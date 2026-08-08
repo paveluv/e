@@ -151,7 +151,8 @@
 ;;; Point, mark, and editing ----------------------------------------------
 
 (define (changed!)
-  (set! modified? #t) (set! message "") (set! mark-active? #f))
+  (set! modified? #t) (set! message "") (set! mark-active? #f)
+  (set! goal-pos #f))
 
 (define (ordered-region) ; -> start-row start-col end-row end-col
   (if (or (< point-row mark-row)
@@ -175,9 +176,19 @@
         [(< point-row (- (vlen) 1))
          (set! point-row (+ point-row 1)) (set! point-col 0)]))
 
+;; Vertical moves aim for a goal column, so point comes back to it after
+;; passing through shorter lines (as in Emacs).  The goal survives exactly
+;; as long as each command finds point where the previous vertical move
+;; left it; anything else that moves point starts a fresh goal.
+(define goal-col 0)
+(define goal-pos #f)
+
 (define (move-vertical! delta)
+  (unless (equal? goal-pos (cons point-row point-col))
+    (set! goal-col point-col))
   (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
-  (set! point-col (min point-col (string-length (current-line)))))
+  (set! point-col (min goal-col (string-length (current-line))))
+  (set! goal-pos (cons point-row point-col)))
 
 (define (insert-text! s)
   (record-edit!)
@@ -289,7 +300,7 @@
   (set! trailing-newline? ends?)
   (set! file-name path)
   (set! point-row 0) (set! point-col 0) (set! top-row 0)
-  (set! modified? #f) (set! mark-active? #f)
+  (set! modified? #f) (set! mark-active? #f) (set! goal-pos #f)
   (set! history (vector '() '()))
   (set! history-direction 'undo) (set! last-history-command #f)
   (set! message msg))
