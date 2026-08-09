@@ -429,7 +429,53 @@
                [(= row er) (cons 0 ec)]
                [else (cons 0 line-length)]))))
 
-(define (display-editor-line s span)
+(define (scan-paren start-row start-col dir)
+  ;; Find the bracket balancing the one at (start-row, start-col), scanning
+  ;; forward (dir 1) or backward (dir -1).  Brackets inside strings and
+  ;; comments don't count, per the syntax styles.  The scan is bounded so
+  ;; pathological buffers stay responsive; #f when nothing balances.
+  (let walk ([row start-row] [col start-col]
+             [styles (scheme-styles (line-at start-row))]
+             [depth 0] [budget 50000])
+    (and (> budget 0)
+         (if (or (< col 0) (>= col (string-length (line-at row))))
+             (let ([row (+ row dir)])
+               (and (>= row 0) (< row (vlen))
+                    (walk row
+                          (if (> dir 0) 0 (- (string-length (line-at row)) 1))
+                          (scheme-styles (line-at row))
+                          depth (- budget 1))))
+             (let* ([c (string-ref (line-at row) col)]
+                    [delta (if (eq? (vector-ref styles col) 'delimiter)
+                               (cond [(memv c '(#\( #\[ #\{)) dir]
+                                     [(memv c '(#\) #\] #\})) (- dir)]
+                                     [else 0])
+                               0)])
+               (if (and (not (= delta 0)) (= (+ depth delta) 0))
+                   (cons row col)
+                   (walk row (+ col dir) styles (+ depth delta) (- budget 1))))))))
+
+(define (paren-highlights)
+  ;; The bracket at point and its partner, as a list of (row . col) pairs
+  ;; to highlight: the opener point sits on, or the closer just before
+  ;; point (as in Emacs's show-paren-mode).  Empty when neither applies.
+  (let* ([line (current-line)]
+         [styles (scheme-styles line)])
+    (define (bracket-at col kinds)
+      (and (>= col 0) (< col (string-length line))
+           (memv (string-ref line col) kinds)
+           (eq? (vector-ref styles col) 'delimiter)
+           col))
+    (let* ([closer (bracket-at (- point-col 1) '(#\) #\] #\}))]
+           [opener (and (not closer) (bracket-at point-col '(#\( #\[ #\{)))]
+           [col (or closer opener)]
+           [match (and col (scan-paren point-row col (if closer -1 1)))])
+      (if match (list (cons point-row col) match) '()))))
+
+(define (paren-cols parens row)
+  (map cdr (filter (lambda (p) (= (car p) row)) parens)))
+
+(define (display-editor-line s span brackets)
   (define n (string-length s))
   (define limit (+ left-col cols))
   (define styles (scheme-styles s))
@@ -451,19 +497,23 @@
               (string-set! out (- i from) ch)))
           (loop (+ i 1))))
       out))
+  (define (bracket? col) (and (memv col brackets) #t))
   ;; Emit runs of identically-attributed columns as single writes.
   (let loop ([col left-col])
     (when (< col limit)
       (let* ([style (style-at col)]
              [hi (highlighted? col)]
+             [br (bracket? col)]
              [end (let run ([j (+ col 1)])
                     (if (and (< j limit)
                              (eq? (style-at j) style)
-                             (eq? (highlighted? j) hi))
+                             (eq? (highlighted? j) hi)
+                             (eq? (bracket? j) br))
                         (run (+ j 1))
                         j))])
         (ansi "\x1b;[0m" (style-code style))
         (when hi (ansi "\x1b;[7m"))
+        (when br (ansi "\x1b;[4m"))
         (ansi (segment col end))
         (loop end))))
   (ansi "\x1b;[0m"))
@@ -521,17 +571,19 @@
                  (if (= top-delta 1) "\x1b;[1S" "\x1b;[1T") "\x1b;[r")
            (shift-screen-cache! top-delta height)])
     (set! cached-top-row top-row)
-    (let loop ([screen 0])
-      (when (< screen height)
-        (let ([i (+ top-row screen)])
-          (if (< i (vlen))
-              (let* ([line (line-at i)]
-                     [span (region-span i (string-length line))])
-                (paint! screen (list i line span)
-                        (lambda () (display-editor-line line span))))
-              (paint! screen '(empty)
-                      (lambda () (ansi (fit "~" cols))))))
-        (loop (+ screen 1))))
+    (let ([parens (paren-highlights)])
+      (let loop ([screen 0])
+        (when (< screen height)
+          (let ([i (+ top-row screen)])
+            (if (< i (vlen))
+                (let* ([line (line-at i)]
+                       [span (region-span i (string-length line))]
+                       [brackets (paren-cols parens i)])
+                  (paint! screen (list i line span brackets)
+                          (lambda () (display-editor-line line span brackets))))
+                (paint! screen '(empty)
+                        (lambda () (ansi (fit "~" cols))))))
+          (loop (+ screen 1)))))
     (let ([status (format " ~a~a  ~a  L~a C~a "
                           (if modified? "**" "--") editor-name
                           (or file-name "*scratch*")

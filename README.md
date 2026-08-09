@@ -61,6 +61,9 @@ began. All matches on screen are highlighted while searching.
 
 - Scheme-aware syntax highlighting (keywords, strings, comments, numbers,
   character literals, delimiters, quotes).
+- Matching-bracket highlighting: the opener under point, or the closer just
+  before it, is shown together with its partner (brackets inside strings
+  and comments are ignored).
 - Unlimited undo with redo (`C-g` after an undo flips direction, Emacs-style).
 - A kill ring entry that accumulates across consecutive kill commands, so
   `C-k C-k C-k … C-y` reassembles whole blocks.
