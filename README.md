@@ -59,6 +59,13 @@ Each window has its own status line (the active one is bright, the others
 dim) and its own point and scroll position; the same buffer can be shown
 in several windows at once.
 
+Prompts complete with TAB, as in Emacs: file names in `C-x C-f` and the
+write-file prompt (a unique directory completes with a `/` and descends),
+buffer names in `C-x b` and `C-x k`. TAB extends to the longest common
+prefix; when nothing extends, a second TAB pops up a `*Completions*`
+window listing the candidates in columns (borrowing the other window, or
+splitting a temporary one), which disappears when the prompt finishes.
+
 ### Movement
 
 | Key                   | Action                        |

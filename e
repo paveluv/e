@@ -78,6 +78,7 @@
 (define suppress-history (make-parameter #f))
 (define quit? #f)
 (define key-prefix #f)
+(define echo-cursor #f)  ; column to park the cursor at in the echo area
 (define search-highlight "")
 (define rows 24)
 (define cols 80)
@@ -135,6 +136,24 @@
 (define (string-suffix? suffix s)
   (let ([n (string-length s)] [m (string-length suffix)])
     (and (>= n m) (string=? (substring s (- n m) n) suffix))))
+
+(define (string-prefix? prefix s)
+  (let ([n (string-length s)] [m (string-length prefix)])
+    (and (>= n m) (string=? (substring s 0 m) prefix))))
+
+(define (string-join xs sep)
+  (if (null? xs) ""
+      (fold-left (lambda (acc x) (string-append acc sep x)) (car xs) (cdr xs))))
+
+(define (common-prefix strs)
+  ;; The longest prefix shared by every string in the non-empty list.
+  (fold-left (lambda (acc s)
+               (let loop ([i 0])
+                 (if (and (< i (string-length acc)) (< i (string-length s))
+                          (char=? (string-ref acc i) (string-ref s i)))
+                     (loop (+ i 1))
+                     (substring acc 0 i))))
+             (car strs) (cdr strs)))
 
 (define (string-search s needle start limit)
   ;; Index of the first occurrence of needle inside s[start, limit), or #f.
@@ -361,11 +380,64 @@
       (let ([s (get-string-all p)])
         (if (eof-object? s) "" s)))))
 
-(define (base-name path)
+(define (directory-part path)
+  ;; Everything up to and including the last slash, or #f without one.
   (let loop ([i (- (string-length path) 1)])
-    (cond [(< i 0) path]
-          [(char=? (string-ref path i) #\/) (string-tail path (+ i 1))]
+    (cond [(< i 0) #f]
+          [(char=? (string-ref path i) #\/) (substring path 0 (+ i 1))]
           [else (loop (- i 1))])))
+
+(define (base-name path)
+  (let ([dir (directory-part path)])
+    (if dir (string-tail path (string-length dir)) path)))
+
+(define (expand-path path)
+  ;; Expand a leading ~ to the home directory.
+  (let ([home (getenv "HOME")])
+    (cond [(not home) path]
+          [(string=? path "~") home]
+          [(string-prefix? "~/" path) (string-append home (string-tail path 1))]
+          [else path])))
+
+(define (abbreviate-path path)
+  ;; The inverse of expand-path, for display: home becomes ~.
+  (let ([home (getenv "HOME")])
+    (if (and home (string-prefix? (string-append home "/") path))
+        (string-append "~" (string-tail path (string-length home)))
+        path)))
+
+(define (default-directory)
+  ;; The directory of the current buffer's file (or the working
+  ;; directory), with a trailing slash, abbreviated for display.
+  (abbreviate-path
+    (or (and file-name (directory-part file-name))
+        (string-append (current-directory) "/"))))
+
+(define (complete-file-name s)
+  ;; Completion candidates for the partial path s: the entries of its
+  ;; directory whose names extend its final component, as full paths, with
+  ;; a trailing slash on directories so completion can descend into them.
+  ;; A leading ~ is kept in the candidates but expanded for the lookups.
+  ;; Dotfiles are offered only once the component starts with a dot.
+  (guard (ex [else '()])
+    (let* ([dir (or (directory-part s) "")]
+           [part (string-tail s (string-length dir))]
+           [listing (directory-list
+                      (expand-path
+                        (cond [(string=? dir "") "."]
+                              [(string=? dir "/") "/"]
+                              [else (substring dir 0 (- (string-length dir) 1))])))])
+      (map (lambda (name)
+             (let ([full (string-append dir name)])
+               (if (file-directory? (expand-path full))
+                   (string-append full "/")
+                   full)))
+           (sort string<?
+                 (filter (lambda (name)
+                           (and (string-prefix? part name)
+                                (or (not (string=? part ""))
+                                    (not (string-prefix? "." name)))))
+                         listing))))))
 
 (define (unique-name base self)
   ;; base, or base<2>, base<3>, ... -- whichever no other buffer uses.
@@ -401,11 +473,13 @@
 
 (define (visit-file! path)
   ;; Switch to the buffer visiting path, creating it if necessary.
-  (cond [(find (lambda (b) (equal? (buffer-file b) path)) buffers)
-         => show-buffer!]
-        [(file-buffer path) => show-buffer!]))
+  (let ([path (expand-path path)])
+    (cond [(find (lambda (b) (equal? (buffer-file b) path)) buffers)
+           => show-buffer!]
+          [(file-buffer path) => show-buffer!])))
 
-(define (save-file! path)
+(define (save-file! path*)
+  (define path (expand-path path*))
   (guard (ex [else (set! message (format "Save failed: ~a" (error-text ex))) #f])
     (call-with-output-file path
       (lambda (p)
@@ -464,13 +538,18 @@
 (define (buffer-named name)
   (find (lambda (b) (string=? (buffer-name b) name)) buffers))
 
+(define (complete-buffer-name s)
+  (sort string<? (filter (lambda (n) (string-prefix? s n))
+                         (map buffer-name buffers))))
+
 (define (switch-buffer-command!)
   (let* ([current (window-buffer current-window)]
          [default (find (lambda (b) (not (eq? b current))) buffers)]
          [s (prompt! (if default
                          (format "Switch to buffer (default ~a): "
                                  (buffer-name default))
-                         "Switch to buffer: "))])
+                         "Switch to buffer: ")
+                     complete-buffer-name)])
     (when s
       (cond [(string=? s "") (when default (show-buffer! default))]
             [(buffer-named s) => show-buffer!]
@@ -489,7 +568,8 @@
 (define (kill-buffer-command!)
   (let* ([current (window-buffer current-window)]
          [s (prompt! (format "Kill buffer (default ~a): "
-                             (buffer-name current)))])
+                             (buffer-name current))
+                     complete-buffer-name)])
     (when s
       (let ([b (if (string=? s "") current (buffer-named s))])
         (cond [(not b) (set! message (format "No buffer named ~a" s))]
@@ -809,9 +889,11 @@
                 layout))
     (paint! (- rows 1) (list 'message message)
             (lambda () (ansi (fit message cols))))
-    (let ([entry (assq current-window layout)])
-      (goto (+ (cadr entry) (- point-row top-row) 1)
-            (+ (- point-col left-col) 1))))
+    (if echo-cursor
+        (goto rows (min echo-cursor cols))
+        (let ([entry (assq current-window layout)])
+          (goto (+ (cadr entry) (- point-row top-row) 1)
+                (+ (- point-col left-col) 1)))))
   (ansi "\x1b;[?25h") (flush-output-port stdout))
 
 ;;; Prompts and commands --------------------------------------------------
@@ -826,27 +908,123 @@
           (when (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
             (loop)))))))
 
-(define (prompt! label)
-  (let loop ([s ""])
-    (set! message (string-append label s)) (redraw!)
-    (let ([c (read-char stdin)])
-      (if (eof-object? c)
-          #f
-          (case (char->integer c)
-            [(27)
-             ;; A bare ESC cancels; an escape sequence (arrow key etc.) is
-             ;; discarded so its bytes do not leak into the prompt.
-             (if (char-ready? stdin)
-                 (begin (discard-escape-sequence!) (loop s))
-                 (begin (set! message "Quit") #f))]
-            [(7) (set! message "Quit") #f]
-            [(10 13) s]
-            [(8 127)
-             (loop (if (string=? s "") s
-                       (substring s 0 (- (string-length s) 1))))]
-            [else (loop (if (>= (char->integer c) 32)
-                            (string-append s (string c))
-                            s))])))))
+(define (completion-label c)
+  ;; A candidate as shown in the completions list: its last path component
+  ;; (with the trailing slash kept on directories); non-paths unchanged.
+  (if (string-suffix? "/" c)
+      (string-append (base-name (substring c 0 (- (string-length c) 1))) "/")
+      (base-name c)))
+
+(define (format-columns labels width)
+  ;; The labels laid out in columns across width, one string per line.
+  (let* ([w (+ 2 (fold-left max 0 (map string-length labels)))]
+         [ncols (max 1 (quotient width w))])
+    (let loop ([xs labels] [acc '()])
+      (if (null? xs)
+          (reverse acc)
+          (let row ([i 0] [xs xs] [line ""])
+            (if (or (= i ncols) (null? xs))
+                (loop xs (cons line acc))
+                (row (+ i 1) (cdr xs) (string-append line (fit (car xs) w)))))))))
+
+;; The *Completions* pop-up: shown on a TAB that cannot extend the input,
+;; in the next window when there are several, in a temporary split when
+;; there is one, and taken down again when the prompt finishes.
+(define completions-buffer #f)
+(define completions-restore #f)
+
+(define (show-completions! labels)
+  ;; #f when the screen has no room; the caller falls back to a note.
+  (let ([content (list->vector (format-columns labels cols))])
+    (cond
+      [completions-restore                       ; already up: refresh it
+       (buffer-lines-set! completions-buffer content)
+       (let ([w (find (lambda (w) (eq? (window-buffer w) completions-buffer))
+                      windows)])
+         (when w
+           (window-top-set! w 0)
+           (window-prow-set! w 0) (window-pcol-set! w 0)))
+       #t]
+      [(pair? (cdr windows))                     ; borrow the next window
+       (set! completions-buffer (new-buffer "*Completions*"))
+       (buffer-lines-set! completions-buffer content)
+       (let* ([w (next-window current-window)]
+              [prev (window-buffer w)])
+         (set-window-buffer! w completions-buffer)
+         (set! completions-restore (lambda () (set-window-buffer! w prev))))
+       #t]
+      [(>= (- rows 3) 4)                         ; room for a second window?
+       (set! completions-buffer (new-buffer "*Completions*"))
+       (buffer-lines-set! completions-buffer content)
+       (let ([w (make-window completions-buffer 0 0 0 0 #f)])
+         (set! windows (insert-after windows current-window w))
+         (set! completions-restore (lambda () (set! windows (remq w windows)))))
+       #t]
+      [else #f])))
+
+(define (dismiss-completions!)
+  (when completions-restore
+    (completions-restore)
+    (set! completions-restore #f)
+    (set! completions-buffer #f)))
+
+(define (complete! s complete k)
+  ;; TAB in a prompt, as in Emacs: extend s to the longest common prefix
+  ;; of its completions; when it cannot be extended, pop up the candidate
+  ;; list.  k continues the prompt loop as (k new-s note).
+  (let ([cands (complete s)])
+    (cond
+      [(null? cands) (k s " [No match]")]
+      [(null? (cdr cands))
+       (if (string=? (car cands) s)
+           (k s " [Sole completion]")
+           (k (car cands) ""))]
+      [else
+       (let ([lcp (common-prefix cands)])
+         (cond [(> (string-length lcp) (string-length s)) (k lcp "")]
+               [(show-completions! (map completion-label cands)) (k s "")]
+               [else (k s (format " {~a}"
+                                  (string-join (map completion-label cands)
+                                               " ")))]))])))
+
+(define (prompt! label . rest)
+  ;; Read a line in the echo area, with the cursor parked there.  Optional
+  ;; arguments: a completer (string -> list of candidate strings) enabling
+  ;; TAB completion, and initial input (pre-filled, editable).  Whichever
+  ;; way the prompt ends, the completions pop-up is taken down.
+  (let* ([complete (and (pair? rest) (car rest))]
+         [initial (if (and (pair? rest) (pair? (cdr rest))) (cadr rest) "")]
+         [result
+          (let loop ([s initial] [note ""])
+      (set! message (string-append label s note))
+      (set! echo-cursor (+ (string-length label) (string-length s) 1))
+      (redraw!)
+      (let ([c (read-char stdin)])
+        (if (eof-object? c)
+            #f
+            (case (char->integer c)
+              [(27)
+               ;; A bare ESC cancels; an escape sequence (arrow key etc.) is
+               ;; discarded so its bytes do not leak into the prompt.
+               (if (char-ready? stdin)
+                   (begin (discard-escape-sequence!) (loop s ""))
+                   (begin (set! message "Quit") #f))]
+              [(7) (set! message "Quit") #f]
+              [(10 13) (set! message "") s]
+              [(9) (if complete
+                       (complete! s complete loop)
+                       (loop s ""))]
+              [(8 127)
+               (loop (if (string=? s "") s
+                         (substring s 0 (- (string-length s) 1)))
+                     "")]
+              [else (loop (if (>= (char->integer c) 32)
+                              (string-append s (string c))
+                              s)
+                          "")]))))])
+    (set! echo-cursor #f)
+    (dismiss-completions!)
+    result))
 
 (define (confirm? label)
   (let ([s (prompt! label)]) (and s (string-ci=? s "yes"))))
@@ -854,12 +1032,12 @@
 (define (save-command!)
   (if file-name
       (save-file! file-name)
-      (let ([s (prompt! "Write file: ")])
+      (let ([s (prompt! "Write file: " complete-file-name (default-directory))])
         (when (and s (> (string-length s) 0)) (save-file! s)))))
 
 (define (find-file-command!)
   ;; Visiting a file never loses the old buffer, so no confirmation needed.
-  (let ([s (prompt! "Find file: ")])
+  (let ([s (prompt! "Find file: " complete-file-name (default-directory))])
     (when (and s (> (string-length s) 0)) (visit-file! s))))
 
 (define (quit-command!)
@@ -971,9 +1149,11 @@
 
 (define (handle-prefix! c)
   (set! key-prefix #f)
+  (set! message "")               ; take down the C-x- hint
   (if (eof-object? c)
       (set! quit? #t)
       (case (char->integer c)
+        [(7) (set! message "Quit")]                           ; C-x C-g
         [(19) (save-command!)]                                ; C-x C-s
         [(3) (quit-command!)]                                 ; C-x C-c
         [(6) (find-file-command!)]                            ; C-x C-f
