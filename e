@@ -8,26 +8,71 @@
 
 (import (chezscheme))
 
-;;; Editor state ----------------------------------------------------------
+;;; Buffers and windows ----------------------------------------------------
+
+(define-record-type buffer
+  (fields (mutable name) (mutable lines) (mutable file) (mutable trailing)
+          (mutable modified) (mutable history) (mutable hist-dir)
+          (mutable hist-last) (mutable mark-row) (mutable mark-col)
+          (mutable marked)
+          ;; where point was when the buffer was last displayed
+          (mutable spot-row) (mutable spot-col) (mutable spot-top)))
+
+(define-record-type window
+  (fields (mutable buffer) (mutable top) (mutable left)
+          (mutable prow) (mutable pcol)))
+
+(define (new-buffer name)
+  (make-buffer name (vector "") #f #t #f (vector '() '()) 'undo #f
+               0 0 #f 0 0 0))
+
+(define buffers (list (new-buffer "*scratch*")))        ; most recent first
+(define windows (list (make-window (car buffers) 0 0 0 0))) ; top to bottom
+(define current-window (car windows))
+
+;; The rest of the editor is written against simple state names: `lines`,
+;; `point-row`, and so on.  Each name is an identifier macro reading and
+;; writing through current-window, so every command transparently follows
+;; buffer and window switches.
+(define-syntax define-state
+  (syntax-rules ()
+    [(_ name place get put)
+     (define-syntax name
+       (identifier-syntax
+         [id (get place)]
+         [(set! id v) (put place v)]))]))
+
+(define-state lines (window-buffer current-window)
+  buffer-lines buffer-lines-set!)
+(define-state file-name (window-buffer current-window)
+  buffer-file buffer-file-set!)
+(define-state trailing-newline? (window-buffer current-window)
+  buffer-trailing buffer-trailing-set!)
+(define-state modified? (window-buffer current-window)
+  buffer-modified buffer-modified-set!)
+(define-state history (window-buffer current-window)
+  buffer-history buffer-history-set!)
+(define-state history-direction (window-buffer current-window)
+  buffer-hist-dir buffer-hist-dir-set!)
+(define-state last-history-command (window-buffer current-window)
+  buffer-hist-last buffer-hist-last-set!)
+(define-state mark-row (window-buffer current-window)
+  buffer-mark-row buffer-mark-row-set!)
+(define-state mark-col (window-buffer current-window)
+  buffer-mark-col buffer-mark-col-set!)
+(define-state mark-active? (window-buffer current-window)
+  buffer-marked buffer-marked-set!)
+(define-state point-row current-window window-prow window-prow-set!)
+(define-state point-col current-window window-pcol window-pcol-set!)
+(define-state top-row current-window window-top window-top-set!)
+(define-state left-col current-window window-left window-left-set!)
+
+;;; Editor state ------------------------------------------------------------
 
 (define editor-name "e")
-(define lines (vector ""))         ; buffer contents, one string per line
-(define point-row 0)
-(define point-col 0)
-(define top-row 0)                 ; first buffer row shown on screen
-(define left-col 0)                ; first buffer column shown on screen
-(define file-name #f)
-(define trailing-newline? #t)      ; did the file end with a newline?
-(define modified? #f)
-(define message "C-s search  C-_ undo  C-x C-s save  C-x C-c quit")
+(define message "C-s search  C-_ undo  C-x b switch  C-x C-s save  C-x C-c quit")
 (define kill-ring "")
 (define last-command #f)
-(define mark-row 0)
-(define mark-col 0)
-(define mark-active? #f)
-(define history (vector '() '())) ; undo and redo stacks of snapshots
-(define history-direction 'undo)
-(define last-history-command #f)
 (define suppress-history (make-parameter #f))
 (define quit? #f)
 (define key-prefix #f)
@@ -118,6 +163,12 @@
 (define (vector-fill-range! v from to x)
   (let loop ([i from])
     (when (< i to) (vector-set! v i x) (loop (+ i 1)))))
+
+(define (insert-after lst x y)
+  ;; A copy of lst with y inserted right after x (or at the end).
+  (cond [(null? lst) (list y)]
+        [(eq? (car lst) x) (cons x (cons y (cdr lst)))]
+        [else (cons (car lst) (insert-after (cdr lst) x y))]))
 
 ;;; Buffer access and undo ------------------------------------------------
 
@@ -308,28 +359,49 @@
       (let ([s (get-string-all p)])
         (if (eof-object? s) "" s)))))
 
-(define (adopt-buffer! path new-lines ends? msg)
-  (set! lines new-lines)
-  (set! trailing-newline? ends?)
-  (set! file-name path)
-  (set! point-row 0) (set! point-col 0) (set! top-row 0)
-  (set! modified? #f) (set! mark-active? #f) (set! goal-pos #f)
-  (set! history (vector '() '()))
-  (set! history-direction 'undo) (set! last-history-command #f)
-  (set! message msg))
+(define (base-name path)
+  (let loop ([i (- (string-length path) 1)])
+    (cond [(< i 0) path]
+          [(char=? (string-ref path i) #\/) (string-tail path (+ i 1))]
+          [else (loop (- i 1))])))
 
-(define (load-file! path)
-  ;; A failed read leaves the buffer, file name, and undo state untouched.
+(define (unique-name base self)
+  ;; base, or base<2>, base<3>, ... -- whichever no other buffer uses.
+  (let loop ([k 1])
+    (let ([name (if (= k 1) base (format "~a<~a>" base k))])
+      (if (find (lambda (b) (and (not (eq? b self))
+                                 (string=? (buffer-name b) name)))
+                buffers)
+          (loop (+ k 1))
+          name))))
+
+(define (file-buffer path)
+  ;; A fresh buffer visiting path; #f (with a message) when it cannot be read.
   (if (file-exists? path)
-      (guard (ex [else (set! message (format "Cannot open ~a: ~a" path (error-text ex)))])
+      (guard (ex [else (set! message (format "Cannot open ~a: ~a"
+                                             path (error-text ex)))
+                       #f])
         (let* ([content (read-file path)]
                [n (string-length content)]
                [ends? (and (> n 0)
                            (char=? (string-ref content (- n 1)) #\newline))]
-               [body (if ends? (substring content 0 (- n 1)) content)])
-          (adopt-buffer! path (list->vector (split-lines body)) ends?
-                         (format "Loaded ~a" path))))
-      (adopt-buffer! path (vector "") #t (format "New file: ~a" path))))
+               [body (if ends? (substring content 0 (- n 1)) content)]
+               [b (new-buffer (unique-name (base-name path) #f))])
+          (buffer-lines-set! b (list->vector (split-lines body)))
+          (buffer-trailing-set! b ends?)
+          (buffer-file-set! b path)
+          (set! message (format "Loaded ~a" path))
+          b))
+      (let ([b (new-buffer (unique-name (base-name path) #f))])
+        (buffer-file-set! b path)
+        (set! message (format "New file: ~a" path))
+        b)))
+
+(define (visit-file! path)
+  ;; Switch to the buffer visiting path, creating it if necessary.
+  (cond [(find (lambda (b) (equal? (buffer-file b) path)) buffers)
+         => show-buffer!]
+        [(file-buffer path) => show-buffer!]))
 
 (define (save-file! path)
   (guard (ex [else (set! message (format "Save failed: ~a" (error-text ex))) #f])
@@ -342,7 +414,120 @@
             (loop (+ i 1)))))
       'replace)
     (set! file-name path) (set! modified? #f)
+    (let ([b (window-buffer current-window)])
+      (buffer-name-set! b (unique-name (base-name path) b)))
     (set! message (format "Wrote ~a" path)) #t))
+
+(define (buffer-text b)
+  (let* ([v (buffer-lines b)] [n (vector-length v)])
+    (let loop ([i (- n 1)] [acc (if (buffer-trailing b) (list "\n") '())])
+      (let ([acc (cons (vector-ref v i) acc)])
+        (if (= i 0)
+            (apply string-append acc)
+            (loop (- i 1) (cons "\n" acc)))))))
+
+(define (buffer-clean? b)
+  ;; Nothing is lost by discarding b: it was never modified, its text is
+  ;; identical to what is on disk again, or it is an empty file-less buffer.
+  (or (not (buffer-modified b))
+      (let ([path (buffer-file b)])
+        (if path
+            (and (file-exists? path)
+                 (guard (ex [else #f])
+                   (string=? (buffer-text b) (read-file path))))
+            (let ([v (buffer-lines b)])
+              (and (= (vector-length v) 1)
+                   (string=? (vector-ref v 0) "")))))))
+
+;;; Buffer and window commands ---------------------------------------------
+
+(define (set-window-buffer! w b)
+  ;; Display b in w, remembering where point was in the old buffer and
+  ;; restoring where it last was in the new one.
+  (let ([old (window-buffer w)])
+    (unless (eq? old b)
+      (buffer-spot-row-set! old (window-prow w))
+      (buffer-spot-col-set! old (window-pcol w))
+      (buffer-spot-top-set! old (window-top w))))
+  (window-buffer-set! w b)
+  (window-prow-set! w (buffer-spot-row b))
+  (window-pcol-set! w (buffer-spot-col b))
+  (window-top-set! w (buffer-spot-top b))
+  (window-left-set! w 0))
+
+(define (show-buffer! b)
+  (set! buffers (cons b (remq b buffers)))   ; most recently used first
+  (set-window-buffer! current-window b))
+
+(define (buffer-named name)
+  (find (lambda (b) (string=? (buffer-name b) name)) buffers))
+
+(define (switch-buffer-command!)
+  (let* ([current (window-buffer current-window)]
+         [default (find (lambda (b) (not (eq? b current))) buffers)]
+         [s (prompt! (if default
+                         (format "Switch to buffer (default ~a): "
+                                 (buffer-name default))
+                         "Switch to buffer: "))])
+    (when s
+      (cond [(string=? s "") (when default (show-buffer! default))]
+            [(buffer-named s) => show-buffer!]
+            [else (show-buffer! (new-buffer s))
+                  (set! message (format "New buffer ~a" s))]))))
+
+(define (kill-buffer! b)
+  (set! buffers (remq b buffers))
+  (when (null? buffers) (set! buffers (list (new-buffer "*scratch*"))))
+  (for-each (lambda (w)
+              (when (eq? (window-buffer w) b)
+                (set-window-buffer! w (car buffers))))
+            windows)
+  (set! message (format "Killed ~a" (buffer-name b))))
+
+(define (kill-buffer-command!)
+  (let* ([current (window-buffer current-window)]
+         [s (prompt! (format "Kill buffer (default ~a): "
+                             (buffer-name current)))])
+    (when s
+      (let ([b (if (string=? s "") current (buffer-named s))])
+        (cond [(not b) (set! message (format "No buffer named ~a" s))]
+              [(or (buffer-clean? b)
+                   (confirm? (format "Buffer ~a modified; kill anyway? (yes or no) "
+                                     (buffer-name b))))
+               (kill-buffer! b)])))))
+
+(define (list-buffers-command!)
+  (set! message
+    (fold-left (lambda (acc b)
+                 (format "~a ~a~a" acc
+                         (if (buffer-modified b) "*" "") (buffer-name b)))
+               "Buffers:" buffers)))
+
+(define (next-window w)
+  (let ([tail (cdr (memq w windows))])
+    (if (pair? tail) (car tail) (car windows))))
+
+(define (other-window!)
+  (set! current-window (next-window current-window)))
+
+(define (split-window!)
+  ;; Stack a new window under the current one, showing the same buffer.
+  (let ([n (+ (length windows) 1)])
+    (if (< (- rows 1 n) (* 2 n))
+        (set! message "Not enough room to split")
+        (let ([w (make-window (window-buffer current-window)
+                              top-row left-col point-row point-col)])
+          (set! windows (insert-after windows current-window w))))))
+
+(define (delete-window!)
+  (if (null? (cdr windows))
+      (set! message "Only one window")
+      (let ([next (next-window current-window)])
+        (set! windows (remq current-window windows))
+        (set! current-window next))))
+
+(define (delete-other-windows!)
+  (set! windows (list current-window)))
 
 ;;; Syntax highlighting ---------------------------------------------------
 
@@ -445,9 +630,9 @@
 (define (paren-cols parens row)
   (map cdr (filter (lambda (p) (= (car p) row)) parens)))
 
-(define (display-editor-line s span brackets)
+(define (display-editor-line s span brackets left)
   (define n (string-length s))
-  (define limit (+ left-col cols))
+  (define limit (+ left cols))
   (define styles (line-styles s))
   (define marked (matching-columns s search-highlight))
   (define (style-at col)
@@ -470,7 +655,7 @@
       out))
   (define (bracket? col) (and (memv col brackets) #t))
   ;; Emit runs of identically-attributed columns as single writes.
-  (let loop ([col left-col])
+  (let loop ([col left])
     (when (< col limit)
       (let* ([style (style-at col)]
              [hi (highlighted? col)]
@@ -489,17 +674,41 @@
         (loop end))))
   (ansi "\x1b;[0m"))
 
-(define (scroll!)
-  (let ([height (- rows 2)])
-    (when (< point-row top-row) (set! top-row point-row))
-    (when (>= point-row (+ top-row height)) (set! top-row (- point-row height -1)))
-    (when (< point-col left-col) (set! left-col point-col))
-    (when (>= point-col (+ left-col cols)) (set! left-col (- point-col cols -1)))))
+(define (window-layout)
+  ;; Stack the windows top to bottom, each a band of text rows followed by
+  ;; its own status line; the last screen row is the echo area.
+  ;; -> list of (window start text-height), start 0-based.
+  (let* ([n (length windows)]
+         [text (- rows 1 n)]
+         [base (quotient text n)]
+         [extra (remainder text n)])
+    (let loop ([ws windows] [start 0] [i 0] [acc '()])
+      (if (null? ws)
+          (reverse acc)
+          (let ([h (+ base (if (< i extra) 1 0))])
+            (loop (cdr ws) (+ start h 1) (+ i 1)
+                  (cons (list (car ws) start h) acc)))))))
 
-;; The cache holds, per screen row (text rows, then status, then message),
-;; the key describing what that row currently shows; a row is repainted
-;; only when its key changes.  Any change of view (size, horizontal scroll,
-;; or search highlight) discards the whole cache.
+(define (scroll-window! w height)
+  ;; Clamp w's point to its buffer (edits in another window may have moved
+  ;; the ground under it) and scroll so point stays visible.
+  (let* ([v (buffer-lines (window-buffer w))]
+         [prow (max 0 (min (window-prow w) (- (vector-length v) 1)))]
+         [pcol (max 0 (min (window-pcol w)
+                           (string-length (vector-ref v prow))))])
+    (window-prow-set! w prow)
+    (window-pcol-set! w pcol)
+    (when (< prow (window-top w)) (window-top-set! w prow))
+    (when (>= prow (+ (window-top w) height))
+      (window-top-set! w (- prow height -1)))
+    (when (< pcol (window-left w)) (window-left-set! w pcol))
+    (when (>= pcol (+ (window-left w) cols))
+      (window-left-set! w (- pcol cols -1)))))
+
+;; The cache holds, per screen row, the key describing what that row
+;; currently shows; a row is repainted only when its key changes.  Any
+;; change of view (size, search highlight, window arrangement) discards
+;; the whole cache.
 (define screen-cache '#())
 (define cached-top-row #f)
 (define cached-view #f)
@@ -527,43 +736,69 @@
     (draw)
     (vector-set! screen-cache row key)))
 
+(define (paint-window! w start height parens)
+  (let* ([b (window-buffer w)]
+         [v (buffer-lines b)]
+         [n (vector-length v)]
+         [top (window-top w)]
+         [left (window-left w)]
+         [current? (eq? w current-window)])
+    (let loop ([k 0])
+      (when (< k height)
+        (let ([i (+ top k)] [row (+ start k)])
+          (if (< i n)
+              (let* ([line (vector-ref v i)]
+                     [span (and current? (region-span i (string-length line)))]
+                     [brackets (if current? (paren-cols parens i) '())])
+                (paint! row (list i line span brackets left)
+                        (lambda () (display-editor-line line span brackets left))))
+              (paint! row '(empty)
+                      (lambda () (ansi (fit "~" cols))))))
+        (loop (+ k 1))))
+    (let ([status (format " ~a~a  ~a  L~a C~a "
+                          (if (buffer-modified b) "**" "--") editor-name
+                          (buffer-name b)
+                          (+ (window-prow w) 1) (+ (window-pcol w) 1))])
+      (paint! (+ start height) (list 'status status current?)
+              (lambda ()
+                (ansi (if current? "\x1b;[7m" "\x1b;[7;2m")
+                      (fit status cols) "\x1b;[0m"))))))
+
 (define (redraw!)
-  (terminal-size!) (scroll!)
-  (let* ([height (- rows 2)]
-         [view (list rows cols left-col search-highlight)]
-         [top-delta (if cached-top-row (- top-row cached-top-row) 0)])
+  (terminal-size!)
+  ;; A terminal too small for the splits collapses back to one window.
+  (when (and (pair? (cdr windows))
+             (< (- rows 1 (length windows)) (* 2 (length windows))))
+    (set! windows (list current-window)))
+  (let* ([layout (window-layout)]
+         [single? (null? (cdr windows))]
+         [view (list rows cols search-highlight (map cdr layout))]
+         [top-delta (if (and single? cached-top-row)
+                        (- top-row cached-top-row)
+                        0)])
+    (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
+              layout)
     (cond [(not (equal? view cached-view))
            (set! screen-cache (make-vector rows #f))
            (set! cached-view view)]
-          [(memv top-delta '(-1 1))
-           ;; Point scrolled by one row: let the terminal move the text and
-           ;; repaint only what the scroll uncovered.
-           (ansi "\x1b;[?25l" "\x1b;[1;" (number->string height) "r"
-                 (if (= top-delta 1) "\x1b;[1S" "\x1b;[1T") "\x1b;[r")
-           (shift-screen-cache! top-delta height)])
-    (set! cached-top-row top-row)
+          [(and single? (memv (- top-row cached-top-row) '(-1 1)))
+           ;; Point scrolled by one row in the sole window: let the terminal
+           ;; move the text and repaint only what the scroll uncovered.
+           (let ([height (- rows 2)]
+                 [delta (- top-row cached-top-row)])
+             (ansi "\x1b;[?25l" "\x1b;[1;" (number->string height) "r"
+                   (if (= delta 1) "\x1b;[1S" "\x1b;[1T") "\x1b;[r")
+             (shift-screen-cache! delta height))])
+    (set! cached-top-row (and single? top-row))
     (let ([parens (paren-highlights)])
-      (let loop ([screen 0])
-        (when (< screen height)
-          (let ([i (+ top-row screen)])
-            (if (< i (vlen))
-                (let* ([line (line-at i)]
-                       [span (region-span i (string-length line))]
-                       [brackets (paren-cols parens i)])
-                  (paint! screen (list i line span brackets)
-                          (lambda () (display-editor-line line span brackets))))
-                (paint! screen '(empty)
-                        (lambda () (ansi (fit "~" cols))))))
-          (loop (+ screen 1)))))
-    (let ([status (format " ~a~a  ~a  L~a C~a "
-                          (if modified? "**" "--") editor-name
-                          (or file-name "*scratch*")
-                          (+ point-row 1) (+ point-col 1))])
-      (paint! height (list 'status status)
-              (lambda () (ansi "\x1b;[7m" (fit status cols) "\x1b;[0m"))))
-    (paint! (+ height 1) (list 'message message)
-            (lambda () (ansi (fit message cols)))))
-  (goto (+ (- point-row top-row) 1) (+ (- point-col left-col) 1))
+      (for-each (lambda (entry)
+                  (paint-window! (car entry) (cadr entry) (caddr entry) parens))
+                layout))
+    (paint! (- rows 1) (list 'message message)
+            (lambda () (ansi (fit message cols))))
+    (let ([entry (assq current-window layout)])
+      (goto (+ (cadr entry) (- point-row top-row) 1)
+            (+ (- point-col left-col) 1))))
   (ansi "\x1b;[?25h") (flush-output-port stdout))
 
 ;;; Prompts and commands --------------------------------------------------
@@ -610,28 +845,13 @@
         (when (and s (> (string-length s) 0)) (save-file! s)))))
 
 (define (find-file-command!)
-  (when (or (not modified?)
-            (confirm? "Buffer modified; discard changes? (yes or no) "))
-    (let ([s (prompt! "Find file: ")])
-      (when (and s (> (string-length s) 0)) (load-file! s)))))
-
-(define (buffer-contents)
-  (string-append
-    (region-text 0 0 (- (vlen) 1) (string-length (line-at (- (vlen) 1))))
-    (if trailing-newline? "\n" "")))
-
-(define (buffer-saved?)
-  ;; True when quitting loses nothing: the buffer was never modified, or its
-  ;; text is identical to what is on disk again (edits undone or reverted).
-  (or (not modified?)
-      (if file-name
-          (and (file-exists? file-name)
-               (guard (ex [else #f])
-                 (string=? (buffer-contents) (read-file file-name))))
-          (and (= (vlen) 1) (string=? (line-at 0) "")))))
+  ;; Visiting a file never loses the old buffer, so no confirmation needed.
+  (let ([s (prompt! "Find file: ")])
+    (when (and s (> (string-length s) 0)) (visit-file! s))))
 
 (define (quit-command!)
-  (when (or (buffer-saved?) (confirm? "Modified; quit anyway? (yes or no) "))
+  (when (or (for-all buffer-clean? buffers)
+            (confirm? "Modified buffers exist; quit anyway? (yes or no) "))
     (set! quit? #t)))
 
 ;;; Incremental search ----------------------------------------------------
@@ -744,6 +964,13 @@
         [(19) (save-command!)]                                ; C-x C-s
         [(3) (quit-command!)]                                 ; C-x C-c
         [(6) (find-file-command!)]                            ; C-x C-f
+        [(2) (list-buffers-command!)]                         ; C-x C-b
+        [(98) (switch-buffer-command!)]                       ; C-x b
+        [(107) (kill-buffer-command!)]                        ; C-x k
+        [(111) (other-window!)]                               ; C-x o
+        [(48) (delete-window!)]                               ; C-x 0
+        [(49) (delete-other-windows!)]                        ; C-x 1
+        [(50) (split-window!)]                                ; C-x 2
         [else (set! message "C-x is undefined for that key")])))
 
 (define (handle-key! c)
@@ -811,10 +1038,10 @@
 (define (main)
   (let ([args (command-line-arguments)])
     (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
-    (when (pair? args) (load-file! (car args))))
+    (when (pair? args) (visit-file! (car args))))
   (load-modules!)
   (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
-    (display "em: an interactive terminal is required\n" (current-error-port))
+    (display "e: an interactive terminal is required\n" (current-error-port))
     (exit 1))
   (dynamic-wind
     (lambda () (system "stty raw -echo") (ansi "\x1b;[?1049h\x1b;[2J"))

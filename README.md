@@ -37,11 +37,27 @@ itself in the message line without preventing startup.
 
 ### Files and exiting
 
-| Key       | Action                                              |
-|-----------|-----------------------------------------------------|
-| `C-x C-s` | Save (prompts for a name in an unnamed buffer)      |
-| `C-x C-f` | Open a file (asks before discarding unsaved edits)  |
-| `C-x C-c` | Quit (asks only if the buffer differs from disk)    |
+| Key       | Action                                                |
+|-----------|-------------------------------------------------------|
+| `C-x C-s` | Save (prompts for a name in an unnamed buffer)        |
+| `C-x C-f` | Visit a file in its own buffer (creating if needed)   |
+| `C-x C-c` | Quit (asks only if some buffer differs from its file) |
+
+### Buffers and windows
+
+| Key       | Action                                                  |
+|-----------|---------------------------------------------------------|
+| `C-x b`   | Switch buffer (default: most recent other; new name creates a buffer) |
+| `C-x C-b` | List buffers in the echo area (`*` marks modified)      |
+| `C-x k`   | Kill a buffer (default: current; asks if modified)      |
+| `C-x 2`   | Split the current window in two (stacked)               |
+| `C-x 1`   | Delete all other windows                                |
+| `C-x 0`   | Delete the current window                               |
+| `C-x o`   | Move to the next window                                 |
+
+Each window has its own status line (the active one is bright, the others
+dim) and its own point and scroll position; the same buffer can be shown
+in several windows at once.
 
 ### Movement
 
@@ -77,6 +93,10 @@ began. All matches on screen are highlighted while searching.
 
 ## Features
 
+- Multiple buffers and stacked windows, Emacs-style: per-buffer undo
+  history and mark, per-window point and scroll, a global kill ring (kill
+  in one buffer, yank in another), and buffers that remember where you
+  were when you come back to them.
 - Scheme-aware syntax highlighting (keywords, strings, comments, numbers,
   character literals, delimiters, quotes).
 - Matching-bracket highlighting: the opener under point, or the closer just
@@ -94,7 +114,8 @@ began. All matches on screen are highlighted while searching.
 
 ## Limitations
 
-Kept deliberately small: one buffer, one window, no configuration. Tabs and
+Kept deliberately small: windows split horizontally only (no side-by-side),
+and there is no configuration beyond extension modules. Tabs and
 other control characters are displayed as a single space cell. Input is read
 as UTF-8, but all characters are assumed to be one column wide.
 
