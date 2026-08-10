@@ -1,6 +1,10 @@
-#!/usr/bin/env scheme-script
+#!/usr/bin/scheme --script
 ;; e -- a tiny, single-file Emacs-like console editor for Chez Scheme.
 ;; Run:  ./e [file]   (or: scheme --script e [file])
+;;
+;; Extension modules (*.e files in ~/.e) are plain Scheme source loaded at
+;; startup into the editor's top level, where they can use and replace any
+;; of its definitions -- see the line-styles hook for syntax highlighting.
 
 (import (chezscheme))
 
@@ -75,6 +79,15 @@
 
 (define (string-delete s from to)
   (string-append (substring s 0 from) (string-tail s to)))
+
+(define (error-text ex)
+  (if (condition? ex)
+      (with-output-to-string (lambda () (display-condition ex)))
+      (format "~a" ex)))
+
+(define (string-suffix? suffix s)
+  (let ([n (string-length s)] [m (string-length suffix)])
+    (and (>= n m) (string=? (substring s (- n m) n) suffix))))
 
 (define (string-search s needle start limit)
   ;; Index of the first occurrence of needle inside s[start, limit), or #f.
@@ -308,7 +321,7 @@
 (define (load-file! path)
   ;; A failed read leaves the buffer, file name, and undo state untouched.
   (if (file-exists? path)
-      (guard (ex [else (set! message (format "Cannot open ~a: ~a" path ex))])
+      (guard (ex [else (set! message (format "Cannot open ~a: ~a" path (error-text ex)))])
         (let* ([content (read-file path)]
                [n (string-length content)]
                [ends? (and (> n 0)
@@ -319,7 +332,7 @@
       (adopt-buffer! path (vector "") #t (format "New file: ~a" path))))
 
 (define (save-file! path)
-  (guard (ex [else (set! message (format "Save failed: ~a" ex)) #f])
+  (guard (ex [else (set! message (format "Save failed: ~a" (error-text ex))) #f])
     (call-with-output-file path
       (lambda (p)
         (let loop ([i 0])
@@ -333,56 +346,12 @@
 
 ;;; Syntax highlighting ---------------------------------------------------
 
-(define scheme-keywords
-  '("and" "begin" "case" "cond" "define" "define-syntax" "delay" "do"
-    "else" "guard" "if" "import" "lambda" "let" "let*" "let-values"
-    "letrec" "letrec*" "or" "parameterize" "quote" "quasiquote" "set!"
-    "syntax" "syntax-case" "syntax-rules" "unless" "unquote"
-    "unquote-splicing" "when"))
-
-(define (scheme-delimiter? c)
-  (or (char-whitespace? c) (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\'))))
-
-(define (token-style token)
-  (cond [(member token scheme-keywords) 'keyword]
-        [(or (member token '("#t" "#f"))
-             (and (>= (string-length token) 2)
-                  (string=? (substring token 0 2) "#\\")))
-         'literal]
-        [(string->number token) 'number]
-        [else 'plain]))
-
-(define (scheme-styles s)
-  (let* ([n (string-length s)]
-         [styles (make-vector n 'plain)])
-    (let loop ([i 0])
-      (when (< i n)
-        (let ([c (string-ref s i)])
-          (cond
-            [(char=? c #\;)
-             (vector-fill-range! styles i n 'comment)]
-            [(char=? c #\")
-             (let string-loop ([j (+ i 1)] [escaped? #f])
-               (cond [(= j n) (vector-fill-range! styles i n 'string)]
-                     [(and (char=? (string-ref s j) #\") (not escaped?))
-                      (vector-fill-range! styles i (+ j 1) 'string)
-                      (loop (+ j 1))]
-                     [else
-                      (string-loop (+ j 1)
-                        (and (char=? (string-ref s j) #\\) (not escaped?)))]))]
-            [(memv c '(#\( #\) #\[ #\] #\{ #\}))
-             (vector-set! styles i 'delimiter) (loop (+ i 1))]
-            [(memv c '(#\' #\` #\,))
-             (vector-set! styles i 'quote) (loop (+ i 1))]
-            [(char-whitespace? c) (loop (+ i 1))]
-            [else
-             (let token-loop ([j (+ i 1)])
-               (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
-                   (token-loop (+ j 1))
-                   (begin
-                     (vector-fill-range! styles i j (token-style (substring s i j)))
-                     (loop j))))]))))
-    styles))
+;; Syntax highlighting is provided by extension modules (see ~/.e), which
+;; replace this hook.  It receives a line and returns either a vector of
+;; per-column style symbols understood by style-code, or #f for an
+;; unstyled line.  Brackets styled 'delimiter take part in bracket
+;; matching; with no styles at all, every bracket counts.
+(define line-styles (lambda (s) #f))
 
 (define (style-code style)
   (case style
@@ -435,7 +404,7 @@
   ;; comments don't count, per the syntax styles.  The scan is bounded so
   ;; pathological buffers stay responsive; #f when nothing balances.
   (let walk ([row start-row] [col start-col]
-             [styles (scheme-styles (line-at start-row))]
+             [styles (line-styles (line-at start-row))]
              [depth 0] [budget 50000])
     (and (> budget 0)
          (if (or (< col 0) (>= col (string-length (line-at row))))
@@ -443,10 +412,11 @@
                (and (>= row 0) (< row (vlen))
                     (walk row
                           (if (> dir 0) 0 (- (string-length (line-at row)) 1))
-                          (scheme-styles (line-at row))
+                          (line-styles (line-at row))
                           depth (- budget 1))))
              (let* ([c (string-ref (line-at row) col)]
-                    [delta (if (eq? (vector-ref styles col) 'delimiter)
+                    [delta (if (or (not styles)
+                                   (eq? (vector-ref styles col) 'delimiter))
                                (cond [(memv c '(#\( #\[ #\{)) dir]
                                      [(memv c '(#\) #\] #\})) (- dir)]
                                      [else 0])
@@ -460,11 +430,11 @@
   ;; to highlight: the opener point sits on, or the closer just before
   ;; point (as in Emacs's show-paren-mode).  Empty when neither applies.
   (let* ([line (current-line)]
-         [styles (scheme-styles line)])
+         [styles (line-styles line)])
     (define (bracket-at col kinds)
       (and (>= col 0) (< col (string-length line))
            (memv (string-ref line col) kinds)
-           (eq? (vector-ref styles col) 'delimiter)
+           (or (not styles) (eq? (vector-ref styles col) 'delimiter))
            col))
     (let* ([closer (bracket-at (- point-col 1) '(#\) #\] #\}))]
            [opener (and (not closer) (bracket-at point-col '(#\( #\[ #\{)))]
@@ -478,9 +448,10 @@
 (define (display-editor-line s span brackets)
   (define n (string-length s))
   (define limit (+ left-col cols))
-  (define styles (scheme-styles s))
+  (define styles (line-styles s))
   (define marked (matching-columns s search-highlight))
-  (define (style-at col) (if (< col n) (vector-ref styles col) 'plain))
+  (define (style-at col)
+    (if (and styles (< col n)) (vector-ref styles col) 'plain))
   (define (highlighted? col)
     (and (< col n)
          (or (and marked (vector-ref marked col))
@@ -821,12 +792,27 @@
 
 (define (usage)
   (display "Usage: e [file]\n")
-  (display "A tiny Emacs-like terminal editor. Set LINES/COLUMNS if needed.\n"))
+  (display "A tiny Emacs-like terminal editor. Set LINES/COLUMNS if needed.\n")
+  (display "Extension modules are loaded from ~/.e/*.e at startup.\n"))
+
+(define (load-modules!)
+  ;; Load extension modules -- every *.e file in ~/.e, in name order.  A
+  ;; module that fails to load reports itself in the message line without
+  ;; keeping the editor (or the other modules) from starting.
+  (let ([dir (format "~a/.e" (or (getenv "HOME") "."))])
+    (when (file-directory? dir)
+      (for-each
+        (lambda (f)
+          (guard (ex [else (set! message (format "Error in ~a: ~a" f (error-text ex)))])
+            (load (string-append dir "/" f))))
+        (sort string<? (filter (lambda (f) (string-suffix? ".e" f))
+                               (directory-list dir)))))))
 
 (define (main)
   (let ([args (command-line-arguments)])
     (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
     (when (pair? args) (load-file! (car args))))
+  (load-modules!)
   (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
     (display "em: an interactive terminal is required\n" (current-error-port))
     (exit 1))

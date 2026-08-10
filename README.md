@@ -15,6 +15,24 @@ The terminal size is detected via `ioctl` (and tracked across window
 resizes); if that is unavailable, set the `LINES` and `COLUMNS` environment
 variables.
 
+## Extension modules
+
+At startup `e` loads every `*.e` file from `~/.e` (in name order). Modules
+are plain Scheme source evaluated in the editor's top level, so they can
+use and replace any of its definitions. To install the modules shipped in
+this repository:
+
+```sh
+ln -s "$(pwd)/.e" ~/.e
+```
+
+Syntax highlighting lives in a module: `.e/scheme-mode.e` provides the
+Scheme highlighter by replacing the editor's `line-styles` hook — a
+function from a line to a vector of per-column style symbols (or `#f` for
+plain text). Without it the editor runs unstyled, and bracket matching
+falls back to counting every bracket. A module that fails to load reports
+itself in the message line without preventing startup.
+
 ## Key bindings
 
 ### Files and exiting
