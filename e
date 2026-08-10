@@ -20,14 +20,16 @@
 
 (define-record-type window
   (fields (mutable buffer) (mutable top) (mutable left)
-          (mutable prow) (mutable pcol)))
+          (mutable prow) (mutable pcol)
+          ;; the top row last drawn, for native scrolling
+          (mutable shown-top)))
 
 (define (new-buffer name)
   (make-buffer name (vector "") #f #t #f (vector '() '()) 'undo #f
                0 0 #f 0 0 0))
 
 (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-(define windows (list (make-window (car buffers) 0 0 0 0))) ; top to bottom
+(define windows (list (make-window (car buffers) 0 0 0 0 #f))) ; top to bottom
 (define current-window (car windows))
 
 ;; The rest of the editor is written against simple state names: `lines`,
@@ -516,7 +518,7 @@
     (if (< (- rows 1 n) (* 2 n))
         (set! message "Not enough room to split")
         (let ([w (make-window (window-buffer current-window)
-                              top-row left-col point-row point-col)])
+                              top-row left-col point-row point-col #f)])
           (set! windows (insert-after windows current-window w))))))
 
 (define (delete-window!)
@@ -689,6 +691,10 @@
             (loop (cdr ws) (+ start h 1) (+ i 1)
                   (cons (list (car ws) start h) acc)))))))
 
+(define (page-size)
+  ;; One page of the current window: its text height less one overlap line.
+  (max 1 (- (caddr (assq current-window (window-layout))) 1)))
+
 (define (scroll-window! w height)
   ;; Clamp w's point to its buffer (edits in another window may have moved
   ;; the ground under it) and scroll so point stays visible.
@@ -710,24 +716,40 @@
 ;; change of view (size, search highlight, window arrangement) discards
 ;; the whole cache.
 (define screen-cache '#())
-(define cached-top-row #f)
 (define cached-view #f)
 
 (define (invalidate-screen-cache!) (set! cached-view #f))
 
-(define (shift-screen-cache! delta height)
-  ;; Mirror a native one-row terminal scroll in the text rows of the cache.
-  (if (= delta 1)
-      (begin (let loop ([i 0])
-               (when (< i (- height 1))
-                 (vector-set! screen-cache i (vector-ref screen-cache (+ i 1)))
-                 (loop (+ i 1))))
-             (vector-set! screen-cache (- height 1) #f))
-      (begin (let loop ([i (- height 1)])
-               (when (> i 0)
-                 (vector-set! screen-cache i (vector-ref screen-cache (- i 1)))
-                 (loop (- i 1))))
-             (vector-set! screen-cache 0 #f))))
+(define (shift-screen-cache! delta start height)
+  ;; Mirror a native delta-row terminal scroll in cache rows
+  ;; [start, start+height); rows the scroll uncovered become #f.
+  (let ([end (+ start height)])
+    (if (> delta 0)
+        (let loop ([i start])
+          (when (< i end)
+            (vector-set! screen-cache i
+              (and (< (+ i delta) end) (vector-ref screen-cache (+ i delta))))
+            (loop (+ i 1))))
+        (let loop ([i (- end 1)])
+          (when (>= i start)
+            (vector-set! screen-cache i
+              (and (>= (+ i delta) start) (vector-ref screen-cache (+ i delta))))
+            (loop (- i 1)))))))
+
+(define (native-scroll! w start height)
+  ;; When w's top moved since it was last drawn, and mostly the same lines
+  ;; remain visible, let the terminal shift them: restrict the scrolling
+  ;; region to this window's text rows, scroll, and mirror it in the cache.
+  ;; The rows the scroll uncovered then repaint through the usual path.
+  (let* ([shown (window-shown-top w)]
+         [delta (and shown (- (window-top w) shown))])
+    (when (and delta (not (= delta 0)) (< (abs delta) height))
+      (ansi "\x1b;[?25l"
+            "\x1b;[" (number->string (+ start 1)) ";"
+            (number->string (+ start height)) "r"
+            (format "\x1b;[~a~a" (abs delta) (if (> delta 0) "S" "T"))
+            "\x1b;[r")
+      (shift-screen-cache! delta start height))))
 
 (define (paint! row key draw)
   ;; Repaint the 0-based screen row unless it already shows key.
@@ -771,28 +793,19 @@
              (< (- rows 1 (length windows)) (* 2 (length windows))))
     (set! windows (list current-window)))
   (let* ([layout (window-layout)]
-         [single? (null? (cdr windows))]
-         [view (list rows cols search-highlight (map cdr layout))]
-         [top-delta (if (and single? cached-top-row)
-                        (- top-row cached-top-row)
-                        0)])
+         [view (list rows cols search-highlight (map cdr layout))])
     (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
               layout)
-    (cond [(not (equal? view cached-view))
-           (set! screen-cache (make-vector rows #f))
-           (set! cached-view view)]
-          [(and single? (memv (- top-row cached-top-row) '(-1 1)))
-           ;; Point scrolled by one row in the sole window: let the terminal
-           ;; move the text and repaint only what the scroll uncovered.
-           (let ([height (- rows 2)]
-                 [delta (- top-row cached-top-row)])
-             (ansi "\x1b;[?25l" "\x1b;[1;" (number->string height) "r"
-                   (if (= delta 1) "\x1b;[1S" "\x1b;[1T") "\x1b;[r")
-             (shift-screen-cache! delta height))])
-    (set! cached-top-row (and single? top-row))
+    (if (not (equal? view cached-view))
+        (begin (set! screen-cache (make-vector rows #f))
+               (set! cached-view view))
+        (for-each (lambda (entry)
+                    (native-scroll! (car entry) (cadr entry) (caddr entry)))
+                  layout))
     (let ([parens (paren-highlights)])
       (for-each (lambda (entry)
-                  (paint-window! (car entry) (cadr entry) (caddr entry) parens))
+                  (paint-window! (car entry) (cadr entry) (caddr entry) parens)
+                  (window-shown-top-set! (car entry) (window-top (car entry))))
                 layout))
     (paint! (- rows 1) (list 'message message)
             (lambda () (ansi (fit message cols))))
@@ -947,11 +960,11 @@
          [(#\H) (set! point-col 0)]
          [(#\F) (set! point-col (string-length (current-line)))]
          [(#\3) (read-char stdin) (delete-forward!)]
-         [(#\5) (read-char stdin) (move-vertical! (- 3 rows))]
-         [(#\6) (read-char stdin) (move-vertical! (- rows 3))]
+         [(#\5) (read-char stdin) (move-vertical! (- (page-size)))]
+         [(#\6) (read-char stdin) (move-vertical! (page-size))]
          [else (void)])]
       ;; M-v: page up, M-< and M->: beginning/end of buffer.
-      [(char=? a #\v) (move-vertical! (- 3 rows))]
+      [(char=? a #\v) (move-vertical! (- (page-size)))]
       [(char=? a #\<) (set! point-row 0) (set! point-col 0)]
       [(char=? a #\>) (set! point-row (- (vlen) 1))
                       (set! point-col (string-length (current-line)))])))
@@ -1006,7 +1019,7 @@
                (set! point-row row) (set! point-col col))]
        [(16) (move-vertical! -1)]                               ; C-p
        [(19) (search-command!)]                                 ; C-s
-       [(22) (move-vertical! (- rows 3))]                       ; C-v
+       [(22) (move-vertical! (page-size))]                      ; C-v
        [(23) (kill-region!)]                                    ; C-w
        [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x
        [(25) (yank!)]                                           ; C-y
