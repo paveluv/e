@@ -1220,6 +1220,7 @@
     [key-prefix (handle-prefix! c)]
     [(eof-object? c) (set! quit? #t)]
     [else
+     (set! message "")            ; messages last until the next key
      (case (char->integer c)
        [(0) (set! mark-row point-row) (set! mark-col point-col) ; C-@ set mark
             (set! mark-active? #t) (set! message "Mark set")]
