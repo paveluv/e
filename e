@@ -898,6 +898,15 @@
     (draw)
     (vector-set! screen-cache row key)))
 
+(define (paint-echo-area!)
+  (paint! (- rows 1) (list 'message message message-ghost)
+          (lambda ()
+            (let* ([mlen (min (string-length message) cols)]
+                   [glen (min (string-length message-ghost) (- cols mlen))])
+              (ansi (substring message 0 mlen)
+                    "\x1b;[90m" (substring message-ghost 0 glen) "\x1b;[0m"
+                    (make-string (- cols mlen glen) #\space))))))
+
 (define (paint-window! w start height parens)
   (let* ([b (window-buffer w)]
          [v (buffer-lines b)]
@@ -955,13 +964,7 @@
                   (paint-window! (car entry) (cadr entry) (caddr entry) parens)
                   (window-shown-top-set! (car entry) (window-top (car entry))))
                 layout))
-    (paint! (- rows 1) (list 'message message message-ghost)
-            (lambda ()
-              (let* ([mlen (min (string-length message) cols)]
-                     [glen (min (string-length message-ghost) (- cols mlen))])
-                (ansi (substring message 0 mlen)
-                      "\x1b;[90m" (substring message-ghost 0 glen) "\x1b;[0m"
-                      (make-string (- cols mlen glen) #\space)))))
+    (paint-echo-area!)
     (if echo-cursor
         (goto rows (min echo-cursor cols))
         (let ([entry (assq current-window layout)])
@@ -1344,6 +1347,45 @@
                     (and (pair? left)
                          (string-append " " (string-join left " "))))))))))
 
+;; A runaway expression would freeze the editor, so during evaluation the
+;; terminal is allowed to turn C-c into SIGINT (isig; outside evaluation
+;; the editor runs with signals off and C-c is an ordinary key), and
+;; SIGINT is turned into a raised condition that unwinds the evaluation.
+;; Limitations: only code executing Scheme can be interrupted this way --
+;; a blocking foreign call (system, a blocked read) runs to completion.
+(define-condition-type &interrupted &serious make-interrupted interrupted?)
+
+(define eval-generation 0)
+
+(define (call-with-interrupt thunk)
+  (let ([saved (keyboard-interrupt-handler)]
+        [gen (+ eval-generation 1)])
+    (set! eval-generation gen)
+    (dynamic-wind
+      (lambda ()
+        (keyboard-interrupt-handler
+          (lambda () (raise (make-interrupted))))
+        ;; A watcher thread marks the evaluation as running once it has
+        ;; been at it for a whole second -- appended in grey to whatever
+        ;; the echo area shows -- so quick commands don't flicker.  A
+        ;; thread (rather than a timer interrupt) still fires while the
+        ;; evaluation is stuck in a blocking foreign call like system; the
+        ;; generation counter keeps a watcher from outliving its evaluation.
+        (when (threaded?)
+          (fork-thread
+            (lambda ()
+              (sleep (make-time 'time-duration 0 1))
+              (when (= eval-generation gen)
+                (set! message-ghost " [evaluating, press C-c to interrupt]")
+                (paint-echo-area!)
+                (flush-output-port stdout)))))
+        (system "stty isig quit undef susp undef"))
+      thunk
+      (lambda ()
+        (set! eval-generation (+ eval-generation 1))
+        (system "stty -isig")
+        (keyboard-interrupt-handler saved)))))
+
 (define (close-expression text)
   ;; text completed with the parentheses it is missing (up to a few), so
   ;; it reads as one datum; #f when that is not enough to make it read.
@@ -1419,14 +1461,23 @@
   (let ([s (parameterize ([prompt-ghost signature-ghost])
              (prompt! "M-x (" complete-symbol "" mx-history))])
     (when (and s (> (string-length s) 0))
-      (let* ([expr (or (close-expression (string-append "(" s))
-                       (string-append "(" s))]
-             [result
-              (guard (ex [else (format "error: ~a" (error-text ex))])
-                (let-values ([vals (eval (with-input-from-string expr read)
-                                         (interaction-environment))])
-                  (string-join (map (lambda (v) (format "~s" v)) vals) ", ")))])
-        (show-eval-result! expr result)))))
+      (let ([expr (or (close-expression (string-append "(" s))
+                      (string-append "(" s))])
+        ;; Keep the prompt on screen while its expression evaluates.
+        (set! message (string-append "M-x (" s))
+        (redraw!)
+        (let ([result
+               (guard (ex [(interrupted? ex) "interrupted"]
+                          [else (format "error: ~a" (error-text ex))])
+                 (call-with-interrupt
+                   (lambda ()
+                     (let-values ([vals (eval (with-input-from-string expr read)
+                                              (interaction-environment))])
+                       (string-join (map (lambda (v) (format "~s" v)) vals)
+                                    ", ")))))])
+          (set! message "")
+          (set! message-ghost "")
+          (show-eval-result! expr result))))))
 
 ;;; Incremental search ----------------------------------------------------
 
@@ -1623,6 +1674,9 @@
   (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
     (display "e: an interactive terminal is required\n" (current-error-port))
     (exit 1))
+  ;; A stray SIGINT outside an evaluation must not drop into Chez's break
+  ;; prompt underneath the editor's screen.
+  (keyboard-interrupt-handler void)
   (dynamic-wind
     (lambda () (system "stty raw -echo") (ansi "\x1b;[?1049h\x1b;[2J"))
     (lambda ()

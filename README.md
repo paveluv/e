@@ -131,7 +131,14 @@ in another window (without stealing focus) if not already visible:
 Entries are numbered from 1 (restarting if the buffer is killed), the
 expression shows any parentheses that were auto-closed for you and is
 syntax-highlighted, and results — errors included — appear beneath it,
-unprefixed, in a distinct color. The up and down arrows browse
+unprefixed, in a distinct color.
+
+A runaway expression (an infinite loop, say) can be interrupted with
+`C-c`: during evaluation the terminal is allowed to deliver SIGINT,
+which unwinds the evaluation and logs `interrupted` as its result; the
+editor carries on. (A blocking foreign call — `system`, a blocked read —
+cannot be interrupted this way.) Outside evaluation `C-c` is an ordinary
+key, so `C-x C-c` still quits. The up and down arrows browse
 previously evaluated expressions, newest first; going back down past the
 newest restores whatever you had been typing.
 
