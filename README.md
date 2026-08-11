@@ -145,7 +145,10 @@ newest restores whatever you had been typing.
 TAB completes the symbol being typed against everything bound in the
 editor's top level — Chez itself, the editor's own functions, and any
 loaded modules — with the same longest-common-prefix and `*Completions*`
-pop-up behavior as the file and buffer prompts. While you type, the
+pop-up behavior as the file and buffer prompts. In the pop-up, symbols
+the editor itself defines are highlighted, making its internals easy to
+spot; Shift-TAB completes against *only* those symbols (on an empty
+input it lists everything the editor defines). While you type, the
 parameters still to be supplied to the innermost open call appear after
 the cursor as a grey suggestion, shrinking as you enter arguments:
 `M-x (vector-sort` suggests `predicate vector`; after typing the

@@ -8,6 +8,19 @@
 
 (import (chezscheme))
 
+;; Captured before anything else is defined: the bindings Chez itself
+;; provides, so that the editor's own definitions (and those of loaded
+;; modules) can be told apart -- M-x completion highlights them.
+(define baseline-bindings
+  (let ([table (make-eq-hashtable)])
+    (for-each (lambda (sym) (eq-hashtable-set! table sym #t))
+              (environment-symbols (interaction-environment)))
+    table))
+
+(define (editor-symbol? sym)
+  (and (top-level-bound? sym)
+       (not (eq-hashtable-ref baseline-bindings sym #f))))
+
 ;;; Buffers and windows ----------------------------------------------------
 
 (define-record-type buffer
@@ -1004,6 +1017,31 @@
 (define completions-buffer #f)
 (define completions-restore #f)
 
+;; Prompts may parameterize this to make candidates stand out in the
+;; pop-up -- M-x highlights the symbols the editor itself defines.
+(define completion-highlight (make-parameter (lambda (label) #f)))
+
+(define (completions-mode)
+  ;; A mode for the pop-up highlighting the labels the current
+  ;; completion-highlight predicate selects.
+  (let ([highlight? (completion-highlight)])
+    (make-mode "completions" '() '()
+      (lambda (s)
+        (let ([styles (make-vector (string-length s) 'plain)]
+              [n (string-length s)])
+          (let loop ([i 0])
+            (cond [(>= i n) styles]
+                  [(char=? (string-ref s i) #\space) (loop (+ i 1))]
+                  [else
+                   (let ([j (let end ([j i])
+                              (if (or (>= j n)
+                                      (char=? (string-ref s j) #\space))
+                                  j
+                                  (end (+ j 1))))])
+                     (when (highlight? (substring s i j))
+                       (vector-fill-range! styles i j 'keyword))
+                     (loop j))])))))))
+
 (define (show-completions! labels)
   ;; #f when the screen has no room; the caller falls back to a note.
   (let ([content (list->vector (format-columns labels cols))])
@@ -1019,6 +1057,7 @@
       [(pair? (cdr windows))                     ; borrow the next window
        (set! completions-buffer (new-buffer "*Completions*"))
        (buffer-read-only-set! completions-buffer #t)
+       (buffer-mode-set! completions-buffer (completions-mode))
        (buffer-lines-set! completions-buffer content)
        (let* ([w (next-window current-window)]
               [prev (window-buffer w)])
@@ -1028,6 +1067,7 @@
       [(>= (- rows 3) 4)                         ; room for a second window?
        (set! completions-buffer (new-buffer "*Completions*"))
        (buffer-read-only-set! completions-buffer #t)
+       (buffer-mode-set! completions-buffer (completions-mode))
        (buffer-lines-set! completions-buffer content)
        (let ([w (make-window completions-buffer 0 0 0 0 #f)])
          (set! windows (insert-after windows current-window w))
@@ -1068,17 +1108,20 @@
 (define (prompt! label . rest)
   ;; Read a line in the echo area, with the cursor parked there.  Optional
   ;; arguments: a completer (string -> list of candidate strings) enabling
-  ;; TAB completion, initial input (pre-filled, editable), and a history
-  ;; box (a list of previous inputs, newest first) navigated with the up
-  ;; and down arrows; accepting an input records it there.  Whichever way
-  ;; the prompt ends, the completions pop-up is taken down.
-  (define complete (and (pair? rest) (car rest)))
-  (define initial
-    (if (and (pair? rest) (pair? (cdr rest))) (cadr rest) ""))
-  (define history
-    (if (and (pair? rest) (pair? (cdr rest)) (pair? (cddr rest)))
-        (caddr rest)
-        #f))
+  ;; TAB completion, initial input (pre-filled, editable), a history box
+  ;; (a list of previous inputs, newest first) navigated with the up and
+  ;; down arrows -- accepting an input records it there -- and an
+  ;; alternative completer bound to Shift-TAB.  Whichever way the prompt
+  ;; ends, the completions pop-up is taken down.
+  (define (optional n)
+    (let loop ([r rest] [n n])
+      (cond [(null? r) #f]
+            [(= n 0) (car r)]
+            [else (loop (cdr r) (- n 1))])))
+  (define complete (optional 0))
+  (define initial (or (optional 1) ""))
+  (define history (optional 2))
+  (define alt-complete (optional 3))
   (define hist-pos -1)   ; -1: editing; 0..: showing that history entry
   (define stash "")      ; the in-progress input while browsing history
   (define (record-history! s)
@@ -1138,6 +1181,15 @@
                              [(#\D) (loop s (max 0 (- pos 1)) "")]
                              [(#\H) (loop s 0 "")]
                              [(#\F) (loop s len "")]
+                             [(#\Z)                       ; Shift-TAB
+                              (set! hist-pos -1)
+                              (if alt-complete
+                                  (complete! s alt-complete
+                                             (lambda (new-s note)
+                                               (loop new-s
+                                                     (string-length new-s)
+                                                     note)))
+                                  (loop s pos ""))]
                              [(#\~)
                               (cond [(and (string=? params "3") (< pos len))
                                      (edited (string-delete s pos (+ pos 1)) pos)]
@@ -1200,9 +1252,11 @@
 
 ;;; M-x: evaluate a Scheme expression --------------------------------------
 
-(define (complete-symbol s)
-  ;; Complete the trailing symbol token of s against everything bound in
-  ;; the editor's top level -- Chez, the editor itself, and any modules.
+(define (complete-symbol-where s keep? empty-ok?)
+  ;; Complete the trailing symbol token of s against the bindings of the
+  ;; editor's top level that satisfy keep?.  An empty token completes to
+  ;; everything kept when empty-ok? -- or to nothing, for predicates that
+  ;; would offer the whole environment.
   (let* ([start (let loop ([i (- (string-length s) 1)])
                   (cond [(< i 0) 0]
                         [(memv (string-ref s i)
@@ -1211,14 +1265,24 @@
                         [else (loop (- i 1))]))]
          [head (substring s 0 start)]
          [part (string-tail s start)])
-    (if (string=? part "")
+    (if (and (string=? part "") (not empty-ok?))
         '()
         (map (lambda (name) (string-append head name))
              (sort string<?
-                   (filter (lambda (name) (string-prefix? part name))
+                   (filter (lambda (name)
+                             (and (string-prefix? part name)
+                                  (keep? (string->symbol name))))
                            (map symbol->string
                                 (environment-symbols
                                   (interaction-environment)))))))))
+
+(define (complete-symbol s)
+  (complete-symbol-where s (lambda (sym) #t) #f))
+
+(define (complete-editor-symbol s)
+  ;; Only the symbols the editor (and its modules) define -- few enough
+  ;; that an empty token usefully lists them all.
+  (complete-symbol-where s editor-symbol? #t))
 
 (define (arity-params mask)
   ;; Generic parameter names from procedure-arity-mask: arg1 ... for the
@@ -1458,8 +1522,12 @@
 (define (eval-expression-command!)
   ;; The prompt supplies the opening parenthesis, so it cannot be deleted;
   ;; the expression is evaluated in the editor's own top level.
-  (let ([s (parameterize ([prompt-ghost signature-ghost])
-             (prompt! "M-x (" complete-symbol "" mx-history))])
+  (let ([s (parameterize ([prompt-ghost signature-ghost]
+                          [completion-highlight
+                           (lambda (label)
+                             (editor-symbol? (string->symbol label)))])
+             (prompt! "M-x (" complete-symbol "" mx-history
+                      complete-editor-symbol))])
     (when (and s (> (string-length s) 0))
       (let ([expr (or (close-expression (string-append "(" s))
                       (string-append "(" s))])
