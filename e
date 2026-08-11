@@ -16,7 +16,8 @@
           (mutable hist-last) (mutable mark-row) (mutable mark-col)
           (mutable marked)
           ;; where point was when the buffer was last displayed
-          (mutable spot-row) (mutable spot-col) (mutable spot-top)))
+          (mutable spot-row) (mutable spot-col) (mutable spot-top)
+          (mutable mode)))
 
 (define-record-type window
   (fields (mutable buffer) (mutable top) (mutable left)
@@ -26,7 +27,7 @@
 
 (define (new-buffer name)
   (make-buffer name (vector "") #f #t #f (vector '() '()) 'undo #f
-               0 0 #f 0 0 0))
+               0 0 #f 0 0 0 #f))
 
 (define buffers (list (new-buffer "*scratch*")))        ; most recent first
 (define windows (list (make-window (car buffers) 0 0 0 0 #f))) ; top to bottom
@@ -464,10 +465,12 @@
           (buffer-lines-set! b (list->vector (split-lines body)))
           (buffer-trailing-set! b ends?)
           (buffer-file-set! b path)
+          (assign-mode! b)
           (set! message (format "Loaded ~a" path))
           b))
       (let ([b (new-buffer (unique-name (base-name path) #f))])
         (buffer-file-set! b path)
+        (assign-mode! b)
         (set! message (format "New file: ~a" path))
         b)))
 
@@ -491,7 +494,8 @@
       'replace)
     (set! file-name path) (set! modified? #f)
     (let ([b (window-buffer current-window)])
-      (buffer-name-set! b (unique-name (base-name path) b)))
+      (buffer-name-set! b (unique-name (base-name path) b))
+      (assign-mode! b))
     (set! message (format "Wrote ~a" path)) #t))
 
 (define (buffer-text b)
@@ -611,14 +615,48 @@
 (define (delete-other-windows!)
   (set! windows (list current-window)))
 
-;;; Syntax highlighting ---------------------------------------------------
+;;; Modes -------------------------------------------------------------------
 
-;; Syntax highlighting is provided by extension modules (see ~/.e), which
-;; replace this hook.  It receives a line and returns either a vector of
-;; per-column style symbols understood by style-code, or #f for an
-;; unstyled line.  Brackets styled 'delimiter take part in bracket
-;; matching; with no styles at all, every bracket counts.
-(define line-styles (lambda (s) #f))
+;; A mode provides syntax highlighting for the buffers it matches.
+;; Extension modules (see ~/.e) call register-mode! with the mode's name,
+;; the file-name endings it claims, the interpreter names recognized in a
+;; #! first line (for files without a matching extension), and a styles
+;; function mapping a line to a vector of per-column style symbols
+;; understood by style-code, or #f for an unstyled line.  Brackets styled
+;; 'delimiter take part in bracket matching; in a buffer without a mode
+;; every bracket counts.
+
+(define-record-type mode
+  (fields name extensions interpreters styles))
+
+(define modes '())
+
+(define (register-mode! name extensions interpreters styles)
+  (set! modes (cons (make-mode name extensions interpreters styles) modes)))
+
+(define (detect-mode path first-line)
+  ;; The mode for a file: by extension, then by the #! interpreter line.
+  (or (and path
+           (find (lambda (m)
+                   (exists (lambda (ext) (string-suffix? ext path))
+                           (mode-extensions m)))
+                 modes))
+      (and (string-prefix? "#!" first-line)
+           (find (lambda (m)
+                   (exists (lambda (name)
+                             (string-search first-line name 0
+                                            (string-length first-line)))
+                           (mode-interpreters m)))
+                 modes))))
+
+(define (assign-mode! b)
+  (buffer-mode-set! b
+    (detect-mode (buffer-file b) (vector-ref (buffer-lines b) 0))))
+
+(define (buffer-line-styles b)
+  ;; The line-styles function of b's mode; unstyled without one.
+  (let ([m (buffer-mode b)])
+    (if m (mode-styles m) (lambda (s) #f))))
 
 (define (style-code style)
   (case style
@@ -665,13 +703,13 @@
                [(= row er) (cons 0 ec)]
                [else (cons 0 line-length)]))))
 
-(define (scan-paren start-row start-col dir)
+(define (scan-paren start-row start-col dir styles-of)
   ;; Find the bracket balancing the one at (start-row, start-col), scanning
   ;; forward (dir 1) or backward (dir -1).  Brackets inside strings and
   ;; comments don't count, per the syntax styles.  The scan is bounded so
   ;; pathological buffers stay responsive; #f when nothing balances.
   (let walk ([row start-row] [col start-col]
-             [styles (line-styles (line-at start-row))]
+             [styles (styles-of (line-at start-row))]
              [depth 0] [budget 50000])
     (and (> budget 0)
          (if (or (< col 0) (>= col (string-length (line-at row))))
@@ -679,7 +717,7 @@
                (and (>= row 0) (< row (vlen))
                     (walk row
                           (if (> dir 0) 0 (- (string-length (line-at row)) 1))
-                          (line-styles (line-at row))
+                          (styles-of (line-at row))
                           depth (- budget 1))))
              (let* ([c (string-ref (line-at row) col)]
                     [delta (if (or (not styles)
@@ -696,8 +734,9 @@
   ;; The bracket at point and its partner, as a list of (row . col) pairs
   ;; to highlight: the opener point sits on, or the closer just before
   ;; point (as in Emacs's show-paren-mode).  Empty when neither applies.
-  (let* ([line (current-line)]
-         [styles (line-styles line)])
+  (let* ([styles-of (buffer-line-styles (window-buffer current-window))]
+         [line (current-line)]
+         [styles (styles-of line)])
     (define (bracket-at col kinds)
       (and (>= col 0) (< col (string-length line))
            (memv (string-ref line col) kinds)
@@ -706,16 +745,15 @@
     (let* ([closer (bracket-at (- point-col 1) '(#\) #\] #\}))]
            [opener (and (not closer) (bracket-at point-col '(#\( #\[ #\{)))]
            [col (or closer opener)]
-           [match (and col (scan-paren point-row col (if closer -1 1)))])
+           [match (and col (scan-paren point-row col (if closer -1 1) styles-of))])
       (if match (list (cons point-row col) match) '()))))
 
 (define (paren-cols parens row)
   (map cdr (filter (lambda (p) (= (car p) row)) parens)))
 
-(define (display-editor-line s span brackets left)
+(define (display-editor-line s span brackets left styles)
   (define n (string-length s))
   (define limit (+ left cols))
-  (define styles (line-styles s))
   (define marked (matching-columns s search-highlight))
   (define (style-at col)
     (if (and styles (< col n)) (vector-ref styles col) 'plain))
@@ -844,6 +882,8 @@
          [n (vector-length v)]
          [top (window-top w)]
          [left (window-left w)]
+         [styles-of (buffer-line-styles b)]
+         [mode-tag (let ([m (buffer-mode b)]) (and m (mode-name m)))]
          [current? (eq? w current-window)])
     (let loop ([k 0])
       (when (< k height)
@@ -852,15 +892,18 @@
               (let* ([line (vector-ref v i)]
                      [span (and current? (region-span i (string-length line)))]
                      [brackets (if current? (paren-cols parens i) '())])
-                (paint! row (list i line span brackets left)
-                        (lambda () (display-editor-line line span brackets left))))
+                (paint! row (list i line span brackets left mode-tag)
+                        (lambda ()
+                          (display-editor-line line span brackets left
+                                               (styles-of line)))))
               (paint! row '(empty)
                       (lambda () (ansi (fit "~" cols))))))
         (loop (+ k 1))))
-    (let ([status (format " ~a~a  ~a  L~a C~a "
+    (let ([status (format " ~a~a  ~a  L~a C~a~a "
                           (if (buffer-modified b) "**" "--") editor-name
                           (buffer-name b)
-                          (+ (window-prow w) 1) (+ (window-pcol w) 1))])
+                          (+ (window-prow w) 1) (+ (window-pcol w) 1)
+                          (if mode-tag (format "  (~a)" mode-tag) ""))])
       (paint! (+ start height) (list 'status status current?)
               (lambda ()
                 (ansi (if current? "\x1b;[7m" "\x1b;[7;2m")
@@ -1233,6 +1276,8 @@
     (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
     (when (pair? args) (visit-file! (car args))))
   (load-modules!)
+  ;; Buffers created before the modules were loaded get their modes now.
+  (for-each assign-mode! buffers)
   (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
     (display "e: an interactive terminal is required\n" (current-error-port))
     (exit 1))

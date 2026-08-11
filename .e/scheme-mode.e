@@ -1,13 +1,16 @@
 ;; scheme-mode.e -- Scheme syntax highlighting for the e editor.
 ;;
 ;; An e extension module: dropped into ~/.e, it is loaded at startup into
-;; the editor's top level.  It installs itself by replacing the
-;; line-styles hook; the style symbols it produces are rendered by the
-;; editor's style-code, and brackets styled 'delimiter take part in
-;; bracket matching (so brackets inside strings and comments don't count).
+;; the editor's top level.  It installs itself with register-mode!, which
+;; ties it to Scheme file extensions and to #! interpreter lines naming a
+;; Scheme, so only Scheme buffers are highlighted.  The style symbols it
+;; produces are rendered by the editor's style-code, and brackets styled
+;; 'delimiter take part in bracket matching (so brackets inside strings
+;; and comments don't count).
 
 (define scheme-keywords
-  '("and" "begin" "case" "cond" "define" "define-syntax" "delay" "do"
+  '("and" "begin" "case" "cond" "define" "define-record-type"
+    "define-syntax" "delay" "do"
     "else" "guard" "if" "import" "lambda" "let" "let*" "let-values"
     "letrec" "letrec*" "or" "parameterize" "quote" "quasiquote" "set!"
     "syntax" "syntax-case" "syntax-rules" "unless" "unquote"
@@ -58,4 +61,7 @@
                      (loop j))))]))))
     styles))
 
-(set! line-styles scheme-styles)
+(register-mode! "scheme"
+  '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
+  '("scheme" "petite" "chez" "guile" "racket")
+  scheme-styles)

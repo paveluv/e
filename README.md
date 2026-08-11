@@ -26,12 +26,26 @@ this repository:
 ln -s "$(pwd)/.e" ~/.e
 ```
 
-Syntax highlighting lives in a module: `.e/scheme-mode.e` provides the
-Scheme highlighter by replacing the editor's `line-styles` hook — a
-function from a line to a vector of per-column style symbols (or `#f` for
-plain text). Without it the editor runs unstyled, and bracket matching
-falls back to counting every bracket. A module that fails to load reports
-itself in the message line without preventing startup.
+Syntax highlighting is provided by *modes*, registered by modules:
+
+```scheme
+(register-mode! "scheme"
+  '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")   ; file-name extensions
+  '("scheme" "petite" "chez" "guile")        ; #! interpreters, for
+  scheme-styles)                             ;   files without an extension
+```
+
+A buffer gets the first mode whose extension matches its file name, or —
+failing that — whose interpreter name appears in the file's `#!` first
+line. The styles function maps a line to a vector of per-column style
+symbols (or `#f` for plain text); brackets styled `delimiter` take part
+in bracket matching. The mode's name is shown in the buffer's status
+line. Buffers without a mode render unstyled, and bracket matching falls
+back to counting every bracket. Two modes ship in `.e/`: `scheme-mode.e`
+(Scheme, by extension or `#!` interpreter) and `md-mode.e` (Markdown:
+headings, blockquotes, lists, fences, rules, inline code, bold, italics,
+links). A module that fails to load reports itself in the message line
+without preventing startup.
 
 ## Key bindings
 
