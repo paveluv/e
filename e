@@ -17,7 +17,7 @@
           (mutable marked)
           ;; where point was when the buffer was last displayed
           (mutable spot-row) (mutable spot-col) (mutable spot-top)
-          (mutable mode)))
+          (mutable mode) (mutable read-only)))
 
 (define-record-type window
   (fields (mutable buffer) (mutable top) (mutable left)
@@ -27,7 +27,7 @@
 
 (define (new-buffer name)
   (make-buffer name (vector "") #f #t #f (vector '() '()) 'undo #f
-               0 0 #f 0 0 0 #f))
+               0 0 #f 0 0 0 #f #f))
 
 (define buffers (list (new-buffer "*scratch*")))        ; most recent first
 (define windows (list (make-window (car buffers) 0 0 0 0 #f))) ; top to bottom
@@ -80,6 +80,7 @@
 (define quit? #f)
 (define key-prefix #f)
 (define echo-cursor #f)  ; column to park the cursor at in the echo area
+(define message-ghost "") ; grey suggestion drawn after the message text
 (define search-highlight "")
 (define rows 24)
 (define cols 80)
@@ -213,6 +214,10 @@
   (invalidate-screen-cache!))
 
 (define (record-edit!)
+  ;; Every editing command passes through here before touching the buffer,
+  ;; so this is also where read-only buffers are protected.
+  (when (buffer-read-only (window-buffer current-window))
+    (error #f "buffer is read-only"))
   (unless (suppress-history)
     (vector-set! history 0 (cons (editor-snapshot) (vector-ref history 0)))
     (vector-set! history 1 '())
@@ -615,6 +620,23 @@
 (define (delete-other-windows!)
   (set! windows (list current-window)))
 
+(define (display-buffer! b)
+  ;; Show b without leaving the current window: in the window already
+  ;; showing it, else the next window, else a fresh split.  The window,
+  ;; or #f when the screen has no room for one.
+  (unless (memq b buffers) (set! buffers (append buffers (list b))))
+  (cond
+    [(find (lambda (w) (eq? (window-buffer w) b)) windows)]
+    [(pair? (cdr windows))
+     (let ([w (next-window current-window)])
+       (set-window-buffer! w b)
+       w)]
+    [(>= (- rows 3) 4)
+     (let ([w (make-window b 0 0 0 0 #f)])
+       (set! windows (insert-after windows current-window w))
+       w)]
+    [else #f]))
+
 ;;; Modes -------------------------------------------------------------------
 
 ;; A mode provides syntax highlighting for the buffers it matches.
@@ -900,7 +922,10 @@
                       (lambda () (ansi (fit "~" cols))))))
         (loop (+ k 1))))
     (let ([status (format " ~a~a  ~a  L~a C~a~a "
-                          (if (buffer-modified b) "**" "--") editor-name
+                          (cond [(buffer-read-only b) "%%"]
+                                [(buffer-modified b) "**"]
+                                [else "--"])
+                          editor-name
                           (buffer-name b)
                           (+ (window-prow w) 1) (+ (window-pcol w) 1)
                           (if mode-tag (format "  (~a)" mode-tag) ""))])
@@ -930,8 +955,13 @@
                   (paint-window! (car entry) (cadr entry) (caddr entry) parens)
                   (window-shown-top-set! (car entry) (window-top (car entry))))
                 layout))
-    (paint! (- rows 1) (list 'message message)
-            (lambda () (ansi (fit message cols))))
+    (paint! (- rows 1) (list 'message message message-ghost)
+            (lambda ()
+              (let* ([mlen (min (string-length message) cols)]
+                     [glen (min (string-length message-ghost) (- cols mlen))])
+                (ansi (substring message 0 mlen)
+                      "\x1b;[90m" (substring message-ghost 0 glen) "\x1b;[0m"
+                      (make-string (- cols mlen glen) #\space)))))
     (if echo-cursor
         (goto rows (min echo-cursor cols))
         (let ([entry (assq current-window layout)])
@@ -941,22 +971,17 @@
 
 ;;; Prompts and commands --------------------------------------------------
 
-(define (discard-escape-sequence!)
-  ;; Consume the remaining bytes of an ESC-initiated key sequence (arrow
-  ;; keys and the like) so they are not read back as ordinary characters.
-  (let ([a (read-char stdin)])
-    (when (and (char? a) (char=? a #\[))
-      (let loop ()
-        (let ([b (read-char stdin)])
-          (when (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
-            (loop)))))))
-
 (define (completion-label c)
-  ;; A candidate as shown in the completions list: its last path component
-  ;; (with the trailing slash kept on directories); non-paths unchanged.
+  ;; A candidate as shown in the completions list: the part after the last
+  ;; separator -- a path's last component (with the trailing slash kept on
+  ;; directories), an expression's trailing symbol; plain names unchanged.
   (if (string-suffix? "/" c)
       (string-append (base-name (substring c 0 (- (string-length c) 1))) "/")
-      (base-name c)))
+      (let loop ([i (- (string-length c) 1)])
+        (cond [(< i 0) c]
+              [(memv (string-ref c i) '(#\/ #\space #\( #\) #\[ #\]))
+               (string-tail c (+ i 1))]
+              [else (loop (- i 1))]))))
 
 (define (format-columns labels width)
   ;; The labels laid out in columns across width, one string per line.
@@ -990,6 +1015,7 @@
        #t]
       [(pair? (cdr windows))                     ; borrow the next window
        (set! completions-buffer (new-buffer "*Completions*"))
+       (buffer-read-only-set! completions-buffer #t)
        (buffer-lines-set! completions-buffer content)
        (let* ([w (next-window current-window)]
               [prev (window-buffer w)])
@@ -998,6 +1024,7 @@
        #t]
       [(>= (- rows 3) 4)                         ; room for a second window?
        (set! completions-buffer (new-buffer "*Completions*"))
+       (buffer-read-only-set! completions-buffer #t)
        (buffer-lines-set! completions-buffer content)
        (let ([w (make-window completions-buffer 0 0 0 0 #f)])
          (set! windows (insert-after windows current-window w))
@@ -1010,6 +1037,11 @@
     (completions-restore)
     (set! completions-restore #f)
     (set! completions-buffer #f)))
+
+;; Prompts may parameterize this to suggest what could follow the input --
+;; M-x uses it to show the pending parameters of the call being typed.
+;; The suggestion is drawn in grey after the cursor; #f for none.
+(define prompt-ghost (make-parameter (lambda (s) #f)))
 
 (define (complete! s complete k)
   ;; TAB in a prompt, as in Emacs: extend s to the longest common prefix
@@ -1033,41 +1065,116 @@
 (define (prompt! label . rest)
   ;; Read a line in the echo area, with the cursor parked there.  Optional
   ;; arguments: a completer (string -> list of candidate strings) enabling
-  ;; TAB completion, and initial input (pre-filled, editable).  Whichever
-  ;; way the prompt ends, the completions pop-up is taken down.
-  (let* ([complete (and (pair? rest) (car rest))]
-         [initial (if (and (pair? rest) (pair? (cdr rest))) (cadr rest) "")]
-         [result
-          (let loop ([s initial] [note ""])
+  ;; TAB completion, initial input (pre-filled, editable), and a history
+  ;; box (a list of previous inputs, newest first) navigated with the up
+  ;; and down arrows; accepting an input records it there.  Whichever way
+  ;; the prompt ends, the completions pop-up is taken down.
+  (define complete (and (pair? rest) (car rest)))
+  (define initial
+    (if (and (pair? rest) (pair? (cdr rest))) (cadr rest) ""))
+  (define history
+    (if (and (pair? rest) (pair? (cdr rest)) (pair? (cddr rest)))
+        (caddr rest)
+        #f))
+  (define hist-pos -1)   ; -1: editing; 0..: showing that history entry
+  (define stash "")      ; the in-progress input while browsing history
+  (define (record-history! s)
+    (when (and history (> (string-length s) 0))
+      (let ([h (unbox history)])
+        (unless (and (pair? h) (string=? (car h) s))
+          (set-box! history (cons s h))))))
+  (define (read-csi)
+    ;; The rest of an ESC [ sequence: (parameter-string . final-char).
+    (let drain ([b (read-char stdin)] [params '()])
+      (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
+          (drain (read-char stdin) (cons b params))
+          (cons (list->string (reverse params)) b))))
+  (define result
+    (let loop ([s initial] [pos (string-length initial)] [note ""])
+      (define len (string-length s))
+      (define (edited new-s new-pos) ; an edit restarts history browsing
+        (set! hist-pos -1)
+        (loop new-s new-pos ""))
+      (define (history-show entry)
+        (loop entry (string-length entry) ""))
+      (define (history-up)
+        (let ([h (if history (unbox history) '())])
+          (if (< (+ hist-pos 1) (length h))
+              (begin
+                (when (= hist-pos -1) (set! stash s))
+                (set! hist-pos (+ hist-pos 1))
+                (history-show (list-ref h hist-pos)))
+              (loop s pos note))))
+      (define (history-down)
+        (cond [(= hist-pos -1) (loop s pos note)]
+              [(= hist-pos 0) (set! hist-pos -1) (history-show stash)]
+              [else (set! hist-pos (- hist-pos 1))
+                    (history-show (list-ref (unbox history) hist-pos))]))
       (set! message (string-append label s note))
-      (set! echo-cursor (+ (string-length label) (string-length s) 1))
+      (set! message-ghost
+        (if (string=? note "") (or ((prompt-ghost) s) "") ""))
+      (set! echo-cursor (+ (string-length label) pos 1))
       (redraw!)
       (let ([c (read-char stdin)])
         (if (eof-object? c)
             #f
             (case (char->integer c)
               [(27)
-               ;; A bare ESC cancels; an escape sequence (arrow key etc.) is
-               ;; discarded so its bytes do not leak into the prompt.
+               ;; A bare ESC cancels.  Escape sequences edit: up and down
+               ;; browse the history, the rest move and delete as usual.
                (if (char-ready? stdin)
-                   (begin (discard-escape-sequence!) (loop s ""))
+                   (let ([a (read-char stdin)])
+                     (if (and (char? a) (char=? a #\[))
+                         (let* ([csi (read-csi)]
+                                [params (car csi)]
+                                [final (cdr csi)])
+                           (case final
+                             [(#\A) (history-up)]
+                             [(#\B) (history-down)]
+                             [(#\C) (loop s (min len (+ pos 1)) "")]
+                             [(#\D) (loop s (max 0 (- pos 1)) "")]
+                             [(#\H) (loop s 0 "")]
+                             [(#\F) (loop s len "")]
+                             [(#\~)
+                              (cond [(and (string=? params "3") (< pos len))
+                                     (edited (string-delete s pos (+ pos 1)) pos)]
+                                    [(member params '("1" "7")) (loop s 0 "")]
+                                    [(member params '("4" "8")) (loop s len "")]
+                                    [else (loop s pos "")])]
+                             [else (loop s pos "")]))
+                         (loop s pos "")))
                    (begin (set! message "Quit") #f))]
               [(7) (set! message "Quit") #f]
-              [(10 13) (set! message "") s]
-              [(9) (if complete
-                       (complete! s complete loop)
-                       (loop s ""))]
+              [(10 13) (record-history! s) (set! message "") s]
+              [(1) (loop s 0 "")]                                   ; C-a
+              [(2) (loop s (max 0 (- pos 1)) "")]                   ; C-b
+              [(5) (loop s len "")]                                 ; C-e
+              [(6) (loop s (min len (+ pos 1)) "")]                 ; C-f
+              [(4) (if (< pos len)                                  ; C-d
+                       (edited (string-delete s pos (+ pos 1)) pos)
+                       (loop s pos ""))]
+              [(11) (set! kill-ring (string-tail s pos))            ; C-k
+                    (edited (substring s 0 pos) pos)]
+              [(25) (edited (string-insert s pos kill-ring)         ; C-y
+                            (+ pos (string-length kill-ring)))]
+              [(9) (set! hist-pos -1)                               ; TAB
+                   (if complete
+                       (complete! s complete
+                                  (lambda (new-s note)
+                                    (loop new-s (string-length new-s) note)))
+                       (loop s pos ""))]
               [(8 127)
-               (loop (if (string=? s "") s
-                         (substring s 0 (- (string-length s) 1)))
-                     "")]
-              [else (loop (if (>= (char->integer c) 32)
-                              (string-append s (string c))
-                              s)
-                          "")]))))])
-    (set! echo-cursor #f)
-    (dismiss-completions!)
-    result))
+               (if (= pos 0)
+                   (loop s pos "")
+                   (edited (string-delete s (- pos 1) pos) (- pos 1)))]
+              [else
+               (if (>= (char->integer c) 32)
+                   (edited (string-insert s pos (string c)) (+ pos 1))
+                   (loop s pos ""))])))))
+  (set! echo-cursor #f)
+  (set! message-ghost "")
+  (dismiss-completions!)
+  result)
 
 (define (confirm? label)
   (let ([s (prompt! label)]) (and s (string-ci=? s "yes"))))
@@ -1087,6 +1194,239 @@
   (when (or (for-all buffer-clean? buffers)
             (confirm? "Modified buffers exist; quit anyway? (yes or no) "))
     (set! quit? #t)))
+
+;;; M-x: evaluate a Scheme expression --------------------------------------
+
+(define (complete-symbol s)
+  ;; Complete the trailing symbol token of s against everything bound in
+  ;; the editor's top level -- Chez, the editor itself, and any modules.
+  (let* ([start (let loop ([i (- (string-length s) 1)])
+                  (cond [(< i 0) 0]
+                        [(memv (string-ref s i)
+                               '(#\space #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,))
+                         (+ i 1)]
+                        [else (loop (- i 1))]))]
+         [head (substring s 0 start)]
+         [part (string-tail s start)])
+    (if (string=? part "")
+        '()
+        (map (lambda (name) (string-append head name))
+             (sort string<?
+                   (filter (lambda (name) (string-prefix? part name))
+                           (map symbol->string
+                                (environment-symbols
+                                  (interaction-environment)))))))))
+
+(define (arity-params mask)
+  ;; Generic parameter names from procedure-arity-mask: arg1 ... for the
+  ;; smallest accepted count, [argN] for the optional ones beyond it, and
+  ;; ... when any further count is accepted (a negative mask).
+  (if (= mask 0)
+      '()
+      (let* ([rest? (< mask 0)]
+             [lo (let loop ([n 0]) (if (logbit? n mask) n (loop (+ n 1))))]
+             [hi (if rest?
+                     lo
+                     (let loop ([n 0] [hi 0])
+                       (cond [(> (expt 2 n) mask) hi]
+                             [(logbit? n mask) (loop (+ n 1) n)]
+                             [else (loop (+ n 1) hi)])))])
+        (append
+          (let loop ([i 1])
+            (if (> i lo) '() (cons (format "arg~a" i) (loop (+ i 1)))))
+          (let loop ([i (+ lo 1)])
+            (if (> i hi) '() (cons (format "[arg~a]" i) (loop (+ i 1)))))
+          (if rest? '("...") '())))))
+
+;; Builtins are compiled without source, so their parameter names are not
+;; recoverable at run time; modules can supply them (transcribed from the
+;; documentation) with register-signatures!.
+(define signature-table (make-eq-hashtable))
+
+(define (register-signatures! signatures)
+  ;; Each signature is the documented call shape as a datum:
+  ;; (name param ...), where a parenthesized param is optional, ... allows
+  ;; any more, and a dotted tail is a rest parameter.  They are converted
+  ;; to display tokens ("param", "[param]", ". param") once, here.
+  (for-each
+    (lambda (sig)
+      (eq-hashtable-set! signature-table (car sig)
+        (let loop ([p (cdr sig)])
+          (cond [(null? p) '()]
+                [(symbol? p) (list (format ". ~a" p))]
+                [(pair? (car p))
+                 (cons (format "[~a]"
+                               (string-join (map (lambda (x) (format "~a" x))
+                                                 (car p))
+                                            " "))
+                       (loop (cdr p)))]
+                [else (cons (format "~a" (car p)) (loop (cdr p)))]))))
+    signatures))
+
+(define (symbol-params sym)
+  ;; The parameters of the procedure sym names, as a list of display
+  ;; tokens: from its source when available, else a registered signature,
+  ;; else its arity in brackets.  #f for anything else.
+  (and (top-level-bound? sym)
+       (let ([v (top-level-value sym)])
+         (and (procedure? v)
+              (let ([src (((inspect/object v) 'code) 'source)])
+                (cond
+                  [(and src
+                        (pair? (src 'value))
+                        (eq? (car (src 'value)) 'lambda))
+                   (let loop ([p (cadr (src 'value))])
+                     (cond [(null? p) '()]
+                           [(symbol? p) (list (format ". ~a" p))]
+                           [else (cons (format "~a" (car p))
+                                       (loop (cdr p)))]))]
+                  [(eq-hashtable-ref signature-table sym #f)]
+                  [else (arity-params (procedure-arity-mask v))]))))))
+
+(define (drop-params tokens n)
+  ;; The parameter tokens left after n arguments: one is consumed per
+  ;; argument, but a rest marker (... or a dotted tail) absorbs any count.
+  (cond [(or (null? tokens) (= n 0)) tokens]
+        [(string=? (car tokens) "...") tokens]
+        [(string-prefix? ". " (car tokens)) tokens]
+        [(and (pair? (cdr tokens)) (string=? (cadr tokens) "...")) tokens]
+        [else (drop-params (cdr tokens) (- n 1))]))
+
+(define (open-call-frames text)
+  ;; The unclosed calls in text, innermost first, each as
+  ;; (operator . arguments-so-far) -- operator is its token string, #f
+  ;; when it is not a plain symbol, or 'pending when not yet typed.  A
+  ;; trailing partial atom or string counts as an argument in progress.
+  (define n (string-length text))
+  (define (atom-end i)
+    (if (or (>= i n)
+            (memv (string-ref text i)
+                  '(#\space #\tab #\( #\) #\[ #\] #\")))
+        i
+        (atom-end (+ i 1))))
+  (define (string-end j)
+    (cond [(>= j n) n]
+          [(char=? (string-ref text j) #\\) (string-end (+ j 2))]
+          [(char=? (string-ref text j) #\") (+ j 1)]
+          [else (string-end (+ j 1))]))
+  (define (datum stack tok)
+    ;; A completed datum: the pending operator slot, or one more argument.
+    (if (null? stack)
+        stack
+        (let ([frame (car stack)])
+          (cons (if (eq? (car frame) 'pending)
+                    (cons (or tok #f) 0)
+                    (cons (car frame) (+ (cdr frame) 1)))
+                (cdr stack)))))
+  (let loop ([i 0] [stack '()])
+    (if (>= i n)
+        stack
+        (let ([c (string-ref text i)])
+          (cond
+            [(memv c '(#\space #\tab #\' #\` #\,)) (loop (+ i 1) stack)]
+            [(memv c '(#\( #\[)) (loop (+ i 1) (cons (cons 'pending 0) stack))]
+            [(memv c '(#\) #\]))
+             (loop (+ i 1) (if (pair? stack) (datum (cdr stack) #f) stack))]
+            [(char=? c #\") (loop (string-end (+ i 1)) (datum stack #f))]
+            [else (let ([j (atom-end (+ i 1))])
+                    (loop j (datum stack (substring text i j))))])))))
+
+(define (signature-ghost s)
+  ;; The grey suggestion for the M-x input: the parameters of the
+  ;; innermost open call's operator that have not been supplied yet.
+  (guard (ex [else #f])
+    (let ([stack (open-call-frames (string-append "(" s))])
+      (and (pair? stack)
+           (string? (caar stack))
+           (let ([tokens (symbol-params (string->symbol (caar stack)))])
+             (and tokens
+                  (let ([left (drop-params tokens (cdar stack))])
+                    (and (pair? left)
+                         (string-append " " (string-join left " "))))))))))
+
+(define (close-expression text)
+  ;; text completed with the parentheses it is missing (up to a few), so
+  ;; it reads as one datum; #f when that is not enough to make it read.
+  (let loop ([extra 0])
+    (and (<= extra 8)
+         (let ([t (string-append text (make-string extra #\)))])
+           (if (guard (ex [else #f])
+                 (with-input-from-string t read)
+                 #t)
+               t
+               (loop (+ extra 1)))))))
+
+(define (eval-prompt-end s)
+  ;; The index just past a leading "[n]> ", or #f.
+  (and (string-prefix? "[" s)
+       (let loop ([i 1])
+         (and (< i (string-length s))
+              (cond [(char-numeric? (string-ref s i)) (loop (+ i 1))]
+                    [(and (> i 1) (string-prefix? "]> " (string-tail s i)))
+                     (+ i 3)]
+                    [else #f])))))
+
+(define eval-mode
+  ;; The *eval* buffer's mode: "[n]> expr" lines get a grey prompt marker
+  ;; and Scheme highlighting for the expression (when a scheme mode is
+  ;; loaded); everything else is output, in one distinct color.
+  (make-mode "eval" '() '()
+    (lambda (s)
+      (let ([p (eval-prompt-end s)])
+        (if p
+            (let ([styles (make-vector (string-length s) 'comment)]
+                  [scheme (find (lambda (m) (string=? (mode-name m) "scheme"))
+                                modes)])
+              (let ([inner (and scheme ((mode-styles scheme) (string-tail s p)))])
+                (when inner
+                  (let loop ([i p])
+                    (when (< i (string-length s))
+                      (vector-set! styles i (vector-ref inner (- i p)))
+                      (loop (+ i 1))))))
+              styles)
+            (make-vector (string-length s) 'string))))))
+
+(define mx-history (box '()))
+(define mx-counter 1)
+
+(define (show-eval-result! expr result)
+  ;; Append the exchange to the read-only *eval* buffer and make sure it
+  ;; is shown, scrolled to the latest entry; on a screen too small for a
+  ;; second window, fall back to the echo area.
+  (let ([b (or (buffer-named "*eval*")
+               (let ([b (new-buffer "*eval*")])
+                 (buffer-mode-set! b eval-mode)
+                 (buffer-read-only-set! b #t)
+                 (set! mx-counter 1)
+                 b))])
+    (buffer-lines-set! b
+      (let ([v (buffer-lines b)]
+            [entry (vector (format "[~a]> ~a" mx-counter expr) result)])
+        (set! mx-counter (+ mx-counter 1))
+        (if (and (= (vector-length v) 1) (string=? (vector-ref v 0) ""))
+            entry
+            (vector-append v entry))))
+    (let ([w (display-buffer! b)])
+      (if w
+          (begin
+            (window-prow-set! w (- (vector-length (buffer-lines b)) 1))
+            (window-pcol-set! w 0))
+          (set! message (string-append expr " => " result))))))
+
+(define (eval-expression-command!)
+  ;; The prompt supplies the opening parenthesis, so it cannot be deleted;
+  ;; the expression is evaluated in the editor's own top level.
+  (let ([s (parameterize ([prompt-ghost signature-ghost])
+             (prompt! "M-x (" complete-symbol "" mx-history))])
+    (when (and s (> (string-length s) 0))
+      (let* ([expr (or (close-expression (string-append "(" s))
+                       (string-append "(" s))]
+             [result
+              (guard (ex [else (format "error: ~a" (error-text ex))])
+                (let-values ([vals (eval (with-input-from-string expr read)
+                                         (interaction-environment))])
+                  (string-join (map (lambda (v) (format "~s" v)) vals) ", ")))])
+        (show-eval-result! expr result)))))
 
 ;;; Incremental search ----------------------------------------------------
 
@@ -1184,7 +1524,8 @@
          [(#\5) (read-char stdin) (move-vertical! (- (page-size)))]
          [(#\6) (read-char stdin) (move-vertical! (page-size))]
          [else (void)])]
-      ;; M-v: page up, M-< and M->: beginning/end of buffer.
+      ;; M-x: eval, M-v: page up, M-< and M->: beginning/end of buffer.
+      [(char=? a #\x) (eval-expression-command!)]
       [(char=? a #\v) (move-vertical! (- (page-size)))]
       [(char=? a #\<) (set! point-row 0) (set! point-col 0)]
       [(char=? a #\>) (set! point-row (- (vlen) 1))
@@ -1287,7 +1628,14 @@
     (lambda ()
       (let loop ()
         (unless quit?
-          (redraw!) (handle-key! (read-char stdin)) (clamp-point!) (loop))))
+          (redraw!)
+          ;; A command that raises (a read-only buffer, a bug in an
+          ;; extension module) reports itself instead of killing the
+          ;; editor.
+          (guard (ex [else (set! message (error-text ex))])
+            (handle-key! (read-char stdin)))
+          (clamp-point!)
+          (loop))))
     (lambda () (ansi "\x1b;[?25h\x1b;[?1049l\x1b;[0m") (flush-output-port stdout)
                (system "stty sane"))))
 

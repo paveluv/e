@@ -73,6 +73,12 @@ Each window has its own status line (the active one is bright, the others
 dim) and its own point and scroll position; the same buffer can be shown
 in several windows at once.
 
+Prompt input is line-editable with the usual bindings: `C-a`/`C-e`,
+`C-b`/`C-f` and the left/right arrows, Home/End, `C-d`/Delete,
+Backspace, `C-k` (kills into the shared kill ring) and `C-y` (yanks from
+it — including text killed in a buffer). Up and down arrows are reserved
+for history navigation where a prompt keeps one (M-x).
+
 Prompts complete with TAB, as in Emacs: file names in `C-x C-f` and the
 write-file prompt (a unique directory completes with a `/` and descends),
 buffer names in `C-x b` and `C-x k`. TAB extends to the longest common
@@ -104,6 +110,45 @@ splitting a temporary one), which disappears when the prompt finishes.
 | `C-_`           | Undo; `C-g` then `C-_` redoes                 |
 | `C-l`           | Repaint the screen and re-read its size       |
 | `C-g`           | Cancel (prompt, search, mark)                 |
+
+### Evaluating Scheme
+
+`M-x` prompts for a Scheme expression — the opening parenthesis is
+supplied (and cannot be deleted), and missing closing parentheses are
+forgiven. The expression is evaluated in the editor's own top level, so
+it can call any editor function or inspect its state:
+
+    M-x (buffer-name (window-buffer current-window))
+
+Each exchange is appended to a read-only `*eval*` buffer, which pops up
+in another window (without stealing focus) if not already visible:
+
+    [1]> (+ 1 2)
+    3
+    [2]> (buffer-name (window-buffer current-window))
+    "e"
+
+Entries are numbered from 1 (restarting if the buffer is killed), the
+expression shows any parentheses that were auto-closed for you and is
+syntax-highlighted, and results — errors included — appear beneath it,
+unprefixed, in a distinct color. The up and down arrows browse
+previously evaluated expressions, newest first; going back down past the
+newest restores whatever you had been typing.
+
+TAB completes the symbol being typed against everything bound in the
+editor's top level — Chez itself, the editor's own functions, and any
+loaded modules — with the same longest-common-prefix and `*Completions*`
+pop-up behavior as the file and buffer prompts. While you type, the
+parameters still to be supplied to the innermost open call appear after
+the cursor as a grey suggestion, shrinking as you enter arguments:
+`M-x (vector-sort` suggests `predicate vector`; after typing the
+predicate only `vector` remains. Parameter names come from the source
+for procedures loaded from it, from the `chez-sigs.e` module's
+documented signatures for common builtins, or fall back to generic names
+derived from the arity (`arg1 arg2`, with `[arg3]` for optional ones and
+`...` for a rest). Rest parameters (`num ...`) persist, and the
+suggestion follows nested calls — inside `(car (cdr` it shows `pair`
+for the `cdr`.
 
 ### Search
 
