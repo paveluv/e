@@ -42,9 +42,8 @@ Two recommended ways:
    the editor in your repo; add `.e/` to your `.gitignore` and `git
    pull` inside it for updates.)
 
-(The loader uses the `lib/` next to the script itself, falling back to
-`~/.e/lib` — so a copied or symlinked `e` script alone still finds your
-home installation.)
+The loader uses strictly the `lib/` next to the script itself, so every
+installation is self-contained.
 
 ## Running
 

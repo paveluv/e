@@ -2,15 +2,14 @@
 ;; e -- loader for the e editor.
 ;; Run:  ./e [file]
 ;;
-;; The editor lives in the lib directory next to this script (or,
-;; failing that, in ~/.e/lib) as R6RS libraries with the .e extension:
-;; the core (core.e, the library (core)) and the extension modules, each
-;; a library named after its file -- eval.e is (eval) -- exporting an
-;; init! that performs its registrations.  Chez's library system does
-;; the rest: sources compile on demand into the eo directory next to
-;; lib, recompile when stale (their own source or a library they import
-;; changed), and modules' imports of one another order their
-;; initialization.
+;; The editor lives in the lib directory next to this script as R6RS
+;; libraries with the .e extension: the core (core.e, the library
+;; (core)) and the extension modules, each a library named after its
+;; file -- eval.e is (eval) -- exporting an init! that performs its
+;; registrations.  Chez's library system does the rest: sources compile
+;; on demand into the eo directory next to lib, recompile when stale
+;; (their own source or a library they import changed), and modules'
+;; imports of one another order their initialization.
 
 (import (chezscheme))
 
@@ -21,18 +20,15 @@
           [else (loop (- i 1))])))
 
 (define e-home
-  ;; Where this installation of the editor lives: next to the script
-  ;; itself, so a checkout runs in place -- as ~/.e or inside a project
-  ;; -- with ~/.e as the fallback for a copied loader.
-  (let ([candidates (list (directory-part (car (command-line)))
-                          (format "~a/.e" (or (getenv "HOME") ".")))])
-    (or (find (lambda (d) (file-directory? (string-append d "/lib")))
-              candidates)
-        (begin
-          (display (format "e: no lib directory found (looked in ~a)\n"
-                           candidates)
-                   (current-error-port))
-          (exit 1)))))
+  ;; Where this installation of the editor lives: strictly the directory
+  ;; of the script itself, so a checkout runs in place -- as ~/.e or
+  ;; inside a project -- and every installation is self-contained.
+  (let ([dir (directory-part (car (command-line)))])
+    (unless (file-directory? (string-append dir "/lib"))
+      (display (format "e: no lib directory in ~a\n" dir)
+               (current-error-port))
+      (exit 1))
+    dir))
 
 (define lib-directory (string-append e-home "/lib"))
 
