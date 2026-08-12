@@ -27,12 +27,20 @@ Two recommended ways:
 
    ```sh
    git clone https://github.com/paveluv/e ~/git/your_project/.e
+   rm -rf ~/git/your_project/.e/.git   # vendor: make it part of your project
    ~/git/your_project/.e/e file.txt
    ```
 
-   Project-specific extension modules dropped into that checkout's
-   `lib/` stay local to the project — the editor becomes decentralized:
-   projects come with their own editor.
+   Copying is the point: with `.e/.git` removed, `git add .e` makes the
+   editor ordinary files of *your* repository, so anyone cloning your
+   project gets a working editor with it — decentralized: projects come
+   with their own editor. Project-specific extension modules dropped
+   into that checkout's `lib/` stay local to the project, and the
+   shipped `.gitignore` keeps the compiled `eo/` objects out of your
+   repository too. (Without removing `.e/.git`, git records the
+   directory as an empty submodule reference — fine if you *don't* want
+   the editor in your repo; add `.e/` to your `.gitignore` and `git
+   pull` inside it for updates.)
 
 (The loader uses the `lib/` next to the script itself, falling back to
 `~/.e/lib` — so a copied or symlinked `e` script alone still finds your
