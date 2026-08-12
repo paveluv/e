@@ -1,4 +1,4 @@
-#!/usr/bin/scheme --script
+#!/usr/bin/env -S scheme --script
 ;; e -- loader for the e editor.
 ;; Run:  ./e [file]
 ;;
