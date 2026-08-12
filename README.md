@@ -1,30 +1,100 @@
 # e
 
-A tiny, single-file Emacs-like console editor written in Chez Scheme.
+A tiny Emacs-like console editor written in Chez Scheme.
 
-The whole editor lives in one script, `e`, with no dependencies beyond
-[Chez Scheme](https://cisco.github.io/ChezScheme/) and a Unix-like terminal.
+The editor is a set of R6RS libraries in `lib/` — a deliberately minimal
+core plus extension modules — started by the small loader script `e`,
+which finds them next to itself. No dependencies beyond
+[Chez Scheme](https://cisco.github.io/ChezScheme/) and a Unix-like
+terminal, and no installation steps: a checkout runs in place.
+
+Repository: <https://github.com/paveluv/e>
+
+## Installation
+
+Two recommended ways:
+
+1. **As your home editor** — clone the repository directly as `~/.e` and
+   use it for all your projects:
+
+   ```sh
+   git clone https://github.com/paveluv/e ~/.e
+   ~/.e/e file.txt        # add ~/.e to PATH for plain `e`
+   ```
+
+2. **Inside a project** — include it in the project's root and use it
+   from there:
+
+   ```sh
+   git clone https://github.com/paveluv/e ~/git/your_project/.e
+   ~/git/your_project/.e/e file.txt
+   ```
+
+   Project-specific extension modules dropped into that checkout's
+   `lib/` stay local to the project — the editor becomes decentralized:
+   projects come with their own editor.
+
+(The loader uses the `lib/` next to the script itself, falling back to
+`~/.e/lib` — so a copied or symlinked `e` script alone still finds your
+home installation.)
 
 ## Running
 
 ```sh
-./e file.txt          # or: scheme --script e file.txt
+./e file.txt
 ```
+
+The first run compiles the libraries into `eo/` next to `lib/` (a few
+hundred milliseconds); afterwards the editor starts from the compiled
+`*.eo` objects in ~115 ms, recompiling automatically whenever a source
+file — or a library it imports — changes. Compiled objects are always
+local to their installation. This is Chez's own library machinery
+(`compile-imported-libraries`); the loader contains no build logic.
 
 The terminal size is detected via `ioctl` (and tracked across window
 resizes); if that is unavailable, set the `LINES` and `COLUMNS` environment
 variables.
 
-## Extension modules
+## Architecture and extension modules
 
-At startup `e` loads every `*.e` file from `~/.e` (in name order). Modules
-are plain Scheme source evaluated in the editor's top level, so they can
-use and replace any of its definitions. To install the modules shipped in
-this repository:
+Everything in `lib/` is a library with the `.e` extension, named after
+its file: `core.e` is `(core)`, `eval.e` is `(eval)`. The core is a
+kernel — buffers, windows, editing, rendering, prompts — whose exports
+are the editor's *published API*: internals (including all mutable
+state) are invisible outside it, open to compiler optimization, and the
+exports are immutable; both guarantees enforced by the language (`set!`
+on an exported name raises an exception). The API comprises the command
+procedures (everything key-bound: `visit-file!`, `show-buffer!`,
+`split-window!`, …), read-only state accessors (`current-buffer`,
+`buffer-list`, `buffer-name`, `buffer-text`, …), and the extension hooks
+(`bind-key!`, `register-mode!`, `prompt!`, `confirm?`, `set-message!`,
+`echo!`, `buffer-append!`, `call-with-interrupt`, plus a few
+string/vector utilities). `M-x (` followed by Shift-TAB lists the entire
+catalog.
 
-```sh
-ln -s "$(pwd)/.e" ~/.e
+An extension module is a library that imports `(core)` and exports an
+`init!` performing its registrations:
+
+```scheme
+;; lib/my-mode.e
+(library (my-mode)
+  (export init!)
+  (import (chezscheme) (core))
+  (define (my-styles s) ...)
+  (define (init!) (register-mode! "my" '(".my") '() my-styles)))
 ```
+
+The loader imports every `lib/*.e` library and calls its `init!`.
+Features are built this way on top of the kernel: M-x itself lives in
+`eval.e`, which binds its key with `bind-key!`, keeps its transcript with
+`buffer-append!`, and interrupts runaway evaluations through the core's
+generic `call-with-interrupt` (which a future shell module can reuse).
+Modules use one another by ordinary import — `scheme-sigs.e` does
+`(import (only (eval) register-signatures!))` — and the library system
+orders initialization and recompilation accordingly (the `only` matters:
+a library body may not shadow an imported name, and every module exports
+`init!`). A module that fails reports itself in the message line without
+preventing startup.
 
 Syntax highlighting is provided by *modes*, registered by modules:
 
@@ -41,11 +111,10 @@ line. The styles function maps a line to a vector of per-column style
 symbols (or `#f` for plain text); brackets styled `delimiter` take part
 in bracket matching. The mode's name is shown in the buffer's status
 line. Buffers without a mode render unstyled, and bracket matching falls
-back to counting every bracket. Two modes ship in `.e/`: `scheme-mode.e`
+back to counting every bracket. Two modes ship in `lib/`: `scheme-mode.e`
 (Scheme, by extension or `#!` interpreter) and `md-mode.e` (Markdown:
 headings, blockquotes, lists, fences, rules, inline code, bold, italics,
-links). A module that fails to load reports itself in the message line
-without preventing startup.
+links).
 
 ## Key bindings
 
@@ -118,14 +187,14 @@ supplied (and cannot be deleted), and missing closing parentheses are
 forgiven. The expression is evaluated in the editor's own top level, so
 it can call any editor function or inspect its state:
 
-    M-x (buffer-name (window-buffer current-window))
+    M-x (buffer-name (current-buffer))
 
 Each exchange is appended to a read-only `*eval*` buffer, which pops up
 in another window (without stealing focus) if not already visible:
 
     [1]> (+ 1 2)
     3
-    [2]> (buffer-name (window-buffer current-window))
+    [2]> (buffer-name (current-buffer))
     "e"
 
 Entries are numbered from 1 (restarting if the buffer is killed), the
@@ -153,7 +222,7 @@ parameters still to be supplied to the innermost open call appear after
 the cursor as a grey suggestion, shrinking as you enter arguments:
 `M-x (vector-sort` suggests `predicate vector`; after typing the
 predicate only `vector` remains. Parameter names come from the source
-for procedures loaded from it, from the `chez-sigs.e` module's
+for procedures loaded from it, from the `scheme-sigs.e` module's
 documented signatures for common builtins, or fall back to generic names
 derived from the arity (`arg1 arg2`, with `[arg3]` for optional ones and
 `...` for a rest). Rest parameters (`num ...`) persist, and the
