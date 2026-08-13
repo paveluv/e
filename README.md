@@ -161,8 +161,19 @@ in several windows at once.
 Prompt input is line-editable with the usual bindings: `C-a`/`C-e`,
 `C-b`/`C-f` and the left/right arrows, Home/End, `C-d`/Delete,
 Backspace, `C-k` (kills into the shared kill ring) and `C-y` (yanks from
-it — including text killed in a buffer). Up and down arrows are reserved
-for history navigation where a prompt keeps one (M-x).
+it — including text killed in a buffer).
+
+Input longer than the screen is wide wraps Emacs-style: the prompt area
+grows a line at a time (the windows above shrink accordingly), a `\` in
+the last column marks each wrapped line, and continuation lines are
+indented to where the input begins — e.g. under `Find file: ` — so the
+text stays in one visual block. The area grows to at most eight lines,
+after which it scrolls; it shrinks back as the input shortens and
+returns to a single line when the prompt finishes. This applies to
+every prompt, the grey suggestions included. In a wrapped prompt the up
+and down arrows move between the visual lines; at the top and bottom
+edge they turn into history navigation where a prompt keeps a history
+(M-x).
 
 Prompts complete with TAB, as in Emacs: file names in `C-x C-f` and the
 write-file prompt (a unique directory completes with a `/` and descends),

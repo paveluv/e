@@ -123,7 +123,16 @@
   (define suppress-history (make-parameter #f))
   (define quit? #f)
   (define key-prefix #f)
-  (define echo-cursor #f)  ; column to park the cursor at in the echo area
+  ;; The echo area is normally one line; during a prompt it grows with
+  ;; the input, wrapping at the right edge Emacs-style with a trailing
+  ;; backslash and continuation lines indented to the prompt text, up to
+  ;; eight lines, after which it scrolls.  The windows above share what
+  ;; remains of the screen.
+  (define echo-cursor #f)   ; content index to park the cursor at, or #f
+  (define echo-indent #f)   ; prompt continuation indent; #f = no prompt
+  (define echo-height 1)
+  (define echo-scroll 0)
+  (define echo-spans '((0 . 0)))
   (define message-ghost "") ; grey suggestion drawn after the message text
   (define search-highlight "")
   (define rows 24)
@@ -648,7 +657,7 @@
   (define (split-window!)
     ;; Stack a new window under the current one, showing the same buffer.
     (let ([n (+ (length windows) 1)])
-      (if (< (- rows 1 n) (* 2 n))
+      (if (< (- rows echo-height n) (* 2 n))
           (set! message "Not enough room to split")
           (let ([w (make-window (window-buffer current-window)
                                 top-row left-col point-row point-col #f)])
@@ -892,10 +901,10 @@
 
   (define (window-layout)
     ;; Stack the windows top to bottom, each a band of text rows followed by
-    ;; its own status line; the last screen row is the echo area.
-    ;; -> list of (window start text-height), start 0-based.
+    ;; its own status line; the last echo-height screen rows are the echo
+    ;; area.  -> list of (window start text-height), start 0-based.
     (let* ([n (length windows)]
-           [text (- rows 1 n)]
+           [text (- rows echo-height n)]
            [base (quotient text n)]
            [extra (remainder text n)])
       (let loop ([ws windows] [start 0] [i 0] [acc '()])
@@ -972,14 +981,72 @@
       (draw)
       (vector-set! screen-cache row key)))
 
+  (define (echo-indent-now)
+    ;; The continuation indent, kept small enough that lines progress.
+    (min (or echo-indent 0) (max 0 (- cols 2))))
+
+  (define (compute-echo-spans len)
+    ;; Content index ranges of the echo area's visual lines: the first
+    ;; line spans the full width, continuations start at the indent, and
+    ;; every wrapped line gives its last column to the wrap mark.
+    (let ([indent (echo-indent-now)])
+      (let loop ([start 0] [first? #t] [acc '()])
+        (let ([avail (if first? cols (- cols indent))])
+          (if (<= (- len start) avail)
+              (reverse (cons (cons start len) acc))
+              (let ([take (- avail 1)])
+                (loop (+ start take) #f
+                      (cons (cons start (+ start take)) acc))))))))
+
+  (define (echo-position k)
+    ;; Visual (line . column) of content index k, per echo-spans.
+    (let loop ([spans echo-spans] [line 0])
+      (let ([span (car spans)])
+        (if (or (null? (cdr spans)) (< k (cdr span)))
+            (cons line (+ (if (= line 0) 0 (echo-indent-now))
+                          (- k (car span))))
+            (loop (cdr spans) (+ line 1))))))
+
   (define (paint-echo-area!)
-    (paint! (- rows 1) (list 'message message message-ghost)
-            (lambda ()
-              (let* ([mlen (min (string-length message) cols)]
-                     [glen (min (string-length message-ghost) (- cols mlen))])
-                (ansi (substring message 0 mlen)
-                      "\x1b;[90m" (substring message-ghost 0 glen) "\x1b;[0m"
-                      (make-string (- cols mlen glen) #\space))))))
+    (if (not echo-indent)
+        (paint! (- rows 1) (list 'message message message-ghost)
+                (lambda ()
+                  (let* ([mlen (min (string-length message) cols)]
+                         [glen (min (string-length message-ghost)
+                                    (- cols mlen))])
+                    (ansi (substring message 0 mlen)
+                          "\x1b;[90m" (substring message-ghost 0 glen)
+                          "\x1b;[0m"
+                          (make-string (- cols mlen glen) #\space)))))
+        ;; A prompt: paint the visible wrapped lines.
+        (let* ([content (string-append message message-ghost)]
+               [ghost-at (string-length message)]
+               [total (length echo-spans)]
+               [indent (echo-indent-now)])
+          (let loop ([line echo-scroll] [row (- rows echo-height)])
+            (when (< row rows)
+              (let* ([span (list-ref echo-spans line)]
+                     [start (car span)]
+                     [end (min (cdr span) (string-length content))]
+                     [end (max end start)]
+                     [lead (if (= line 0) 0 indent)]
+                     [wrapped? (< line (- total 1))]
+                     [cut (min (max (- ghost-at start) 0) (- end start))])
+                (paint! row
+                        (list 'echo line (substring content start end)
+                              cut lead wrapped?)
+                        (lambda ()
+                          (ansi (make-string lead #\space)
+                                (substring content start (+ start cut))
+                                "\x1b;[90m"
+                                (substring content (+ start cut) end)
+                                "\x1b;[0m"
+                                (make-string
+                                  (max 0 (- cols lead (- end start)
+                                            (if wrapped? 1 0)))
+                                  #\space)
+                                (if wrapped? "\\" "")))))
+              (loop (+ line 1) (+ row 1)))))))
 
   (define (echo! text . ghost)
     ;; Set the echo area (with an optional grey suffix) and paint it right
@@ -1025,11 +1092,36 @@
                   (ansi (if current? "\x1b;[7m" "\x1b;[7;2m")
                         (fit status cols) "\x1b;[0m"))))))
 
+  (define (update-echo-geometry!)
+    ;; The prompt area's height follows its wrapped text (the grey
+    ;; suggestion included), up to eight lines, then scrolls keeping the
+    ;; cursor's line visible; without a prompt it is one line.
+    (if echo-indent
+        (let* ([len (+ (string-length message) (string-length message-ghost))]
+               [padded (max len (+ (or echo-cursor 0) 1))])
+          (set! echo-spans (compute-echo-spans padded))
+          (let* ([total (length echo-spans)]
+                 [cap (max 1 (min 8 (- rows 3)))])
+            (set! echo-height (min total cap))
+            (when echo-cursor
+              (let ([line (car (echo-position echo-cursor))])
+                (when (< line echo-scroll) (set! echo-scroll line))
+                (when (>= line (+ echo-scroll echo-height))
+                  (set! echo-scroll (- line (- echo-height 1))))))
+            (set! echo-scroll
+              (max 0 (min echo-scroll (- total echo-height))))))
+        (begin
+          (set! echo-spans '((0 . 0)))
+          (set! echo-height 1)
+          (set! echo-scroll 0))))
+
   (define (redraw!)
     (terminal-size!)
+    (update-echo-geometry!)
     ;; A terminal too small for the splits collapses back to one window.
     (when (and (pair? (cdr windows))
-               (< (- rows 1 (length windows)) (* 2 (length windows))))
+               (< (- rows echo-height (length windows))
+                  (* 2 (length windows))))
       (set! windows (list current-window)))
     (let* ([layout (window-layout)]
            [view (list rows cols search-highlight (map cdr layout))])
@@ -1048,7 +1140,11 @@
                   layout))
       (paint-echo-area!)
       (if echo-cursor
-          (goto rows (min echo-cursor cols))
+          (if echo-indent
+              (let ([p (echo-position echo-cursor)])
+                (goto (+ (- rows echo-height) (- (car p) echo-scroll) 1)
+                      (min (+ (cdr p) 1) cols)))
+              (goto rows (min (+ echo-cursor 1) cols)))
           (let ([entry (assq current-window layout)])
             (goto (+ (cadr entry) (- point-row top-row) 1)
                   (+ (- point-col left-col) 1)))))
@@ -1225,10 +1321,29 @@
                 [(= hist-pos 0) (set! hist-pos -1) (history-show stash)]
                 [else (set! hist-pos (- hist-pos 1))
                       (history-show (list-ref (unbox history) hist-pos))]))
+        (define (vertical-move delta)
+          ;; Move the cursor between the prompt's visual lines, keeping
+          ;; the column, clamped into the editable input.
+          (let* ([p (echo-position echo-cursor)]
+                 [target (list-ref echo-spans (+ (car p) delta))]
+                 [indent (echo-indent-now)]
+                 [col (cdr p)]
+                 [k (if (= (+ (car p) delta) 0)
+                        (min col (cdr target))
+                        (+ (car target) (max 0 (- col indent))))]
+                 [k (min k (cdr target))]
+                 [new-pos (min (max 0 (- k (string-length label)))
+                               (string-length s))])
+            (loop s new-pos note)))
+        (define (cursor-on-top?)
+          (= (car (echo-position echo-cursor)) 0))
+        (define (cursor-on-bottom?)
+          (= (car (echo-position echo-cursor)) (- (length echo-spans) 1)))
         (set! message (string-append label s note))
         (set! message-ghost
           (if (string=? note "") (or ((prompt-ghost) s) "") ""))
-        (set! echo-cursor (+ (string-length label) pos 1))
+        (set! echo-indent (string-length label))
+        (set! echo-cursor (+ (string-length label) pos))
         (redraw!)
         (let ([c (read-char stdin)])
           (if (eof-object? c)
@@ -1244,8 +1359,14 @@
                                   [params (car csi)]
                                   [final (cdr csi)])
                              (case final
-                               [(#\A) (history-up)]
-                               [(#\B) (history-down)]
+                               ;; Up and down move within a wrapped
+                               ;; prompt; history takes over at the edges.
+                               [(#\A) (if (cursor-on-top?)
+                                          (history-up)
+                                          (vertical-move -1))]
+                               [(#\B) (if (cursor-on-bottom?)
+                                          (history-down)
+                                          (vertical-move 1))]
                                [(#\C) (loop s (min len (+ pos 1)) "")]
                                [(#\D) (loop s (max 0 (- pos 1)) "")]
                                [(#\H) (loop s 0 "")]
@@ -1296,6 +1417,8 @@
                      (edited (string-insert s pos (string c)) (+ pos 1))
                      (loop s pos ""))])))))
     (set! echo-cursor #f)
+    (set! echo-indent #f)
+    (set! echo-scroll 0)
     (set! message-ghost "")
     (dismiss-completions!)
     result)
