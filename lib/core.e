@@ -762,10 +762,27 @@
   (define (set-buffer-read-only! b flag)
     (buffer-read-only-set! b flag))
 
+  (define (no-styles s) #f)
+
+  ;; Computed styles, memoized per line string.  Edits replace line
+  ;; strings (never mutate them), so string identity keys the cache and
+  ;; can never go stale; weak keys keep it bounded by the live lines.
+  ;; Each entry remembers its mode, in case an identical string is shared
+  ;; between buffers of different modes.
+  (define style-cache (make-weak-eq-hashtable))
+
   (define (buffer-line-styles b)
     ;; The line-styles function of b's mode; unstyled without one.
     (let ([m (buffer-mode b)])
-      (if m (mode-styles m) (lambda (s) #f))))
+      (if m
+          (lambda (s)
+            (let ([hit (eq-hashtable-ref style-cache s #f)])
+              (if (and hit (eq? (car hit) m))
+                  (cdr hit)
+                  (let ([styles ((mode-styles m) s)])
+                    (eq-hashtable-set! style-cache s (cons m styles))
+                    styles))))
+          no-styles)))
 
   (define (style-code style)
     (case style
@@ -791,16 +808,19 @@
 
   (define (matching-columns s needle)
     ;; Columns covered by a search match, as a boolean vector, or #f when
-    ;; there is no active search.
+    ;; there is no active search or no match on this line.
     (and (> (string-length needle) 0)
-         (let ([marked (make-vector (string-length s) #f)])
-           (let loop ([start 0])
-             (let ([found (string-search s needle start (string-length s))])
-               (when found
-                 (vector-fill-range! marked found (+ found (string-length needle)) #t)
-                 ;; Advance one column so overlapping matches highlight too.
-                 (loop (+ found 1)))))
-           marked)))
+         (let ([first (string-search s needle 0 (string-length s))])
+           (and first
+                (let ([marked (make-vector (string-length s) #f)])
+                  (let loop ([found first])
+                    (when found
+                      (vector-fill-range! marked found
+                        (+ found (string-length needle)) #t)
+                      ;; Advance one column so overlapping matches highlight too.
+                      (loop (string-search s needle (+ found 1)
+                                           (string-length s)))))
+                  marked)))))
 
   (define (region-span row line-length)
     ;; The columns of `row` inside the active region, as (start . end), or #f.

@@ -13,25 +13,34 @@
   (import (chezscheme) (core))
 
   (define scheme-keywords
-    '("and" "begin" "case" "cond" "define" "define-record-type"
-      "define-syntax" "delay" "do"
-      "else" "export" "guard" "identifier-syntax" "if" "import" "lambda"
-      "let" "let*"
-      "let-values" "letrec" "letrec*" "library" "or" "parameterize"
-      "quote" "quasiquote" "set!"
-      "syntax" "syntax-case" "syntax-rules" "unless" "unquote"
-      "unquote-splicing" "when"))
+    (let ([table (make-hashtable string-hash string=?)])
+      (for-each (lambda (k) (hashtable-set! table k #t))
+                '("and" "begin" "case" "cond" "define" "define-record-type"
+                  "define-syntax" "delay" "do"
+                  "else" "export" "guard" "identifier-syntax" "if" "import"
+                  "lambda" "let" "let*"
+                  "let-values" "letrec" "letrec*" "library" "or"
+                  "parameterize" "quote" "quasiquote" "set!"
+                  "syntax" "syntax-case" "syntax-rules" "unless" "unquote"
+                  "unquote-splicing" "when"))
+      table))
 
   (define (scheme-delimiter? c)
     (or (char-whitespace? c) (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\'))))
 
+  (define (maybe-number? token)
+    ;; Only tokens that can begin a number are worth handing to the
+    ;; reader: a digit, or a sign, dot, or # prefix (rare identifiers
+    ;; like ->x cost one failed parse; the mass of alphabetic ones skip).
+    (let ([c (string-ref token 0)])
+      (or (char<=? #\0 c #\9) (memv c '(#\+ #\- #\. #\#)))))
+
   (define (scheme-token-style token)
-    (cond [(member token scheme-keywords) 'keyword]
-          [(or (member token '("#t" "#f"))
-               (and (>= (string-length token) 2)
-                    (string=? (substring token 0 2) "#\\")))
-           'literal]
-          [(string->number token) 'number]
+    ;; Character literals never reach here -- the line scanner consumes
+    ;; them whole -- so # tokens are booleans or radix-prefixed numbers.
+    (cond [(hashtable-ref scheme-keywords token #f) 'keyword]
+          [(member token '("#t" "#f")) 'literal]
+          [(and (maybe-number? token) (string->number token)) 'number]
           [else 'plain]))
 
   (define (scheme-styles s)
