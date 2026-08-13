@@ -40,6 +40,16 @@
         (when (< i n)
           (let ([c (string-ref s i)])
             (cond
+              [(and (char=? c #\#) (< (+ i 1) n)
+                    (char=? (string-ref s (+ i 1)) #\\))
+               ;; A character literal: #\ followed by any character --
+               ;; delimiters like ; " ( ) included -- then any trailing
+               ;; name characters (#\space, #\x41).
+               (let lit-loop ([j (min n (+ i 3))])
+                 (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
+                     (lit-loop (+ j 1))
+                     (begin (vector-fill-range! styles i j 'literal)
+                            (loop j))))]
               [(char=? c #\;)
                (vector-fill-range! styles i n 'comment)]
               [(char=? c #\")
