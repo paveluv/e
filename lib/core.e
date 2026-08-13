@@ -141,7 +141,9 @@
 
   (define terminal-ioctl
     (guard (ex [else #f])
-      (load-shared-object (if macos? "libSystem.dylib" "libc.so.6"))
+      (guard (ex2 [else (load-shared-object
+                          (if macos? "libc.dylib" "libc.so"))])
+        (load-shared-object (if macos? "libSystem.dylib" "libc.so.6")))
       (foreign-procedure "ioctl" (int unsigned-long u8*) int)))
 
   ;; TIOCGWINSZ
@@ -159,21 +161,45 @@
            [n (and s (string->number s))])
       (if (and n (exact? n) (integer? n) (> n 0)) n fallback)))
 
+  (define (ioctl-size)
+    ;; (rows . cols) via TIOCGWINSZ, or #f.
+    (and terminal-ioctl
+         (guard (ex [else #f])
+           (let ([size (make-bytevector 8 0)])
+             (and (= (terminal-ioctl
+                       (port-file-descriptor (standard-output-port))
+                       winsize-request size) 0)
+                  (let ([r (bytevector-u16-native-ref size 0)]
+                        [c (bytevector-u16-native-ref size 2)])
+                    (and (> r 0) (> c 0) (cons r c))))))))
+
+  (define (stty-size)
+    ;; (rows . cols) from "stty size", or #f -- an ioctl-free fallback
+    ;; that works wherever stty does (the editor already depends on it).
+    (guard (ex [else #f])
+      (let-values ([(to-stdin from-stdout from-stderr pid)
+                    (open-process-ports "stty size </dev/tty" 'line
+                                        (native-transcoder))])
+        (let ([line (get-line from-stdout)])
+          (close-port to-stdin)
+          (close-port from-stdout)
+          (close-port from-stderr)
+          (and (string? line)
+               (with-input-from-string line
+                 (lambda ()
+                   (let* ([r (read)] [c (read)])
+                     (and (fixnum? r) (fixnum? c) (> r 0) (> c 0)
+                          (cons r c))))))))))
+
   (define (terminal-size!)
     (when size-dirty?
       (set! size-dirty? #f)
       (set! rows (max 4 (env-number "LINES" 24)))
       (set! cols (max 20 (env-number "COLUMNS" 80)))
-      (when terminal-ioctl
-        (guard (ex [else (void)])
-          (let ([size (make-bytevector 8 0)])
-            (when (= (terminal-ioctl
-                       (port-file-descriptor (standard-output-port))
-                       winsize-request size) 0)
-              (let ([r (bytevector-u16-native-ref size 0)]
-                    [c (bytevector-u16-native-ref size 2)])
-                (when (> r 0) (set! rows (max 4 r)))
-                (when (> c 0) (set! cols (max 20 c))))))))))
+      (let ([size (or (ioctl-size) (stty-size))])
+        (when size
+          (set! rows (max 4 (car size)))
+          (set! cols (max 20 (cdr size)))))))
 
   ;;; Small utilities -------------------------------------------------------
 
