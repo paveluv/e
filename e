@@ -2,6 +2,11 @@
 ;; e -- loader for the e editor.
 ;; Run:  ./e [file]
 ;;
+;; scheme-script is the interpreter name Chez's man page recommends for
+;; scripts; Linux distributions and Homebrew install it under exactly
+;; that name.  The FreeBSD port calls it chez-scheme-script -- FreeBSD
+;; users: adjust the line above.
+;;
 ;; The editor lives in the lib directory next to this script as R6RS
 ;; libraries with the .e extension: the core (core.e, the library
 ;; (core)) and the extension modules, each a library named after its

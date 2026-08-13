@@ -6,10 +6,12 @@ The editor is a set of R6RS libraries in `lib/` — a deliberately minimal
 core plus extension modules — started by the small loader script `e`,
 which finds them next to itself. No dependencies beyond
 [Chez Scheme](https://cisco.github.io/ChezScheme/) and a Unix-like
-terminal, and no installation steps: a checkout runs in place. Works on
-Linux and macOS alike — the loader runs via `#!/usr/bin/env
-scheme-script`, the interpreter name Chez installs everywhere (Linux
-distributions and Homebrew both ship it), as its man page recommends.
+terminal, and no installation steps: a checkout runs in place. The
+loader runs via `#!/usr/bin/env scheme-script`, the interpreter name
+Chez's man page recommends for scripts; Linux distributions and
+Homebrew install it under exactly that name. The FreeBSD port calls it
+`chez-scheme-script` — FreeBSD users: adjust the shebang, or invoke
+`chez-scheme --script e` directly.
 
 Repository: <https://github.com/paveluv/e>
 
