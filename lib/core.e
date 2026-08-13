@@ -35,8 +35,9 @@
     main)
   ;; The editor defines a few names Chez also exports (the buffer record's
   ;; buffer-mode accessor vs the port option, ...); a library body may not
-  ;; shadow an import, so those imports are excluded.
-  (import (except (chezscheme) buffer-mode))
+  ;; shadow an import, so those imports are excluded.  The system-specific
+  ;; layer -- libc, termios, signals -- comes from (sys).
+  (import (except (chezscheme) buffer-mode) (sys))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -130,141 +131,29 @@
   (define stdin (current-input-port))
   (define stdout (current-output-port))
 
-  ;;; Terminal control ------------------------------------------------------
+  ;;; Terminal size ---------------------------------------------------------
 
-  ;; The terminal is driven through libc directly -- raw mode, SIGINT
-  ;; enabling, and window size -- with no external utility.  Everything
-  ;; degrades softly: without a terminal (or without libc) the calls
-  ;; below become no-ops, sizes fall back to LINES/COLUMNS.
+  ;; The system-specific work (termios, ioctl, SIGWINCH) lives in (sys);
+  ;; here only the editor's idea of its size.  Without a terminal, sizes
+  ;; fall back to LINES/COLUMNS.
 
   (define size-dirty? #t)
 
-  (define macos?
-    (let* ([mt (symbol->string (machine-type))]
-           [n (string-length mt)])
-      (and (>= n 3) (string=? (substring mt (- n 3) n) "osx"))))
-
-  (define libc-loaded?
-    (guard (ex [else #f])
-      (guard (ex2 [else (load-shared-object
-                          (if macos? "libc.dylib" "libc.so"))])
-        (load-shared-object (if macos? "libSystem.dylib" "libc.so.6")))
-      #t))
-
-  (define tcgetattr
-    (and libc-loaded?
-         (guard (ex [else #f])
-           (foreign-procedure "tcgetattr" (int u8*) int))))
-
-  (define tcsetattr
-    (and libc-loaded?
-         (guard (ex [else #f])
-           (foreign-procedure "tcsetattr" (int int u8*) int))))
-
-  (define cfmakeraw
-    (and libc-loaded?
-         (guard (ex [else #f])
-           (foreign-procedure "cfmakeraw" (u8*) void))))
-
-  (define winsize-ioctl
-    ;; ioctl is variadic, and on ARM64 macOS variadic C functions use a
-    ;; different calling convention -- say so where Chez supports it
-    ;; (the plain declaration remains correct on the other platforms).
-    (and libc-loaded?
-         (or (guard (ex [else #f])
-               (eval '(foreign-procedure (__varargs_after 2) "ioctl"
-                                         (int unsigned-long u8*) int)))
-             (guard (ex [else #f])
-               (foreign-procedure "ioctl" (int unsigned-long u8*) int)))))
-
-  ;; TIOCGWINSZ
-  (define winsize-request (if macos? #x40087468 #x5413))
-
-  ;; struct termios differs between Linux and macOS: the width and offset
-  ;; of the local-modes word (c_lflag), the ISIG bit, the offset and
-  ;; indices of the control-character array, and the disabling value.
-  (define lflag-offset (if macos? 24 12))
-  (define isig-bit (if macos? #x80 #x1))
-  (define cc-offset (if macos? 32 17))
-  (define vquit (if macos? 9 1))
-  (define vsusp 10)
-  (define vdisable (if macos? #xff 0))
-  (define tcsanow 0)
-
-  (define (get-lflag t)
-    (if macos?
-        (bytevector-u64-native-ref t lflag-offset)
-        (bytevector-u32-native-ref t lflag-offset)))
-
-  (define (set-lflag! t v)
-    (if macos?
-        (bytevector-u64-native-set! t lflag-offset v)
-        (bytevector-u32-native-set! t lflag-offset v)))
-
-  (define saved-termios #f)
-
-  (define (terminal-raw!)
-    ;; Switch the terminal to raw mode, remembering how to put it back.
-    (when (and tcgetattr tcsetattr cfmakeraw)
-      (guard (ex [else (void)])
-        (let ([orig (make-bytevector 128 0)])
-          (when (= (tcgetattr 0 orig) 0)
-            (set! saved-termios orig)
-            (let ([raw (bytevector-copy orig)])
-              (cfmakeraw raw)
-              (tcsetattr 0 tcsanow raw)))))))
-
-  (define (terminal-restore!)
-    (when (and tcsetattr saved-termios)
-      (guard (ex [else (void)])
-        (tcsetattr 0 tcsanow saved-termios))))
-
-  (define (terminal-isig! on)
-    ;; Let the terminal turn C-c into SIGINT (with the quit and suspend
-    ;; characters still disabled), or stop doing so.
-    (when (and tcgetattr tcsetattr)
-      (guard (ex [else (void)])
-        (let ([t (make-bytevector 128 0)])
-          (when (= (tcgetattr 0 t) 0)
-            (set-lflag! t (if on
-                              (bitwise-ior (get-lflag t) isig-bit)
-                              (bitwise-and (get-lflag t)
-                                           (bitwise-not isig-bit))))
-            (when on
-              (bytevector-u8-set! t (+ cc-offset vquit) vdisable)
-              (bytevector-u8-set! t (+ cc-offset vsusp) vdisable))
-            (tcsetattr 0 tcsanow t))))))
-
-  ;; SIGWINCH is signal 28 on both Linux and macOS.
-  ;; C-l also forces a size refresh in case a platform uses another number.
+  ;; C-l also forces a size refresh in case resize events are unavailable.
   (define sigwinch-registered
-    (guard (ex [else #f])
-      (register-signal-handler 28 (lambda args (set! size-dirty? #t)))
-      #t))
+    (watch-terminal-resize! (lambda () (set! size-dirty? #t))))
 
   (define (env-number name fallback)
     (let* ([s (getenv name)]
            [n (and s (string->number s))])
       (if (and n (exact? n) (integer? n) (> n 0)) n fallback)))
 
-  (define (ioctl-size)
-    ;; (rows . cols) via TIOCGWINSZ, or #f.
-    (and winsize-ioctl
-         (guard (ex [else #f])
-           (let ([size (make-bytevector 8 0)])
-             (and (= (winsize-ioctl
-                       (port-file-descriptor (standard-output-port))
-                       winsize-request size) 0)
-                  (let ([r (bytevector-u16-native-ref size 0)]
-                        [c (bytevector-u16-native-ref size 2)])
-                    (and (> r 0) (> c 0) (cons r c))))))))
-
   (define (terminal-size!)
     (when size-dirty?
       (set! size-dirty? #f)
       (set! rows (max 4 (env-number "LINES" 24)))
       (set! cols (max 20 (env-number "COLUMNS" 80)))
-      (let ([size (ioctl-size)])
+      (let ([size (terminal-size)])
         (when size
           (set! rows (max 4 (car size)))
           (set! cols (max 20 (cdr size)))))))

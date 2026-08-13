@@ -69,7 +69,9 @@ variables.
 
 Everything in `lib/` is a library with the `.e` extension, named after
 its file: `core.e` is `(core)`, `eval.e` is `(eval)`. The core is a
-kernel — buffers, windows, editing, rendering, prompts — whose exports
+kernel — buffers, windows, editing, rendering, prompts — resting on
+`sys.e`, the system-specific layer (libc, termios, ioctl, signals), the
+only library containing foreign procedures. The core's exports
 are the editor's *published API*: internals (including all mutable
 state) are invisible outside it, open to compiler optimization, and the
 exports are immutable; both guarantees enforced by the language (`set!`
