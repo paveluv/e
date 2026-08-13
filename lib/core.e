@@ -10,8 +10,9 @@
 (library (core)
   (export
     ;; state, read-only
-    current-buffer buffer-list
+    current-buffer buffer-list point
     buffer-name buffer-file buffer-text buffer-clean? buffer-modified
+    buffer-line buffer-line-count buffer-line-styles
     new-buffer buffer-named editor-symbol?
     ;; buffers, windows, files
     visit-file! save-file! save-command! find-file-command!
@@ -25,7 +26,7 @@
     move-left! move-right! move-vertical!
     search-command! quit-command!
     ;; extending the editor
-    bind-key! register-mode! find-mode mode-styles
+    bind-key! register-mode! find-mode mode-styles add-highlighter!
     prompt! confirm? prompt-ghost completion-highlight
     set-message! echo! redraw! error-text
     call-with-interrupt interrupted?
@@ -596,6 +597,9 @@
   (define (current-buffer) (window-buffer current-window))
   (define (buffer-list) (list-copy buffers))
   (define (set-message! s) (set! message s))
+  (define (point) (cons point-row point-col))
+  (define (buffer-line-count b) (vector-length (buffer-lines b)))
+  (define (buffer-line b n) (vector-ref (buffer-lines b) n))
 
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
@@ -808,55 +812,27 @@
                  [(= row er) (cons 0 ec)]
                  [else (cons 0 line-length)]))))
 
-  (define (scan-paren start-row start-col dir styles-of)
-    ;; Find the bracket balancing the one at (start-row, start-col), scanning
-    ;; forward (dir 1) or backward (dir -1).  Brackets inside strings and
-    ;; comments don't count, per the syntax styles.  The scan is bounded so
-    ;; pathological buffers stay responsive; #f when nothing balances.
-    (let walk ([row start-row] [col start-col]
-               [styles (styles-of (line-at start-row))]
-               [depth 0] [budget 50000])
-      (and (> budget 0)
-           (if (or (< col 0) (>= col (string-length (line-at row))))
-               (let ([row (+ row dir)])
-                 (and (>= row 0) (< row (vlen))
-                      (walk row
-                            (if (> dir 0) 0 (- (string-length (line-at row)) 1))
-                            (styles-of (line-at row))
-                            depth (- budget 1))))
-               (let* ([c (string-ref (line-at row) col)]
-                      [delta (if (or (not styles)
-                                     (eq? (vector-ref styles col) 'delimiter))
-                                 (cond [(memv c '(#\( #\[ #\{)) dir]
-                                       [(memv c '(#\) #\] #\})) (- dir)]
-                                       [else 0])
-                                 0)])
-                 (if (and (not (= delta 0)) (= (+ depth delta) 0))
-                     (cons row col)
-                     (walk row (+ col dir) styles (+ depth delta) (- budget 1))))))))
+  ;; Context highlighting is provided by modules: a highlighter, registered
+  ;; with add-highlighter!, is called at every redraw and returns ranges of
+  ;; the current buffer to mark up -- a list of (row start end) triples,
+  ;; drawn underlined on top of the syntax styles.  The paren module
+  ;; matches brackets this way; a broken highlighter is ignored for that
+  ;; redraw rather than taking the editor down.
+  (define highlighters '())
 
-  (define (paren-highlights)
-    ;; The bracket at point and its partner, as a list of (row . col) pairs
-    ;; to highlight: the opener point sits on, or the closer just before
-    ;; point (as in Emacs's show-paren-mode).  Empty when neither applies.
-    (let* ([styles-of (buffer-line-styles (window-buffer current-window))]
-           [line (current-line)]
-           [styles (styles-of line)])
-      (define (bracket-at col kinds)
-        (and (>= col 0) (< col (string-length line))
-             (memv (string-ref line col) kinds)
-             (or (not styles) (eq? (vector-ref styles col) 'delimiter))
-             col))
-      (let* ([closer (bracket-at (- point-col 1) '(#\) #\] #\}))]
-             [opener (and (not closer) (bracket-at point-col '(#\( #\[ #\{)))]
-             [col (or closer opener)]
-             [match (and col (scan-paren point-row col (if closer -1 1) styles-of))])
-        (if match (list (cons point-row col) match) '()))))
+  (define (add-highlighter! proc)
+    (set! highlighters (cons proc highlighters)))
 
-  (define (paren-cols parens row)
-    (map cdr (filter (lambda (p) (= (car p) row)) parens)))
+  (define (highlight-ranges)
+    (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
+               '() highlighters))
 
-  (define (display-editor-line s span brackets left styles)
+  (define (ranges-on-row ranges row)
+    (fold-left (lambda (acc r)
+                 (if (= (car r) row) (cons (cdr r) acc) acc))
+               '() ranges))
+
+  (define (display-editor-line s span marks left styles)
     (define n (string-length s))
     (define limit (+ left cols))
     (define marked (matching-columns s search-highlight))
@@ -878,23 +854,24 @@
                 (string-set! out (- i from) ch)))
             (loop (+ i 1))))
         out))
-    (define (bracket? col) (and (memv col brackets) #t))
+    (define (marked? col)
+      (exists (lambda (m) (and (<= (car m) col) (< col (cadr m)))) marks))
     ;; Emit runs of identically-attributed columns as single writes.
     (let loop ([col left])
       (when (< col limit)
         (let* ([style (style-at col)]
                [hi (highlighted? col)]
-               [br (bracket? col)]
+               [mk (marked? col)]
                [end (let run ([j (+ col 1)])
                       (if (and (< j limit)
                                (eq? (style-at j) style)
                                (eq? (highlighted? j) hi)
-                               (eq? (bracket? j) br))
+                               (eq? (marked? j) mk))
                           (run (+ j 1))
                           j))])
           (ansi "\x1b;[0m" (style-code style))
           (when hi (ansi "\x1b;[7m"))
-          (when br (ansi "\x1b;[4m"))
+          (when mk (ansi "\x1b;[4m"))
           (ansi (segment col end))
           (loop end))))
     (ansi "\x1b;[0m"))
@@ -1056,7 +1033,7 @@
     (paint-echo-area!)
     (flush-output-port stdout))
 
-  (define (paint-window! w start height parens)
+  (define (paint-window! w start height ranges)
     (let* ([b (window-buffer w)]
            [v (buffer-lines b)]
            [n (vector-length v)]
@@ -1071,10 +1048,10 @@
             (if (< i n)
                 (let* ([line (vector-ref v i)]
                        [span (and current? (region-span i (string-length line)))]
-                       [brackets (if current? (paren-cols parens i) '())])
-                  (paint! row (list i line span brackets left mode-tag)
+                       [marks (if current? (ranges-on-row ranges i) '())])
+                  (paint! row (list i line span marks left mode-tag)
                           (lambda ()
-                            (display-editor-line line span brackets left
+                            (display-editor-line line span marks left
                                                  (styles-of line)))))
                 (paint! row '(empty)
                         (lambda () (ansi (fit "~" cols))))))
@@ -1133,9 +1110,9 @@
           (for-each (lambda (entry)
                       (native-scroll! (car entry) (cadr entry) (caddr entry)))
                     layout))
-      (let ([parens (paren-highlights)])
+      (let ([ranges (highlight-ranges)])
         (for-each (lambda (entry)
-                    (paint-window! (car entry) (cadr entry) (caddr entry) parens)
+                    (paint-window! (car entry) (cadr entry) (caddr entry) ranges)
                     (window-shown-top-set! (car entry) (window-top (car entry))))
                   layout))
       (paint-echo-area!)

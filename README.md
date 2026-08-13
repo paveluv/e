@@ -82,11 +82,11 @@ exports are immutable; both guarantees enforced by the language (`set!`
 on an exported name raises an exception). The API comprises the command
 procedures (everything key-bound: `visit-file!`, `show-buffer!`,
 `split-window!`, …), read-only state accessors (`current-buffer`,
-`buffer-list`, `buffer-name`, `buffer-text`, …), and the extension hooks
-(`bind-key!`, `register-mode!`, `prompt!`, `confirm?`, `set-message!`,
-`echo!`, `buffer-append!`, `call-with-interrupt`, plus a few
-string/vector utilities). `M-x (` followed by Shift-TAB lists the entire
-catalog.
+`buffer-list`, `point`, `buffer-name`, `buffer-text`, `buffer-line`, …),
+and the extension hooks (`bind-key!`, `register-mode!`,
+`add-highlighter!`, `prompt!`, `confirm?`, `set-message!`, `echo!`,
+`buffer-append!`, `call-with-interrupt`, plus a few string/vector
+utilities). `M-x (` followed by Shift-TAB lists the entire catalog.
 
 An extension module is a library that imports `(core)` and exports an
 `init!` performing its registrations:
@@ -131,6 +131,17 @@ back to counting every bracket. Two modes ship in `lib/`: `scheme-mode.e`
 (Scheme, by extension or `#!` interpreter) and `md-mode.e` (Markdown:
 headings, blockquotes, lists, fences, rules, inline code, bold, italics,
 links).
+
+Context highlighting — markup that depends on where point is rather
+than on the line alone — is provided by *highlighters*. A module calls
+`add-highlighter!` with a function that is consulted at every redraw
+and returns ranges of the current buffer to underline, as a list of
+`(row start end)` triples (an empty list for none); it reads the
+editor's state through the accessors (`point`, `current-buffer`,
+`buffer-line`, `buffer-line-count`, `buffer-line-styles`). The
+matching-bracket highlighting is such a module, `paren.e`; local
+variable or other semantic highlighting could be added the same way. A
+highlighter that raises is ignored for that redraw.
 
 ## Key bindings
 
@@ -271,9 +282,9 @@ began. All matches on screen are highlighted while searching.
   were when you come back to them.
 - Scheme-aware syntax highlighting (keywords, strings, comments, numbers,
   character literals, delimiters, quotes).
-- Matching-bracket highlighting: the opener under point, or the closer just
-  before it, is shown together with its partner (brackets inside strings
-  and comments are ignored).
+- Matching-bracket highlighting (the `paren.e` module): the opener under
+  point, or the closer just before it, is shown together with its partner
+  (brackets inside strings and comments are ignored).
 - Unlimited undo with redo (`C-g` after an undo flips direction, Emacs-style).
 - A kill ring entry that accumulates across consecutive kill commands, so
   `C-k C-k C-k … C-y` reassembles whole blocks.
