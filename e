@@ -4,8 +4,12 @@
 ;;
 ;; scheme-script is the interpreter name Chez's man page recommends for
 ;; scripts; Linux distributions and Homebrew install it under exactly
-;; that name.  The FreeBSD port calls it chez-scheme-script -- FreeBSD
-;; users: adjust the line above.
+;; that name.  The FreeBSD port renames it chez-scheme-script, which
+;; defeats Chez's dispatch on its own program name and loses script
+;; semantics -- FreeBSD users: change the line above to
+;; "#!/usr/bin/env -S chez-scheme --script" (FreeBSD's env and kernel
+;; both support the multi-argument form), or invoke
+;; `chez-scheme --script e` directly.
 ;;
 ;; The editor lives in the lib directory next to this script as R6RS
 ;; libraries with the .e extension: the core (core.e, the library
@@ -42,8 +46,12 @@
 (define e-home
   ;; Where this installation of the editor lives: strictly the directory
   ;; of the script itself, so a checkout runs in place -- as ~/.e or
-  ;; inside a project -- and every installation is self-contained.
-  (let ([dir (directory-part (car (command-line)))])
+  ;; inside a project -- and every installation is self-contained.  An
+  ;; invocation without script semantics leaves command-line empty; the
+  ;; current directory then stands in for the script's.
+  (let ([dir (directory-part
+               (let ([cl (command-line)])
+                 (if (and (pair? cl) (string? (car cl))) (car cl) "")))])
     (unless (file-directory? (string-append dir "/lib"))
       (display (format "e: no lib directory in ~a\n" dir)
                (current-error-port))

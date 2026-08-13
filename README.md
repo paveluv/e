@@ -9,8 +9,10 @@ which finds them next to itself. No dependencies beyond
 terminal, and no installation steps: a checkout runs in place. The
 loader runs via `#!/usr/bin/env scheme-script`, the interpreter name
 Chez's man page recommends for scripts; Linux distributions and
-Homebrew install it under exactly that name. The FreeBSD port calls it
-`chez-scheme-script` — FreeBSD users: adjust the shebang, or invoke
+Homebrew install it under exactly that name. The FreeBSD port renames
+it `chez-scheme-script`, which defeats Chez's dispatch on its own
+program name and loses script semantics — FreeBSD users: change the
+shebang to `#!/usr/bin/env -S chez-scheme --script`, or invoke
 `chez-scheme --script e` directly.
 
 Repository: <https://github.com/paveluv/e>

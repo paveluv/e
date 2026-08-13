@@ -12,17 +12,29 @@
           terminal-size watch-terminal-resize!)
   (import (chezscheme))
 
-  (define macos?
+  (define os
+    ;; From the machine type's suffix: ...osx is macOS, ...fb is FreeBSD,
+    ;; anything else is treated as Linux.
     (let* ([mt (symbol->string (machine-type))]
            [n (string-length mt)])
-      (and (>= n 3) (string=? (substring mt (- n 3) n) "osx"))))
+      (define (suffix? s)
+        (let ([m (string-length s)])
+          (and (>= n m) (string=? (substring mt (- n m) n) s))))
+      (cond [(suffix? "osx") 'macos]
+            [(suffix? "fb") 'freebsd]
+            [else 'linux])))
+
+  (define-syntax os-case   ; (os-case linux-value macos-value freebsd-value)
+    (syntax-rules ()
+      [(_ l m f) (case os [(macos) m] [(freebsd) f] [else l])]))
 
   (define libc-loaded?
-    (guard (ex [else #f])
-      (guard (ex2 [else (load-shared-object
-                          (if macos? "libc.dylib" "libc.so"))])
-        (load-shared-object (if macos? "libSystem.dylib" "libc.so.6")))
-      #t))
+    (let try ([names (os-case '("libc.so.6" "libc.so")
+                              '("libSystem.dylib" "libc.dylib")
+                              '("libc.so.7" "libc.so"))])
+      (cond [(null? names) #f]
+            [(guard (ex [else #f]) (load-shared-object (car names)) #t) #t]
+            [else (try (cdr names))])))
 
   (define tcgetattr
     (and libc-loaded?
@@ -50,27 +62,29 @@
              (guard (ex [else #f])
                (foreign-procedure "ioctl" (int unsigned-long u8*) int)))))
 
-  ;; TIOCGWINSZ
-  (define winsize-request (if macos? #x40087468 #x5413))
+  ;; TIOCGWINSZ: Linux's own encoding; macOS and FreeBSD share BSD's.
+  (define winsize-request (os-case #x5413 #x40087468 #x40087468))
 
-  ;; struct termios differs between Linux and macOS: the width and offset
-  ;; of the local-modes word (c_lflag), the ISIG bit, the offset and
-  ;; indices of the control-character array, and the disabling value.
-  (define lflag-offset (if macos? 24 12))
-  (define isig-bit (if macos? #x80 #x1))
-  (define cc-offset (if macos? 32 17))
-  (define vquit (if macos? 9 1))
+  ;; struct termios differs across the three: the width and offset of the
+  ;; local-modes word (c_lflag), the ISIG bit, the offset and indices of
+  ;; the control-character array, and the disabling value -- all verified
+  ;; against the platform headers.
+  (define lflag-offset (os-case 12 24 12))
+  (define lflag-64bit? (os-case #f #t #f))
+  (define isig-bit (os-case #x1 #x80 #x80))
+  (define cc-offset (os-case 17 32 16))
+  (define vquit (os-case 1 9 9))
   (define vsusp 10)
-  (define vdisable (if macos? #xff 0))
+  (define vdisable (os-case 0 #xff #xff))
   (define tcsanow 0)
 
   (define (get-lflag t)
-    (if macos?
+    (if lflag-64bit?
         (bytevector-u64-native-ref t lflag-offset)
         (bytevector-u32-native-ref t lflag-offset)))
 
   (define (set-lflag! t v)
-    (if macos?
+    (if lflag-64bit?
         (bytevector-u64-native-set! t lflag-offset v)
         (bytevector-u32-native-set! t lflag-offset v)))
 
