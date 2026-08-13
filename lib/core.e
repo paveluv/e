@@ -133,12 +133,21 @@
   ;;; Terminal size ---------------------------------------------------------
 
   (define size-dirty? #t)
+
+  (define macos?
+    (let* ([mt (symbol->string (machine-type))]
+           [n (string-length mt)])
+      (and (>= n 3) (string=? (substring mt (- n 3) n) "osx"))))
+
   (define terminal-ioctl
     (guard (ex [else #f])
-      (load-shared-object "libc.so.6")
+      (load-shared-object (if macos? "libSystem.dylib" "libc.so.6"))
       (foreign-procedure "ioctl" (int unsigned-long u8*) int)))
 
-  ;; SIGWINCH is signal 28 on the Unix systems targeted by this little editor.
+  ;; TIOCGWINSZ
+  (define winsize-request (if macos? #x40087468 #x5413))
+
+  ;; SIGWINCH is signal 28 on both Linux and macOS.
   ;; C-l also forces a size refresh in case a platform uses another number.
   (define sigwinch-registered
     (guard (ex [else #f])
@@ -159,7 +168,8 @@
         (guard (ex [else (void)])
           (let ([size (make-bytevector 8 0)])
             (when (= (terminal-ioctl
-                       (port-file-descriptor (standard-output-port)) #x5413 size) 0)
+                       (port-file-descriptor (standard-output-port))
+                       winsize-request size) 0)
               (let ([r (bytevector-u16-native-ref size 0)]
                     [c (bytevector-u16-native-ref size 2)])
                 (when (> r 0) (set! rows (max 4 r)))

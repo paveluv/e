@@ -1,4 +1,18 @@
-#!/usr/bin/scheme --script
+#!/bin/sh
+#|  This file is both a sh script and a Chez Scheme program.  To Scheme,
+#   these lines are a block comment behind an ignored shebang line; to
+#   sh, the block markers and this prose are # comments, and the lines
+#   below replace the process with the first Chez binary found -- Linux
+#   distributions install `scheme`, Homebrew installs `chez` -- so the
+#   same file runs on both.  Set CHEZ to override.
+CHEZ="${CHEZ:-$(command -v chez || command -v scheme)}"
+[ -n "$CHEZ" ] || {
+  echo "e: Chez Scheme not found (need 'chez' or 'scheme' in PATH)" >&2
+  exit 1
+}
+exec "$CHEZ" --script "$0" "$@"
+|#
+
 ;; e -- loader for the e editor.
 ;; Run:  ./e [file]
 ;;

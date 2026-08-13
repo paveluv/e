@@ -6,7 +6,10 @@ The editor is a set of R6RS libraries in `lib/` — a deliberately minimal
 core plus extension modules — started by the small loader script `e`,
 which finds them next to itself. No dependencies beyond
 [Chez Scheme](https://cisco.github.io/ChezScheme/) and a Unix-like
-terminal, and no installation steps: a checkout runs in place.
+terminal, and no installation steps: a checkout runs in place. Works on
+Linux and macOS: the loader is a sh/Scheme polyglot that runs itself
+with the first Chez binary it finds — `scheme` (Linux distributions) or
+`chez` (Homebrew) — overridable with the `CHEZ` environment variable.
 
 Repository: <https://github.com/paveluv/e>
 
