@@ -15,7 +15,8 @@
   (define scheme-keywords
     '("and" "begin" "case" "cond" "define" "define-record-type"
       "define-syntax" "delay" "do"
-      "else" "export" "guard" "if" "import" "lambda" "let" "let*"
+      "else" "export" "guard" "identifier-syntax" "if" "import" "lambda"
+      "let" "let*"
       "let-values" "letrec" "letrec*" "library" "or" "parameterize"
       "quote" "quasiquote" "set!"
       "syntax" "syntax-case" "syntax-rules" "unless" "unquote"
