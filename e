@@ -19,11 +19,12 @@
 ;; and start the editor.  Everything else, the loading of the extension
 ;; modules included, is the core's business (load-modules! there).
 ;;
-;; scheme-script runs this file with R6RS program semantics, where a
-;; literal (import (core)) would resolve before library-directories is
-;; set below -- so the core is imported at run time, in the interaction
-;; environment, which is also where M-x evaluates and where the modules
-;; must land anyway.
+;; scheme-script compiles this whole file before running any of it, and
+;; a literal (import (core)) would be resolved during that compilation
+;; -- before the code below has said where the libraries live.  Hence
+;; the eval at the bottom: it defers importing and starting the editor
+;; until run time.  It evaluates in the interaction environment, the
+;; editor's top level -- the same place M-x expressions run.
 
 (import (chezscheme))
 
@@ -53,10 +54,9 @@
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
-(eval '(import (core)) (interaction-environment))
-
-;; Saving a module source (a .e file in lib) reloads it into the running
-;; editor.  Comment this line out to disable that.
-(eval '(auto-reload #t) (interaction-environment))
-
-(eval '(main) (interaction-environment))
+(eval '(begin
+         (import (core))
+         ;; Saving a module source (a .e file in lib) reloads it into
+         ;; the running editor.  Delete this line if you don't want that.
+         (auto-reload #t)
+         (main)))
