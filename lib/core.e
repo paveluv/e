@@ -23,7 +23,8 @@
     split-window! delete-window! delete-other-windows! other-window!
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
-    kill-line! kill-region! yank! undo-command! call-as-one-edit!
+    kill-line! kill-region! yank! undo-command! undo! redo!
+    call-as-one-edit!
     move-horizontal! move-vertical! goto-point!
     search-command! quit-command!
     ;; extending the editor
@@ -312,24 +313,34 @@
                          (string-tail s (- (string-length s) keep))))))
 
   (define (history-shift! from to verb)
-    (if (null? (vector-ref history from))
-        (set! message (format "No further ~a information" (string-downcase verb)))
-        (let ([entry (car (vector-ref history from))])
-          (vector-set! history from (cdr (vector-ref history from)))
-          (vector-set! history to
-            (cons (cons (car entry) (editor-snapshot))
-                  (vector-ref history to)))
-          (restore-snapshot! (cdr entry))
-          (set! message
+    ;; The report -- what was undone or redone -- is also returned, so
+    ;; M-x (undo!) shows it as its result.
+    (set! message
+      (if (null? (vector-ref history from))
+          (format "No further ~a information" (string-downcase verb))
+          (let ([entry (car (vector-ref history from))])
+            (vector-set! history from (cdr (vector-ref history from)))
+            (vector-set! history to
+              (cons (cons (car entry) (editor-snapshot))
+                    (vector-ref history to)))
+            (restore-snapshot! (cdr entry))
             (elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
-                   cols)))))
+                   cols))))
+    message)
+
+  (define (undo!)
+    (let ([report (history-shift! 0 1 "Undo")])
+      (set! last-history-command 'undo)
+      report))
+
+  (define (redo!)
+    (let ([report (history-shift! 1 0 "Redo")])
+      (set! last-history-command 'undo)
+      report))
 
   (define (undo-command!)
     ;; C-g after an undo flips the direction, giving a simple redo.
-    (if (eq? history-direction 'redo)
-        (history-shift! 1 0 "Redo")
-        (history-shift! 0 1 "Undo"))
-    (set! last-history-command 'undo))
+    (if (eq? history-direction 'redo) (redo!) (undo!)))
 
   ;;; Point, mark, and editing ----------------------------------------------
 
