@@ -231,10 +231,13 @@
   (define mx-history (box '()))
   (define mx-counter 1)
 
-  (define (show-eval-result! expr result)
-    ;; Append the exchange to the read-only *eval* buffer and make sure it
-    ;; is shown, scrolled to the latest entry; on a screen too small for a
-    ;; second window, fall back to the echo area.
+  (define (show-eval-result! expr result pop?)
+    ;; Append the exchange to the read-only *eval* buffer; when pop? --
+    ;; the expression returned something -- also make sure the buffer is
+    ;; shown, scrolled to the latest entry (on a screen too small for a
+    ;; second window, fall back to the echo area).  A void result is
+    ;; recorded without popping, so an interactive command's own display
+    ;; is left alone.
     (let ([b (or (buffer-named "*eval*")
                  (let ([b (new-buffer "*eval*")])
                    (set-buffer-mode! b "eval")
@@ -243,8 +246,9 @@
                    b))])
       (buffer-append! b (format "[~a]> ~a" mx-counter expr) result)
       (set! mx-counter (+ mx-counter 1))
-      (unless (display-buffer! b)
-        (set-message! (string-append expr " => " result)))))
+      (when pop?
+        (unless (display-buffer! b)
+          (set-message! (string-append expr " => " result))))))
 
   (define (eval!!)
     ;; The prompt supplies the opening parenthesis, so it cannot be deleted;
@@ -257,11 +261,12 @@
                         complete-editor-symbol))])
       (when (and s (> (string-length s) 0))
         (let ([expr (or (close-expression (string-append "(" s))
-                        (string-append "(" s))])
+                        (string-append "(" s))]
+              [kept (string-append "M-x (" s)])
           ;; Keep the prompt on screen while its expression evaluates.
-          (set-message! (string-append "M-x (" s))
+          (set-message! kept)
           (redraw!)
-          (let ([result
+          (let ([outcome
                  (guard (ex [(interrupted? ex) "interrupted"]
                             [else (format "error: ~a" (error-text ex))])
                    (call-with-interrupt
@@ -274,11 +279,21 @@
                            (let-values ([vals (eval (with-input-from-string
                                                       expr read)
                                                     (interaction-environment))])
-                             (string-join (map (lambda (v) (format "~s" v))
-                                               vals)
-                                          ", ")))))))])
-            (echo! "")
-            (show-eval-result! expr result))))))
+                             vals))))))])
+            (let* ([failed? (string? outcome)]
+                   [void? (and (not failed?)
+                               (or (null? outcome)
+                                   (and (null? (cdr outcome))
+                                        (eq? (car outcome) (void)))))]
+                   [result (if failed?
+                               outcome
+                               (string-join (map (lambda (v) (format "~s" v))
+                                                 outcome)
+                                            ", "))])
+              ;; A command that left its own message keeps it; otherwise
+              ;; the kept prompt comes down.
+              (when (equal? (current-message) kept) (echo! ""))
+              (show-eval-result! expr result (not void?))))))))
 
   (define (init!)
     (register-mode! "eval" '() '() eval-styles)

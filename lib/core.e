@@ -33,7 +33,7 @@
     load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost completion-highlight
     read-key pending-input?
-    set-message! echo! redraw! error-text
+    set-message! current-message echo! redraw! error-text
     call-with-interrupt interrupted?
     vector-fill-range! string-search
     string-tail string-prefix? string-suffix? string-join
@@ -145,6 +145,17 @@
   (define cols 80)
   (define stdin (current-input-port))
   (define stdout (current-output-port))
+
+  ;; The single point where the editor blocks on the terminal, so the
+  ;; busy watcher (see call-with-interrupt) can tell waiting for the
+  ;; user from computing.
+  (define waiting-for-input? #f)
+
+  (define (next-char)
+    (set! waiting-for-input? #t)
+    (let ([c (read-char stdin)])
+      (set! waiting-for-input? #f)
+      c))
 
   ;;; Terminal size ---------------------------------------------------------
 
@@ -675,6 +686,7 @@
   (define (current-buffer) (window-buffer current-window))
   (define (buffer-list) (list-copy buffers))
   (define (set-message! s) (set! message s))
+  (define (current-message) message)
   (define (point) (cons point-row point-col))
   (define (mark) (and mark-active? (cons mark-row mark-col)))
   (define (buffer-line-count b) (vector-length (buffer-lines b)))
@@ -796,6 +808,8 @@
     ;; Append lines to b, transcript style: a fresh buffer's single empty
     ;; line is replaced, and the display follows -- point moves to the
     ;; last line in every window showing b, and in ones that show it later.
+    ;; A transcript belongs in the buffer list even before it is shown.
+    (unless (memq b buffers) (set! buffers (append buffers (list b))))
     (let ([v (buffer-lines b)]
           [add (list->vector new-lines)])
       (buffer-lines-set! b
@@ -1423,9 +1437,9 @@
             (set-box! history (cons s h))))))
     (define (read-csi)
       ;; The rest of an ESC [ sequence: (parameter-string . final-char).
-      (let drain ([b (read-char stdin)] [params '()])
+      (let drain ([b (next-char)] [params '()])
         (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
-            (drain (read-char stdin) (cons b params))
+            (drain (next-char) (cons b params))
             (cons (list->string (reverse params)) b))))
     (define result
       (let loop ([s initial] [pos (string-length initial)] [note ""])
@@ -1472,7 +1486,7 @@
         (set! echo-indent (string-length label))
         (set! echo-cursor (+ (string-length label) pos))
         (redraw!)
-        (let ([c (read-char stdin)])
+        (let ([c (next-char)])
           (if (eof-object? c)
               #f
               (case (char->integer c)
@@ -1480,7 +1494,7 @@
                  ;; A bare ESC cancels.  Escape sequences edit: up and down
                  ;; browse the history, the rest move and delete as usual.
                  (if (char-ready? stdin)
-                     (let ([a (read-char stdin)])
+                     (let ([a (next-char)])
                        (if (and (char? a) (char=? a #\[))
                            (let* ([csi (read-csi)]
                                   [params (car csi)]
@@ -1566,7 +1580,7 @@
   ;; (single-key queries, search-like loops): the next key as a
   ;; character (#f at end of input), and whether one is already waiting.
   (define (read-key)
-    (let ([c (read-char stdin)]) (and (char? c) c)))
+    (let ([c (next-char)]) (and (char? c) c)))
 
   (define (pending-input?) (char-ready? stdin))
 
@@ -1614,11 +1628,19 @@
           (when (and busy (threaded?))
             (fork-thread
               (lambda ()
-                (sleep (make-time 'time-duration 0 1))
-                (when (= interrupt-generation gen)
-                  (set! message-ghost busy)
-                  (paint-echo-area!)
-                  (flush-output-port stdout)))))
+                ;; Show the busy note after a second of *computing* --
+                ;; waiting at a prompt or query is not busy.  Interaction
+                ;; repaints the note away and re-arms the clock.
+                (let tick ([computing 0] [shown? #f])
+                  (sleep (make-time 'time-duration 100000000 0))
+                  (when (= interrupt-generation gen)
+                    (cond [waiting-for-input? (tick 0 #f)]
+                          [(and (not shown?) (>= computing 10))
+                           (set! message-ghost busy)
+                           (paint-echo-area!)
+                           (flush-output-port stdout)
+                           (tick computing #t)]
+                          [else (tick (+ computing 1) shown?)]))))))
           (terminal-isig! #t))
         thunk
         (lambda ()
@@ -1655,7 +1677,7 @@
         (set! search-highlight needle)
         (set! message (format "~aI-search: ~a" (if failed? "Failing " "") needle))
         (redraw!)
-        (let ([c (read-char stdin)]
+        (let ([c (next-char)]
               [anchor (or match origin)])
           (if (eof-object? c)
               (set! quit? #t)
@@ -1726,10 +1748,10 @@
   (define (read-paste)
     ;; The text of a bracketed paste: everything up to ESC [ 2 0 1 ~.
     (let loop ([acc '()])
-      (let ([c (read-char stdin)])
+      (let ([c (next-char)])
         (cond [(eof-object? c) (list->string (reverse acc))]
               [(char=? c #\esc)
-               (do ([i 0 (+ i 1)]) ((= i 5)) (read-char stdin))
+               (do ([i 0 (+ i 1)]) ((= i 5)) (next-char))
                (list->string (reverse acc))]
               [else (loop (cons c acc))]))))
 
@@ -1799,13 +1821,13 @@
       [else (registry-add! user-keys (cons (code spec) command))]))
 
   (define (escape-sequence!)
-    (let ([a (read-char stdin)])
+    (let ([a (next-char)])
       (cond
         [(eof-object? a) (void)]
         [(char=? a #\[)
-         (let drain ([b (read-char stdin)] [ps '()])
+         (let drain ([b (next-char)] [ps '()])
            (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
-               (drain (read-char stdin) (cons b ps))
+               (drain (next-char) (cons b ps))
                (let ([params (list->string (reverse ps))])
                  (case b
                    [(#\A) (move-vertical! -1)] [(#\B) (move-vertical! 1)]
@@ -2073,7 +2095,7 @@
             ;; extension module) reports itself instead of killing the
             ;; editor.
             (guard (ex [else (set! message (error-text ex))])
-              (handle-key! (read-char stdin)))
+              (handle-key! (next-char)))
             (clamp-point!)
             (loop))))
       (lambda () (ansi "\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
