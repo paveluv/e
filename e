@@ -54,4 +54,9 @@
 (compile-imported-libraries #t)
 
 (eval '(import (core)) (interaction-environment))
+
+;; Saving a module source (a .e file in lib) reloads it into the running
+;; editor.  Comment this line out to disable that.
+(eval '(auto-reload #t) (interaction-environment))
+
 (eval '(main) (interaction-environment))

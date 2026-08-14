@@ -1811,9 +1811,11 @@
 
   ;; Saving a module's source reloads it on the spot (a fresh .e file in
   ;; the lib directory is loaded for the first time), so editing the
-  ;; editor from inside itself takes effect on save.  M-x (auto-reload #f)
-  ;; turns that off.
-  (define auto-reload (make-parameter #t))
+  ;; editor from inside itself takes effect on save.  Off by default;
+  ;; the loader script turns it on -- comment that line out for an
+  ;; installation without it -- and M-x (auto-reload #f) turns it off
+  ;; for a session.
+  (define auto-reload (make-parameter #f))
 
   (define (canonical-path path*)
     ;; path made absolute, with ".", "..", and empty segments resolved
