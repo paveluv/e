@@ -150,12 +150,65 @@
                 (loop (+ row 1) (cons (substring s from (max from to)) acc)))))
         "\n")))
 
+  ;;; The buffer list -----------------------------------------------------------
+
+  (define (pad s width)
+    (let ([n (string-length s)])
+      (if (>= n width) s (string-append s (make-string (- width n) #\space)))))
+
+  (define (pad-left s width)
+    (let ([n (string-length s)])
+      (if (>= n width) s (string-append (make-string (- width n) #\space) s))))
+
+  (define (abbreviate-home path)
+    (let ([home (getenv "HOME")])
+      (if (and home (string-prefix? (string-append home "/") path))
+          (string-append "~" (string-tail path (string-length home)))
+          path)))
+
   (define (list-buffers-command!)
-    (set-message!
-      (fold-left (lambda (acc b)
-                   (format "~a ~a~a" acc
-                           (if (buffer-modified b) "*" "") (buffer-name b)))
-                 "Buffers:" (buffer-list))))
+    ;; Pop up a *Buffer List*, Emacs-style: every buffer with its marks
+    ;; (. current, % read-only, * modified), length in lines, mode, and
+    ;; file, most recently used first.  Rebuilt on every invocation; on
+    ;; a screen too small for a second window, a one-line summary.
+    (let ([old (buffer-named "*Buffer List*")])
+      (when old (kill-buffer! old)))
+    (let* ([current (current-buffer)]
+           [rows (map (lambda (b)
+                        (list (string-append
+                                (if (eq? b current) "." " ")
+                                (if (buffer-read-only b) "%" " ")
+                                (if (buffer-modified b) "*" " "))
+                              (buffer-name b)
+                              (number->string (buffer-line-count b))
+                              (or (buffer-mode-name b) "")
+                              (let ([f (buffer-file b)])
+                                (if f (abbreviate-home f) ""))))
+                      (buffer-list))]
+           [all (cons (list "CRM" "Buffer" "Lines" "Mode" "File") rows)]
+           [width (lambda (i)
+                    (fold-left (lambda (w r) (max w (string-length (list-ref r i))))
+                               0 all))]
+           [wname (width 1)] [wlines (width 2)] [wmode (width 3)]
+           [render (lambda (r)
+                     (format "~a  ~a  ~a  ~a  ~a"
+                             (car r)
+                             (pad (list-ref r 1) wname)
+                             (pad-left (list-ref r 2) wlines)
+                             (pad (list-ref r 3) wmode)
+                             (list-ref r 4)))]
+           [b (new-buffer "*Buffer List*")])
+      (apply buffer-append! b (map render all))
+      (set-buffer-read-only! b #t)
+      (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
+      (if (display-buffer! b)
+          (set-message! "")
+          (set-message!
+            (fold-left (lambda (acc r)
+                         (format "~a ~a~a" acc
+                                 (if (char=? (string-ref (car r) 2) #\*) "*" "")
+                                 (list-ref r 1)))
+                       "Buffers:" rows)))))
 
   (define (init!)
     (bind-key! "C-x C-b" list-buffers-command!)))

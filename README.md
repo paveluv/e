@@ -92,6 +92,17 @@ edits into a single undo step), and the extension hooks (`bind-key!`,
 `reload-module!`, plus a few string/vector utilities). `M-x (` followed
 by Shift-TAB lists the entire catalog.
 
+Names follow a contract. A procedure ending in `-command!` is an
+*interactive command*: it takes no required arguments, may prompt,
+confirm, or pop up a buffer, and reports through the echo area — keys
+are bound to these. An unsuffixed verb (`visit-file!`, `replace-all!`,
+`undo!`) is a *primitive*: explicit arguments, no interaction, a useful
+return value. Interactive commands are thin wrappers over primitives —
+`find-file-command!` prompts and calls `visit-file!`, `undo-command!`
+adds the direction-flipping policy over `undo!`/`redo!` — and commands
+that need no interaction (`split-window!`, `other-window!`) are bound
+directly, unsuffixed.
+
 An extension module is a library that imports `(core)` and exports an
 `init!` performing its registrations:
 
@@ -205,7 +216,7 @@ highlighter that raises is ignored for that redraw.
 | Key       | Action                                                  |
 |-----------|---------------------------------------------------------|
 | `C-x b`   | Switch buffer (default: most recent other; new name creates a buffer) |
-| `C-x C-b` | List buffers in the echo area (`*` marks modified)      |
+| `C-x C-b` | Pop up `*Buffer List*`: marks (`.` current, `%` read-only, `*` modified), lines, mode, file |
 | `C-x k`   | Kill a buffer (default: current; asks if modified)      |
 | `C-x 2`   | Split the current window in two (stacked)               |
 | `C-x 1`   | Delete all other windows                                |

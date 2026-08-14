@@ -12,6 +12,7 @@
     ;; state, read-only
     current-buffer buffer-list point mark
     buffer? buffer-name buffer-file buffer-text buffer-clean? buffer-modified
+    buffer-read-only buffer-mode-name
     buffer-line buffer-line-count buffer-line-styles
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
@@ -893,6 +894,10 @@
 
   (define (set-buffer-read-only! b flag)
     (buffer-read-only-set! b flag))
+
+  (define (buffer-mode-name b)
+    ;; The name of b's mode, or #f without one.
+    (let ([m (buffer-mode b)]) (and m (mode-name m))))
 
   (define (no-styles s) #f)
 
