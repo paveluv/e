@@ -1044,45 +1044,38 @@
             (loop (cdr spans) (+ line 1))))))
 
   (define (paint-echo-area!)
-    (if (not echo-indent)
-        (paint! (- rows 1) (list 'message message message-ghost)
-                (lambda ()
-                  (let* ([mlen (min (string-length message) cols)]
-                         [glen (min (string-length message-ghost)
-                                    (- cols mlen))])
-                    (ansi (substring message 0 mlen)
-                          "\x1b;[90m" (substring message-ghost 0 glen)
-                          "\x1b;[0m"
-                          (make-string (- cols mlen glen) #\space)))))
-        ;; A prompt: paint the visible wrapped lines.
-        (let* ([content (string-append message message-ghost)]
-               [ghost-at (string-length message)]
-               [total (length echo-spans)]
-               [indent (echo-indent-now)])
-          (let loop ([line echo-scroll] [row (- rows echo-height)])
-            (when (< row rows)
-              (let* ([span (list-ref echo-spans line)]
-                     [start (car span)]
-                     [end (min (cdr span) (string-length content))]
-                     [end (max end start)]
-                     [lead (if (= line 0) 0 indent)]
-                     [wrapped? (< line (- total 1))]
-                     [cut (min (max (- ghost-at start) 0) (- end start))])
-                (paint! row
-                        (list 'echo line (substring content start end)
-                              cut lead wrapped?)
-                        (lambda ()
-                          (ansi (make-string lead #\space)
-                                (substring content start (+ start cut))
-                                "\x1b;[90m"
-                                (substring content (+ start cut) end)
-                                "\x1b;[0m"
-                                (make-string
-                                  (max 0 (- cols lead (- end start)
-                                            (if wrapped? 1 0)))
-                                  #\space)
-                                (if wrapped? "\\" "")))))
-              (loop (+ line 1) (+ row 1)))))))
+    ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
+    ;; first: echo! and the busy-message watcher come here directly,
+    ;; with the content just changed (from redraw! it is a no-op).
+    (update-echo-geometry!)
+    (let* ([content (string-append message message-ghost)]
+           [ghost-at (string-length message)]
+           [total (length echo-spans)]
+           [indent (echo-indent-now)])
+      (let loop ([line echo-scroll] [row (- rows echo-height)])
+        (when (< row rows)
+          (let* ([span (list-ref echo-spans line)]
+                 [start (car span)]
+                 [end (min (cdr span) (string-length content))]
+                 [end (max end start)]
+                 [lead (if (= line 0) 0 indent)]
+                 [wrapped? (< line (- total 1))]
+                 [cut (min (max (- ghost-at start) 0) (- end start))])
+            (paint! row
+                    (list 'echo line (substring content start end)
+                          cut lead wrapped?)
+                    (lambda ()
+                      (ansi (make-string lead #\space)
+                            (substring content start (+ start cut))
+                            "\x1b;[90m"
+                            (substring content (+ start cut) end)
+                            "\x1b;[0m"
+                            (make-string
+                              (max 0 (- cols lead (- end start)
+                                        (if wrapped? 1 0)))
+                              #\space)
+                            (if wrapped? "\\" "")))))
+          (loop (+ line 1) (+ row 1))))))
 
   (define (echo! text . ghost)
     ;; Set the echo area (with an optional grey suffix) and paint it right
@@ -1129,27 +1122,25 @@
                         (fit status cols) "\x1b;[0m"))))))
 
   (define (update-echo-geometry!)
-    ;; The prompt area's height follows its wrapped text (the grey
-    ;; suggestion included), up to eight lines, then scrolls keeping the
-    ;; cursor's line visible; without a prompt it is one line.
-    (if echo-indent
-        (let* ([len (+ (string-length message) (string-length message-ghost))]
-               [padded (max len (+ (or echo-cursor 0) 1))])
-          (set! echo-spans (compute-echo-spans padded))
-          (let* ([total (length echo-spans)]
-                 [cap (max 1 (min 8 (- rows 3)))])
-            (set! echo-height (min total cap))
-            (when echo-cursor
-              (let ([line (car (echo-position echo-cursor))])
-                (when (< line echo-scroll) (set! echo-scroll line))
-                (when (>= line (+ echo-scroll echo-height))
-                  (set! echo-scroll (- line (- echo-height 1))))))
-            (set! echo-scroll
-              (max 0 (min echo-scroll (- total echo-height))))))
-        (begin
-          (set! echo-spans '((0 . 0)))
-          (set! echo-height 1)
-          (set! echo-scroll 0))))
+    ;; The echo area's height follows its wrapped content (the grey
+    ;; suggestion included): prompt input wraps with continuations
+    ;; indented to the prompt text, and a plain message that overflows
+    ;; the width wraps the same way at indent zero, temporarily
+    ;; borrowing rows.  Up to eight lines, after which it scrolls,
+    ;; keeping the prompt cursor's line visible.
+    (let* ([len (+ (string-length message) (string-length message-ghost))]
+           [padded (max len (if echo-cursor (+ echo-cursor 1) 1))])
+      (set! echo-spans (compute-echo-spans padded))
+      (let* ([total (length echo-spans)]
+             [cap (max 1 (min 8 (- rows 3)))])
+        (set! echo-height (min total cap))
+        (when echo-cursor
+          (let ([line (car (echo-position echo-cursor))])
+            (when (< line echo-scroll) (set! echo-scroll line))
+            (when (>= line (+ echo-scroll echo-height))
+              (set! echo-scroll (- line (- echo-height 1))))))
+        (set! echo-scroll
+          (max 0 (min echo-scroll (- total echo-height)))))))
 
   (define (redraw!)
     (terminal-size!)

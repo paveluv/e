@@ -209,7 +209,9 @@ indented to where the input begins — e.g. under `Find file: ` — so the
 text stays in one visual block. The area grows to at most eight lines,
 after which it scrolls; it shrinks back as the input shortens and
 returns to a single line when the prompt finishes. This applies to
-every prompt, the grey suggestions included. In a wrapped prompt the up
+every prompt, the grey suggestions included — and to messages: one too
+long for the width (a buffer list, an error) wraps the same way,
+borrowing rows until the next key. In a wrapped prompt the up
 and down arrows move between the visual lines; at the top and bottom
 edge they turn into history navigation where a prompt keeps a history
 (M-x).
