@@ -250,6 +250,14 @@
         (unless (display-buffer! b)
           (set-message! (string-append expr " => " result))))))
 
+  (define (trim-right s)
+    ;; s without trailing blanks, so auto-closed parentheses attach
+    ;; directly to the input (completion appends a space, for one).
+    (let loop ([n (string-length s)])
+      (if (and (> n 0) (memv (string-ref s (- n 1)) '(#\space #\tab)))
+          (loop (- n 1))
+          (substring s 0 n))))
+
   (define (eval!!)
     ;; The prompt supplies the opening parenthesis, so it cannot be deleted;
     ;; the expression is evaluated in the editor's own top level.
@@ -257,8 +265,9 @@
                             [completion-highlight
                              (lambda (label)
                                (editor-symbol? (string->symbol label)))])
-               (prompt! "M-x (" complete-symbol "" mx-history
-                        complete-editor-symbol))])
+               (let ([s (prompt! "M-x (" complete-symbol "" mx-history
+                                 complete-editor-symbol)])
+                 (and s (trim-right s))))])
       (when (and s (> (string-length s) 0))
         (let ([expr (or (close-expression (string-append "(" s))
                         (string-append "(" s))]
