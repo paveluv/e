@@ -94,8 +94,10 @@ by Shift-TAB lists the entire catalog.
 
 Names follow a contract. A procedure ending in `!!` is an *interactive
 command*: it takes no required arguments, may prompt, confirm, or pop
-up a buffer, and reports through the echo area — keys are bound to
-these. A single-`!` verb (`visit-file!`, `replace-all!`, `undo!`) is a
+up a buffer, reports through the echo area, and returns nothing — on
+success it is void, so evaluating one from M-x leaves its display and
+message in place; failures raise, and the error pops up in `*eval*`.
+Keys are bound to these. A single-`!` verb (`visit-file!`, `replace-all!`, `undo!`) is a
 *primitive*: explicit arguments, no interaction, a useful return value.
 One bang changes things; two bangs also ask you things. Interactive
 commands are thin wrappers over primitives — `find-file!!` prompts and

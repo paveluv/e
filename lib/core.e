@@ -353,7 +353,8 @@
 
   (define (undo!!)
     ;; C-g after an undo flips the direction, giving a simple redo.
-    (if (eq? history-direction 'redo) (redo!) (undo!)))
+    (if (eq? history-direction 'redo) (redo!) (undo!))
+    (void))
 
   ;;; Point, mark, and editing ----------------------------------------------
 
@@ -1588,7 +1589,8 @@
     (if file-name
         (save-file! file-name)
         (let ([s (prompt! "Write file: " complete-file-name (default-directory))])
-          (when (and s (> (string-length s) 0)) (save-file! s)))))
+          (when (and s (> (string-length s) 0)) (save-file! s))))
+    (void))
 
   (define (find-file!!)
     ;; Visiting a file never loses the old buffer, so no confirmation needed.

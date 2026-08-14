@@ -184,14 +184,14 @@
     ;; for whichever of from and to are not supplied.  The whole run is
     ;; one undo step; point follows, ending after the last replacement
     ;; (or at the start of the last skipped or stopped-at match).  The
-    ;; report -- how many replaced and skipped -- is returned.
+    ;; report -- how many replaced and skipped -- is echoed.
     (let* ([from (if (pair? args) (car args) (prompt! "Replace: "))]
            [to (and from
                     (if (and (pair? args) (pair? (cdr args)))
                         (cadr args)
                         (prompt! (format "Replace ~s with: " from))))])
       (if (or (not from) (not to) (string=? from ""))
-          ""                          ; cancelled at a prompt
+          (void)                      ; cancelled at a prompt
           (let ([b (current-buffer)]
                 [m (string-length from)]
                 [question (format "Replace ~s with ~s? (y, n, q)" from to)]
@@ -230,9 +230,8 @@
                                (goto-point! hit)]
                               [else (loop (car hit) (cdr hit))]))))))))
               (lambda () (set! query-match #f)))
-            (let ([report (format "Replaced ~a, skipped ~a" replaced skipped)])
-              (set-message! report)
-              report)))))
+            (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
+            (void)))))
 
   ;;; The buffer list -----------------------------------------------------------
 
