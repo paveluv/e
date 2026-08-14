@@ -14,6 +14,7 @@
     buffer-name buffer-file buffer-text buffer-clean? buffer-modified
     buffer-line buffer-line-count buffer-line-styles
     new-buffer buffer-named editor-symbol?
+    (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
     visit-file! save-file! save-command! find-file-command!
     show-buffer! kill-buffer! display-buffer! buffer-append!
@@ -606,6 +607,20 @@
 
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
+
+  ;; A buffer's printed form is the expression that looks it up again, so
+  ;; results shown in *eval* can be pasted straight into the next
+  ;; expression: (buffer-line-count (buffer "e")).  The lookup is by
+  ;; name at evaluation time -- a killed buffer's form reports itself.
+  (define (lookup-buffer name)
+    (or (buffer-named name) (error 'buffer "no buffer named" name)))
+
+  (define buffer-printing
+    (record-writer (record-type-descriptor buffer)
+      (lambda (r p wr)
+        (display "(buffer " p)
+        (wr (buffer-name r) p)
+        (display ")" p))))
 
   (define (complete-buffer-name s)
     (sort string<? (filter (lambda (n) (string-prefix? s n))

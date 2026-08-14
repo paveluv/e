@@ -270,6 +270,12 @@ expression shows any parentheses that were auto-closed for you and is
 syntax-highlighted, and results — errors included — appear beneath it,
 unprefixed, in a distinct color.
 
+Buffers print as the expression that looks them up — `(current-buffer)`
+shows `(buffer "e")`, not the record's contents — so a printed result
+can be pasted straight into the next expression:
+`(buffer-line-count (buffer "e"))`. The lookup is by name at evaluation
+time; naming a killed buffer reports an error.
+
 A runaway expression (an infinite loop, say) can be interrupted with
 `C-c`: during evaluation the terminal is allowed to deliver SIGINT,
 which unwinds the evaluation and logs `interrupted` as its result; the
