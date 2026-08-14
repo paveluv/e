@@ -263,38 +263,66 @@
     (set! mark-active? #f)
     (invalidate-screen-cache!))
 
-  ;; Inside a call-as-one-edit! group, the box remembers whether the
-  ;; group's single snapshot has been taken yet.
+  ;; Undo entries are labeled with the user-level action that made them
+  ;; -- "insert \"hello\"", "(replace-all! \"xx\" \"yy\")" -- and undo
+  ;; and redo report the label.  Inside a call-as-one-edit! group, the
+  ;; box holds (label . buffers-snapshotted): one entry per buffer the
+  ;; group touches, labeled with the group's label (or, lacking one,
+  ;; that buffer's first edit's).
   (define edit-group (make-parameter #f))
 
-  (define (record-edit!)
+  (define (push-undo! label)
+    (vector-set! history 0 (cons (cons label (editor-snapshot))
+                                 (vector-ref history 0)))
+    (vector-set! history 1 '())
+    (set! history-direction 'undo))
+
+  (define (record-edit! label)
     ;; Every editing command passes through here before touching the buffer,
-    ;; so this is also where read-only buffers are protected.  Within an
-    ;; edit group only the first edit takes the snapshot.
+    ;; so this is also where read-only buffers are protected.
     (when (buffer-read-only (window-buffer current-window))
       (error #f "buffer is read-only"))
-    (let ([group (edit-group)])
-      (unless (or (suppress-history) (and group (unbox group)))
-        (vector-set! history 0 (cons (editor-snapshot) (vector-ref history 0)))
-        (vector-set! history 1 '())
-        (set! history-direction 'undo)
-        (when group (set-box! group #t)))))
+    (unless (suppress-history)
+      (let ([group (edit-group)]
+            [b (window-buffer current-window)])
+        (cond [(not group) (push-undo! label)]
+              [(memq b (cdr (unbox group))) (void)]
+              [else (push-undo! (or (car (unbox group)) label))
+                    (set-box! group (cons (car (unbox group))
+                                          (cons b (cdr (unbox group)))))]))))
 
-  (define (call-as-one-edit! thunk)
-    ;; Bundle every edit thunk makes (in one buffer) into a single undo
-    ;; step -- and none at all when it turns out not to edit.
+  (define (relabel-last-edit! label)
+    (let ([h (vector-ref history 0)])
+      (when (pair? h) (set-car! (car h) label))))
+
+  (define (call-as-one-edit! label thunk)
+    ;; Bundle every edit thunk makes into one labeled undo step per
+    ;; buffer it touches -- and none for buffers it does not edit.
+    ;; Nested groups defer to the outermost.
     (if (edit-group)
         (thunk)
-        (parameterize ([edit-group (box #f)]) (thunk))))
+        (parameterize ([edit-group (box (cons label '()))]) (thunk))))
 
-  (define (history-shift! from to label)
+  (define (elide s width)
+    ;; s shortened to about width with an elided middle, for messages.
+    (if (<= (string-length s) width)
+        s
+        (let ([keep (max 4 (quotient (- width 5) 2))])
+          (string-append (substring s 0 keep) " ... "
+                         (string-tail s (- (string-length s) keep))))))
+
+  (define (history-shift! from to verb)
     (if (null? (vector-ref history from))
-        (set! message (format "No further ~a information" (string-downcase label)))
-        (let ([snapshot (car (vector-ref history from))])
+        (set! message (format "No further ~a information" (string-downcase verb)))
+        (let ([entry (car (vector-ref history from))])
           (vector-set! history from (cdr (vector-ref history from)))
-          (vector-set! history to (cons (editor-snapshot) (vector-ref history to)))
-          (restore-snapshot! snapshot)
-          (set! message label))))
+          (vector-set! history to
+            (cons (cons (car entry) (editor-snapshot))
+                  (vector-ref history to)))
+          (restore-snapshot! (cdr entry))
+          (set! message
+            (elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
+                   cols)))))
 
   (define (undo-command!)
     ;; C-g after an undo flips the direction, giving a simple redo.
@@ -358,13 +386,13 @@
     (set! goal-pos (cons point-row point-col)))
 
   (define (insert-text! s)
-    (record-edit!)
+    (record-edit! (format "insert ~s" s))
     (set-line! point-row (string-insert (current-line) point-col s))
     (set! point-col (+ point-col (string-length s)))
     (changed!))
 
   (define (newline!)
-    (record-edit!)
+    (record-edit! "newline")
     (let ([s (current-line)])
       (set-line! point-row (substring s 0 point-col))
       (set! lines (vector-splice lines (+ point-row 1) (+ point-row 1)
@@ -374,12 +402,14 @@
 
   (define (delete-forward!)
     (cond [(< point-col (string-length (current-line)))
-           (record-edit!)
+           (record-edit!
+             (format "delete ~s"
+                     (string (string-ref (current-line) point-col))))
            (set-line! point-row
              (string-delete (current-line) point-col (+ point-col 1)))
            (changed!)]
           [(< point-row (- (vlen) 1))
-           (record-edit!)
+           (record-edit! "delete newline")
            (set-line! point-row
              (string-append (current-line) (line-at (+ point-row 1))))
            (set! lines (vector-splice lines (+ point-row 1) (+ point-row 2) '()))
@@ -387,7 +417,11 @@
 
   (define (backspace!)
     (when (or (> point-col 0) (> point-row 0))
-      (record-edit!)
+      (record-edit!
+        (if (> point-col 0)
+            (format "delete ~s"
+                    (string (string-ref (current-line) (- point-col 1))))
+            "delete newline"))
       (parameterize ([suppress-history #t])
         (move-left!) (delete-forward!))))
 
@@ -402,10 +436,11 @@
   (define (kill-line!)
     (let* ([s (current-line)] [n (string-length s)])
       (cond [(< point-col n)
-             (record-edit!)
-             (kill! (substring s point-col n))
-             (set-line! point-row (substring s 0 point-col))
-             (changed!)]
+             (let ([text (substring s point-col n)])
+               (record-edit! (format "kill ~s" text))
+               (kill! text)
+               (set-line! point-row (substring s 0 point-col))
+               (changed!))]
             [(< point-row (- (vlen) 1))
              (kill! "\n")
              (delete-forward!)])))
@@ -414,7 +449,7 @@
     ;; Kill-ring entries can span lines after consecutive C-k commands.  Insert
     ;; newlines as buffer structure rather than embedding them in a line string.
     (unless (string=? kill-ring "")
-      (record-edit!)
+      (record-edit! (format "yank ~s" kill-ring))
       (parameterize ([suppress-history #t])
         (let ([parts (split-lines kill-ring)])
           (insert-text! (car parts))
@@ -446,9 +481,9 @@
         (let-values ([(sr sc er ec) (ordered-region)])
           (if (and (= sr er) (= sc ec))
               (set! message "Empty region")
-              (begin
-                (record-edit!)
-                (kill! (region-text sr sc er ec))
+              (let ([text (region-text sr sc er ec)])
+                (record-edit! (format "kill ~s" text))
+                (kill! text)
                 (delete-region! sr sc er ec)
                 (set! point-row sr) (set! point-col sc)
                 (changed!)
@@ -1065,8 +1100,9 @@
       (vector-set! screen-cache row key)))
 
   (define (echo-indent-now)
-    ;; The continuation indent, kept small enough that lines progress.
-    (min (or echo-indent 0) (max 0 (- cols 2))))
+    ;; The continuation indent, capped at half the width so a prompt
+    ;; whose label alone overflows the screen still wraps usefully.
+    (min (or echo-indent 0) (quotient cols 2)))
 
   (define (compute-echo-spans len)
     ;; Content index ranges of the echo area's visual lines: the first
@@ -1459,6 +1495,15 @@
                                        (edited (string-delete s pos (+ pos 1)) pos)]
                                       [(member params '("1" "7")) (loop s 0 "")]
                                       [(member params '("4" "8")) (loop s len "")]
+                                      [(string=? params "200")
+                                       ;; A paste, inserted whole; its line
+                                       ;; breaks become spaces.
+                                       (let ([text (string-join
+                                                     (split-pasted-lines
+                                                       (read-paste))
+                                                     " ")])
+                                         (edited (string-insert s pos text)
+                                                 (+ pos (string-length text))))]
                                       [else (loop s pos "")])]
                                [else (loop s pos "")]))
                            (loop s pos "")))
@@ -1636,6 +1681,68 @@
                            (begin (goto-match! next) (loop longer next #f))
                            (loop longer match #t))))]))))))
 
+  ;;; Pasting and typed runs --------------------------------------------------
+
+  (define (split-pasted-lines s)
+    ;; Pasted text split at newlines, whichever convention the terminal
+    ;; delivered: \n, \r\n, or bare \r.
+    (let ([n (string-length s)])
+      (let loop ([i 0] [start 0] [acc '()])
+        (cond [(= i n) (reverse (cons (substring s start i) acc))]
+              [(char=? (string-ref s i) #\newline)
+               (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
+              [(char=? (string-ref s i) #\return)
+               (let ([next (if (and (< (+ i 1) n)
+                                    (char=? (string-ref s (+ i 1)) #\newline))
+                               (+ i 2) (+ i 1))])
+                 (loop next next (cons (substring s start i) acc)))]
+              [else (loop (+ i 1) start acc)]))))
+
+  (define (read-paste)
+    ;; The text of a bracketed paste: everything up to ESC [ 2 0 1 ~.
+    (let loop ([acc '()])
+      (let ([c (read-char stdin)])
+        (cond [(eof-object? c) (list->string (reverse acc))]
+              [(char=? c #\esc)
+               (do ([i 0 (+ i 1)]) ((= i 5)) (read-char stdin))
+               (list->string (reverse acc))]
+              [else (loop (cons c acc))]))))
+
+  (define (paste-into-buffer!)
+    ;; A bracketed paste: the whole text becomes one labeled edit, its
+    ;; newlines becoming real line breaks.
+    (let ([text (read-paste)])
+      (unless (string=? text "")
+        (call-as-one-edit! (format "insert ~s" text)
+          (lambda ()
+            (let ([parts (split-pasted-lines text)])
+              (insert-text! (car parts))
+              (for-each (lambda (part) (newline!) (insert-text! part))
+                        (cdr parts))))))))
+
+  ;; Consecutive typed characters coalesce into one undo entry (up to
+  ;; twenty, as in Emacs), so undo removes the run, not one character.
+  ;; The chain is (buffer row col run-length text): where the next typed
+  ;; character must land to continue the run.  Any other key breaks it.
+  (define insert-chain #f)
+
+  (define (self-insert! ch chain)
+    (let ([b (window-buffer current-window)]
+          [s (string ch)])
+      (if (and chain
+               (eq? (car chain) b)
+               (= (cadr chain) point-row)
+               (= (caddr chain) point-col)
+               (< (cadddr chain) 20))
+          (let ([text (string-append (list-ref chain 4) s)])
+            (parameterize ([suppress-history #t]) (insert-text! s))
+            (relabel-last-edit! (format "insert ~s" text))
+            (set! insert-chain
+              (list b point-row point-col (+ (cadddr chain) 1) text)))
+          (begin
+            (insert-text! s)
+            (set! insert-chain (list b point-row point-col 1 s))))))
+
   ;;; Key handling ----------------------------------------------------------
 
   ;; Keys bound by modules, consulted before the built-in bindings (so a
@@ -1671,15 +1778,23 @@
       (cond
         [(eof-object? a) (void)]
         [(char=? a #\[)
-         (case (read-char stdin)
-           [(#\A) (move-vertical! -1)] [(#\B) (move-vertical! 1)]
-           [(#\C) (move-right!)] [(#\D) (move-left!)]
-           [(#\H) (set! point-col 0)]
-           [(#\F) (set! point-col (string-length (current-line)))]
-           [(#\3) (read-char stdin) (delete-forward!)]
-           [(#\5) (read-char stdin) (move-vertical! (- (page-size)))]
-           [(#\6) (read-char stdin) (move-vertical! (page-size))]
-           [else (void)])]
+         (let drain ([b (read-char stdin)] [ps '()])
+           (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
+               (drain (read-char stdin) (cons b ps))
+               (let ([params (list->string (reverse ps))])
+                 (case b
+                   [(#\A) (move-vertical! -1)] [(#\B) (move-vertical! 1)]
+                   [(#\C) (move-right!)] [(#\D) (move-left!)]
+                   [(#\H) (set! point-col 0)]
+                   [(#\F) (set! point-col (string-length (current-line)))]
+                   [(#\~)
+                    (cond [(string=? params "3") (delete-forward!)]
+                          [(string=? params "5")
+                           (move-vertical! (- (page-size)))]
+                          [(string=? params "6") (move-vertical! (page-size))]
+                          [(string=? params "200") (paste-into-buffer!)]
+                          [else (void)])]
+                   [else (void)]))))]
         [(user-binding user-meta-keys (char->integer a))
          => (lambda (command) (command))]
         ;; M-v: page up, M-< and M->: beginning/end of buffer.
@@ -1710,6 +1825,8 @@
           [else (set! message "C-x is undefined for that key")])]))
 
   (define (handle-key! c)
+    (define chain insert-chain)     ; only an unbroken typed run keeps it
+    (set! insert-chain #f)
     (when (char? c)
       (let ([n (char->integer c)])
         (unless (= n 11) (set! last-command #f))                ; C-k chains kills
@@ -1754,7 +1871,7 @@
          [(27) (escape-sequence!)]                                ; ESC
          [(31) (undo-command!)]                                   ; C-_
          [else (when (>= (char->integer c) 32)
-                 (insert-text! (string c)))])])]))
+                 (self-insert! c chain))])])]))
 
   ;;; Modules -----------------------------------------------------------------
 
@@ -1919,7 +2036,10 @@
     ;; prompt underneath the editor's screen.
     (keyboard-interrupt-handler void)
     (dynamic-wind
-      (lambda () (terminal-raw!) (ansi "\x1b;[?1049h\x1b;[2J"))
+      ;; The alternate screen, plus bracketed paste: terminals that
+      ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
+      ;; making a paste one identifiable edit; others ignore the mode.
+      (lambda () (terminal-raw!) (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h"))
       (lambda ()
         (let loop ()
           (unless quit?
@@ -1931,7 +2051,8 @@
               (handle-key! (read-char stdin)))
             (clamp-point!)
             (loop))))
-      (lambda () (ansi "\x1b;[?25h\x1b;[?1049l\x1b;[0m") (flush-output-port stdout)
+      (lambda () (ansi "\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+                 (flush-output-port stdout)
                  (terminal-restore!))))
 
   ) ;; library (core)

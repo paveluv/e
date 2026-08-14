@@ -267,10 +267,16 @@
                    (call-with-interrupt
                      " [evaluating, press C-c to interrupt]"
                      (lambda ()
-                       (let-values ([vals (eval (with-input-from-string expr read)
-                                                (interaction-environment))])
-                         (string-join (map (lambda (v) (format "~s" v)) vals)
-                                      ", ")))))])
+                       ;; The whole expression is one undo step in every
+                       ;; buffer it edits, labeled with itself.
+                       (call-as-one-edit! expr
+                         (lambda ()
+                           (let-values ([vals (eval (with-input-from-string
+                                                      expr read)
+                                                    (interaction-environment))])
+                             (string-join (map (lambda (v) (format "~s" v))
+                                               vals)
+                                          ", ")))))))])
             (echo! "")
             (show-eval-result! expr result))))))
 

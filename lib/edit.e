@@ -119,6 +119,7 @@
                (lambda ()
                  (let ([saved (point)])
                    (call-as-one-edit!
+                     (format "(replace-all! ~s ~s)" from to)
                      (lambda ()
                        (let ([n (for-matches! r from
                                   (lambda (row col)

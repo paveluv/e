@@ -127,7 +127,8 @@ means the buffers it accepts; and a list of any of these means their
 union. So `M-x (replace-all! "xx" "yy")` rewrites the current buffer,
 `(replace-all! "xx" "yy" buffer-file)` every file-visiting buffer, and
 `(count-matches "xx" "notes.md")` counts without editing. Each targeted
-buffer gets one undo step, and point stays where it was. A *region* — a
+buffer gets one undo step labeled with the command itself — undoing
+reports `Undo (replace-all! "xx" "yy")` — and point stays where it was. A *region* — a
 slice of one buffer between two `(row . col)` points — prints as the
 expression that rebuilds it, like buffers do:
 `(region (buffer "e") '(0 . 0) '(12 . 5))`; `regions-of` exposes the
@@ -341,7 +342,16 @@ began. All matches on screen are highlighted while searching.
 - Matching-bracket highlighting (the `paren.e` module): the opener under
   point, or the closer just before it, is shown together with its partner
   (brackets inside strings and comments are ignored).
-- Unlimited undo with redo (`C-g` after an undo flips direction, Emacs-style).
+- Unlimited undo with redo (`C-g` after an undo flips direction,
+  Emacs-style), and every step says what it undoes: `Undo insert
+  "hello"`, `Undo kill "the line"`, `Undo (replace-all! "xx" "yy")` —
+  long texts elided to fit. Typed characters coalesce into runs of up
+  to twenty, an M-x expression is one step labeled with itself, and a
+  paste is one step whatever its size.
+- Bracketed paste: the editor switches the terminal to bracketed paste
+  mode, so pasting — from a browser, say — inserts the text as a single
+  edit (one undo step), control characters not interpreted as commands;
+  in a prompt, the paste lands whole, its line breaks as spaces.
 - A kill ring entry that accumulates across consecutive kill commands, so
   `C-k C-k C-k … C-y` reassembles whole blocks.
 - Incremental screen updates: only rows whose content changed are repainted,
