@@ -27,7 +27,7 @@
     search-command! quit-command!
     ;; extending the editor
     bind-key! register-mode! find-mode mode-styles add-highlighter!
-    load-module! reload-module!
+    load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost completion-highlight
     set-message! echo! redraw! error-text
     call-with-interrupt interrupted?
@@ -550,7 +550,9 @@
       (let ([b (window-buffer current-window)])
         (buffer-name-set! b (unique-name (base-name path) b))
         (assign-mode! b))
-      (set! message (format "Wrote ~a" path)) #t))
+      (set! message (format "Wrote ~a" path))
+      (reload-on-save! path)
+      #t))
 
   (define (buffer-text b)
     (let* ([v (buffer-lines b)] [n (vector-length v)])
@@ -1787,6 +1789,56 @@
       (refresh-buffer-modes!)
       (invalidate-screen-cache!)
       (set! message (format "Reloaded ~a" name))))
+
+  ;; Saving a module's source reloads it on the spot (a fresh .e file in
+  ;; the lib directory is loaded for the first time), so editing the
+  ;; editor from inside itself takes effect on save.  M-x (auto-reload #f)
+  ;; turns that off.
+  (define auto-reload (make-parameter #t))
+
+  (define (canonical-path path*)
+    ;; path made absolute, with ".", "..", and empty segments resolved
+    ;; textually (symbolic links are not chased) -- enough to recognize
+    ;; the editor's own files whichever way they are named.
+    (let* ([path (if (string-prefix? "/" path*)
+                     path*
+                     (string-append (current-directory) "/" path*))]
+           [n (string-length path)])
+      (let loop ([i 0] [start 0] [stack '()])
+        (define (push seg)
+          (cond [(or (string=? seg "") (string=? seg ".")) stack]
+                [(string=? seg "..") (if (pair? stack) (cdr stack) stack)]
+                [else (cons seg stack)]))
+        (cond [(> i n) (string-append "/" (string-join (reverse stack) "/"))]
+              [(or (= i n) (char=? (string-ref path i) #\/))
+               (loop (+ i 1) (+ i 1) (push (substring path start i)))]
+              [else (loop (+ i 1) start stack)]))))
+
+  (define (module-name-of-path path)
+    ;; The module name a saved path denotes: a .e file directly in the
+    ;; editor's lib directory; #f for anything else -- the core included,
+    ;; which cannot be reloaded.
+    (let ([full (canonical-path path)]
+          [lib (string-append (canonical-path (caar (library-directories)))
+                              "/")])
+      (and (string-prefix? lib full)
+           (string-suffix? ".e" full)
+           (let ([base (string-tail full (string-length lib))])
+             (and (not (string-search base "/" 0 (string-length base)))
+                  (not (string=? base "core.e"))
+                  (substring base 0 (- (string-length base) 2)))))))
+
+  (define (reload-on-save! path)
+    ;; The save-file! hook.  A reload that fails (a module saved mid-edit,
+    ;; say) reports itself without disturbing the save -- or the editor,
+    ;; which keeps running the module's old version.
+    (let ([name (and (auto-reload) (module-name-of-path path))])
+      (when name
+        (guard (ex [else (set! message
+                           (format "Wrote ~a; reload failed: ~a"
+                                   path (error-text ex)))])
+          (reload-module! name)
+          (set! message (format "Wrote ~a (reloaded ~a)" path name))))))
 
   ;;; Main ------------------------------------------------------------------
 

@@ -113,8 +113,13 @@ a library body may not shadow an imported name, and every module exports
 `init!`). A module that fails reports itself in the message line without
 preventing startup.
 
-Modules can be reloaded without restarting the editor. After editing a
-module's source (from inside e or out), run
+Modules can be reloaded without restarting the editor. Saving a module
+buffer — any `.e` file in the running editor's `lib/` directory,
+including one that did not exist at startup — reloads it on the spot,
+so editing the editor from inside itself takes effect on `C-x C-s`
+(`M-x (auto-reload #f)` turns that off; a save whose reload fails
+reports the error and leaves the old version running). For sources
+edited outside e, run
 
     M-x (reload-module! "paren")
 
