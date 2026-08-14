@@ -10,21 +10,21 @@
 (library (core)
   (export
     ;; state, read-only
-    current-buffer buffer-list point
-    buffer-name buffer-file buffer-text buffer-clean? buffer-modified
+    current-buffer buffer-list point mark
+    buffer? buffer-name buffer-file buffer-text buffer-clean? buffer-modified
     buffer-line buffer-line-count buffer-line-styles
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
     visit-file! save-file! save-command! find-file-command!
     show-buffer! kill-buffer! display-buffer! buffer-append!
-    set-buffer-mode! set-buffer-read-only!
-    switch-buffer-command! kill-buffer-command! list-buffers-command!
+    set-buffer-mode! set-buffer-read-only! call-with-buffer
+    switch-buffer-command! kill-buffer-command!
     split-window! delete-window! delete-other-windows! other-window!
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
-    kill-line! kill-region! yank! undo-command!
-    move-left! move-right! move-vertical!
+    kill-line! kill-region! yank! undo-command! call-as-one-edit!
+    move-horizontal! move-vertical! goto-point!
     search-command! quit-command!
     ;; extending the editor
     bind-key! register-mode! find-mode mode-styles add-highlighter!
@@ -263,15 +263,29 @@
     (set! mark-active? #f)
     (invalidate-screen-cache!))
 
+  ;; Inside a call-as-one-edit! group, the box remembers whether the
+  ;; group's single snapshot has been taken yet.
+  (define edit-group (make-parameter #f))
+
   (define (record-edit!)
     ;; Every editing command passes through here before touching the buffer,
-    ;; so this is also where read-only buffers are protected.
+    ;; so this is also where read-only buffers are protected.  Within an
+    ;; edit group only the first edit takes the snapshot.
     (when (buffer-read-only (window-buffer current-window))
       (error #f "buffer is read-only"))
-    (unless (suppress-history)
-      (vector-set! history 0 (cons (editor-snapshot) (vector-ref history 0)))
-      (vector-set! history 1 '())
-      (set! history-direction 'undo)))
+    (let ([group (edit-group)])
+      (unless (or (suppress-history) (and group (unbox group)))
+        (vector-set! history 0 (cons (editor-snapshot) (vector-ref history 0)))
+        (vector-set! history 1 '())
+        (set! history-direction 'undo)
+        (when group (set-box! group #t)))))
+
+  (define (call-as-one-edit! thunk)
+    ;; Bundle every edit thunk makes (in one buffer) into a single undo
+    ;; step -- and none at all when it turns out not to edit.
+    (if (edit-group)
+        (thunk)
+        (parameterize ([edit-group (box #f)]) (thunk))))
 
   (define (history-shift! from to label)
     (if (null? (vector-ref history from))
@@ -316,6 +330,18 @@
            (set! point-col (+ point-col 1))]
           [(< point-row (- (vlen) 1))
            (set! point-row (+ point-row 1)) (set! point-col 0)]))
+
+  (define (move-horizontal! delta)
+    ;; Move point delta characters, negative to the left, crossing line
+    ;; ends the way repeated single steps do.
+    (if (< delta 0)
+        (do ([i 0 (- i 1)]) ((= i delta)) (move-left!))
+        (do ([i 0 (+ i 1)]) ((= i delta)) (move-right!))))
+
+  (define (goto-point! p)
+    ;; Move point straight to (row . col), clamped into the buffer.
+    (set! point-row (max 0 (min (car p) (- (vlen) 1))))
+    (set! point-col (max 0 (min (cdr p) (string-length (current-line))))))
 
   ;; Vertical moves aim for a goal column, so point comes back to it after
   ;; passing through shorter lines (as in Emacs).  The goal survives exactly
@@ -602,8 +628,21 @@
   (define (buffer-list) (list-copy buffers))
   (define (set-message! s) (set! message s))
   (define (point) (cons point-row point-col))
+  (define (mark) (and mark-active? (cons mark-row mark-col)))
   (define (buffer-line-count b) (vector-length (buffer-lines b)))
   (define (buffer-line b n) (vector-ref (buffer-lines b) n))
+
+  (define (call-with-buffer b thunk)
+    ;; Run thunk with b temporarily the current buffer, in the current
+    ;; window with the usual spot saving -- invisibly: the MRU order is
+    ;; untouched and nothing repaints during a command.
+    (if (eq? b (window-buffer current-window))
+        (thunk)
+        (let ([old (window-buffer current-window)])
+          (dynamic-wind
+            (lambda () (set-window-buffer! current-window b))
+            thunk
+            (lambda () (set-window-buffer! current-window old))))))
 
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
@@ -661,13 +700,6 @@
                      (confirm? (format "Buffer ~a modified; kill anyway? (yes or no) "
                                        (buffer-name b))))
                  (kill-buffer! b)])))))
-
-  (define (list-buffers-command!)
-    (set! message
-      (fold-left (lambda (acc b)
-                   (format "~a ~a~a" acc
-                           (if (buffer-modified b) "*" "") (buffer-name b)))
-                 "Buffers:" buffers)))
 
   (define (next-window w)
     (let ([tail (cdr (memq w windows))])
@@ -1669,7 +1701,6 @@
           [(19) (save-command!)]                                ; C-x C-s
           [(3) (quit-command!)]                                 ; C-x C-c
           [(6) (find-file-command!)]                            ; C-x C-f
-          [(2) (list-buffers-command!)]                         ; C-x C-b
           [(98) (switch-buffer-command!)]                       ; C-x b
           [(107) (kill-buffer-command!)]                        ; C-x k
           [(111) (other-window!)]                               ; C-x o

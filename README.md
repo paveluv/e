@@ -82,12 +82,15 @@ exports are immutable; both guarantees enforced by the language (`set!`
 on an exported name raises an exception). The API comprises the command
 procedures (everything key-bound: `visit-file!`, `show-buffer!`,
 `split-window!`, …), read-only state accessors (`current-buffer`,
-`buffer-list`, `point`, `buffer-name`, `buffer-text`, `buffer-line`, …),
-and the extension hooks (`bind-key!`, `register-mode!`,
-`add-highlighter!`, `prompt!`, `confirm?`, `set-message!`, `echo!`,
-`buffer-append!`, `call-with-interrupt`, `reload-module!`, plus a few
-string/vector utilities). `M-x (` followed by Shift-TAB lists the
-entire catalog.
+`buffer-list`, `point`, `mark`, `buffer-name`, `buffer-text`,
+`buffer-line`, …), the editing primitives modules compose commands from
+(`goto-point!`, `move-horizontal!`, `call-with-buffer` — run code with
+another buffer temporarily current — and `call-as-one-edit!` — bundle
+edits into a single undo step), and the extension hooks (`bind-key!`,
+`register-mode!`, `add-highlighter!`, `prompt!`, `confirm?`,
+`set-message!`, `echo!`, `buffer-append!`, `call-with-interrupt`,
+`reload-module!`, plus a few string/vector utilities). `M-x (` followed
+by Shift-TAB lists the entire catalog.
 
 An extension module is a library that imports `(core)` and exports an
 `init!` performing its registrations:
@@ -114,6 +117,21 @@ orders initialization and recompilation accordingly (the `only` matters:
 a library body may not shadow an imported name, and every module exports
 `init!`). A module that fails reports itself in the message line without
 preventing startup.
+
+Generic editing helpers live in `edit.e` — layer 1 of the editor,
+composed entirely from the core's public API (and hot-reloadable like
+any module). Its commands take an optional `where` argument saying what
+to operate on: omitted, it means the selected region, or else the whole
+current buffer; a buffer (or its name) means all of it; a predicate
+means the buffers it accepts; and a list of any of these means their
+union. So `M-x (replace-all! "xx" "yy")` rewrites the current buffer,
+`(replace-all! "xx" "yy" buffer-file)` every file-visiting buffer, and
+`(count-matches "xx" "notes.md")` counts without editing. Each targeted
+buffer gets one undo step, and point stays where it was. A *region* — a
+slice of one buffer between two `(row . col)` points — prints as the
+expression that rebuilds it, like buffers do:
+`(region (buffer "e") '(0 . 0) '(12 . 5))`; `regions-of` exposes the
+`where` normalization for building further commands the same way.
 
 Modules can be reloaded without restarting the editor. Saving a module
 buffer — any `.e` file in the running editor's `lib/` directory,
