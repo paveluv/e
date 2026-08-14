@@ -17,7 +17,7 @@
   (export init!
           region region? region-buffer region-start region-end
           regions-of region-text
-          replace-all! count-matches
+          replace-all! count-matches replace!!
           list-buffers!!)
   (import (chezscheme) (core))
 
@@ -150,6 +150,90 @@
                 (loop (+ row 1) (cons (substring s from (max from to)) acc)))))
         "\n")))
 
+  ;;; Query replace -------------------------------------------------------------
+
+  ;; The candidate being offered, drawn highlighted by the highlighter
+  ;; init! registers; #f outside replace!!.
+  (define query-match #f)
+
+  (define (find-from b needle row col)
+    ;; The first match of needle at or after (row . col): (row . start),
+    ;; or #f.  Needles are single-line.
+    (let loop ([row row] [col col])
+      (and (< row (buffer-line-count b))
+           (let* ([s (buffer-line b row)]
+                  [hit (string-search s needle col (string-length s))])
+             (if hit
+                 (cons row hit)
+                 (loop (+ row 1) 0))))))
+
+  (define (drain-escape!)
+    ;; Swallow the tail of an escape sequence, so an arrow key pressed
+    ;; at the query doesn't leak into the buffer as text.
+    (when (pending-input?)
+      (let ([a (read-key)])
+        (when (and a (char=? a #\[))
+          (let drain ([c (read-key)])
+            (when (and c (or (char<=? #\0 c #\9) (char=? c #\;)))
+              (drain (read-key))))))))
+
+  (define (replace!! . args)
+    ;; Query-replace in the current buffer, from point to the end: each
+    ;; occurrence of from is highlighted and offered -- y (or SPC)
+    ;; replaces, n (or DEL) skips, q / RET / C-g / ESC stops.  Prompts
+    ;; for whichever of from and to are not supplied.  The whole run is
+    ;; one undo step; point follows, ending after the last replacement
+    ;; (or at the start of the last skipped or stopped-at match).  The
+    ;; report -- how many replaced and skipped -- is returned.
+    (let* ([from (if (pair? args) (car args) (prompt! "Replace: "))]
+           [to (and from
+                    (if (and (pair? args) (pair? (cdr args)))
+                        (cadr args)
+                        (prompt! (format "Replace ~s with: " from))))])
+      (if (or (not from) (not to) (string=? from ""))
+          ""                          ; cancelled at a prompt
+          (let ([b (current-buffer)]
+                [m (string-length from)]
+                [question (format "Replace ~s with ~s? (y, n, q)" from to)]
+                [replaced 0]
+                [skipped 0])
+            (dynamic-wind
+              void
+              (lambda ()
+                (call-as-one-edit! (format "(replace!! ~s ~s)" from to)
+                  (lambda ()
+                    (let loop ([row (car (point))] [col (cdr (point))])
+                      (let ([hit (find-from b from row col)])
+                        (when hit
+                          (set! query-match
+                            (list (car hit) (cdr hit) (+ (cdr hit) m)))
+                          (goto-point! (cons (car hit) (+ (cdr hit) m)))
+                          (set-message! question)
+                          (redraw!)
+                          (let* ([key (read-key)]
+                                 [n (and key (char->integer key))])
+                            (cond
+                              [(memv n '(121 89 32))          ; y Y SPC
+                               (goto-point! hit)
+                               (do ([i 0 (+ i 1)]) ((= i m)) (delete-forward!))
+                               (insert-text! to)
+                               (set! replaced (+ replaced 1))
+                               (loop (car (point)) (cdr (point)))]
+                              [(memv n '(110 78 127))         ; n N DEL
+                               (set! skipped (+ skipped 1))
+                               (goto-point! hit)
+                               (loop (car hit) (+ (cdr hit) m))]
+                              [(not n) (goto-point! hit)]     ; end of input
+                              [(= n 27)                       ; ESC stops
+                               (drain-escape!) (goto-point! hit)]
+                              [(memv n '(7 13 10 113))        ; C-g RET q
+                               (goto-point! hit)]
+                              [else (loop (car hit) (cdr hit))]))))))))
+              (lambda () (set! query-match #f)))
+            (let ([report (format "Replaced ~a, skipped ~a" replaced skipped)])
+              (set-message! report)
+              report)))))
+
   ;;; The buffer list -----------------------------------------------------------
 
   (define (pad s width)
@@ -211,4 +295,7 @@
                        "Buffers:" rows)))))
 
   (define (init!)
-    (bind-key! "C-x C-b" list-buffers!!)))
+    (bind-key! "C-x C-b" list-buffers!!)
+    (bind-key! "M-%" replace!!)
+    (add-highlighter!
+      (lambda () (if query-match (list query-match) '())))))

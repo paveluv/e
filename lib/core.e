@@ -32,6 +32,7 @@
     bind-key! register-mode! find-mode mode-styles add-highlighter!
     load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost completion-highlight
+    read-key pending-input?
     set-message! echo! redraw! error-text
     call-with-interrupt interrupted?
     vector-fill-range! string-search
@@ -1560,6 +1561,14 @@
 
   (define (confirm? label)
     (let ([s (prompt! label)]) (and s (string-ci=? s "yes"))))
+
+  ;; Key-at-a-time input, for modules building interactive commands
+  ;; (single-key queries, search-like loops): the next key as a
+  ;; character (#f at end of input), and whether one is already waiting.
+  (define (read-key)
+    (let ([c (read-char stdin)]) (and (char? c) c)))
+
+  (define (pending-input?) (char-ready? stdin))
 
   (define (save!!)
     (if file-name

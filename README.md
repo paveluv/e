@@ -137,7 +137,11 @@ current buffer; a buffer (or its name) means all of it; a predicate
 means the buffers it accepts; and a list of any of these means their
 union. So `M-x (replace-all! "xx" "yy")` rewrites the current buffer,
 `(replace-all! "xx" "yy" buffer-file)` every file-visiting buffer, and
-`(count-matches "xx" "notes.md")` counts without editing. Each targeted
+`(count-matches "xx" "notes.md")` counts without editing. The
+interactive `replace!!` (`M-%`) queries occurrence by occurrence in the
+current buffer, highlighting each; it prompts for whichever of *from*
+and *to* it is not given — `(replace!! "xx")` asks only for the
+replacement — and reports how many it replaced and skipped. Each targeted
 buffer gets one undo step labeled with the command itself — undoing
 reports `Undo (replace-all! "xx" "yy")` — and point stays where it was. A *region* — a
 slice of one buffer between two `(row . col)` points — prints as the
@@ -275,6 +279,7 @@ splitting a temporary one), which disappears when the prompt finishes.
 | `C-w`           | Kill the region between mark and point        |
 | `C-y`           | Yank the last kill                            |
 | `C-_`           | Undo; `C-g` then `C-_` redoes                 |
+| `M-%`           | Query replace from point: `y`/`SPC` replaces, `n`/`DEL` skips, `q`/`RET`/`C-g` stops |
 | `C-l`           | Repaint the screen and re-read its size       |
 | `C-g`           | Cancel (prompt, search, mark)                 |
 
