@@ -33,14 +33,18 @@
            [part (string-tail s start)])
       (if (and (string=? part "") (not empty-ok?))
           '()
-          (map (lambda (name) (string-append head name))
-               (sort string<?
-                     (filter (lambda (name)
-                               (and (string-prefix? part name)
-                                    (keep? (string->symbol name))))
-                             (map symbol->string
-                                  (environment-symbols
-                                    (interaction-environment)))))))))
+          (let ([names (sort string<?
+                             (filter (lambda (name)
+                                       (and (string-prefix? part name)
+                                            (keep? (string->symbol name))))
+                                     (map symbol->string
+                                          (environment-symbols
+                                            (interaction-environment)))))])
+            ;; A unique completion is final: append a space so the next
+            ;; argument can start at once.
+            (if (and (pair? names) (null? (cdr names)))
+                (list (string-append head (car names) " "))
+                (map (lambda (name) (string-append head name)) names))))))
 
   (define (complete-symbol s)
     (complete-symbol-where s (lambda (sym) #t) #f))
@@ -177,7 +181,9 @@
                (and tokens
                     (let ([left (drop-params tokens (cdar stack))])
                       (and (pair? left)
-                           (string-append " " (string-join left " "))))))))))
+                           (string-append
+                             (if (string-suffix? " " s) "" " ")
+                             (string-join left " "))))))))))
 
   ;;; The *eval* transcript ------------------------------------------------------
 

@@ -271,7 +271,9 @@ newest restores whatever you had been typing.
 TAB completes the symbol being typed against everything bound in the
 editor's top level — Chez itself, the editor's own functions, and any
 loaded modules — with the same longest-common-prefix and `*Completions*`
-pop-up behavior as the file and buffer prompts. In the pop-up, symbols
+pop-up behavior as the file and buffer prompts. A unique completion
+appends a space, so the next argument can be typed at once — in any
+position, command or argument. In the pop-up, symbols
 the editor itself defines are highlighted, making its internals easy to
 spot; Shift-TAB completes against *only* those symbols (on an empty
 input it lists everything the editor defines). While you type, the
