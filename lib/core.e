@@ -27,6 +27,7 @@
     search-command! quit-command!
     ;; extending the editor
     bind-key! register-mode! find-mode mode-styles add-highlighter!
+    load-module! reload-module!
     prompt! confirm? prompt-ghost completion-highlight
     set-message! echo! redraw! error-text
     call-with-interrupt interrupted?
@@ -713,6 +714,42 @@
                     (window-pcol-set! w 0)))
                 windows)))
 
+  ;;; Module registries -------------------------------------------------------
+
+  ;; Everything a module registers with the core -- key bindings, modes,
+  ;; highlighters, whatever a future hook adds -- goes through a registry
+  ;; and is tagged with the module whose init! is running.  Reloading a
+  ;; module retracts its entries wholesale before running its init!
+  ;; afresh, so registration is replace-by-module by construction: a new
+  ;; hook gets it by using make-registry, with nothing to remember.
+  ;; Entries registered outside any module (M-x, say) have owner #f and
+  ;; survive reloads.  Lookups prefer newer entries.
+
+  (define registering-module (make-parameter #f))
+  (define registries '())
+
+  (define (make-registry)
+    (let ([r (box '())])            ; entries (owner . item), newest first
+      (set! registries (cons r registries))
+      r))
+
+  (define (registry-add! r item)
+    (set-box! r (cons (cons (registering-module) item) (unbox r))))
+
+  (define (registry-items r) (map cdr (unbox r)))
+
+  (define (registry-find r match?)
+    (let loop ([entries (unbox r)])
+      (cond [(null? entries) #f]
+            [(match? (cdar entries)) (cdar entries)]
+            [else (loop (cdr entries))])))
+
+  (define (retract-module! owner)
+    (for-each (lambda (r)
+                (set-box! r (remp (lambda (e) (eq? (car e) owner))
+                                  (unbox r))))
+              registries))
+
   ;;; Modes -------------------------------------------------------------------
 
   ;; A mode provides syntax highlighting for the buffers it matches.
@@ -727,32 +764,32 @@
   (define-record-type mode
     (fields name extensions interpreters styles))
 
-  (define modes '())
+  (define modes (make-registry))
 
   (define (register-mode! name extensions interpreters styles)
-    (set! modes (cons (make-mode name extensions interpreters styles) modes)))
+    (registry-add! modes (make-mode name extensions interpreters styles)))
 
   (define (detect-mode path first-line)
     ;; The mode for a file: by extension, then by the #! interpreter line.
     (or (and path
-             (find (lambda (m)
-                     (exists (lambda (ext) (string-suffix? ext path))
-                             (mode-extensions m)))
-                   modes))
+             (registry-find modes
+               (lambda (m)
+                 (exists (lambda (ext) (string-suffix? ext path))
+                         (mode-extensions m)))))
         (and (string-prefix? "#!" first-line)
-             (find (lambda (m)
-                     (exists (lambda (name)
-                               (string-search first-line name 0
-                                              (string-length first-line)))
-                             (mode-interpreters m)))
-                   modes))))
+             (registry-find modes
+               (lambda (m)
+                 (exists (lambda (name)
+                           (string-search first-line name 0
+                                          (string-length first-line)))
+                         (mode-interpreters m)))))))
 
   (define (assign-mode! b)
     (buffer-mode-set! b
       (detect-mode (buffer-file b) (vector-ref (buffer-lines b) 0))))
 
   (define (find-mode name)
-    (find (lambda (m) (string=? (mode-name m) name)) modes))
+    (registry-find modes (lambda (m) (string=? (mode-name m) name))))
 
   (define (set-buffer-mode! b name)
     ;; Give b the registered mode called name (#f for none), regardless of
@@ -838,14 +875,14 @@
   ;; drawn underlined on top of the syntax styles.  The paren module
   ;; matches brackets this way; a broken highlighter is ignored for that
   ;; redraw rather than taking the editor down.
-  (define highlighters '())
+  (define highlighters (make-registry))
 
   (define (add-highlighter! proc)
-    (set! highlighters (cons proc highlighters)))
+    (registry-add! highlighters proc))
 
   (define (highlight-ranges)
     (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
-               '() highlighters))
+               '() (registry-items highlighters)))
 
   (define (ranges-on-row ranges row)
     (fold-left (lambda (acc r)
@@ -1564,9 +1601,13 @@
   ;; Keys bound by modules, consulted before the built-in bindings (so a
   ;; module may also rebind a built-in key): plain control keys, keys
   ;; after the C-x prefix, and keys after ESC (meta).
-  (define user-keys (make-eqv-hashtable))
-  (define user-cx-keys (make-eqv-hashtable))
-  (define user-meta-keys (make-eqv-hashtable))
+  (define user-keys (make-registry))       ; entries: (key-code . command)
+  (define user-cx-keys (make-registry))
+  (define user-meta-keys (make-registry))
+
+  (define (user-binding r code)
+    (let ([hit (registry-find r (lambda (item) (= (car item) code)))])
+      (and hit (cdr hit))))
 
   (define (bind-key! spec command)
     ;; Bind a key to a zero-argument command.  spec is "C-t" for a control
@@ -1579,11 +1620,11 @@
             [else (error 'bind-key! "unrecognized key" s)]))
     (cond
       [(string-prefix? "C-x " spec)
-       (hashtable-set! user-cx-keys (code (string-tail spec 4)) command)]
+       (registry-add! user-cx-keys (cons (code (string-tail spec 4)) command))]
       [(and (= (string-length spec) 3) (string-prefix? "M-" spec))
-       (hashtable-set! user-meta-keys
-                       (char->integer (string-ref spec 2)) command)]
-      [else (hashtable-set! user-keys (code spec) command)]))
+       (registry-add! user-meta-keys
+                      (cons (char->integer (string-ref spec 2)) command))]
+      [else (registry-add! user-keys (cons (code spec) command))]))
 
   (define (escape-sequence!)
     (let ([a (read-char stdin)])
@@ -1599,7 +1640,7 @@
            [(#\5) (read-char stdin) (move-vertical! (- (page-size)))]
            [(#\6) (read-char stdin) (move-vertical! (page-size))]
            [else (void)])]
-        [(hashtable-ref user-meta-keys (char->integer a) #f)
+        [(user-binding user-meta-keys (char->integer a))
          => (lambda (command) (command))]
         ;; M-v: page up, M-< and M->: beginning/end of buffer.
         [(char=? a #\v) (move-vertical! (- (page-size)))]
@@ -1612,7 +1653,7 @@
     (set! message "")               ; take down the C-x- hint
     (cond
       [(eof-object? c) (set! quit? #t)]
-      [(hashtable-ref user-cx-keys (char->integer c) #f)
+      [(user-binding user-cx-keys (char->integer c))
        => (lambda (command) (command))]
       [else
        (case (char->integer c)
@@ -1642,7 +1683,7 @@
       [else
        (set! message "")            ; messages last until the next key
        (cond
-         [(hashtable-ref user-keys (char->integer c) #f)
+         [(user-binding user-keys (char->integer c))
           => (lambda (command) (command))]
          [else
           (case (char->integer c)
@@ -1675,6 +1716,77 @@
          [(31) (undo-command!)]                                   ; C-_
          [else (when (>= (char->integer c) 32)
                  (insert-text! (string c)))])])]))
+
+  ;;; Modules -----------------------------------------------------------------
+
+  ;; Extension modules are libraries in the lib directory, loaded through
+  ;; here -- by the loader at startup, or later by hand -- so the core
+  ;; knows which modules exist and owns their registrations (see the
+  ;; module registries above).
+
+  (define loaded-modules '())   ; module names, in load order
+
+  (define (module-source name)
+    (format "~a/~a.e" (caar (library-directories)) name))
+
+  (define (init-module! name)
+    ;; Import the module's library into the editor's top level (compiling
+    ;; it when stale) and run its init!, if any, owning its registrations.
+    (let ([lib (list (string->symbol name))])
+      (eval `(import ,lib) (interaction-environment))
+      (when (memq 'init! (library-exports lib))
+        (parameterize ([registering-module (string->symbol name)])
+          (eval `(let () (import (only ,lib init!)) (init!))
+                (interaction-environment))))))
+
+  (define (load-module! name)
+    (unless (member name loaded-modules)
+      (set! loaded-modules (append loaded-modules (list name))))
+    (init-module! name))
+
+  (define (module-requires? name target)
+    ;; Does library (name) build on (target), directly or through others?
+    (let ([t (string->symbol target)])
+      (let walk ([lib (list (string->symbol name))])
+        (exists (lambda (req) (or (eq? (car req) t) (walk req)))
+                (guard (ex [else '()]) (library-requirements lib))))))
+
+  (define (refresh-buffer-modes!)
+    ;; Re-resolve every buffer's mode by name, so buffers pick up a
+    ;; reloaded mode's new styles (or lose a mode that is gone).
+    (for-each (lambda (b)
+                (let ([m (buffer-mode b)])
+                  (when m (buffer-mode-set! b (find-mode (mode-name m))))))
+              buffers))
+
+  (define (reload-module! name*)
+    ;; Reload a module in place: redefine its library from the (edited)
+    ;; source, likewise every loaded module built on it, then retract all
+    ;; module registrations and run every init! afresh -- the effect is
+    ;; exactly a clean startup, with the editor's state (buffers, windows,
+    ;; this session's top level) untouched.  Closures already captured
+    ;; keep running the old code; a module's own state starts over.  The
+    ;; core itself cannot be reloaded: everything is compiled against it.
+    (let* ([name (if (symbol? name*) (symbol->string name*) name*)]
+           [source (module-source name)])
+      (when (string=? name "core")
+        (error 'reload-module! "the core cannot be reloaded in place"))
+      (unless (file-exists? source)
+        (error 'reload-module! "no module source" source))
+      (load source)
+      (unless (member name loaded-modules)
+        (set! loaded-modules (append loaded-modules (list name))))
+      (for-each (lambda (m)
+                  (when (and (not (string=? m name))
+                             (module-requires? m name))
+                    (load (module-source m))))
+                loaded-modules)
+      (for-each (lambda (m) (retract-module! (string->symbol m)))
+                loaded-modules)
+      (for-each init-module! loaded-modules)
+      (refresh-buffer-modes!)
+      (invalidate-screen-cache!)
+      (set! message (format "Reloaded ~a" name))))
 
   ;;; Main ------------------------------------------------------------------
 

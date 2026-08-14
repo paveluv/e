@@ -85,8 +85,9 @@ procedures (everything key-bound: `visit-file!`, `show-buffer!`,
 `buffer-list`, `point`, `buffer-name`, `buffer-text`, `buffer-line`, …),
 and the extension hooks (`bind-key!`, `register-mode!`,
 `add-highlighter!`, `prompt!`, `confirm?`, `set-message!`, `echo!`,
-`buffer-append!`, `call-with-interrupt`, plus a few string/vector
-utilities). `M-x (` followed by Shift-TAB lists the entire catalog.
+`buffer-append!`, `call-with-interrupt`, `reload-module!`, plus a few
+string/vector utilities). `M-x (` followed by Shift-TAB lists the
+entire catalog.
 
 An extension module is a library that imports `(core)` and exports an
 `init!` performing its registrations:
@@ -111,6 +112,24 @@ orders initialization and recompilation accordingly (the `only` matters:
 a library body may not shadow an imported name, and every module exports
 `init!`). A module that fails reports itself in the message line without
 preventing startup.
+
+Modules can be reloaded without restarting the editor. After editing a
+module's source (from inside e or out), run
+
+    M-x (reload-module! "paren")
+
+The core redefines the module's library from the source, along with
+every loaded module built on it (reloading `eval.e` also recompiles
+`scheme-sigs.e` against it), and re-runs the `init!`s. Everything a
+module registers with the core is tagged with the module that
+registered it, and a reload retracts the module's previous
+registrations before its `init!` runs again — so re-registration
+replaces rather than accumulates, for any present or future hook, with
+nothing for module authors to remember. Buffers, windows, and the M-x
+top level are untouched; a module's own internal state (the M-x history
+in `eval.e`, say) starts over, and the core itself cannot be reloaded
+— everything is compiled against it. `reload-module!` also loads a
+module that was not present at startup.
 
 Syntax highlighting is provided by *modes*, registered by modules:
 

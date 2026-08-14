@@ -67,20 +67,18 @@
 
 (eval '(import (core)) (interaction-environment))
 
-;; Import every extension module and run its init!; a broken module
-;; reports itself without keeping the editor (or the others) from
-;; starting.
+;; Load every extension module through the core, which imports it, runs
+;; its init!, and tracks its registrations so the module can later be
+;; reloaded in place (reload-module!).  A broken module reports itself
+;; without keeping the editor (or the others) from starting.
 (for-each
   (lambda (file)
     (guard (ex [else
                 (let ([msg (format "Error in ~a: ~a" file (error->string ex))])
                   (display (format "e: ~a\n" msg) (current-error-port))
                   (eval `(set-message! ,msg) (interaction-environment)))])
-      (let ([lib (list (string->symbol
-                         (substring file 0 (- (string-length file) 2))))])
-        (eval `(import ,lib) (interaction-environment))
-        (when (memq 'init! (library-exports lib))
-          (eval '(init!) (interaction-environment))))))
+      (eval `(load-module! ,(substring file 0 (- (string-length file) 2)))
+            (interaction-environment))))
   (sort string<?
         (filter (lambda (file)
                   (and (dot-e? file) (not (string=? file "core.e"))))
