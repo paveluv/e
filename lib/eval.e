@@ -1,7 +1,7 @@
 ;; eval.e -- M-x: evaluate Scheme expressions, for the e editor.
 ;;
-;; An e extension module: the library (eval), loaded at startup by the e
-;; loader, which calls init!.  M-x prompts for an expression (the opening
+;; An e extension module: the library (eval), loaded at startup by the
+;; core, which calls init!.  M-x prompts for an expression (the opening
 ;; parenthesis is supplied and cannot be deleted; missing closing
 ;; parentheses are forgiven), evaluates it in the editor's top level, and
 ;; logs the exchange to a read-only *eval* transcript buffer as numbered

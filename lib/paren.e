@@ -1,7 +1,7 @@
 ;; paren.e -- matching-bracket highlighting for the e editor.
 ;;
 ;; An e extension module: the library (paren), loaded at startup by the
-;; e loader, which calls init!.  Registers a highlighter (the core's
+;; core, which calls init!.  Registers a highlighter (the core's
 ;; generic context-highlighting hook) that marks the bracket at point
 ;; and its partner, as in Emacs's show-paren-mode: the opener point
 ;; sits on, or the closer just before it.  Brackets inside strings and

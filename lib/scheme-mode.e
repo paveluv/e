@@ -1,7 +1,7 @@
 ;; scheme-mode.e -- Scheme syntax highlighting for the e editor.
 ;;
 ;; An e extension module: the library (scheme-mode), loaded at startup by
-;; the e loader, which calls init!.  Registers a mode tied to Scheme file
+;; the core, which calls init!.  Registers a mode tied to Scheme file
 ;; extensions and to #! interpreter lines naming a Scheme, so only Scheme
 ;; buffers are highlighted.  The style symbols it produces are rendered
 ;; by the editor's style-code, and brackets styled 'delimiter take part

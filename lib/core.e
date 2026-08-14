@@ -1746,6 +1746,25 @@
       (set! loaded-modules (append loaded-modules (list name))))
     (init-module! name))
 
+  (define (load-modules!)
+    ;; Load every module in the lib directory (the loader script has
+    ;; already pointed library-directories there): each .e file but the
+    ;; core itself, in name order.  A broken module reports itself
+    ;; without keeping the editor (or the others) from starting.
+    (for-each
+      (lambda (file)
+        (guard (ex [else
+                    (let ([msg (format "Error in ~a: ~a"
+                                       file (error-text ex))])
+                      (display (format "e: ~a\n" msg) (current-error-port))
+                      (set! message msg))])
+          (load-module! (substring file 0 (- (string-length file) 2)))))
+      (sort string<?
+            (filter (lambda (file)
+                      (and (string-suffix? ".e" file)
+                           (not (string=? file "core.e"))))
+                    (directory-list (caar (library-directories)))))))
+
   (define (module-requires? name target)
     ;; Does library (name) build on (target), directly or through others?
     (let ([t (string->symbol target)])
@@ -1848,10 +1867,11 @@
     (display "Extension modules are loaded from the lib directory at startup.\n"))
 
   (define (main)
-    ;; The loader script has compiled and loaded all extension modules by
-    ;; the time this runs.
+    ;; The loader script is pure bootstrap; the extension modules are
+    ;; loaded here, before the file argument needs their modes.
     (let ([args (command-line-arguments)])
       (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
+      (load-modules!)
       (when (pair? args) (visit-file! (car args))))
     (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
       (display "e: an interactive terminal is required\n" (current-error-port))

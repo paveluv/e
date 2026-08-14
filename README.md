@@ -101,7 +101,9 @@ An extension module is a library that imports `(core)` and exports an
   (define (init!) (register-mode! "my" '(".my") '() my-styles)))
 ```
 
-The loader imports every `lib/*.e` library and calls its `init!`.
+At startup the core loads every `lib/*.e` library and calls its
+`init!`; the loader script is pure bootstrap — locating the
+installation and pointing Chez's library system at it.
 Features are built this way on top of the kernel: M-x itself lives in
 `eval.e`, which binds its key with `bind-key!`, keeps its transcript with
 `buffer-append!`, and interrupts runaway evaluations through the core's

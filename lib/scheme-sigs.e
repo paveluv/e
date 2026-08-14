@@ -1,7 +1,7 @@
 ;; scheme-sigs.e -- parameter names for common builtins, for M-x signatures.
 ;;
 ;; An e extension module: the library (scheme-sigs), loaded at startup by
-;; the e loader, which calls init!.  Compiled builtins carry no source,
+;; the core, which calls init!.  Compiled builtins carry no source,
 ;; so their parameter names cannot be recovered at run time; this table
 ;; transcribes them from The Scheme Programming Language and the Chez
 ;; Scheme User's Guide.  Each entry is the documented call shape itself:
