@@ -13,7 +13,7 @@
 ;; like scheme-sigs.e.
 
 (library (eval)
-  (export init! eval-expression-command! register-signatures!)
+  (export init! eval!! register-signatures!)
   (import (chezscheme) (core))
 
   ;;; Symbol completion -------------------------------------------------------
@@ -246,7 +246,7 @@
       (unless (display-buffer! b)
         (set-message! (string-append expr " => " result)))))
 
-  (define (eval-expression-command!)
+  (define (eval!!)
     ;; The prompt supplies the opening parenthesis, so it cannot be deleted;
     ;; the expression is evaluated in the editor's own top level.
     (let ([s (parameterize ([prompt-ghost signature-ghost]
@@ -282,4 +282,4 @@
 
   (define (init!)
     (register-mode! "eval" '() '() eval-styles)
-    (bind-key! "M-x" eval-expression-command!)))
+    (bind-key! "M-x" eval!!)))

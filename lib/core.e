@@ -17,17 +17,17 @@
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
-    visit-file! save-file! save-command! find-file-command!
+    visit-file! save-file! save!! find-file!!
     show-buffer! kill-buffer! display-buffer! buffer-append!
     set-buffer-mode! set-buffer-read-only! call-with-buffer
-    switch-buffer-command! kill-buffer-command!
+    switch-buffer!! kill-buffer!!
     split-window! delete-window! delete-other-windows! other-window!
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
-    kill-line! kill-region! yank! undo-command! undo! redo!
+    kill-line! kill-region! yank! undo!! undo! redo!
     call-as-one-edit!
     move-horizontal! move-vertical! goto-point!
-    search-command! quit-command!
+    search!! quit!!
     ;; extending the editor
     bind-key! register-mode! find-mode mode-styles add-highlighter!
     load-module! reload-module! auto-reload
@@ -339,7 +339,7 @@
       (set! last-history-command 'undo)
       report))
 
-  (define (undo-command!)
+  (define (undo!!)
     ;; C-g after an undo flips the direction, giving a simple redo.
     (if (eq? history-direction 'redo) (redo!) (undo!)))
 
@@ -712,7 +712,7 @@
     (sort string<? (filter (lambda (n) (string-prefix? s n))
                            (map buffer-name buffers))))
 
-  (define (switch-buffer-command!)
+  (define (switch-buffer!!)
     (let* ([current (window-buffer current-window)]
            [default (find (lambda (b) (not (eq? b current))) buffers)]
            [s (prompt! (if default
@@ -735,7 +735,7 @@
               windows)
     (set! message (format "Killed ~a" (buffer-name b))))
 
-  (define (kill-buffer-command!)
+  (define (kill-buffer!!)
     (let* ([current (window-buffer current-window)]
            [s (prompt! (format "Kill buffer (default ~a): "
                                (buffer-name current))
@@ -1561,18 +1561,18 @@
   (define (confirm? label)
     (let ([s (prompt! label)]) (and s (string-ci=? s "yes"))))
 
-  (define (save-command!)
+  (define (save!!)
     (if file-name
         (save-file! file-name)
         (let ([s (prompt! "Write file: " complete-file-name (default-directory))])
           (when (and s (> (string-length s) 0)) (save-file! s)))))
 
-  (define (find-file-command!)
+  (define (find-file!!)
     ;; Visiting a file never loses the old buffer, so no confirmation needed.
     (let ([s (prompt! "Find file: " complete-file-name (default-directory))])
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
-  (define (quit-command!)
+  (define (quit!!)
     (when (or (for-all buffer-clean? buffers)
               (confirm? "Modified buffers exist; quit anyway? (yes or no) "))
       (set! quit? #t)))
@@ -1640,7 +1640,7 @@
   (define (goto-match! match)
     (set! point-row (car match)) (set! point-col (cdr match)))
 
-  (define (search-command!)
+  (define (search!!)
     (let ([origin (cons point-row point-col)])
       (let loop ([needle ""] [match #f] [failed? #f])
         (set! search-highlight needle)
@@ -1829,11 +1829,11 @@
       [else
        (case (char->integer c)
           [(7) (set! message "Quit")]                           ; C-x C-g
-          [(19) (save-command!)]                                ; C-x C-s
-          [(3) (quit-command!)]                                 ; C-x C-c
-          [(6) (find-file-command!)]                            ; C-x C-f
-          [(98) (switch-buffer-command!)]                       ; C-x b
-          [(107) (kill-buffer-command!)]                        ; C-x k
+          [(19) (save!!)]                                ; C-x C-s
+          [(3) (quit!!)]                                 ; C-x C-c
+          [(6) (find-file!!)]                            ; C-x C-f
+          [(98) (switch-buffer!!)]                       ; C-x b
+          [(107) (kill-buffer!!)]                        ; C-x k
           [(111) (other-window!)]                               ; C-x o
           [(48) (delete-window!)]                               ; C-x 0
           [(49) (delete-other-windows!)]                        ; C-x 1
@@ -1879,13 +1879,13 @@
                  (newline!)
                  (set! point-row row) (set! point-col col))]
          [(16) (move-vertical! -1)]                               ; C-p
-         [(19) (search-command!)]                                 ; C-s
+         [(19) (search!!)]                                 ; C-s
          [(22) (move-vertical! (page-size))]                      ; C-v
          [(23) (kill-region!)]                                    ; C-w
          [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x
          [(25) (yank!)]                                           ; C-y
          [(27) (escape-sequence!)]                                ; ESC
-         [(31) (undo-command!)]                                   ; C-_
+         [(31) (undo!!)]                                   ; C-_
          [else (when (>= (char->integer c) 32)
                  (self-insert! c chain))])])]))
 

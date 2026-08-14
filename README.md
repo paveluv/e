@@ -92,16 +92,16 @@ edits into a single undo step), and the extension hooks (`bind-key!`,
 `reload-module!`, plus a few string/vector utilities). `M-x (` followed
 by Shift-TAB lists the entire catalog.
 
-Names follow a contract. A procedure ending in `-command!` is an
-*interactive command*: it takes no required arguments, may prompt,
-confirm, or pop up a buffer, and reports through the echo area — keys
-are bound to these. An unsuffixed verb (`visit-file!`, `replace-all!`,
-`undo!`) is a *primitive*: explicit arguments, no interaction, a useful
-return value. Interactive commands are thin wrappers over primitives —
-`find-file-command!` prompts and calls `visit-file!`, `undo-command!`
-adds the direction-flipping policy over `undo!`/`redo!` — and commands
-that need no interaction (`split-window!`, `other-window!`) are bound
-directly, unsuffixed.
+Names follow a contract. A procedure ending in `!!` is an *interactive
+command*: it takes no required arguments, may prompt, confirm, or pop
+up a buffer, and reports through the echo area — keys are bound to
+these. A single-`!` verb (`visit-file!`, `replace-all!`, `undo!`) is a
+*primitive*: explicit arguments, no interaction, a useful return value.
+One bang changes things; two bangs also ask you things. Interactive
+commands are thin wrappers over primitives — `find-file!!` prompts and
+calls `visit-file!`, `undo!!` adds the direction-flipping policy over
+`undo!`/`redo!` — and commands that need no interaction
+(`split-window!`, `other-window!`) are bound directly, single-banged.
 
 An extension module is a library that imports `(core)` and exports an
 `init!` performing its registrations:
