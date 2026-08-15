@@ -306,10 +306,12 @@ way.
   anywhere is one edit, and one undo step, with no pasted control
   characters running commands; in a prompt, the paste lands whole.
 - Mouse: a click focuses the window under the pointer and places point
-  at the clicked cell; the wheel scrolls the window under the pointer,
-  wherever the focus is. The terminal's own mouse selection needs
-  Shift held while tracking is on; `M-x (mouse! #f)` turns tracking
-  off (and native selection back on) for the session.
+  at the clicked cell; dragging selects, exactly as though the mark
+  were set at the press and point moved (so `C-w`, `C-y`, and friends
+  apply); the wheel scrolls the window under the pointer, wherever the
+  focus is. The terminal's own mouse selection needs Shift held while
+  tracking is on; `M-x (mouse! #f)` turns tracking off (and native
+  selection back on) for the session.
 - Kill ring entries accumulate across consecutive kill commands, so
   `C-k C-k C-k ... C-y` reassembles whole blocks.
 - Incremental screen updates: only rows whose content changed repaint,

@@ -1831,15 +1831,16 @@
   ;;; Mouse -------------------------------------------------------------------
 
   ;; SGR mouse tracking: clicks focus the window under the pointer and
-  ;; place point at the clicked cell; the wheel scrolls the window under
-  ;; the pointer, wherever the focus is.  The cost is the terminal's
-  ;; native mouse selection -- hold Shift for that -- so mouse! turns
-  ;; the whole thing on or off at run time.
+  ;; place point at the clicked cell, dragging selects as though the
+  ;; mark were set at the press (C-Space) and point moved, and the
+  ;; wheel scrolls the window under the pointer, wherever the focus is.
+  ;; The cost is the terminal's native mouse selection -- hold Shift
+  ;; for that -- so mouse! turns the whole thing on or off at run time.
   (define mouse-on? #f)
 
   (define (set-mouse! on)
     (set! mouse-on? on)
-    (ansi (if on "\x1b;[?1000;1006h" "\x1b;[?1000;1006l"))
+    (ansi (if on "\x1b;[?1002;1006h" "\x1b;[?1002;1006l"))
     (flush-output-port stdout))
 
   (define (mouse! on)
@@ -1858,14 +1859,30 @@
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
-  (define (mouse-click! x y)
-    ;; Focus the window at 1-based screen position (x, y); a click in
-    ;; its text area also places point at the clicked cell.
+  (define (mouse-press! x y)
+    ;; Focus the window at 1-based screen position (x, y); a press in
+    ;; its text area also places point at the clicked cell and arms the
+    ;; mark there -- dragging activates it, a motionless click does not.
     (window-under-row (- y 1)
       (lambda (entry)
         (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
           (set! current-window w)
           (when (< (- y 1) (+ start height))       ; text row, not status
+            (goto-point! (cons (+ (window-top w) (- y 1 start))
+                               (+ (window-left w) (- x 1))))
+            (set! mark-row point-row)
+            (set! mark-col point-col)
+            (set! mark-active? #f))))))
+
+  (define (mouse-drag! x y)
+    ;; Extend the selection armed by the press: the mark activates and
+    ;; point follows the pointer within the focused window's text area.
+    (window-under-row (- y 1)
+      (lambda (entry)
+        (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+          (when (and (eq? w current-window)
+                     (< (- y 1) (+ start height)))
+            (set! mark-active? #t)
             (goto-point! (cons (+ (window-top w) (- y 1 start))
                                (+ (window-left w) (- x 1)))))))))
 
@@ -1898,8 +1915,11 @@
                 (cond [(char=? c #\m) (void)]                    ; release
                       [(= (bitwise-and b 64) 64)                 ; wheel
                        (mouse-wheel! y (if (even? b) -3 3))]
-                      [(< (bitwise-and b 3) 3)                   ; a button
-                       (mouse-click! x y)])))))))
+                      [(= (bitwise-and b 32) 32)                 ; drag
+                       (when (< (bitwise-and b 3) 3)
+                         (mouse-drag! x y))]
+                      [(< (bitwise-and b 3) 3)                   ; a press
+                       (mouse-press! x y)])))))))
 
   ;;; Key handling ----------------------------------------------------------
 
@@ -2218,7 +2238,7 @@
             (loop))))
       (lambda () (unless (string=? cursor-style-shown "\x1b;[0 q")
                    (ansi "\x1b;[0 q"))
-                 (ansi "\x1b;[?1000;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+                 (ansi "\x1b;[?1002;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
                  (flush-output-port stdout)
                  (terminal-restore!))))
 
