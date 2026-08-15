@@ -62,8 +62,8 @@
 
   (define-record-type buffer
     (fields (mutable name) (mutable lines) (mutable file) (mutable trailing)
-            (mutable modified) (mutable history) (mutable hist-dir)
-            (mutable hist-last) (mutable mark-row) (mutable mark-col)
+            (mutable modified) (mutable history)
+            (mutable mark-row) (mutable mark-col)
             (mutable marked)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
@@ -76,7 +76,7 @@
             (mutable shown-top)))
 
   (define (new-buffer name)
-    (make-buffer name (vector "") #f #t #f (vector '() '()) 'undo #f
+    (make-buffer name (vector "") #f #t #f (vector '() '())
                  0 0 #f 0 0 0 #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
@@ -105,10 +105,6 @@
     buffer-modified buffer-modified-set!)
   (define-state history (window-buffer current-window)
     buffer-history buffer-history-set!)
-  (define-state history-direction (window-buffer current-window)
-    buffer-hist-dir buffer-hist-dir-set!)
-  (define-state last-history-command (window-buffer current-window)
-    buffer-hist-last buffer-hist-last-set!)
   (define-state mark-row (window-buffer current-window)
     buffer-mark-row buffer-mark-row-set!)
   (define-state mark-col (window-buffer current-window)
@@ -277,8 +273,7 @@
   (define (push-undo! label)
     (vector-set! history 0 (cons (cons label (editor-snapshot))
                                  (vector-ref history 0)))
-    (vector-set! history 1 '())
-    (set! history-direction 'undo))
+    (vector-set! history 1 '()))
 
   (define (record-edit! label)
     ;; Every editing command passes through here before touching the buffer,
@@ -330,15 +325,9 @@
                    cols))))
     message)
 
-  (define (undo!)
-    (let ([report (history-shift! 0 1 "Undo")])
-      (set! last-history-command 'undo)
-      report))
+  (define (undo!) (history-shift! 0 1 "Undo"))
 
-  (define (redo!)
-    (let ([report (history-shift! 1 0 "Redo")])
-      (set! last-history-command 'undo)
-      report))
+  (define (redo!) (history-shift! 1 0 "Redo"))
 
 
   ;;; Point, mark, and editing ----------------------------------------------
@@ -1823,6 +1812,8 @@
                    [else (void)]))))]
         [(user-binding user-meta-keys (char->integer a))
          => (lambda (command) (command))]
+        ;; C-M-_: redo, as in Emacs.
+        [(char=? a #\x1f) (redo!)]
         ;; M-v: page up, M-< and M->: beginning/end of buffer.
         [(char=? a #\v) (move-vertical! (- (page-size)))]
         [(char=? a #\<) (set! point-row 0) (set! point-col 0)]
@@ -1855,10 +1846,7 @@
     (set! insert-chain #f)
     (when (char? c)
       (let ([n (char->integer c)])
-        (unless (= n 11) (set! last-command #f))                ; C-k chains kills
-        (unless (memv n '(7 31))                                ; C-g/C-_ keep undo state
-          (set! history-direction 'undo)
-          (set! last-history-command #f))))
+        (unless (= n 11) (set! last-command #f))))              ; C-k chains kills
     (cond
       [key-prefix (handle-prefix! c)]
       [(eof-object? c) (set! quit? #t)]
@@ -1876,9 +1864,7 @@
          [(4) (delete-forward!)]                                  ; C-d
          [(5) (set! point-col (string-length (current-line)))]    ; C-e
          [(6) (move-right!)]                                      ; C-f
-         [(7) (set! mark-active? #f) (set! message "Quit")        ; C-g
-              (when (eq? last-history-command 'undo)
-                (set! history-direction 'redo))]
+         [(7) (set! mark-active? #f) (set! message "Quit")]      ; C-g
          [(8 127) (backspace!)]                                   ; C-h, DEL
          [(10 13) (newline!)]                                     ; RET
          [(11) (kill-line!)]                                      ; C-k
@@ -1895,8 +1881,7 @@
          [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x
          [(25) (yank!)]                                           ; C-y
          [(27) (escape-sequence!)]                                ; ESC
-         ;; C-_ undoes; C-g right after an undo flips it to redo.
-         [(31) (if (eq? history-direction 'redo) (redo!) (undo!))]
+         [(31) (undo!)]                                           ; C-_
          [else (when (>= (char->integer c) 32)
                  (self-insert! c chain))])])]))
 

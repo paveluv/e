@@ -103,8 +103,8 @@ something: `list-buffers!` pops up the buffer list but asks nothing,
 so one bang. Two bangs ask you things. The `!!` commands are thin
 wrappers over primitives — `find-file!!` prompts and calls
 `visit-file!` — and keys bind to whichever fits: `C-x C-f` to
-`find-file!!`, `C-x C-b` to `list-buffers!`, `C-_` to the undo/redo
-flip over `undo!` and `redo!`.
+`find-file!!`, `C-x C-b` to `list-buffers!`, `C-_` to `undo!` and
+`C-M-_` to `redo!`.
 
 An extension module is a library that imports `(core)` and exports an
 `init!` performing its registrations:
@@ -281,7 +281,8 @@ splitting a temporary one), which disappears when the prompt finishes.
 | `C-@` (`C-Space`) | Set the mark                                |
 | `C-w`           | Kill the region between mark and point        |
 | `C-y`           | Yank the last kill                            |
-| `C-_`           | Undo; `C-g` then `C-_` redoes                 |
+| `C-_`           | Undo                                          |
+| `C-M-_`         | Redo (as in Emacs)                            |
 | `M-%`           | Query replace from point: `y`/`SPC` replaces, `n`/`DEL` skips, `q`/`RET`/`C-g` stops |
 | `C-l`           | Repaint the screen and re-read its size       |
 | `C-g`           | Cancel (prompt, search, mark, running evaluation) |
@@ -375,8 +376,8 @@ began. All matches on screen are highlighted while searching.
 - Matching-bracket highlighting (the `paren.e` module): the opener under
   point, or the closer just before it, is shown together with its partner
   (brackets inside strings and comments are ignored).
-- Unlimited undo with redo (`C-g` after an undo flips direction,
-  Emacs-style), and every step says what it undoes: `Undo insert
+- Unlimited undo (`C-_`) with redo (`C-M-_`, as in Emacs), and every
+  step says what it undoes: `Undo insert
   "hello"`, `Undo kill "the line"`, `Undo (replace-all! "xx" "yy")` —
   long texts elided to fit. Typed characters coalesce into runs of up
   to twenty, an M-x expression is one step labeled with itself, and a
