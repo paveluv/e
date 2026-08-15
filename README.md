@@ -113,9 +113,10 @@ same buffer can be shown in several windows at once.
 
 `C-s` starts an incremental search: type to extend the needle, `C-s`
 again jumps to the next match (wrapping around), Backspace shortens the
-needle, `RET`/`ESC` accepts, `C-g` cancels and returns point to where
-the search began. All matches on screen are highlighted while
-searching.
+needle, `RET`/`ESC` accepts silently, `C-g` cancels and returns point
+to where the search began. Point rides just past the current match, so
+a mark set before searching leaves the found text inside the region.
+All matches on screen are highlighted while searching.
 
 ### Prompts
 

@@ -1669,6 +1669,13 @@
   (define (goto-match! match)
     (set! point-row (car match)) (set! point-col (cdr match)))
 
+  (define (goto-match-end! match needle)
+    ;; Point lands right after the match, so accepting the search
+    ;; leaves it there -- a region set before searching then covers
+    ;; the found text.
+    (set! point-row (car match))
+    (set! point-col (+ (cdr match) (string-length needle))))
+
   (define (search!!)
     ;; The search owns C-g while it runs; the match highlighting goes
     ;; away however it exits.
@@ -1690,12 +1697,11 @@
           (if (eof-object? c)
               (set! quit? #t)
               (case (char->integer c)
-                ;; RET or ESC accepts the current match.  An escape sequence
-                ;; (arrow key etc.) also accepts, then moves point as usual.
+                ;; RET or ESC accepts the current match, silently.  An escape
+                ;; sequence (arrow key etc.) also accepts, then moves point.
                 [(10 13 27)
                  (set! search-highlight "")
-                 (set! message (if (string=? needle "") ""
-                                   (format "Search: ~a" needle)))
+                 (set! message "")
                  (when (and (= (char->integer c) 27) (char-ready? stdin))
                    (escape-sequence!))]
                 ;; C-g cancels the search and restores point.
@@ -1710,7 +1716,8 @@
                      (let ([next (search-forward-from needle (car anchor)
                                                       (+ (cdr anchor) 1))])
                        (if next
-                           (begin (goto-match! next) (loop needle next #f))
+                           (begin (goto-match-end! next needle)
+                                  (loop needle next #f))
                            (loop needle match #t))))]
                 ;; Backspace shortens the needle and searches again from the
                 ;; original point.
@@ -1722,7 +1729,7 @@
                            (begin (goto-match! origin) (loop shorter #f #f))
                            (let ([next (search-forward-from shorter (car origin)
                                                             (cdr origin))])
-                             (when next (goto-match! next))
+                             (when next (goto-match-end! next shorter))
                              (loop shorter next (not next))))))]
                 [else
                  (if (< (char->integer c) 32)
@@ -1733,7 +1740,8 @@
                             [next (search-forward-from longer (car anchor)
                                                        (cdr anchor))])
                        (if next
-                           (begin (goto-match! next) (loop longer next #f))
+                           (begin (goto-match-end! next longer)
+                                  (loop longer next #f))
                            (loop longer match #t))))]))))))
 
   ;;; Pasting and typed runs --------------------------------------------------
