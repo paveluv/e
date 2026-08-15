@@ -41,7 +41,7 @@
             (immutable source doc-source)         ; tspl or csug
             (immutable chapter doc-chapter)       ; chapter title
             (immutable url doc-url)               ; page anchor
-            (immutable description doc-description)))
+            (immutable description doc-description)))  ; markdown
 
   (define (data-dir)
     (string-append (caar (library-directories)) "/../describe-data"))
@@ -91,18 +91,40 @@
   (define (closing-tag? tag)
     (and (> (string-length tag) 0) (char=? (string-ref tag 0) #\/)))
 
-  (define (html->text html)
+  (define (html->text html) (convert-html html #f))
+
+  ;; The markdown variant, for description bodies: <tt> becomes inline
+  ;; `code`, or a fenced block when it spans lines (the example groups);
+  ;; <i> and <b> outside code become *emphasis* and **bold**.
+  (define (html->markdown html) (convert-html html #t))
+
+  (define (convert-html html md?)
     ;; <br> and <p> become line and paragraph breaks, the eval-arrow
     ;; images become =>, sup becomes ^, other tags vanish; entities are
     ;; decoded; the HTML source's own newlines are soft spaces.
     (let ([out (open-output-string)]
-          [n (string-length html)])
+          [n (string-length html)]
+          [tt #f])                ; capture inside a <tt> span, when md?
+      (define (sink) (or tt out))
+      (define (end-tt!)
+        (let ([content (get-output-string tt)])
+          (set! tt #f)
+          (cond [(string=? content "") (void)]
+                [(find-str content "\n" 0)
+                 (put-string out "\n```\n")
+                 (put-string out content)
+                 (put-string out "\n```\n")]
+                [(find-str content "`" 0)   ; backticks cannot nest
+                 (put-string out content)]
+                [else (put-char out #\`)
+                      (put-string out content)
+                      (put-char out #\`)])))
       (let loop ([i 0])
         (when (< i n)
           (let ([c (string-ref html i)])
             (cond
               [(char=? c #\newline)
-               (put-char out #\space)
+               (put-char (sink) #\space)
                (loop (+ i 1))]
               [(char=? c #\<)
                (let* ([end (let scan ([j (+ i 1)] [quoted #f])
@@ -117,30 +139,39 @@
                                    [else (scan (+ j 1) quoted)]))]
                       [tag (substring html (+ i 1) end)]
                       [name (tag-name tag)])
-                 (cond [(string=? name "br") (put-char out #\newline)]
+                 (cond [(string=? name "br") (put-char (sink) #\newline)]
                        [(and (string=? name "p") (not (closing-tag? tag)))
-                        (put-string out "\n\n")]
-                       [(string=? name "img") (put-string out " => ")]
+                        (put-string (sink) "\n\n")]
+                       [(string=? name "img") (put-string (sink) " => ")]
                        [(and (string=? name "sup") (not (closing-tag? tag)))
-                        (put-char out #\^)])
+                        (put-char (sink) #\^)]
+                       [(and md? (string=? name "tt"))
+                        (if (closing-tag? tag)
+                            (when tt (end-tt!))
+                            (unless tt (set! tt (open-output-string))))]
+                       [(and md? (not tt) (string=? name "i"))
+                        (put-char out #\*)]
+                       [(and md? (not tt) (string=? name "b"))
+                        (put-string out "**")])
                  (loop (+ end 1)))]
               [(char=? c #\&)
                (let* ([end (or (find-str html ";" i) (- n 1))]
                       [entity (and (< (- end i) 8)
                                    (substring html i (+ end 1)))])
-                 (cond [(not entity) (put-char out c) (loop (+ i 1))]
+                 (cond [(not entity) (put-char (sink) c) (loop (+ i 1))]
                        [(string=? entity "&nbsp;")
-                        (put-char out hard-space) (loop (+ end 1))]
+                        (put-char (sink) hard-space) (loop (+ end 1))]
                        [(string=? entity "&lt;")
-                        (put-char out #\<) (loop (+ end 1))]
+                        (put-char (sink) #\<) (loop (+ end 1))]
                        [(string=? entity "&gt;")
-                        (put-char out #\>) (loop (+ end 1))]
+                        (put-char (sink) #\>) (loop (+ end 1))]
                        [(string=? entity "&amp;")
-                        (put-char out #\&) (loop (+ end 1))]
+                        (put-char (sink) #\&) (loop (+ end 1))]
                        [(string=? entity "&quot;")
-                        (put-char out #\") (loop (+ end 1))]
-                       [else (put-char out c) (loop (+ i 1))]))]
-              [else (put-char out c) (loop (+ i 1))]))))
+                        (put-char (sink) #\") (loop (+ end 1))]
+                       [else (put-char (sink) c) (loop (+ i 1))]))]
+              [else (put-char (sink) c) (loop (+ i 1))]))))
+      (when tt (end-tt!))
       (tidy (get-output-string out))))
 
   (define (tidy s)
@@ -286,7 +317,7 @@
                                   18)
                                (cdr l)))
                   '())
-              (html->text (substring body rest-start stop)))))
+              (html->markdown (substring body rest-start stop)))))
 
   (define (read-file path)
     (call-with-input-file path (lambda (p) (get-string-all p))))
@@ -481,7 +512,9 @@
   (define (entry-lines entry)
     (append
       (map (lambda (form)
-             (format "~a: ~a" (car form) (cdr form)))
+             (if (find-str (cdr form) "`" 0)
+                 (format "**~a**: ~a" (car form) (cdr form))
+                 (format "**~a**: `~a`" (car form) (cdr form))))
            (doc-forms entry))
       (if (doc-returns entry)
           (wrapped-lines (format "returns: ~a" (doc-returns entry)) 72)
@@ -522,6 +555,7 @@
                                        (cons "" (cons (make-string 72 #\-)
                                                       (cons "" acc)))))))))
               (set-buffer-read-only! b #t)
+              (set-buffer-mode! b "markdown")
               (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
               (if (display-buffer! b)
                   (set-message! "")
