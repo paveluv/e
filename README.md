@@ -194,9 +194,10 @@ The Scheme manual is available inside the editor:
 pops up a `*Describe*` buffer with the entry from the reference
 documentation: forms, what it returns, libraries, source, and the full
 prose. The corpus covers R6RS (from TSPL4) and the Chez extensions
-(from the Chez Scheme User's Guide); run `reference/download.sh` once
-to fetch and extract it (about 1400 entries; the downloaded data stays
-out of git). The database is structured and queryable from M-x:
+(from the Chez Scheme User's Guide); run `M-x (fetch-describe-data!)`
+once to download and extract it (about 1400 entries, kept in
+`reference/` next to `lib/`, out of git; the byte transfer uses curl,
+everything else is the `describe.e` module itself). The database is structured and queryable from M-x:
 `doc-lookup` returns the entries for a name, `doc-entries` all of them
 (optionally filtered by a predicate), and the `doc-*` accessors take
 entries apart, so the whole corpus can be sliced by source, chapter,

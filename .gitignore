@@ -1,5 +1,3 @@
 /eo/
 lib/#*#
-/reference/*
-!/reference/download.sh
-!/reference/extract.ss
+/reference/
