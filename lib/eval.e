@@ -8,7 +8,7 @@
 ;; entries.  TAB completes symbols (Shift-TAB: only editor-defined ones,
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
-;; down arrows browse the history, and C-c interrupts a runaway
+;; down arrows browse the history, and C-g interrupts a runaway
 ;; evaluation.  Exports register-signatures! for signature-table modules
 ;; like scheme-sigs.e.
 
@@ -279,7 +279,6 @@
                  (guard (ex [(interrupted? ex) "interrupted"]
                             [else (format "error: ~a" (error-text ex))])
                    (call-with-interrupt
-                     " [evaluating, press C-c to interrupt]"
                      (lambda ()
                        ;; The whole expression is one undo step in every
                        ;; buffer it edits, labeled with itself.

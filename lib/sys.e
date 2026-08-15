@@ -73,6 +73,7 @@
   (define lflag-64bit? (os-case #f #t #f))
   (define isig-bit (os-case #x1 #x80 #x80))
   (define cc-offset (os-case 17 32 16))
+  (define vintr (os-case 0 8 8))
   (define vquit (os-case 1 9 9))
   (define vsusp 10)
   (define vdisable (os-case 0 #xff #xff))
@@ -107,8 +108,8 @@
         (tcsetattr 0 tcsanow saved-termios))))
 
   (define (terminal-isig! on)
-    ;; Let the terminal turn C-c into SIGINT (with the quit and suspend
-    ;; characters still disabled), or stop doing so.
+    ;; Let the terminal turn C-g into SIGINT (the interrupt character is
+    ;; set to C-g; quit and suspend stay disabled), or stop doing so.
     (when (and tcgetattr tcsetattr)
       (guard (ex [else (void)])
         (let ([t (make-bytevector 128 0)])
@@ -118,6 +119,7 @@
                               (bitwise-and (get-lflag t)
                                            (bitwise-not isig-bit))))
             (when on
+              (bytevector-u8-set! t (+ cc-offset vintr) 7)   ; C-g
               (bytevector-u8-set! t (+ cc-offset vquit) vdisable)
               (bytevector-u8-set! t (+ cc-offset vsusp) vdisable))
             (tcsetattr 0 tcsanow t))))))

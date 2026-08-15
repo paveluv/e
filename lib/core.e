@@ -146,17 +146,6 @@
   (define stdin (current-input-port))
   (define stdout (current-output-port))
 
-  ;; The single point where the editor blocks on the terminal, so the
-  ;; busy watcher (see call-with-interrupt) can tell waiting for the
-  ;; user from computing.
-  (define waiting-for-input? #f)
-
-  (define (next-char)
-    (set! waiting-for-input? #t)
-    (let ([c (read-char stdin)])
-      (set! waiting-for-input? #f)
-      c))
-
   ;;; Terminal size ---------------------------------------------------------
 
   ;; The system-specific work (termios, ioctl, SIGWINCH) lives in (sys);
@@ -1438,9 +1427,9 @@
             (set-box! history (cons s h))))))
     (define (read-csi)
       ;; The rest of an ESC [ sequence: (parameter-string . final-char).
-      (let drain ([b (next-char)] [params '()])
+      (let drain ([b (read-char stdin)] [params '()])
         (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
-            (drain (next-char) (cons b params))
+            (drain (read-char stdin) (cons b params))
             (cons (list->string (reverse params)) b))))
     (define result
       (let loop ([s initial] [pos (string-length initial)] [note ""])
@@ -1487,7 +1476,7 @@
         (set! echo-indent (string-length label))
         (set! echo-cursor (+ (string-length label) pos))
         (redraw!)
-        (let ([c (next-char)])
+        (let ([c (read-char stdin)])
           (if (eof-object? c)
               #f
               (case (char->integer c)
@@ -1495,7 +1484,7 @@
                  ;; A bare ESC cancels.  Escape sequences edit: up and down
                  ;; browse the history, the rest move and delete as usual.
                  (if (char-ready? stdin)
-                     (let ([a (next-char)])
+                     (let ([a (read-char stdin)])
                        (if (and (char? a) (char=? a #\[))
                            (let* ([csi (read-csi)]
                                   [params (car csi)]
@@ -1581,7 +1570,7 @@
   ;; (single-key queries, search-like loops): the next key as a
   ;; character (#f at end of input), and whether one is already waiting.
   (define (read-key)
-    (let ([c (next-char)]) (and (char? c) c)))
+    (let ([c (read-char stdin)]) (and (char? c) c)))
 
   (define (pending-input?) (char-ready? stdin))
 
@@ -1606,47 +1595,24 @@
 
   ;; A runaway computation run on the user's behalf (an M-x expression, a
   ;; shell command, ...) would freeze the editor, so for its duration the
-  ;; terminal is allowed to turn C-c into SIGINT (isig; outside it the
-  ;; editor runs with signals off and C-c is an ordinary key), and SIGINT
-  ;; becomes a raised condition, answering #t to interrupted?, that unwinds
-  ;; the computation.  Limitation: only running Scheme can be interrupted
-  ;; this way -- a blocking foreign call runs to completion.
+  ;; terminal turns C-g into SIGINT (outside it the editor runs with
+  ;; signals off), and SIGINT becomes a raised condition, answering #t to
+  ;; interrupted?, that unwinds the computation -- C-g aborts an
+  ;; evaluation just as it cancels a prompt.  Limitation: only running
+  ;; Scheme can be interrupted this way -- a blocking foreign call runs
+  ;; to completion.
   (define-condition-type &interrupted &serious make-interrupted interrupted?)
 
-  (define interrupt-generation 0)
-
-  (define (call-with-interrupt busy thunk)
-    ;; Run thunk interruptibly.  Once it has run for a whole second, the
-    ;; string busy is appended in grey to whatever the echo area shows (a
-    ;; watcher thread, so it also fires during blocking foreign calls; the
-    ;; generation counter keeps a watcher from outliving its computation).
-    (let ([saved (keyboard-interrupt-handler)]
-          [gen (+ interrupt-generation 1)])
-      (set! interrupt-generation gen)
+  (define (call-with-interrupt thunk)
+    ;; Run thunk interruptibly by C-g.
+    (let ([saved (keyboard-interrupt-handler)])
       (dynamic-wind
         (lambda ()
           (keyboard-interrupt-handler
             (lambda () (raise (make-interrupted))))
-          (when (and busy (threaded?))
-            (fork-thread
-              (lambda ()
-                ;; Show the busy note after a second of *computing* --
-                ;; waiting at a prompt or query is not busy.  Interaction
-                ;; repaints the note away and re-arms the clock.
-                (let tick ([computing 0] [shown? #f])
-                  (sleep (make-time 'time-duration 100000000 0))
-                  (when (= interrupt-generation gen)
-                    (cond [waiting-for-input? (tick 0 #f)]
-                          [(and (not shown?) (>= computing 10))
-                           (set! message-ghost busy)
-                           (paint-echo-area!)
-                           (flush-output-port stdout)
-                           (tick computing #t)]
-                          [else (tick (+ computing 1) shown?)]))))))
           (terminal-isig! #t))
         thunk
         (lambda ()
-          (set! interrupt-generation (+ interrupt-generation 1))
           (terminal-isig! #f)
           (keyboard-interrupt-handler saved)))))
 
@@ -1679,7 +1645,7 @@
         (set! search-highlight needle)
         (set! message (format "~aI-search: ~a" (if failed? "Failing " "") needle))
         (redraw!)
-        (let ([c (next-char)]
+        (let ([c (read-char stdin)]
               [anchor (or match origin)])
           (if (eof-object? c)
               (set! quit? #t)
@@ -1750,10 +1716,10 @@
   (define (read-paste)
     ;; The text of a bracketed paste: everything up to ESC [ 2 0 1 ~.
     (let loop ([acc '()])
-      (let ([c (next-char)])
+      (let ([c (read-char stdin)])
         (cond [(eof-object? c) (list->string (reverse acc))]
               [(char=? c #\esc)
-               (do ([i 0 (+ i 1)]) ((= i 5)) (next-char))
+               (do ([i 0 (+ i 1)]) ((= i 5)) (read-char stdin))
                (list->string (reverse acc))]
               [else (loop (cons c acc))]))))
 
@@ -1823,13 +1789,13 @@
       [else (registry-add! user-keys (cons (code spec) command))]))
 
   (define (escape-sequence!)
-    (let ([a (next-char)])
+    (let ([a (read-char stdin)])
       (cond
         [(eof-object? a) (void)]
         [(char=? a #\[)
-         (let drain ([b (next-char)] [ps '()])
+         (let drain ([b (read-char stdin)] [ps '()])
            (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
-               (drain (next-char) (cons b ps))
+               (drain (read-char stdin) (cons b ps))
                (let ([params (list->string (reverse ps))])
                  (case b
                    [(#\A) (move-vertical! -1)] [(#\B) (move-vertical! 1)]
@@ -2097,7 +2063,7 @@
             ;; extension module) reports itself instead of killing the
             ;; editor.
             (guard (ex [else (set! message (error-text ex))])
-              (handle-key! (next-char)))
+              (handle-key! (read-char stdin)))
             (clamp-point!)
             (loop))))
       (lambda () (ansi "\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")

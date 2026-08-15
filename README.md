@@ -283,7 +283,7 @@ splitting a temporary one), which disappears when the prompt finishes.
 | `C-_`           | Undo; `C-g` then `C-_` redoes                 |
 | `M-%`           | Query replace from point: `y`/`SPC` replaces, `n`/`DEL` skips, `q`/`RET`/`C-g` stops |
 | `C-l`           | Repaint the screen and re-read its size       |
-| `C-g`           | Cancel (prompt, search, mark)                 |
+| `C-g`           | Cancel (prompt, search, mark, running evaluation) |
 
 ### Evaluating Scheme
 
@@ -319,15 +319,13 @@ or `(replace!! ...)` — is recorded in the transcript without popping
 it, so whatever the command displayed stays on screen, and a message it
 left in the echo area stays put.
 
-A runaway expression (an infinite loop, say) can be interrupted with
-`C-c`: during evaluation the terminal is allowed to deliver SIGINT,
-which unwinds the evaluation and logs `interrupted` as its result; the
-editor carries on. After a second of computation a grey
-`[evaluating, press C-c to interrupt]` note appears — computing time,
-not elapsed time: an expression waiting at one of its own prompts or
-queries is not busy, and shows no note. (A blocking foreign call — `system`, a blocked read —
-cannot be interrupted this way.) Outside evaluation `C-c` is an ordinary
-key, so `C-x C-c` still quits. The up and down arrows browse
+A runaway expression (an infinite loop, say) is interrupted with `C-g`
+— the same key that cancels everything else: during evaluation the
+terminal turns `C-g` into SIGINT, which unwinds the evaluation, even
+out of one of the expression's own prompts or queries, and logs
+`interrupted` as its result; the editor carries on. (A blocking
+foreign call — `system`, a blocked read — cannot be interrupted this
+way.) The up and down arrows browse
 previously evaluated expressions, newest first; going back down past the
 newest restores whatever you had been typing.
 
