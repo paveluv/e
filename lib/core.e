@@ -1899,12 +1899,8 @@
     ;; mark there -- dragging activates it, a motionless click does not.
     ;; A second press on the same cell within half a second is a double
     ;; click: it selects the word there.
-    ;; Erase and repaint on every press: the terminal's own
-    ;; Shift-selection highlight survives identical overwrites (VTE
-    ;; only drops a selection when content changes), so erasing the
-    ;; screen is what actually clears it; the repaint follows in the
-    ;; same output burst.
-    (erase-screen!)
+    ;; The terminal's own Shift-selection highlight is not touched here
+    ;; (erasing on every press flickers); C-l clears it.
     (let ([prev last-press]
           [now (real-time)])
       (set! last-press (list x y now))
