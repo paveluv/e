@@ -987,10 +987,10 @@
     (define marked (matching-columns s search-highlight))
     (define (style-at col)
       (if (and styles (< col n)) (vector-ref styles col) 'plain))
-    (define (highlighted? col)
-      (and (< col n)
-           (or (and marked (vector-ref marked col))
-               (and span (<= (car span) col) (< col (cdr span))))))
+    (define (search-hit? col)
+      (and (< col n) marked (vector-ref marked col)))
+    (define (selected? col)
+      (and (< col n) span (<= (car span) col) (< col (cdr span))))
     (define (segment from to)
       ;; The characters of columns [from, to); control characters (notably
       ;; tabs) and columns past the end of the line become spaces, so every
@@ -1009,17 +1009,20 @@
     (let loop ([col left])
       (when (< col limit)
         (let* ([style (style-at col)]
-               [hi (highlighted? col)]
+               [srch (search-hit? col)]
+               [sel (selected? col)]
                [mk (marked? col)]
                [end (let run ([j (+ col 1)])
                       (if (and (< j limit)
                                (eq? (style-at j) style)
-                               (eq? (highlighted? j) hi)
+                               (eq? (search-hit? j) srch)
+                               (eq? (selected? j) sel)
                                (eq? (marked? j) mk))
                           (run (+ j 1))
                           j))])
           (ansi "\x1b;[0m" (style-code style))
-          (when hi (ansi "\x1b;[7m"))
+          (when sel (ansi "\x1b;[44m"))     ; the selection: blue backdrop
+          (when srch (ansi "\x1b;[7m"))     ; search matches: reverse video
           (when mk (ansi "\x1b;[4m"))
           (ansi (segment col end))
           (loop end))))
