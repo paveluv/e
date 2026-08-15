@@ -24,7 +24,7 @@
     split-window! delete-window! delete-other-windows! other-window!
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
-    kill-line! kill-region! yank! undo!! undo! redo!
+    kill-line! kill-region! yank! undo! redo!
     call-as-one-edit!
     move-horizontal! move-vertical! goto-point!
     search!! quit!!
@@ -340,10 +340,6 @@
       (set! last-history-command 'undo)
       report))
 
-  (define (undo!!)
-    ;; C-g after an undo flips the direction, giving a simple redo.
-    (if (eq? history-direction 'redo) (redo!) (undo!))
-    (void))
 
   ;;; Point, mark, and editing ----------------------------------------------
 
@@ -1899,7 +1895,8 @@
          [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x
          [(25) (yank!)]                                           ; C-y
          [(27) (escape-sequence!)]                                ; ESC
-         [(31) (undo!!)]                                   ; C-_
+         ;; C-_ undoes; C-g right after an undo flips it to redo.
+         [(31) (if (eq? history-direction 'redo) (redo!) (undo!))]
          [else (when (>= (char->integer c) 32)
                  (self-insert! c chain))])])]))
 

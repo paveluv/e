@@ -92,18 +92,19 @@ edits into a single undo step), and the extension hooks (`bind-key!`,
 `reload-module!`, plus a few string/vector utilities). `M-x (` followed
 by Shift-TAB lists the entire catalog.
 
-Names follow a contract. A procedure ending in `!!` is an *interactive
-command*: it takes no required arguments, may prompt, confirm, or pop
-up a buffer, reports through the echo area, and returns nothing — on
-success it is void, so evaluating one from M-x leaves its display and
-message in place; failures raise, and the error pops up in `*eval*`.
-Keys are bound to these. A single-`!` verb (`visit-file!`, `replace-all!`, `undo!`) is a
-*primitive*: explicit arguments, no interaction, a useful return value.
-One bang changes things; two bangs also ask you things. Interactive
-commands are thin wrappers over primitives — `find-file!!` prompts and
-calls `visit-file!`, `undo!!` adds the direction-flipping policy over
-`undo!`/`redo!` — and commands that need no interaction
-(`split-window!`, `other-window!`) are bound directly, single-banged.
+Names follow a contract. A procedure ending in `!!` *waits for input
+from the user* — a prompt, a confirmation, a key query. It takes no
+required arguments, reports through the echo area, and returns nothing:
+on success it is void, so evaluating one from M-x leaves its display
+and message in place; failures raise, and the error pops up in
+`*eval*`. A single-`!` verb acts immediately with what it is given —
+explicit arguments, a useful return value — even when it displays
+something: `list-buffers!` pops up the buffer list but asks nothing,
+so one bang. Two bangs ask you things. The `!!` commands are thin
+wrappers over primitives — `find-file!!` prompts and calls
+`visit-file!` — and keys bind to whichever fits: `C-x C-f` to
+`find-file!!`, `C-x C-b` to `list-buffers!`, `C-_` to the undo/redo
+flip over `undo!` and `redo!`.
 
 An extension module is a library that imports `(core)` and exports an
 `init!` performing its registrations:
@@ -321,8 +322,8 @@ a glance; the cursor returns to the buffer when the evaluation
 finishes or is interrupted.
 
 An expression that returns a value pops the `*eval*` buffer up; one
-that returns nothing — an interactive command like `(list-buffers!!)`
-or `(replace!! ...)` — is recorded in the transcript without popping
+that returns nothing — `(list-buffers!)`, or an interactive command
+like `(replace!! ...)` — is recorded in the transcript without popping
 it, so whatever the command displayed stays on screen, and a message it
 left in the echo area stays put.
 

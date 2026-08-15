@@ -18,7 +18,7 @@
           region region? region-buffer region-start region-end
           regions-of region-text
           replace-all! count-matches replace!!
-          list-buffers!!)
+          list-buffers!)
   (import (chezscheme) (core))
 
   ;;; Regions -----------------------------------------------------------------
@@ -249,7 +249,7 @@
           (string-append "~" (string-tail path (string-length home)))
           path)))
 
-  (define (list-buffers!!)
+  (define (list-buffers!)
     ;; Pop up a *Buffer List*, Emacs-style: every buffer with its marks
     ;; (. current, % read-only, * modified), length in lines, mode, and
     ;; file, most recently used first.  Rebuilt on every invocation; on
@@ -294,7 +294,7 @@
                        "Buffers:" rows)))))
 
   (define (init!)
-    (bind-key! "C-x C-b" list-buffers!!)
+    (bind-key! "C-x C-b" list-buffers!)
     (bind-key! "M-%" replace!!)
     (add-highlighter!
       (lambda () (if query-match (list query-match) '())))))
