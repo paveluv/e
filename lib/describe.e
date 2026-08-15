@@ -30,7 +30,7 @@
   (export init! describe describe! describe-at-point! fetch-describe-data!
           doc-lookup doc-entries
           doc-names doc-forms doc-returns doc-libraries
-          doc-source doc-chapter doc-url doc-description)
+          doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core))
 
   (define-record-type (doc-entry make-doc-entry doc-entry?)
@@ -332,12 +332,24 @@
 
   ;;; Fetching ------------------------------------------------------------------
 
+  (define tspl-base "https://www.scheme.com/tspl4/")
+  (define csug-base "https://cisco.github.io/ChezScheme/csug10.0/")
+
   (define tspl-pages
     '("binding" "control" "exceptions" "io" "libraries" "objects"
       "records" "syntax"))
   (define csug-pages
     '("binding" "compat" "control" "debug" "expeditor" "foreign" "io"
       "libraries" "numeric" "objects" "smgmt" "syntax" "system" "threads"))
+
+  (define (doc-browser-url entry)
+    ;; The entry's documentation in the browser: its page anchor made
+    ;; absolute against its book's site.
+    (string-append (case (doc-source entry)
+                     [(tspl) tspl-base]
+                     [(csug) csug-base]
+                     [else ""])
+                   (doc-url entry)))
 
   (define (ensure-directory! path)
     (unless (file-directory? path) (mkdir path)))
@@ -385,10 +397,8 @@
       (ensure-directory! ref)
       (ensure-directory! (string-append ref "/tspl4"))
       (ensure-directory! (string-append ref "/csug"))
-      (fetch-book! ref "tspl4" "https://www.scheme.com/tspl4/"
-                   tspl-pages progress)
-      (fetch-book! ref "csug" "https://cisco.github.io/ChezScheme/csug10.0/"
-                   csug-pages progress)
+      (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
+      (fetch-book! ref "csug" csug-base csug-pages progress)
       (echo! "Extracting the reference corpus...")
       (write-data! (append (parse-book ref "tspl4" 'tspl tspl-pages)
                            (parse-book ref "csug" 'csug csug-pages)))
@@ -480,13 +490,13 @@
           (list (format "libraries: ~a"
                         (string-join (doc-libraries entry) ", ")))
           '())
-      (list (format "source: ~a, ~a  [~a]"
+      (list (format "source: ~a, ~a"
                     (case (doc-source entry)
                       [(tspl) "TSPL4"]
                       [(csug) "Chez Scheme User's Guide"]
                       [else (doc-source entry)])
-                    (doc-chapter entry)
-                    (doc-url entry))
+                    (doc-chapter entry))
+            (format "url: ~a" (doc-browser-url entry))
             "")
       (wrapped-lines (doc-description entry) 72)))
 
