@@ -187,6 +187,21 @@ itself, and point stays where it was. The interactive `replace!!`
 (`M-%`) queries occurrence by occurrence instead, highlighting each,
 and prompts for whichever arguments it is not given.
 
+The Scheme manual is available inside the editor:
+
+    M-x (describe eq-hashtable-ref)
+
+pops up a `*Describe*` buffer with the entry from the reference
+documentation: forms, what it returns, libraries, source, and the full
+prose. The corpus covers R6RS (from TSPL4) and the Chez extensions
+(from the Chez Scheme User's Guide); run `reference/download.sh` once
+to fetch and extract it (about 1400 entries; the downloaded data stays
+out of git). The database is structured and queryable from M-x:
+`doc-lookup` returns the entries for a name, `doc-entries` all of them
+(optionally filtered by a predicate), and the `doc-*` accessors take
+entries apart, so the whole corpus can be sliced by source, chapter,
+library, or anything else.
+
 ## Architecture and extension modules
 
 Everything in `lib/` is a library with the `.e` extension, named after
