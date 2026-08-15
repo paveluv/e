@@ -309,9 +309,12 @@ way.
   at the clicked cell; dragging selects, exactly as though the mark
   were set at the press and point moved (so `C-w`, `C-y`, and friends
   apply); a double click selects the word under the pointer; the wheel
-  scrolls the window under the pointer, wherever the focus is. The terminal's own mouse selection needs Shift held while
-  tracking is on; `M-x (mouse! #f)` turns tracking off (and native
-  selection back on) for the session.
+  scrolls the window under the pointer, wherever the focus is, and
+  horizontal wheel ticks move point sideways within its line. The
+  terminal's own mouse selection needs Shift held while tracking is
+  on; `M-x (mouse! #f)` turns tracking off (and native selection back
+  on) for the session; a lingering Shift-selection highlight clears
+  with `C-l`.
 - Kill ring entries accumulate across consecutive kill commands, so
   `C-k C-k C-k ... C-y` reassembles whole blocks.
 - Incremental screen updates: only rows whose content changed repaint,

@@ -1931,15 +1931,26 @@
             (goto-point! (cons (+ (window-top w) (- y 1 start))
                                (+ (window-left w) (- x 1)))))))))
 
-  (define (mouse-wheel! y delta)
-    ;; Scroll the window under the pointer by moving its point; redraw
-    ;; scrolls it to follow.  The focused window stays focused.
+  (define (mouse-wheel! y mover)
+    ;; Scroll the window under the pointer by moving its point (redraw
+    ;; scrolls it to follow); the focused window stays focused.
     (window-under-row (- y 1)
       (lambda (entry)
         (let ([old current-window])
           (set! current-window (car entry))
-          (move-vertical! delta)
+          (mover)
           (set! current-window old)))))
+
+  (define (wheel-mover dir)
+    ;; Wheel direction (the low bits of a 64-flagged button): up, down,
+    ;; left, right.  Vertical ticks move point by lines; horizontal ones
+    ;; move it sideways within its line.
+    (case dir
+      [(0) (lambda () (move-vertical! -3))]
+      [(1) (lambda () (move-vertical! 3))]
+      [(2) (lambda () (goto-point! (cons point-row (- point-col 3))))]
+      [(3) (lambda () (goto-point! (cons point-row (+ point-col 3))))]
+      [else (lambda () (void))]))
 
   (define (mouse-event!)
     ;; The rest of an ESC [ < sequence: b ; x ; y then M (press) or
@@ -1959,7 +1970,7 @@
               (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
                 (cond [(char=? c #\m) (void)]                    ; release
                       [(= (bitwise-and b 64) 64)                 ; wheel
-                       (mouse-wheel! y (if (even? b) -3 3))]
+                       (mouse-wheel! y (wheel-mover (bitwise-and b 3)))]
                       [(= (bitwise-and b 32) 32)                 ; drag
                        (when (< (bitwise-and b 3) 3)
                          (mouse-drag! x y))]
