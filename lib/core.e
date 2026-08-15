@@ -1266,15 +1266,23 @@
                     (paint-window! (car entry) (cadr entry) (caddr entry) ranges)
                     (window-shown-top-set! (car entry) (window-top (car entry))))
                   layout))
-      (paint-echo-area!)
-      (let ([cursor (echo-cursor-now)])
-        (if cursor
-            (let ([p (echo-position cursor)])
-              (goto (+ (- rows echo-height) (- (car p) echo-scroll) 1)
-                    (min (+ (cdr p) 1) cols)))
-            (let ([entry (assq current-window layout)])
-              (goto (+ (cadr entry) (- point-row top-row) 1)
-                    (+ (- point-col left-col) 1))))))
+      (paint-echo-area!))
+    (place-cursor!))
+
+  (define (place-cursor!)
+    ;; Park the cursor in the echo area (a prompt, or a running
+    ;; evaluation -- the latter drawn as a blinking underline), else
+    ;; put it at point in the current window.  Also called on its own
+    ;; when an interaction is about to wait for a key, so its cursor
+    ;; rules take effect without a repaint.
+    (let ([cursor (echo-cursor-now)])
+      (if cursor
+          (let ([p (echo-position cursor)])
+            (goto (+ (- rows echo-height) (- (car p) echo-scroll) 1)
+                  (min (+ (cdr p) 1) cols)))
+          (let ([entry (assq current-window (window-layout))])
+            (goto (+ (cadr entry) (- point-row top-row) 1)
+                  (+ (- point-col left-col) 1)))))
     (let ([style (if (cursor-in-echo) "\x1b;[3 q" "\x1b;[0 q")])
       (unless (string=? style cursor-style-shown)
         (set! cursor-style-shown style)
@@ -1580,6 +1588,9 @@
   (define (read-key)
     (call-uninterrupted
       (lambda ()
+        ;; The caller's redraw may have parked the cursor for a running
+        ;; evaluation; waiting for a key is interaction, so re-place it.
+        (place-cursor!)
         (let ([c (read-char stdin)]) (and (char? c) c)))))
 
   (define (pending-input?) (char-ready? stdin))
@@ -1626,10 +1637,12 @@
       (terminal-isig! on)))
 
   (define (call-uninterrupted thunk)
+    ;; Interaction also owns the cursor: while it runs, the cursor
+    ;; follows the interaction's rules, not a parked evaluation's.
     (let ([old isig-on?])
       (dynamic-wind
         (lambda () (set-isig! #f))
-        thunk
+        (lambda () (parameterize ([cursor-in-echo #f]) (thunk)))
         (lambda () (set-isig! old)))))
 
   (define (call-with-interrupt thunk)
