@@ -111,9 +111,18 @@
           (set! tt #f)
           (cond [(string=? content "") (void)]
                 [(find-str content "\n" 0)
-                 (put-string out "\n```\n")
-                 (put-string out content)
-                 (put-string out "\n```\n")]
+                 ;; a code block: markdown's four-space indentation (hard
+                 ;; spaces, so tidy keeps them), which md-mode styles as
+                 ;; Scheme line by line
+                 (put-string out "\n\n")
+                 (let loop ([i 0] [line-start #t])
+                   (when (< i (string-length content))
+                     (when line-start
+                       (put-string out (make-string 4 hard-space)))
+                     (let ([c (string-ref content i)])
+                       (put-char out c)
+                       (loop (+ i 1) (char=? c #\newline)))))
+                 (put-string out "\n\n")]
                 [(find-str content "`" 0)   ; backticks cannot nest
                  (put-string out content)]
                 [else (put-char out #\`)

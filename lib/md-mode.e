@@ -69,6 +69,14 @@
     (let ([i0 (skip-spaces 0)])
       (cond
         [(>= i0 n) styles]
+        [(>= i0 4)
+         ;; An indented code block line -- markdown's other code syntax,
+         ;; self-identifying per line.  Code in Scheme documents is
+         ;; Scheme: delegate to the scheme mode when one is registered.
+         (let ([scheme (find-mode "scheme")])
+           (if scheme
+               (or ((mode-styles scheme) s) styles)
+               (begin (mark! 0 n 'string) styles)))]
         [(char=? (string-ref s i0) #\#) (mark! 0 n 'keyword) styles]   ; heading
         [(char=? (string-ref s i0) #\>) (mark! 0 n 'comment) styles]   ; quote
         [(prefix-at? "```" i0) (mark! 0 n 'delimiter) styles]          ; fence

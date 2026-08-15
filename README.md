@@ -288,7 +288,8 @@ A buffer gets the first mode whose extension matches its file name, or
 whose interpreter name appears in the file's `#!` line. The styles
 function maps a line to a vector of per-column style symbols; brackets
 styled `delimiter` take part in bracket matching. Two modes ship in
-`lib/`: `scheme-mode.e` and `md-mode.e` (Markdown). Context
+`lib/`: `scheme-mode.e` and `md-mode.e` (Markdown; indented code
+blocks are styled as Scheme, modes composing per line). Context
 highlighting, markup that depends on where point is, is provided by
 highlighters: `add-highlighter!` registers a function consulted at
 every redraw that returns `(row start end)` ranges of the current
