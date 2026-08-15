@@ -22,6 +22,7 @@
     set-buffer-mode! set-buffer-read-only! call-with-buffer
     switch-buffer!! kill-buffer!!
     split-window! delete-window! delete-other-windows! other-window!
+    resize-window!
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! yank! undo! redo!
@@ -73,14 +74,17 @@
     (fields (mutable buffer) (mutable top) (mutable left)
             (mutable prow) (mutable pcol)
             ;; the top row last drawn, for native scrolling
-            (mutable shown-top)))
+            (mutable shown-top)
+            ;; text height in screen lines; the layout keeps the sizes
+            ;; tiling the text area, rescaling them when it changes
+            (mutable size)))
 
   (define (new-buffer name)
     (make-buffer name (vector "") #f #t #f (vector '() '())
                  0 0 #f 0 0 0 #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-  (define windows (list (make-window (car buffers) 0 0 0 0 #f))) ; top to bottom
+  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0))) ; top to bottom
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -743,14 +747,47 @@
   (define (other-window!)
     (set! current-window (next-window current-window)))
 
+  (define (halved-size!)
+    ;; Take the lower half of the current window's band for a new
+    ;; window (one line goes to its status); #f when too small.
+    (let ([h (window-size current-window)])
+      (and (>= (- h 1) 4)
+           (let ([new (quotient (- h 1) 2)])
+             (window-size-set! current-window (- h 1 new))
+             new))))
+
   (define (split-window!)
-    ;; Stack a new window under the current one, showing the same buffer.
-    (let ([n (+ (length windows) 1)])
-      (if (< (- rows echo-height n) (* 2 n))
-          (set! message "Not enough room to split")
-          (let ([w (make-window (window-buffer current-window)
-                                top-row left-col point-row point-col #f)])
-            (set! windows (insert-after windows current-window w))))))
+    ;; Stack a new window under the current one, showing the same
+    ;; buffer, in the lower half of its band.
+    (cond
+      [(halved-size!) =>
+       (lambda (new)
+         (set! windows
+           (insert-after windows current-window
+                         (make-window (window-buffer current-window)
+                                      top-row left-col
+                                      point-row point-col #f new))))]
+      [else (set! message "Not enough room to split")]))
+
+  (define (resize-window! delta)
+    ;; Grow the current window by delta text lines (negative shrinks),
+    ;; trading lines with the window below -- or above, for the lowest.
+    (if (null? (cdr windows))
+        (set! message "Only one window")
+        (let ([tail (memq current-window windows)])
+          (transfer-lines! current-window
+                           (if (pair? (cdr tail))
+                               (cadr tail)
+                               (list-ref windows (- (length windows) 2)))
+                           delta))))
+
+  (define (transfer-lines! w partner delta)
+    ;; Move up to delta text lines from partner to w, both keeping at
+    ;; least two.
+    (let* ([delta (min delta (- (window-size partner) 2))]
+           [delta (max delta (- 2 (window-size w)))])
+      (window-size-set! w (+ (window-size w) delta))
+      (window-size-set! partner (- (window-size partner) delta))))
 
   (define (delete-window!)
     (if (null? (cdr windows))
@@ -773,10 +810,11 @@
        (let ([w (next-window current-window)])
          (set-window-buffer! w b)
          w)]
-      [(>= (- rows 3) 4)
-       (let ([w (make-window b 0 0 0 0 #f)])
-         (set! windows (insert-after windows current-window w))
-         w)]
+      [(halved-size!) =>
+       (lambda (new)
+         (let ([w (make-window b 0 0 0 0 #f new)])
+           (set! windows (insert-after windows current-window w))
+           w))]
       [else #f]))
 
   (define (buffer-append! b . new-lines)
@@ -1031,16 +1069,34 @@
   (define (window-layout)
     ;; Stack the windows top to bottom, each a band of text rows followed by
     ;; its own status line; the last echo-height screen rows are the echo
-    ;; area.  -> list of (window start text-height), start 0-based.
+    ;; area.  Each window's stored size is honored; when the sizes no
+    ;; longer tile the text area (a terminal resize, prompt growth, a
+    ;; window added or removed) they are rescaled proportionally --
+    ;; evenly when there is nothing valid to scale.
+    ;; -> list of (window start text-height), start 0-based.
     (let* ([n (length windows)]
            [text (- rows echo-height n)]
-           [base (quotient text n)]
-           [extra (remainder text n)])
-      (let loop ([ws windows] [start 0] [i 0] [acc '()])
+           [sum (fold-left + 0 (map window-size windows))])
+      (unless (= sum text)
+        (if (or (<= sum 0)
+                (exists (lambda (w) (< (window-size w) 2)) windows))
+            (let ([base (quotient text n)] [extra (remainder text n)])
+              (let loop ([ws windows] [i 0])
+                (unless (null? ws)
+                  (window-size-set! (car ws) (+ base (if (< i extra) 1 0)))
+                  (loop (cdr ws) (+ i 1)))))
+            (let loop ([ws windows] [left text])
+              (if (null? (cdr ws))
+                  (window-size-set! (car ws) (max 2 left))
+                  (let ([h (max 2 (quotient (* (window-size (car ws)) text)
+                                            sum))])
+                    (window-size-set! (car ws) h)
+                    (loop (cdr ws) (- left h)))))))
+      (let loop ([ws windows] [start 0] [acc '()])
         (if (null? ws)
             (reverse acc)
-            (let ([h (+ base (if (< i extra) 1 0))])
-              (loop (cdr ws) (+ start h 1) (+ i 1)
+            (let ([h (window-size (car ws))])
+              (loop (cdr ws) (+ start h 1)
                     (cons (list (car ws) start h) acc)))))))
 
   (define (page-size)
@@ -1380,15 +1436,17 @@
            (set-window-buffer! w completions-buffer)
            (set! completions-restore (lambda () (set-window-buffer! w prev))))
          #t]
-        [(>= (- rows 3) 4)                         ; room for a second window?
-         (set! completions-buffer (new-buffer "*Completions*"))
-         (buffer-read-only-set! completions-buffer #t)
-         (buffer-mode-set! completions-buffer (completions-mode))
-         (buffer-lines-set! completions-buffer content)
-         (let ([w (make-window completions-buffer 0 0 0 0 #f)])
-           (set! windows (insert-after windows current-window w))
-           (set! completions-restore (lambda () (set! windows (remq w windows)))))
-         #t]
+        [(halved-size!) =>                         ; room for a second window?
+         (lambda (new)
+           (set! completions-buffer (new-buffer "*Completions*"))
+           (buffer-read-only-set! completions-buffer #t)
+           (buffer-mode-set! completions-buffer (completions-mode))
+           (buffer-lines-set! completions-buffer content)
+           (let ([w (make-window completions-buffer 0 0 0 0 #f new)])
+             (set! windows (insert-after windows current-window w))
+             (set! completions-restore
+               (lambda () (set! windows (remq w windows)))))
+           #t)]
         [else #f])))
 
   (define (dismiss-completions!)
@@ -1893,14 +1951,19 @@
                           (if (on? i) (fwd (+ i 1)) i)))
         (set! mark-active? #t))))
 
+  ;; The window whose status bar is being dragged to resize it, or #f.
+  (define drag-status #f)
+
   (define (mouse-press! x y)
-    ;; Focus the window at 1-based screen position (x, y); a press in
+    ;; Focus the window at 1-based screen position (x, y).  A press in
     ;; its text area also places point at the clicked cell and arms the
-    ;; mark there -- dragging activates it, a motionless click does not.
-    ;; A second press on the same cell within half a second is a double
-    ;; click: it selects the word there.
+    ;; mark there -- dragging activates it, a motionless click does not;
+    ;; a second press on the same cell within half a second is a double
+    ;; click, selecting the word there.  A press on a status bar (other
+    ;; than the lowest) arms a resize drag instead.
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
+    (set! drag-status #f)
     (let ([prev last-press]
           [now (real-time)])
       (set! last-press (list x y now))
@@ -1908,28 +1971,41 @@
         (lambda (entry)
           (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
             (set! current-window w)
-            (when (< (- y 1) (+ start height))     ; text row, not status
-              (goto-point! (cons (+ (window-top w) (- y 1 start))
-                                 (+ (window-left w) (- x 1))))
-              (set! mark-row point-row)
-              (set! mark-col point-col)
-              (set! mark-active? #f)
-              (when (and prev
-                         (= (car prev) x) (= (cadr prev) y)
-                         (< (- now (caddr prev)) 450))
-                (select-word!))))))))
+            (cond
+              [(= (- y 1) (+ start height))        ; the status bar
+               (when (pair? (cdr (memq w windows)))
+                 (set! drag-status w))]
+              [else                                ; a text row
+               (goto-point! (cons (+ (window-top w) (- y 1 start))
+                                  (+ (window-left w) (- x 1))))
+               (set! mark-row point-row)
+               (set! mark-col point-col)
+               (set! mark-active? #f)
+               (when (and prev
+                          (= (car prev) x) (= (cadr prev) y)
+                          (< (- now (caddr prev)) 450))
+                 (select-word!))]))))))
 
   (define (mouse-drag! x y)
-    ;; Extend the selection armed by the press: the mark activates and
-    ;; point follows the pointer within the focused window's text area.
-    (window-under-row (- y 1)
-      (lambda (entry)
-        (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-          (when (and (eq? w current-window)
-                     (< (- y 1) (+ start height)))
-            (set! mark-active? #t)
-            (goto-point! (cons (+ (window-top w) (- y 1 start))
-                               (+ (window-left w) (- x 1)))))))))
+    ;; A status-bar drag resizes; otherwise extend the selection armed
+    ;; by the press -- the mark activates and point follows the pointer
+    ;; within the focused window's text area.
+    (if drag-status
+        (let ([entry (assq drag-status (window-layout))])
+          (when entry
+            (let ([delta (- (- y 1) (cadr entry) (caddr entry))])
+              (unless (= delta 0)
+                (transfer-lines! drag-status
+                                 (cadr (memq drag-status windows))
+                                 delta)))))
+        (window-under-row (- y 1)
+          (lambda (entry)
+            (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+              (when (and (eq? w current-window)
+                         (< (- y 1) (+ start height)))
+                (set! mark-active? #t)
+                (goto-point! (cons (+ (window-top w) (- y 1 start))
+                                   (+ (window-left w) (- x 1))))))))))
 
   (define (mouse-wheel! y mover)
     ;; Scroll the window under the pointer by moving its point (redraw
@@ -1968,7 +2044,7 @@
                                            acc)]))])
             (when (and (char? c) (= (length nums) 3))
               (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
-                (cond [(char=? c #\m) (void)]                    ; release
+                (cond [(char=? c #\m) (set! drag-status #f)]     ; release
                       [(= (bitwise-and b 64) 64)                 ; wheel
                        (mouse-wheel! y (wheel-mover (bitwise-and b 3)))]
                       [(= (bitwise-and b 32) 32)                 ; drag

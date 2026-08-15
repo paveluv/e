@@ -80,7 +80,12 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x o`   | Move to the next window                                 |
 
 Each window has its own status line, point, and scroll position; the
-same buffer can be shown in several windows at once.
+same buffer can be shown in several windows at once. Windows resize by
+dragging a status bar with the mouse, or with
+`M-x (resize-window! n)`, which grows the current window by n text
+lines (negative shrinks), trading lines with its neighbor; splits halve
+the current window, and sizes rescale proportionally when the screen
+or the prompt area changes.
 
 ### Movement
 
@@ -308,7 +313,8 @@ way.
 - Mouse: a click focuses the window under the pointer and places point
   at the clicked cell; dragging selects, exactly as though the mark
   were set at the press and point moved (so `C-w`, `C-y`, and friends
-  apply); a double click selects the word under the pointer; the wheel
+  apply); a double click selects the word under the pointer; dragging
+  a status bar resizes the windows it separates; the wheel
   scrolls the window under the pointer, wherever the focus is, and
   horizontal wheel ticks move point sideways within its line. The
   terminal's own mouse selection needs Shift held while tracking is
