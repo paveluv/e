@@ -1892,6 +1892,10 @@
     ;; mark there -- dragging activates it, a motionless click does not.
     ;; A second press on the same cell within half a second is a double
     ;; click: it selects the word there.
+    ;; A full repaint on every press: the terminal's own Shift-selection
+    ;; highlight is cleared only when its cells are repainted, and the
+    ;; incremental renderer would otherwise leave it standing forever.
+    (invalidate-screen-cache!)
     (let ([prev last-press]
           [now (real-time)])
       (set! last-press (list x y now))
