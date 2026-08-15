@@ -308,8 +308,8 @@ way.
 - Mouse: a click focuses the window under the pointer and places point
   at the clicked cell; dragging selects, exactly as though the mark
   were set at the press and point moved (so `C-w`, `C-y`, and friends
-  apply); the wheel scrolls the window under the pointer, wherever the
-  focus is. The terminal's own mouse selection needs Shift held while
+  apply); a double click selects the word under the pointer; the wheel
+  scrolls the window under the pointer, wherever the focus is. The terminal's own mouse selection needs Shift held while
   tracking is on; `M-x (mouse! #f)` turns tracking off (and native
   selection back on) for the session.
 - Kill ring entries accumulate across consecutive kill commands, so

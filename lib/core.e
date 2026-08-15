@@ -1862,20 +1862,53 @@
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
+  (define last-press #f)   ; (x y ms) of the previous button press
+
+  (define (word-char? c)
+    (not (or (char-whitespace? c)
+             (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\, #\.)))))
+
+  (define (select-word!)
+    ;; Select the word point is on (or just after): mark at its start,
+    ;; point at its end.
+    (let* ([s (current-line)]
+           [n (string-length s)]
+           [on? (lambda (i)
+                  (and (>= i 0) (< i n) (word-char? (string-ref s i))))]
+           [col (cond [(on? point-col) point-col]
+                      [(on? (- point-col 1)) (- point-col 1)]
+                      [else #f])])
+      (when col
+        (set! mark-row point-row)
+        (set! mark-col (let back ([i col])
+                         (if (on? (- i 1)) (back (- i 1)) i)))
+        (set! point-col (let fwd ([i col])
+                          (if (on? i) (fwd (+ i 1)) i)))
+        (set! mark-active? #t))))
+
   (define (mouse-press! x y)
     ;; Focus the window at 1-based screen position (x, y); a press in
     ;; its text area also places point at the clicked cell and arms the
     ;; mark there -- dragging activates it, a motionless click does not.
-    (window-under-row (- y 1)
-      (lambda (entry)
-        (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-          (set! current-window w)
-          (when (< (- y 1) (+ start height))       ; text row, not status
-            (goto-point! (cons (+ (window-top w) (- y 1 start))
-                               (+ (window-left w) (- x 1))))
-            (set! mark-row point-row)
-            (set! mark-col point-col)
-            (set! mark-active? #f))))))
+    ;; A second press on the same cell within half a second is a double
+    ;; click: it selects the word there.
+    (let ([prev last-press]
+          [now (real-time)])
+      (set! last-press (list x y now))
+      (window-under-row (- y 1)
+        (lambda (entry)
+          (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+            (set! current-window w)
+            (when (< (- y 1) (+ start height))     ; text row, not status
+              (goto-point! (cons (+ (window-top w) (- y 1 start))
+                                 (+ (window-left w) (- x 1))))
+              (set! mark-row point-row)
+              (set! mark-col point-col)
+              (set! mark-active? #f)
+              (when (and prev
+                         (= (car prev) x) (= (cadr prev) y)
+                         (< (- now (caddr prev)) 450))
+                (select-word!))))))))
 
   (define (mouse-drag! x y)
     ;; Extend the selection armed by the press: the mark activates and
