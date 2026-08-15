@@ -1431,7 +1431,7 @@
         (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
             (drain (read-char stdin) (cons b params))
             (cons (list->string (reverse params)) b))))
-    (define result
+    (define (run-prompt)
       (let loop ([s initial] [pos (string-length initial)] [note ""])
         (define len (string-length s))
         (define (edited new-s new-pos) ; an edit restarts history browsing
@@ -1556,12 +1556,20 @@
                  (if (>= (char->integer c) 32)
                      (edited (string-insert s pos (string c)) (+ pos 1))
                      (loop s pos ""))])))))
-    (set! echo-cursor #f)
-    (set! echo-indent #f)
-    (set! echo-scroll 0)
-    (set! message-ghost "")
-    (dismiss-completions!)
-    result)
+    ;; The prompt owns C-g while it runs, and its echo-area state is
+    ;; restored however it exits -- an error unwinding through it
+    ;; included.
+    (call-uninterrupted
+      (lambda ()
+        (dynamic-wind
+          void
+          run-prompt
+          (lambda ()
+            (set! echo-cursor #f)
+            (set! echo-indent #f)
+            (set! echo-scroll 0)
+            (set! message-ghost "")
+            (dismiss-completions!))))))
 
   (define (confirm? label)
     (let ([s (prompt! label)]) (and s (string-ci=? s "yes"))))
@@ -1570,7 +1578,9 @@
   ;; (single-key queries, search-like loops): the next key as a
   ;; character (#f at end of input), and whether one is already waiting.
   (define (read-key)
-    (let ([c (read-char stdin)]) (and (char? c) c)))
+    (call-uninterrupted
+      (lambda ()
+        (let ([c (read-char stdin)]) (and (char? c) c)))))
 
   (define (pending-input?) (char-ready? stdin))
 
@@ -1603,17 +1613,37 @@
   ;; to completion.
   (define-condition-type &interrupted &serious make-interrupted interrupted?)
 
+  ;; Interaction owns C-g; interruption applies to computation.  While
+  ;; the editor waits for the user -- a prompt, a key query, a search --
+  ;; isig is off and C-g arrives as an ordinary key the interaction
+  ;; handles, so a command cancels the same way however it was invoked;
+  ;; between interactions an evaluation is interruptible.
+  (define isig-on? #f)
+
+  (define (set-isig! on)
+    (unless (eq? on isig-on?)
+      (set! isig-on? on)
+      (terminal-isig! on)))
+
+  (define (call-uninterrupted thunk)
+    (let ([old isig-on?])
+      (dynamic-wind
+        (lambda () (set-isig! #f))
+        thunk
+        (lambda () (set-isig! old)))))
+
   (define (call-with-interrupt thunk)
     ;; Run thunk interruptibly by C-g.
-    (let ([saved (keyboard-interrupt-handler)])
+    (let ([saved (keyboard-interrupt-handler)]
+          [old isig-on?])
       (dynamic-wind
         (lambda ()
           (keyboard-interrupt-handler
             (lambda () (raise (make-interrupted))))
-          (terminal-isig! #t))
+          (set-isig! #t))
         thunk
         (lambda ()
-          (terminal-isig! #f)
+          (set-isig! old)
           (keyboard-interrupt-handler saved)))))
 
   ;;; Incremental search ----------------------------------------------------
@@ -1640,6 +1670,16 @@
     (set! point-row (car match)) (set! point-col (cdr match)))
 
   (define (search!!)
+    ;; The search owns C-g while it runs; the match highlighting goes
+    ;; away however it exits.
+    (call-uninterrupted
+      (lambda ()
+        (dynamic-wind
+          void
+          run-search!
+          (lambda () (set! search-highlight ""))))))
+
+  (define (run-search!)
     (let ([origin (cons point-row point-col)])
       (let loop ([needle ""] [match #f] [failed? #f])
         (set! search-highlight needle)
