@@ -46,11 +46,11 @@
             [(or (prefix-at? "**" i) (prefix-at? "__" i))    ; **bold**
              (let* ([marker (substring s i (+ i 2))]
                     [close (string-search s marker (+ i 2) n)])
-               (cond [close (mark! i (+ close 2) 'literal) (inline (+ close 2))]
+               (cond [close (mark! i (+ close 2) 'bold) (inline (+ close 2))]
                      [else (inline (+ i 2))]))]
             [(char=? c #\*)                                  ; *italic*
              (let ([close (find-char #\* (+ i 1))])
-               (cond [close (mark! i (+ close 1) 'quote) (inline (+ close 1))]
+               (cond [close (mark! i (+ close 1) 'italic) (inline (+ close 1))]
                      [else (inline (+ i 1))]))]
             [(char=? c #\[)                                  ; [text](url)
              (let ([close (find-char #\] (+ i 1))])

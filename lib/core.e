@@ -920,6 +920,8 @@
       [(literal) "\x1b;[1;35m"]
       [(delimiter) "\x1b;[33m"]
       [(quote) "\x1b;[36m"]
+      [(bold) "\x1b;[1m"]      ; real face attributes: terminals without
+      [(italic) "\x1b;[3m"]    ; them simply show plain text
       [else "\x1b;[0m"]))
 
   ;;; Rendering -------------------------------------------------------------
