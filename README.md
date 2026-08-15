@@ -305,6 +305,11 @@ way.
 - Bracketed paste: the editor enables it itself, so a paste from
   anywhere is one edit, and one undo step, with no pasted control
   characters running commands; in a prompt, the paste lands whole.
+- Mouse: a click focuses the window under the pointer and places point
+  at the clicked cell; the wheel scrolls the window under the pointer,
+  wherever the focus is. The terminal's own mouse selection needs
+  Shift held while tracking is on; `M-x (mouse! #f)` turns tracking
+  off (and native selection back on) for the session.
 - Kill ring entries accumulate across consecutive kill commands, so
   `C-k C-k C-k ... C-y` reassembles whole blocks.
 - Incremental screen updates: only rows whose content changed repaint,

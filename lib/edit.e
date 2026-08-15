@@ -168,13 +168,14 @@
                  (loop (+ row 1) 0))))))
 
   (define (drain-escape!)
-    ;; Swallow the tail of an escape sequence, so an arrow key pressed
-    ;; at the query doesn't leak into the buffer as text.
+    ;; Swallow the tail of an escape sequence -- arrow keys, mouse
+    ;; reports -- so it doesn't leak into the buffer as text.
     (when (pending-input?)
       (let ([a (read-key)])
         (when (and a (char=? a #\[))
           (let drain ([c (read-key)])
-            (when (and c (or (char<=? #\0 c #\9) (char=? c #\;)))
+            (when (and c (or (char<=? #\0 c #\9)
+                             (memv c '(#\; #\<))))
               (drain (read-key))))))))
 
   (define (replace!! . args)

@@ -33,7 +33,7 @@
     load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost completion-highlight
     read-key pending-input? cursor-in-echo
-    set-message! current-message echo! redraw! error-text
+    set-message! current-message echo! redraw! error-text mouse!
     call-with-interrupt interrupted?
     vector-fill-range! string-search
     string-tail string-prefix? string-suffix? string-join
@@ -1521,6 +1521,13 @@
                                                        (string-length new-s)
                                                        note)))
                                     (loop s pos ""))]
+                               [(#\<)
+                                ;; a mouse report: swallow it
+                                (let mouse ([c (read-char stdin)])
+                                  (if (and (char? c)
+                                           (not (memv c '(#\M #\m))))
+                                      (mouse (read-char stdin))
+                                      (loop s pos note)))]
                                [(#\~)
                                 (cond [(and (string=? params "3") (< pos len))
                                        (edited (string-delete s pos (+ pos 1)) pos)]
@@ -1821,6 +1828,79 @@
             (insert-text! s)
             (set! insert-chain (list b point-row point-col 1 s))))))
 
+  ;;; Mouse -------------------------------------------------------------------
+
+  ;; SGR mouse tracking: clicks focus the window under the pointer and
+  ;; place point at the clicked cell; the wheel scrolls the window under
+  ;; the pointer, wherever the focus is.  The cost is the terminal's
+  ;; native mouse selection -- hold Shift for that -- so mouse! turns
+  ;; the whole thing on or off at run time.
+  (define mouse-on? #f)
+
+  (define (set-mouse! on)
+    (set! mouse-on? on)
+    (ansi (if on "\x1b;[?1000;1006h" "\x1b;[?1000;1006l"))
+    (flush-output-port stdout))
+
+  (define (mouse! on)
+    ;; Turn mouse tracking on or off (off restores native selection).
+    (set-mouse! on)
+    (set! message (format "Mouse ~a" (if on "on" "off")))
+    (void))
+
+  (define (window-under-row r0 receiver)
+    ;; Call receiver with the layout entry containing 0-based screen
+    ;; row r0 (text rows or the status line); #f when r0 is echo area.
+    (let loop ([entries (window-layout)])
+      (cond [(null? entries) #f]
+            [(<= (cadr (car entries)) r0
+                 (+ (cadr (car entries)) (caddr (car entries))))
+             (receiver (car entries))]
+            [else (loop (cdr entries))])))
+
+  (define (mouse-click! x y)
+    ;; Focus the window at 1-based screen position (x, y); a click in
+    ;; its text area also places point at the clicked cell.
+    (window-under-row (- y 1)
+      (lambda (entry)
+        (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+          (set! current-window w)
+          (when (< (- y 1) (+ start height))       ; text row, not status
+            (goto-point! (cons (+ (window-top w) (- y 1 start))
+                               (+ (window-left w) (- x 1)))))))))
+
+  (define (mouse-wheel! y delta)
+    ;; Scroll the window under the pointer by moving its point; redraw
+    ;; scrolls it to follow.  The focused window stays focused.
+    (window-under-row (- y 1)
+      (lambda (entry)
+        (let ([old current-window])
+          (set! current-window (car entry))
+          (move-vertical! delta)
+          (set! current-window old)))))
+
+  (define (mouse-event!)
+    ;; The rest of an ESC [ < sequence: b ; x ; y then M (press) or
+    ;; m (release).  Wheel is button 64/65; releases are ignored.
+    (let drain ([c (read-char stdin)] [ps '()])
+      (if (and (char? c) (or (char<=? #\0 c #\9) (char=? c #\;)))
+          (drain (read-char stdin) (cons c ps))
+          (let ([nums (let split ([chars (reverse ps)] [cur 0] [acc '()])
+                        (cond [(null? chars) (reverse (cons cur acc))]
+                              [(char=? (car chars) #\;)
+                               (split (cdr chars) 0 (cons cur acc))]
+                              [else (split (cdr chars)
+                                           (+ (* cur 10)
+                                              (- (char->integer (car chars)) 48))
+                                           acc)]))])
+            (when (and (char? c) (= (length nums) 3))
+              (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
+                (cond [(char=? c #\m) (void)]                    ; release
+                      [(= (bitwise-and b 64) 64)                 ; wheel
+                       (mouse-wheel! y (if (even? b) -3 3))]
+                      [(< (bitwise-and b 3) 3)                   ; a button
+                       (mouse-click! x y)])))))))
+
   ;;; Key handling ----------------------------------------------------------
 
   ;; Keys bound by modules, consulted before the built-in bindings (so a
@@ -1856,23 +1936,31 @@
       (cond
         [(eof-object? a) (void)]
         [(char=? a #\[)
-         (let drain ([b (read-char stdin)] [ps '()])
-           (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
-               (drain (read-char stdin) (cons b ps))
-               (let ([params (list->string (reverse ps))])
-                 (case b
-                   [(#\A) (move-vertical! -1)] [(#\B) (move-vertical! 1)]
-                   [(#\C) (move-right!)] [(#\D) (move-left!)]
-                   [(#\H) (set! point-col 0)]
-                   [(#\F) (set! point-col (string-length (current-line)))]
-                   [(#\~)
-                    (cond [(string=? params "3") (delete-forward!)]
-                          [(string=? params "5")
-                           (move-vertical! (- (page-size)))]
-                          [(string=? params "6") (move-vertical! (page-size))]
-                          [(string=? params "200") (paste-into-buffer!)]
-                          [else (void)])]
-                   [else (void)]))))]
+         (let ([first (read-char stdin)])
+           (if (and (char? first) (char=? first #\<))
+               (mouse-event!)
+               (let drain ([b first] [ps '()])
+                 (if (and (char? b)
+                          (or (char<=? #\0 b #\9) (char=? b #\;)))
+                     (drain (read-char stdin) (cons b ps))
+                     (let ([params (list->string (reverse ps))])
+                       (case b
+                         [(#\A) (move-vertical! -1)]
+                         [(#\B) (move-vertical! 1)]
+                         [(#\C) (move-right!)] [(#\D) (move-left!)]
+                         [(#\H) (set! point-col 0)]
+                         [(#\F) (set! point-col
+                                  (string-length (current-line)))]
+                         [(#\~)
+                          (cond [(string=? params "3") (delete-forward!)]
+                                [(string=? params "5")
+                                 (move-vertical! (- (page-size)))]
+                                [(string=? params "6")
+                                 (move-vertical! (page-size))]
+                                [(string=? params "200")
+                                 (paste-into-buffer!)]
+                                [else (void)])]
+                         [else (void)]))))))]
         [(user-binding user-meta-keys (char->integer a))
          => (lambda (command) (command))]
         ;; C-M-_: redo, as in Emacs.
@@ -2114,7 +2202,9 @@
       ;; The alternate screen, plus bracketed paste: terminals that
       ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
       ;; making a paste one identifiable edit; others ignore the mode.
-      (lambda () (terminal-raw!) (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h"))
+      ;; Mouse tracking likewise (see mouse!).
+      (lambda () (terminal-raw!) (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h")
+                 (set-mouse! #t))
       (lambda ()
         (let loop ()
           (unless quit?
@@ -2128,7 +2218,7 @@
             (loop))))
       (lambda () (unless (string=? cursor-style-shown "\x1b;[0 q")
                    (ansi "\x1b;[0 q"))
-                 (ansi "\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+                 (ansi "\x1b;[?1000;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
                  (flush-output-port stdout)
                  (terminal-restore!))))
 
