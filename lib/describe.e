@@ -4,10 +4,10 @@
 ;; the core.  Serves the reference documentation for the whole default
 ;; corpus -- R6RS from TSPL4, the Chez extensions from the Chez Scheme
 ;; User's Guide.  The whole pipeline lives here: fetch-describe-data!
-;; downloads the corpus into the reference directory next to lib (the
+;; downloads the corpus into the describe-data directory next to lib (the
 ;; byte transfer is delegated to curl, since Chez speaks no TLS; page
 ;; lists, orchestration, and parsing are all this module), extracts it
-;; into reference/describe.sdata, and loads it.  Run it once:
+;; into describe-data/describe.sdata, and loads it.  Run it once:
 ;;
 ;;   M-x (fetch-describe-data!)
 ;;
@@ -43,11 +43,11 @@
             (immutable url doc-url)               ; page anchor
             (immutable description doc-description)))
 
-  (define (reference-dir)
-    (string-append (caar (library-directories)) "/../reference"))
+  (define (data-dir)
+    (string-append (caar (library-directories)) "/../describe-data"))
 
   (define (data-path)
-    (string-append (reference-dir) "/describe.sdata"))
+    (string-append (data-dir) "/describe.sdata"))
 
   ;;; HTML to text ---------------------------------------------------------------
 
@@ -372,10 +372,10 @@
       'replace))
 
   (define (fetch-describe-data!)
-    ;; Download the reference corpus into the reference directory next
+    ;; Download the reference corpus into the describe-data directory next
     ;; to lib (kept out of git), extract it into describe.sdata, and
     ;; load it, reporting progress in the echo area.
-    (let* ([ref (reference-dir)]
+    (let* ([ref (data-dir)]
            [total (+ (length tspl-pages) (length csug-pages))]
            [done 0]
            [progress (lambda (what)
