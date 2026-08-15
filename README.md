@@ -313,6 +313,13 @@ can be pasted straight into the next expression:
 `(buffer-line-count (buffer "e"))`. The lookup is by name at evaluation
 time; naming a killed buffer reports an error.
 
+While an expression runs, the prompt stays in the echo area — shown
+with the parentheses that were auto-closed for you — and the cursor
+stays parked at its end, drawn as a blinking underline (on terminals
+supporting cursor styles), so an evaluation in progress is visible at
+a glance; the cursor returns to the buffer when the evaluation
+finishes or is interrupted.
+
 An expression that returns a value pops the `*eval*` buffer up; one
 that returns nothing — an interactive command like `(list-buffers!!)`
 or `(replace!! ...)` — is recorded in the transcript without popping

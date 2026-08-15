@@ -269,25 +269,28 @@
                                  complete-editor-symbol)])
                  (and s (trim-right s))))])
       (when (and s (> (string-length s) 0))
-        (let ([expr (or (close-expression (string-append "(" s))
-                        (string-append "(" s))]
-              [kept (string-append "M-x (" s)])
-          ;; Keep the prompt on screen while its expression evaluates.
+        (let* ([expr (or (close-expression (string-append "(" s))
+                         (string-append "(" s))]
+               [kept (string-append "M-x " expr)])
+          ;; Keep the prompt on screen while its expression evaluates --
+          ;; auto-closed parentheses included -- with the cursor parked
+          ;; at its end, drawn as the evaluation-in-progress underline.
           (set-message! kept)
-          (redraw!)
           (let ([outcome
-                 (guard (ex [(interrupted? ex) "interrupted"]
-                            [else (format "error: ~a" (error-text ex))])
-                   (call-with-interrupt
-                     (lambda ()
-                       ;; The whole expression is one undo step in every
-                       ;; buffer it edits, labeled with itself.
-                       (call-as-one-edit! expr
-                         (lambda ()
-                           (let-values ([vals (eval (with-input-from-string
-                                                      expr read)
-                                                    (interaction-environment))])
-                             vals))))))])
+                 (parameterize ([cursor-in-echo #t])
+                   (redraw!)
+                   (guard (ex [(interrupted? ex) "interrupted"]
+                              [else (format "error: ~a" (error-text ex))])
+                     (call-with-interrupt
+                       (lambda ()
+                         ;; The whole expression is one undo step in every
+                         ;; buffer it edits, labeled with itself.
+                         (call-as-one-edit! expr
+                           (lambda ()
+                             (let-values ([vals (eval (with-input-from-string
+                                                        expr read)
+                                                      (interaction-environment))])
+                               vals)))))))])
             (let* ([failed? (string? outcome)]
                    [void? (and (not failed?)
                                (or (null? outcome)

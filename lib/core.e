@@ -32,7 +32,7 @@
     bind-key! register-mode! find-mode mode-styles add-highlighter!
     load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost completion-highlight
-    read-key pending-input?
+    read-key pending-input? cursor-in-echo
     set-message! current-message echo! redraw! error-text
     call-with-interrupt interrupted?
     vector-fill-range! string-search
@@ -1079,6 +1079,7 @@
   ;; the whole cache.
   (define screen-cache '#())
   (define cached-view #f)
+  (define cursor-style-shown "\x1b;[0 q")   ; DECSCUSR last emitted
 
   (define (invalidate-screen-cache!) (set! cached-view #f))
 
@@ -1146,6 +1147,16 @@
             (cons line (+ (if (= line 0) 0 (echo-indent-now))
                           (- k (car span))))
             (loop (cdr spans) (+ line 1))))))
+
+  ;; Parameterized on (by eval, around an evaluation), the cursor parks
+  ;; at the end of the echo area's content -- and is drawn as a blinking
+  ;; underline, so a running evaluation is visible at a glance.
+  (define cursor-in-echo (make-parameter #f))
+
+  (define (echo-cursor-now)
+    (or echo-cursor
+        (and (cursor-in-echo)
+             (+ (string-length message) (string-length message-ghost)))))
 
   (define (paint-echo-area!)
     ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
@@ -1233,13 +1244,14 @@
     ;; borrowing rows.  Up to eight lines, after which it scrolls,
     ;; keeping the prompt cursor's line visible.
     (let* ([len (+ (string-length message) (string-length message-ghost))]
-           [padded (max len (if echo-cursor (+ echo-cursor 1) 1))])
+           [cursor (echo-cursor-now)]
+           [padded (max len (if cursor (+ cursor 1) 1))])
       (set! echo-spans (compute-echo-spans padded))
       (let* ([total (length echo-spans)]
              [cap (max 1 (min 8 (- rows 3)))])
         (set! echo-height (min total cap))
-        (when echo-cursor
-          (let ([line (car (echo-position echo-cursor))])
+        (when cursor
+          (let ([line (car (echo-position cursor))])
             (when (< line echo-scroll) (set! echo-scroll line))
             (when (>= line (+ echo-scroll echo-height))
               (set! echo-scroll (- line (- echo-height 1))))))
@@ -1270,15 +1282,18 @@
                     (window-shown-top-set! (car entry) (window-top (car entry))))
                   layout))
       (paint-echo-area!)
-      (if echo-cursor
-          (if echo-indent
-              (let ([p (echo-position echo-cursor)])
-                (goto (+ (- rows echo-height) (- (car p) echo-scroll) 1)
-                      (min (+ (cdr p) 1) cols)))
-              (goto rows (min (+ echo-cursor 1) cols)))
-          (let ([entry (assq current-window layout)])
-            (goto (+ (cadr entry) (- point-row top-row) 1)
-                  (+ (- point-col left-col) 1)))))
+      (let ([cursor (echo-cursor-now)])
+        (if cursor
+            (let ([p (echo-position cursor)])
+              (goto (+ (- rows echo-height) (- (car p) echo-scroll) 1)
+                    (min (+ (cdr p) 1) cols)))
+            (let ([entry (assq current-window layout)])
+              (goto (+ (cadr entry) (- point-row top-row) 1)
+                    (+ (- point-col left-col) 1))))))
+    (let ([style (if (cursor-in-echo) "\x1b;[3 q" "\x1b;[0 q")])
+      (unless (string=? style cursor-style-shown)
+        (set! cursor-style-shown style)
+        (ansi style)))
     (ansi "\x1b;[?25h") (flush-output-port stdout))
 
   ;;; Prompts and commands --------------------------------------------------
@@ -2066,7 +2081,9 @@
               (handle-key! (read-char stdin)))
             (clamp-point!)
             (loop))))
-      (lambda () (ansi "\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+      (lambda () (unless (string=? cursor-style-shown "\x1b;[0 q")
+                   (ansi "\x1b;[0 q"))
+                 (ansi "\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
                  (flush-output-port stdout)
                  (terminal-restore!))))
 
