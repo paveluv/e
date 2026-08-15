@@ -1073,6 +1073,13 @@
 
   (define (invalidate-screen-cache!) (set! cached-view #f))
 
+  (define (erase-screen!)
+    ;; Blank the terminal and schedule the full repaint -- an actual
+    ;; erase, which also clears the terminal's own selection highlight
+    ;; where an identical overwrite would not.
+    (ansi "\x1b;[2J")
+    (invalidate-screen-cache!))
+
   (define (shift-screen-cache! delta start height)
     ;; Mirror a native delta-row terminal scroll in cache rows
     ;; [start, start+height); rows the scroll uncovered become #f.
@@ -1892,10 +1899,12 @@
     ;; mark there -- dragging activates it, a motionless click does not.
     ;; A second press on the same cell within half a second is a double
     ;; click: it selects the word there.
-    ;; A full repaint on every press: the terminal's own Shift-selection
-    ;; highlight is cleared only when its cells are repainted, and the
-    ;; incremental renderer would otherwise leave it standing forever.
-    (invalidate-screen-cache!)
+    ;; Erase and repaint on every press: the terminal's own
+    ;; Shift-selection highlight survives identical overwrites (VTE
+    ;; only drops a selection when content changes), so erasing the
+    ;; screen is what actually clears it; the repaint follows in the
+    ;; same output burst.
+    (erase-screen!)
     (let ([prev last-press]
           [now (real-time)])
       (set! last-press (list x y now))
@@ -2079,7 +2088,7 @@
          [(8 127) (backspace!)]                                   ; C-h, DEL
          [(10 13) (newline!)]                                     ; RET
          [(11) (kill-line!)]                                      ; C-k
-         [(12) (set! size-dirty? #t) (invalidate-screen-cache!)   ; C-l
+         [(12) (set! size-dirty? #t) (erase-screen!)              ; C-l
                (set! message "Screen redrawn")]
          [(14) (move-vertical! 1)]                                ; C-n
          [(15) (let ([row point-row] [col point-col])             ; C-o open line
