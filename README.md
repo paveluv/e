@@ -106,6 +106,7 @@ same buffer can be shown in several windows at once.
 | `C-_`           | Undo                                          |
 | `C-M-_`         | Redo                                          |
 | `M-%`           | Query replace from point: `y`/`SPC` replaces, `n`/`DEL` skips, `q`/`RET`/`C-g` stops |
+| `M-.`           | Describe the symbol at point (Scheme buffers; see below) |
 | `C-l`           | Repaint the screen and re-read its size       |
 | `C-g`           | Cancel (prompt, search, mark, running evaluation) |
 
@@ -201,7 +202,8 @@ everything else is the `describe.e` module itself). The database is structured a
 `doc-lookup` returns the entries for a name, `doc-entries` all of them
 (optionally filtered by a predicate), and the `doc-*` accessors take
 entries apart, so the whole corpus can be sliced by source, chapter,
-library, or anything else.
+library, or anything else. In a Scheme buffer (the `*eval*` transcript
+included), `M-.` describes the symbol the cursor is on.
 
 ## Architecture and extension modules
 

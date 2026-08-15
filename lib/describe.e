@@ -27,7 +27,7 @@
 ;;           (doc-entries))
 
 (library (describe)
-  (export describe describe! fetch-describe-data!
+  (export init! describe describe! describe-at-point! fetch-describe-data!
           doc-lookup doc-entries
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-description)
@@ -521,4 +521,40 @@
 
   (define-syntax describe
     (syntax-rules ()
-      [(_ name) (describe! 'name)])))
+      [(_ name) (describe! 'name)]))
+
+  ;;; The symbol at point ---------------------------------------------------------
+
+  (define (scheme-delimiter? c)
+    (or (char-whitespace? c)
+        (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\,))))
+
+  (define (symbol-at-point)
+    ;; The symbol the cursor is on -- or just after, as at the end of a
+    ;; word -- in the current buffer; #f when point is not at one.
+    (let* ([b (current-buffer)]
+           [p (point)]
+           [s (buffer-line b (car p))]
+           [n (string-length s)]
+           [on? (lambda (i)
+                  (and (>= i 0) (< i n)
+                       (not (scheme-delimiter? (string-ref s i)))))]
+           [col (cond [(on? (cdr p)) (cdr p)]
+                      [(on? (- (cdr p) 1)) (- (cdr p) 1)]
+                      [else #f])])
+      (and col
+           (let ([start (let back ([i col]) (if (on? (- i 1)) (back (- i 1)) i))]
+                 [end (let fwd ([i col]) (if (on? i) (fwd (+ i 1)) i))])
+             (string->symbol (substring s start end))))))
+
+  (define (describe-at-point!)
+    ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
+    (cond [(not (member (buffer-mode-name (current-buffer))
+                        '("scheme" "eval")))
+           (set-message! "Not a Scheme buffer")]
+          [(symbol-at-point) => describe!]
+          [else (set-message! "No symbol at point")])
+    (void))
+
+  (define (init!)
+    (bind-key! "M-." describe-at-point!)))
