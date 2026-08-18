@@ -1735,12 +1735,15 @@
     ;; A candidate as shown in the completions list: the part after the last
     ;; separator -- a path's last component (with the trailing slash kept on
     ;; directories), an expression's trailing symbol; plain names unchanged.
+    ;; A label that comes out empty (a view name like "[log]" ends in a
+    ;; separator) falls back to the whole candidate.
     (if (string-suffix? "/" c)
         (string-append (base-name (substring c 0 (- (string-length c) 1))) "/")
         (let loop ([i (- (string-length c) 1)])
           (cond [(< i 0) c]
                 [(memv (string-ref c i) '(#\/ #\space #\( #\) #\[ #\]))
-                 (string-tail c (+ i 1))]
+                 (let ([tail (string-tail c (+ i 1))])
+                   (if (string=? tail "") c tail))]
                 [else (loop (- i 1))]))))
 
   (define (format-columns labels width)
