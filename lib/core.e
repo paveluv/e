@@ -23,7 +23,7 @@
     set-buffer-mode! set-buffer-read-only! call-with-buffer
     switch-buffer!! kill-buffer!!
     split-window! delete-window! delete-other-windows! other-window!
-    resize-window!
+    resize-window! wrap!
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
@@ -82,14 +82,17 @@
             ;; recomputed fresh each redraw, so temporary changes (a
             ;; grown echo area, a pop-up split) never drift them
             (mutable size)
-            (mutable goal)))
+            (mutable goal)
+            ;; soft-wrap long lines onto continuation rows instead of
+            ;; scrolling horizontally
+            (mutable wrap)))
 
   (define (new-buffer name)
     (make-buffer name (vector "") #f #t #f (vector '() '())
                  0 0 #f 0 0 0 #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0))) ; top to bottom
+  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0 #f))) ; top to bottom
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -824,8 +827,19 @@
            (insert-after windows current-window
                          (make-window (window-buffer current-window)
                                       top-row left-col
-                                      point-row point-col #f new new))))]
+                                      point-row point-col #f new new
+                                      (window-wrap current-window)))))]
       [else (set! message "Not enough room to split")]))
+
+  (define (wrap! . on)
+    ;; Toggle (or set) soft-wrapping of long lines in the current window.
+    (window-wrap-set! current-window
+                      (if (pair? on) (car on)
+                          (not (window-wrap current-window))))
+    (window-left-set! current-window 0)
+    (set! message (format "Wrap ~a"
+                          (if (window-wrap current-window) "on" "off")))
+    (void))
 
   (define (resize-window! delta)
     ;; Grow the current window by delta text lines (negative shrinks),
@@ -882,7 +896,7 @@
          w)]
       [(halved-size!) =>
        (lambda (new)
-         (let ([w (make-window b 0 0 0 0 #f new new)])
+         (let ([w (make-window b 0 0 0 0 #f new new #f)])
            (set! windows (insert-after windows current-window w))
            w))]
       [else #f]))
@@ -1177,6 +1191,21 @@
     ;; One page of the current window: its text height less one overlap line.
     (max 1 (- (caddr (assq current-window (window-layout))) 1)))
 
+  (define (line-segments w line)
+    ;; How many screen rows the line takes in w: 1, or its soft-wrapped
+    ;; segment count.
+    (if (window-wrap w)
+        (max 1 (div (+ (string-length line) cols -1) cols))
+        1))
+
+  (define (rows-before w prow pcol)
+    ;; Screen rows between w's top and point, wrap-aware.
+    (let ([v (buffer-lines (window-buffer w))])
+      (let loop ([i (window-top w)] [n 0])
+        (if (>= i prow)
+            (+ n (if (window-wrap w) (div pcol cols) 0))
+            (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
+
   (define (scroll-window! w height)
     ;; Clamp w's point to its buffer (edits in another window may have moved
     ;; the ground under it) and scroll so point stays visible.
@@ -1187,11 +1216,19 @@
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
       (when (< prow (window-top w)) (window-top-set! w prow))
-      (when (>= prow (+ (window-top w) height))
-        (window-top-set! w (- prow height -1)))
-      (when (< pcol (window-left w)) (window-left-set! w pcol))
-      (when (>= pcol (+ (window-left w) cols))
-        (window-left-set! w (- pcol cols -1)))))
+      (if (window-wrap w)
+          ;; advance top until point's segment row fits in the band
+          (let advance ()
+            (when (and (>= (rows-before w prow pcol) height)
+                       (< (window-top w) prow))
+              (window-top-set! w (+ (window-top w) 1))
+              (advance)))
+          (begin
+            (when (>= prow (+ (window-top w) height))
+              (window-top-set! w (- prow height -1)))
+            (when (< pcol (window-left w)) (window-left-set! w pcol))
+            (when (>= pcol (+ (window-left w) cols))
+              (window-left-set! w (- pcol cols -1)))))))
 
   ;; The cache holds, per screen row, the key describing what that row
   ;; currently shows; a row is repainted only when its key changes.  Any
@@ -1233,7 +1270,8 @@
     ;; The rows the scroll uncovered then repaint through the usual path.
     (let* ([shown (window-shown-top w)]
            [delta (and shown (- (window-top w) shown))])
-      (when (and delta (not (= delta 0)) (< (abs delta) height))
+      (when (and delta (not (= delta 0)) (< (abs delta) height)
+                 (not (window-wrap w)))     ; wrapped rows aren't 1:1
         (ansi "\x1b;[?25l"
               "\x1b;[" (number->string (+ start 1)) ";"
               (number->string (+ start height)) "r"
@@ -1336,11 +1374,15 @@
            [styles-of (buffer-line-styles b)]
            [mode-tag (let ([m (buffer-mode b)]) (and m (mode-name m)))]
            [current? (eq? w current-window)])
-      (let loop ([k 0])
+      ;; Walk buffer lines from the top; a soft-wrapping window paints a
+      ;; long line as successive slices (the same line at successive
+      ;; left offsets), others one row per line.
+      (let loop ([k 0] [i top] [seg 0])
         (when (< k height)
-          (let ([i (+ top k)] [row (+ start k)])
+          (let ([row (+ start k)])
             (if (< i n)
                 (let* ([line (vector-ref v i)]
+                       [slice-left (if (window-wrap w) (* seg cols) left)]
                        [span (and current? (region-span i (string-length line)))]
                        [marks (if current? (ranges-on-row ranges i) '())]
                        [cur (and search-current
@@ -1348,13 +1390,17 @@
                                  (= (cadr search-current) i)
                                  (cons (caddr search-current)
                                        (cadddr search-current)))])
-                  (paint! row (list i line span marks cur left mode-tag)
+                  (paint! row (list i line span marks cur slice-left mode-tag)
                           (lambda ()
-                            (display-editor-line line span marks cur left
-                                                 (styles-of line)))))
-                (paint! row '(empty)
-                        (lambda () (ansi (fit "~" cols))))))
-          (loop (+ k 1))))
+                            (display-editor-line line span marks cur slice-left
+                                                 (styles-of line))))
+                  (if (< (+ seg 1) (line-segments w line))
+                      (loop (+ k 1) i (+ seg 1))
+                      (loop (+ k 1) (+ i 1) 0)))
+                (begin
+                  (paint! row '(empty)
+                          (lambda () (ansi (fit "~" cols))))
+                  (loop (+ k 1) (+ i 1) 0))))))
       (let ([status (format " ~a~a  ~a  L~a C~a~a "
                             (cond [(buffer-read-only b) "%%"]
                                   [(buffer-modified b) "**"]
@@ -1399,7 +1445,8 @@
                   (* 2 (length windows))))
       (set! windows (list current-window)))
     (let* ([layout (window-layout)]
-           [view (list rows cols search-highlight (map cdr layout))])
+           [view (list rows cols search-highlight (map cdr layout)
+                       (map window-wrap windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                 layout)
       (if (not (equal? view cached-view))
@@ -1416,6 +1463,15 @@
       (paint-echo-area!))
     (place-cursor!))
 
+  (define (window-screen-position w prow pcol)
+    ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
+    (let ([entry (assq w (window-layout))])
+      (if (window-wrap w)
+          (cons (+ (cadr entry) (rows-before w prow pcol) 1)
+                (+ (mod pcol cols) 1))
+          (cons (+ (cadr entry) (- prow (window-top w)) 1)
+                (+ (- pcol (window-left w)) 1)))))
+
   (define (place-cursor!)
     ;; Park the cursor in the echo area (a prompt, or a running
     ;; evaluation -- the latter drawn as a blinking underline), else
@@ -1427,9 +1483,9 @@
           (let ([p (echo-position cursor)])
             (goto (+ (- rows echo-height) (- (car p) echo-scroll) 1)
                   (min (+ (cdr p) 1) cols)))
-          (let ([entry (assq current-window (window-layout))])
-            (goto (+ (cadr entry) (- point-row top-row) 1)
-                  (+ (- point-col left-col) 1)))))
+          (let ([p (window-screen-position current-window
+                                           point-row point-col)])
+            (goto (min (car p) rows) (min (cdr p) cols)))))
     (let ([style (cond
                    [(cursor-in-echo) "\x1b;[3 q"]
                    ;; a bar where typing cannot land: a read-only buffer
@@ -1526,7 +1582,7 @@
            (buffer-read-only-set! completions-buffer #t)
            (buffer-mode-set! completions-buffer (completions-mode))
            (buffer-lines-set! completions-buffer content)
-           (let ([w (make-window completions-buffer 0 0 0 0 #f new new)])
+           (let ([w (make-window completions-buffer 0 0 0 0 #f new new #f)])
              (set! windows (insert-after windows current-window w))
              (set! completions-restore
                (lambda () (set! windows (remq w windows)))))
@@ -2080,6 +2136,23 @@
   ;; The window whose status bar is being dragged to resize it, or #f.
   (define drag-status #f)
 
+  (define (window-position w start height x y)
+    ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
+    ;; band, wrap-aware: wrapped lines occupy successive screen rows,
+    ;; so the band row is walked through the segment counts.
+    (let* ([v (buffer-lines (window-buffer w))]
+           [k (max 0 (- y 1 start))]
+           [col (max 0 (- x 1))])
+      (if (window-wrap w)
+          (let loop ([i (window-top w)] [k k])
+            (if (>= i (vector-length v))
+                (cons (max 0 (- (vector-length v) 1)) col)
+                (let ([segs (line-segments w (vector-ref v i))])
+                  (if (< k segs)
+                      (cons i (+ (* k cols) col))
+                      (loop (+ i 1) (- k segs))))))
+          (cons (+ (window-top w) k) (+ (window-left w) col)))))
+
   (define (mouse-press! x y)
     ;; Focus the window at 1-based screen position (x, y).  A press in
     ;; its text area also places point at the clicked cell and arms the
@@ -2102,8 +2175,7 @@
                (when (pair? (cdr (memq w windows)))
                  (set! drag-status w))]
               [else                                ; a text row
-               (goto-point! (cons (+ (window-top w) (- y 1 start))
-                                  (+ (window-left w) (- x 1))))
+               (goto-point! (window-position w start height x y))
                (set! mark-row point-row)
                (set! mark-col point-col)
                (set! mark-active? #f)
@@ -2130,8 +2202,7 @@
               (when (and (eq? w current-window)
                          (< (- y 1) (+ start height)))
                 (set! mark-active? #t)
-                (goto-point! (cons (+ (window-top w) (- y 1 start))
-                                   (+ (window-left w) (- x 1))))))))))
+                (goto-point! (window-position w start height x y))))))))
 
   (define (mouse-wheel! y mover)
     ;; Scroll the window under the pointer by moving its point (redraw
