@@ -2381,6 +2381,15 @@
     ;; A stray SIGINT outside an evaluation must not drop into Chez's break
     ;; prompt underneath the editor's screen.
     (keyboard-interrupt-handler void)
+    ;; A stray (exit) or (abort) evaluated at the prompt must not kill
+    ;; the process past the modified-buffers check: they run the
+    ;; editor's quit and unwind the evaluation instead.
+    (let ([safe-quit (lambda args
+                       (quit!!)
+                       (raise (make-interrupted)))])
+      (exit-handler safe-quit)
+      (abort-handler safe-quit)
+      (reset-handler safe-quit))
     (dynamic-wind
       ;; The alternate screen, plus bracketed paste: terminals that
       ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
