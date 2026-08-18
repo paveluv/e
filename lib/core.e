@@ -298,11 +298,19 @@
                                  (vector-ref history 0)))
     (vector-set! history 1 '()))
 
+  ;; Refused edits raise this distinguished condition: the main loop
+  ;; shows it as a plain message rather than an exception report.
+  (define-condition-type &read-only &error make-read-only-error
+    read-only-error?)
+
   (define (record-edit! label)
-    ;; Every editing command passes through here before touching the buffer,
-    ;; so this is also where read-only buffers are protected.
-    (when (buffer-read-only (window-buffer current-window))
-      (error #f "buffer is read-only"))
+    ;; Every editing command passes through here before touching the
+    ;; buffer, so this is also where read-only buffers are protected:
+    ;; #t forbids all edits, and a procedure decides per edit.
+    (let ([guard (buffer-read-only (window-buffer current-window))])
+      (when (if (procedure? guard) (not (guard)) guard)
+        (raise (condition (make-read-only-error)
+                          (make-message-condition "buffer is read-only")))))
     (unless (suppress-history)
       (let ([group (edit-group)]
             [b (window-buffer current-window)])
@@ -2638,7 +2646,9 @@
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
             ;; editor.
-            (guard (ex [else (set! message (error-text ex))])
+            (guard (ex [(read-only-error? ex)
+                        (set! message "Buffer is read-only")]
+                       [else (set! message (error-text ex))])
               (handle-key! (read-char stdin)))
             (clamp-point!)
             (loop))))
