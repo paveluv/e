@@ -1519,12 +1519,12 @@
 
   (define (log-echo-message!)
     ;; The choke point: a spoken message painted in the echo area --
-    ;; one set through set-message!, not a prompt in progress, not the
-    ;; parked evaluation echo -- becomes a log record attributed to
-    ;; whoever stamped it.  Unstamped indicators show and vanish
-    ;; without a trace: the log records events, not keystrokes.
+    ;; one set through set-message! -- becomes a log record attributed
+    ;; to whoever stamped it, the moment it first paints (mid-command
+    ;; included).  Unstamped indicators -- chord hints, prompt input,
+    ;; the parked evaluation echo -- show and vanish without a trace:
+    ;; the log records events, not keystrokes.
     (when (and message-from
-               (not (echo-cursor-now))
                (> (string-length message) 0)
                (not (string=? message last-logged-message)))
       (set! last-logged-message message)

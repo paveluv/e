@@ -427,6 +427,7 @@
     ;; Download the reference corpus into the describe-data directory next
     ;; to lib (kept out of git), extract it into describe.sdata, and
     ;; load it, reporting progress in the echo area.
+    (parameterize ([message-source 'describe])
     (let* ([ref (data-dir)]
            [total (+ (length tspl-pages) (length csug-pages))]
            [done 0]
@@ -449,7 +450,7 @@
                 (length all-entries)
                 (fold-left + 0 (map (lambda (e) (length (doc-names e)))
                                     all-entries))))
-      (void)))
+      (void))))
 
   ;;; Loading -------------------------------------------------------------------
 
