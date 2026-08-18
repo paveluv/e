@@ -432,14 +432,14 @@
            [done 0]
            [progress (lambda (what)
                        (set! done (+ done 1))
-                       (echo! (format "Fetching ~a (~a/~a)"
+                       (set-message! (format "Fetching ~a (~a/~a)"
                                       what done total)))])
       (ensure-directory! ref)
       (ensure-directory! (string-append ref "/tspl4"))
       (ensure-directory! (string-append ref "/csug"))
       (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
       (fetch-book! ref "csug" csug-base csug-pages progress)
-      (echo! "Extracting the reference corpus...")
+      (set-message! "Extracting the reference corpus...")
       (write-data! (append (parse-book ref "tspl4" 'tspl tspl-pages)
                            (parse-book ref "csug" 'csug csug-pages)))
       (set! all-entries #f)

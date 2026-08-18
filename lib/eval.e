@@ -303,7 +303,7 @@
                                             ", "))])
               ;; A command that left its own message keeps it; otherwise
               ;; the kept prompt comes down.
-              (when (equal? (current-message) kept) (echo! ""))
+              (when (equal? (current-message) kept) (set-message! ""))
               (show-eval-result! expr result (not void?))))))))
 
   (define (init!)

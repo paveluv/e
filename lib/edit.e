@@ -210,7 +210,7 @@
                             (list (car hit) (cdr hit) (+ (cdr hit) m)))
                           (goto-point! (cons (car hit) (+ (cdr hit) m)))
                           (set-message! question)
-                          (redraw!)
+                          (redraw!)     ; the match highlight, not the message
                           (let* ([key (read-key)]
                                  [n (and key (char->integer key))])
                             (cond

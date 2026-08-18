@@ -36,7 +36,7 @@
     prompt! confirm? prompt-ghost completion-highlight min-window-lines
     complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
-    set-message! current-message echo! redraw! error-text mouse!
+    set-message! current-message redraw! error-text mouse!
     call-with-interrupt interrupted?
     vector-fill-range! string-search
     string-tail string-prefix? string-suffix? string-join
@@ -704,7 +704,15 @@
   ;; goes through the command API.
   (define (current-buffer) (window-buffer current-window))
   (define (buffer-list) (list-copy buffers))
-  (define (set-message! s) (set! message s))
+  (define (set-message! s)
+    ;; The message presents itself: it paints the moment it is set,
+    ;; even in the middle of a long command -- and never before the
+    ;; screen is the editor's.
+    (set! message s)
+    (set! message-ghost "")
+    (when screen-live?
+      (paint-echo-area!)
+      (flush-output-port stdout)))
   (define (current-message) message)
   (define (point) (cons point-row point-col))
   (define (mark) (and mark-active? (cons mark-row mark-col)))
@@ -1253,6 +1261,8 @@
   ;; change of view (size, search highlight, window arrangement) discards
   ;; the whole cache.
   (define screen-cache '#())
+  (define screen-live? #f) ; the terminal is ours only between main's
+                           ; alternate-screen enter and exit
   (define cached-view #f)
   (define cursor-style-shown "\x1b;[0 q")   ; DECSCUSR last emitted
 
@@ -1343,7 +1353,7 @@
 
   (define (paint-echo-area!)
     ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
-    ;; first: echo! and the busy-message watcher come here directly,
+    ;; first: set-message! and the busy watcher come here directly,
     ;; with the content just changed (from redraw! it is a no-op).
     (update-echo-geometry!)
     (let* ([content (string-append message message-ghost)]
@@ -1374,14 +1384,6 @@
                               #\space)
                             (if wrapped? "\\" "")))))
           (loop (+ line 1) (+ row 1))))))
-
-  (define (echo! text . ghost)
-    ;; Set the echo area (with an optional grey suffix) and paint it right
-    ;; away -- usable while the main loop is busy running a command.
-    (set! message text)
-    (set! message-ghost (if (pair? ghost) (car ghost) ""))
-    (paint-echo-area!)
-    (flush-output-port stdout))
 
   (define (paint-window! w start height ranges)
     (let* ([b (window-buffer w)]
@@ -2638,7 +2640,8 @@
       ;; making a paste one identifiable edit; others ignore the mode.
       ;; Mouse tracking likewise (see mouse!).
       (lambda () (terminal-raw!) (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h")
-                 (set-mouse! #t))
+                 (set-mouse! #t)
+                 (set! screen-live? #t))
       (lambda ()
         (let loop ()
           (unless quit?
@@ -2652,7 +2655,8 @@
               (handle-key! (read-char stdin)))
             (clamp-point!)
             (loop))))
-      (lambda () (unless (string=? cursor-style-shown "\x1b;[0 q")
+      (lambda () (set! screen-live? #f)
+                 (unless (string=? cursor-style-shown "\x1b;[0 q")
                    (ansi "\x1b;[0 q"))
                  (ansi "\x1b;[?1002;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
                  (flush-output-port stdout)
