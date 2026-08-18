@@ -601,7 +601,7 @@
   (define (describe-at-point!)
     ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
     (cond [(not (member (buffer-mode-name (current-buffer))
-                        '("scheme" "eval")))
+                        '("scheme")))
            (set-message! "Not a Scheme buffer")]
           [(symbol-at-point) => describe!]
           [else (set-message! "No symbol at point")])

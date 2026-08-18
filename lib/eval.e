@@ -2,10 +2,13 @@
 ;;
 ;; An e extension module: the library (eval), loaded at startup by the
 ;; core, which calls init!.  M-x prompts for an expression (the opening
-;; parenthesis is supplied and cannot be deleted; missing closing
-;; parentheses are forgiven), evaluates it in the editor's top level, and
-;; logs the exchange to a read-only *eval* transcript buffer as numbered
-;; entries.  TAB completes symbols (Shift-TAB: only editor-defined ones,
+;; parenthesis is pretyped and deletable, so a bare symbol works too;
+;; missing closing parentheses are forgiven), evaluates it in the
+;; editor's top level, logs the expression (component eval, which also
+;; carries the history), and shows the result in the echo area,
+;; transiently like any message -- the log keeps what flashed by.  The
+;; expression styles as Scheme while typed.  TAB completes symbols
+;; (Shift-TAB: only editor-defined ones,
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
 ;; down arrows browse the history, and C-g interrupts a runaway
@@ -174,7 +177,7 @@
     ;; The grey suggestion for the M-x input: the parameters of the
     ;; innermost open call's operator that have not been supplied yet.
     (guard (ex [else #f])
-      (let ([stack (open-call-frames (string-append "(" s))])
+      (let ([stack (open-call-frames s)])
         (and (pair? stack)
              (string? (caar stack))
              (let ([tokens (symbol-params (string->symbol (caar stack)))])
@@ -185,7 +188,7 @@
                              (if (string-suffix? " " s) "" " ")
                              (string-join left " "))))))))))
 
-  ;;; The *eval* transcript ------------------------------------------------------
+  ;;; Evaluation ----------------------------------------------------------------
 
   (define (close-expression text)
     ;; text completed with the parentheses it is missing (up to a few), so
@@ -199,56 +202,31 @@
                  t
                  (loop (+ extra 1)))))))
 
-  (define (eval-prompt-end s)
-    ;; The index just past a leading "[n]> ", or #f.
-    (and (string-prefix? "[" s)
-         (let loop ([i 1])
-           (and (< i (string-length s))
-                (cond [(char-numeric? (string-ref s i)) (loop (+ i 1))]
-                      [(and (> i 1) (string-prefix? "]> " (string-tail s i)))
-                       (+ i 3)]
-                      [else #f])))))
+  (define (eval-history)
+    ;; The M-x history, read off the log: the expressions component
+    ;; eval recorded, newest first, consecutive repeats collapsed.
+    (let loop ([es (log-entries 'eval)] [last #f])
+      (cond [(null? es) '()]
+            [(equal? (caddr (car es)) last) (loop (cdr es) last)]
+            [else (cons (caddr (car es))
+                        (loop (cdr es) (caddr (car es))))])))
 
-  (define eval-styles
-    ;; The *eval* buffer's mode (see init!): "[n]> expr" lines get a grey
-    ;; prompt marker and Scheme highlighting for the expression (when a
-    ;; scheme mode is loaded); everything else is output, in one distinct
-    ;; color.
-    (lambda (s)
-      (let ([p (eval-prompt-end s)])
-        (if p
-            (let ([styles (make-vector (string-length s) 'comment)]
-                  [scheme (find-mode "scheme")])
-              (let ([inner (and scheme ((mode-styles scheme) (string-tail s p)))])
-                (when inner
-                  (let loop ([i p])
-                    (when (< i (string-length s))
-                      (vector-set! styles i (vector-ref inner (- i p)))
-                      (loop (+ i 1))))))
-              styles)
-            (make-vector (string-length s) 'string)))))
-
-  (define mx-history (box '()))
-  (define mx-counter 1)
-
-  (define (show-eval-result! expr result pop?)
-    ;; Append the exchange to the read-only *eval* buffer; when pop? --
-    ;; the expression returned something -- also make sure the buffer is
-    ;; shown, scrolled to the latest entry (on a screen too small for a
-    ;; second window, fall back to the echo area).  A void result is
-    ;; recorded without popping, so an interactive command's own display
-    ;; is left alone.
-    (let ([b (or (buffer-named "*eval*")
-                 (let ([b (new-buffer "*eval*")])
-                   (set-buffer-mode! b "eval")
-                   (set-buffer-read-only! b #t)
-                   (set! mx-counter 1)
-                   b))])
-      (buffer-append! b (format "[~a]> ~a" mx-counter expr) result)
-      (set! mx-counter (+ mx-counter 1))
-      (when pop?
-        (unless (display-buffer! b)
-          (set-message! (string-append expr " => " result))))))
+  (define (mx-echo-styles content)
+    ;; Scheme highlighting for the M-x prompt: the label stays grey,
+    ;; the expression styles as Scheme.
+    (guard (ex [else #f])
+      (and (string-prefix? "M-x " content)
+           (let ([scheme (find-mode "scheme")])
+             (and scheme
+                  (let ([styles (make-vector (string-length content)
+                                             'comment)]
+                        [inner ((mode-styles scheme)
+                                (string-tail content 4))])
+                    (let loop ([i 4])
+                      (when (< i (string-length content))
+                        (vector-set! styles i (vector-ref inner (- i 4)))
+                        (loop (+ i 1))))
+                    styles))))))
 
   (define (trim-right s)
     ;; s without trailing blanks, so auto-closed parentheses attach
@@ -260,32 +238,39 @@
 
   (define (normalize-input s)
     ;; The prompt's normalizer: trailing blanks go and the forgiven
-    ;; closing parentheses are appended (sans the prompt's own opening
-    ;; one), so the history and the kept echo carry the completed
-    ;; expression.
+    ;; closing parentheses are appended, so the history and the kept
+    ;; echo carry the completed expression.  A lone "(" -- the
+    ;; untouched pretyped prompt -- passes through for the
+    ;; cancellation check.
     (let ([t (trim-right s)])
-      (if (string=? t "")
+      (if (or (string=? t "") (string=? t "("))
           t
-          (let ([e (or (close-expression (string-append "(" t))
-                       (string-append "(" t))])
-            (substring e 1 (string-length e))))))
+          (or (close-expression t) t))))
+
+  (define (one-line s)
+    ;; s with its newlines flattened, for the echo area.
+    (list->string (map (lambda (c) (if (char=? c #\newline) #\space c))
+                       (string->list s))))
 
   (define (eval!!)
-    ;; The prompt supplies the opening parenthesis, so it cannot be deleted;
-    ;; the expression is evaluated in the editor's own top level.
+    ;; Read an expression -- the prompt pretypes "(", deletable, so a
+    ;; bare symbol evaluates too -- and evaluate it in the editor's
+    ;; own top level.  The expression is logged (component eval, which
+    ;; also carries the history); the result shows in the echo area,
+    ;; transiently like any message, and lands in the log with it.
     (let ([s (parameterize ([prompt-ghost signature-ghost]
                             [completion-highlight
                              (lambda (label)
-                               (editor-symbol? (string->symbol label)))])
-               (prompt! "M-x (" complete-symbol "" mx-history
+                               (editor-symbol? (string->symbol label)))]
+                            [echo-highlight mx-echo-styles])
+               (prompt! "M-x " complete-symbol "(" (box (eval-history))
                         complete-editor-symbol normalize-input))])
-      (when (and s (> (string-length s) 0))
-        (let* ([expr (or (close-expression (string-append "(" s))
-                         (string-append "(" s))]
-               [kept (string-append "M-x " expr)])
+      (when (and s (> (string-length s) 0) (not (string=? s "(")))
+        (let ([kept (string-append "M-x " s)])
+          (log! 'eval s)
           ;; Keep the prompt on screen while its expression evaluates --
-          ;; auto-closed parentheses included -- with the cursor parked
-          ;; at its end, drawn as the evaluation-in-progress underline.
+          ;; forgiven parentheses included -- with the cursor parked at
+          ;; its end, drawn as the evaluation-in-progress underline.
           (set-message! kept)
           (let ([outcome
                  (parameterize ([cursor-in-echo #t])
@@ -296,10 +281,10 @@
                        (lambda ()
                          ;; The whole expression is one undo step in every
                          ;; buffer it edits, labeled with itself.
-                         (call-as-one-edit! expr
+                         (call-as-one-edit! s
                            (lambda ()
                              (let-values ([vals (eval (with-input-from-string
-                                                        expr read)
+                                                        s read)
                                                       (interaction-environment))])
                                vals)))))))])
             (let* ([failed? (string? outcome)]
@@ -312,11 +297,13 @@
                                (string-join (map (lambda (v) (format "~s" v))
                                                  outcome)
                                             ", "))])
-              ;; A command that left its own message keeps it; otherwise
-              ;; the kept prompt comes down.
-              (when (equal? (current-message) kept) (set-message! ""))
-              (show-eval-result! expr result (not void?))))))))
+              (if void?
+                  ;; a command that left its own message keeps it;
+                  ;; otherwise the kept prompt comes down
+                  (when (equal? (current-message) kept) (set-message! ""))
+                  (parameterize ([message-source 'eval])
+                    (set-message!
+                      (one-line (string-append s " => " result)))))))))))
 
   (define (init!)
-    (register-mode! "eval" '() '() eval-styles)
     (bind-key! "M-x" eval!!)))

@@ -141,18 +141,23 @@ edges.
 
 ## Evaluating Scheme
 
-`M-x` prompts for an expression (the opening parenthesis is supplied,
-missing closing parentheses are forgiven) and evaluates it in the
-editor's own top level, where the whole published API lives:
+`M-x` prompts for an expression (the opening parenthesis is pretyped
+and deletable, so a bare symbol works too; missing closing parentheses
+are forgiven) and evaluates it in the editor's own top level, where the
+whole published API lives.  The expression styles as Scheme while you
+type, and the result shows in the echo area, transiently like any
+message:
 
     M-x (buffer-name (current-buffer))
+    (buffer-name (current-buffer)) => "sa.txt"
 
-Each exchange is appended to a read-only `*eval*` transcript:
-
-    [1]> (+ 1 2)
-    3
-    [2]> (buffer-name (current-buffer))
-    "e"
+Nothing is lost when it fades: every message that passes through the
+echo area lands in the log -- the editor's syslog, structured records
+of date, component, and text.  `show-log!` pops up the `*log*` view
+(rendered from the records on the fly), `log-entries` returns the
+records themselves for slicing from M-x, and `log!` adds your own.
+The M-x history is read off the log, so the up arrow recalls past
+expressions -- forgiven parentheses included -- across the session.
 
 TAB completes the symbol being typed against everything bound in the
 top level: Chez itself, the editor, loaded modules. A unique completion
@@ -207,8 +212,8 @@ everything else is the `describe.e` module itself). The database is structured a
 `doc-lookup` returns the entries for a name, `doc-entries` all of them
 (optionally filtered by a predicate), and the `doc-*` accessors take
 entries apart, so the whole corpus can be sliced by source, chapter,
-library, or anything else. In a Scheme buffer (the `*eval*` transcript
-included), `M-.` describes the symbol the cursor is on.
+library, or anything else. In a Scheme buffer, `M-.` describes the
+symbol the cursor is on.
 
 ## Architecture and extension modules
 
@@ -234,8 +239,8 @@ Names follow a contract. A procedure ending in `!!` waits for input
 from the user: a prompt, a confirmation, a key query. It takes no
 required arguments, reports through the echo area, and returns nothing;
 on success it is void, so evaluating one from M-x leaves its display
-and message in place, and failures raise, popping up in `*eval*` as
-errors. A single-`!` verb acts immediately with what it is given
+and message in place, and failures raise, reported in the echo area
+(and the log) as errors. A single-`!` verb acts immediately with what it is given
 (explicit arguments, a useful return value), even when it displays
 something: `list-buffers!` pops up the buffer list but asks nothing, so
 one bang. Two bangs ask you things. The `!!` commands are thin wrappers
