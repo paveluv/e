@@ -1416,7 +1416,12 @@
           (let ([entry (assq current-window (window-layout))])
             (goto (+ (cadr entry) (- point-row top-row) 1)
                   (+ (- point-col left-col) 1)))))
-    (let ([style (if (cursor-in-echo) "\x1b;[3 q" "\x1b;[0 q")])
+    (let ([style (cond
+                   [(cursor-in-echo) "\x1b;[3 q"]
+                   ;; a bar where typing cannot land: a read-only buffer
+                   [(buffer-read-only (window-buffer current-window))
+                    "\x1b;[5 q"]
+                   [else "\x1b;[0 q"])])
       (unless (string=? style cursor-style-shown)
         (set! cursor-style-shown style)
         (ansi style)))
