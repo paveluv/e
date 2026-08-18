@@ -34,6 +34,7 @@
     bind-key! register-mode! find-mode mode-styles add-highlighter!
     load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost completion-highlight min-window-lines
+    complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
     set-message! current-message echo! redraw! error-text mouse!
     call-with-interrupt interrupted?
@@ -251,6 +252,12 @@
   (define (vector-fill-range! v from to x)
     (let loop ([i from])
       (when (< i to) (vector-set! v i x) (loop (+ i 1)))))
+
+  (define (insert-before lst x y)
+    ;; A copy of lst with y inserted right before x (or at the end).
+    (cond [(null? lst) (list y)]
+          [(eq? (car lst) x) (cons y lst)]
+          [else (cons (car lst) (insert-before (cdr lst) x y))]))
 
   (define (insert-after lst x y)
     ;; A copy of lst with y inserted right after x (or at the end).
@@ -1166,16 +1173,19 @@
     ;; goals every time, at least min-window-lines each, so a grown
     ;; echo area or a terminal resize cannot drift them.
     ;; -> list of (window start text-height), start 0-based.
-    (let* ([n (length windows)]
-           [text (- rows echo-height n)]
-           [sum (fold-left + 0 (map window-weight windows))]
-           [m (min (min-window-lines) (max 1 (quotient text n)))])
-      (let loop ([ws windows] [left text])
+    (let* ([popup (completions-window)]
+           [plain (remq popup windows)]
+           [n (length plain)]
+           [text (- rows echo-height (length windows))]
+           [total (- text (if popup (window-size popup) 0))]
+           [sum (fold-left + 0 (map window-weight plain))]
+           [m (min (min-window-lines) (max 1 (quotient total n)))])
+      (let loop ([ws plain] [left total])
         (if (null? (cdr ws))
             (window-size-set! (car ws) (max m left))
             (let* ([rest (* m (length (cdr ws)))]
                    [h (min (max m (quotient (* (window-weight (car ws))
-                                               text)
+                                               total)
                                             sum))
                            (max m (- left rest)))])
               (window-size-set! (car ws) h)
@@ -1401,14 +1411,20 @@
                   (paint! row '(empty)
                           (lambda () (ansi (fit "~" cols))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let ([status (format " ~a~a  ~a  L~a C~a~a "
+      (let ([status (format " ~a~a  ~a  L~a C~a~a~a "
                             (cond [(buffer-read-only b) "%%"]
                                   [(buffer-modified b) "**"]
                                   [else "--"])
                             editor-name
                             (buffer-name b)
                             (+ (window-prow w) 1) (+ (window-pcol w) 1)
-                            (if mode-tag (format "  (~a)" mode-tag) ""))])
+                            (if mode-tag (format "  (~a)" mode-tag) "")
+                            (if (and (eq? b completions-buffer)
+                                     (> completions-pages 1))
+                                (format "  page ~a/~a"
+                                        (+ completions-page 1)
+                                        completions-pages)
+                                ""))])
         (paint! (+ start height) (list 'status status current?)
                 (lambda ()
                   (ansi (if current? "\x1b;[7m" "\x1b;[7;2m")
@@ -1439,6 +1455,7 @@
   (define (redraw!)
     (terminal-size!)
     (update-echo-geometry!)
+    (update-completions-size!)
     ;; A terminal too small for the splits collapses back to one window.
     (when (and (pair? (cdr windows))
                (< (- rows echo-height (length windows))
@@ -1554,46 +1571,94 @@
                          (vector-fill-range! styles i j 'keyword))
                        (loop j))])))))))
 
+  (define completions-labels #f)   ; the labels shown: repeat detection
+  (define completions-rows '#())   ; the full column layout
+  (define completions-cols 0)      ; the width the layout was built for
+  (define completions-page 0)
+  (define completions-pages 1)
+  (define completions-filled #f)   ; (page size) the buffer holds
+
+  (define (completions-window)
+    (and completions-buffer
+         (find (lambda (w) (eq? (window-buffer w) completions-buffer))
+               windows)))
+
+  (define (completions-layout! labels)
+    (set! completions-rows (list->vector (format-columns labels cols)))
+    (set! completions-cols cols)
+    (set! completions-page 0)
+    (set! completions-filled #f))
+
   (define (show-completions! labels)
     ;; #f when the screen has no room; the caller falls back to a note.
-    (let ([content (list->vector (format-columns labels cols))])
-      (cond
-        [completions-restore                       ; already up: refresh it
-         (buffer-lines-set! completions-buffer content)
-         (let ([w (find (lambda (w) (eq? (window-buffer w) completions-buffer))
-                        windows)])
-           (when w
-             (window-top-set! w 0)
-             (window-prow-set! w 0) (window-pcol-set! w 0)))
-         #t]
-        [(pair? (cdr windows))                     ; borrow the next window
-         (set! completions-buffer (new-buffer "*Completions*"))
-         (buffer-read-only-set! completions-buffer #t)
-         (buffer-mode-set! completions-buffer (completions-mode))
-         (buffer-lines-set! completions-buffer content)
-         (let* ([w (next-window current-window)]
-                [prev (window-buffer w)])
-           (set-window-buffer! w completions-buffer)
-           (set! completions-restore (lambda () (set-window-buffer! w prev))))
-         #t]
-        [(halved-size!) =>                         ; room for a second window?
-         (lambda (new)
-           (set! completions-buffer (new-buffer "*Completions*"))
-           (buffer-read-only-set! completions-buffer #t)
-           (buffer-mode-set! completions-buffer (completions-mode))
-           (buffer-lines-set! completions-buffer content)
-           (let ([w (make-window completions-buffer 0 0 0 0 #f new new #f)])
-             (set! windows (insert-after windows current-window w))
-             (set! completions-restore
-               (lambda () (set! windows (remq w windows)))))
-           #t)]
-        [else #f])))
+    ;; The pop-up opens in a dedicated window at the bottom of the
+    ;; stack -- directly above the echo area, where the prompt that
+    ;; triggered it lives -- sized to its rows
+    ;; (update-completions-size!); a list too tall is paged, and
+    ;; repeated TAB on the same candidates cycles the pages.
+    (cond
+      [(and completions-restore (equal? labels completions-labels))
+       (set! completions-page (mod (+ completions-page 1)
+                                   (max 1 completions-pages)))
+       (set! completions-filled #f)
+       #t]
+      [completions-restore                       ; already up: refresh it
+       (set! completions-labels labels)
+       (completions-layout! labels)
+       #t]
+      [(let ([n (length windows)])
+         (>= (- rows echo-height (+ n 1))
+             (+ (* n (min-window-lines)) 1)))
+       (set! completions-buffer (new-buffer "*Completions*"))
+       (buffer-read-only-set! completions-buffer #t)
+       (buffer-mode-set! completions-buffer (completions-mode))
+       (set! completions-labels labels)
+       (completions-layout! labels)
+       (let ([w (make-window completions-buffer 0 0 0 0 #f 1 1 #f)])
+         (set! windows (append windows (list w)))
+         (set! completions-restore
+           (lambda () (set! windows (remq w windows)))))
+       #t]
+      [else #f]))
+
+  (define (update-completions-size!)
+    ;; Size the pop-up to its rows: the whole list when it fits, the
+    ;; largest possible page otherwise -- the other windows shrinking
+    ;; down to min-window-lines each to make room.
+    (let ([w (completions-window)])
+      (when w
+        (unless (= completions-cols cols)        ; the width changed
+          (completions-layout! completions-labels))
+        (let* ([others (remq w windows)]
+               [text (- rows echo-height (length windows))]
+               [avail (max 1 (- text (* (min-window-lines)
+                                        (length others))))]
+               [all (max 1 (vector-length completions-rows))]
+               [size (min all avail)])
+          (set! completions-pages (div (+ all size -1) size))
+          (when (>= completions-page completions-pages)
+            (set! completions-page 0))
+          ;; the buffer holds the current page
+          (unless (equal? completions-filled (list completions-page size))
+            (set! completions-filled (list completions-page size))
+            (let* ([from (* completions-page size)]
+                   [to (min (vector-length completions-rows) (+ from size))]
+                   [out (make-vector (max 1 (- to from)) "")])
+              (do ([i from (+ i 1)]) ((>= i to))
+                (vector-set! out (- i from)
+                             (vector-ref completions-rows i)))
+              (buffer-lines-set! completions-buffer out)
+              (window-top-set! w 0)
+              (window-prow-set! w 0) (window-pcol-set! w 0)))
+          (window-size-set! w size)))))    ; the layout tiles the rest
 
   (define (dismiss-completions!)
     (when completions-restore
       (completions-restore)
+      (set! buffers (remq completions-buffer buffers))
+      (set! completions-buffer #f)
       (set! completions-restore #f)
-      (set! completions-buffer #f)))
+      (set! completions-labels #f)))
 
   ;; Prompts may parameterize this to suggest what could follow the input --
   ;; M-x uses it to show the pending parameters of the call being typed.
@@ -1606,8 +1671,9 @@
     ;; list.  k continues the prompt loop as (k new-s note).
     (let ([cands (complete s)])
       (cond
-        [(null? cands) (k s " [No match]")]
+        [(null? cands) (dismiss-completions!) (k s " [No match]")]
         [(null? (cdr cands))
+         (dismiss-completions!)
          (if (string=? (car cands) s)
              (k s " [Sole completion]")
              (k (car cands) ""))]
