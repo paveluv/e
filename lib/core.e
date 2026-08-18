@@ -26,7 +26,7 @@
     resize-window!
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
-    kill-line! kill-region! yank! undo! redo!
+    kill-line! kill-region! copy-region! yank! undo! redo!
     call-as-one-edit!
     move-horizontal! move-vertical! goto-point!
     search!! quit!!
@@ -482,6 +482,19 @@
         (let ([joined (string-append (substring (line-at sr) 0 sc)
                                      (string-tail (line-at er) ec))])
           (set! lines (vector-splice lines sr (+ er 1) (list joined))))))
+
+  (define (copy-region!)
+    ;; Save the region to the kill ring without deleting it -- M-w, as
+    ;; in Emacs.  The mark deactivates; C-y reinserts.
+    (if (not mark-active?)
+        (set! message "The mark is not set now")
+        (let-values ([(sr sc er ec) (ordered-region)])
+          (if (and (= sr er) (= sc ec))
+              (set! message "Empty region")
+              (begin
+                (set! kill-ring (region-text sr sc er ec))
+                (set! mark-active? #f)
+                (set! message "Copied"))))))
 
   (define (kill-region!)
     (if (not mark-active?)
@@ -2169,7 +2182,9 @@
          => (lambda (command) (command))]
         ;; C-M-_: redo, as in Emacs.
         [(char=? a #\x1f) (redo!)]
-        ;; M-v: page up, M-< and M->: beginning/end of buffer.
+        ;; M-w: copy the region; M-v: page up; M-< and M->:
+        ;; beginning/end of buffer.
+        [(char=? a #\w) (copy-region!)]
         [(char=? a #\v) (move-vertical! (- (page-size)))]
         [(char=? a #\<) (set! point-row 0) (set! point-col 0)]
         [(char=? a #\>) (set! point-row (- (vlen) 1))
