@@ -33,7 +33,7 @@
     ;; extending the editor
     bind-key! register-mode! find-mode mode-styles add-highlighter!
     load-module! reload-module! auto-reload
-    prompt! confirm? prompt-ghost completion-highlight
+    prompt! confirm? prompt-ghost completion-highlight min-window-lines
     read-key pending-input? cursor-in-echo
     set-message! current-message echo! redraw! error-text mouse!
     call-with-interrupt interrupted?
@@ -76,16 +76,20 @@
             (mutable prow) (mutable pcol)
             ;; the top row last drawn, for native scrolling
             (mutable shown-top)
-            ;; text height in screen lines; the layout keeps the sizes
-            ;; tiling the text area, rescaling them when it changes
-            (mutable size)))
+            ;; text height in screen lines, written by the layout: the
+            ;; goal is the user's chosen proportion, and the layout
+            ;; realizes the goals in whatever space is there --
+            ;; recomputed fresh each redraw, so temporary changes (a
+            ;; grown echo area, a pop-up split) never drift them
+            (mutable size)
+            (mutable goal)))
 
   (define (new-buffer name)
     (make-buffer name (vector "") #f #t #f (vector '() '())
                  0 0 #f 0 0 0 #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0))) ; top to bottom
+  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0))) ; top to bottom
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -775,13 +779,22 @@
   (define (other-window!)
     (set! current-window (next-window current-window)))
 
+  ;; Windows squeezed by the layout keep at least this many text lines.
+  (define min-window-lines
+    (make-parameter 3 (lambda (v) (max 1 v))))
+
+  (define (window-weight w) (max 1 (window-goal w)))
+
   (define (halved-size!)
     ;; Take the lower half of the current window's band for a new
-    ;; window (one line goes to its status); #f when too small.
+    ;; window (one line goes to its status); #f when too small.  Both
+    ;; goals follow the halved sizes: goals live in the same scale as
+    ;; sizes, so trades between them stay one-to-one.
     (let ([h (window-size current-window)])
       (and (>= (- h 1) 4)
            (let ([new (quotient (- h 1) 2)])
              (window-size-set! current-window (- h 1 new))
+             (window-goal-set! current-window (- h 1 new))
              new))))
 
   (define (split-window!)
@@ -794,7 +807,7 @@
            (insert-after windows current-window
                          (make-window (window-buffer current-window)
                                       top-row left-col
-                                      point-row point-col #f new))))]
+                                      point-row point-col #f new new))))]
       [else (set! message "Not enough room to split")]))
 
   (define (resize-window! delta)
@@ -810,12 +823,24 @@
                            delta))))
 
   (define (transfer-lines! w partner delta)
-    ;; Move up to delta text lines from partner to w, both keeping at
-    ;; least two.
-    (let* ([delta (min delta (- (window-size partner) 2))]
-           [delta (max delta (- 2 (window-size w)))])
-      (window-size-set! w (+ (window-size w) delta))
-      (window-size-set! partner (- (window-size partner) delta))))
+    ;; Move up to delta text lines from partner to w, both keeping the
+    ;; minimum.  The trade adjusts goals, not sizes -- the layout
+    ;; realizes goals proportionally, so the delta is scaled between
+    ;; the two spaces: in the steady state the border moves exactly as
+    ;; dragged.
+    (let* ([m (min-window-lines)]
+           [delta (min delta (- (window-size partner) m))]
+           [delta (max delta (- m (window-size w)))]
+           [ssum (fold-left + 0 (map window-size windows))]
+           [gsum (fold-left + 0 (map window-weight windows))])
+      (unless (= delta 0)
+        (let ([g (if (<= ssum 0)
+                     delta
+                     (let ([g (round (/ (* delta gsum) ssum))])
+                       (if (= g 0) (if (> delta 0) 1 -1) g)))])
+          (window-goal-set! w (max 1 (+ (window-weight w) g)))
+          (window-goal-set! partner
+                            (max 1 (- (window-weight partner) g)))))))
 
   (define (delete-window!)
     (if (null? (cdr windows))
@@ -840,7 +865,7 @@
          w)]
       [(halved-size!) =>
        (lambda (new)
-         (let ([w (make-window b 0 0 0 0 #f new)])
+         (let ([w (make-window b 0 0 0 0 #f new new)])
            (set! windows (insert-after windows current-window w))
            w))]
       [else #f]))
@@ -1100,29 +1125,25 @@
   (define (window-layout)
     ;; Stack the windows top to bottom, each a band of text rows followed by
     ;; its own status line; the last echo-height screen rows are the echo
-    ;; area.  Each window's stored size is honored; when the sizes no
-    ;; longer tile the text area (a terminal resize, prompt growth, a
-    ;; window added or removed) they are rescaled proportionally --
-    ;; evenly when there is nothing valid to scale.
+    ;; area.  The windows tile the text area in proportion to their
+    ;; goals -- the sizes the user chose -- realized fresh from the
+    ;; goals every time, at least min-window-lines each, so a grown
+    ;; echo area or a terminal resize cannot drift them.
     ;; -> list of (window start text-height), start 0-based.
     (let* ([n (length windows)]
            [text (- rows echo-height n)]
-           [sum (fold-left + 0 (map window-size windows))])
-      (unless (= sum text)
-        (if (or (<= sum 0)
-                (exists (lambda (w) (< (window-size w) 2)) windows))
-            (let ([base (quotient text n)] [extra (remainder text n)])
-              (let loop ([ws windows] [i 0])
-                (unless (null? ws)
-                  (window-size-set! (car ws) (+ base (if (< i extra) 1 0)))
-                  (loop (cdr ws) (+ i 1)))))
-            (let loop ([ws windows] [left text])
-              (if (null? (cdr ws))
-                  (window-size-set! (car ws) (max 2 left))
-                  (let ([h (max 2 (quotient (* (window-size (car ws)) text)
-                                            sum))])
-                    (window-size-set! (car ws) h)
-                    (loop (cdr ws) (- left h)))))))
+           [sum (fold-left + 0 (map window-weight windows))]
+           [m (min (min-window-lines) (max 1 (quotient text n)))])
+      (let loop ([ws windows] [left text])
+        (if (null? (cdr ws))
+            (window-size-set! (car ws) (max m left))
+            (let* ([rest (* m (length (cdr ws)))]
+                   [h (min (max m (quotient (* (window-weight (car ws))
+                                               text)
+                                            sum))
+                           (max m (- left rest)))])
+              (window-size-set! (car ws) h)
+              (loop (cdr ws) (- left h)))))
       (let loop ([ws windows] [start 0] [acc '()])
         (if (null? ws)
             (reverse acc)
@@ -1473,7 +1494,7 @@
            (buffer-read-only-set! completions-buffer #t)
            (buffer-mode-set! completions-buffer (completions-mode))
            (buffer-lines-set! completions-buffer content)
-           (let ([w (make-window completions-buffer 0 0 0 0 #f new)])
+           (let ([w (make-window completions-buffer 0 0 0 0 #f new new)])
              (set! windows (insert-after windows current-window w))
              (set! completions-restore
                (lambda () (set! windows (remq w windows)))))
