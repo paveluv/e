@@ -627,12 +627,14 @@
             (buffer-trailing-set! b ends?)
             (buffer-file-set! b path)
             (assign-mode! b)
-            (set! message (format "Loaded ~a" path))
+            (parameterize ([message-source 'visit-file!])
+              (set-message! (format "Loaded ~a" path)))
             b))
         (let ([b (new-buffer (unique-name (base-name path) #f))])
           (buffer-file-set! b path)
           (assign-mode! b)
-          (set! message (format "New file: ~a" path))
+          (parameterize ([message-source 'visit-file!])
+            (set-message! (format "New file: ~a" path)))
           b)))
 
   (define (visit-file! path)
@@ -657,7 +659,8 @@
       (let ([b (window-buffer current-window)])
         (buffer-name-set! b (unique-name (base-name path) b))
         (assign-mode! b))
-      (set! message (format "Wrote ~a" path))
+      (parameterize ([message-source 'save-file!])
+        (set-message! (format "Wrote ~a" path)))
       (reload-on-save! path)
       #t))
 
@@ -709,9 +712,12 @@
   (define (set-message! s)
     ;; The message presents itself: it paints the moment it is set,
     ;; even in the middle of a long command -- and never before the
-    ;; screen is the editor's.
+    ;; screen is the editor's.  The sender's identity (message-source)
+    ;; is stamped now, so the log attributes the record correctly no
+    ;; matter when it paints.
     (set! message s)
     (set! message-ghost "")
+    (set! message-from (message-source))
     (when screen-live?
       (paint-echo-area!)
       (flush-output-port stdout)))
@@ -941,7 +947,8 @@
                 (when (eq? (window-buffer w) b)
                   (set-window-buffer! w (car buffers))))
               windows)
-    (set! message (format "Killed ~a" (buffer-name b))))
+    (parameterize ([message-source 'kill-buffer!])
+      (set-message! (format "Killed ~a" (buffer-name b)))))
 
   (define (kill-buffer!!)
     (let* ([current (window-buffer current-window)]
@@ -1499,17 +1506,20 @@
              (+ (string-length message) (string-length message-ghost)))))
 
   (define last-logged-message "")
+  (define message-from 'e)   ; who set the current message: stamped by
+                             ; set-message!, reset once the record logs
 
   (define (log-echo-message!)
     ;; The choke point: a message painted in the echo area -- not a
     ;; prompt in progress, not the parked evaluation echo -- becomes a
-    ;; log record attributed to (message-source).  Nothing that shows
-    ;; there escapes the log.
+    ;; log record attributed to whoever stamped it.  Nothing that
+    ;; shows there escapes the log.
     (when (and (not (echo-cursor-now))
                (> (string-length message) 0)
                (not (string=? message last-logged-message)))
       (set! last-logged-message message)
-      (log! (message-source) message)))
+      (log! message-from message)
+      (set! message-from 'e)))
 
   (define (paint-echo-area!)
     ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
@@ -2793,7 +2803,9 @@
                            (format "Wrote ~a; reload failed: ~a"
                                    path (error-text ex)))])
           (reload-module! name)
-          (set! message (format "Wrote ~a (reloaded ~a)" path name))))))
+          (parameterize ([message-source 'reload-module!])
+            (set-message!
+              (format "Wrote ~a (reloaded ~a)" path name)))))))
 
   ;;; Main ------------------------------------------------------------------
 
