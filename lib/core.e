@@ -37,7 +37,8 @@
     complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
     set-message! current-message redraw! error-text mouse!
-    log! log-entries show-log! message-source echo-highlight
+    log! log-entries log-view show-log! message-source echo-highlight
+    register-view!
     call-with-interrupt interrupted?
     vector-fill-range! string-search
     string-tail string-prefix? string-suffix? string-join
@@ -744,61 +745,6 @@
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
 
-  ;;; The log -----------------------------------------------------------------
-
-  ;; The editor's syslog: structured records -- (date component text),
-  ;; newest first -- of every message that passes through the echo
-  ;; area, plus whatever components log directly (log!).  The *log*
-  ;; buffer is an ephemeral view rendered from the records on the fly
-  ;; (show-log!), so a format change applies to every row; the records
-  ;; themselves are queriable (log-entries).
-  (define log-records '())
-
-  (define message-source
-    ;; Who a message came from, for the log's attribution: components
-    ;; parameterize it around their messages.
-    (make-parameter 'e))
-
-  (define (log! component text)
-    ;; Append a structured record; a live *log* view follows.
-    (set! log-records (cons (list (current-date) component text)
-                            log-records))
-    (when (buffer-named "*log*") (render-log!)))
-
-  (define (log-entries . component)
-    ;; The records, newest first, each (date component text) --
-    ;; filtered when a component is given.
-    (if (pair? component)
-        (filter (lambda (e) (eq? (cadr e) (car component))) log-records)
-        (list-copy log-records)))
-
-  (define (log-line-prefix e)
-    (let ([d (car e)])
-      (format "~2,'0d:~2,'0d:~2,'0d ~a: "
-              (date-hour d) (date-minute d) (date-second d) (cadr e))))
-
-  (define (render-log!)
-    ;; Rebuild the *log* view from the records, oldest first; a
-    ;; multi-line record renders each line under the same prefix.
-    (let ([b (fresh-buffer "*log*")]
-          [lines (let loop ([es log-records] [acc '()])
-                   (if (null? es)
-                       acc
-                       (loop (cdr es)
-                             (let ([prefix (log-line-prefix (car es))])
-                               (append
-                                 (map (lambda (l) (string-append prefix l))
-                                      (split-lines (caddr (car es))))
-                                 acc)))))])
-      (when (pair? lines) (apply buffer-append! b lines))
-      (buffer-read-only-set! b #t)
-      b))
-
-  (define (show-log!)
-    ;; Pop up the *log* view, rendered fresh from the records.
-    (display-buffer! (render-log!))
-    (void))
-
   (define (fresh-buffer name)
     ;; The named tool buffer, emptied for rebuilding -- *describe*,
     ;; *Buffer List*, and their kin.  An existing one is reused: the
@@ -816,6 +762,145 @@
                     (window-pcol-set! w 0)))
                 windows)
       b))
+
+  ;;; Views ---------------------------------------------------------------------
+
+  ;; A view is a buffer rendered on the fly from a source of truth --
+  ;; named [so], to stand apart from the *scratch* kind.  A view sits
+  ;; in the buffer list like any buffer and reads as an ordinary
+  ;; read-only buffer; its refresh procedure brings the content up to
+  ;; date incrementally, run at every redraw while the view is
+  ;; visible.  A window whose point sits at the very end follows
+  ;; appended content -- tail mode, M-> to enter -- and anywhere else
+  ;; the viewport holds still while the source grows.  Killing a view
+  ;; buffer discards it; asking for the view again builds it afresh.
+  (define views '())   ; (buffer . refresh!)
+
+  (define (register-view! name refresh!)
+    (let ([b (or (buffer-named name) (new-buffer name))])
+      (buffer-read-only-set! b #t)
+      (unless (memq b buffers) (set! buffers (append buffers (list b))))
+      (set! views (cons (cons b refresh!) views))
+      b))
+
+  (define (refresh-visible-views!)
+    (set! views (filter (lambda (e) (memq (car e) buffers)) views))
+    (for-each (lambda (entry)
+                (when (find (lambda (w) (eq? (window-buffer w) (car entry)))
+                            windows)
+                  (guard (ex [else (void)])   ; a broken view stays stale
+                    ((cdr entry)))))
+              views))
+
+  (define (view-append! b lines)
+    ;; Append lines to view b: windows whose point was at the very end
+    ;; follow the tail; others hold their viewport still.
+    (when (pair? lines)
+      (let* ([v (buffer-lines b)]
+             [n (vector-length v)]
+             [virgin? (and (= n 1) (string=? (vector-ref v 0) ""))]
+             [tail? (lambda (w)
+                      (and (eq? (window-buffer w) b)
+                           (= (window-prow w) (- n 1))
+                           (= (window-pcol w)
+                              (string-length (vector-ref v (- n 1))))))]
+             [tails (filter tail? windows)])
+        (buffer-lines-set! b
+          (if virgin?
+              (list->vector lines)
+              (vector-splice v n n lines)))
+        (let* ([nv (buffer-lines b)]
+               [last (- (vector-length nv) 1)])
+          (for-each (lambda (w)
+                      (window-prow-set! w last)
+                      (window-pcol-set! w
+                        (string-length (vector-ref nv last))))
+                    tails)))))
+
+  ;;; The log -----------------------------------------------------------------
+
+  ;; The editor's syslog: structured records -- (time component text),
+  ;; time with nanosecond precision -- indexed in a growable vector,
+  ;; appended by log! and by every message that passes through the
+  ;; echo area (attributed to the message-source parameter).  The
+  ;; [log] view renders them on the fly; (log-view 'eval) makes a
+  ;; filtered view; log-entries returns the records themselves.
+  (define log-store (make-vector 64 #f))
+  (define log-count 0)
+
+  (define (log-record i) (vector-ref log-store i))
+
+  (define message-source
+    ;; Who a message came from, for the log's attribution: components
+    ;; parameterize it around their messages.
+    (make-parameter 'e))
+
+  (define (log! component text)
+    ;; Append a structured record; visible views catch up at the next
+    ;; redraw.
+    (when (= log-count (vector-length log-store))
+      (let ([bigger (make-vector (* 2 (vector-length log-store)) #f)])
+        (do ([i 0 (+ i 1)]) ((= i log-count))
+          (vector-set! bigger i (vector-ref log-store i)))
+        (set! log-store bigger)))
+    (vector-set! log-store log-count (list (current-time) component text))
+    (set! log-count (+ log-count 1)))
+
+  (define (log-entries . component)
+    ;; The records, newest first, each (time component text) --
+    ;; filtered when a component is given.
+    (let loop ([i 0] [acc '()])
+      (if (= i log-count)
+          (if (pair? component)
+              (filter (lambda (e) (eq? (cadr e) (car component))) acc)
+              acc)
+          (loop (+ i 1) (cons (log-record i) acc)))))
+
+  (define (log-line-prefix e)
+    ;; The view's row prefix; the stored time keeps nanoseconds, the
+    ;; rendering shows seconds.
+    (let ([d (time-utc->date (car e))])
+      (format "~2,'0d:~2,'0d:~2,'0d ~a: "
+              (date-hour d) (date-minute d) (date-second d) (cadr e))))
+
+  (define (make-log-view name pred)
+    ;; A view over the log: the records pred accepts, one prefixed row
+    ;; per line of text, appended past a high-water mark.
+    (define b #f)
+    (define rendered 0)
+    (define (refresh!)
+      (when (< rendered log-count)
+        (let ([lines '()])
+          (do ([i (- log-count 1) (- i 1)]) ((< i rendered))
+            (let ([e (log-record i)])
+              (when (pred e)
+                (set! lines
+                  (append (let ([prefix (log-line-prefix e)])
+                            (map (lambda (l) (string-append prefix l))
+                                 (split-lines (caddr e))))
+                          lines)))))
+          (set! rendered log-count)
+          (view-append! b lines))))
+    (set! b (register-view! name refresh!))
+    (refresh!)
+    b)
+
+  (define (log-view . component)
+    ;; The [log] view -- or a dynamic filtered one, [log eval] for
+    ;; (log-view 'eval) -- created (or recreated after a kill) on
+    ;; demand.
+    (if (null? component)
+        (or (buffer-named "[log]")
+            (make-log-view "[log]" (lambda (e) #t)))
+        (let ([name (format "[log ~a]" (car component))])
+          (or (buffer-named name)
+              (make-log-view name
+                (lambda (e) (eq? (cadr e) (car component))))))))
+
+  (define (show-log!)
+    ;; Pop up the [log] view.
+    (display-buffer! (log-view))
+    (void))
 
   ;; A buffer's printed form is the expression that looks it up again, so
   ;; results shown in *eval* can be pasted straight into the next
@@ -1561,6 +1646,7 @@
   (define (redraw!)
     (terminal-size!)
     (update-echo-geometry!)
+    (refresh-visible-views!)
     (update-completions-size!)
     ;; A terminal too small for the splits collapses back to one window.
     (when (and (pair? (cdr windows))
@@ -2721,6 +2807,7 @@
     ;; loaded here, before the file argument needs their modes.
     (let ([args (command-line-arguments)])
       (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
+      (log-view)                ; the [log] view, listed from startup
       (load-modules!)
       (when (pair? args) (visit-file! (car args))))
     (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))

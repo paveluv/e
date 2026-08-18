@@ -153,11 +153,17 @@ message:
 
 Nothing is lost when it fades: every message that passes through the
 echo area lands in the log -- the editor's syslog, structured records
-of date, component, and text.  `show-log!` pops up the `*log*` view
-(rendered from the records on the fly), `log-entries` returns the
-records themselves for slicing from M-x, and `log!` adds your own.
-The M-x history is read off the log, so the up arrow recalls past
-expressions -- forgiven parentheses included -- across the session.
+of time (nanosecond precision), component, and text.  The `[log]`
+buffer is a *view*: rendered from the records on the fly, always in
+the buffer list (`C-x b [log]`), read-only, refreshed while visible.
+With the cursor at the end (`M->`) it tails the log; anywhere else
+the viewport holds still while records arrive.  Square-bracket names
+mark views apart from `*scratch*`-style buffers; `(log-view 'eval)`
+makes a filtered one -- `[log eval]` -- on the fly.  `log-entries`
+returns the records themselves for slicing from M-x, and `log!` adds
+your own.  The M-x history is read off the log, so the up arrow
+recalls past expressions -- forgiven parentheses included -- across
+the session.
 
 TAB completes the symbol being typed against everything bound in the
 top level: Chez itself, the editor, loaded modules. A unique completion
