@@ -146,6 +146,10 @@
   (define echo-spans '((0 . 0)))
   (define message-ghost "") ; grey suggestion drawn after the message text
   (define search-highlight "")
+
+  ;; The match point sits on, as (buffer row start end); #f outside a
+  ;; search.  Painted in its own color, apart from the other matches.
+  (define search-current #f)
   (define rows 24)
   (define cols 80)
   (define stdin (current-input-port))
@@ -1088,7 +1092,7 @@
                  (if (= (car r) row) (cons (cdr r) acc) acc))
                '() ranges))
 
-  (define (display-editor-line s span marks left styles)
+  (define (display-editor-line s span marks cur left styles)
     (define n (string-length s))
     (define limit (+ left cols))
     (define marked (matching-columns s search-highlight))
@@ -1096,6 +1100,8 @@
       (if (and styles (< col n)) (vector-ref styles col) 'plain))
     (define (search-hit? col)
       (and (< col n) marked (vector-ref marked col)))
+    (define (current-hit? col)
+      (and cur (<= (car cur) col) (< col (cdr cur))))
     (define (selected? col)
       (and (< col n) span (<= (car span) col) (< col (cdr span))))
     (define (segment from to)
@@ -1117,19 +1123,22 @@
       (when (< col limit)
         (let* ([style (style-at col)]
                [srch (search-hit? col)]
+               [curh (current-hit? col)]
                [sel (selected? col)]
                [mk (marked? col)]
                [end (let run ([j (+ col 1)])
                       (if (and (< j limit)
                                (eq? (style-at j) style)
                                (eq? (search-hit? j) srch)
+                               (eq? (current-hit? j) curh)
                                (eq? (selected? j) sel)
                                (eq? (marked? j) mk))
                           (run (+ j 1))
                           j))])
           (ansi "\x1b;[0m" (style-code style))
           (when sel (ansi "\x1b;[44m"))     ; the selection: blue backdrop
-          (when srch (ansi "\x1b;[7m"))     ; search matches: reverse video
+          (cond [curh (ansi "\x1b;[43;30m")]  ; the match point is on: yellow
+                [srch (ansi "\x1b;[46;30m")]) ; other matches: cyan
           (when mk (ansi "\x1b;[4m"))
           (ansi (segment col end))
           (loop end))))
@@ -1333,10 +1342,15 @@
             (if (< i n)
                 (let* ([line (vector-ref v i)]
                        [span (and current? (region-span i (string-length line)))]
-                       [marks (if current? (ranges-on-row ranges i) '())])
-                  (paint! row (list i line span marks left mode-tag)
+                       [marks (if current? (ranges-on-row ranges i) '())]
+                       [cur (and search-current
+                                 (eq? (car search-current) b)
+                                 (= (cadr search-current) i)
+                                 (cons (caddr search-current)
+                                       (cadddr search-current)))])
+                  (paint! row (list i line span marks cur left mode-tag)
                           (lambda ()
-                            (display-editor-line line span marks left
+                            (display-editor-line line span marks cur left
                                                  (styles-of line)))))
                 (paint! row '(empty)
                         (lambda () (ansi (fit "~" cols))))))
@@ -1844,65 +1858,107 @@
         (dynamic-wind
           void
           run-search!
-          (lambda () (set! search-highlight ""))))))
+          (lambda ()
+            (set! search-highlight "")
+            (set! search-current #f))))))
 
   (define (run-search!)
-    (let ([origin (cons point-row point-col)])
-      (let loop ([needle ""] [match #f] [failed? #f])
-        (set! search-highlight needle)
-        (set! message (format "~aI-search: ~a" (if failed? "Failing " "") needle))
-        (redraw!)
-        (let ([c (read-char stdin)]
-              [anchor (or match origin)])
-          (if (eof-object? c)
-              (set! quit? #t)
-              (case (char->integer c)
-                ;; RET or ESC accepts the current match, silently.  An escape
-                ;; sequence (arrow key etc.) also accepts, then moves point.
-                [(10 13 27)
-                 (set! search-highlight "")
-                 (set! message "")
-                 (when (and (= (char->integer c) 27) (char-ready? stdin))
-                   (escape-sequence!))]
-                ;; C-g cancels the search and restores point.
-                [(7)
-                 (set! search-highlight "")
-                 (goto-match! origin)
-                 (set! message "Quit")]
-                ;; C-s repeats the current search from just beyond this match.
-                [(19)
-                 (if (string=? needle "")
-                     (loop needle match failed?)
-                     (let ([next (search-forward-from needle (car anchor)
-                                                      (+ (cdr anchor) 1))])
-                       (if next
-                           (begin (goto-match-end! next needle)
-                                  (loop needle next #f))
-                           (loop needle match #t))))]
-                ;; Backspace shortens the needle and searches again from the
-                ;; original point.
-                [(8 127)
-                 (if (string=? needle "")
-                     (loop needle match failed?)
-                     (let ([shorter (substring needle 0 (- (string-length needle) 1))])
-                       (if (string=? shorter "")
-                           (begin (goto-match! origin) (loop shorter #f #f))
-                           (let ([next (search-forward-from shorter (car origin)
-                                                            (cdr origin))])
-                             (when next (goto-match-end! next shorter))
-                             (loop shorter next (not next))))))]
-                [else
-                 (if (< (char->integer c) 32)
-                     (loop needle match failed?)
-                     ;; Extend the current match when possible; if it no longer
-                     ;; matches, continue forward to the next candidate.
-                     (let* ([longer (string-append needle (string c))]
-                            [next (search-forward-from longer (car anchor)
-                                                       (cdr anchor))])
-                       (if next
-                           (begin (goto-match-end! next longer)
-                                  (loop longer next #f))
-                           (loop longer match #t))))]))))))
+    ;; Keys the search does not use run through the ordinary dispatch,
+    ;; so windows and buffers can be switched (C-x o, C-x b, and
+    ;; friends) without leaving the search; it then continues from
+    ;; point in the new buffer.  A match records where it was found --
+    ;; (buffer row col len) -- so the highlight and the anchors survive
+    ;; the excursion.
+    (define origin-window current-window)
+    (define origin (cons point-row point-col))
+    (define (match-here? match)
+      (and match (eq? (car match) (current-buffer))))
+    (define (anchor match)
+      ;; Where the next search starts: the current match when it is in
+      ;; this buffer, else point.
+      (if (match-here? match)
+          (cons (cadr match) (caddr match))
+          (cons point-row point-col)))
+    (define (found hit needle)
+      (list (current-buffer) (car hit) (cdr hit) (string-length needle)))
+    (let loop ([needle ""] [match #f] [failed? #f])
+      (set! search-highlight needle)
+      (set! search-current
+        (and match (list (car match) (cadr match) (caddr match)
+                         (+ (caddr match) (cadddr match)))))
+      (unless key-prefix                  ; C-x- stays visible mid-chord
+        (set! message
+          (format "~aI-search: ~a" (if failed? "Failing " "") needle)))
+      (redraw!)
+      (let ([c (read-char stdin)])
+        (cond
+          [(eof-object? c) (set! quit? #t)]
+          ;; A pending prefix owns the next key entirely.
+          [key-prefix (handle-key! c)
+                      (unless quit? (loop needle match failed?))]
+          [else
+           (case (char->integer c)
+             ;; RET or ESC accepts the current match, silently.  An escape
+             ;; sequence (arrow key etc.) also accepts, then moves point.
+             [(10 13 27)
+              (set! search-highlight "")
+              (set! search-current #f)
+              (set! message "")
+              (when (and (= (char->integer c) 27) (char-ready? stdin))
+                (escape-sequence!))]
+             ;; C-g cancels the search and restores point -- back in the
+             ;; window it started in.
+             [(7)
+              (set! search-highlight "")
+              (set! search-current #f)
+              (when (memq origin-window windows)
+                (set! current-window origin-window)
+                (goto-match! origin))
+              (set! message "Quit")]
+             ;; C-s repeats the current search from just beyond this match
+             ;; -- or from point, after a move to another buffer.
+             [(19)
+              (if (string=? needle "")
+                  (loop needle match failed?)
+                  (let* ([a (anchor match)]
+                         [skip (if (match-here? match) 1 0)]
+                         [next (search-forward-from needle (car a)
+                                                    (+ (cdr a) skip))])
+                    (if next
+                        (begin (goto-match-end! next needle)
+                               (loop needle (found next needle) #f))
+                        (loop needle match #t))))]
+             ;; Backspace shortens the needle and searches again from the
+             ;; original point (or from point, away from the origin window).
+             [(8 127)
+              (if (string=? needle "")
+                  (loop needle match failed?)
+                  (let ([shorter (substring needle 0 (- (string-length needle) 1))]
+                        [home (if (eq? current-window origin-window)
+                                  origin
+                                  (cons point-row point-col))])
+                    (if (string=? shorter "")
+                        (begin (goto-match! home) (loop shorter #f #f))
+                        (let ([next (search-forward-from shorter (car home)
+                                                         (cdr home))])
+                          (when next (goto-match-end! next shorter))
+                          (loop shorter (and next (found next shorter))
+                                (not next))))))]
+             [else
+              (if (< (char->integer c) 32)
+                  ;; Any other control key runs as usual -- C-x o, C-x b
+                  ;; and friends -- and the search carries on.
+                  (begin (handle-key! c)
+                         (unless quit? (loop needle match failed?)))
+                  ;; Extend the current match when possible; if it no longer
+                  ;; matches, continue forward to the next candidate.
+                  (let* ([longer (string-append needle (string c))]
+                         [a (anchor match)]
+                         [next (search-forward-from longer (car a) (cdr a))])
+                    (if next
+                        (begin (goto-match-end! next longer)
+                               (loop longer (found next longer) #f))
+                        (loop longer match #t))))])]))))
 
   ;;; Pasting and typed runs --------------------------------------------------
 
