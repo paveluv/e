@@ -614,8 +614,9 @@
   (define (file-buffer path)
     ;; A fresh buffer visiting path; #f (with a message) when it cannot be read.
     (if (file-exists? path)
-        (guard (ex [else (set! message (format "Cannot open ~a: ~a"
-                                               path (error-text ex)))
+        (guard (ex [else (parameterize ([message-source 'visit-file!])
+                           (set-message! (format "Cannot open ~a: ~a"
+                                                 path (error-text ex))))
                          #f])
           (let* ([content (read-file path)]
                  [n (string-length content)]
@@ -646,7 +647,10 @@
 
   (define (save-file! path*)
     (define path (expand-path path*))
-    (guard (ex [else (set! message (format "Save failed: ~a" (error-text ex))) #f])
+    (guard (ex [else (parameterize ([message-source 'save-file!])
+                       (set-message!
+                         (format "Save failed: ~a" (error-text ex))))
+                     #f])
       (call-with-output-file path
         (lambda (p)
           (let loop ([i 0])
@@ -838,7 +842,8 @@
 
   (define message-source
     ;; Who a message came from, for the log's attribution: components
-    ;; parameterize it around their messages.
+    ;; parameterize it around their messages.  #f makes the message a
+    ;; plain indicator -- shown, never logged.
     (make-parameter 'e))
 
   (define (log! component text)
@@ -1506,20 +1511,25 @@
              (+ (string-length message) (string-length message-ghost)))))
 
   (define last-logged-message "")
-  (define message-from 'e)   ; who set the current message: stamped by
-                             ; set-message!, reset once the record logs
+  (define message-from #f)   ; who set the current message: stamped by
+                             ; set-message!, reset once the record logs.
+                             ; #f -- a raw indicator (a chord hint,
+                             ; "Quit", "Mark set") -- stays out of
+                             ; the log.
 
   (define (log-echo-message!)
-    ;; The choke point: a message painted in the echo area -- not a
-    ;; prompt in progress, not the parked evaluation echo -- becomes a
-    ;; log record attributed to whoever stamped it.  Nothing that
-    ;; shows there escapes the log.
-    (when (and (not (echo-cursor-now))
+    ;; The choke point: a spoken message painted in the echo area --
+    ;; one set through set-message!, not a prompt in progress, not the
+    ;; parked evaluation echo -- becomes a log record attributed to
+    ;; whoever stamped it.  Unstamped indicators show and vanish
+    ;; without a trace: the log records events, not keystrokes.
+    (when (and message-from
+               (not (echo-cursor-now))
                (> (string-length message) 0)
                (not (string=? message last-logged-message)))
       (set! last-logged-message message)
       (log! message-from message)
-      (set! message-from 'e)))
+      (set! message-from #f)))
 
   (define (paint-echo-area!)
     ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
@@ -2799,9 +2809,10 @@
     ;; which keeps running the module's old version.
     (let ([name (and (auto-reload) (module-name-of-path path))])
       (when name
-        (guard (ex [else (set! message
-                           (format "Wrote ~a; reload failed: ~a"
-                                   path (error-text ex)))])
+        (guard (ex [else (parameterize ([message-source 'reload-module!])
+                           (set-message!
+                             (format "Wrote ~a; reload failed: ~a"
+                                     path (error-text ex))))])
           (reload-module! name)
           (parameterize ([message-source 'reload-module!])
             (set-message!
@@ -2854,7 +2865,8 @@
             ;; editor.
             (guard (ex [(read-only-error? ex)
                         (set! message "Buffer is read-only")]
-                       [else (set! message (error-text ex))])
+                       [else (parameterize ([message-source 'error])
+                               (set-message! (error-text ex)))])
               (handle-key! (read-char stdin)))
             (clamp-point!)
             (loop))))

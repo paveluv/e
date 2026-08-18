@@ -271,7 +271,10 @@
           ;; Keep the prompt on screen while its expression evaluates --
           ;; forgiven parentheses included -- with the cursor parked at
           ;; its end, drawn as the evaluation-in-progress underline.
-          (set-message! kept)
+          ;; An indicator, not a record: the expression is already
+          ;; logged under eval.
+          (parameterize ([message-source #f])
+            (set-message! kept))
           (let ([outcome
                  (parameterize ([cursor-in-echo #t])
                    (redraw!)
