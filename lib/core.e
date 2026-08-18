@@ -972,7 +972,10 @@
             (let ([hit (eq-hashtable-ref style-cache s #f)])
               (if (and hit (eq? (car hit) m))
                   (cdr hit)
-                  (let ([styles ((mode-styles m) s)])
+                  ;; a raising mode styles the line plain rather than
+                  ;; taking the redraw (and the editor) down
+                  (let ([styles (guard (ex [else #f])
+                                  ((mode-styles m) s))])
                     (eq-hashtable-set! style-cache s (cons m styles))
                     styles))))
           no-styles)))
