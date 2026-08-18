@@ -22,10 +22,10 @@
   ;;; Symbol completion -------------------------------------------------------
 
   (define (complete-symbol-where s keep? empty-ok?)
-    ;; Complete the trailing symbol token of s against the bindings of the
-    ;; editor's top level that satisfy keep?.  An empty token completes to
-    ;; everything kept when empty-ok? -- or to nothing, for predicates that
-    ;; would offer the whole environment.
+    ;; Complete the trailing symbol token of s against the bindings of
+    ;; the editor's top level that satisfy keep?.  An empty token
+    ;; completes to everything kept when empty-ok? -- the pop-up pages
+    ;; a list as large as the whole environment.
     (let* ([start (let loop ([i (- (string-length s) 1)])
                     (cond [(< i 0) 0]
                           [(memv (string-ref s i)
@@ -50,7 +50,7 @@
                 (map (lambda (name) (string-append head name)) names))))))
 
   (define (complete-symbol s)
-    (complete-symbol-where s (lambda (sym) #t) #f))
+    (complete-symbol-where s (lambda (sym) #t) #t))
 
   (define (complete-editor-symbol s)
     ;; Only the symbols the editor (and its modules) define -- few enough
