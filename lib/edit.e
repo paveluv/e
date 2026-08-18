@@ -229,6 +229,11 @@
                                (drain-escape!) (goto-point! hit)]
                               [(memv n '(7 13 10 113))        ; C-g RET q
                                (goto-point! hit)]
+                              [(= n 24)                       ; C-x: only the
+                               (let ([k2 (read-key)])         ; quit chord
+                                 (when (and k2 (= (char->integer k2) 3))
+                                   (quit!!))
+                                 (goto-point! hit))]
                               [else (loop (car hit) (cdr hit))]))))))))
               (lambda () (set! query-match #f)))
             (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
