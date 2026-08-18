@@ -258,6 +258,18 @@
           (loop (- n 1))
           (substring s 0 n))))
 
+  (define (normalize-input s)
+    ;; The prompt's normalizer: trailing blanks go and the forgiven
+    ;; closing parentheses are appended (sans the prompt's own opening
+    ;; one), so the history and the kept echo carry the completed
+    ;; expression.
+    (let ([t (trim-right s)])
+      (if (string=? t "")
+          t
+          (let ([e (or (close-expression (string-append "(" t))
+                       (string-append "(" t))])
+            (substring e 1 (string-length e))))))
+
   (define (eval!!)
     ;; The prompt supplies the opening parenthesis, so it cannot be deleted;
     ;; the expression is evaluated in the editor's own top level.
@@ -265,9 +277,8 @@
                             [completion-highlight
                              (lambda (label)
                                (editor-symbol? (string->symbol label)))])
-               (let ([s (prompt! "M-x (" complete-symbol "" mx-history
-                                 complete-editor-symbol)])
-                 (and s (trim-right s))))])
+               (prompt! "M-x (" complete-symbol "" mx-history
+                        complete-editor-symbol normalize-input))])
       (when (and s (> (string-length s) 0))
         (let* ([expr (or (close-expression (string-append "(" s))
                          (string-append "(" s))]

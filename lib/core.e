@@ -1700,9 +1700,11 @@
     ;; arguments: a completer (string -> list of candidate strings) enabling
     ;; TAB completion, initial input (pre-filled, editable), a history box
     ;; (a list of previous inputs, newest first) navigated with the up and
-    ;; down arrows -- accepting an input records it there -- and an
-    ;; alternative completer bound to Shift-TAB.  Whichever way the prompt
-    ;; ends, the completions pop-up is taken down.
+    ;; down arrows -- accepting an input records it there -- an
+    ;; alternative completer bound to Shift-TAB, and a normalizer
+    ;; applied to the accepted input before recording and returning.
+    ;; Whichever way the prompt ends, the completions pop-up is taken
+    ;; down.
     (define (optional n)
       (let loop ([r rest] [n n])
         (cond [(null? r) #f]
@@ -1712,6 +1714,10 @@
     (define initial (or (optional 1) ""))
     (define history (optional 2))
     (define alt-complete (optional 3))
+    ;; applied to the accepted input before it is recorded and
+    ;; returned: eval closes forgiven parentheses here, so the history
+    ;; carries the completed expression
+    (define normalize (optional 4))
     (define hist-pos -1)   ; -1: editing; 0..: showing that history entry
     (define stash "")      ; the in-progress input while browsing history
     (define (record-history! s)
@@ -1831,7 +1837,9 @@
                            (loop s pos "")))
                      (begin (set! message "Quit") #f))]
                 [(7) (set! message "Quit") #f]
-                [(10 13) (record-history! s) (set! message "") s]
+                [(10 13)
+                 (let ([out (if normalize (normalize s) s)])
+                   (record-history! out) (set! message "") out)]
                 [(1) (loop s 0 "")]                                   ; C-a
                 [(2) (loop s (max 0 (- pos 1)) "")]                   ; C-b
                 [(5) (loop s len "")]                                 ; C-e
