@@ -202,14 +202,18 @@
                  t
                  (loop (+ extra 1)))))))
 
-  (define (eval-history)
-    ;; The M-x history, read off the log: the expressions component
-    ;; eval recorded, newest first, consecutive repeats collapsed.
-    (let loop ([es (log-entries 'eval)] [last #f])
-      (cond [(null? es) '()]
-            [(equal? (caddr (car es)) last) (loop (cdr es) last)]
-            [else (cons (caddr (car es))
-                        (loop (cdr es) (caddr (car es))))])))
+  (define (format-exchange d)
+    ;; The eval entry: (query . result) formatted "query => result";
+    ;; a bare string (an old-style record) as itself.
+    (if (pair? d)
+        (string-append (car d) " => " (cdr d))
+        (format "~a" d)))
+
+  (define (style-exchange text)
+    ;; Scheme highlighting over the whole exchange, echo and *log*
+    ;; alike.
+    (let ([scheme (find-mode "scheme")])
+      (and scheme ((mode-styles scheme) text))))
 
   (define (mx-echo-styles content)
     ;; Scheme highlighting for the M-x prompt: the label stays grey,
@@ -247,11 +251,6 @@
           t
           (or (close-expression t) t))))
 
-  (define (one-line s)
-    ;; s with its newlines flattened, for the echo area.
-    (list->string (map (lambda (c) (if (char=? c #\newline) #\space c))
-                       (string->list s))))
-
   (define (eval!!)
     ;; Read an expression -- the prompt pretypes "(", deletable, so a
     ;; bare symbol evaluates too -- and evaluate it in the editor's
@@ -263,11 +262,11 @@
                              (lambda (label)
                                (editor-symbol? (string->symbol label)))]
                             [echo-highlight mx-echo-styles])
-               (prompt! "M-x " complete-symbol "(" (box (eval-history))
+               (prompt! "M-x " complete-symbol "("
+                        (box (log-history 'eval car))
                         complete-editor-symbol normalize-input))])
       (when (and s (> (string-length s) 0) (not (string=? s "(")))
         (let ([kept (string-append "M-x " s)])
-          (log! 'eval s)
           ;; Keep the prompt on screen while its expression evaluates --
           ;; forgiven parentheses included -- with the cursor parked at
           ;; its end, drawn as the evaluation-in-progress underline.
@@ -300,13 +299,18 @@
                                (string-join (map (lambda (v) (format "~s" v))
                                                  outcome)
                                             ", "))])
+              ;; one structured record per exchange: history reads the
+              ;; queries, the view and the echo the formatted pair.  A
+              ;; void exchange logs quietly, leaving the command's own
+              ;; message its display.
               (if void?
-                  ;; a command that left its own message keeps it;
-                  ;; otherwise the kept prompt comes down
-                  (when (equal? (current-message) kept) (set-message! ""))
-                  (parameterize ([message-source 'eval])
-                    (set-message!
-                      (one-line (string-append s " => " result)))))))))))
+                  (begin
+                    (log! 'eval (cons s "#<void>") #f)
+                    (when (equal? (current-message) kept)
+                      (parameterize ([message-source #f])
+                        (set-message! ""))))
+                  (log! 'eval (cons s result)))))))))
 
   (define (init!)
+    (register-log-formatter! 'eval format-exchange style-exchange)
     (bind-key! "M-x" eval!!)))

@@ -160,11 +160,17 @@ the buffer list (`C-x b *log*`), read-only, refreshed while visible,
 wearing `[]` in its status bar where ordinary buffers show `--`.
 With the cursor at the end (`M->`) it tails the log; anywhere else
 the viewport holds still while records arrive.  `(log-view 'eval)`
-makes a filtered view -- `*log eval*` -- on the fly.  `log-entries`
-returns the records themselves for slicing from M-x, and `log!` adds
-your own.  The M-x history is read off the log, so the up arrow
-recalls past expressions -- forgiven parentheses included -- across
-the session.
+makes a filtered view -- `*log eval*` -- on the fly.  Entries are
+structured data with registered presentation: a module registers a
+formatter (and optionally a styler) for its component, used
+identically in the echo area and the view -- eval logs the pair
+`(query . result)`, formatted `query => result` with Scheme
+highlighting, while its history reads just the queries.  Messages
+set with a `message-source` of `#f` are indicators -- shown like a
+CapsLock light, never logged.  `log-entries` returns the records
+themselves for slicing from M-x, `log-history` derives a command
+history from any component (find-file and save-as browse their past
+paths this way), and `log!` adds your own.
 
 TAB completes the symbol being typed against everything bound in the
 top level: Chez itself, the editor, loaded modules. A unique completion

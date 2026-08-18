@@ -38,7 +38,7 @@
     read-key pending-input? cursor-in-echo
     set-message! current-message redraw! error-text mouse!
     log! log-entries log-view show-log! message-source echo-highlight
-    register-view!
+    register-view! register-log-formatter! log-history
     call-with-interrupt interrupted?
     vector-fill-range! string-search
     string-tail string-prefix? string-suffix? string-join
@@ -628,14 +628,12 @@
             (buffer-trailing-set! b ends?)
             (buffer-file-set! b path)
             (assign-mode! b)
-            (parameterize ([message-source 'visit-file!])
-              (set-message! (format "Loaded ~a" path)))
+            (log! 'visit-file! (cons "Loaded" path))
             b))
         (let ([b (new-buffer (unique-name (base-name path) #f))])
           (buffer-file-set! b path)
           (assign-mode! b)
-          (parameterize ([message-source 'visit-file!])
-            (set-message! (format "New file: ~a" path)))
+          (log! 'visit-file! (cons "New file:" path))
           b)))
 
   (define (visit-file! path)
@@ -668,8 +666,7 @@
         (buffer-name-set! b (unique-name (base-name path) b))
         (assign-mode! b))
       (when mode (guard (ex [else (void)]) (chmod path mode)))
-      (parameterize ([message-source 'save-file!])
-        (set-message! (format "Wrote ~a" path)))
+      (log! 'save-file! (cons "Wrote" path))
       (reload-on-save! path)
       #t))
 
@@ -719,17 +716,15 @@
   (define (current-buffer) (window-buffer current-window))
   (define (buffer-list) (list-copy buffers))
   (define (set-message! s)
-    ;; The message presents itself: it paints the moment it is set,
-    ;; even in the middle of a long command -- and never before the
-    ;; screen is the editor's.  The sender's identity (message-source)
-    ;; is stamped now, so the log attributes the record correctly no
-    ;; matter when it paints.
-    (set! message s)
-    (set! message-ghost "")
-    (set! message-from (message-source))
-    (when screen-live?
-      (paint-echo-area!)
-      (flush-output-port stdout)))
+    ;; A stamped message is a log entry -- recorded and shown; with
+    ;; (message-source #f) it is an indicator, shown and forgotten,
+    ;; like a CapsLock light.  Either way it presents the moment it is
+    ;; set, mid-command included, and never before the screen is the
+    ;; editor's.
+    (let ([src (message-source)])
+      (if src
+          (log! src s)
+          (show-message! s #f))))
   (define (current-message) message)
   (define (point) (cons point-row point-col))
   (define (mark) (and mark-active? (cons mark-row mark-col)))
@@ -854,16 +849,64 @@
     ;; plain indicator -- shown, never logged.
     (make-parameter 'e))
 
-  (define (log! component text)
-    ;; Append a structured record; visible views catch up at the next
-    ;; redraw.
+  ;; Per-component presentation of structured entries: modules register
+  ;; a formatter (datum -> string) and optionally a styler (formatted
+  ;; text -> styles vector), used identically in the echo area and the
+  ;; *log* view.  The datum itself stays queriable -- eval logs
+  ;; (query . result) and its history reads only the queries.
+  (define log-formatters '#f)  ; the registry, made after registries exist
+
+  (define (register-log-formatter! component fmt . style)
+    (registry-add! log-formatters
+                   (list component fmt (and (pair? style) (car style)))))
+
+  (define (log-formatter component)
+    (registry-find log-formatters (lambda (x) (eq? (car x) component))))
+
+  (define (format-log-entry e)
+    ;; The entry's presentation text: its component's formatter, or the
+    ;; datum itself (a string as it is, anything else written).
+    (let ([f (log-formatter (cadr e))]
+          [d (caddr e)])
+      (guard (ex [else (format "~s" d)])
+        (if f ((cadr f) d) (if (string? d) d (format "~s" d))))))
+
+  (define (one-line s)
+    ;; s with its newlines flattened, for the echo area.
+    (list->string (map (lambda (c) (if (char=? c #\newline) #\space c))
+                       (string->list s))))
+
+  (define (log! component datum . show)
+    ;; Append a structured record -- visible views catch up at the next
+    ;; redraw -- and present it transiently in the echo area, styled by
+    ;; the component's styler (pass #f to log quietly).
     (when (= log-count (vector-length log-store))
       (let ([bigger (make-vector (* 2 (vector-length log-store)) #f)])
         (do ([i 0 (+ i 1)]) ((= i log-count))
           (vector-set! bigger i (vector-ref log-store i)))
         (set! log-store bigger)))
-    (vector-set! log-store log-count (list (current-time) component text))
-    (set! log-count (+ log-count 1)))
+    (let ([e (list (current-time) component datum)])
+      (vector-set! log-store log-count e)
+      (set! log-count (+ log-count 1))
+      (when (or (null? show) (car show))
+        (let* ([text (one-line (format-log-entry e))]
+               [f (log-formatter component)]
+               [styler (and f (caddr f))])
+          (show-message! text (and styler (cons text styler)))))))
+
+  (define (log-history component . select)
+    ;; Command history off the log: a component's datums through select
+    ;; -- car for eval's (query . result), cdr for the file commands'
+    ;; (verb . path) -- newest first, non-strings dropped, consecutive
+    ;; repeats collapsed.
+    (let ([sel (if (pair? select) (car select) (lambda (d) d))])
+      (let loop ([es (log-entries component)] [last #f])
+        (if (null? es)
+            '()
+            (let ([x (guard (ex [else #f]) (sel (caddr (car es))))])
+              (if (and (string? x) (not (equal? x last)))
+                  (cons x (loop (cdr es) x))
+                  (loop (cdr es) last)))))))
 
   (define (log-entries . component)
     ;; The records, newest first, each (time component text) --
@@ -882,9 +925,33 @@
       (format "~2,'0d:~2,'0d:~2,'0d ~a: "
               (date-hour d) (date-minute d) (date-second d) (cadr e))))
 
+  (define (log-mode)
+    ;; The *log* view's mode: the timestamp and component prefix grey,
+    ;; the text styled by the component's registered styler.
+    (make-mode "log" '() '()
+      (lambda (s)
+        (let* ([n (string-length s)]
+               [styles (make-vector n 'comment)]
+               [sep (and (> n 9) (string-search s ": " 9 n))])
+          (when sep
+            (let* ([component (string->symbol (substring s 9 sep))]
+                   [f (log-formatter component)]
+                   [from (+ sep 2)]
+                   [inner (and f (caddr f)
+                               (guard (ex [else #f])
+                                 ((caddr f) (string-tail s from))))])
+              (if inner
+                  (let loop ([i from])
+                    (when (< i n)
+                      (vector-set! styles i (vector-ref inner (- i from)))
+                      (loop (+ i 1))))
+                  (vector-fill-range! styles from n 'plain))))
+          styles))))
+
   (define (make-log-view name pred)
-    ;; A view over the log: the records pred accepts, one prefixed row
-    ;; per line of text, appended past a high-water mark.
+    ;; A view over the log: the records pred accepts, each formatted by
+    ;; its component's formatter, one prefixed row per line, appended
+    ;; past a high-water mark.
     (define b #f)
     (define rendered 0)
     (define (refresh!)
@@ -896,11 +963,12 @@
                 (set! lines
                   (append (let ([prefix (log-line-prefix e)])
                             (map (lambda (l) (string-append prefix l))
-                                 (split-lines (caddr e))))
+                                 (split-lines (format-log-entry e))))
                           lines)))))
           (set! rendered log-count)
           (view-append! b lines))))
     (set! b (register-view! name refresh!))
+    (buffer-mode-set! b (log-mode))
     (refresh!)
     b)
 
@@ -1141,6 +1209,18 @@
                 (set-box! r (remp (lambda (e) (eq? (car e) owner))
                                   (unbox r))))
               registries))
+
+  ;; The formatter registry itself, and the file commands' formatters:
+  ;; their entries are (verb . path), formatted "verb path", their
+  ;; histories the paths (see log-history).
+  (define log-formatters-init
+    (let ([fmt (lambda (d)
+                 (if (pair? d)
+                     (format "~a ~a" (car d) (cdr d))
+                     (format "~a" d)))])
+      (set! log-formatters (make-registry))
+      (registry-add! log-formatters (list 'visit-file! fmt #f))
+      (registry-add! log-formatters (list 'save-file! fmt #f))))
 
   ;;; Modes -------------------------------------------------------------------
 
@@ -1518,32 +1598,23 @@
         (and (cursor-in-echo)
              (+ (string-length message) (string-length message-ghost)))))
 
-  (define last-logged-message "")
-  (define message-from #f)   ; who set the current message: stamped by
-                             ; set-message!, reset once the record logs.
-                             ; #f -- a raw indicator (a chord hint,
-                             ; "Quit", "Mark set") -- stays out of
-                             ; the log.
+  (define message-styles #f)  ; (text . styler) for the current message:
+                              ; applied while the text still matches
 
-  (define (log-echo-message!)
-    ;; The choke point: a spoken message painted in the echo area --
-    ;; one set through set-message! -- becomes a log record attributed
-    ;; to whoever stamped it, the moment it first paints (mid-command
-    ;; included).  Unstamped indicators -- chord hints, prompt input,
-    ;; the parked evaluation echo -- show and vanish without a trace:
-    ;; the log records events, not keystrokes.
-    (when (and message-from
-               (> (string-length message) 0)
-               (not (string=? message last-logged-message)))
-      (set! last-logged-message message)
-      (log! message-from message)
-      (set! message-from #f)))
+  (define (show-message! s styles-pair)
+    ;; Put s in the echo area and paint right away (once the screen is
+    ;; the editor's).
+    (set! message s)
+    (set! message-ghost "")
+    (set! message-styles styles-pair)
+    (when screen-live?
+      (paint-echo-area!)
+      (flush-output-port stdout)))
 
   (define (paint-echo-area!)
     ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
     ;; first: set-message! and the busy watcher come here directly,
     ;; with the content just changed (from redraw! it is a no-op).
-    (log-echo-message!)
     (update-echo-geometry!)
     (let* ([content (string-append message message-ghost)]
            [ghost-at (string-length message)]
@@ -1560,11 +1631,19 @@
                  [cut (min (max (- ghost-at start) 0) (- end start))])
             (paint! row
                     (list 'echo line (substring content start end)
-                          cut lead wrapped? (and (echo-highlight) #t))
+                          cut lead wrapped? (and (echo-highlight) #t)
+                          (and message-styles #t))
                     (lambda ()
-                      (let ([styles (and (echo-highlight)
-                                         (guard (ex [else #f])
-                                           ((echo-highlight) content)))])
+                      (let ([styles
+                             (or (and (echo-highlight)
+                                      (guard (ex [else #f])
+                                        ((echo-highlight) content)))
+                                 (and message-styles
+                                      (string-prefix? (car message-styles)
+                                                      content)
+                                      (guard (ex [else #f])
+                                        ((cdr message-styles)
+                                         (car message-styles)))))])
                         (ansi (make-string lead #\space))
                         (if styles
                             ;; styled runs for the typed part
@@ -2125,13 +2204,17 @@
     ;; edit -- and save the buffer there: the buffer visits the new
     ;; file from then on, its name and mode following.
     (let ([s (prompt! "Save as: " complete-file-name
-                      (or file-name (default-directory)))])
+                      (or file-name (default-directory))
+                      (box (log-history 'save-file! cdr)))])
       (when (and s (> (string-length s) 0)) (save-file! s)))
     (void))
 
   (define (find-file!!)
-    ;; Visiting a file never loses the old buffer, so no confirmation needed.
-    (let ([s (prompt! "Find file: " complete-file-name (default-directory))])
+    ;; Visiting a file never loses the old buffer, so no confirmation
+    ;; needed.  Up and down browse the paths visited before, off the
+    ;; log.
+    (let ([s (prompt! "Find file: " complete-file-name (default-directory)
+                      (box (log-history 'visit-file! cdr)))])
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
   (define (quit!!)
