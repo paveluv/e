@@ -780,9 +780,9 @@
 
   ;;; Views ---------------------------------------------------------------------
 
-  ;; A view is a buffer rendered on the fly from a source of truth --
-  ;; named [so], to stand apart from the *scratch* kind.  A view sits
-  ;; in the buffer list like any buffer and reads as an ordinary
+  ;; A view is a buffer rendered on the fly from a source of truth,
+  ;; named like any buffer and marked [] in its status bar.  A view
+  ;; sits in the buffer list like any buffer and reads as an ordinary
   ;; read-only buffer; its refresh procedure brings the content up to
   ;; date incrementally, run at every redraw while the view is
   ;; visible.  A window whose point sits at the very end follows
@@ -797,6 +797,9 @@
       (unless (memq b buffers) (set! buffers (append buffers (list b))))
       (set! views (cons (cons b refresh!) views))
       b))
+
+  (define (view-buffer? b)
+    (and (assq b views) #t))
 
   (define (refresh-visible-views!)
     (set! views (filter (lambda (e) (memq (car e) buffers)) views))
@@ -838,7 +841,7 @@
   ;; time with nanosecond precision -- indexed in a growable vector,
   ;; appended by log! and by every message that passes through the
   ;; echo area (attributed to the message-source parameter).  The
-  ;; [log] view renders them on the fly; (log-view 'eval) makes a
+  ;; *log* view renders them on the fly; (log-view 'eval) makes a
   ;; filtered view; log-entries returns the records themselves.
   (define log-store (make-vector 64 #f))
   (define log-count 0)
@@ -902,19 +905,19 @@
     b)
 
   (define (log-view . component)
-    ;; The [log] view -- or a dynamic filtered one, [log eval] for
+    ;; The *log* view -- or a dynamic filtered one, *log eval* for
     ;; (log-view 'eval) -- created (or recreated after a kill) on
     ;; demand.
     (if (null? component)
-        (or (buffer-named "[log]")
-            (make-log-view "[log]" (lambda (e) #t)))
-        (let ([name (format "[log ~a]" (car component))])
+        (or (buffer-named "*log*")
+            (make-log-view "*log*" (lambda (e) #t)))
+        (let ([name (format "*log ~a*" (car component))])
           (or (buffer-named name)
               (make-log-view name
                 (lambda (e) (eq? (cadr e) (car component))))))))
 
   (define (show-log!)
-    ;; Pop up the [log] view.
+    ;; Pop up the *log* view.
     (display-buffer! (log-view))
     (void))
 
@@ -1628,7 +1631,8 @@
                           (lambda () (ansi (fit "~" cols))))
                   (loop (+ k 1) (+ i 1) 0))))))
       (let ([status (format " ~a~a  ~a  L~a C~a~a~a "
-                            (cond [(buffer-read-only b) "%%"]
+                            (cond [(view-buffer? b) "[]"]
+                                  [(buffer-read-only b) "%%"]
                                   [(buffer-modified b) "**"]
                                   [else "--"])
                             editor-name
@@ -2851,7 +2855,7 @@
     ;; loaded here, before the file argument needs their modes.
     (let ([args (command-line-arguments)])
       (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
-      (log-view)                ; the [log] view, listed from startup
+      (log-view)                ; the *log* view, listed from startup
       (load-modules!)
       (when (pair? args) (visit-file! (car args))))
     (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
