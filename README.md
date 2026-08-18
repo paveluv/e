@@ -64,6 +64,7 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | Key       | Action                                                |
 |-----------|-------------------------------------------------------|
 | `C-x C-s` | Save (prompts for a name in an unnamed buffer)        |
+| `C-x C-w` | Save as: prompt for a path, the buffer visits it      |
 | `C-x C-f` | Visit a file in its own buffer (creating if needed)   |
 | `C-x C-c` | Quit (asks only if some buffer differs from its file) |
 

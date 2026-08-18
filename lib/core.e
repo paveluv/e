@@ -17,7 +17,7 @@
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
-    visit-file! save-file! save!! find-file!!
+    visit-file! save-file! save!! save-as!! find-file!!
     show-buffer! kill-buffer! display-buffer! buffer-append!
     fresh-buffer
     set-buffer-mode! set-buffer-read-only! call-with-buffer
@@ -647,6 +647,10 @@
 
   (define (save-file! path*)
     (define path (expand-path path*))
+    ;; Rewriting recreates the file: remember its permissions (the
+    ;; exec bit on a script, say) and put them back after.
+    (define mode (and (file-exists? path)
+                      (guard (ex [else #f]) (get-mode path))))
     (guard (ex [else (parameterize ([message-source 'save-file!])
                        (set-message!
                          (format "Save failed: ~a" (error-text ex))))
@@ -663,6 +667,7 @@
       (let ([b (window-buffer current-window)])
         (buffer-name-set! b (unique-name (base-name path) b))
         (assign-mode! b))
+      (when mode (guard (ex [else (void)]) (chmod path mode)))
       (parameterize ([message-source 'save-file!])
         (set-message! (format "Wrote ~a" path)))
       (reload-on-save! path)
@@ -2111,6 +2116,15 @@
           (when (and s (> (string-length s) 0)) (save-file! s))))
     (void))
 
+  (define (save-as!!)
+    ;; Prompt for a path -- prefilled with the current file, ready to
+    ;; edit -- and save the buffer there: the buffer visits the new
+    ;; file from then on, its name and mode following.
+    (let ([s (prompt! "Save as: " complete-file-name
+                      (or file-name (default-directory)))])
+      (when (and s (> (string-length s) 0)) (save-file! s)))
+    (void))
+
   (define (find-file!!)
     ;; Visiting a file never loses the old buffer, so no confirmation needed.
     (let ([s (prompt! "Find file: " complete-file-name (default-directory))])
@@ -2625,6 +2639,7 @@
        (case (char->integer c)
           [(7) (set! message "Quit")]                           ; C-x C-g
           [(19) (save!!)]                                ; C-x C-s
+          [(23) (save-as!!)]                             ; C-x C-w
           [(3) (quit!!)]                                 ; C-x C-c
           [(6) (find-file!!)]                            ; C-x C-f
           [(98) (switch-buffer!!)]                       ; C-x b
