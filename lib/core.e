@@ -1717,6 +1717,9 @@
             (goto (min (car p) rows) (min (cdr p) cols)))))
     (let ([style (cond
                    [(cursor-in-echo) "\x1b;[3 q"]
+                   ;; a prompt: the cursor is in the echo area's input,
+                   ;; which is editable whatever the buffer behind it
+                   [echo-cursor "\x1b;[0 q"]
                    ;; a bar where typing cannot land: a read-only buffer
                    [(buffer-read-only (window-buffer current-window))
                     "\x1b;[5 q"]
