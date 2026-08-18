@@ -15,7 +15,7 @@
 ;;
 ;;   M-x (describe eq-hashtable-ref)
 ;;
-;; pops up a *Describe* buffer with the entry: its forms, what it
+;; pops up a *describe* buffer with the entry: its forms, what it
 ;; returns, its libraries, source, and the full prose.  The database is
 ;; structured and queryable: doc-lookup returns the entries for a name,
 ;; doc-entries all of them (optionally filtered), and the doc-*
@@ -543,15 +543,13 @@
       (wrapped-lines (doc-description entry) 72)))
 
   (define (describe! name)
-    ;; Pop up a *Describe* buffer with the documentation for name (a
+    ;; Pop up a *describe* buffer with the documentation for name (a
     ;; symbol or its string); every matching entry is shown.
     (let ([entries (doc-lookup name)])
       (if (null? entries)
           (set-message! (format "No documentation for ~a" name))
           (begin
-            (let ([old (buffer-named "*Describe*")])
-              (when old (kill-buffer! old)))
-            (let ([b (new-buffer "*Describe*")])
+            (let ([b (fresh-buffer "*describe*")])
               (apply buffer-append! b
                      (let loop ([es entries] [acc '()])
                        (if (null? es)
@@ -569,7 +567,7 @@
               (if (display-buffer! b)
                   (set-message! "")
                   (set-message!
-                    (format "~a: see the *Describe* buffer" name))))))
+                    (format "~a: see the *describe* buffer" name))))))
       (void)))
 
   (define-syntax describe

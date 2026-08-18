@@ -19,6 +19,7 @@
     ;; buffers, windows, files
     visit-file! save-file! save!! find-file!!
     show-buffer! kill-buffer! display-buffer! buffer-append!
+    fresh-buffer
     set-buffer-mode! set-buffer-read-only! call-with-buffer
     switch-buffer!! kill-buffer!!
     split-window! delete-window! delete-other-windows! other-window!
@@ -672,19 +673,46 @@
   (define (buffer-line b n) (vector-ref (buffer-lines b) n))
 
   (define (call-with-buffer b thunk)
-    ;; Run thunk with b temporarily the current buffer, in the current
-    ;; window with the usual spot saving -- invisibly: the MRU order is
-    ;; untouched and nothing repaints during a command.
-    (if (eq? b (window-buffer current-window))
-        (thunk)
-        (let ([old (window-buffer current-window)])
-          (dynamic-wind
-            (lambda () (set-window-buffer! current-window b))
-            thunk
-            (lambda () (set-window-buffer! current-window old))))))
+    ;; Run thunk with b temporarily the current buffer: in the window
+    ;; already showing it when there is one -- point moves where the
+    ;; user sees them -- else invisibly in the current window with the
+    ;; usual spot saving; the MRU order is untouched either way.
+    (cond
+      [(eq? b (window-buffer current-window)) (thunk)]
+      [(find (lambda (w) (eq? (window-buffer w) b)) windows)
+       => (lambda (w)
+            (let ([prev current-window])
+              (dynamic-wind
+                (lambda () (set! current-window w))
+                thunk
+                (lambda () (set! current-window prev)))))]
+      [else
+       (let ([old (window-buffer current-window)])
+         (dynamic-wind
+           (lambda () (set-window-buffer! current-window b))
+           thunk
+           (lambda () (set-window-buffer! current-window old))))]))
 
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
+
+  (define (fresh-buffer name)
+    ;; The named tool buffer, emptied for rebuilding -- *describe*,
+    ;; *Buffer List*, and their kin.  An existing one is reused: the
+    ;; windows showing it keep showing it and display-buffer! finds it
+    ;; on screen -- no kill, no second window, no duplication.
+    (let ([b (or (buffer-named name) (new-buffer name))])
+      (buffer-read-only-set! b #f)
+      (buffer-lines-set! b (vector ""))
+      (buffer-history-set! b (vector '() '()))
+      (buffer-modified-set! b #f)
+      (for-each (lambda (w)
+                  (when (eq? (window-buffer w) b)
+                    (window-top-set! w 0)
+                    (window-prow-set! w 0)
+                    (window-pcol-set! w 0)))
+                windows)
+      b))
 
   ;; A buffer's printed form is the expression that looks it up again, so
   ;; results shown in *eval* can be pasted straight into the next

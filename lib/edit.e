@@ -255,8 +255,6 @@
     ;; (. current, % read-only, * modified), length in lines, mode, and
     ;; file, most recently used first.  Rebuilt on every invocation; on
     ;; a screen too small for a second window, a one-line summary.
-    (let ([old (buffer-named "*Buffer List*")])
-      (when old (kill-buffer! old)))
     (let* ([current (current-buffer)]
            [rows (map (lambda (b)
                         (list (string-append
@@ -281,7 +279,7 @@
                              (pad-left (list-ref r 2) wlines)
                              (pad (list-ref r 3) wmode)
                              (list-ref r 4)))]
-           [b (new-buffer "*Buffer List*")])
+           [b (fresh-buffer "*Buffer List*")])
       (apply buffer-append! b (map render all))
       (set-buffer-read-only! b #t)
       (call-with-buffer b (lambda () (goto-point! '(0 . 0))))

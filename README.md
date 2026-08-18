@@ -197,7 +197,7 @@ The Scheme manual is available inside the editor:
 
     M-x (describe eq-hashtable-ref)
 
-pops up a `*Describe*` buffer with the entry from the reference
+pops up a `*describe*` buffer with the entry from the reference
 documentation: forms, what it returns, libraries, source, and the full
 prose. The corpus covers R6RS (from TSPL4) and the Chez extensions
 (from the Chez Scheme User's Guide); run `M-x (fetch-describe-data!)`
