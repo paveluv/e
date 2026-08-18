@@ -37,6 +37,7 @@
     complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
     set-message! current-message redraw! error-text mouse!
+    log! log-entries show-log! message-source echo-highlight
     call-with-interrupt interrupted?
     vector-fill-range! string-search
     string-tail string-prefix? string-suffix? string-join
@@ -743,6 +744,61 @@
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
 
+  ;;; The log -----------------------------------------------------------------
+
+  ;; The editor's syslog: structured records -- (date component text),
+  ;; newest first -- of every message that passes through the echo
+  ;; area, plus whatever components log directly (log!).  The *log*
+  ;; buffer is an ephemeral view rendered from the records on the fly
+  ;; (show-log!), so a format change applies to every row; the records
+  ;; themselves are queriable (log-entries).
+  (define log-records '())
+
+  (define message-source
+    ;; Who a message came from, for the log's attribution: components
+    ;; parameterize it around their messages.
+    (make-parameter 'e))
+
+  (define (log! component text)
+    ;; Append a structured record; a live *log* view follows.
+    (set! log-records (cons (list (current-date) component text)
+                            log-records))
+    (when (buffer-named "*log*") (render-log!)))
+
+  (define (log-entries . component)
+    ;; The records, newest first, each (date component text) --
+    ;; filtered when a component is given.
+    (if (pair? component)
+        (filter (lambda (e) (eq? (cadr e) (car component))) log-records)
+        (list-copy log-records)))
+
+  (define (log-line-prefix e)
+    (let ([d (car e)])
+      (format "~2,'0d:~2,'0d:~2,'0d ~a: "
+              (date-hour d) (date-minute d) (date-second d) (cadr e))))
+
+  (define (render-log!)
+    ;; Rebuild the *log* view from the records, oldest first; a
+    ;; multi-line record renders each line under the same prefix.
+    (let ([b (fresh-buffer "*log*")]
+          [lines (let loop ([es log-records] [acc '()])
+                   (if (null? es)
+                       acc
+                       (loop (cdr es)
+                             (let ([prefix (log-line-prefix (car es))])
+                               (append
+                                 (map (lambda (l) (string-append prefix l))
+                                      (split-lines (caddr (car es))))
+                                 acc)))))])
+      (when (pair? lines) (apply buffer-append! b lines))
+      (buffer-read-only-set! b #t)
+      b))
+
+  (define (show-log!)
+    ;; Pop up the *log* view, rendered fresh from the records.
+    (display-buffer! (render-log!))
+    (void))
+
   (define (fresh-buffer name)
     ;; The named tool buffer, emptied for rebuilding -- *describe*,
     ;; *Buffer List*, and their kin.  An existing one is reused: the
@@ -1346,15 +1402,35 @@
   ;; underline, so a running evaluation is visible at a glance.
   (define cursor-in-echo (make-parameter #f))
 
+  ;; Prompts may parameterize this to style the echo content -- M-x
+  ;; gives the expression Scheme highlighting.  A procedure from the
+  ;; content string to a styles vector (as modes produce), or #f to
+  ;; style nothing; a raising styler paints plain.
+  (define echo-highlight (make-parameter #f))
+
   (define (echo-cursor-now)
     (or echo-cursor
         (and (cursor-in-echo)
              (+ (string-length message) (string-length message-ghost)))))
 
+  (define last-logged-message "")
+
+  (define (log-echo-message!)
+    ;; The choke point: a message painted in the echo area -- not a
+    ;; prompt in progress, not the parked evaluation echo -- becomes a
+    ;; log record attributed to (message-source).  Nothing that shows
+    ;; there escapes the log.
+    (when (and (not (echo-cursor-now))
+               (> (string-length message) 0)
+               (not (string=? message last-logged-message)))
+      (set! last-logged-message message)
+      (log! (message-source) message)))
+
   (define (paint-echo-area!)
     ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
     ;; first: set-message! and the busy watcher come here directly,
     ;; with the content just changed (from redraw! it is a no-op).
+    (log-echo-message!)
     (update-echo-geometry!)
     (let* ([content (string-append message message-ghost)]
            [ghost-at (string-length message)]
@@ -1371,18 +1447,38 @@
                  [cut (min (max (- ghost-at start) 0) (- end start))])
             (paint! row
                     (list 'echo line (substring content start end)
-                          cut lead wrapped?)
+                          cut lead wrapped? (and (echo-highlight) #t))
                     (lambda ()
-                      (ansi (make-string lead #\space)
-                            (substring content start (+ start cut))
-                            "\x1b;[90m"
-                            (substring content (+ start cut) end)
-                            "\x1b;[0m"
-                            (make-string
-                              (max 0 (- cols lead (- end start)
-                                        (if wrapped? 1 0)))
-                              #\space)
-                            (if wrapped? "\\" "")))))
+                      (let ([styles (and (echo-highlight)
+                                         (guard (ex [else #f])
+                                           ((echo-highlight) content)))])
+                        (ansi (make-string lead #\space))
+                        (if styles
+                            ;; styled runs for the typed part
+                            (let emit ([i start])
+                              (when (< i (+ start cut))
+                                (let* ([at (lambda (k)
+                                             (if (< k (vector-length styles))
+                                                 (vector-ref styles k)
+                                                 'plain))]
+                                       [st (at i)]
+                                       [j (let run ([j (+ i 1)])
+                                            (if (and (< j (+ start cut))
+                                                     (eq? (at j) st))
+                                                (run (+ j 1))
+                                                j))])
+                                  (ansi "\x1b;[0m" (style-code st)
+                                        (substring content i j))
+                                  (emit j))))
+                            (ansi (substring content start (+ start cut))))
+                        (ansi "\x1b;[0m\x1b;[90m"
+                              (substring content (+ start cut) end)
+                              "\x1b;[0m"
+                              (make-string
+                                (max 0 (- cols lead (- end start)
+                                          (if wrapped? 1 0)))
+                                #\space)
+                              (if wrapped? "\\" ""))))))
           (loop (+ line 1) (+ row 1))))))
 
   (define (paint-window! w start height ranges)
