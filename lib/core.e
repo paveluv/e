@@ -1322,7 +1322,8 @@
       [(keyword) "\x1b;[1;36m"]
       [(number) "\x1b;[35m"]
       [(literal) "\x1b;[1;35m"]
-      [(delimiter) "\x1b;[33m"]
+      [(delimiter) "\x1b;[38;5;245m"]   ; mid grey: neutral, not white
+      [(editor) "\x1b;[38;5;135m"]      ; medium purple: the editor's own
       [(quote) "\x1b;[36m"]
       [(bold) "\x1b;[1m"]      ; real face attributes: terminals without
       [(italic) "\x1b;[3m"]    ; them simply show plain text
@@ -1918,7 +1919,7 @@
                                     j
                                     (end (+ j 1))))])
                        (when (highlight? (substring s i j))
-                         (vector-fill-range! styles i j 'keyword))
+                         (vector-fill-range! styles i j 'editor))
                        (loop j))])))))))
 
   (define completions-labels #f)   ; the labels shown: repeat detection

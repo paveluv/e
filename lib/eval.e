@@ -209,23 +209,53 @@
         (string-append (car d) " => " (cdr d))
         (format "~a" d)))
 
+  (define (editorize! text styles)
+    ;; Overlay for eval contexts, which run in the editor's top level:
+    ;; symbols the editor itself defines take the editor style, on top
+    ;; of cells the base styling left plain or italic.
+    (let ([n (string-length text)])
+      (define (boundary? c)
+        (memv c '(#\space #\tab #\( #\) #\[ #\] #\" #\' #\` #\,
+                  #\;)))
+      (let loop ([i 0])
+        (when (< i n)
+          (if (boundary? (string-ref text i))
+              (loop (+ i 1))
+              (let end ([j (+ i 1)])
+                (if (and (< j n) (not (boundary? (string-ref text j))))
+                    (end (+ j 1))
+                    (begin
+                      (when (and (guard (ex [else #f])
+                                   (editor-symbol?
+                                     (string->symbol (substring text i j))))
+                                 (memq (vector-ref styles i) '(plain italic)))
+                        (let fill ([k i])
+                          (when (< k j)
+                            (vector-set! styles k 'editor)
+                            (fill (+ k 1)))))
+                      (loop j)))))))
+      styles))
+
   (define (style-exchange text)
     ;; Scheme highlighting over the whole exchange, echo and *log*
-    ;; alike.
+    ;; alike -- the editor's own names in the editor style: eval runs
+    ;; in the editor's environment, whatever a random file does.
     (let ([scheme (find-mode "scheme")])
-      (and scheme ((mode-styles scheme) text))))
+      (and scheme (editorize! text ((mode-styles scheme) text)))))
 
   (define (mx-echo-styles content)
     ;; Scheme highlighting for the M-x prompt: the label stays grey,
-    ;; the expression styles as Scheme.
+    ;; the expression styles as Scheme with the editor's own names in
+    ;; the editor style.
     (guard (ex [else #f])
       (and (string-prefix? "M-x " content)
            (let ([scheme (find-mode "scheme")])
              (and scheme
-                  (let ([styles (make-vector (string-length content)
-                                             'comment)]
-                        [inner ((mode-styles scheme)
-                                (string-tail content 4))])
+                  (let* ([tail (string-tail content 4)]
+                         [styles (make-vector (string-length content)
+                                              'comment)]
+                         [inner (editorize! tail
+                                            ((mode-styles scheme) tail))])
                     (let loop ([i 4])
                       (when (< i (string-length content))
                         (vector-set! styles i (vector-ref inner (- i 4)))

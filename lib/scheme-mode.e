@@ -35,13 +35,31 @@
     (let ([c (string-ref token 0)])
       (or (char<=? #\0 c #\9) (memv c '(#\+ #\- #\. #\#)))))
 
+  (define standard-symbol?
+    ;; Membership in the standard language -- Chez's (chezscheme)
+    ;; environment, built once at first use.  The negative-space check
+    ;; is against the language, not the editor's session: what counts
+    ;; as known does not drift as things get defined.
+    (let ([table #f])
+      (lambda (sym)
+        (unless table
+          (set! table (make-eq-hashtable))
+          (for-each (lambda (s) (eq-hashtable-set! table s #t))
+                    (environment-symbols (environment '(chezscheme)))))
+        (eq-hashtable-ref table sym #f))))
+
   (define (scheme-token-style token)
     ;; Character literals never reach here -- the line scanner consumes
     ;; them whole -- so # tokens are booleans or radix-prefixed numbers.
+    ;; A symbol the standard language does not know is the negative
+    ;; space: a local, a program-defined name, or a typo.  Italic.
     (cond [(hashtable-ref scheme-keywords token #f) 'keyword]
           [(member token '("#t" "#f")) 'literal]
           [(and (maybe-number? token) (string->number token)) 'number]
-          [else 'plain]))
+          [(guard (ex [else #t])
+             (standard-symbol? (string->symbol token)))
+           'plain]
+          [else 'italic]))
 
   (define (scheme-styles s)
     (let* ([n (string-length s)]

@@ -1,8 +1,8 @@
-;; pretty.e -- pretty-scheme: per-construct unicode parens, for the e
-;; editor.
+;; pretty-scheme.e -- per-construct unicode parens, for the e editor.
 ;;
-;; An e extension module: the library (pretty), loaded at startup by
-;; the core, which calls init!.  (pretty!) toggles the current buffer
+;; An e extension module: the library (pretty-scheme), loaded at
+;; startup by the core, which calls init!.  (pretty-scheme!) toggles
+;; the current buffer
 ;; between scheme and pretty-scheme.  The mode draws each construct's
 ;; parentheses as the unicode pair assigned to its cluster -- (define
 ;; ...) wears double angles, conditionals white parens, and so on --
@@ -14,8 +14,8 @@
 ;; is one character and one terminal cell, so editing, search, and the
 ;; file on disk are untouched.
 
-(library (pretty)
-  (export init! pretty!)
+(library (pretty-scheme)
+  (export init! pretty-scheme!)
   (import (chezscheme) (core))
 
   ;;; Clusters ------------------------------------------------------------------
@@ -220,7 +220,7 @@
         (insert-text! (string (if (eqv? (innermost-opener) #\[) #\] #\))))
         (insert-text! (string typed))))
 
-  (define (pretty!)
+  (define (pretty-scheme!)
     ;; Toggle the current buffer between scheme and pretty-scheme.
     (set-buffer-mode! (current-buffer)
                       (if (pretty-buffer?) "scheme" "pretty-scheme"))
