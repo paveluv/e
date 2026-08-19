@@ -265,6 +265,23 @@ the editor's own top level, the editor's names take their own style
 -- so at the M-x prompt, plain is standard Scheme, purple is the
 editor, italic is nobody's.
 
+## Integrity
+
+The editor never quietly overwrites work -- yours or anybody's.
+Every file buffer remembers the disk state it last agreed with: at
+the start of each edit session (one undo entry -- an unbroken typed
+run asks once), a changed mtime prompts before the keystroke lands,
+and a mere `touch` passes silently because content, not clocks, is
+what counts.  Saving re-reads the file and compares contents; if
+somebody changed it meanwhile, the save stops and asks: `o)verwrite,
+m)erge, c)ancel`.  Merge is a three-way merge (the in-house `diff.e`,
+a patience diff) of what you loaded, what you have, and what the disk
+says: changes on one side apply silently, and colliding ones become
+`<<<<<<< buffer / ======= / >>>>>>> disk` markers in the buffer --
+the save waits until you resolve.  `next-conflict!` hops between
+them; `keep-mine!` and `keep-disk!` settle the one at point, each a
+single undo step.  A clean merge saves both sides in one go.
+
 ## Architecture and extension modules
 
 Everything in `lib/` is a library with the `.e` extension, named after

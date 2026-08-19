@@ -18,6 +18,7 @@
           region region? region-buffer region-start region-end
           regions-of region-text
           replace-all! count-matches replace!!
+          next-conflict! keep-mine! keep-disk!
           list-buffers!)
   (import (chezscheme) (core))
 
@@ -238,6 +239,92 @@
               (lambda () (set! query-match #f)))
             (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
             (void)))))
+
+  ;;; Conflict resolution ---------------------------------------------------------
+
+  ;; A merge left <<<<<<< buffer / ======= / >>>>>>> disk markers:
+  ;; next-conflict! hops to one, keep-mine! and keep-disk! resolve the
+  ;; conflict at point, each as one undo step.
+
+  (define (conflict-marker? b row prefix)
+    (and (>= row 0) (< row (buffer-line-count b))
+         (string-prefix? prefix (buffer-line b row))))
+
+  (define (conflict-at row)
+    ;; The (start mid end) marker rows of the conflict containing row,
+    ;; or #f.
+    (let ([b (current-buffer)])
+      (let up ([r row])
+        (cond
+          [(< r 0) #f]
+          [(and (< r row) (conflict-marker? b r ">>>>>>>")) #f]
+          [(conflict-marker? b r "<<<<<<<")
+           (let mid ([m (+ r 1)])
+             (cond
+               [(>= m (buffer-line-count b)) #f]
+               [(conflict-marker? b m "=======")
+                (let end ([e (+ m 1)])
+                  (cond
+                    [(>= e (buffer-line-count b)) #f]
+                    [(conflict-marker? b e ">>>>>>>")
+                     (and (>= e row) (list r m e))]
+                    [else (end (+ e 1))]))]
+               [else (mid (+ m 1))]))]
+          [else (up (- r 1))]))))
+
+  (define (delete-rows! r1 r2)
+    ;; Remove rows r1..r2 inclusive, joining across their newlines.
+    (goto-point! (cons r1 0))
+    (let ([n (let loop ([r r1] [n 0])
+               (if (> r r2)
+                   n
+                   (loop (+ r 1)
+                         (+ n 1 (string-length
+                                  (buffer-line (current-buffer) r))))))])
+      (do ([i 0 (+ i 1)]) ((= i n)) (delete-forward!))))
+
+  (define (next-conflict!)
+    ;; Point to the next conflict's <<<<<<< line, wrapping around.
+    (let* ([b (current-buffer)]
+           [n (buffer-line-count b)]
+           [from (car (point))]
+           [hit (let scan ([r (+ from 1)] [left n])
+                  (cond [(zero? left) #f]
+                        [(>= r n) (scan 0 left)]
+                        [(conflict-marker? b r "<<<<<<<") r]
+                        [else (scan (+ r 1) (- left 1))]))])
+      (if hit
+          (goto-point! (cons hit 0))
+          (set-message! "No conflicts"))
+      (void)))
+
+  (define (keep-mine!)
+    ;; Resolve the conflict at point in the buffer's favor.
+    (let ([c (conflict-at (car (point)))])
+      (if c
+          (begin
+            (call-as-one-edit! "keep mine"
+              (lambda ()
+                (delete-rows! (cadr c) (caddr c))
+                (delete-rows! (car c) (car c))
+                (goto-point! (cons (car c) 0))))
+            (set-message! "Kept the buffer side"))
+          (set-message! "Not in a conflict"))
+      (void)))
+
+  (define (keep-disk!)
+    ;; Resolve the conflict at point in the disk's favor.
+    (let ([c (conflict-at (car (point)))])
+      (if c
+          (begin
+            (call-as-one-edit! "keep disk"
+              (lambda ()
+                (delete-rows! (caddr c) (caddr c))
+                (delete-rows! (car c) (cadr c))
+                (goto-point! (cons (car c) 0))))
+            (set-message! "Kept the disk side"))
+          (set-message! "Not in a conflict"))
+      (void)))
 
   ;;; The buffer list -----------------------------------------------------------
 

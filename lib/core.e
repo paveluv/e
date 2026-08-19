@@ -50,7 +50,7 @@
   ;; buffer-mode accessor vs the port option, ...); a library body may not
   ;; shadow an import, so those imports are excluded.  The system-specific
   ;; layer -- libc, termios, signals -- comes from (sys).
-  (import (except (chezscheme) buffer-mode) (sys))
+  (import (except (chezscheme) buffer-mode) (sys) (diff))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -74,7 +74,12 @@
             (mutable marked)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
-            (mutable mode) (mutable read-only)))
+            (mutable mode) (mutable read-only)
+            ;; the disk state this buffer last agreed with: the mtime
+            ;; stamp raising suspicion cheaply, and the content as
+            ;; loaded or last saved -- the base for comparisons and
+            ;; three-way merges
+            (mutable stamp) (mutable base)))
 
   (define-record-type window
     (fields (mutable buffer) (mutable top) (mutable left)
@@ -94,7 +99,7 @@
 
   (define (new-buffer name)
     (make-buffer name (vector "") #f #t #f (vector '() '())
-                 0 0 #f 0 0 0 #f #f))
+                 0 0 #f 0 0 0 #f #f #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
   (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0 #f))) ; top to bottom
@@ -307,6 +312,64 @@
   (define-condition-type &read-only &error make-read-only-error
     read-only-error?)
 
+  ;; Likewise for a command the user declined mid-flight -- an edit
+  ;; in a buffer whose file changed on disk, say.
+  (define-condition-type &refused &error make-refusal refusal?)
+
+  (define (disk-stamp path)
+    ;; The file's mtime as (seconds . nanoseconds), or #f.
+    (guard (ex [else #f])
+      (and (file-exists? path)
+           (let ([t (file-modification-time path)])
+             (cons (time-second t) (time-nanosecond t))))))
+
+  (define (string-lines s)
+    ;; s split at newlines, a trailing newline yielding no empty last
+    ;; line: the shape comparisons and merges run on.
+    (let* ([n (string-length s)]
+           [body (if (and (> n 0)
+                          (char=? (string-ref s (- n 1)) #\newline))
+                     (substring s 0 (- n 1))
+                     s)])
+      (list->vector (split-lines body))))
+
+  (define (query-key! question)
+    ;; A single-key question, replace!!-style: show, paint, read.
+    (parameterize ([message-source #f])
+      (set-message! question))
+    (redraw!)
+    (read-key))
+
+  (define (check-disk-before-edit!)
+    ;; The start of an edit session -- one undo entry; chained typing
+    ;; asks once: if the file changed on disk meanwhile, ask before
+    ;; the keystroke lands.  The mtime raises the suspicion cheaply;
+    ;; the content confirms it, so a mere touch passes silently.
+    ;; Answering y acknowledges the session (the save guard still
+    ;; compares contents); anything else refuses the edit.
+    (let ([b (window-buffer current-window)])
+      (when (and file-name (buffer-base b))
+        (let ([stamp (disk-stamp file-name)])
+          (unless (equal? stamp (buffer-stamp b))
+            (let ([disk (guard (ex [else #f])
+                          (and (file-exists? file-name)
+                               (read-file file-name)))])
+              (if (and disk (string=? disk (buffer-base b)))
+                  (buffer-stamp-set! b stamp)
+                  (let ask ()
+                    (let* ([k (query-key!
+                                (format "~a changed on disk; edit anyway? (y or n)"
+                                        (buffer-name b)))]
+                           [n (and k (char->integer k))])
+                      (cond
+                        [(memv n '(121 89))
+                         (buffer-stamp-set! b stamp)]
+                        [(or (not n) (memv n '(110 78 7 27 113)))
+                         (raise (condition (make-refusal)
+                                           (make-message-condition
+                                             "Edit refused: the file changed on disk")))]
+                        [else (ask)]))))))))))
+
   (define (record-edit! label)
     ;; Every editing command passes through here before touching the
     ;; buffer, so this is also where read-only buffers are protected:
@@ -316,6 +379,7 @@
         (raise (condition (make-read-only-error)
                           (make-message-condition "buffer is read-only")))))
     (unless (suppress-history)
+      (check-disk-before-edit!)
       (let ([group (edit-group)]
             [b (window-buffer current-window)])
         (cond [(not group) (push-undo! label)]
@@ -629,6 +693,8 @@
             (buffer-lines-set! b (list->vector (split-lines body)))
             (buffer-trailing-set! b ends?)
             (buffer-file-set! b path)
+            (buffer-base-set! b content)
+            (buffer-stamp-set! b (disk-stamp path))
             (assign-mode! b)
             (log! 'visit-file! (cons "Loaded" path))
             b))
@@ -646,34 +712,98 @@
             [(file-buffer path) => show-buffer!])))
 
   (define (save-file! path*)
+    ;; Saving is guarded by content, not clocks: the disk is read and
+    ;; compared with the buffer's base (what it loaded or last saved).
+    ;; A mismatch means somebody changed the file meanwhile -- the
+    ;; save stops and asks: overwrite, merge three-way, or cancel.
     (define path (expand-path path*))
     (define adopted? (not (equal? path file-name)))  ; saving under a new name
-    ;; Rewriting recreates the file: remember its permissions (the
-    ;; exec bit on a script, say) and put them back after.
-    (define mode (and (file-exists? path)
-                      (guard (ex [else #f]) (get-mode path))))
-    (guard (ex [else (parameterize ([message-source 'save-file!])
-                       (set-message!
-                         (format "Save failed: ~a" (error-text ex))))
-                     #f])
-      (call-with-output-file path
-        (lambda (p)
-          (let loop ([i 0])
-            (when (< i (vlen))
-              (display (line-at i) p)
-              (when (or (< i (- (vlen) 1)) trailing-newline?) (newline p))
-              (loop (+ i 1)))))
-        'replace)
-      (set! file-name path) (set! modified? #f)
-      (let ([b (window-buffer current-window)])
+    (define b (window-buffer current-window))
+    (define disk (guard (ex [else #f])
+                   (and (file-exists? path) (read-file path))))
+    (define (write!)
+      ;; Rewriting recreates the file: remember its permissions (the
+      ;; exec bit on a script, say) and put them back after.
+      (define mode (and (file-exists? path)
+                        (guard (ex [else #f]) (get-mode path))))
+      (guard (ex [else (parameterize ([message-source 'save-file!])
+                         (set-message!
+                           (format "Save failed: ~a" (error-text ex))))
+                       #f])
+        (call-with-output-file path
+          (lambda (p)
+            (let loop ([i 0])
+              (when (< i (vlen))
+                (display (line-at i) p)
+                (when (or (< i (- (vlen) 1)) trailing-newline?) (newline p))
+                (loop (+ i 1)))))
+          'replace)
+        (set! file-name path) (set! modified? #f)
         (buffer-name-set! b (unique-name (base-name path) b))
         ;; re-detect the mode only when the name changed: a plain
         ;; re-save must not clobber a mode chosen by hand
-        (when adopted? (assign-mode! b)))
-      (when mode (guard (ex [else (void)]) (chmod path mode)))
-      (log! 'save-file! (cons "Wrote" path))
-      (reload-on-save! path)
-      #t))
+        (when adopted? (assign-mode! b))
+        (when mode (guard (ex [else (void)]) (chmod path mode)))
+        (buffer-base-set! b (buffer-text b))
+        (buffer-stamp-set! b (disk-stamp path))
+        (log! 'save-file! (cons "Wrote" path))
+        (reload-on-save! path)
+        #t))
+    (cond
+      [(and disk (not adopted?)
+            (not (and (buffer-base b) (string=? disk (buffer-base b)))))
+       (stale-save! b path disk write!)]
+      [(and disk adopted?)
+       ;; saving under a new name onto an existing file
+       (let ask ()
+         (let* ([k (query-key! (format "~a exists; overwrite? (y or n)"
+                                       (base-name path)))]
+                [n (and k (char->integer k))])
+           (cond [(memv n '(121 89)) (write!)]
+                 [(or (not n) (memv n '(110 78 7 27)))
+                  (set! message "Save cancelled") #f]
+                 [else (ask)])))]
+      [else (write!)]))
+
+  (define (merge-from-disk! b path disk)
+    ;; Replace the buffer with the three-way merge of its base, its
+    ;; text, and the disk; -> the conflict count.  The buffer adopts
+    ;; the disk as its new base either way -- the external change is
+    ;; incorporated, so the next save writes cleanly.  One undo entry.
+    (let-values ([(merged conflicts)
+                  (merge3 (string-lines (buffer-base b))
+                          (string-lines (buffer-text b))
+                          (string-lines disk))])
+      (buffer-base-set! b disk)
+      (buffer-stamp-set! b (disk-stamp path))
+      (record-edit! "merge from disk")
+      (buffer-lines-set! b (if (null? merged)
+                               (vector "")
+                               (list->vector merged)))
+      (changed!)
+      conflicts))
+
+  (define (stale-save! b path disk write!)
+    (let ask ()
+      (let* ([k (query-key!
+                  (format "~a changed on disk: o)verwrite, m)erge, c)ancel"
+                          (base-name path)))]
+             [n (and k (char->integer k))])
+        (cond
+          [(memv n '(111 79)) (write!)]                       ; o
+          [(memv n '(109 77))                                 ; m
+           (let ([conflicts (merge-from-disk! b path disk)])
+             (if (zero? conflicts)
+                 (write!)
+                 (begin
+                   (parameterize ([message-source 'save-file!])
+                     (set-message!
+                       (format "Merged with ~a conflict~a -- resolve, then save"
+                               conflicts (if (= conflicts 1) "" "s"))))
+                   #f)))]
+          [(memv n '(99 67 7 27)) (set! message "Save cancelled") #f]
+          [(not n) #f]
+          [else (ask)]))))
 
   (define (buffer-text b)
     (let* ([v (buffer-lines b)] [n (vector-length v)])
@@ -3061,6 +3191,8 @@
             ;; editor.
             (guard (ex [(read-only-error? ex)
                         (set! message "Buffer is read-only")]
+                       [(refusal? ex)
+                        (set! message (condition-message ex))]
                        [else (parameterize ([message-source 'error])
                                (set-message! (error-text ex)))])
               (handle-key! (read-char stdin)))
