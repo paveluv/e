@@ -549,16 +549,34 @@
   ;;; Display -------------------------------------------------------------------
 
   (define (wrap-line s width)
-    ;; s broken at spaces into lines of at most width columns; a line
-    ;; without spaces (or short enough) stays whole.
-    (let loop ([start 0] [acc '()])
-      (let ([n (string-length s)])
+    ;; s broken at spaces into lines of at most width columns -- never
+    ;; inside a `code span`, which travels whole so the per-line
+    ;; styling always sees both its backticks.  When nothing breakable
+    ;; fits, the break falls at the next breakable space instead (one
+    ;; long line beats a split span).
+    (let* ([n (string-length s)]
+           [in-span (make-vector (max n 1) #f)])
+      (define (breakable? i)
+        (and (char=? (string-ref s i) #\space)
+             (not (vector-ref in-span i))))
+      (let mark ([i 0] [in? #f])
+        (when (< i n)
+          (let ([tick? (char=? (string-ref s i) #\`)])
+            (vector-set! in-span i (or in? tick?))
+            (mark (+ i 1) (if tick? (not in?) in?)))))
+      (let loop ([start 0] [acc '()])
         (if (<= (- n start) width)
             (reverse (cons (substring s start n) acc))
             (let find ([i (min (+ start width) (- n 1))])
               (cond [(<= i start)
-                     (reverse (cons (substring s start n) acc))]
-                    [(char=? (string-ref s i) #\space)
+                     (let after ([j (min (+ start width) (- n 1))])
+                       (cond [(>= j n)
+                              (reverse (cons (substring s start n) acc))]
+                             [(breakable? j)
+                              (loop (+ j 1)
+                                    (cons (substring s start j) acc))]
+                             [else (after (+ j 1))]))]
+                    [(breakable? i)
                      (loop (+ i 1) (cons (substring s start i) acc))]
                     [else (find (- i 1))]))))))
 
