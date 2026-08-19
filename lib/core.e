@@ -31,7 +31,8 @@
     move-horizontal! move-vertical! goto-point!
     search!! quit!!
     ;; extending the editor
-    bind-key! register-mode! find-mode mode-styles add-highlighter!
+    bind-key! command-key command-hint
+    register-mode! find-mode mode-styles add-highlighter!
     add-status-hint!
     load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
@@ -864,8 +865,10 @@
                  (begin
                    (parameterize ([message-source 'save-file!])
                      (set-message!
-                       (format "Merged with ~a conflict~a -- resolve, then save; details in ~a"
+                       (format "Merged with ~a conflict~a -- resolve (~a), then save; details in ~a"
                                conflicts (if (= conflicts 1) "" "s")
+                               (command-hint
+                                 '(next-conflict! keep-mine! keep-disk!))
                                report-name)))
                    #f)))]
           [(memv n '(99 67 7 27)) (set! message "Save cancelled") #f]
@@ -2948,6 +2951,40 @@
   (define (user-binding r code)
     (let ([hit (registry-find r (lambda (item) (= (car item) code)))])
       (and hit (cdr hit))))
+
+  (define (command-key sym)
+    ;; The key spec currently bound to the top-level command named sym
+    ;; -- "M-n", "C-t", "C-x C-b" -- looked up in the live registries,
+    ;; newest binding first; #f when none.
+    (define (render code)
+      (if (< code 32)
+          (format "C-~c" (integer->char (+ code 96)))
+          (string (integer->char code))))
+    (define (search r wrap)
+      (lambda (proc)
+        (let ([hit (find (lambda (e) (eq? (cdr e) proc))
+                         (registry-items r))])
+          (and hit (wrap (car hit))))))
+    (guard (ex [else #f])
+      (and (top-level-bound? sym)
+           (let ([proc (top-level-value sym)])
+             (or ((search user-meta-keys
+                          (lambda (c) (format "M-~c" (integer->char c))))
+                  proc)
+                 ((search user-keys render) proc)
+                 ((search user-cx-keys
+                          (lambda (c) (format "C-x ~a" (render c))))
+                  proc))))))
+
+  (define (command-hint syms)
+    ;; "M-n next-conflict!, M-m keep-mine!" for a list of command
+    ;; names: each with its current key, or bare when unbound.
+    (string-join
+      (map (lambda (s)
+             (let ([k (command-key s)])
+               (if k (format "~a ~a" k s) (format "~a" s))))
+           syms)
+      ", "))
 
   (define (bind-key! spec command)
     ;; Bind a key to a zero-argument command.  spec is "C-t" for a control
