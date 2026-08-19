@@ -1253,18 +1253,26 @@
             ;; a string of the SAME length, shown in place of the line
             ;; (the buffer text is untouched), or #f for the line as
             ;; is.  Presentation only: columns stay 1:1.
-            render)
+            render
+            ;; optional buffer-aware styling: (row-styles buffer row
+            ;; line) -> a styles vector, or #f for the plain styles
+            ;; function.  Uncached by the core -- the mode memoizes.
+            row-styles)
     (protocol (lambda (new)
                 (case-lambda
-                  [(n e i s) (new n e i s #f)]
-                  [(n e i s r) (new n e i s r)]))))
+                  [(n e i s) (new n e i s #f #f)]
+                  [(n e i s r) (new n e i s r #f)]
+                  [(n e i s r rs) (new n e i s r rs)]))))
 
   (define modes (make-registry))
 
-  (define (register-mode! name extensions interpreters styles . render)
+  (define (register-mode! name extensions interpreters styles . extra)
+    ;; extra: an optional render transform, then an optional
+    ;; buffer-aware row-styles procedure (see the mode record).
     (registry-add! modes
       (make-mode name extensions interpreters styles
-                 (and (pair? render) (car render)))))
+                 (and (pair? extra) (car extra))
+                 (and (pair? extra) (pair? (cdr extra)) (cadr extra)))))
 
   (define (detect-mode path first-line)
     ;; The mode for a file: by extension, then by the #! interpreter line.
@@ -1334,6 +1342,13 @@
       [(literal) "\x1b;[1;35m"]
       [(delimiter) "\x1b;[38;5;245m"]   ; mid grey: neutral, not white
       [(editor) "\x1b;[38;5;135m"]      ; medium purple: the editor's own
+      [(rainbow1) "\x1b;[38;5;196m"]    ; red
+      [(rainbow2) "\x1b;[38;5;208m"]    ; orange
+      [(rainbow3) "\x1b;[38;5;220m"]    ; yellow
+      [(rainbow4) "\x1b;[38;5;40m"]     ; green
+      [(rainbow5) "\x1b;[38;5;33m"]     ; blue
+      [(rainbow6) "\x1b;[38;5;57m"]     ; indigo
+      [(rainbow7) "\x1b;[38;5;129m"]    ; violet
       [(quote) "\x1b;[36m"]
       [(bold) "\x1b;[1m"]      ; real face attributes: terminals without
       [(italic) "\x1b;[3m"]    ; them simply show plain text
@@ -1750,12 +1765,18 @@
                                  (= (cadr search-current) i)
                                  (cons (caddr search-current)
                                        (cadddr search-current)))])
-                  (paint! row (list i line shown span marks cur slice-left
-                                    mode-tag)
-                          (lambda ()
-                            (display-editor-line line shown span marks cur
-                                                 slice-left
-                                                 (styles-of line))))
+                  (let ([row-styles
+                         (let ([m (buffer-mode b)])
+                           (and m (mode-row-styles m)
+                                (guard (ex [else #f])
+                                  ((mode-row-styles m) b i line))))])
+                    (paint! row (list i line shown span marks cur slice-left
+                                      mode-tag row-styles)
+                            (lambda ()
+                              (display-editor-line line shown span marks cur
+                                                   slice-left
+                                                   (or row-styles
+                                                       (styles-of line))))))
                   (if (< (+ seg 1) (line-segments w line))
                       (loop (+ k 1) i (+ seg 1))
                       (loop (+ k 1) (+ i 1) 0)))
