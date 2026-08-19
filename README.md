@@ -228,6 +228,36 @@ entries apart, so the whole corpus can be sliced by source, chapter,
 library, or anything else. In a Scheme buffer, `M-.` describes the
 symbol the cursor is on.
 
+## Pretty parens
+
+`M-x (pretty-scheme!)` toggles the current buffer into a mode where
+each construct's parentheses draw as the unicode pair assigned to its
+cluster, while the buffer and the file keep plain ASCII:
+
+    ｢define (twice x)
+      ⟨let ([y (* x 2)])
+        ⦅if (odd? y) y ⟦begin x⟧⦆⟩｣
+
+Definitions wear `｢ ｣`, lambdas `⸦ ⸧`, the `let` family `⟨ ⟩`,
+conditionals `⦅ ⦆`, control `⟦ ⟧`, iteration `⟅ ⟆`, syntax `⧼ ⧽`,
+modules `⸨ ⸩`, quoting `‹ ›`, `set!` `⧘ ⧙`, `delay` `⌊ ⌋`.
+Applications and clause brackets stay plain, so the glyphs mark
+structure without drowning it.  The display follows the code as you
+type: the glyph appears when the operator completes and flips if you
+edit `define` into `cond`.  Typing `)` or `]` closes the innermost
+open construct with whatever character the source opened it with, as
+the REPL does, and the status line shows the source character under
+the cursor.  The cluster table lives at the top of `pretty-scheme.e`
+as literal glyphs next to a palette of spare pairs; with auto-reload
+on, editing it re-skins every pretty buffer on save.
+
+Two style rules ride along in every Scheme buffer: symbols the
+standard language does not know render italic (a local, a
+program-defined name, or a typo), and in eval contexts, which run in
+the editor's own top level, the editor's names take their own style
+-- so at the M-x prompt, plain is standard Scheme, purple is the
+editor, italic is nobody's.
+
 ## Architecture and extension modules
 
 Everything in `lib/` is a library with the `.e` extension, named after
