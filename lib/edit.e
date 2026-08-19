@@ -387,5 +387,8 @@
   (define (init!)
     (bind-key! "C-x C-b" list-buffers!)
     (bind-key! "M-%" replace!!)
+    (bind-key! "M-n" next-conflict!)
+    (bind-key! "M-m" keep-mine!)
+    (bind-key! "M-d" keep-disk!)
     (add-highlighter!
       (lambda () (if query-match (list query-match) '())))))
