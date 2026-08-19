@@ -160,6 +160,8 @@
   (define echo-height 1)
   (define echo-scroll 0)
   (define echo-spans '((0 . 0)))
+  (define echo-pending '())      ; transient-log lines: (prefix text styler)
+  (define echo-live-height 1)    ; rows of the live line inside echo-height
   (define message-ghost "") ; grey suggestion drawn after the message text
   (define search-highlight "")
 
@@ -937,11 +939,12 @@
   (define (set-message! s)
     ;; A stamped message is a log entry -- recorded and shown; with
     ;; (message-source #f) it is an indicator, shown and forgotten,
-    ;; like a CapsLock light.  Either way it presents the moment it is
-    ;; set, mid-command included, and never before the screen is the
+    ;; like a CapsLock light, and an empty message merely clears the
+    ;; indicator.  Either way it presents the moment it is set,
+    ;; mid-command included, and never before the screen is the
     ;; editor's.
     (let ([src (message-source)])
-      (if src
+      (if (and src (> (string-length s) 0))
           (log! src s)
           (show-message! s #f))))
   (define (current-message) message)
@@ -1120,7 +1123,7 @@
         (let* ([text (one-line (format-log-entry e))]
                [f (log-formatter component)]
                [styler (and f (caddr f))])
-          (show-message! text (and styler (cons text styler)))))))
+          (echo-append! (format "~a: " component) text styler)))))
 
   (define (log-history component . select)
     ;; Command history off the log: a component's datums through select
@@ -1883,16 +1886,76 @@
       (paint-echo-area!)
       (flush-output-port stdout)))
 
+  (define (echo-append! prefix text styler)
+    ;; Append one line to the echo area's transient log: every logged
+    ;; message stacks up there, component-prefixed, until the next key
+    ;; settles the area.  A stale indicator gives way; a prompt's
+    ;; input line (or a running evaluation's) stays put below.
+    (set! echo-pending (append echo-pending (list (list prefix text styler))))
+    (unless (echo-cursor-now)
+      (set! message "")
+      (set! message-ghost "")
+      (set! message-styles #f))
+    (when screen-live?
+      (paint-echo-area!)
+      (flush-output-port stdout)))
+
+  (define (emit-runs content styles start end)
+    ;; content[start,end) in styled runs, each under its style's code;
+    ;; positions past the styles vector paint plain.
+    (let emit ([i start])
+      (when (< i end)
+        (let* ([at (lambda (k)
+                     (if (< k (vector-length styles))
+                         (vector-ref styles k)
+                         'plain))]
+               [st (at i)]
+               [j (let run ([j (+ i 1)])
+                    (if (and (< j end) (eq? (at j) st))
+                        (run (+ j 1))
+                        j))])
+          (ansi "\x1b;[0m" (style-code st) (substring content i j))
+          (emit j)))))
+
+  (define (display-echo-log-line prefix text styler)
+    ;; One transient-log row: the component prefix grey, the text
+    ;; under its component's styler, cut to the width.
+    (let* ([prefix (if (> (string-length prefix) cols)
+                       (substring prefix 0 cols)
+                       prefix)]
+           [avail (- cols (string-length prefix))]
+           [shown (if (> (string-length text) avail)
+                      (substring text 0 (max 0 avail))
+                      text)]
+           [styles (and styler (guard (ex [else #f]) (styler text)))])
+      (ansi "\x1b;[0m\x1b;[90m" prefix)
+      (if styles
+          (emit-runs shown styles 0 (string-length shown))
+          (ansi "\x1b;[0m" shown))
+      (ansi "\x1b;[0m"
+            (make-string (max 0 (- cols (string-length prefix)
+                                   (string-length shown)))
+                         #\space))))
+
   (define (paint-echo-area!)
-    ;; Paint the visible (wrapped) echo lines.  Recompute the geometry
-    ;; first: set-message! and the busy watcher come here directly,
-    ;; with the content just changed (from redraw! it is a no-op).
+    ;; Paint the pending transient-log lines, then the visible
+    ;; (wrapped) live line under them.  Recompute the geometry first:
+    ;; set-message! and echo-append! come here directly, with the
+    ;; content just changed (from redraw! it is a no-op).
     (update-echo-geometry!)
-    (let* ([content (string-append message message-ghost)]
+    (let loop ([es echo-pending] [row (- rows echo-height)])
+      (when (pair? es)
+        (let ([e (car es)])
+          (paint! row (cons 'echo-log e)
+                  (lambda ()
+                    (display-echo-log-line (car e) (cadr e) (caddr e)))))
+        (loop (cdr es) (+ row 1))))
+    (when (> echo-live-height 0)
+     (let* ([content (string-append message message-ghost)]
            [ghost-at (string-length message)]
            [total (length echo-spans)]
            [indent (echo-indent-now)])
-      (let loop ([line echo-scroll] [row (- rows echo-height)])
+      (let loop ([line echo-scroll] [row (- rows echo-live-height)])
         (when (< row rows)
           (let* ([span (list-ref echo-spans line)]
                  [start (car span)]
@@ -1919,21 +1982,7 @@
                         (ansi (make-string lead #\space))
                         (if styles
                             ;; styled runs for the typed part
-                            (let emit ([i start])
-                              (when (< i (+ start cut))
-                                (let* ([at (lambda (k)
-                                             (if (< k (vector-length styles))
-                                                 (vector-ref styles k)
-                                                 'plain))]
-                                       [st (at i)]
-                                       [j (let run ([j (+ i 1)])
-                                            (if (and (< j (+ start cut))
-                                                     (eq? (at j) st))
-                                                (run (+ j 1))
-                                                j))])
-                                  (ansi "\x1b;[0m" (style-code st)
-                                        (substring content i j))
-                                  (emit j))))
+                            (emit-runs content styles start (+ start cut))
                             (ansi (substring content start (+ start cut))))
                         (ansi "\x1b;[0m\x1b;[90m"
                               (substring content (+ start cut) end)
@@ -1943,7 +1992,7 @@
                                           (if wrapped? 1 0)))
                                 #\space)
                               (if wrapped? "\\" ""))))))
-          (loop (+ line 1) (+ row 1))))))
+          (loop (+ line 1) (+ row 1)))))))
 
   (define (paint-window! w start height ranges)
     (let* ([b (window-buffer w)]
@@ -2027,27 +2076,44 @@
                                 "\x1b;[0m")
                           (ansi bar text "\x1b;[0m")))))))))
 
+  (define (echo-cap)
+    ;; How tall the whole echo area may grow: everything but each
+    ;; window's minimum -- min-window-lines of text (at least 2,
+    ;; redraw!'s collapse threshold) plus its status line.
+    (max 1 (- rows (* (length windows) (+ (max 2 (min-window-lines)) 1)))))
+
   (define (update-echo-geometry!)
-    ;; The echo area's height follows its wrapped content (the grey
-    ;; suggestion included): prompt input wraps with continuations
-    ;; indented to the prompt text, and a plain message that overflows
-    ;; the width wraps the same way at indent zero, temporarily
-    ;; borrowing rows.  Up to eight lines, after which it scrolls,
-    ;; keeping the prompt cursor's line visible.
+    ;; The echo area stacks the pending transient-log lines above the
+    ;; live line.  The live line's height follows its wrapped content
+    ;; (the grey suggestion included): prompt input wraps with
+    ;; continuations indented to the prompt text, and a plain message
+    ;; that overflows the width wraps the same way at indent zero --
+    ;; up to eight lines, after which it scrolls, keeping the prompt
+    ;; cursor's line visible; empty behind pending lines it folds
+    ;; away.  The whole area grows until the windows above hit their
+    ;; minimum; past that the oldest pending lines are evicted -- they
+    ;; remain in *log*.
     (let* ([len (+ (string-length message) (string-length message-ghost))]
            [cursor (echo-cursor-now)]
            [padded (max len (if cursor (+ cursor 1) 1))])
       (set! echo-spans (compute-echo-spans padded))
       (let* ([total (length echo-spans)]
-             [cap (max 1 (min 8 (- rows 3)))])
-        (set! echo-height (min total cap))
+             [live (if (or cursor (> len 0) (null? echo-pending))
+                       (min total (max 1 (min 8 (- rows 3))))
+                       0)]
+             [room (max (if (= live 0) 1 0) (- (echo-cap) live))])
+        (when (> (length echo-pending) room)
+          (set! echo-pending
+            (list-tail echo-pending (- (length echo-pending) room))))
+        (set! echo-live-height live)
+        (set! echo-height (+ live (length echo-pending)))
         (when cursor
           (let ([line (car (echo-position cursor))])
             (when (< line echo-scroll) (set! echo-scroll line))
-            (when (>= line (+ echo-scroll echo-height))
-              (set! echo-scroll (- line (- echo-height 1))))))
+            (when (>= line (+ echo-scroll live))
+              (set! echo-scroll (- line (- live 1))))))
         (set! echo-scroll
-          (max 0 (min echo-scroll (- total echo-height)))))))
+          (max 0 (min echo-scroll (- total (max live 1))))))))
 
   (define (redraw!)
     (terminal-size!)
@@ -2096,7 +2162,7 @@
     (let ([cursor (echo-cursor-now)])
       (if cursor
           (let ([p (echo-position cursor)])
-            (goto (+ (- rows echo-height) (- (car p) echo-scroll) 1)
+            (goto (+ (- rows echo-live-height) (- (car p) echo-scroll) 1)
                   (min (+ (cdr p) 1) cols)))
           (let ([p (window-screen-position current-window
                                            point-row point-col)])
@@ -3062,6 +3128,7 @@
   (define (handle-prefix! c)
     (set! key-prefix #f)
     (set! message "")               ; take down the C-x- hint
+    (set! echo-pending '())
     (cond
       [(eof-object? c) (set! quit? #t)]
       [(user-binding user-cx-keys (char->integer c))
@@ -3091,7 +3158,10 @@
       [key-prefix (handle-prefix! c)]
       [(eof-object? c) (set! quit? #t)]
       [else
-       (set! message "")            ; messages last until the next key
+       ;; the settlement: messages last until the next key, then the
+       ;; echo area goes back to one line
+       (set! message "")
+       (set! echo-pending '())
        (cond
          [(user-binding user-keys (char->integer c))
           => (lambda (command) (command))]

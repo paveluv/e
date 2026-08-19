@@ -210,7 +210,8 @@
                           (set! query-match
                             (list (car hit) (cdr hit) (+ (cdr hit) m)))
                           (goto-point! (cons (car hit) (+ (cdr hit) m)))
-                          (set-message! question)
+                          (parameterize ([message-source #f]) ; an indicator
+                            (set-message! question))
                           (redraw!)     ; the match highlight, not the message
                           (let* ([key (read-key)]
                                  [n (and key (char->integer key))])

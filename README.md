@@ -150,9 +150,16 @@ type, and the result shows in the echo area, transiently like any
 message:
 
     M-x (buffer-name (current-buffer))
-    (buffer-name (current-buffer)) => "sa.txt"
+    eval: (buffer-name (current-buffer)) => "sa.txt"
 
-Nothing is lost when it fades: every message that passes through the
+The echo area is a transient tail of the log: each message a command
+logs stacks on its own line, prefixed with its component in grey, so a
+save that reloads a module and then reports a merge shows all three
+lines at once.  The area grows as messages arrive, the windows above
+shrinking down to their minimum, past which the oldest lines give way;
+the next keystroke settles it back to a single line.
+
+Nothing is lost when it settles: every message that passes through the
 echo area lands in the log -- the editor's syslog, structured records
 of time (nanosecond precision), component, and text.  The `*log*`
 buffer is a *view*: rendered from the records on the fly, always in
