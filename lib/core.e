@@ -79,7 +79,9 @@
             ;; stamp raising suspicion cheaply, and the content as
             ;; loaded or last saved -- the base for comparisons and
             ;; three-way merges
-            (mutable stamp) (mutable base)))
+            ;; stale marks a detected external change, worn as a red
+            ;; !! in the status bar until a save settles it
+            (mutable stamp) (mutable base) (mutable stale)))
 
   (define-record-type window
     (fields (mutable buffer) (mutable top) (mutable left)
@@ -99,7 +101,7 @@
 
   (define (new-buffer name)
     (make-buffer name (vector "") #f #t #f (vector '() '())
-                 0 0 #f 0 0 0 #f #f #f #f))
+                 0 0 #f 0 0 0 #f #f #f #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
   (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0 #f))) ; top to bottom
@@ -342,11 +344,11 @@
 
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
-    ;; asks once: if the file changed on disk meanwhile, ask before
-    ;; the keystroke lands.  The mtime raises the suspicion cheaply;
-    ;; the content confirms it, so a mere touch passes silently.
-    ;; Answering y acknowledges the session (the save guard still
-    ;; compares contents); anything else refuses the edit.
+    ;; checks once: if the file changed on disk meanwhile, mark the
+    ;; buffer stale -- a red !! in the status bar -- and let the edit
+    ;; proceed; the save guard still compares contents.  The mtime
+    ;; raises the suspicion cheaply; the content confirms it, so a
+    ;; mere touch passes silently.
     (let ([b (window-buffer current-window)])
       (when (and file-name (buffer-base b))
         (let ([stamp (disk-stamp file-name)])
@@ -354,21 +356,9 @@
             (let ([disk (guard (ex [else #f])
                           (and (file-exists? file-name)
                                (read-file file-name)))])
-              (if (and disk (string=? disk (buffer-base b)))
-                  (buffer-stamp-set! b stamp)
-                  (let ask ()
-                    (let* ([k (query-key!
-                                (format "~a changed on disk; edit anyway? (y or n)"
-                                        (buffer-name b)))]
-                           [n (and k (char->integer k))])
-                      (cond
-                        [(memv n '(121 89))
-                         (buffer-stamp-set! b stamp)]
-                        [(or (not n) (memv n '(110 78 7 27 113)))
-                         (raise (condition (make-refusal)
-                                           (make-message-condition
-                                             "Edit refused: the file changed on disk")))]
-                        [else (ask)]))))))))))
+              (unless (and disk (string=? disk (buffer-base b)))
+                (buffer-stale-set! b #t))
+              (buffer-stamp-set! b stamp)))))))
 
   (define (record-edit! label)
     ;; Every editing command passes through here before touching the
@@ -746,6 +736,7 @@
         (when mode (guard (ex [else (void)]) (chmod path mode)))
         (buffer-base-set! b (buffer-text b))
         (buffer-stamp-set! b (disk-stamp path))
+        (buffer-stale-set! b #f)
         (log! 'save-file! (cons "Wrote" path))
         (reload-on-save! path)
         #t))
@@ -784,6 +775,7 @@
       conflicts))
 
   (define (stale-save! b path disk write!)
+    (buffer-stale-set! b #t)   ; worn until a write settles it
     (let ask ()
       (let* ([k (query-key!
                   (format "~a changed on disk: o)verwrite, m)erge, c)ancel"
@@ -1915,7 +1907,8 @@
                           (lambda () (ansi (fit "~" cols))))
                   (loop (+ k 1) (+ i 1) 0))))))
       (let ([status (format " ~a~a  ~a  L~a C~a~a~a~a "
-                            (cond [(view-buffer? b) "[]"]
+                            (cond [(buffer-stale b) "!!"]
+                                  [(view-buffer? b) "[]"]
                                   [(buffer-read-only b) "%%"]
                                   [(buffer-modified b) "**"]
                                   [else "--"])
@@ -1930,10 +1923,17 @@
                                         (+ completions-page 1)
                                         completions-pages)
                                 ""))])
-        (paint! (+ start height) (list 'status status current?)
-                (lambda ()
-                  (ansi (if current? "\x1b;[7m" "\x1b;[7;2m")
-                        (fit status cols) "\x1b;[0m"))))))
+        (let ([stale? (buffer-stale b)])
+          (paint! (+ start height) (list 'status status current? stale?)
+                  (lambda ()
+                    (let ([bar (if current? "\x1b;[7m" "\x1b;[7;2m")]
+                          [text (fit status cols)])
+                      (if stale?
+                          ;; the !! flag in red, the rest as usual
+                          (ansi bar "\x1b;[31m" (substring text 0 3)
+                                "\x1b;[39m" (string-tail text 3)
+                                "\x1b;[0m")
+                          (ansi bar text "\x1b;[0m")))))))))
 
   (define (update-echo-geometry!)
     ;; The echo area's height follows its wrapped content (the grey

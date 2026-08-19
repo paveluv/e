@@ -270,7 +270,8 @@ editor, italic is nobody's.
 The editor never quietly overwrites work -- yours or anybody's.
 Every file buffer remembers the disk state it last agreed with: at
 the start of each edit session (one undo entry -- an unbroken typed
-run asks once), a changed mtime prompts before the keystroke lands,
+run checks once), a detected external change marks the buffer with a
+red `!!` in its status bar -- no interruption, just the warning --
 and a mere `touch` passes silently because content, not clocks, is
 what counts.  Saving re-reads the file and compares contents; if
 somebody changed it meanwhile, the save stops and asks: `o)verwrite,
