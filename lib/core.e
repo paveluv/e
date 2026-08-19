@@ -775,10 +775,46 @@
                  [else (ask)])))]
       [else (write!)]))
 
-  (define (merge-report! b path report conflicts)
-    ;; The merge's paper trail: a read-only *merge-<buffer>* with every
-    ;; changed chunk and how it went -- built quietly, never displayed;
-    ;; the echo names it.  -> the report buffer's name.
+  (define (merge-report! b path base report conflicts)
+    ;; The merge's paper trail: a read-only *merge-<buffer>* in a
+    ;; unified-diff-like shape -- @@ headers with 1-based positions
+    ;; and lengths for all three sides, two lines of context around
+    ;; each hunk -- built quietly, never displayed; the echo names it.
+    ;; -> the report buffer's name.
+    (define context 2)
+    (define (ctx lo hi)                  ; base lines [lo, hi) as context
+      (let loop ([k (max 0 lo)] [acc '()])
+        (if (>= k (min hi (vector-length base)))
+            (reverse acc)
+            (loop (+ k 1)
+                  (cons (format "   ~a" (vector-ref base k)) acc)))))
+    (define (tag label ls)
+      (map (lambda (l) (format " ~a ~a" label l)) ls))
+    (define (hunk c i)
+      (let* ([kind (car c)]
+             [bp (cadr c)] [mp (caddr c)] [tp (cadddr c)]
+             [bs (list-ref c 4)] [ms (list-ref c 5)] [ts (list-ref c 6)]
+             [head (format "@@ base ~a,~a  buffer ~a,~a  disk ~a,~a @@ ~a"
+                           (+ bp 1) (length bs)
+                           (+ mp 1) (length ms)
+                           (+ tp 1) (length ts)
+                           (case kind
+                             [(theirs) "took the disk side"]
+                             [(mine) "took the buffer side"]
+                             [(both) "both sides made the same change"]
+                             [else "CONFLICT -- markers left in the buffer"]))]
+             [body (case kind
+                     [(theirs) (append (tag "-" bs) (tag "+" ts))]
+                     [(mine) (append (tag "-" bs) (tag "+" ms))]
+                     [(both) (append (tag "-" bs) (tag "+" ms))]
+                     [else (append (tag "b|" bs)
+                                   (tag "<|" ms)
+                                   (tag ">|" ts))])])
+        (append (list head)
+                (ctx (- bp context) bp)
+                body
+                (ctx (+ bp (length bs)) (+ bp (length bs) context))
+                (list ""))))
     (let* ([name (format "*merge-~a*" (buffer-name b))]
            [rb (fresh-buffer name)]
            [lines
@@ -791,34 +827,9 @@
                     "")
               (let loop ([cs report] [i 1] [acc '()])
                 (if (null? cs)
-                    (reverse acc)
-                    (let* ([c (car cs)]
-                           [tag (lambda (label ls)
-                                  (map (lambda (l)
-                                         (format "  ~a ~a" label l))
-                                       ls))]
-                           [entry
-                            (case (car c)
-                              [(theirs)
-                               (append
-                                 (list (format "hunk ~a: took the disk side" i))
-                                 (tag "-" (cadr c)) (tag "+" (cadddr c)))]
-                              [(mine)
-                               (append
-                                 (list (format "hunk ~a: took the buffer side" i))
-                                 (tag "-" (cadr c)) (tag "+" (caddr c)))]
-                              [(both)
-                               (append
-                                 (list (format "hunk ~a: both sides made the same change" i))
-                                 (tag "-" (cadr c)) (tag "+" (caddr c)))]
-                              [else
-                               (append
-                                 (list (format "hunk ~a: CONFLICT -- markers left in the buffer" i))
-                                 (tag "base  |" (cadr c))
-                                 (tag "buffer|" (caddr c))
-                                 (tag "disk  |" (cadddr c)))])])
-                      (loop (cdr cs) (+ i 1)
-                            (cons "" (append (reverse entry) acc)))))))])
+                    (apply append (reverse acc))
+                    (loop (cdr cs) (+ i 1)
+                          (cons (hunk (car cs) i) acc)))))])
       (when (pair? lines) (apply buffer-append! rb lines))
       (buffer-read-only-set! rb #t)
       name))
@@ -829,8 +840,9 @@
     ;; buffer's name.  The buffer adopts the disk as its new base
     ;; either way -- the external change is incorporated, so the next
     ;; save writes cleanly.  One undo entry.
+    (let* ([base (string-lines (buffer-base b))])
     (let-values ([(merged conflicts report)
-                  (merge3 (string-lines (buffer-base b))
+                  (merge3 base
                           (string-lines (buffer-text b))
                           (string-lines disk))])
       (buffer-base-set! b disk)
@@ -840,7 +852,7 @@
                                (vector "")
                                (list->vector merged)))
       (changed!)
-      (values conflicts (merge-report! b path report conflicts))))
+      (values conflicts (merge-report! b path base report conflicts)))))
 
   (define (stale-save! b path disk write!)
     (buffer-stale-set! b #t)   ; worn until a write settles it

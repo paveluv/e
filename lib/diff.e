@@ -119,8 +119,9 @@
   (define (merge3 base mine theirs)
     ;; Merge line vectors: three values -- the merged lines (a list),
     ;; the conflict count, and a report of the changed chunks, each
-    ;; (kind base-lines mine-lines theirs-lines) with kind mine,
-    ;; theirs, both, or conflict.  Regions only one side touched take
+    ;; (kind base-pos mine-pos theirs-pos base-lines mine-lines
+    ;; theirs-lines) with kind mine, theirs, both, or conflict and the
+    ;; positions 0-based chunk starts.  Regions only one side touched take
     ;; that side; regions both touched identically take either; the
     ;; rest conflict, marked <<<<<<< buffer / ======= / >>>>>>> disk.
     (let* ([n (vector-length base)]
@@ -157,16 +158,18 @@
                         [bs (slice base b s)]
                         [ms (slice mine i i2)]
                         [ts (slice theirs j j2)])
+                   (define (chunk kind)
+                     (list kind b i j bs ms ts))
                    (cond
                      [(equal? ms bs)      ; only theirs changed
                       (loop s i2 j2 (append (reverse ts) out) conflicts
-                            (cons (list 'theirs bs ms ts) report))]
+                            (cons (chunk 'theirs) report))]
                      [(equal? ts bs)      ; only mine changed
                       (loop s i2 j2 (append (reverse ms) out) conflicts
-                            (cons (list 'mine bs ms ts) report))]
+                            (cons (chunk 'mine) report))]
                      [(equal? ms ts)      ; both, identically
                       (loop s i2 j2 (append (reverse ms) out) conflicts
-                            (cons (list 'both bs ms ts) report))]
+                            (cons (chunk 'both) report))]
                      [else
                       (loop s i2 j2
                             (append
@@ -176,5 +179,5 @@
                                         '(">>>>>>> disk")))
                               out)
                             (+ conflicts 1)
-                            (cons (list 'conflict bs ms ts) report))]))))]))))
+                            (cons (chunk 'conflict) report))]))))]))))
 )
