@@ -330,16 +330,9 @@
                                                  outcome)
                                             ", "))])
               ;; one structured record per exchange: history reads the
-              ;; queries, the view and the echo the formatted pair.  A
-              ;; void exchange logs quietly, leaving the command's own
-              ;; message its display.
-              (if void?
-                  (begin
-                    (log! 'eval (cons s "#<void>") #f)
-                    (when (equal? (current-message) kept)
-                      (parameterize ([message-source #f])
-                        (set-message! ""))))
-                  (log! 'eval (cons s result)))))))))
+              ;; queries, the view and the echo the formatted pair --
+              ;; #<void> spoken like any other result
+              (log! 'eval (cons s (if void? "#<void>" result)))))))))
 
   (define (init!)
     (register-log-formatter! 'eval format-exchange style-exchange)
