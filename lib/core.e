@@ -17,7 +17,7 @@
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
-    visit-file! save-file! save!! save-as!! find-file!!
+    visit-file! save-file! save!! save-as!! find-file!! data-directory
     show-buffer! kill-buffer! display-buffer! buffer-append!
     fresh-buffer
     set-buffer-mode! set-buffer-read-only! call-with-buffer
@@ -755,6 +755,15 @@
            (lambda () (set-window-buffer! current-window b))
            thunk
            (lambda () (set-window-buffer! current-window old))))]))
+
+  (define (data-directory)
+    ;; Where commands and apps keep built or fetched data, out of git:
+    ;; the data directory next to lib, created on first use.  Each
+    ;; concern takes a subdirectory -- the describe corpus lives in
+    ;; data/describe.
+    (let ([dir (string-append (caar (library-directories)) "/../data")])
+      (unless (file-directory? dir) (mkdir dir))
+      dir))
 
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))

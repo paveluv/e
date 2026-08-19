@@ -4,10 +4,10 @@
 ;; the core.  Serves the reference documentation for the whole default
 ;; corpus -- R6RS from TSPL4, the Chez extensions from the Chez Scheme
 ;; User's Guide.  The whole pipeline lives here: fetch-describe-data!
-;; downloads the corpus into the describe-data directory next to lib (the
+;; downloads the corpus into data/describe next to lib (the
 ;; byte transfer is delegated to curl, since Chez speaks no TLS; page
 ;; lists, orchestration, and parsing are all this module), extracts it
-;; into describe-data/describe.sdata, and loads it.  Run it once:
+;; into data/describe/describe.sdata, and loads it.  Run it once:
 ;;
 ;;   M-x (fetch-describe-data!)
 ;;
@@ -44,7 +44,7 @@
             (immutable description doc-description)))  ; markdown
 
   (define (data-dir)
-    (string-append (caar (library-directories)) "/../describe-data"))
+    (string-append (data-directory) "/describe"))
 
   (define (data-path)
     (string-append (data-dir) "/describe.sdata"))
