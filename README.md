@@ -252,6 +252,12 @@ the cursor.  The cluster table lives at the top of `pretty-scheme.e`
 as literal glyphs next to a palette of spare pairs; with auto-reload
 on, editing it re-skins every pretty buffer on save.
 
+Two sibling variants trade the cluster rule for nesting depth:
+`M-x (pretty-depth!)` rotates the glyph pairs as the tree deepens
+(cycling when the twelve run out), and `M-x (pretty-rainbow!)` keeps
+the plain characters but colors each depth through a seven-color
+rainbow, closers mirroring their openers.
+
 Two style rules ride along in every Scheme buffer: symbols the
 standard language does not know render italic (a local, a
 program-defined name, or a typo), and in eval contexts, which run in

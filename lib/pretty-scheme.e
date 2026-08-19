@@ -15,7 +15,7 @@
 ;; file on disk are untouched.
 
 (library (pretty-scheme)
-  (export init! pretty-scheme!)
+  (export init! pretty-scheme! pretty-depth! pretty-rainbow!)
   (import (chezscheme) (core))
 
   ;;; Clusters ------------------------------------------------------------------
@@ -159,6 +159,62 @@
                (set! stack (cdr stack)))])))
       out))
 
+  ;;; Depth variants --------------------------------------------------------------
+
+  (define depth-pairs
+    ;; The rotation for pretty-depth: one pair per nesting level,
+    ;; cycling when exhausted.
+    '((#\｢ . #\｣) (#\⸦ . #\⸧) (#\⟨ . #\⟩) (#\⦅ . #\⦆)
+      (#\⟦ . #\⟧) (#\⟅ . #\⟆) (#\⧼ . #\⧽) (#\⸨ . #\⸩)
+      (#\⟪ . #\⟫) (#\⦇ . #\⦈) (#\⌈ . #\⌉) (#\⌊ . #\⌋)))
+
+  (define rainbow
+    ;; The rotation for pretty-rainbow: seven colors, rainbow order.
+    '#(rainbow1 rainbow2 rainbow3 rainbow4 rainbow5 rainbow6 rainbow7))
+
+  (define (analyze-depth v)
+    ;; Display lines with every paren drawn as its nesting level's
+    ;; pair: the top level wears the first, each level deeper the
+    ;; next, cycling.
+    (let ([out (let ([o (make-vector (vector-length v))])
+                 (do ([i 0 (+ i 1)]) ((= i (vector-length v)) o)
+                   (vector-set! o i (string-copy (vector-ref v i)))))]
+        [stack '()])
+      (walk v
+        (lambda (r c ch)
+          (cond
+            [(memv ch '(#\( #\[))
+             (let ([pair (list-ref depth-pairs
+                                   (mod (length stack)
+                                        (length depth-pairs)))])
+               (string-set! (vector-ref out r) c (car pair))
+               (set! stack (cons (cdr pair) stack)))]
+            [(memv ch '(#\) #\]))
+             (when (pair? stack)
+               (string-set! (vector-ref out r) c (car stack))
+               (set! stack (cdr stack)))])))
+      out))
+
+  (define (analyze-rainbow v)
+    ;; Per-row paren coloring by nesting level: a vector of
+    ;; ((col . style) ...) alists, the seven colors cycling.
+    (let ([out (make-vector (vector-length v) '())]
+          [depth 0])
+      (walk v
+        (lambda (r c ch)
+          (cond
+            [(memv ch '(#\( #\[))
+             (vector-set! out r
+               (cons (cons c (vector-ref rainbow (mod depth 7)))
+                     (vector-ref out r)))
+             (set! depth (+ depth 1))]
+            [(memv ch '(#\) #\]))
+             (set! depth (max 0 (- depth 1)))
+             (vector-set! out r
+               (cons (cons c (vector-ref rainbow (mod depth 7)))
+                     (vector-ref out r)))])))
+      out))
+
   ;;; The mode ------------------------------------------------------------------
 
   (define (buffer-vector b)
@@ -169,8 +225,6 @@
       (do ([i 0 (+ i 1)]) ((= i n) v)
         (vector-set! v i (buffer-line b i)))))
 
-  (define render-cache (make-weak-eq-hashtable))
-
   (define (lines-eq? a b)
     (and (= (vector-length a) (vector-length b))
          (let loop ([i 0])
@@ -178,16 +232,46 @@
                (and (eq? (vector-ref a i) (vector-ref b i))
                     (loop (+ i 1)))))))
 
+  (define (memoized analyze)
+    ;; A per-buffer memo of a whole-buffer analysis, redone only when
+    ;; some line changed (slot-eq? snapshot compare).  -> (b row) ->
+    ;; the analysis row, or #f past the end.
+    (let ([cache (make-weak-eq-hashtable)])
+      (lambda (b row)
+        (let* ([v (buffer-vector b)]
+               [hit (eq-hashtable-ref cache b #f)])
+          (unless (and hit (lines-eq? (car hit) v))
+            (set! hit (cons v (analyze v)))
+            (eq-hashtable-set! cache b hit))
+          (let ([product (cdr hit)])
+            (and (< row (vector-length product))
+                 (vector-ref product row)))))))
+
+  (define cluster-row (memoized analyze))
+  (define depth-row (memoized analyze-depth))
+  (define rainbow-row (memoized analyze-rainbow))
+
   (define (rendered b row line)
-    ;; The display line for row: the whole buffer's analysis, redone
-    ;; only when some line changed (slot-eq? snapshot compare).
-    (let* ([v (buffer-vector b)]
-           [hit (eq-hashtable-ref render-cache b #f)])
-      (unless (and hit (lines-eq? (car hit) v))
-        (set! hit (cons v (analyze v)))
-        (eq-hashtable-set! render-cache b hit))
-      (let ([disp (cdr hit)])
-        (if (< row (vector-length disp)) (vector-ref disp row) line))))
+    (or (cluster-row b row) line))
+
+  (define (depth-rendered b row line)
+    (or (depth-row b row) line))
+
+  (define (rainbow-styles b row line)
+    ;; The scheme styles with the paren cells recolored by depth --
+    ;; copied first: the base vector belongs to the style cache.
+    (let ([styles (let ([s (scheme-styles line)])
+                    (if s
+                        (let ([copy (make-vector (vector-length s))])
+                          (do ([i 0 (+ i 1)])
+                              ((= i (vector-length s)) copy)
+                            (vector-set! copy i (vector-ref s i))))
+                        (make-vector (string-length line) 'plain)))])
+      (for-each (lambda (o)
+                  (when (< (car o) (vector-length styles))
+                    (vector-set! styles (car o) (cdr o))))
+                (or (rainbow-row b row) '()))
+      styles))
 
   (define (scheme-styles s)
     (let ([m (find-mode "scheme")])
@@ -196,7 +280,10 @@
   ;;; Editing -------------------------------------------------------------------
 
   (define (pretty-buffer?)
-    (equal? (buffer-mode-name (current-buffer)) "pretty-scheme"))
+    ;; The modes whose display hides the source characters -- they get
+    ;; the REPL-style closing and the source hint.
+    (member (buffer-mode-name (current-buffer))
+            '("pretty-scheme" "pretty-depth")))
 
   (define (innermost-opener)
     ;; The source character of the innermost construct still open at
@@ -220,14 +307,33 @@
         (insert-text! (string (if (eqv? (innermost-opener) #\[) #\] #\))))
         (insert-text! (string typed))))
 
-  (define (pretty-scheme!)
-    ;; Toggle the current buffer between scheme and pretty-scheme.
+  (define (toggle-mode! name)
     (set-buffer-mode! (current-buffer)
-                      (if (pretty-buffer?) "scheme" "pretty-scheme"))
+                      (if (equal? (buffer-mode-name (current-buffer)) name)
+                          "scheme"
+                          name))
     (void))
+
+  (define (pretty-scheme!)
+    ;; Toggle the current buffer between scheme and pretty-scheme:
+    ;; construct-cluster parens.
+    (toggle-mode! "pretty-scheme"))
+
+  (define (pretty-depth!)
+    ;; Toggle pretty-depth: parens by nesting level, the pair rotation
+    ;; cycling as the tree deepens.
+    (toggle-mode! "pretty-depth"))
+
+  (define (pretty-rainbow!)
+    ;; Toggle pretty-rainbow: plain characters, colored by nesting
+    ;; level through the rainbow.
+    (toggle-mode! "pretty-rainbow"))
 
   (define (init!)
     (register-mode! "pretty-scheme" '() '() scheme-styles rendered)
+    (register-mode! "pretty-depth" '() '() scheme-styles depth-rendered)
+    (register-mode! "pretty-rainbow" '() '() scheme-styles #f
+                    rainbow-styles)
     (bind-key! ")" (lambda () (close! #\))))
     (bind-key! "]" (lambda () (close! #\])))
     (add-status-hint!
