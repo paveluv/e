@@ -181,7 +181,8 @@ still to be supplied to the innermost open call appear after the cursor
 as a grey suggestion, shrinking as you enter arguments:
 `M-x (vector-sort` suggests `predicate vector`. Parameter names come
 from procedure sources when available, from documented signatures in
-`scheme-sigs.e` for common builtins, or from the arity (`arg1 arg2`).
+the describe corpus for the documented builtins (generated into
+`data/describe/signatures.sdata`), or from the arity (`arg1 arg2`).
 Up and down arrows browse the history, newest first.
 
 Buffers print as the expression that looks them up: `(current-buffer)`

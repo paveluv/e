@@ -31,7 +31,10 @@
           doc-lookup doc-entries
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
-  (import (chezscheme) (core))
+  ;; (only ...) because (eval) also exports an init!, which a library
+  ;; body may not shadow; the import also orders the two modules'
+  ;; initialization, whatever their load order.
+  (import (chezscheme) (core) (only (eval) register-signatures!))
 
   (define-record-type (doc-entry make-doc-entry doc-entry?)
     (fields (immutable names doc-names)           ; symbols defined
@@ -45,6 +48,9 @@
 
   (define (data-dir)
     (string-append (data-directory) "/describe"))
+
+  (define (signatures-path)
+    (string-append (data-dir) "/signatures.sdata"))
 
   (define (data-path)
     (string-append (data-dir) "/describe.sdata"))
@@ -445,6 +451,10 @@
                            (parse-book ref "csug" 'csug csug-pages)))
       (set! all-entries #f)
       (load-data!)
+      (let ([sigs (generate-signatures)])
+        (write-signatures! sigs)
+        (register-signatures! sigs)
+        (set-message! (format "Generated ~a signatures" (length sigs))))
       (set-message!
         (format "Describe database ready: ~a entries covering ~a names"
                 (length all-entries)
@@ -456,6 +466,52 @@
 
   (define all-entries #f)   ; list of doc-entry, or #f before loading
   (define by-name #f)       ; symbol -> (doc-entry ...), tspl first
+
+  (define (generate-signatures)
+    ;; The documented procedure call shapes, one per name (the longest
+    ;; when a procedure has several forms), read off the corpus
+    ;; templates -- what scheme-sigs.e used to transcribe by hand.
+    (define (arity d)
+      (let loop ([d (cdr d)] [n 0])
+        (if (pair? d) (loop (cdr d) (+ n 1)) n)))
+    (load-data!)
+    (let ([best (make-eq-hashtable)])
+      (for-each
+        (lambda (e)
+          (for-each
+            (lambda (form)
+              (when (equal? (car form) "procedure")
+                (let ([datum (guard (ex [else #f])
+                               (with-input-from-string (cdr form) read))])
+                  (when (and (pair? datum) (symbol? (car datum)))
+                    (let ([prev (eq-hashtable-ref best (car datum) #f)])
+                      (when (or (not prev) (> (arity datum) (arity prev)))
+                        (eq-hashtable-set! best (car datum) datum)))))))
+            (doc-forms e)))
+        all-entries)
+      (vector->list (hashtable-values best))))
+
+  (define (write-signatures! sigs)
+    (with-output-to-file (signatures-path)
+      (lambda ()
+        (display ";; generated from the describe corpus -- do not edit\n")
+        (write sigs)
+        (newline))
+      'replace))
+
+  (define (load-signatures!)
+    ;; Register the cached signatures with eval -- the cache is small
+    ;; and loads at startup; when it is missing but the corpus is
+    ;; there, build it once from the corpus.
+    (guard (ex [else (void)])
+      (cond
+        [(file-exists? (signatures-path))
+         (register-signatures!
+           (with-input-from-file (signatures-path) read))]
+        [(file-exists? (data-path))
+         (let ([sigs (generate-signatures)])
+           (write-signatures! sigs)
+           (register-signatures! sigs))])))
 
   (define (load-data!)
     (unless all-entries
@@ -609,4 +665,5 @@
     (void))
 
   (define (init!)
+    (load-signatures!)
     (bind-key! "M-." describe-at-point!)))

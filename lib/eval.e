@@ -12,8 +12,8 @@
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
 ;; down arrows browse the history, and C-g interrupts a runaway
-;; evaluation.  Exports register-signatures! for signature-table modules
-;; like scheme-sigs.e.
+;; evaluation.  Exports register-signatures!; the describe module
+;; supplies the signatures, generated from its reference corpus.
 
 (library (eval)
   (export init! eval!! register-signatures!)
