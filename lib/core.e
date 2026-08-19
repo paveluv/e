@@ -1882,22 +1882,32 @@
     (set! message s)
     (set! message-ghost "")
     (set! message-styles styles-pair)
-    (when screen-live?
-      (paint-echo-area!)
-      (flush-output-port stdout)))
+    (present-echo!))
 
   (define (echo-append! prefix text styler)
     ;; Append one line to the echo area's transient log: every logged
     ;; message stacks up there, component-prefixed, until the next key
-    ;; settles the area.  A stale indicator gives way; a prompt's
-    ;; input line (or a running evaluation's) stays put below.
+    ;; settles the area.  A stale indicator gives way -- a running
+    ;; evaluation's kept query included, its parked cursor showing the
+    ;; run on -- but a prompt's input line stays put below.
     (set! echo-pending (append echo-pending (list (list prefix text styler))))
-    (unless (echo-cursor-now)
+    (unless echo-cursor
       (set! message "")
       (set! message-ghost "")
       (set! message-styles #f))
+    (present-echo!))
+
+  (define (present-echo!)
+    ;; Present the echo area now, mid-command included (once the
+    ;; screen is the editor's).  Grown or shrunk it takes a full
+    ;; redraw -- the windows above shift, their status bars with them
+    ;; -- otherwise painting the area suffices.
     (when screen-live?
-      (paint-echo-area!)
+      (let ([h echo-height])
+        (update-echo-geometry!)
+        (if (= h echo-height)
+            (paint-echo-area!)
+            (redraw!)))
       (flush-output-port stdout)))
 
   (define (emit-runs content styles start end)
