@@ -2,7 +2,7 @@
 ;;
 ;; An e extension module: the library (pretty-scheme), loaded at
 ;; startup by the core, which calls init!.  (pretty-scheme-clusters!) toggles
-;;7 the current buffer
+;; the current buffer
 ;; between scheme and pretty-scheme.  The mode draws each construct's
 ;; parentheses as the unicode pair assigned to its cluster -- (define
 ;; ...) wears double angles, conditionals white parens, and so on --
