@@ -231,7 +231,7 @@ symbol the cursor is on.
 
 ## Pretty parens
 
-`M-x (pretty-scheme!)` toggles the current buffer into a mode where
+`M-x (pretty-scheme-clusters!)` toggles the current buffer into a mode where
 each construct's parentheses draw as the unicode pair assigned to its
 cluster, while the buffer and the file keep plain ASCII:
 
@@ -253,8 +253,8 @@ as literal glyphs next to a palette of spare pairs; with auto-reload
 on, editing it re-skins every pretty buffer on save.
 
 Two sibling variants trade the cluster rule for nesting depth:
-`M-x (pretty-depth!)` rotates the glyph pairs as the tree deepens
-(cycling when the twelve run out), and `M-x (pretty-rainbow!)` keeps
+`M-x (pretty-scheme-depth!)` rotates the glyph pairs as the tree deepens
+(cycling when the twelve run out), and `M-x (pretty-scheme-rainbow!)` keeps
 the plain characters but colors each depth through a seven-color
 rainbow, closers mirroring their openers.
 

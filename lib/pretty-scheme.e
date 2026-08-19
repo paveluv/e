@@ -1,7 +1,7 @@
 ;; pretty-scheme.e -- per-construct unicode parens, for the e editor.
 ;;
 ;; An e extension module: the library (pretty-scheme), loaded at
-;; startup by the core, which calls init!.  (pretty-scheme!) toggles
+;; startup by the core, which calls init!.  (pretty-scheme-clusters!) toggles
 ;; the current buffer
 ;; between scheme and pretty-scheme.  The mode draws each construct's
 ;; parentheses as the unicode pair assigned to its cluster -- (define
@@ -15,7 +15,7 @@
 ;; file on disk are untouched.
 
 (library (pretty-scheme)
-  (export init! pretty-scheme! pretty-depth! pretty-rainbow!)
+  (export init! pretty-scheme-clusters! pretty-scheme-depth! pretty-scheme-rainbow!)
   (import (chezscheme) (core))
 
   ;;; Clusters ------------------------------------------------------------------
@@ -162,14 +162,14 @@
   ;;; Depth variants --------------------------------------------------------------
 
   (define depth-pairs
-    ;; The rotation for pretty-depth: one pair per nesting level,
+    ;; The rotation for pretty-scheme-depth: one pair per nesting level,
     ;; cycling when exhausted.
     '((#\｢ . #\｣) (#\⸦ . #\⸧) (#\⟨ . #\⟩) (#\⦅ . #\⦆)
       (#\⟦ . #\⟧) (#\⟅ . #\⟆) (#\⧼ . #\⧽) (#\⸨ . #\⸩)
       (#\⟪ . #\⟫) (#\⦇ . #\⦈) (#\⌈ . #\⌉) (#\⌊ . #\⌋)))
 
   (define rainbow
-    ;; The rotation for pretty-rainbow: seven colors, rainbow order.
+    ;; The rotation for pretty-scheme-rainbow: seven colors, rainbow order.
     '#(rainbow1 rainbow2 rainbow3 rainbow4 rainbow5 rainbow6 rainbow7))
 
   (define (analyze-depth v)
@@ -283,7 +283,7 @@
     ;; The modes whose display hides the source characters -- they get
     ;; the REPL-style closing and the source hint.
     (member (buffer-mode-name (current-buffer))
-            '("pretty-scheme" "pretty-depth")))
+            '("pretty-scheme-clusters" "pretty-scheme-depth")))
 
   (define (innermost-opener)
     ;; The source character of the innermost construct still open at
@@ -314,25 +314,25 @@
                           name))
     (void))
 
-  (define (pretty-scheme!)
-    ;; Toggle the current buffer between scheme and pretty-scheme:
+  (define (pretty-scheme-clusters!)
+    ;; Toggle the current buffer between scheme and pretty-scheme-clusters:
     ;; construct-cluster parens.
-    (toggle-mode! "pretty-scheme"))
+    (toggle-mode! "pretty-scheme-clusters"))
 
-  (define (pretty-depth!)
-    ;; Toggle pretty-depth: parens by nesting level, the pair rotation
+  (define (pretty-scheme-depth!)
+    ;; Toggle pretty-scheme-depth: parens by nesting level, the pair rotation
     ;; cycling as the tree deepens.
-    (toggle-mode! "pretty-depth"))
+    (toggle-mode! "pretty-scheme-depth"))
 
-  (define (pretty-rainbow!)
-    ;; Toggle pretty-rainbow: plain characters, colored by nesting
+  (define (pretty-scheme-rainbow!)
+    ;; Toggle pretty-scheme-rainbow: plain characters, colored by nesting
     ;; level through the rainbow.
-    (toggle-mode! "pretty-rainbow"))
+    (toggle-mode! "pretty-scheme-rainbow"))
 
   (define (init!)
-    (register-mode! "pretty-scheme" '() '() scheme-styles rendered)
-    (register-mode! "pretty-depth" '() '() scheme-styles depth-rendered)
-    (register-mode! "pretty-rainbow" '() '() scheme-styles #f
+    (register-mode! "pretty-scheme-clusters" '() '() scheme-styles rendered)
+    (register-mode! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
+    (register-mode! "pretty-scheme-rainbow" '() '() scheme-styles #f
                     rainbow-styles)
     (bind-key! ")" (lambda () (close! #\))))
     (bind-key! "]" (lambda () (close! #\])))
