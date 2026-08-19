@@ -896,9 +896,11 @@
               (loop (- i 1) (cons "\n" acc)))))))
 
   (define (buffer-clean? b)
-    ;; Nothing is lost by discarding b: it was never modified, its text is
-    ;; identical to what is on disk again, or it is an empty file-less buffer.
+    ;; Nothing is lost by discarding b: it was never modified, it is
+    ;; read-only (a view, a report), its text is identical to what is
+    ;; on disk again, or it is an empty file-less buffer.
     (or (not (buffer-modified b))
+        (buffer-read-only b)
         (let ([path (buffer-file b)])
           (if path
               (and (file-exists? path)
@@ -3261,12 +3263,11 @@
       (when name
         (guard (ex [else (parameterize ([message-source 'reload-module!])
                            (set-message!
-                             (format "Wrote ~a; reload failed: ~a"
-                                     path (error-text ex))))])
+                             (format "Reload of ~a failed: ~a"
+                                     name (error-text ex))))])
           (reload-module! name)
           (parameterize ([message-source 'reload-module!])
-            (set-message!
-              (format "Wrote ~a (reloaded ~a)" path name)))))))
+            (set-message! (format "Reloaded ~a" name)))))))
 
   ;;; Main ------------------------------------------------------------------
 
