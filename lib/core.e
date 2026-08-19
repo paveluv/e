@@ -32,6 +32,7 @@
     search!! quit!!
     ;; extending the editor
     bind-key! register-mode! find-mode mode-styles add-highlighter!
+    add-status-hint!
     load-module! reload-module! auto-reload
     prompt! confirm? prompt-ghost completion-highlight min-window-lines
     complete! show-completions! dismiss-completions!
@@ -645,6 +646,7 @@
 
   (define (save-file! path*)
     (define path (expand-path path*))
+    (define adopted? (not (equal? path file-name)))  ; saving under a new name
     ;; Rewriting recreates the file: remember its permissions (the
     ;; exec bit on a script, say) and put them back after.
     (define mode (and (file-exists? path)
@@ -664,7 +666,9 @@
       (set! file-name path) (set! modified? #f)
       (let ([b (window-buffer current-window)])
         (buffer-name-set! b (unique-name (base-name path) b))
-        (assign-mode! b))
+        ;; re-detect the mode only when the name changed: a plain
+        ;; re-save must not clobber a mode chosen by hand
+        (when adopted? (assign-mode! b)))
       (when mode (guard (ex [else (void)]) (chmod path mode)))
       (log! 'save-file! (cons "Wrote" path))
       (reload-on-save! path)
@@ -1234,12 +1238,23 @@
   ;; every bracket counts.
 
   (define-record-type mode
-    (fields name extensions interpreters styles))
+    (fields name extensions interpreters styles
+            ;; optional display transform: (render buffer row line) ->
+            ;; a string of the SAME length, shown in place of the line
+            ;; (the buffer text is untouched), or #f for the line as
+            ;; is.  Presentation only: columns stay 1:1.
+            render)
+    (protocol (lambda (new)
+                (case-lambda
+                  [(n e i s) (new n e i s #f)]
+                  [(n e i s r) (new n e i s r)]))))
 
   (define modes (make-registry))
 
-  (define (register-mode! name extensions interpreters styles)
-    (registry-add! modes (make-mode name extensions interpreters styles)))
+  (define (register-mode! name extensions interpreters styles . render)
+    (registry-add! modes
+      (make-mode name extensions interpreters styles
+                 (and (pair? render) (car render)))))
 
   (define (detect-mode path first-line)
     ;; The mode for a file: by extension, then by the #! interpreter line.
@@ -1356,6 +1371,22 @@
   ;; drawn underlined on top of the syntax styles.  The paren module
   ;; matches brackets this way; a broken highlighter is ignored for that
   ;; redraw rather than taking the editor down.
+  ;; Modules may add a status hint: a thunk returning a short string
+  ;; (or #f) appended to the current window's status line -- the
+  ;; pretty-parens mode shows the source paren under point this way.
+  (define status-hints (make-registry))
+
+  (define (add-status-hint! proc)
+    (registry-add! status-hints proc))
+
+  (define (status-hint-text)
+    (apply string-append
+           (map (lambda (p)
+                  (or (guard (ex [else #f])
+                        (let ([s (p)]) (and (string? s) s)))
+                      ""))
+                (registry-items status-hints))))
+
   (define highlighters (make-registry))
 
   (define (add-highlighter! proc)
@@ -1370,7 +1401,7 @@
                  (if (= (car r) row) (cons (cdr r) acc) acc))
                '() ranges))
 
-  (define (display-editor-line s span marks cur left styles)
+  (define (display-editor-line s shown span marks cur left styles)
     (define n (string-length s))
     (define limit (+ left cols))
     (define marked (matching-columns s search-highlight))
@@ -1383,13 +1414,14 @@
     (define (selected? col)
       (and (< col n) span (<= (car span) col) (< col (cdr span))))
     (define (segment from to)
-      ;; The characters of columns [from, to); control characters (notably
-      ;; tabs) and columns past the end of the line become spaces, so every
-      ;; column is exactly one cell wide.
+      ;; The characters of columns [from, to), off the shown text (the
+      ;; mode's display transform, usually the line itself); control
+      ;; characters (notably tabs) and columns past the end of the line
+      ;; become spaces, so every column is exactly one cell wide.
       (let ([out (make-string (- to from) #\space)])
         (let loop ([i from])
-          (when (and (< i to) (< i n))
-            (let ([ch (string-ref s i)])
+          (when (and (< i to) (< i (string-length shown)))
+            (let ([ch (string-ref shown i)])
               (unless (< (char->integer ch) 32)
                 (string-set! out (- i from) ch)))
             (loop (+ i 1))))
@@ -1690,6 +1722,15 @@
           (let ([row (+ start k)])
             (if (< i n)
                 (let* ([line (vector-ref v i)]
+                       [shown (let ([r (let ([m (buffer-mode b)])
+                                         (and m (mode-render m)))])
+                                (or (and r (guard (ex [else #f])
+                                             (let ([t (r b i line)])
+                                               (and (string? t)
+                                                    (= (string-length t)
+                                                       (string-length line))
+                                                    t))))
+                                    line))]
                        [slice-left (if (window-wrap w) (* seg cols) left)]
                        [span (and current? (region-span i (string-length line)))]
                        [marks (if current? (ranges-on-row ranges i) '())]
@@ -1698,9 +1739,11 @@
                                  (= (cadr search-current) i)
                                  (cons (caddr search-current)
                                        (cadddr search-current)))])
-                  (paint! row (list i line span marks cur slice-left mode-tag)
+                  (paint! row (list i line shown span marks cur slice-left
+                                    mode-tag)
                           (lambda ()
-                            (display-editor-line line span marks cur slice-left
+                            (display-editor-line line shown span marks cur
+                                                 slice-left
                                                  (styles-of line))))
                   (if (< (+ seg 1) (line-segments w line))
                       (loop (+ k 1) i (+ seg 1))
@@ -1709,7 +1752,7 @@
                   (paint! row '(empty)
                           (lambda () (ansi (fit "~" cols))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let ([status (format " ~a~a  ~a  L~a C~a~a~a "
+      (let ([status (format " ~a~a  ~a  L~a C~a~a~a~a "
                             (cond [(view-buffer? b) "[]"]
                                   [(buffer-read-only b) "%%"]
                                   [(buffer-modified b) "**"]
@@ -1718,6 +1761,7 @@
                             (buffer-name b)
                             (+ (window-prow w) 1) (+ (window-pcol w) 1)
                             (if mode-tag (format "  (~a)" mode-tag) "")
+                            (if current? (status-hint-text) "")
                             (if (and (eq? b completions-buffer)
                                      (> completions-pages 1))
                                 (format "  page ~a/~a"
