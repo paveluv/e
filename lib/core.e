@@ -34,7 +34,8 @@
     bind-key! register-mode! find-mode mode-styles add-highlighter!
     add-status-hint!
     load-module! reload-module! auto-reload
-    prompt! confirm? prompt-ghost completion-highlight min-window-lines
+    prompt! confirm? prompt-ghost prompt-inspector completion-highlight
+    min-window-lines
     complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
     set-message! current-message redraw! error-text mouse!
@@ -2025,6 +2026,11 @@
   ;; The suggestion is drawn in grey after the cursor; #f for none.
   (define prompt-ghost (make-parameter (lambda (s) #f)))
 
+  ;; M-. at a prompt hands the input and cursor position here --
+  ;; describe wires it to pop the reference page for the symbol at
+  ;; (or just before) the cursor.  A procedure (text pos), or #f.
+  (define prompt-inspector (make-parameter #f))
+
   (define (complete! s complete k)
     ;; TAB in a prompt, as in Emacs: extend s to the longest common prefix
     ;; of its completions; when it cannot be extended, pop up the candidate
@@ -2184,7 +2190,14 @@
                                                  (+ pos (string-length text))))]
                                       [else (loop s pos "")])]
                                [else (loop s pos "")]))
-                           (loop s pos "")))
+                           (if (and (char? a) (char=? a #\.))
+                               (begin              ; M-.: inspect
+                                 (let ([p (prompt-inspector)])
+                                   (when p
+                                     (guard (ex [else (void)])
+                                       (p s pos))))
+                                 (loop s pos ""))
+                               (loop s pos ""))))
                      (begin (set! message "Quit") #f))]
                 [(7) (set! message "Quit") #f]
                 [(10 13)

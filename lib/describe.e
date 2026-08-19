@@ -664,6 +664,35 @@
           [else (set-message! "No symbol at point")])
     (void))
 
+  (define (describe-input! text pos)
+    ;; M-. at a prompt: describe the symbol at the cursor, or the one
+    ;; just before it, trailing spaces skipped -- "vector-sort " M-.
+    ;; pops the page for vector-sort while the prompt stays open.
+    (define (delim? c)
+      (or (char-whitespace? c)
+          (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\,))))
+    (let* ([n (string-length text)]
+           [i (min pos n)]
+           [end (if (and (< i n) (not (delim? (string-ref text i))))
+                    (let fwd ([j i])
+                      (if (and (< j n) (not (delim? (string-ref text j))))
+                          (fwd (+ j 1))
+                          j))
+                    (let back ([j i])
+                      (if (and (> j 0)
+                               (memv (string-ref text (- j 1))
+                                     '(#\space #\tab)))
+                          (back (- j 1))
+                          j)))]
+           [start (let back ([j end])
+                    (if (and (> j 0)
+                             (not (delim? (string-ref text (- j 1)))))
+                        (back (- j 1))
+                        j))])
+      (when (> end start)
+        (describe! (string->symbol (substring text start end))))))
+
   (define (init!)
     (load-signatures!)
+    (prompt-inspector describe-input!)
     (bind-key! "M-." describe-at-point!)))
