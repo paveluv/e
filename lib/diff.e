@@ -117,10 +117,12 @@
   ;;; Three-way merge -------------------------------------------------------------
 
   (define (merge3 base mine theirs)
-    ;; Merge line vectors: two values, the merged lines (a list) and
-    ;; the conflict count.  Regions only one side touched take that
-    ;; side; regions both touched identically take either; the rest
-    ;; conflict, marked <<<<<<< buffer / ======= / >>>>>>> disk.
+    ;; Merge line vectors: three values -- the merged lines (a list),
+    ;; the conflict count, and a report of the changed chunks, each
+    ;; (kind base-lines mine-lines theirs-lines) with kind mine,
+    ;; theirs, both, or conflict.  Regions only one side touched take
+    ;; that side; regions both touched identically take either; the
+    ;; rest conflict, marked <<<<<<< buffer / ======= / >>>>>>> disk.
     (let* ([n (vector-length base)]
            [m1 (make-vector (+ n 1) #f)]
            [m2 (make-vector (+ n 1) #f)])
@@ -133,16 +135,16 @@
                 (diff-matches base theirs))
       (vector-set! m1 n (vector-length mine))
       (vector-set! m2 n (vector-length theirs))
-      (let loop ([b 0] [i 0] [j 0] [out '()] [conflicts 0])
+      (let loop ([b 0] [i 0] [j 0] [out '()] [conflicts 0] [report '()])
         (cond
           [(and (>= b n) (>= i (vector-length mine)) (>= j (vector-length theirs)))
-           (values (reverse out) conflicts)]
+           (values (reverse out) conflicts (reverse report))]
           [(and (< b n)
                 (eqv? (vector-ref m1 b) i)
                 (eqv? (vector-ref m2 b) j))
            ;; all three aligned: the line is common ground
            (loop (+ b 1) (+ i 1) (+ j 1)
-                 (cons (vector-ref base b) out) conflicts)]
+                 (cons (vector-ref base b) out) conflicts report)]
           [else
            ;; a changed chunk: up to the next base line aligned on
            ;; both sides (or the ends)
@@ -157,10 +159,14 @@
                         [ts (slice theirs j j2)])
                    (cond
                      [(equal? ms bs)      ; only theirs changed
-                      (loop s i2 j2 (append (reverse ts) out) conflicts)]
-                     [(or (equal? ts bs)  ; only mine changed
-                          (equal? ms ts)) ; or both, identically
-                      (loop s i2 j2 (append (reverse ms) out) conflicts)]
+                      (loop s i2 j2 (append (reverse ts) out) conflicts
+                            (cons (list 'theirs bs ms ts) report))]
+                     [(equal? ts bs)      ; only mine changed
+                      (loop s i2 j2 (append (reverse ms) out) conflicts
+                            (cons (list 'mine bs ms ts) report))]
+                     [(equal? ms ts)      ; both, identically
+                      (loop s i2 j2 (append (reverse ms) out) conflicts
+                            (cons (list 'both bs ms ts) report))]
                      [else
                       (loop s i2 j2
                             (append
@@ -169,5 +175,6 @@
                                         '("=======") ts
                                         '(">>>>>>> disk")))
                               out)
-                            (+ conflicts 1))]))))]))))
+                            (+ conflicts 1)
+                            (cons (list 'conflict bs ms ts) report))]))))]))))
 )

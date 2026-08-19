@@ -696,9 +696,22 @@
 
   (define (visit-file! path)
     ;; Switch to the buffer visiting path, creating it if necessary.
+    ;; Reopening a buffer whose file changed on disk meanwhile raises
+    ;; the same dialog a stale save would: overwrite, merge, cancel.
     (let ([path (expand-path path)])
       (cond [(find (lambda (b) (equal? (buffer-file b) path)) buffers)
-             => show-buffer!]
+             => (lambda (b)
+                  (show-buffer! b)
+                  (when (buffer-base b)
+                    (let ([stamp (disk-stamp path)])
+                      (unless (equal? stamp (buffer-stamp b))
+                        (let ([disk (guard (ex [else #f])
+                                      (and (file-exists? path)
+                                           (read-file path)))])
+                          (if (and disk
+                                   (string=? disk (buffer-base b)))
+                              (buffer-stamp-set! b stamp)
+                              (save-file! path)))))))]
             [(file-buffer path) => show-buffer!])))
 
   (define (save-file! path*)
@@ -741,6 +754,11 @@
         (reload-on-save! path)
         #t))
     (cond
+      [(and disk (not adopted?) (not modified?)
+            (buffer-base b) (string=? disk (buffer-base b)))
+       ;; nothing to do, and the mtime stays untouched
+       (set! message "No changes to save")
+       #f]
       [(and disk (not adopted?)
             (not (and (buffer-base b) (string=? disk (buffer-base b)))))
        (stale-save! b path disk write!)]
@@ -756,12 +774,61 @@
                  [else (ask)])))]
       [else (write!)]))
 
+  (define (merge-report! b path report conflicts)
+    ;; The merge's paper trail: a read-only *merge-<buffer>* with every
+    ;; changed chunk and how it went -- built quietly, never displayed;
+    ;; the echo names it.  -> the report buffer's name.
+    (let* ([name (format "*merge-~a*" (buffer-name b))]
+           [rb (fresh-buffer name)]
+           [lines
+            (append
+              (list (format "Three-way merge of ~a" path)
+                    (format "~a changed chunk~a, ~a conflict~a"
+                            (length report)
+                            (if (= (length report) 1) "" "s")
+                            conflicts (if (= conflicts 1) "" "s"))
+                    "")
+              (let loop ([cs report] [i 1] [acc '()])
+                (if (null? cs)
+                    (reverse acc)
+                    (let* ([c (car cs)]
+                           [tag (lambda (label ls)
+                                  (map (lambda (l)
+                                         (format "  ~a ~a" label l))
+                                       ls))]
+                           [entry
+                            (case (car c)
+                              [(theirs)
+                               (append
+                                 (list (format "hunk ~a: took the disk side" i))
+                                 (tag "-" (cadr c)) (tag "+" (cadddr c)))]
+                              [(mine)
+                               (append
+                                 (list (format "hunk ~a: took the buffer side" i))
+                                 (tag "-" (cadr c)) (tag "+" (caddr c)))]
+                              [(both)
+                               (append
+                                 (list (format "hunk ~a: both sides made the same change" i))
+                                 (tag "-" (cadr c)) (tag "+" (caddr c)))]
+                              [else
+                               (append
+                                 (list (format "hunk ~a: CONFLICT -- markers left in the buffer" i))
+                                 (tag "base  |" (cadr c))
+                                 (tag "buffer|" (caddr c))
+                                 (tag "disk  |" (cadddr c)))])])
+                      (loop (cdr cs) (+ i 1)
+                            (cons "" (append (reverse entry) acc)))))))])
+      (when (pair? lines) (apply buffer-append! rb lines))
+      (buffer-read-only-set! rb #t)
+      name))
+
   (define (merge-from-disk! b path disk)
     ;; Replace the buffer with the three-way merge of its base, its
-    ;; text, and the disk; -> the conflict count.  The buffer adopts
-    ;; the disk as its new base either way -- the external change is
-    ;; incorporated, so the next save writes cleanly.  One undo entry.
-    (let-values ([(merged conflicts)
+    ;; text, and the disk; -> the conflict count and the report
+    ;; buffer's name.  The buffer adopts the disk as its new base
+    ;; either way -- the external change is incorporated, so the next
+    ;; save writes cleanly.  One undo entry.
+    (let-values ([(merged conflicts report)
                   (merge3 (string-lines (buffer-base b))
                           (string-lines (buffer-text b))
                           (string-lines disk))])
@@ -772,7 +839,7 @@
                                (vector "")
                                (list->vector merged)))
       (changed!)
-      conflicts))
+      (values conflicts (merge-report! b path report conflicts))))
 
   (define (stale-save! b path disk write!)
     (buffer-stale-set! b #t)   ; worn until a write settles it
@@ -784,14 +851,22 @@
         (cond
           [(memv n '(111 79)) (write!)]                       ; o
           [(memv n '(109 77))                                 ; m
-           (let ([conflicts (merge-from-disk! b path disk)])
+           (let-values ([(conflicts report-name)
+                         (merge-from-disk! b path disk)])
              (if (zero? conflicts)
-                 (write!)
+                 (begin
+                   (write!)
+                   (parameterize ([message-source 'save-file!])
+                     (set-message!
+                       (format "Merged and saved -- details in ~a"
+                               report-name)))
+                   #t)
                  (begin
                    (parameterize ([message-source 'save-file!])
                      (set-message!
-                       (format "Merged with ~a conflict~a -- resolve, then save"
-                               conflicts (if (= conflicts 1) "" "s"))))
+                       (format "Merged with ~a conflict~a -- resolve, then save; details in ~a"
+                               conflicts (if (= conflicts 1) "" "s")
+                               report-name)))
                    #f)))]
           [(memv n '(99 67 7 27)) (set! message "Save cancelled") #f]
           [(not n) #f]
