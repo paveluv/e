@@ -338,6 +338,20 @@ read-only `*merge-<name>*` buffer, named in the echo once the merge is
 done -- immediately for a clean one, after the resolving save for a
 conflicted one.
 
+## Configuration
+
+`config.e` next to the loader script is plain Scheme -- no library,
+no shebang: every expression evaluates in the editor's top level, the
+M-x environment, with the whole public API in scope.  It loads at
+startup once the modules are up, and loads again after every module
+reload so its settings reapply on top of fresh registrations -- write
+it to tolerate being loaded any number of times.  Saving it inside
+the editor applies it on the spot, as does M-x `(load-config!)`; an
+error reports in the echo area and leaves the editor running.  The
+shipped file is a commented sampler -- for example,
+`(indent-on-tab! "scheme" #f)` turns TAB's auto-indent off for Scheme
+buffers.
+
 ## Architecture and extension modules
 
 Everything in `lib/` is a library with the `.e` extension, named after
@@ -392,11 +406,12 @@ reports itself in the message line without preventing startup.
 
 Modules reload without restarting. Saving a module source in the
 editor (any `.e` file in the running editor's `lib/`, including a new
-one) reloads it on the spot; `M-x (auto-reload #f)` turns that off for
-a session, commenting the `(auto-reload #t)` line out of the loader
-disables it for an installation, and a save whose reload fails reports
-the error and leaves the old version running. For sources edited
-outside e:
+one) reloads it on the spot; `M-x (modules-reload-on-save #f)` turns that
+off for a session, commenting the `(modules-reload-on-save #t)` line out
+of `config.e` disables it for an installation (`config-reload-on-save`
+governs config.e's own on-save reload the same way), and a save whose
+reload fails reports the error and leaves the old version running.
+For sources edited outside e:
 
     M-x (reload-module! "paren")
 

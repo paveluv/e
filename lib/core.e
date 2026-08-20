@@ -36,7 +36,8 @@
     register-mode! find-mode mode-styles add-highlighter!
     register-indenter! register-formatter!
     add-status-hint!
-    load-module! reload-module! auto-reload indent-on-tab!
+    load-module! reload-module! modules-reload-on-save config-reload-on-save
+    load-config! indent-on-tab!
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
     min-window-lines
     complete! show-completions! dismiss-completions!
@@ -3348,17 +3349,20 @@
       (for-each (lambda (m) (retract-module! (string->symbol m)))
                 loaded-modules)
       (for-each init-module! loaded-modules)
+      (load-config!)              ; the settings reapply on top
       (refresh-buffer-modes!)
       (invalidate-screen-cache!)
       (set! message (format "Reloaded ~a" name))))
 
-  ;; Saving a module's source reloads it on the spot (a fresh .e file in
-  ;; the lib directory is loaded for the first time), so editing the
-  ;; editor from inside itself takes effect on save.  Off by default;
-  ;; the loader script turns it on -- comment that line out for an
-  ;; installation without it -- and M-x (auto-reload #f) turns it off
-  ;; for a session.
-  (define auto-reload (make-parameter #f))
+  ;; Saving a module's source reloads it on the spot (a fresh .e file
+  ;; in the lib directory is loaded for the first time), and saving
+  ;; config.e applies it, so editing the editor from inside itself
+  ;; takes effect on save.  Both off by default; the shipped config.e
+  ;; turns both on -- comment its lines out for an installation
+  ;; without them -- and M-x (modules-reload-on-save #f) or
+  ;; (config-reload-on-save #f) turns either off for a session.
+  (define modules-reload-on-save (make-parameter #f))
+  (define config-reload-on-save (make-parameter #f))
 
   (define (canonical-path path*)
     ;; path made absolute, with ".", "..", and empty segments resolved
@@ -3392,19 +3396,52 @@
                   (not (string=? base "core.e"))
                   (substring base 0 (- (string-length base) 2)))))))
 
+  (define (config-file)
+    ;; config.e next to the loader script: the lib directory's parent.
+    (string-append (caar (library-directories)) "/../config.e"))
+
+  (define (load-config!)
+    ;; The user's configuration: config.e, plain expressions evaluated
+    ;; in the editor's top level (the M-x environment).  Loaded at
+    ;; startup once the modules are up, and again after every module
+    ;; reload so its settings reapply on top of fresh registrations --
+    ;; it must tolerate being loaded any number of times.  Its own
+    ;; registrations are owned like a module's, retracted before each
+    ;; load, so nothing accumulates.  -> whether it loaded cleanly; an
+    ;; error reports and leaves the rest of the file unread.
+    (let ([path (config-file)])
+      (and (file-exists? path)
+           (begin
+             (retract-module! 'config)
+             (guard (ex [else (parameterize ([message-source 'config])
+                                (set-message!
+                                  (format "Error in config.e: ~a"
+                                    (error-text ex))))
+                              #f])
+               (parameterize ([registering-module 'config])
+                 (load path))
+               #t)))))
+
   (define (reload-on-save! path)
-    ;; The save-file! hook.  A reload that fails (a module saved mid-edit,
+    ;; The post-save hook.  A reload that fails (a module saved mid-edit,
     ;; say) reports itself without disturbing the save -- or the editor,
-    ;; which keeps running the module's old version.
-    (let ([name (and (auto-reload) (module-name-of-path path))])
-      (when name
-        (guard (ex [else (parameterize ([message-source 'reload-module!])
-                           (set-message!
-                             (format "Reload of ~a failed: ~a"
-                                     name (error-text ex))))])
-          (reload-module! name)
-          (parameterize ([message-source 'reload-module!])
-            (set-message! (format "Reloaded ~a" name)))))))
+    ;; which keeps running the module's old version.  A saved config.e
+    ;; applies on the spot the same way.
+    (let ([name (and (modules-reload-on-save) (module-name-of-path path))])
+      (cond
+        [name
+         (guard (ex [else (parameterize ([message-source 'reload-module!])
+                            (set-message!
+                              (format "Reload of ~a failed: ~a"
+                                      name (error-text ex))))])
+           (reload-module! name)
+           (parameterize ([message-source 'reload-module!])
+             (set-message! (format "Reloaded ~a" name))))]
+        [(and (config-reload-on-save)
+              (string=? (canonical-path path) (canonical-path (config-file))))
+         (when (load-config!)
+           (parameterize ([message-source 'config])
+             (set-message! "Applied config.e")))])))
 
 
   ;;; Main ------------------------------------------------------------------
@@ -3420,6 +3457,7 @@
     (let ([args (command-line-arguments)])
       (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
       (load-modules!)           ; the log-view module lists *log* from startup
+      (load-config!)
       (when (pair? args) (visit-file! (car args))))
     (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
       (display "e: an interactive terminal is required\n" (current-error-port))

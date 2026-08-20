@@ -56,7 +56,4 @@
 
 (eval '(begin
          (import (core))
-         ;; Saving a module source (a .e file in lib) reloads it into
-         ;; the running editor.  Delete this line if you don't want that.
-         (auto-reload #t)
          (main)))
