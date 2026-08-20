@@ -1,0 +1,104 @@
+#!/usr/bin/env scheme-script
+;; scheme-format -- Scheme source formatter: the e editor's normal form,
+;; from the shell.
+;;
+;; usage: scheme-format [-i] [file ...]
+;;
+;; Formats Scheme source -- indentation (each line settling on the
+;; stop nearest its current column), tabs widened, the ( ) vs [ ]
+;; conventions, trailing whitespace trimmed, one final newline;
+;; spacing within lines is the author's and stays.  See the e
+;; README's "Indentation and formatting".  Without arguments,
+;; stdin formats to stdout.  With -i the files are rewritten in
+;; place (only when changed, permissions kept); without it their
+;; formatted text prints to stdout.  A result that does not read
+;; back as the very same data -- it cannot, short of a bug -- is
+;; refused and the file left untouched.
+;;
+;; The engine is the (scheme-format) library in the e editor's lib
+;; directory next to this tool's; the two share compiled objects.
+;; See the e loader script for the scheme-script portability notes.
+
+(import (chezscheme))
+
+(define (directory-part path)
+  (let loop ([i (- (string-length path) 1)])
+    (cond [(< i 0) "."]
+          [(char=? (string-ref path i) #\/) (substring path 0 i)]
+          [else (loop (- i 1))])))
+
+(define e-home
+  ;; the installation: this script lives in its tools directory
+  (let ([dir (string-append
+               (directory-part
+                 (let ([cl (command-line)])
+                   (if (and (pair? cl) (string? (car cl))) (car cl) "")))
+               "/..")])
+    (unless (file-directory? (string-append dir "/lib"))
+      (display (format "scheme-format: no lib directory in ~a\n" dir)
+               (current-error-port))
+      (exit 1))
+    dir))
+
+(library-directories
+  (list (cons (string-append e-home "/lib") (string-append e-home "/eo"))))
+(library-extensions (cons '(".e" . ".eo") (library-extensions)))
+(compile-imported-libraries #t)
+
+(define (split-lines s)
+  (let ([p (open-string-input-port s)])
+    (let loop ([acc '()])
+      (let ([l (get-line p)])
+        (if (eof-object? l) (reverse acc) (loop (cons l acc)))))))
+
+(define (read-data s)
+  (let ([p (open-string-input-port s)])
+    (let loop ([acc '()])
+      (let ([x (read p)])
+        (if (eof-object? x) (reverse acc) (loop (cons x acc)))))))
+
+(define (format-text text format-lines)
+  (let* ([v (list->vector (split-lines text))]
+         [n (vector-length v)]
+         [out (if (zero? n) '() (format-lines v 0 (- n 1)))]
+         [new (apply string-append
+                     (map (lambda (l) (string-append l "\n")) out))])
+    (unless (equal? (read-data text) (read-data new))
+      (error 'scheme-format "the result does not read back as the same data"))
+    new))
+
+(define (run format-lines)
+  (let* ([args (command-line-arguments)]
+         [in-place? (and (pair? args) (string=? (car args) "-i"))]
+         [files (if in-place? (cdr args) args)])
+    (cond
+      [(null? files)
+       (when in-place?
+         (display "usage: scheme-format [-i] [file ...]\n" (current-error-port))
+         (exit 1))
+       (display (format-text (get-string-all (current-input-port))
+                             format-lines))]
+      [else
+       (for-each
+         (lambda (path)
+           (let* ([text (call-with-input-file path get-string-all)]
+                  [new (guard (ex [else
+                                   (display (format "scheme-format: ~a: ~a\n"
+                                                    path (condition-message ex))
+                                            (current-error-port))
+                                   (exit 1)])
+                         (format-text text format-lines))])
+             (cond
+               [(not in-place?) (display new)]
+               [(string=? new text) (void)]
+               [else
+                (let ([mode (guard (ex [else #f]) (get-mode path))])
+                  (call-with-output-file path
+                    (lambda (p) (put-string p new))
+                    'replace)
+                  (when mode (guard (ex [else (void)]) (chmod path mode)))
+                  (display path) (newline))])))
+         files)])))
+
+(eval '(import (scheme-format)) (interaction-environment))
+(run (eval 'scheme-format-lines (interaction-environment)))

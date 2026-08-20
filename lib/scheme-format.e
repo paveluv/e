@@ -1,7 +1,7 @@
 ;; scheme-format.e -- Scheme indentation and formatting, for the e editor.
 ;;
 ;; A pure library (no init!): the engine behind scheme-mode's
-;; indenter and formatter.
+;; indenter and formatter and behind the standalone scheme-format tool.
 ;; It operates on vectors of lines; nothing here touches the editor.
 ;;
 ;; Indentation is the one thing enforced -- spacing within a line is

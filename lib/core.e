@@ -1385,7 +1385,6 @@
                                   (unbox r))))
               registries))
 
-
   ;; Modules may hook the save: pre-save hooks run before anything is
   ;; checked or written (formatting, say), post-save hooks after a
   ;; successful write (the module reload lives there).  Each receives
@@ -3468,7 +3467,6 @@
   ;; the core's own post-save hook: the reload lives there like any
   ;; module's
   (define reload-hooked (add-post-save-hook! reload-on-save!))
-
 
   ;;; Main ------------------------------------------------------------------
 

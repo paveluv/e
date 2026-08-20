@@ -110,7 +110,7 @@
   ;;; Indentation and formatting ------------------------------------------------
 
   ;; The engine is the pure (scheme-format) library, shared with the
-  ;; standalone schemefmt tool; these adapters feed it buffer lines.
+  ;; standalone scheme-format tool; these adapters feed it buffer lines.
 
   (define (buffer-vector b)
     (let* ([n (buffer-line-count b)]

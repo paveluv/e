@@ -162,7 +162,9 @@ format only rewrites bracket pairs it wholly contains, so it can
 never unbalance the buffer; string interiors and margin comments are
 never touched.  Modules provide the rules per mode with
 `register-indenter!` and `register-formatter!`.  The Scheme engine is
-the pure `(scheme-format)` library.  With `(scheme-format-on-save #t)`
+the pure `(scheme-format)` library, also driving `tools/scheme-format` --
+the same treatment from the shell: `scheme-format [-i] [file ...]`, stdin
+to stdout without arguments.  With `(scheme-format-on-save #t)`
 (on in the shipped config.e) every save of a Scheme buffer formats it
 first -- a pre-save hook; modules add their own with
 `add-pre-save-hook!` and `add-post-save-hook!` (the module reload is
