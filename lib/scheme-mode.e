@@ -9,8 +9,13 @@
 ;; count).
 
 (library (scheme-mode)
-  (export init!)
+  (export init! scheme-format-on-save)
   (import (chezscheme) (core) (scheme-format))
+
+  ;; Configuration: format Scheme buffers just before they are written
+  ;; (a pre-save hook), so every save leaves the normal form on disk.
+  ;; Off by default; the shipped config.e turns it on.
+  (define scheme-format-on-save (make-parameter #f))
 
   (define scheme-keywords
     (let ([table (make-hashtable string-hash string=?)])
@@ -104,8 +109,8 @@
 
   ;;; Indentation and formatting ------------------------------------------------
 
-  ;; The engine is the pure (scheme-format) library; these adapters
-  ;; feed it buffer lines.
+  ;; The engine is the pure (scheme-format) library, shared with the
+  ;; standalone schemefmt tool; these adapters feed it buffer lines.
 
   (define (buffer-vector b)
     (let* ([n (buffer-line-count b)]
@@ -119,10 +124,16 @@
   (define (scheme-format b from to)
     (scheme-format-lines (buffer-vector b) from to))
 
+  (define (format-on-save! path)
+    (when (and (scheme-format-on-save)
+               (equal? (buffer-mode-name (current-buffer)) "scheme"))
+      (format-buffer!)))
+
   (define (init!)
     (register-mode! "scheme"
                     '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
                     '("scheme" "petite" "chez" "guile" "racket")
                     scheme-styles)
     (register-indenter! "scheme" scheme-indent)
-    (register-formatter! "scheme" scheme-format)))
+    (register-formatter! "scheme" scheme-format)
+    (add-pre-save-hook! format-on-save!)))

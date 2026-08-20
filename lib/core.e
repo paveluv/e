@@ -38,6 +38,7 @@
     add-status-hint!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab!
+    add-pre-save-hook! add-post-save-hook!
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
     min-window-lines
     complete! show-completions! dismiss-completions!
@@ -764,8 +765,9 @@
             (log! 'save-file!
                   (format "Merge resolved -- details in ~a" (cdr pending)))))
         (log! 'save-file! (cons "Wrote" path))
-        (reload-on-save! path)
+        (run-save-hooks! post-save-hooks path)
         #t))
+    (run-save-hooks! pre-save-hooks path)
     (cond
       [(and disk (not adopted?) (not modified?)
             (buffer-base b) (string=? disk (buffer-base b)))
@@ -1383,6 +1385,26 @@
                                   (unbox r))))
               registries))
 
+
+  ;; Modules may hook the save: pre-save hooks run before anything is
+  ;; checked or written (formatting, say), post-save hooks after a
+  ;; successful write (the module reload lives there).  Each receives
+  ;; the path being written; a raising hook reports and the save goes
+  ;; on.
+  (define pre-save-hooks (make-registry))
+  (define post-save-hooks (make-registry))
+
+  (define (add-pre-save-hook! proc) (registry-add! pre-save-hooks proc))
+  (define (add-post-save-hook! proc) (registry-add! post-save-hooks proc))
+
+  (define (run-save-hooks! hooks path)
+    (for-each (lambda (p)
+                (guard (ex [else (parameterize ([message-source 'save-file!])
+                                   (set-message!
+                                     (format "Save hook failed: ~a"
+                                             (error-text ex))))])
+                  (p path)))
+              (registry-items hooks)))
 
   ;; The formatter registry itself, and the file commands' formatters:
   ;; their entries are (verb . path), formatted "verb path", their
@@ -3442,6 +3464,10 @@
          (when (load-config!)
            (parameterize ([message-source 'config])
              (set-message! "Applied config.e")))])))
+
+  ;; the core's own post-save hook: the reload lives there like any
+  ;; module's
+  (define reload-hooked (add-post-save-hook! reload-on-save!))
 
 
   ;;; Main ------------------------------------------------------------------

@@ -11,6 +11,7 @@
 
 (modules-reload-on-save #t)   ; saving a module source reloads it in place
 (config-reload-on-save #t)    ; saving this file applies it on the spot
+(scheme-format-on-save #t)    ; Scheme buffers format as they are saved
 
 ;; Some things to try:
 ;;
