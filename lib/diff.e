@@ -5,7 +5,7 @@
 ;; stale-file guard; anything else may use it too.
 
 (library (diff)
-  (export diff-matches merge3)
+  (export diff-matches merge3 merge-report-lines)
   (import (chezscheme))
 
   ;;; Patience diff --------------------------------------------------------------
@@ -180,4 +180,53 @@
                               out)
                             (+ conflicts 1)
                             (cons (chunk 'conflict) report))]))))]))))
+
+  ;;; The merge report -----------------------------------------------------------
+
+  (define (merge-report-lines path base report conflicts)
+    ;; merge3's report rendered in a unified-diff-like shape: @@
+    ;; headers with 1-based positions and lengths for all three sides,
+    ;; two lines of base context around each hunk.  -> a list of lines.
+    (define context 2)
+    (define (ctx lo hi)                  ; base lines [lo, hi) as context
+      (let loop ([k (max 0 lo)] [acc '()])
+        (if (>= k (min hi (vector-length base)))
+            (reverse acc)
+            (loop (+ k 1)
+                  (cons (format "   ~a" (vector-ref base k)) acc)))))
+    (define (tag label ls)
+      (map (lambda (l) (format " ~a ~a" label l)) ls))
+    (define (hunk c)
+      (let* ([kind (car c)]
+             [bp (cadr c)] [mp (caddr c)] [tp (cadddr c)]
+             [bs (list-ref c 4)] [ms (list-ref c 5)] [ts (list-ref c 6)]
+             [head (format "@@ base ~a,~a  buffer ~a,~a  disk ~a,~a @@ ~a"
+                           (+ bp 1) (length bs)
+                           (+ mp 1) (length ms)
+                           (+ tp 1) (length ts)
+                           (case kind
+                             [(theirs) "took the disk side"]
+                             [(mine) "took the buffer side"]
+                             [(both) "both sides made the same change"]
+                             [else "CONFLICT -- markers left in the buffer"]))]
+             [body (case kind
+                     [(theirs) (append (tag "-" bs) (tag "+" ts))]
+                     [(mine) (append (tag "-" bs) (tag "+" ms))]
+                     [(both) (append (tag "-" bs) (tag "+" ms))]
+                     [else (append (tag "b|" bs)
+                                   (tag "<|" ms)
+                                   (tag ">|" ts))])])
+        (append (list head)
+                (ctx (- bp context) bp)
+                body
+                (ctx (+ bp (length bs)) (+ bp (length bs) context))
+                (list ""))))
+    (append
+      (list (format "Three-way merge of ~a" path)
+            (format "~a changed chunk~a, ~a conflict~a"
+                    (length report)
+                    (if (= (length report) 1) "" "s")
+                    conflicts (if (= conflicts 1) "" "s"))
+            "")
+      (apply append (map hunk report))))
 )

@@ -788,60 +788,12 @@
       [else (write!)]))
 
   (define (merge-report! b path base report conflicts)
-    ;; The merge's paper trail: a read-only *merge-<buffer>* in a
-    ;; unified-diff-like shape -- @@ headers with 1-based positions
-    ;; and lengths for all three sides, two lines of context around
-    ;; each hunk -- built quietly, never displayed; the echo names it.
-    ;; -> the report buffer's name.
-    (define context 2)
-    (define (ctx lo hi)                  ; base lines [lo, hi) as context
-      (let loop ([k (max 0 lo)] [acc '()])
-        (if (>= k (min hi (vector-length base)))
-            (reverse acc)
-            (loop (+ k 1)
-                  (cons (format "   ~a" (vector-ref base k)) acc)))))
-    (define (tag label ls)
-      (map (lambda (l) (format " ~a ~a" label l)) ls))
-    (define (hunk c i)
-      (let* ([kind (car c)]
-             [bp (cadr c)] [mp (caddr c)] [tp (cadddr c)]
-             [bs (list-ref c 4)] [ms (list-ref c 5)] [ts (list-ref c 6)]
-             [head (format "@@ base ~a,~a  buffer ~a,~a  disk ~a,~a @@ ~a"
-                           (+ bp 1) (length bs)
-                           (+ mp 1) (length ms)
-                           (+ tp 1) (length ts)
-                           (case kind
-                             [(theirs) "took the disk side"]
-                             [(mine) "took the buffer side"]
-                             [(both) "both sides made the same change"]
-                             [else "CONFLICT -- markers left in the buffer"]))]
-             [body (case kind
-                     [(theirs) (append (tag "-" bs) (tag "+" ts))]
-                     [(mine) (append (tag "-" bs) (tag "+" ms))]
-                     [(both) (append (tag "-" bs) (tag "+" ms))]
-                     [else (append (tag "b|" bs)
-                                   (tag "<|" ms)
-                                   (tag ">|" ts))])])
-        (append (list head)
-                (ctx (- bp context) bp)
-                body
-                (ctx (+ bp (length bs)) (+ bp (length bs) context))
-                (list ""))))
+    ;; The merge's paper trail: a read-only *merge-<buffer>* holding
+    ;; diff's unified-diff-style rendering -- built quietly, never
+    ;; displayed; the echo names it.  -> the report buffer's name.
     (let* ([name (format "*merge-~a*" (buffer-name b))]
            [rb (fresh-buffer name)]
-           [lines
-            (append
-              (list (format "Three-way merge of ~a" path)
-                    (format "~a changed chunk~a, ~a conflict~a"
-                            (length report)
-                            (if (= (length report) 1) "" "s")
-                            conflicts (if (= conflicts 1) "" "s"))
-                    "")
-              (let loop ([cs report] [i 1] [acc '()])
-                (if (null? cs)
-                    (apply append (reverse acc))
-                    (loop (cdr cs) (+ i 1)
-                          (cons (hunk (car cs) i) acc)))))])
+           [lines (merge-report-lines path base report conflicts)])
       (when (pair? lines) (apply buffer-append! rb lines))
       (buffer-read-only-set! rb #t)
       name))
