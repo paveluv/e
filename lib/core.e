@@ -754,15 +754,16 @@
         (buffer-base-set! b (buffer-text b))
         (buffer-stamp-set! b (disk-stamp path))
         (buffer-stale-set! b #f)
-        (log! 'save-file! (cons "Wrote" path))
-        (reload-on-save! path)
         ;; a conflicted merge reports its details once resolved --
-        ;; saved with no markers left
+        ;; saved with no markers left; the resolution preceded the
+        ;; write, so its record does too
         (let ([pending (assq b merge-reports)])
           (when (and pending (not (buffer-has-conflicts? b)))
             (set! merge-reports (remq pending merge-reports))
             (log! 'save-file!
                   (format "Merge resolved -- details in ~a" (cdr pending)))))
+        (log! 'save-file! (cons "Wrote" path))
+        (reload-on-save! path)
         #t))
     (cond
       [(and disk (not adopted?) (not modified?)
