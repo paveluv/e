@@ -29,7 +29,7 @@
     kill-line! kill-region! copy-region! yank! undo! redo!
     call-as-one-edit!
     move-horizontal! move-vertical! goto-point!
-    search!! quit!!
+    quit!!
     ;; extending the editor
     bind-key! command-key command-hint
     register-mode! find-mode mode-styles add-highlighter!
@@ -39,12 +39,14 @@
     min-window-lines
     complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
+    (rename (handle-key! dispatch-key!))
+    selected-window select-window! quitting?
     set-message! current-message redraw! error-text mouse!
     log! log-entries log-length log-record log-styler format-log-entry
     message-source message-progress
     echo-highlight
     register-view! view-append! register-log-formatter! log-history
-    call-with-interrupt interrupted?
+    call-with-interrupt call-uninterrupted interrupted?
     vector-fill-range! string-search
     string-tail string-prefix? string-suffix? string-join split-lines
     ;; the editor itself
@@ -165,11 +167,6 @@
   (define echo-pending '())      ; transient-log lines: (prefix text styler)
   (define echo-live-height 1)    ; rows of the live line inside echo-height
   (define message-ghost "") ; grey suggestion drawn after the message text
-  (define search-highlight "")
-
-  ;; The match point sits on, as (buffer row start end); #f outside a
-  ;; search.  Painted in its own color, apart from the other matches.
-  (define search-current #f)
   (define rows 24)
   (define cols 80)
   (define stdin (current-input-port))
@@ -1209,6 +1206,21 @@
   (define (other-window!)
     (set! current-window (next-window current-window)))
 
+  (define (selected-window)
+    ;; The current window, an opaque token: hold it, compare it, give
+    ;; it back to select-window!.
+    current-window)
+
+  (define (select-window! w)
+    ;; Make w current when it is still on screen; -> whether it was.
+    (and (memq w windows)
+         (begin (set! current-window w) #t)))
+
+  (define (quitting?)
+    ;; Has a quit been requested?  A module driving its own key loop
+    ;; (the search) checks this after dispatching a key through.
+    quit?)
+
   ;; Windows squeezed by the layout keep at least this many text lines.
   (define min-window-lines
     (make-parameter 3 (lambda (v) (max 1 v))))
@@ -1509,22 +1521,6 @@
           (substring s 0 width)
           (string-append s (make-string (- width n) #\space)))))
 
-  (define (matching-columns s needle)
-    ;; Columns covered by a search match, as a boolean vector, or #f when
-    ;; there is no active search or no match on this line.
-    (and (> (string-length needle) 0)
-         (let ([first (string-search s needle 0 (string-length s))])
-           (and first
-                (let ([marked (make-vector (string-length s) #f)])
-                  (let loop ([found first])
-                    (when found
-                      (vector-fill-range! marked found
-                        (+ found (string-length needle)) #t)
-                      ;; Advance one column so overlapping matches highlight too.
-                      (loop (string-search s needle (+ found 1)
-                                           (string-length s)))))
-                  marked)))))
-
   (define (region-span row line-length)
     ;; The columns of `row` inside the active region, as (start . end), or #f.
     (and mark-active?
@@ -1536,11 +1532,14 @@
                  [else (cons 0 line-length)]))))
 
   ;; Context highlighting is provided by modules: a highlighter, registered
-  ;; with add-highlighter!, is called at every redraw and returns ranges of
-  ;; the current buffer to mark up -- a list of (row start end) triples,
-  ;; drawn underlined on top of the syntax styles.  The paren module
-  ;; matches brackets this way; a broken highlighter is ignored for that
-  ;; redraw rather than taking the editor down.
+  ;; with add-highlighter!, is called at every redraw and returns ranges
+  ;; of the current buffer to mark up -- a list of (row start end) or
+  ;; (row start end style) entries, drawn in the current window on top
+  ;; of the syntax styles.  Styles: mark (the default) underlines --
+  ;; the paren module matches brackets this way -- while match and
+  ;; match-point are the search's cyan and yellow backgrounds.  A
+  ;; broken highlighter is ignored for that redraw rather than taking
+  ;; the editor down.
   ;; Modules may add a status hint: a thunk returning a short string
   ;; (or #f) appended to the current window's status line -- the
   ;; pretty-parens mode shows the source paren under point this way.
@@ -1571,16 +1570,26 @@
                  (if (= (car r) row) (cons (cdr r) acc) acc))
                '() ranges))
 
-  (define (display-editor-line s shown span marks cur left styles)
+  (define (display-editor-line s shown span marks left styles)
     (define n (string-length s))
     (define limit (+ left cols))
-    (define marked (matching-columns s search-highlight))
     (define (style-at col)
       (if (and styles (< col n)) (vector-ref styles col) 'plain))
-    (define (search-hit? col)
-      (and (< col n) marked (vector-ref marked col)))
-    (define (current-hit? col)
-      (and cur (<= (car cur) col) (< col (cdr cur))))
+    (define (mark-style m)
+      (if (pair? (cddr m)) (caddr m) 'mark))
+    (define (covers? m col)
+      (and (<= (car m) col) (< col (cadr m))))
+    (define (bg-at col)
+      ;; The strongest background among the marks covering col:
+      ;; match-point (yellow) over match (cyan), or #f.
+      (fold-left (lambda (acc m)
+                   (if (covers? m col)
+                       (case (mark-style m)
+                         [(match-point) 'match-point]
+                         [(match) (or acc 'match)]
+                         [else acc])
+                       acc))
+                 #f marks))
     (define (selected? col)
       (and (< col n) span (<= (car span) col) (< col (cdr span))))
     (define (segment from to)
@@ -1597,28 +1606,29 @@
             (loop (+ i 1))))
         out))
     (define (marked? col)
-      (exists (lambda (m) (and (<= (car m) col) (< col (cadr m)))) marks))
+      (exists (lambda (m) (and (eq? (mark-style m) 'mark) (covers? m col)))
+              marks))
     ;; Emit runs of identically-attributed columns as single writes.
     (let loop ([col left])
       (when (< col limit)
         (let* ([style (style-at col)]
-               [srch (search-hit? col)]
-               [curh (current-hit? col)]
+               [bg (bg-at col)]
                [sel (selected? col)]
                [mk (marked? col)]
                [end (let run ([j (+ col 1)])
                       (if (and (< j limit)
                                (eq? (style-at j) style)
-                               (eq? (search-hit? j) srch)
-                               (eq? (current-hit? j) curh)
+                               (eq? (bg-at j) bg)
                                (eq? (selected? j) sel)
                                (eq? (marked? j) mk))
                           (run (+ j 1))
                           j))])
           (ansi "\x1b;[0m" (style-code style))
           (when sel (ansi "\x1b;[44m"))     ; the selection: blue backdrop
-          (cond [curh (ansi "\x1b;[43;30m")]  ; the match point is on: yellow
-                [srch (ansi "\x1b;[46;30m")]) ; other matches: cyan
+          (case bg
+            [(match-point) (ansi "\x1b;[43;30m")]  ; the match point is on
+            [(match) (ansi "\x1b;[46;30m")]        ; other matches: cyan
+            [else (void)])
           (when mk (ansi "\x1b;[4m"))
           (ansi (segment col end))
           (loop end))))
@@ -1968,21 +1978,16 @@
                                     line))]
                        [slice-left (if (window-wrap w) (* seg cols) left)]
                        [span (and current? (region-span i (string-length line)))]
-                       [marks (if current? (ranges-on-row ranges i) '())]
-                       [cur (and search-current
-                                 (eq? (car search-current) b)
-                                 (= (cadr search-current) i)
-                                 (cons (caddr search-current)
-                                       (cadddr search-current)))])
+                       [marks (if current? (ranges-on-row ranges i) '())])
                   (let ([row-styles
                          (let ([m (buffer-mode b)])
                            (and m (mode-row-styles m)
                                 (guard (ex [else #f])
                                   ((mode-row-styles m) b i line))))])
-                    (paint! row (list i line shown span marks cur slice-left
+                    (paint! row (list i line shown span marks slice-left
                                       mode-tag row-styles)
                             (lambda ()
-                              (display-editor-line line shown span marks cur
+                              (display-editor-line line shown span marks
                                                    slice-left
                                                    (or row-styles
                                                        (styles-of line))))))
@@ -2089,7 +2094,7 @@
                   (* 2 (length windows))))
       (set! windows (list current-window)))
     (let* ([layout (window-layout)]
-           [view (list rows cols search-highlight (map cdr layout)
+           [view (list rows cols (map cdr layout)
                        (map window-wrap windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                 layout)
@@ -2608,146 +2613,6 @@
           (set-isig! old)
           (keyboard-interrupt-handler saved)))))
 
-  ;;; Incremental search ----------------------------------------------------
-
-  (define (search-forward-from needle start-row start-col)
-    ;; Search from the supplied position to the end of the buffer, then wrap
-    ;; once.  The first pass covers the starting line from start-col onward,
-    ;; so the wrap pass covers matches beginning before start-col --
-    ;; including ones that straddle it.
-    (let loop ([row start-row] [col start-col] [remaining (vlen)])
-      (if (= remaining 0)
-          (let* ([line (line-at start-row)]
-                 [found (string-search line needle 0
-                                       (min (+ start-col (string-length needle) -1)
-                                            (string-length line)))])
-            (and found (cons start-row found)))
-          (let* ([line (line-at row)]
-                 [found (string-search line needle col (string-length line))])
-            (if found
-                (cons row found)
-                (loop (modulo (+ row 1) (vlen)) 0 (- remaining 1)))))))
-
-  (define (goto-match! match)
-    (set! point-row (car match)) (set! point-col (cdr match)))
-
-  (define (goto-match-end! match needle)
-    ;; Point lands right after the match, so accepting the search
-    ;; leaves it there -- a region set before searching then covers
-    ;; the found text.
-    (set! point-row (car match))
-    (set! point-col (+ (cdr match) (string-length needle))))
-
-  (define (search!!)
-    ;; The search owns C-g while it runs; the match highlighting goes
-    ;; away however it exits.
-    (call-uninterrupted
-      (lambda ()
-        (dynamic-wind
-          void
-          run-search!
-          (lambda ()
-            (set! search-highlight "")
-            (set! search-current #f))))))
-
-  (define (run-search!)
-    ;; Keys the search does not use run through the ordinary dispatch,
-    ;; so windows and buffers can be switched (C-x o, C-x b, and
-    ;; friends) without leaving the search; it then continues from
-    ;; point in the new buffer.  A match records where it was found --
-    ;; (buffer row col len) -- so the highlight and the anchors survive
-    ;; the excursion.
-    (define origin-window current-window)
-    (define origin (cons point-row point-col))
-    (define (match-here? match)
-      (and match (eq? (car match) (current-buffer))))
-    (define (anchor match)
-      ;; Where the next search starts: the current match when it is in
-      ;; this buffer, else point.
-      (if (match-here? match)
-          (cons (cadr match) (caddr match))
-          (cons point-row point-col)))
-    (define (found hit needle)
-      (list (current-buffer) (car hit) (cdr hit) (string-length needle)))
-    (let loop ([needle ""] [match #f] [failed? #f])
-      (set! search-highlight needle)
-      (set! search-current
-        (and match (list (car match) (cadr match) (caddr match)
-                         (+ (caddr match) (cadddr match)))))
-      (unless key-prefix                  ; C-x- stays visible mid-chord
-        (set! message
-          (format "~aI-search: ~a" (if failed? "Failing " "") needle)))
-      (redraw!)
-      (let ([c (read-char stdin)])
-        (cond
-          [(eof-object? c) (set! quit? #t)]
-          ;; A pending prefix owns the next key entirely.
-          [key-prefix (handle-key! c)
-                      (unless quit? (loop needle match failed?))]
-          [else
-           (case (char->integer c)
-             ;; RET or ESC accepts the current match, silently.  An escape
-             ;; sequence (arrow key etc.) also accepts, then moves point.
-             [(10 13 27)
-              (set! search-highlight "")
-              (set! search-current #f)
-              (set! message "")
-              (when (and (= (char->integer c) 27) (char-ready? stdin))
-                (escape-sequence!))]
-             ;; C-g cancels the search and restores point -- back in the
-             ;; window it started in.
-             [(7)
-              (set! search-highlight "")
-              (set! search-current #f)
-              (when (memq origin-window windows)
-                (set! current-window origin-window)
-                (goto-match! origin))
-              (set! message "Quit")]
-             ;; C-s repeats the current search from just beyond this match
-             ;; -- or from point, after a move to another buffer.
-             [(19)
-              (if (string=? needle "")
-                  (loop needle match failed?)
-                  (let* ([a (anchor match)]
-                         [skip (if (match-here? match) 1 0)]
-                         [next (search-forward-from needle (car a)
-                                                    (+ (cdr a) skip))])
-                    (if next
-                        (begin (goto-match-end! next needle)
-                               (loop needle (found next needle) #f))
-                        (loop needle match #t))))]
-             ;; Backspace shortens the needle and searches again from the
-             ;; original point (or from point, away from the origin window).
-             [(8 127)
-              (if (string=? needle "")
-                  (loop needle match failed?)
-                  (let ([shorter (substring needle 0 (- (string-length needle) 1))]
-                        [home (if (eq? current-window origin-window)
-                                  origin
-                                  (cons point-row point-col))])
-                    (if (string=? shorter "")
-                        (begin (goto-match! home) (loop shorter #f #f))
-                        (let ([next (search-forward-from shorter (car home)
-                                                         (cdr home))])
-                          (when next (goto-match-end! next shorter))
-                          (loop shorter (and next (found next shorter))
-                                (not next))))))]
-             [else
-              (if (< (char->integer c) 32)
-                  ;; Any other control key runs as usual -- C-x o, C-x b
-                  ;; and friends -- and the search carries on.
-                  (begin (handle-key! c)
-                         (unless quit? (loop needle match failed?)))
-                  ;; Extend the current match when possible; if it no longer
-                  ;; matches, continue forward to the next candidate.
-                  (let* ([longer (string-append needle (string c))]
-                         [a (anchor match)]
-                         [next (search-forward-from longer (car a) (cdr a))])
-                    (if next
-                        (begin (goto-match-end! next longer)
-                               (loop longer (found next longer) #f))
-                        (loop longer match #t))))])]))))
-
   ;;; Pasting and typed runs --------------------------------------------------
 
   (define (split-pasted-lines s)
@@ -3148,7 +3013,6 @@
                  (newline!)
                  (set! point-row row) (set! point-col col))]
          [(16) (move-vertical! -1)]                               ; C-p
-         [(19) (search!!)]                                 ; C-s
          [(22) (move-vertical! (page-size))]                      ; C-v
          [(23) (kill-region!)]                                    ; C-w
          [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x

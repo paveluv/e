@@ -123,7 +123,8 @@ again jumps to the next match (wrapping around), Backspace shortens the
 needle, `RET`/`ESC` accepts silently, `C-g` cancels and returns point
 to where the search began. Point rides just past the current match, so
 a mark set before searching leaves the found text inside the region.
-All matches on screen are highlighted while searching.
+The needle's matches in the current window are highlighted while
+searching.
 
 ### Prompts
 
@@ -386,10 +387,12 @@ styled `delimiter` take part in bracket matching. Two modes ship in
 blocks are styled as Scheme, modes composing per line). Context
 highlighting, markup that depends on where point is, is provided by
 highlighters: `add-highlighter!` registers a function consulted at
-every redraw that returns `(row start end)` ranges of the current
-buffer to underline. Bracket matching is such a module, `paren.e`;
-local-variable or other semantic highlighting could be added the same
-way.
+every redraw that returns `(row start end)` or `(row start end style)`
+ranges of the current buffer to mark up -- `mark` (the default)
+underlines, `match` and `match-point` are the search's cyan and yellow
+backgrounds. Bracket matching is such a module, `paren.e`, and the
+incremental search itself is another, `search.e`; local-variable or
+other semantic highlighting could be added the same way.
 
 ## Details worth knowing
 
