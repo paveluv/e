@@ -40,7 +40,8 @@
     complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
     set-message! current-message redraw! error-text mouse!
-    log! log-entries log-view show-log! message-source echo-highlight
+    log! log-entries log-view show-log! message-source message-progress
+    echo-highlight
     register-view! register-log-formatter! log-history
     call-with-interrupt interrupted?
     vector-fill-range! string-search
@@ -1080,6 +1081,13 @@
     ;; plain indicator -- shown, never logged.
     (make-parameter 'e))
 
+  (define message-progress
+    ;; When true, a logged message supersedes its component's newest
+    ;; line in the echo area -- progress redrawn in place rather than
+    ;; stacked -- never a line from another component.  The log
+    ;; records every step regardless.
+    (make-parameter #f))
+
   ;; Per-component presentation of structured entries: modules register
   ;; a formatter (datum -> string) and optionally a styler (formatted
   ;; text -> styles vector), used identically in the echo area and the
@@ -1123,7 +1131,7 @@
         (let* ([text (one-line (format-log-entry e))]
                [f (log-formatter component)]
                [styler (and f (caddr f))])
-          (echo-append! (format "~a: " component) text styler)))))
+          (echo-append! component text styler (message-progress))))))
 
   (define (log-history component . select)
     ;; Command history off the log: a component's datums through select
@@ -1884,13 +1892,21 @@
     (set! message-styles styles-pair)
     (present-echo!))
 
-  (define (echo-append! prefix text styler)
+  (define (echo-append! component text styler replace?)
     ;; Append one line to the echo area's transient log: every logged
     ;; message stacks up there, component-prefixed, until the next key
-    ;; settles the area.  A stale indicator gives way; a prompt's
-    ;; input line stays put below, and so does a running evaluation's
-    ;; kept query -- the user sees what is running.
-    (set! echo-pending (append echo-pending (list (list prefix text styler))))
+    ;; settles the area.  With replace? true the component's newest
+    ;; line is superseded when it is also the newest overall --
+    ;; progress redrawn in place -- never another component's.  A
+    ;; stale indicator gives way; a prompt's input line stays put
+    ;; below, and so does a running evaluation's kept query -- the
+    ;; user sees what is running.
+    (let* ([entry (list component text styler)]
+           [rev (reverse echo-pending)]
+           [rev (if (and replace? (pair? rev) (eq? (caar rev) component))
+                    (cdr rev)
+                    rev)])
+      (set! echo-pending (reverse (cons entry rev))))
     (unless (echo-cursor-now)
       (set! message "")
       (set! message-ghost "")
@@ -1958,7 +1974,8 @@
         (let ([e (car es)])
           (paint! row (cons 'echo-log e)
                   (lambda ()
-                    (display-echo-log-line (car e) (cadr e) (caddr e)))))
+                    (display-echo-log-line (format "~a: " (car e))
+                                           (cadr e) (caddr e)))))
         (loop (cdr es) (+ row 1))))
     (when (> echo-live-height 0)
      (let* ([content (string-append message message-ghost)]

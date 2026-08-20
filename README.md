@@ -157,7 +157,11 @@ logs stacks on its own line, prefixed with its component in grey, so a
 save that reloads a module and then reports a merge shows all three
 lines at once.  The area grows as messages arrive, the windows above
 shrinking down to their minimum, past which the oldest lines give way;
-the next keystroke settles it back to a single line.
+the next keystroke settles it back to a single line.  A message logged
+under `(parameterize ([message-progress #t]) ...)` is progress: it
+supersedes its component's newest line instead of stacking -- never
+another component's -- so a download reports fourteen steps as one
+line redrawn in place, while `*log*` still records every step.
 
 Nothing is lost when it settles: every message that passes through the
 echo area lands in the log -- the editor's syslog, structured records
