@@ -62,7 +62,7 @@
           "syntax-rules" "syntax-case" "with-syntax" "quasisyntax"
           "syntax" "identifier-syntax")
         (cluster #\⸨ #\⸩                  ; modules
-          "library" "import" "export")
+          "library" "import" "export" "include")
         (cluster #\‹ #\›                  ; quoting
           "quote" "quasiquote" "unquote" "unquote-splicing")
         (cluster #\⧘ #\⧙                  ; mutation

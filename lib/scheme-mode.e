@@ -15,14 +15,15 @@
   (define scheme-keywords
     (let ([table (make-hashtable string-hash string=?)])
       (for-each (lambda (k) (hashtable-set! table k #t))
-                '("and" "begin" "case" "cond" "define" "define-record-type"
-                  "define-syntax" "delay" "do"
+                '("and" "begin" "case" "case-lambda" "cond" "define"
+                  "define-condition-type" "define-record-type"
+                  "define-syntax" "define-values" "delay" "do"
                   "else" "export" "guard" "identifier-syntax" "if" "import"
-                  "lambda" "let" "let*"
+                  "include" "lambda" "let" "let*"
                   "let-values" "letrec" "letrec*" "library" "or"
                   "parameterize" "quote" "quasiquote" "set!"
                   "syntax" "syntax-case" "syntax-rules" "unless" "unquote"
-                  "unquote-splicing" "when"))
+                  "unquote-splicing" "when" "with-syntax"))
       table))
 
   (define (scheme-delimiter? c)
