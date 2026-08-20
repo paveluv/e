@@ -1887,11 +1887,11 @@
   (define (echo-append! prefix text styler)
     ;; Append one line to the echo area's transient log: every logged
     ;; message stacks up there, component-prefixed, until the next key
-    ;; settles the area.  A stale indicator gives way -- a running
-    ;; evaluation's kept query included, its parked cursor showing the
-    ;; run on -- but a prompt's input line stays put below.
+    ;; settles the area.  A stale indicator gives way; a prompt's
+    ;; input line stays put below, and so does a running evaluation's
+    ;; kept query -- the user sees what is running.
     (set! echo-pending (append echo-pending (list (list prefix text styler))))
-    (unless echo-cursor
+    (unless (echo-cursor-now)
       (set! message "")
       (set! message-ghost "")
       (set! message-styles #f))
