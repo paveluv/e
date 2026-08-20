@@ -869,13 +869,19 @@
   ;; the save that carries the resolved text does, separately.
   (define merge-reports '())
 
-  (define (buffer-has-conflicts? b)
-    ;; Any merge conflict markers left in b?
+  (define (buffer-conflict-count b)
+    ;; How many merge conflict markers are left in b.
     (let ([v (buffer-lines b)])
-      (let loop ([i 0])
-        (and (< i (vector-length v))
-             (or (string-prefix? "<<<<<<<" (vector-ref v i))
-                 (loop (+ i 1)))))))
+      (let loop ([i 0] [n 0])
+        (if (= i (vector-length v))
+            n
+            (loop (+ i 1)
+                  (if (string-prefix? "<<<<<<<" (vector-ref v i))
+                      (+ n 1)
+                      n))))))
+
+  (define (buffer-has-conflicts? b)
+    (> (buffer-conflict-count b) 0))
 
   (define (stale-save! b path disk write!)
     (buffer-stale-set! b #t)   ; worn until a write settles it
@@ -2097,34 +2103,51 @@
                   (paint! row '(empty)
                           (lambda () (ansi (fit "~" cols))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let ([status (format " ~a~a  ~a  L~a C~a~a~a~a "
-                            (cond [(buffer-stale b) "!!"]
-                                  [(view-buffer? b) "[]"]
-                                  [(buffer-read-only b) "%%"]
-                                  [(buffer-modified b) "**"]
-                                  [else "--"])
-                            editor-name
-                            (buffer-name b)
-                            (+ (window-prow w) 1) (+ (window-pcol w) 1)
-                            (if mode-tag (format "  (~a)" mode-tag) "")
-                            (if current? (status-hint-text) "")
-                            (if (and (eq? b completions-buffer)
-                                     (> completions-pages 1))
-                                (format "  page ~a/~a"
-                                        (+ completions-page 1)
-                                        completions-pages)
-                                ""))])
+      (let* ([conflicts (and (assq b merge-reports)
+                             (let ([n (buffer-conflict-count b)])
+                               (and (> n 0) n)))]
+             [head (format " ~a~a  ~a  L~a C~a"
+                           (cond [(buffer-stale b) "!!"]
+                                 [(view-buffer? b) "[]"]
+                                 [(buffer-read-only b) "%%"]
+                                 [(buffer-modified b) "**"]
+                                 [else "--"])
+                           editor-name
+                           (buffer-name b)
+                           (+ (window-prow w) 1) (+ (window-pcol w) 1))]
+             [conf (if conflicts
+                       (format "  ~a conflict~a"
+                               conflicts (if (= conflicts 1) "" "s"))
+                       "")]
+             [status (format "~a~a~a~a~a "
+                             head conf
+                             (if mode-tag (format "  (~a)" mode-tag) "")
+                             (if current? (status-hint-text) "")
+                             (if (and (eq? b completions-buffer)
+                                      (> completions-pages 1))
+                                 (format "  page ~a/~a"
+                                         (+ completions-page 1)
+                                         completions-pages)
+                                 ""))])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (list 'status status current? stale?)
                   (lambda ()
-                    (let ([bar (if current? "\x1b;[7m" "\x1b;[7;2m")]
-                          [text (fit status cols)])
+                    (let* ([bar (if current? "\x1b;[7m" "\x1b;[7;2m")]
+                           [text (fit status cols)]
+                           [n (string-length text)]
+                           [cs (min (string-length head) n)]
+                           [ce (min (+ cs (string-length conf)) n)])
+                      (ansi bar)
                       (if stale?
                           ;; the !! flag in red, the rest as usual
-                          (ansi bar "\x1b;[31m" (substring text 0 3)
-                                "\x1b;[39m" (string-tail text 3)
-                                "\x1b;[0m")
-                          (ansi bar text "\x1b;[0m")))))))))
+                          (ansi "\x1b;[31m" (substring text 0 (min 3 n))
+                                "\x1b;[39m" (substring text (min 3 n) cs))
+                          (ansi (substring text 0 cs)))
+                      (unless (= cs ce)
+                        ;; the conflict count in red too
+                        (ansi "\x1b;[31m" (substring text cs ce)
+                              "\x1b;[39m"))
+                      (ansi (substring text ce n) "\x1b;[0m"))))))))
 
   (define (echo-cap)
     ;; How tall the whole echo area may grow: everything but each

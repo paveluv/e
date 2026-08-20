@@ -290,7 +290,8 @@ m)erge, c)ancel`.  Merge is a three-way merge (the in-house `diff.e`,
 a patience diff) of what you loaded, what you have, and what the disk
 says: changes on one side apply silently, and colliding ones become
 `<<<<<<< buffer / ======= / >>>>>>> disk` markers in the buffer --
-the save waits until you resolve.  `M-n` (`next-conflict!`) hops
+the save waits until you resolve, the status bar counting the
+remaining conflicts in red.  `M-n` (`next-conflict!`) hops
 between them; `M-m` (`keep-mine!`) and `M-d` (`keep-disk!`) settle
 the one at point, each a single undo step.  A clean merge saves both
 sides in one go.  Every merge writes a unified-diff-style report to a
