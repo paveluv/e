@@ -180,7 +180,7 @@
     (let ([out (let ([o (make-vector (vector-length v))])
                  (do ([i 0 (+ i 1)]) ((= i (vector-length v)) o)
                    (vector-set! o i (string-copy (vector-ref v i)))))]
-        [stack '()])
+          [stack '()])
       (walk v
         (lambda (r c ch)
           (cond

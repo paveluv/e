@@ -10,7 +10,7 @@
 
 (library (scheme-mode)
   (export init!)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core) (scheme-format))
 
   (define scheme-keywords
     (let ([table (make-hashtable string-hash string=?)])
@@ -25,9 +25,6 @@
                   "syntax" "syntax-case" "syntax-rules" "unless" "unquote"
                   "unquote-splicing" "when" "with-syntax"))
       table))
-
-  (define (scheme-delimiter? c)
-    (or (char-whitespace? c) (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\'))))
 
   (define (maybe-number? token)
     ;; Only tokens that can begin a number are worth handing to the
@@ -89,7 +86,7 @@
                         (loop (+ j 1))]
                        [else
                         (string-loop (+ j 1)
-                          (and (char=? (string-ref s j) #\\) (not escaped?)))]))]
+                                     (and (char=? (string-ref s j) #\\) (not escaped?)))]))]
               [(memv c '(#\( #\) #\[ #\] #\{ #\}))
                (vector-set! styles i 'delimiter) (loop (+ i 1))]
               [(memv c '(#\' #\` #\,))
@@ -105,8 +102,27 @@
                        (loop j))))]))))
       styles))
 
+  ;;; Indentation and formatting ------------------------------------------------
+
+  ;; The engine is the pure (scheme-format) library; these adapters
+  ;; feed it buffer lines.
+
+  (define (buffer-vector b)
+    (let* ([n (buffer-line-count b)]
+           [v (make-vector n)])
+      (do ([i 0 (+ i 1)]) ((= i n) v)
+        (vector-set! v i (buffer-line b i)))))
+
+  (define (scheme-indent b from to)
+    (scheme-indent-lines (buffer-vector b) from to))
+
+  (define (scheme-format b from to)
+    (scheme-format-lines (buffer-vector b) from to))
+
   (define (init!)
     (register-mode! "scheme"
-      '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
-      '("scheme" "petite" "chez" "guile" "racket")
-      scheme-styles)))
+                    '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
+                    '("scheme" "petite" "chez" "guile" "racket")
+                    scheme-styles)
+    (register-indenter! "scheme" scheme-indent)
+    (register-formatter! "scheme" scheme-format)))

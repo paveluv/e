@@ -28,13 +28,15 @@
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
     call-as-one-edit!
+    indent-line! indent-region! indent-buffer! format-region! format-buffer!
     move-horizontal! move-vertical! goto-point!
     quit!!
     ;; extending the editor
     bind-key! command-key command-hint
     register-mode! find-mode mode-styles add-highlighter!
+    register-indenter! register-formatter!
     add-status-hint!
-    load-module! reload-module! auto-reload
+    load-module! reload-module! auto-reload indent-on-tab!
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
     min-window-lines
     complete! show-completions! dismiss-completions!
@@ -802,18 +804,18 @@
     ;; either way -- the external change is incorporated, so the next
     ;; save writes cleanly.  One undo entry.
     (let* ([base (string-lines (buffer-base b))])
-    (let-values ([(merged conflicts report)
-                  (merge3 base
-                          (string-lines (buffer-text b))
-                          (string-lines disk))])
-      (buffer-base-set! b disk)
-      (buffer-stamp-set! b (disk-stamp path))
-      (record-edit! "merge from disk")
-      (buffer-lines-set! b (if (null? merged)
+      (let-values ([(merged conflicts report)
+                    (merge3 base
+                            (string-lines (buffer-text b))
+                            (string-lines disk))])
+        (buffer-base-set! b disk)
+        (buffer-stamp-set! b (disk-stamp path))
+        (record-edit! "merge from disk")
+        (buffer-lines-set! b (if (null? merged)
                                (vector "")
                                (list->vector merged)))
-      (changed!)
-      (values conflicts (merge-report! b path base report conflicts)))))
+        (changed!)
+        (values conflicts (merge-report! b path base report conflicts)))))
 
   ;; Merge reports awaiting resolution -- (buffer . report-name): a
   ;; conflicted merge does not announce its report buffer up front;
@@ -1380,6 +1382,7 @@
                                   (unbox r))))
               registries))
 
+
   ;; The formatter registry itself, and the file commands' formatters:
   ;; their entries are (verb . path), formatted "verb path", their
   ;; histories the paths (see log-history).
@@ -1463,6 +1466,242 @@
   (define (buffer-mode-name b)
     ;; The name of b's mode, or #f without one.
     (let ([m (buffer-mode b)]) (and m (mode-name m))))
+
+  ;;; Indentation and formatting ------------------------------------------------
+
+  ;; Both are provided per mode by modules.  An indenter maps rows to
+  ;; where their text should start: (proc buffer from to) -> one entry
+  ;; per row of from..to -- #f leaving a row alone (a multi-line
+  ;; string's interior, say), a column, or an ascending list of
+  ;; columns when several indentations are valid (its stops) --
+  ;; computed as if each row settles on the stop nearest its current
+  ;; indentation, top to bottom.  The commands settle likewise; TAB
+  ;; instead cycles: the nearest stop to the right, wrapping around.
+  ;; A formatter rewrites rows wholesale: (proc buffer from to) -> the
+  ;; replacement lines, or #f when the rows cannot be formatted.  TAB
+  ;; indents the current line when the mode registered its indenter
+  ;; with the tab flag on (the default).
+  (define indenters (make-registry))   ; entries (mode-name proc tab?)
+  (define formatters (make-registry))  ; entries (mode-name proc)
+
+  (define (register-indenter! name proc . tab)
+    (registry-add! indenters (list name proc (or (null? tab) (car tab)))))
+
+  (define (register-formatter! name proc)
+    (registry-add! formatters (list name proc)))
+
+  (define (mode-entry registry)
+    (let ([m (buffer-mode-name (window-buffer current-window))])
+      (and m (registry-find registry (lambda (x) (string=? (car x) m))))))
+
+  (define (leading-blanks s)
+    (let loop ([i 0])
+      (if (and (< i (string-length s))
+               (memv (string-ref s i) '(#\space #\tab)))
+          (loop (+ i 1))
+          i)))
+
+  (define (settle-stops col cur)
+    ;; An indenter entry resolved for a line currently at cur: the
+    ;; nearest stop (ties leftward); a bare column stands.
+    (if (pair? col)
+        (fold-left (lambda (best s)
+                     (if (< (abs (- s cur)) (abs (- best cur))) s best))
+                   (car col) col)
+        col))
+
+  (define (cycle-stops col cur)
+    ;; TAB's resolution: the nearest stop right of cur, wrapping back
+    ;; to the first past the last.
+    (if (pair? col)
+        (or (find (lambda (s) (> s cur)) col) (car col))
+        col))
+
+  (define (apply-indent! from cols pad?)
+    ;; Rewrite the leading whitespace of rows from.. to the given
+    ;; columns (#f leaves a row, as does a whitespace-only row --
+    ;; except with pad?, which pads it out to the column: TAB on a
+    ;; blank line).  One undo entry; point and mark follow their
+    ;; line's text, landing on the indentation when they sat inside
+    ;; the old one.  -> whether anything changed.
+    (define b (window-buffer current-window))
+    (define v (buffer-lines b))
+    (define n (vector-length v))
+    (define (retabbed s col)
+      (let ([rest (string-tail s (leading-blanks s))])
+        (if (string=? rest "")
+            (if pad? (make-string col #\space) s)
+            (string-append (make-string col #\space) rest))))
+    (let ([changes
+           (let loop ([r from] [cs cols] [acc '()])
+             (if (or (null? cs) (>= r n))
+                 (reverse acc)
+                 (loop (+ r 1) (cdr cs)
+                       (if (and (car cs)
+                                (not (string=? (retabbed (vector-ref v r)
+                                                         (car cs))
+                                               (vector-ref v r))))
+                           (cons (cons r (car cs)) acc)
+                           acc))))])
+      (when (pair? changes)
+        (record-edit! "indent")
+        (let ([nv (let ([o (make-vector n)])
+                    (do ([i 0 (+ i 1)]) ((= i n) o)
+                      (vector-set! o i (vector-ref v i))))])
+          (for-each
+            (lambda (change)
+              (let* ([row (car change)] [col (cdr change)]
+                     [old (vector-ref v row)]
+                     [lead (leading-blanks old)]
+                     [follow (lambda (c)
+                               (if (<= c lead) col (+ c (- col lead))))])
+                (vector-set! nv row (retabbed old col))
+                (when (= row point-row)
+                  (set! point-col (follow point-col)))
+                (when (and mark-active? (= row mark-row))
+                  (set! mark-col (follow mark-col)))))
+            changes)
+          (buffer-lines-set! b nv))
+        (changed!))
+      (pair? changes)))
+
+  (define (indent-rows! from to)
+    ;; Indent rows [from, to] by the mode's indenter, each settling on
+    ;; the stop nearest its current indentation; -> #f without one.
+    (let ([entry (mode-entry indenters)])
+      (if (not entry)
+          (begin (set! message "No indenter for this mode") #f)
+          (let* ([b (window-buffer current-window)]
+                 [v (buffer-lines b)]
+                 [last (min to (- (vector-length v) 1))]
+                 [cols (let settle ([r from]
+                                    [cs ((cadr entry) b from last)]
+                                    [acc '()])
+                         (if (null? cs)
+                             (reverse acc)
+                             (settle (+ r 1) (cdr cs)
+                                     (cons (settle-stops
+                                             (car cs)
+                                             (leading-blanks
+                                               (vector-ref v r)))
+                                           acc))))])
+            (apply-indent! from cols #f)
+            #t))))
+
+  (define (indent-line!)
+    ;; TAB's work: indent the current line, cycling through its stops
+    ;; -- the nearest stop right of the current indentation, wrapping
+    ;; -- and land on the indentation (a blank line pads out to it);
+    ;; point already past it stays with its text.
+    (let ([entry (mode-entry indenters)])
+      (if (not entry)
+          (set! message "No indenter for this mode")
+          (let* ([b (window-buffer current-window)]
+                 [cols ((cadr entry) b point-row point-row)]
+                 [col (and (pair? cols)
+                           (cycle-stops (car cols)
+                                        (leading-blanks
+                                          (line-at point-row))))])
+            (when col
+              (apply-indent! point-row (list col) #t)
+              (when (< point-col col) (set! point-col col))))))
+    (void))
+
+  (define (indent-tab!)
+    ;; TAB: the mode indents when it asked to; otherwise nothing.
+    (let ([entry (mode-entry indenters)])
+      (when (and entry (caddr entry))
+        (indent-line!))))
+
+  (define (indent-on-tab! name flag)
+    ;; Configuration: whether TAB auto-indents in the named mode,
+    ;; overriding the flag its indenter registered with.
+    (let ([entry (registry-find indenters
+                                (lambda (x) (string=? (car x) name)))])
+      (unless entry (error 'indent-on-tab! "no indenter for mode" name))
+      (registry-add! indenters (list name (cadr entry) flag))))
+
+  (define (indent-region!)
+    (if (not mark-active?)
+        (set! message "The mark is not set now")
+        (let ([from (min mark-row point-row)]
+              [to (max mark-row point-row)])
+          (when (indent-rows! from to)
+            (set! message (format "Indented ~a line~a" (+ (- to from) 1)
+                                  (if (= from to) "" "s"))))))
+    (void))
+
+  (define (indent-buffer!)
+    (let ([n (vector-length (buffer-lines (window-buffer current-window)))])
+      (when (indent-rows! 0 (- n 1))
+        (set! message (format "Indented ~a lines" n))))
+    (void))
+
+  (define (replace-rows! from to lines)
+    ;; Replace rows [from, to] of the current buffer with lines (a
+    ;; list), one undo entry; point keeps its row when it can.
+    (define b (window-buffer current-window))
+    (define v (buffer-lines b))
+    (define n (vector-length v))
+    (let ([nv (list->vector
+                (let loop ([r 0] [acc '()])
+                  (cond [(= r from)
+                         (append (reverse acc) lines
+                                 (let tail ([r (+ to 1)] [acc '()])
+                                   (if (>= r n)
+                                       (reverse acc)
+                                       (tail (+ r 1)
+                                             (cons (vector-ref v r) acc)))))]
+                        [else (loop (+ r 1)
+                                    (cons (vector-ref v r) acc))])))])
+      (record-edit! "format")
+      (buffer-lines-set! b (if (zero? (vector-length nv)) (vector "") nv))
+      (set! point-row (max 0 (min point-row
+                                  (- (vector-length (buffer-lines b)) 1))))
+      (changed!)))
+
+  (define (format-rows! from to)
+    ;; Format rows [from, to] by the mode's formatter; -> whether the
+    ;; buffer changed.
+    (let ([entry (mode-entry formatters)])
+      (cond
+        [(not entry) (set! message "No formatter for this mode") #f]
+        [else
+         (let* ([b (window-buffer current-window)]
+                [v (buffer-lines b)]
+                [last (min to (- (vector-length v) 1))]
+                [lines ((cadr entry) b from last)])
+           (cond
+             [(not lines) (set! message "Cannot format these lines") #f]
+             [(let same ([r from] [ls lines])
+                (if (null? ls)
+                    (> r last)
+                    (and (<= r last)
+                         (string=? (car ls) (vector-ref v r))
+                         (same (+ r 1) (cdr ls)))))
+              (set! message "Already formatted") #f]
+             [else
+              (replace-rows! from last lines)
+              ;; formatted through the end: the file ends with exactly
+              ;; one newline
+              (when (= last (- (vector-length v) 1))
+                (set! trailing-newline? #t))
+              #t]))])))
+
+  (define (format-region!)
+    (if (not mark-active?)
+        (set! message "The mark is not set now")
+        (let ([from (min mark-row point-row)]
+              [to (max mark-row point-row)])
+          (when (format-rows! from to)
+            (set! message "Formatted region"))))
+    (void))
+
+  (define (format-buffer!)
+    (let ([n (vector-length (buffer-lines (window-buffer current-window)))])
+      (when (format-rows! 0 (- n 1))
+        (set! message (format "Formatted ~a lines" n))))
+    (void))
 
   (define (no-styles s) #f)
 
@@ -1907,48 +2146,48 @@
                                            (cadr e) (caddr e)))))
         (loop (cdr es) (+ row 1))))
     (when (> echo-live-height 0)
-     (let* ([content (string-append message message-ghost)]
-           [ghost-at (string-length message)]
-           [total (length echo-spans)]
-           [indent (echo-indent-now)])
-      (let loop ([line echo-scroll] [row (- rows echo-live-height)])
-        (when (< row rows)
-          (let* ([span (list-ref echo-spans line)]
-                 [start (car span)]
-                 [end (min (cdr span) (string-length content))]
-                 [end (max end start)]
-                 [lead (if (= line 0) 0 indent)]
-                 [wrapped? (< line (- total 1))]
-                 [cut (min (max (- ghost-at start) 0) (- end start))])
-            (paint! row
-                    (list 'echo line (substring content start end)
-                          cut lead wrapped? (and (echo-highlight) #t)
-                          (and message-styles #t))
-                    (lambda ()
-                      (let ([styles
-                             (or (and (echo-highlight)
-                                      (guard (ex [else #f])
-                                        ((echo-highlight) content)))
+      (let* ([content (string-append message message-ghost)]
+             [ghost-at (string-length message)]
+             [total (length echo-spans)]
+             [indent (echo-indent-now)])
+        (let loop ([line echo-scroll] [row (- rows echo-live-height)])
+          (when (< row rows)
+            (let* ([span (list-ref echo-spans line)]
+                   [start (car span)]
+                   [end (min (cdr span) (string-length content))]
+                   [end (max end start)]
+                   [lead (if (= line 0) 0 indent)]
+                   [wrapped? (< line (- total 1))]
+                   [cut (min (max (- ghost-at start) 0) (- end start))])
+              (paint! row
+                      (list 'echo line (substring content start end)
+                        cut lead wrapped? (and (echo-highlight) #t)
+                        (and message-styles #t))
+                      (lambda ()
+                        (let ([styles
+                               (or (and (echo-highlight)
+                                     (guard (ex [else #f])
+                                       ((echo-highlight) content)))
                                  (and message-styles
                                       (string-prefix? (car message-styles)
                                                       content)
                                       (guard (ex [else #f])
                                         ((cdr message-styles)
                                          (car message-styles)))))])
-                        (ansi (make-string lead #\space))
-                        (if styles
+                          (ansi (make-string lead #\space))
+                          (if styles
                             ;; styled runs for the typed part
                             (emit-runs content styles start (+ start cut))
                             (ansi (substring content start (+ start cut))))
-                        (ansi "\x1b;[0m\x1b;[90m"
-                              (substring content (+ start cut) end)
-                              "\x1b;[0m"
-                              (make-string
-                                (max 0 (- cols lead (- end start)
-                                          (if wrapped? 1 0)))
-                                #\space)
-                              (if wrapped? "\\" ""))))))
-          (loop (+ line 1) (+ row 1)))))))
+                          (ansi "\x1b;[0m\x1b;[90m"
+                            (substring content (+ start cut) end)
+                            "\x1b;[0m"
+                            (make-string
+                              (max 0 (- cols lead (- end start)
+                                        (if wrapped? 1 0)))
+                              #\space)
+                            (if wrapped? "\\" ""))))))
+            (loop (+ line 1) (+ row 1)))))))
 
   (define (paint-window! w start height ranges)
     (let* ([b (window-buffer w)]
@@ -2488,15 +2727,15 @@
                          (edited (string-delete s pos (+ pos 1)) pos)
                          (loop s pos ""))]
                 [(11) (set! kill-ring (string-tail s pos))            ; C-k
-                      (edited (substring s 0 pos) pos)]
+                 (edited (substring s 0 pos) pos)]
                 [(25) (edited (string-insert s pos kill-ring)         ; C-y
                               (+ pos (string-length kill-ring)))]
                 [(9) (set! hist-pos -1)                               ; TAB
-                     (if complete
-                         (complete! s complete
-                                    (lambda (new-s note)
-                                      (loop new-s (string-length new-s) note)))
-                         (loop s pos ""))]
+                 (if complete
+                     (complete! s complete
+                                (lambda (new-s note)
+                                  (loop new-s (string-length new-s) note)))
+                     (loop s pos ""))]
                 [(8 127)
                  (if (= pos 0)
                      (loop s pos "")
@@ -2951,7 +3190,7 @@
         [(char=? a #\v) (move-vertical! (- (page-size)))]
         [(char=? a #\<) (set! point-row 0) (set! point-col 0)]
         [(char=? a #\>) (set! point-row (- (vlen) 1))
-                        (set! point-col (string-length (current-line)))])))
+         (set! point-col (string-length (current-line)))])))
 
   (define (handle-prefix! c)
     (set! key-prefix #f)
@@ -2963,18 +3202,18 @@
        => (lambda (command) (command))]
       [else
        (case (char->integer c)
-          [(7) (set! message "Quit")]                           ; C-x C-g
-          [(19) (save!!)]                                ; C-x C-s
-          [(23) (save-as!!)]                             ; C-x C-w
-          [(3) (quit!!)]                                 ; C-x C-c
-          [(6) (find-file!!)]                            ; C-x C-f
-          [(98) (switch-buffer!!)]                       ; C-x b
-          [(107) (kill-buffer!!)]                        ; C-x k
-          [(111) (other-window!)]                               ; C-x o
-          [(48) (delete-window!)]                               ; C-x 0
-          [(49) (delete-other-windows!)]                        ; C-x 1
-          [(50) (split-window!)]                                ; C-x 2
-          [else (set! message "C-x is undefined for that key")])]))
+         [(7) (set! message "Quit")]                           ; C-x C-g
+         [(19) (save!!)]                                ; C-x C-s
+         [(23) (save-as!!)]                             ; C-x C-w
+         [(3) (quit!!)]                                 ; C-x C-c
+         [(6) (find-file!!)]                            ; C-x C-f
+         [(98) (switch-buffer!!)]                       ; C-x b
+         [(107) (kill-buffer!!)]                        ; C-x k
+         [(111) (other-window!)]                               ; C-x o
+         [(48) (delete-window!)]                               ; C-x 0
+         [(49) (delete-other-windows!)]                        ; C-x 1
+         [(50) (split-window!)]                                ; C-x 2
+         [else (set! message "C-x is undefined for that key")])]))
 
   (define (handle-key! c)
     (define chain insert-chain)     ; only an unbroken typed run keeps it
@@ -2995,32 +3234,33 @@
           => (lambda (command) (command))]
          [else
           (case (char->integer c)
-         [(0) (set! mark-row point-row) (set! mark-col point-col) ; C-@ set mark
-              (set! mark-active? #t) (set! message "Mark set")]
-         [(1) (set! point-col 0)]                                 ; C-a
-         [(2) (move-left!)]                                       ; C-b
-         [(4) (delete-forward!)]                                  ; C-d
-         [(5) (set! point-col (string-length (current-line)))]    ; C-e
-         [(6) (move-right!)]                                      ; C-f
-         [(7) (set! mark-active? #f) (set! message "Quit")]      ; C-g
-         [(8 127) (backspace!)]                                   ; C-h, DEL
-         [(10 13) (newline!)]                                     ; RET
-         [(11) (kill-line!)]                                      ; C-k
-         [(12) (set! size-dirty? #t) (erase-screen!)              ; C-l
-               (set! message "Screen redrawn")]
-         [(14) (move-vertical! 1)]                                ; C-n
-         [(15) (let ([row point-row] [col point-col])             ; C-o open line
-                 (newline!)
-                 (set! point-row row) (set! point-col col))]
-         [(16) (move-vertical! -1)]                               ; C-p
-         [(22) (move-vertical! (page-size))]                      ; C-v
-         [(23) (kill-region!)]                                    ; C-w
-         [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x
-         [(25) (yank!)]                                           ; C-y
-         [(27) (escape-sequence!)]                                ; ESC
-         [(31) (undo!)]                                           ; C-_
-         [else (when (>= (char->integer c) 32)
-                 (self-insert! c chain))])])]))
+            [(0) (set! mark-row point-row) (set! mark-col point-col) ; C-@ set mark
+             (set! mark-active? #t) (set! message "Mark set")]
+            [(1) (set! point-col 0)]                                 ; C-a
+            [(2) (move-left!)]                                       ; C-b
+            [(4) (delete-forward!)]                                  ; C-d
+            [(5) (set! point-col (string-length (current-line)))]    ; C-e
+            [(6) (move-right!)]                                      ; C-f
+            [(7) (set! mark-active? #f) (set! message "Quit")]      ; C-g
+            [(8 127) (backspace!)]                                   ; C-h, DEL
+            [(9) (indent-tab!)]                                      ; TAB
+            [(10 13) (newline!)]                                     ; RET
+            [(11) (kill-line!)]                                      ; C-k
+            [(12) (set! size-dirty? #t) (erase-screen!)              ; C-l
+             (set! message "Screen redrawn")]
+            [(14) (move-vertical! 1)]                                ; C-n
+            [(15) (let ([row point-row] [col point-col])             ; C-o open line
+                    (newline!)
+                    (set! point-row row) (set! point-col col))]
+            [(16) (move-vertical! -1)]                               ; C-p
+            [(22) (move-vertical! (page-size))]                      ; C-v
+            [(23) (kill-region!)]                                    ; C-w
+            [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x
+            [(25) (yank!)]                                           ; C-y
+            [(27) (escape-sequence!)]                                ; ESC
+            [(31) (undo!)]                                           ; C-_
+            [else (when (>= (char->integer c) 32)
+                    (self-insert! c chain))])])]))
 
   ;;; Modules -----------------------------------------------------------------
 
@@ -3166,6 +3406,7 @@
           (parameterize ([message-source 'reload-module!])
             (set-message! (format "Reloaded ~a" name)))))))
 
+
   ;;; Main ------------------------------------------------------------------
 
   (define (usage)
@@ -3201,8 +3442,8 @@
       ;; making a paste one identifiable edit; others ignore the mode.
       ;; Mouse tracking likewise (see mouse!).
       (lambda () (terminal-raw!) (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h")
-                 (set-mouse! #t)
-                 (set! screen-live? #t))
+        (set-mouse! #t)
+        (set! screen-live? #t))
       (lambda ()
         (let loop ()
           (unless quit?
@@ -3220,10 +3461,10 @@
             (clamp-point!)
             (loop))))
       (lambda () (set! screen-live? #f)
-                 (unless (string=? cursor-style-shown "\x1b;[0 q")
-                   (ansi "\x1b;[0 q"))
-                 (ansi "\x1b;[?1002;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
-                 (flush-output-port stdout)
-                 (terminal-restore!))))
+        (unless (string=? cursor-style-shown "\x1b;[0 q")
+          (ansi "\x1b;[0 q"))
+        (ansi "\x1b;[?1002;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+        (flush-output-port stdout)
+        (terminal-restore!))))
 
-  ) ;; library (core)
+) ;; library (core)

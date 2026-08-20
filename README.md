@@ -111,6 +111,7 @@ or the prompt area changes.
 | `C-y`           | Yank the last kill                            |
 | `C-_`           | Undo                                          |
 | `C-M-_`         | Redo                                          |
+| `TAB`           | Indent the line by its mode's rules           |
 | `M-%`           | Query replace from point: `y`/`SPC` replaces, `n`/`DEL` skips, `q`/`RET`/`C-g` stops |
 | `M-.`           | Describe the symbol at point (Scheme buffers; see below) |
 | `C-l`           | Repaint the screen and re-read its size       |
@@ -125,6 +126,43 @@ to where the search began. Point rides just past the current match, so
 a mark set before searching leaves the found text inside the region.
 The needle's matches in the current window are highlighted while
 searching.
+
+### Indentation and formatting
+
+Indentation is the one thing enforced -- spacing within a line is the
+author's (tables, alignment, and hand layout communicate structure),
+and lines are never joined or split.  The Scheme rules are
+Emacs-like: body forms (`define`, `lambda`, the `let` family, `when`,
+...) indent their bodies two columns past the opener, a lone closer
+sits under its opener, and an application's continuation lines have
+two *stops* -- two past the opener, or aligned under the first
+argument when it shares the opener's line -- with the author picking:
+
+    (very-long-function-name param1 param2
+      param3)
+    (very-long-function-name param1 param2
+                             param3)
+
+`TAB` indents the current line, cycling through its stops -- the
+nearest stop to the right, wrapping around -- and puts point on the
+indentation (a blank line pads out to it); modes opt in when they
+register an indenter, and scheme-mode does.  `indent-region!` and
+`indent-buffer!` indent line by line from the top, one undo step,
+each line settling on the stop nearest its current indentation: on a
+stop it stays, before the first it takes the first, past the last the
+last.  `format-region!` and `format-buffer!` additionally widen tabs
+outside strings to spaces (`(scheme-tab-width 2)`; `#f` keeps tabs),
+trim trailing whitespace, drop trailing blank lines so the file ends
+with exactly one newline, and apply the bracket conventions -- `[ ]`
+for the bindings of the `let` family, `do`, `parameterize`, and
+`with-syntax`, and for the clauses of `cond`, `case`, `case-lambda`,
+`guard`, `syntax-rules`, and `syntax-case`; `( )` everywhere else --
+the `scheme-format-brackets` parameter turns that off.  A region
+format only rewrites bracket pairs it wholly contains, so it can
+never unbalance the buffer; string interiors and margin comments are
+never touched.  Modules provide the rules per mode with
+`register-indenter!` and `register-formatter!`.  The Scheme engine is
+the pure `(scheme-format)` library.
 
 ### Prompts
 

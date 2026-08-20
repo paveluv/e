@@ -434,35 +434,35 @@
     ;; to lib (kept out of git), extract it into describe.sdata, and
     ;; load it, reporting progress in the echo area.
     (parameterize ([message-source 'describe])
-    (let* ([ref (data-dir)]
-           [total (+ (length tspl-pages) (length csug-pages))]
-           [done 0]
-           [progress (lambda (what)
-                       (set! done (+ done 1))
-                       (parameterize ([message-progress #t])
-                         (set-message! (format "Fetching ~a (~a/~a)"
-                                        what done total))))])
-      (ensure-directory! ref)
-      (ensure-directory! (string-append ref "/tspl4"))
-      (ensure-directory! (string-append ref "/csug"))
-      (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
-      (fetch-book! ref "csug" csug-base csug-pages progress)
-      (parameterize ([message-progress #t])
-        (set-message! "Extracting the reference corpus..."))
-      (write-data! (append (parse-book ref "tspl4" 'tspl tspl-pages)
-                           (parse-book ref "csug" 'csug csug-pages)))
-      (set! all-entries #f)
-      (load-data!)
-      (let ([sigs (generate-signatures)])
-        (write-signatures! sigs)
-        (register-signatures! sigs)
-        (set-message! (format "Generated ~a signatures" (length sigs))))
-      (set-message!
-        (format "Describe database ready: ~a entries covering ~a names"
-                (length all-entries)
-                (fold-left + 0 (map (lambda (e) (length (doc-names e)))
-                                    all-entries))))
-      (void))))
+      (let* ([ref (data-dir)]
+             [total (+ (length tspl-pages) (length csug-pages))]
+             [done 0]
+             [progress (lambda (what)
+                         (set! done (+ done 1))
+                         (parameterize ([message-progress #t])
+                           (set-message! (format "Fetching ~a (~a/~a)"
+                                           what done total))))])
+        (ensure-directory! ref)
+        (ensure-directory! (string-append ref "/tspl4"))
+        (ensure-directory! (string-append ref "/csug"))
+        (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
+        (fetch-book! ref "csug" csug-base csug-pages progress)
+        (parameterize ([message-progress #t])
+          (set-message! "Extracting the reference corpus..."))
+        (write-data! (append (parse-book ref "tspl4" 'tspl tspl-pages)
+                             (parse-book ref "csug" 'csug csug-pages)))
+        (set! all-entries #f)
+        (load-data!)
+        (let ([sigs (generate-signatures)])
+          (write-signatures! sigs)
+          (register-signatures! sigs)
+          (set-message! (format "Generated ~a signatures" (length sigs))))
+        (set-message!
+          (format "Describe database ready: ~a entries covering ~a names"
+                  (length all-entries)
+                  (fold-left + 0 (map (lambda (e) (length (doc-names e)))
+                                   all-entries))))
+        (void))))
 
   ;;; Loading -------------------------------------------------------------------
 
