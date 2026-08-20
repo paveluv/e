@@ -40,12 +40,13 @@
     complete! show-completions! dismiss-completions!
     read-key pending-input? cursor-in-echo
     set-message! current-message redraw! error-text mouse!
-    log! log-entries log-view show-log! message-source message-progress
+    log! log-entries log-length log-record log-styler format-log-entry
+    message-source message-progress
     echo-highlight
-    register-view! register-log-formatter! log-history
+    register-view! view-append! register-log-formatter! log-history
     call-with-interrupt interrupted?
     vector-fill-range! string-search
-    string-tail string-prefix? string-suffix? string-join
+    string-tail string-prefix? string-suffix? string-join split-lines
     ;; the editor itself
     main)
   ;; The editor defines a few names Chez also exports (the buffer record's
@@ -1098,12 +1099,13 @@
   ;; time with nanosecond precision -- indexed in a growable vector,
   ;; appended by log! and by every message that passes through the
   ;; echo area (attributed to the message-source parameter).  The
-  ;; *log* view renders them on the fly; (log-view 'eval) makes a
-  ;; filtered view; log-entries returns the records themselves.
+  ;; log-view module renders them on the fly as the *log* view (and
+  ;; filtered kin); log-entries returns the records themselves.
   (define log-store (make-vector 64 #f))
   (define log-count 0)
 
   (define (log-record i) (vector-ref log-store i))
+  (define (log-length) log-count)
 
   (define message-source
     ;; Who a message came from, for the log's attribution: components
@@ -1131,6 +1133,11 @@
 
   (define (log-formatter component)
     (registry-find log-formatters (lambda (x) (eq? (car x) component))))
+
+  (define (log-styler component)
+    ;; The component's registered styler (formatted text -> styles
+    ;; vector), or #f -- the log-view module styles its rows with it.
+    (let ([f (log-formatter component)]) (and f (caddr f))))
 
   (define (format-log-entry e)
     ;; The entry's presentation text: its component's formatter, or the
@@ -1187,76 +1194,6 @@
               acc)
           (loop (+ i 1) (cons (log-record i) acc)))))
 
-  (define (log-line-prefix e)
-    ;; The view's row prefix; the stored time keeps nanoseconds, the
-    ;; rendering shows seconds.
-    (let ([d (time-utc->date (car e))])
-      (format "~2,'0d:~2,'0d:~2,'0d ~a: "
-              (date-hour d) (date-minute d) (date-second d) (cadr e))))
-
-  (define (log-mode)
-    ;; The *log* view's mode: the timestamp and component prefix grey,
-    ;; the text styled by the component's registered styler.
-    (make-mode "log" '() '()
-      (lambda (s)
-        (let* ([n (string-length s)]
-               [styles (make-vector n 'comment)]
-               [sep (and (> n 9) (string-search s ": " 9 n))])
-          (when sep
-            (let* ([component (string->symbol (substring s 9 sep))]
-                   [f (log-formatter component)]
-                   [from (+ sep 2)]
-                   [inner (and f (caddr f)
-                               (guard (ex [else #f])
-                                 ((caddr f) (string-tail s from))))])
-              (if inner
-                  (let loop ([i from])
-                    (when (< i n)
-                      (vector-set! styles i (vector-ref inner (- i from)))
-                      (loop (+ i 1))))
-                  (vector-fill-range! styles from n 'plain))))
-          styles))))
-
-  (define (make-log-view name pred)
-    ;; A view over the log: the records pred accepts, each formatted by
-    ;; its component's formatter, one prefixed row per line, appended
-    ;; past a high-water mark.
-    (define b #f)
-    (define rendered 0)
-    (define (refresh!)
-      (when (< rendered log-count)
-        (let ([lines '()])
-          (do ([i (- log-count 1) (- i 1)]) ((< i rendered))
-            (let ([e (log-record i)])
-              (when (pred e)
-                (set! lines
-                  (append (let ([prefix (log-line-prefix e)])
-                            (map (lambda (l) (string-append prefix l))
-                                 (split-lines (format-log-entry e))))
-                          lines)))))
-          (set! rendered log-count)
-          (view-append! b lines))))
-    (set! b (register-view! name refresh!))
-    (buffer-mode-set! b (log-mode))
-    (refresh!)
-    b)
-
-  (define (log-view . component)
-    ;; The *log* view -- or a dynamic filtered one, *log eval* for
-    ;; (log-view 'eval) -- created (or recreated after a kill) on
-    ;; demand.
-    (if (null? component)
-        (or (buffer-named "*log*")
-            (make-log-view "*log*" (lambda (e) #t)))
-        (let ([name (format "*log ~a*" (car component))])
-          (or (buffer-named name)
-              (make-log-view name
-                (lambda (e) (eq? (cadr e) (car component))))))))
-
-  (define (show-log!)
-    ;; Pop up the *log* view.
-    (display-buffer! (log-view))
-    (void))
 
   ;; A buffer's printed form is the expression that looks it up again, so
   ;; results shown in *eval* can be pasted straight into the next
@@ -3425,8 +3362,7 @@
     ;; loaded here, before the file argument needs their modes.
     (let ([args (command-line-arguments)])
       (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
-      (log-view)                ; the *log* view, listed from startup
-      (load-modules!)
+      (load-modules!)           ; the log-view module lists *log* from startup
       (when (pair? args) (visit-file! (car args))))
     (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
       (display "e: an interactive terminal is required\n" (current-error-port))
