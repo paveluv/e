@@ -293,7 +293,10 @@ says: changes on one side apply silently, and colliding ones become
 the save waits until you resolve.  `M-n` (`next-conflict!`) hops
 between them; `M-m` (`keep-mine!`) and `M-d` (`keep-disk!`) settle
 the one at point, each a single undo step.  A clean merge saves both
-sides in one go.
+sides in one go.  Every merge writes a unified-diff-style report to a
+read-only `*merge-<name>*` buffer, named in the echo once the merge is
+done -- immediately for a clean one, after the resolving save for a
+conflicted one.
 
 ## Architecture and extension modules
 

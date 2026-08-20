@@ -756,6 +756,13 @@
         (buffer-stale-set! b #f)
         (log! 'save-file! (cons "Wrote" path))
         (reload-on-save! path)
+        ;; a conflicted merge reports its details once resolved --
+        ;; saved with no markers left
+        (let ([pending (assq b merge-reports)])
+          (when (and pending (not (buffer-has-conflicts? b)))
+            (set! merge-reports (remq pending merge-reports))
+            (log! 'save-file!
+                  (format "Merge resolved -- details in ~a" (cdr pending)))))
         #t))
     (cond
       [(and disk (not adopted?) (not modified?)
@@ -857,6 +864,19 @@
       (changed!)
       (values conflicts (merge-report! b path base report conflicts)))))
 
+  ;; Merge reports awaiting resolution -- (buffer . report-name): a
+  ;; conflicted merge does not announce its report buffer up front;
+  ;; the save that carries the resolved text does, separately.
+  (define merge-reports '())
+
+  (define (buffer-has-conflicts? b)
+    ;; Any merge conflict markers left in b?
+    (let ([v (buffer-lines b)])
+      (let loop ([i 0])
+        (and (< i (vector-length v))
+             (or (string-prefix? "<<<<<<<" (vector-ref v i))
+                 (loop (+ i 1)))))))
+
   (define (stale-save! b path disk write!)
     (buffer-stale-set! b #t)   ; worn until a write settles it
     (let ask ()
@@ -878,13 +898,16 @@
                                report-name)))
                    #t)
                  (begin
+                   (set! merge-reports
+                     (cons (cons b report-name)
+                           (remp (lambda (p) (eq? (car p) b))
+                                 merge-reports)))
                    (parameterize ([message-source 'save-file!])
                      (set-message!
-                       (format "Merged with ~a conflict~a -- resolve (~a), then save; details in ~a"
+                       (format "Merged with ~a conflict~a -- resolve (~a), then save"
                                conflicts (if (= conflicts 1) "" "s")
                                (command-hint
-                                 '(next-conflict! keep-mine! keep-disk!))
-                               report-name)))
+                                 '(next-conflict! keep-mine! keep-disk!)))))
                    #f)))]
           [(memv n '(99 67 7 27)) (set! message "Save cancelled") #f]
           [(not n) #f]
