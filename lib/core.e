@@ -23,7 +23,7 @@
     set-buffer-mode! set-buffer-read-only! call-with-buffer
     switch-buffer!! kill-buffer!!
     split-window! delete-window! delete-other-windows! other-window!
-    resize-window! wrap!
+    resize-window! wrap! wrap-lines
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
@@ -113,7 +113,19 @@
                  0 0 #f 0 0 0 #f #f #f #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0 #f))) ; top to bottom
+  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0 'default)))
+
+  ;; Whether windows soft-wrap by default -- for config.e; a window
+  ;; toggled by hand (wrap!, C-x t) keeps its own setting.
+  (define wrap-lines (make-parameter #t))
+
+  (define (window-wrapped? w)
+    (let ([x (window-wrap w)])
+      (if (eq? x 'default) (wrap-lines) x)))
+
+  (define (wrap-width)
+    ;; a wrapped row keeps its last column for the \ continuation mark
+    (max 1 (- cols 1)))
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -1262,10 +1274,10 @@
     ;; Toggle (or set) soft-wrapping of long lines in the current window.
     (window-wrap-set! current-window
                       (if (pair? on) (car on)
-                          (not (window-wrap current-window))))
+                          (not (window-wrapped? current-window))))
     (window-left-set! current-window 0)
     (set! message (format "Wrap ~a"
-                          (if (window-wrap current-window) "on" "off")))
+                          (if (window-wrapped? current-window) "on" "off")))
     (void))
 
   (define (resize-window! delta)
@@ -1323,7 +1335,7 @@
          w)]
       [(halved-size!) =>
        (lambda (new)
-         (let ([w (make-window b 0 0 0 0 #f new new #f)])
+         (let ([w (make-window b 0 0 0 0 #f new new 'default)])
            (set! windows (insert-after windows current-window w))
            w))]
       [else #f]))
@@ -1831,9 +1843,11 @@
                  (if (= (car r) row) (cons (cdr r) acc) acc))
                '() ranges))
 
-  (define (display-editor-line s shown span marks left styles)
+  (define (display-editor-line s shown span marks left styles edge)
+    ;; edge: #f, or the continuation mark for the last column -- 'wrap
+    ;; (the line goes on below) or 'trunc (past the right edge).
     (define n (string-length s))
-    (define limit (+ left cols))
+    (define limit (+ left cols (if edge -1 0)))
     (define (style-at col)
       (if (and styles (< col n)) (vector-ref styles col) 'plain))
     (define (mark-style m)
@@ -1893,6 +1907,8 @@
           (when mk (ansi "\x1b;[4m"))
           (ansi (segment col end))
           (loop end))))
+    (when edge
+      (ansi "\x1b;[0m\x1b;[90m" (if (eq? edge 'wrap) "\\" "$")))
     (ansi "\x1b;[0m"))
 
   (define (window-layout)
@@ -1934,8 +1950,9 @@
   (define (line-segments w line)
     ;; How many screen rows the line takes in w: 1, or its soft-wrapped
     ;; segment count.
-    (if (window-wrap w)
-        (max 1 (div (+ (string-length line) cols -1) cols))
+    (if (window-wrapped? w)
+        (let ([width (wrap-width)])
+          (max 1 (div (+ (string-length line) width -1) width)))
         1))
 
   (define (rows-before w prow pcol)
@@ -1943,7 +1960,7 @@
     (let ([v (buffer-lines (window-buffer w))])
       (let loop ([i (window-top w)] [n 0])
         (if (>= i prow)
-            (+ n (if (window-wrap w) (div pcol cols) 0))
+            (+ n (if (window-wrapped? w) (div pcol (wrap-width)) 0))
             (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
 
   (define (scroll-window! w height)
@@ -1956,7 +1973,7 @@
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
       (when (< prow (window-top w)) (window-top-set! w prow))
-      (if (window-wrap w)
+      (if (window-wrapped? w)
           ;; advance top until point's segment row fits in the band
           (let advance ()
             (when (and (>= (rows-before w prow pcol) height)
@@ -2013,7 +2030,7 @@
     (let* ([shown (window-shown-top w)]
            [delta (and shown (- (window-top w) shown))])
       (when (and delta (not (= delta 0)) (< (abs delta) height)
-                 (not (window-wrap w)))     ; wrapped rows aren't 1:1
+                 (not (window-wrapped? w))) ; wrapped rows aren't 1:1
         (ansi "\x1b;[?25l"
               "\x1b;[" (number->string (+ start 1)) ";"
               (number->string (+ start height)) "r"
@@ -2237,7 +2254,16 @@
                                                        (string-length line))
                                                     t))))
                                     line))]
-                       [slice-left (if (window-wrap w) (* seg cols) left)]
+                       [wrapped? (window-wrapped? w)]
+                       [slice-left (if wrapped? (* seg (wrap-width)) left)]
+                       [edge (cond
+                               [(and wrapped?
+                                     (< (+ seg 1) (line-segments w line)))
+                                'wrap]     ; the line continues below: \
+                               [(and (not wrapped?)
+                                     (> (string-length line) (+ left cols)))
+                                'trunc]    ; it continues past the edge: $
+                               [else #f])]
                        [span (and current? (region-span i (string-length line)))]
                        [marks (if current? (ranges-on-row ranges i) '())])
                   (let ([row-styles
@@ -2246,12 +2272,13 @@
                                 (guard (ex [else #f])
                                   ((mode-row-styles m) b i line))))])
                     (paint! row (list i line shown span marks slice-left
-                                      mode-tag row-styles)
+                                      mode-tag row-styles edge)
                             (lambda ()
                               (display-editor-line line shown span marks
                                                    slice-left
                                                    (or row-styles
-                                                       (styles-of line))))))
+                                                       (styles-of line))
+                                                   edge))))
                   (if (< (+ seg 1) (line-segments w line))
                       (loop (+ k 1) i (+ seg 1))
                       (loop (+ k 1) (+ i 1) 0)))
@@ -2356,7 +2383,7 @@
       (set! windows (list current-window)))
     (let* ([layout (window-layout)]
            [view (list rows cols (map cdr layout)
-                       (map window-wrap windows))])
+                       (map window-wrapped? windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                 layout)
       (if (not (equal? view cached-view))
@@ -2376,9 +2403,9 @@
   (define (window-screen-position w prow pcol)
     ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
     (let ([entry (assq w (window-layout))])
-      (if (window-wrap w)
+      (if (window-wrapped? w)
           (cons (+ (cadr entry) (rows-before w prow pcol) 1)
-                (+ (mod pcol cols) 1))
+                (+ (mod pcol (wrap-width)) 1))
           (cons (+ (cadr entry) (- prow (window-top w)) 1)
                 (+ (- pcol (window-left w)) 1)))))
 
@@ -3001,13 +3028,14 @@
     (let* ([v (buffer-lines (window-buffer w))]
            [k (max 0 (- y 1 start))]
            [col (max 0 (- x 1))])
-      (if (window-wrap w)
+      (if (window-wrapped? w)
           (let loop ([i (window-top w)] [k k])
             (if (>= i (vector-length v))
                 (cons (max 0 (- (vector-length v) 1)) col)
                 (let ([segs (line-segments w (vector-ref v i))])
                   (if (< k segs)
-                      (cons i (+ (* k cols) col))
+                      (cons i (+ (* k (wrap-width))
+                                 (min col (- (wrap-width) 1))))
                       (loop (+ i 1) (- k segs))))))
           (cons (+ (window-top w) k) (+ (window-left w) col)))))
 
@@ -3235,6 +3263,7 @@
          [(48) (delete-window!)]                               ; C-x 0
          [(49) (delete-other-windows!)]                        ; C-x 1
          [(50) (split-window!)]                                ; C-x 2
+         [(116) (wrap!)]                                       ; C-x t
          [else (set! message "C-x is undefined for that key")])]))
 
   (define (handle-key! c)

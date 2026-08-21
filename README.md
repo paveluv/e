@@ -79,6 +79,7 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x 1`   | Delete all other windows                                |
 | `C-x 0`   | Delete the current window                               |
 | `C-x o`   | Move to the next window                                 |
+| `C-x t`   | Toggle soft-wrapping of long lines in this window       |
 
 Each window has its own status line, point, and scroll position; the
 same buffer can be shown in several windows at once. Windows resize by
@@ -87,6 +88,13 @@ dragging a status bar with the mouse, or with
 lines (negative shrinks), trading lines with its neighbor; splits halve
 the current window, and sizes rescale proportionally when the screen
 or the prompt area changes.
+
+Long lines soft-wrap onto continuation rows, Emacs-style: a wrapped
+row ends in a grey `\`, and with wrapping off a line running past the
+right edge ends in a grey `$` (the window then scrolls horizontally to
+follow point).  Wrapping is on by default -- `(wrap-lines #f)` in
+config.e flips the default -- and `C-x t` (`wrap!`) toggles it per
+window.
 
 ### Movement
 

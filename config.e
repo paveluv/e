@@ -20,3 +20,4 @@
 ;; (scheme-tab-width 8)           ; tabs widen to 8 spaces (#f keeps tabs)
 ;; (min-window-lines 4)           ; squeezed windows keep 4 text lines
 ;; (bind-key! "M-l" show-log!)    ; pop the *log* view with one chord
+;; (wrap-lines #f)                ; long lines truncate ($) instead of wrapping (\)
