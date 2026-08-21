@@ -2069,16 +2069,35 @@
     ;; remain visible, let the terminal shift them: restrict the scrolling
     ;; region to this window's text rows, scroll, and mirror it in the cache.
     ;; The rows the scroll uncovered then repaint through the usual path.
+    ;; In a wrapped window the shift counts visual rows -- the segments
+    ;; of the lines that crossed the top.  (An edit alongside the
+    ;; scroll can make either count stale; the row keys then miss and
+    ;; those rows repaint, so the shift is only ever an economy.)
+    (define (rows-between from to)
+      ;; visual rows spanned by lines [from, to); #f out of range
+      (let ([v (buffer-lines (window-buffer w))])
+        (and (<= 0 from) (<= to (vector-length v))
+             (let loop ([i from] [n 0])
+               (if (>= i to)
+                   n
+                   (loop (+ i 1)
+                         (+ n (line-segments w (vector-ref v i)))))))))
     (let* ([shown (window-shown-top w)]
-           [delta (and shown (- (window-top w) shown))])
-      (when (and delta (not (= delta 0)) (< (abs delta) height)
-                 (not (window-wrapped? w))) ; wrapped rows aren't 1:1
+           [delta (and shown (- (window-top w) shown))]
+           [vdelta (and delta (not (= delta 0))
+                        (if (window-wrapped? w)
+                            (if (> delta 0)
+                                (rows-between shown (window-top w))
+                                (let ([n (rows-between (window-top w) shown)])
+                                  (and n (- n))))
+                            delta))])
+      (when (and vdelta (not (= vdelta 0)) (< (abs vdelta) height))
         (ansi "\x1b;[?25l"
               "\x1b;[" (number->string (+ start 1)) ";"
               (number->string (+ start height)) "r"
-              (format "\x1b;[~a~a" (abs delta) (if (> delta 0) "S" "T"))
+              (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
               "\x1b;[r")
-        (shift-screen-cache! delta start height))))
+        (shift-screen-cache! vdelta start height))))
 
   (define (paint! row key draw)
     ;; Repaint the 0-based screen row unless it already shows key.
