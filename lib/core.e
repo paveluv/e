@@ -93,7 +93,11 @@
             (mutable stamp) (mutable base) (mutable stale)))
 
   (define-record-type window
-    (fields (mutable buffer) (mutable top) (mutable left)
+    (fields (mutable buffer) (mutable top)
+            ;; a soft-wrapping window may start mid-line: the first
+            ;; visible segment of the top line (0 elsewhere)
+            (mutable topseg)
+            (mutable left)
             (mutable prow) (mutable pcol)
             ;; the top row last drawn, for native scrolling
             (mutable shown-top)
@@ -113,7 +117,7 @@
                  0 0 #f 0 0 0 #f #f #f #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-  (define windows (list (make-window (car buffers) 0 0 0 0 #f 0 0 'default)))
+  (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 'default)))
 
   ;; Whether windows soft-wrap by default -- for config.e; a window
   ;; toggled by hand (wrap!, C-x t) keeps its own setting.
@@ -965,6 +969,7 @@
     (window-prow-set! w (buffer-spot-row b))
     (window-pcol-set! w (buffer-spot-col b))
     (window-top-set! w (buffer-spot-top b))
+    (window-topseg-set! w 0)
     (window-left-set! w 0))
 
   (define (show-buffer! b)
@@ -1038,6 +1043,7 @@
       (for-each (lambda (w)
                   (when (eq? (window-buffer w) b)
                     (window-top-set! w 0)
+                    (window-topseg-set! w 0)
                     (window-prow-set! w 0)
                     (window-pcol-set! w 0)))
                 windows)
@@ -1306,7 +1312,9 @@
          (set! windows
            (insert-after windows current-window
                          (make-window (window-buffer current-window)
-                                      top-row left-col
+                                      top-row
+                                      (window-topseg current-window)
+                                      left-col
                                       point-row point-col #f new new
                                       (window-wrap current-window)))))]
       [else (set! message "Not enough room to split")]))
@@ -1377,7 +1385,7 @@
          w)]
       [(halved-size!) =>
        (lambda (new)
-         (let ([w (make-window b 0 0 0 0 #f new new 'default)])
+         (let ([w (make-window b 0 0 0 0 0 #f new new 'default)])
            (set! windows (insert-after windows current-window w))
            w))]
       [else #f]))
@@ -1998,9 +2006,10 @@
         1))
 
   (define (rows-before w prow pcol)
-    ;; Screen rows between w's top and point, wrap-aware.
+    ;; Screen rows between w's top -- its first visible segment -- and
+    ;; point, wrap-aware.
     (let ([v (buffer-lines (window-buffer w))])
-      (let loop ([i (window-top w)] [n 0])
+      (let loop ([i (window-top w)] [n (- (window-topseg w))])
         (if (>= i prow)
             (+ n (if (window-wrapped? w) (div pcol (wrap-width)) 0))
             (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
@@ -2014,15 +2023,37 @@
                              (string-length (vector-ref v prow))))])
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
-      (when (< prow (window-top w)) (window-top-set! w prow))
       (if (window-wrapped? w)
-          ;; advance top until point's segment row fits in the band
-          (let advance ()
-            (when (and (>= (rows-before w prow pcol) height)
-                       (< (window-top w) prow))
-              (window-top-set! w (+ (window-top w) 1))
-              (advance)))
+          (let ([pseg (div pcol (wrap-width))])
+            ;; a stale top (edits, toggles) clamps into the buffer
+            (window-top-set! w (min (window-top w)
+                                    (- (vector-length v) 1)))
+            (window-topseg-set!
+              w (min (window-topseg w)
+                     (- (line-segments w (vector-ref v (window-top w)))
+                        1)))
+            ;; point above the view: its own segment row becomes the
+            ;; top, so moving up scrolls by one visual row, not by the
+            ;; whole wrapped line
+            (when (or (< prow (window-top w))
+                      (and (= prow (window-top w))
+                           (< pseg (window-topseg w))))
+              (window-top-set! w prow)
+              (window-topseg-set! w pseg))
+            ;; and below: advance one visual row at a time
+            (let advance ()
+              (when (and (>= (rows-before w prow pcol) height)
+                         (or (< (window-top w) prow)
+                             (< (window-topseg w) pseg)))
+                (if (< (+ (window-topseg w) 1)
+                       (line-segments w (vector-ref v (window-top w))))
+                    (window-topseg-set! w (+ (window-topseg w) 1))
+                    (begin (window-top-set! w (+ (window-top w) 1))
+                           (window-topseg-set! w 0)))
+                (advance))))
           (begin
+            (window-topseg-set! w 0)
+            (when (< prow (window-top w)) (window-top-set! w prow))
             (when (>= prow (+ (window-top w) height))
               (window-top-set! w (- prow height -1)))
             (when (< pcol (window-left w)) (window-left-set! w pcol))
@@ -2083,14 +2114,17 @@
                    (loop (+ i 1)
                          (+ n (line-segments w (vector-ref v i)))))))))
     (let* ([shown (window-shown-top w)]
-           [delta (and shown (- (window-top w) shown))]
-           [vdelta (and delta (not (= delta 0))
-                        (if (window-wrapped? w)
-                            (if (> delta 0)
-                                (rows-between shown (window-top w))
-                                (let ([n (rows-between (window-top w) shown)])
-                                  (and n (- n))))
-                            delta))])
+           [t (window-top w)]
+           [ts (window-topseg w)]
+           [vdelta (and (pair? shown)
+                        (let ([s (car shown)] [ss (cdr shown)])
+                          (if (window-wrapped? w)
+                              (let ([d (if (>= t s)
+                                           (rows-between s t)
+                                           (let ([n (rows-between t s)])
+                                             (and n (- n))))])
+                                (and d (+ d (- ts ss))))
+                              (- t s))))])
       (when (and vdelta (not (= vdelta 0)) (< (abs vdelta) height))
         (ansi "\x1b;[?25l"
               "\x1b;[" (number->string (+ start 1)) ";"
@@ -2298,10 +2332,11 @@
            [styles-of (buffer-line-styles b)]
            [mode-tag (let ([m (buffer-mode b)]) (and m (mode-name m)))]
            [current? (eq? w current-window)])
-      ;; Walk buffer lines from the top; a soft-wrapping window paints a
-      ;; long line as successive slices (the same line at successive
-      ;; left offsets), others one row per line.
-      (let loop ([k 0] [i top] [seg 0])
+      ;; Walk buffer lines from the top -- its first visible segment --
+      ;; a soft-wrapping window painting a long line as successive
+      ;; slices (the same line at successive left offsets), others one
+      ;; row per line.
+      (let loop ([k 0] [i top] [seg (window-topseg w)])
         (when (< k height)
           (let ([row (+ start k)])
             (if (< i n)
@@ -2456,7 +2491,9 @@
       (let ([ranges (highlight-ranges)])
         (for-each (lambda (entry)
                     (paint-window! (car entry) (cadr entry) (caddr entry) ranges)
-                    (window-shown-top-set! (car entry) (window-top (car entry))))
+                    (window-shown-top-set! (car entry)
+                                           (cons (window-top (car entry))
+                                                 (window-topseg (car entry)))))
                   layout))
       (paint-echo-area!))
     (place-cursor!))
@@ -2601,7 +2638,7 @@
        (buffer-mode-set! completions-buffer (completions-mode))
        (set! completions-labels labels)
        (completions-layout! labels)
-       (let ([w (make-window completions-buffer 0 0 0 0 #f 1 1 #f)])
+       (let ([w (make-window completions-buffer 0 0 0 0 0 #f 1 1 #f)])
          (set! windows (append windows (list w)))
          (set! completions-restore
            (lambda () (set! windows (remq w windows)))))
@@ -3090,7 +3127,7 @@
            [k (max 0 (- y 1 start))]
            [col (max 0 (- x 1))])
       (if (window-wrapped? w)
-          (let loop ([i (window-top w)] [k k])
+          (let loop ([i (window-top w)] [k (+ k (window-topseg w))])
             (if (>= i (vector-length v))
                 (cons (max 0 (- (vector-length v) 1)) col)
                 (let ([segs (line-segments w (vector-ref v i))])
