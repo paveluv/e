@@ -485,10 +485,51 @@
   (define goal-pos #f)
 
   (define (move-vertical! delta)
+    ;; By buffer lines -- or by visual rows in a soft-wrapping window,
+    ;; where up and down walk a long line's segments (C-a and C-e
+    ;; still treat it as one line).  The goal column is visual when
+    ;; wrapped.
+    (define wrapped? (window-wrapped? current-window))
     (unless (equal? goal-pos (cons point-row point-col))
-      (set! goal-col point-col))
-    (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
-    (set! point-col (min goal-col (string-length (current-line))))
+      (set! goal-col (if wrapped?
+                         (mod point-col (wrap-width))
+                         point-col)))
+    (if wrapped?
+        (let ([w (wrap-width)])
+          (let step ([n delta])
+            (cond
+              [(zero? n) (void)]
+              [(negative? n)
+               (let ([seg (div point-col w)])
+                 (cond
+                   [(> seg 0)              ; up, within the same line
+                    (set! point-col
+                      (min (+ (* (- seg 1) w) goal-col)
+                           (string-length (current-line))))]
+                   [(> point-row 0)        ; onto the line above's last row
+                    (set! point-row (- point-row 1))
+                    (let* ([len (string-length (current-line))]
+                           [segs (line-segments current-window
+                                                (current-line))])
+                      (set! point-col
+                        (min (+ (* (- segs 1) w) goal-col) len)))]))
+               (step (+ n 1))]
+              [else
+               (let ([segs (line-segments current-window (current-line))]
+                     [seg (div point-col w)])
+                 (cond
+                   [(< (+ seg 1) segs)     ; down, within the same line
+                    (set! point-col
+                      (min (+ (* (+ seg 1) w) goal-col)
+                           (string-length (current-line))))]
+                   [(< point-row (- (vlen) 1))
+                    (set! point-row (+ point-row 1))
+                    (set! point-col
+                      (min goal-col (string-length (current-line))))]))
+               (step (- n 1))])))
+        (begin
+          (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
+          (set! point-col (min goal-col (string-length (current-line))))))
     (set! goal-pos (cons point-row point-col)))
 
   (define (insert-text! s)
@@ -1276,6 +1317,7 @@
                       (if (pair? on) (car on)
                           (not (window-wrapped? current-window))))
     (window-left-set! current-window 0)
+    (set! goal-pos #f)              ; the goal column changes meaning
     (set! message (format "Wrap ~a"
                           (if (window-wrapped? current-window) "on" "off")))
     (void))
