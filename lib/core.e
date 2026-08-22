@@ -2673,7 +2673,14 @@
           (paint! (+ start height) (window-xoff w)
                   (list 'status status current? stale?)
                   (lambda ()
-                    (let* ([bar (if current? "\x1b;[7m" "\x1b;[7;2m")]
+                    ;; Reversed cells take the bar's shade from the
+                    ;; foreground color, so full reverse tracks the
+                    ;; terminal's scheme (dark bar on light, light on
+                    ;; dark) and an explicit mid grey marks inactive
+                    ;; on either -- dim, the old marker, vanishes in
+                    ;; reverse on light schemes.
+                    (let* ([bar (if current? "\x1b;[7m" "\x1b;[7;38;5;245m")]
+                           [fg (if current? "\x1b;[39m" "\x1b;[38;5;245m")]
                            [text (fit status (window-width w))]
                            [n (string-length text)]
                            [cs (min (string-length head) n)]
@@ -2682,12 +2689,12 @@
                       (if stale?
                           ;; the !! flag in red, the rest as usual
                           (ansi "\x1b;[31m" (substring text 0 (min 3 n))
-                                "\x1b;[39m" (substring text (min 3 n) cs))
+                                fg (substring text (min 3 n) cs))
                           (ansi (substring text 0 cs)))
                       (unless (= cs ce)
                         ;; the conflict count in red too
                         (ansi "\x1b;[31m" (substring text cs ce)
-                              "\x1b;[39m"))
+                              fg))
                       (ansi (substring text ce n) "\x1b;[0m"))))))))
 
   (define (echo-cap)
