@@ -563,62 +563,19 @@
 
   ;;; Display -------------------------------------------------------------------
 
-  (define (wrap-line s width)
-    ;; s broken at spaces into lines of at most width columns -- never
-    ;; inside a `code span`, which travels whole so the per-line
-    ;; styling always sees both its backticks.  When nothing breakable
-    ;; fits, the break falls at the next breakable space instead (one
-    ;; long line beats a split span).
-    (let* ([n (string-length s)]
-           [in-span (make-vector (max n 1) #f)])
-      (define (breakable? i)
-        (and (char=? (string-ref s i) #\space)
-             (not (vector-ref in-span i))))
-      (let mark ([i 0] [state 'out])
-        (when (< i n)
-          (if (char=? (string-ref s i) #\`)
-              (let* ([j (if (and (< (+ i 1) n)
-                                 (char=? (string-ref s (+ i 1)) #\`))
-                            (+ i 2)
-                            (+ i 1))]
-                     [next (case state
-                             [(out) (if (= (- j i) 2) 'double 'single)]
-                             [(single) 'out]
-                             [(double) (if (= (- j i) 2) 'out 'double)])])
-                (do ([k i (+ k 1)]) ((= k j))
-                  (vector-set! in-span k #t))
-                (mark j next))
-              (begin
-                (vector-set! in-span i (not (eq? state 'out)))
-                (mark (+ i 1) state)))))
-      (let loop ([start 0] [acc '()])
-        (if (<= (- n start) width)
-            (reverse (cons (substring s start n) acc))
-            (let find ([i (min (+ start width) (- n 1))])
-              (cond [(<= i start)
-                     (let after ([j (min (+ start width) (- n 1))])
-                       (cond [(>= j n)
-                              (reverse (cons (substring s start n) acc))]
-                             [(breakable? j)
-                              (loop (+ j 1)
-                                    (cons (substring s start j) acc))]
-                             [else (after (+ j 1))]))]
-                    [(breakable? i)
-                     (loop (+ i 1) (cons (substring s start i) acc))]
-                    [else (find (- i 1))]))))))
-
-  (define (split-on-newlines s)
+  (define (split-on-newlines text)
     (let loop ([i 0] [start 0] [acc '()])
-      (cond [(= i (string-length s))
-             (reverse (cons (substring s start i) acc))]
-            [(char=? (string-ref s i) #\newline)
-             (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
+      (cond [(= i (string-length text))
+             (reverse (cons (substring text start i) acc))]
+            [(char=? (string-ref text i) #\newline)
+             (loop (+ i 1) (+ i 1)
+                   (cons (substring text start i) acc))]
             [else (loop (+ i 1) start acc)])))
 
-  (define (wrapped-lines text width)
-    (apply append
-           (map (lambda (line) (wrap-line line width))
-                (split-on-newlines text))))
+  ;; Prose is not pre-wrapped: a paragraph stays one buffer line
+  ;; (markdown's soft-break rule -- newlines inside a paragraph are
+  ;; presentation, not content) and the window's word-boundary soft
+  ;; wrap lays it out at whatever width the window has.
 
   (define (entry-lines entry)
     (append
@@ -634,8 +591,7 @@
                         (format "**~a**: `~a`" (car form) (cdr form))))
                   (doc-forms entry))
              (if (doc-returns entry)
-                 (wrapped-lines (format "returns: ~a" (doc-returns entry))
-                                72)
+                 (list (format "returns: ~a" (doc-returns entry)))
                  '())
              (if (pair? (doc-libraries entry))
                  (list (format "libraries: ~a"
@@ -649,7 +605,7 @@
                            (doc-chapter entry))
                    (format "url: ~a" (doc-browser-url entry)))))
       (list "")
-      (wrapped-lines (doc-description entry) 72)))
+      (split-on-newlines (doc-description entry))))
 
   (define (describe! name)
     ;; Pop up a *describe* buffer with the documentation for name (a
