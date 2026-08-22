@@ -76,14 +76,18 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x C-b` | Pop up `*Buffer List*`: marks (`.` current, `%` read-only, `*` modified), lines, mode, file |
 | `C-x k`   | Kill a buffer (default: current; asks if modified)      |
 | `C-x 2`   | Split the current window in two (stacked)               |
+| `C-x 3`   | Split the current window in two (side by side)          |
 | `C-x 1`   | Delete all other windows                                |
 | `C-x 0`   | Delete the current window                               |
 | `C-x o`   | Move to the next window                                 |
 | `C-x t`   | Toggle soft-wrapping of long lines in this window       |
 
 Each window has its own status line, point, and scroll position; the
-same buffer can be shown in several windows at once. Windows resize by
-dragging a status bar with the mouse, or with
+same buffer can be shown in several windows at once.  `C-x 3` puts
+windows side by side -- columns sharing a band of rows, a grey divider
+between them, each wrapping at its own width; `C-x 2` under such a
+band splits below the whole band. Windows resize by
+dragging a status bar (or a column divider) with the mouse, or with
 `M-x (resize-window! n)`, which grows the current window by n text
 lines (negative shrinks), trading lines with its neighbor; splits halve
 the current window, and sizes rescale proportionally when the screen

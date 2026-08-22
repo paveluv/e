@@ -22,7 +22,8 @@
     fresh-buffer
     set-buffer-mode! set-buffer-read-only! call-with-buffer
     switch-buffer!! kill-buffer!!
-    split-window! delete-window! delete-other-windows! other-window!
+    split-window! split-window-right!
+    delete-window! delete-other-windows! other-window!
     resize-window! wrap! wrap-lines
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
@@ -108,6 +109,12 @@
             ;; grown echo area, a pop-up split) never drift them
             (mutable size)
             (mutable goal)
+            ;; horizontal band geometry, written by the layout: the
+            ;; window's first screen column and its width
+            (mutable xoff)
+            (mutable width)
+            ;; column proportion within a band shared side by side
+            (mutable wgoal)
             ;; soft-wrap long lines onto continuation rows instead of
             ;; scrolling horizontally
             (mutable wrap)))
@@ -117,7 +124,26 @@
                  0 0 #f 0 0 0 #f #f #f #f #f))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-  (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 'default)))
+  (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)))
+
+  ;; Windows grouped into horizontal bands, top to bottom: each band a
+  ;; list of side-by-side columns sharing its rows.  `windows` stays
+  ;; the flattened list (top to bottom, left to right) that every
+  ;; traversal uses; band mutations go through set-bands!.
+  (define bands (list windows))
+
+  (define (set-bands! bs)
+    (set! bands (filter pair? bs))
+    (set! windows (apply append bands)))
+
+  (define (window-band w)
+    (find (lambda (b) (memq w b)) bands))
+
+  (define (band-replace! old news)
+    ;; Replace the band old with the bands in news.
+    (set-bands!
+      (apply append (map (lambda (b) (if (eq? b old) news (list b)))
+                         bands))))
 
   ;; Whether windows soft-wrap by default -- for config.e; a window
   ;; toggled by hand (wrap!, C-x t) keeps its own setting.
@@ -127,9 +153,9 @@
     (let ([x (window-wrap w)])
       (if (eq? x 'default) (wrap-lines) x)))
 
-  (define (wrap-width)
+  (define (wrap-width w)
     ;; a wrapped row keeps its last column for the \ continuation mark
-    (max 1 (- cols 1)))
+    (max 1 (- (window-width w) 1)))
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -496,10 +522,10 @@
     (define wrapped? (window-wrapped? current-window))
     (unless (equal? goal-pos (cons point-row point-col))
       (set! goal-col (if wrapped?
-                         (mod point-col (wrap-width))
+                         (mod point-col (wrap-width current-window))
                          point-col)))
     (if wrapped?
-        (let ([w (wrap-width)])
+        (let ([w (wrap-width current-window)])
           (let step ([n delta])
             (cond
               [(zero? n) (void)]
@@ -1299,25 +1325,51 @@
     (let ([h (window-size current-window)])
       (and (>= (- h 1) 4)
            (let ([new (quotient (- h 1) 2)])
-             (window-size-set! current-window (- h 1 new))
-             (window-goal-set! current-window (- h 1 new))
+             (for-each (lambda (w)
+                         (window-size-set! w (- h 1 new))
+                         (window-goal-set! w (- h 1 new)))
+                       (window-band current-window))
              new))))
 
   (define (split-window!)
     ;; Stack a new window under the current one, showing the same
-    ;; buffer, in the lower half of its band.
+    ;; buffer, in the lower half of its band -- below the whole band,
+    ;; when the current one shares it with side-by-side columns.
     (cond
       [(halved-size!) =>
        (lambda (new)
-         (set! windows
-           (insert-after windows current-window
-                         (make-window (window-buffer current-window)
-                                      top-row
-                                      (window-topseg current-window)
-                                      left-col
-                                      point-row point-col #f new new
-                                      (window-wrap current-window)))))]
+         (let ([w (make-window (window-buffer current-window)
+                               top-row
+                               (window-topseg current-window)
+                               left-col
+                               point-row point-col #f new new 0 0 1
+                               (window-wrap current-window))]
+               [band (window-band current-window)])
+           (band-replace! band (list band (list w)))))]
       [else (set! message "Not enough room to split")]))
+
+  (define (split-window-right!)
+    ;; Put a new window beside the current one, showing the same
+    ;; buffer, in the right half of its columns.
+    (let* ([band (window-band current-window)]
+           [k (+ (length band) 1)])
+      (if (< (quotient (- cols (- k 1)) k) 20)
+          (set! message "Not enough room to split")
+          (let* ([half (quotient (- (window-width current-window) 1) 2)]
+                 [w (make-window (window-buffer current-window)
+                                 top-row
+                                 (window-topseg current-window)
+                                 left-col
+                                 point-row point-col #f
+                                 (window-size current-window)
+                                 (window-goal current-window)
+                                 0 0 half
+                                 (window-wrap current-window))])
+            (window-wgoal-set! current-window
+                               (max 1 (- (window-width current-window)
+                                         1 half)))
+            (band-replace! band (list (insert-after band current-window w))))))
+    (void))
 
   (define (wrap! . on)
     ;; Toggle (or set) soft-wrapping of long lines in the current window.
@@ -1332,45 +1384,52 @@
 
   (define (resize-window! delta)
     ;; Grow the current window by delta text lines (negative shrinks),
-    ;; trading lines with the window below -- or above, for the lowest.
-    (if (null? (cdr windows))
+    ;; trading lines with the band below -- or above, for the lowest.
+    (if (null? (cdr bands))
         (set! message "Only one window")
-        (let ([tail (memq current-window windows)])
-          (transfer-lines! current-window
+        (let ([tail (memq (window-band current-window) bands)])
+          (transfer-lines! (car tail)
                            (if (pair? (cdr tail))
                                (cadr tail)
-                               (list-ref windows (- (length windows) 2)))
+                               (list-ref bands (- (length bands) 2)))
                            delta))))
 
-  (define (transfer-lines! w partner delta)
-    ;; Move up to delta text lines from partner to w, both keeping the
-    ;; minimum.  The trade adjusts goals, not sizes -- the layout
-    ;; realizes goals proportionally, so the delta is scaled between
-    ;; the two spaces: in the steady state the border moves exactly as
-    ;; dragged.
+  (define (band-weight b) (apply max (map window-weight b)))
+
+  (define (transfer-lines! band partner delta)
+    ;; Move up to delta text lines from the band partner to band, both
+    ;; keeping the minimum.  The trade adjusts goals, not sizes -- the
+    ;; layout realizes goals proportionally, so the delta is scaled
+    ;; between the two spaces: in the steady state the border moves
+    ;; exactly as dragged.
     (let* ([m (min-window-lines)]
-           [delta (min delta (- (window-size partner) m))]
-           [delta (max delta (- m (window-size w)))]
-           [ssum (fold-left + 0 (map window-size windows))]
-           [gsum (fold-left + 0 (map window-weight windows))])
+           [delta (min delta (- (window-size (car partner)) m))]
+           [delta (max delta (- m (window-size (car band))))]
+           [ssum (fold-left + 0 (map (lambda (b) (window-size (car b)))
+                                     bands))]
+           [gsum (fold-left + 0 (map band-weight bands))])
       (unless (= delta 0)
         (let ([g (if (<= ssum 0)
                      delta
                      (let ([g (round (/ (* delta gsum) ssum))])
-                       (if (= g 0) (if (> delta 0) 1 -1) g)))])
-          (window-goal-set! w (max 1 (+ (window-weight w) g)))
-          (window-goal-set! partner
-                            (max 1 (- (window-weight partner) g)))))))
+                       (if (= g 0) (if (> delta 0) 1 -1) g)))]
+              [retarget (lambda (b goal)
+                          (for-each (lambda (w) (window-goal-set! w goal))
+                                    b))])
+          (retarget band (max 1 (+ (band-weight band) g)))
+          (retarget partner (max 1 (- (band-weight partner) g)))))))
 
   (define (delete-window!)
     (if (null? (cdr windows))
         (set! message "Only one window")
         (let ([next (next-window current-window)])
-          (set! windows (remq current-window windows))
+          (band-replace! (window-band current-window)
+                         (list (remq current-window
+                                     (window-band current-window))))
           (set! current-window next))))
 
   (define (delete-other-windows!)
-    (set! windows (list current-window)))
+    (set-bands! (list (list current-window))))
 
   (define (display-buffer! b)
     ;; Show b without leaving the current window: in the window already
@@ -1385,8 +1444,9 @@
          w)]
       [(halved-size!) =>
        (lambda (new)
-         (let ([w (make-window b 0 0 0 0 0 #f new new 'default)])
-           (set! windows (insert-after windows current-window w))
+         (let ([w (make-window b 0 0 0 0 0 #f new new 0 0 1 'default)])
+           (band-replace! (window-band current-window)
+                          (list (window-band current-window) (list w)))
            w))]
       [else #f]))
 
@@ -1893,11 +1953,11 @@
                  (if (= (car r) row) (cons (cdr r) acc) acc))
                '() ranges))
 
-  (define (display-editor-line s shown span marks left styles edge)
+  (define (display-editor-line s shown span marks left styles edge width)
     ;; edge: #f, or the continuation mark for the last column -- 'wrap
     ;; (the line goes on below) or 'trunc (past the right edge).
     (define n (string-length s))
-    (define limit (+ left cols (if edge -1 0)))
+    (define limit (+ left width (if edge -1 0)))
     (define (style-at col)
       (if (and styles (< col n)) (vector-ref styles col) 'plain))
     (define (mark-style m)
@@ -1961,37 +2021,66 @@
       (ansi "\x1b;[0m\x1b;[90m" (if (eq? edge 'wrap) "\\" "$")))
     (ansi "\x1b;[0m"))
 
+  (define (layout-columns! band)
+    ;; Tile a band's columns across the screen in proportion to their
+    ;; width goals, a divider column between neighbors.
+    (let* ([k (length band)]
+           [avail (- cols (- k 1))]
+           [sum (fold-left + 0 (map (lambda (w) (max 1 (window-wgoal w)))
+                                    band))]
+           [m (min 20 (max 1 (quotient avail k)))])
+      (let loop ([ws band] [x 0] [left avail])
+        (cond
+          [(null? (cdr ws))
+           (window-xoff-set! (car ws) x)
+           (window-width-set! (car ws) (max 1 left))]
+          [else
+           (let ([wd (min (max m (quotient (* (max 1 (window-wgoal
+                                                       (car ws)))
+                                              avail)
+                                           sum))
+                          (max m (- left (* m (length (cdr ws))))))])
+             (window-xoff-set! (car ws) x)
+             (window-width-set! (car ws) wd)
+             (loop (cdr ws) (+ x wd 1) (- left wd)))]))))
+
   (define (window-layout)
-    ;; Stack the windows top to bottom, each a band of text rows followed by
-    ;; its own status line; the last echo-height screen rows are the echo
-    ;; area.  The windows tile the text area in proportion to their
-    ;; goals -- the sizes the user chose -- realized fresh from the
-    ;; goals every time, at least min-window-lines each, so a grown
-    ;; echo area or a terminal resize cannot drift them.
+    ;; Stack the bands top to bottom, each a run of text rows shared by
+    ;; its side-by-side columns and followed by one status line; the
+    ;; last echo-height screen rows are the echo area.  The bands tile
+    ;; the text area in proportion to their goals -- the sizes the user
+    ;; chose -- realized fresh from the goals every time, at least
+    ;; min-window-lines each, so a grown echo area or a terminal resize
+    ;; cannot drift them; the columns tile the width likewise.
     ;; -> list of (window start text-height), start 0-based.
     (let* ([popup (completions-window)]
-           [plain (remq popup windows)]
+           [popup-band (and popup (window-band popup))]
+           [plain (remp (lambda (b) (eq? b popup-band)) bands)]
            [n (length plain)]
-           [text (- rows echo-height (length windows))]
+           [text (- rows echo-height (length bands))]
            [total (- text (if popup (window-size popup) 0))]
-           [sum (fold-left + 0 (map window-weight plain))]
-           [m (min (min-window-lines) (max 1 (quotient total n)))])
-      (let loop ([ws plain] [left total])
-        (if (null? (cdr ws))
-            (window-size-set! (car ws) (max m left))
-            (let* ([rest (* m (length (cdr ws)))]
-                   [h (min (max m (quotient (* (window-weight (car ws))
-                                               total)
-                                            sum))
-                           (max m (- left rest)))])
-              (window-size-set! (car ws) h)
-              (loop (cdr ws) (- left h)))))
-      (let loop ([ws windows] [start 0] [acc '()])
-        (if (null? ws)
+           [sum (fold-left + 0 (map band-weight plain))]
+           [m (min (min-window-lines) (max 1 (quotient total (max 1 n))))])
+      (let loop ([bs plain] [left total])
+        (unless (null? bs)
+          (let* ([rest (* m (length (cdr bs)))]
+                 [h (if (null? (cdr bs))
+                        (max m left)
+                        (min (max m (quotient (* (band-weight (car bs))
+                                                 total)
+                                              sum))
+                             (max m (- left rest))))])
+            (for-each (lambda (w) (window-size-set! w h)) (car bs))
+            (loop (cdr bs) (- left h)))))
+      (for-each layout-columns! bands)
+      (let loop ([bs bands] [start 0] [acc '()])
+        (if (null? bs)
             (reverse acc)
-            (let ([h (window-size (car ws))])
-              (loop (cdr ws) (+ start h 1)
-                    (cons (list (car ws) start h) acc)))))))
+            (let ([h (window-size (caar bs))])
+              (loop (cdr bs) (+ start h 1)
+                    (append (reverse (map (lambda (w) (list w start h))
+                                          (car bs)))
+                            acc)))))))
 
   (define (page-size)
     ;; One page of the current window: its text height less one overlap line.
@@ -2001,7 +2090,7 @@
     ;; How many screen rows the line takes in w: 1, or its soft-wrapped
     ;; segment count.
     (if (window-wrapped? w)
-        (let ([width (wrap-width)])
+        (let ([width (wrap-width w)])
           (max 1 (div (+ (string-length line) width -1) width)))
         1))
 
@@ -2011,7 +2100,7 @@
     (let ([v (buffer-lines (window-buffer w))])
       (let loop ([i (window-top w)] [n (- (window-topseg w))])
         (if (>= i prow)
-            (+ n (if (window-wrapped? w) (div pcol (wrap-width)) 0))
+            (+ n (if (window-wrapped? w) (div pcol (wrap-width w)) 0))
             (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
 
   (define (scroll-window! w height)
@@ -2024,7 +2113,7 @@
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
       (if (window-wrapped? w)
-          (let ([pseg (div pcol (wrap-width))])
+          (let ([pseg (div pcol (wrap-width w))])
             ;; a stale top (edits, toggles) clamps into the buffer
             (window-top-set! w (min (window-top w)
                                     (- (vector-length v) 1)))
@@ -2057,8 +2146,8 @@
             (when (>= prow (+ (window-top w) height))
               (window-top-set! w (- prow height -1)))
             (when (< pcol (window-left w)) (window-left-set! w pcol))
-            (when (>= pcol (+ (window-left w) cols))
-              (window-left-set! w (- pcol cols -1)))))))
+            (when (>= pcol (+ (window-left w) (window-width w)))
+              (window-left-set! w (- pcol (window-width w) -1)))))))
 
   ;; The cache holds, per screen row, the key describing what that row
   ;; currently shows; a row is repainted only when its key changes.  Any
@@ -2125,7 +2214,8 @@
                                              (and n (- n))))])
                                 (and d (+ d (- ts ss))))
                               (- t s))))])
-      (when (and vdelta (not (= vdelta 0)) (< (abs vdelta) height))
+      (when (and vdelta (not (= vdelta 0)) (< (abs vdelta) height)
+                 (= (window-width w) cols))    ; region scrolls span rows
         (ansi "\x1b;[?25l"
               "\x1b;[" (number->string (+ start 1)) ";"
               (number->string (+ start height)) "r"
@@ -2133,12 +2223,37 @@
               "\x1b;[r")
         (shift-screen-cache! vdelta start height))))
 
-  (define (paint! row key draw)
-    ;; Repaint the 0-based screen row unless it already shows key.
-    (unless (equal? key (vector-ref screen-cache row))
-      (ansi "\x1b;[?25l") (goto (+ row 1) 1)
-      (draw)
-      (vector-set! screen-cache row key)))
+  (define (paint-dividers! layout)
+    ;; The vertical line between side-by-side columns, through their
+    ;; status row too.
+    (for-each
+      (lambda (band)
+        (when (pair? (cdr band))
+          (let* ([entry (assq (car band) layout)]
+                 [start (cadr entry)]
+                 [height (caddr entry)])
+            (for-each
+              (lambda (w)
+                (let ([x (- (window-xoff w) 1)])
+                  (do ([r start (+ r 1)]) ((> r (+ start height)))
+                    (paint! r x '(divider)
+                            (lambda ()
+                              (ansi "\x1b;[90m\x2502;\x1b;[0m"))))))
+              (cdr band)))))
+      bands))
+
+  (define (paint! row xoff key draw)
+    ;; Repaint the segment of the 0-based screen row starting at
+    ;; column xoff unless it already shows key; a row shared by
+    ;; side-by-side windows caches one key per segment.
+    (let* ([entry (vector-ref screen-cache row)]
+           [hit (and (pair? entry) (assv xoff entry))])
+      (unless (and hit (equal? (cdr hit) key))
+        (ansi "\x1b;[?25l") (goto (+ row 1) (+ xoff 1))
+        (draw)
+        (vector-set! screen-cache row
+          (cons (cons xoff key)
+                (if hit (remq hit entry) (or entry '())))))))
 
   (define (echo-indent-now)
     ;; The continuation indent, capped at half the width so a prompt
@@ -2274,7 +2389,7 @@
     (let loop ([es echo-pending] [row (- rows echo-height)])
       (when (pair? es)
         (let ([e (car es)])
-          (paint! row (cons 'echo-log e)
+          (paint! row 0 (cons 'echo-log e)
                   (lambda ()
                     (display-echo-log-line (format "~a: " (car e))
                                            (cadr e) (caddr e)))))
@@ -2293,7 +2408,7 @@
                    [lead (if (= line 0) 0 indent)]
                    [wrapped? (< line (- total 1))]
                    [cut (min (max (- ghost-at start) 0) (- end start))])
-              (paint! row
+              (paint! row 0
                       (list 'echo line (substring content start end)
                         cut lead wrapped? (and (echo-highlight) #t)
                         (and message-styles #t))
@@ -2351,13 +2466,14 @@
                                                     t))))
                                     line))]
                        [wrapped? (window-wrapped? w)]
-                       [slice-left (if wrapped? (* seg (wrap-width)) left)]
+                       [slice-left (if wrapped? (* seg (wrap-width w)) left)]
                        [edge (cond
                                [(and wrapped?
                                      (< (+ seg 1) (line-segments w line)))
                                 'wrap]     ; the line continues below: \
                                [(and (not wrapped?)
-                                     (> (string-length line) (+ left cols)))
+                                     (> (string-length line)
+                                        (+ left (window-width w))))
                                 'trunc]    ; it continues past the edge: $
                                [else #f])]
                        [span (and current? (region-span i (string-length line)))]
@@ -2367,20 +2483,22 @@
                            (and m (mode-row-styles m)
                                 (guard (ex [else #f])
                                   ((mode-row-styles m) b i line))))])
-                    (paint! row (list i line shown span marks slice-left
-                                      mode-tag row-styles edge)
+                    (paint! row (window-xoff w)
+                            (list i line shown span marks slice-left
+                                  mode-tag row-styles edge)
                             (lambda ()
                               (display-editor-line line shown span marks
                                                    slice-left
                                                    (or row-styles
                                                        (styles-of line))
-                                                   edge))))
+                                                   edge
+                                                   (window-width w)))))
                   (if (< (+ seg 1) (line-segments w line))
                       (loop (+ k 1) i (+ seg 1))
                       (loop (+ k 1) (+ i 1) 0)))
                 (begin
-                  (paint! row '(empty)
-                          (lambda () (ansi (fit "~" cols))))
+                  (paint! row (window-xoff w) '(empty)
+                          (lambda () (ansi (fit "~" (window-width w)))))
                   (loop (+ k 1) (+ i 1) 0))))))
       (let* ([conflicts (and (assq b merge-reports)
                              (let ([n (buffer-conflict-count b)])
@@ -2409,10 +2527,11 @@
                                          completions-pages)
                                  ""))])
         (let ([stale? (buffer-stale b)])
-          (paint! (+ start height) (list 'status status current? stale?)
+          (paint! (+ start height) (window-xoff w)
+                  (list 'status status current? stale?)
                   (lambda ()
                     (let* ([bar (if current? "\x1b;[7m" "\x1b;[7;2m")]
-                           [text (fit status cols)]
+                           [text (fit status (window-width w))]
                            [n (string-length text)]
                            [cs (min (string-length head) n)]
                            [ce (min (+ cs (string-length conf)) n)])
@@ -2432,7 +2551,7 @@
     ;; How tall the whole echo area may grow: everything but each
     ;; window's minimum -- min-window-lines of text (at least 2,
     ;; redraw!'s collapse threshold) plus its status line.
-    (max 1 (- rows (* (length windows) (+ (max 2 (min-window-lines)) 1)))))
+    (max 1 (- rows (* (length bands) (+ (max 2 (min-window-lines)) 1)))))
 
   (define (update-echo-geometry!)
     ;; The echo area stacks the pending transient-log lines above the
@@ -2474,11 +2593,16 @@
     (update-completions-size!)
     ;; A terminal too small for the splits collapses back to one window.
     (when (and (pair? (cdr windows))
-               (< (- rows echo-height (length windows))
-                  (* 2 (length windows))))
-      (set! windows (list current-window)))
+               (< (- rows echo-height (length bands))
+                  (* 2 (length bands))))
+      (set-bands! (list (list current-window))))
     (let* ([layout (window-layout)]
-           [view (list rows cols (map cdr layout)
+           [view (list rows cols
+                       (map (lambda (entry)
+                              (list (cadr entry) (caddr entry)
+                                    (window-xoff (car entry))
+                                    (window-width (car entry))))
+                            layout)
                        (map window-wrapped? windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                 layout)
@@ -2488,6 +2612,7 @@
           (for-each (lambda (entry)
                       (native-scroll! (car entry) (cadr entry) (caddr entry)))
                     layout))
+      (paint-dividers! layout)
       (let ([ranges (highlight-ranges)])
         (for-each (lambda (entry)
                     (paint-window! (car entry) (cadr entry) (caddr entry) ranges)
@@ -2503,9 +2628,9 @@
     (let ([entry (assq w (window-layout))])
       (if (window-wrapped? w)
           (cons (+ (cadr entry) (rows-before w prow pcol) 1)
-                (+ (mod pcol (wrap-width)) 1))
+                (+ (window-xoff w) (mod pcol (wrap-width w)) 1))
           (cons (+ (cadr entry) (- prow (window-top w)) 1)
-                (+ (- pcol (window-left w)) 1)))))
+                (+ (window-xoff w) (- pcol (window-left w)) 1)))))
 
   (define (place-cursor!)
     ;; Park the cursor in the echo area (a prompt, or a running
@@ -2630,7 +2755,7 @@
        (set! completions-labels labels)
        (completions-layout! labels)
        #t]
-      [(let ([n (length windows)])
+      [(let ([n (length bands)])
          (>= (- rows echo-height (+ n 1))
              (+ (* n (min-window-lines)) 1)))
        (set! completions-buffer (new-buffer "*Completions*"))
@@ -2638,10 +2763,11 @@
        (buffer-mode-set! completions-buffer (completions-mode))
        (set! completions-labels labels)
        (completions-layout! labels)
-       (let ([w (make-window completions-buffer 0 0 0 0 0 #f 1 1 #f)])
-         (set! windows (append windows (list w)))
+       (let ([w (make-window completions-buffer 0 0 0 0 0 #f 1 1 0 0 1 #f)])
+         (set-bands! (append bands (list (list w))))
          (set! completions-restore
-           (lambda () (set! windows (remq w windows)))))
+           (lambda ()
+             (set-bands! (map (lambda (b) (remq w b)) bands)))))
        #t]
       [else #f]))
 
@@ -2653,10 +2779,9 @@
       (when w
         (unless (= completions-cols cols)        ; the width changed
           (completions-layout! completions-labels))
-        (let* ([others (remq w windows)]
-               [text (- rows echo-height (length windows))]
+        (let* ([text (- rows echo-height (length bands))]
                [avail (max 1 (- text (* (min-window-lines)
-                                        (length others))))]
+                                        (- (length bands) 1))))]
                [all (max 1 (vector-length completions-rows))]
                [size (min all avail)])
           (set! completions-pages (div (+ all size -1) size))
@@ -3082,13 +3207,18 @@
     (set! message (format "Mouse ~a" (if on "on" "off")))
     (void))
 
-  (define (window-under-row r0 receiver)
+  (define (window-at x0 r0 receiver)
     ;; Call receiver with the layout entry containing 0-based screen
-    ;; row r0 (text rows or the status line); #f when r0 is echo area.
+    ;; position (x0, r0) (text rows or the status line); #f in the
+    ;; echo area or on a divider.
     (let loop ([entries (window-layout)])
       (cond [(null? entries) #f]
-            [(<= (cadr (car entries)) r0
-                 (+ (cadr (car entries)) (caddr (car entries))))
+            [(and (<= (cadr (car entries)) r0
+                      (+ (cadr (car entries)) (caddr (car entries))))
+                  (<= (window-xoff (caar entries)) x0
+                      (+ (window-xoff (caar entries))
+                         (window-width (caar entries))
+                         -1)))
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
@@ -3118,6 +3248,46 @@
 
   ;; The window whose status bar is being dragged to resize it, or #f.
   (define drag-status #f)
+  (define drag-divider #f)   ; (left . right) columns astride the bar
+
+  (define (divider-at x0 r0)
+    ;; The (left . right) column pair whose divider bar sits at
+    ;; 0-based screen (x0, r0); #f elsewhere.
+    (let ([layout (window-layout)])
+      (let bloop ([bs bands])
+        (and (pair? bs)
+             (let* ([band (car bs)]
+                    [entry (assq (car band) layout)])
+               (if (and entry (pair? (cdr band))
+                        (<= (cadr entry) r0
+                            (+ (cadr entry) (caddr entry))))
+                   (let wloop ([ws band])
+                     (cond [(null? (cdr ws)) #f]
+                           [(= x0 (- (window-xoff (cadr ws)) 1))
+                            (cons (car ws) (cadr ws))]
+                           [else (wloop (cdr ws))]))
+                   (bloop (cdr bs))))))))
+
+  (define (transfer-width! w partner delta)
+    ;; Move up to delta columns from partner to w -- neighbors in one
+    ;; band -- keeping the split minimum; like transfer-lines!, the
+    ;; trade adjusts width goals, scaled so the bar moves as dragged.
+    (let* ([m 20]
+           [delta (min delta (- (window-width partner) m))]
+           [delta (max delta (- m (window-width w)))]
+           [band (window-band w)]
+           [ssum (fold-left + 0 (map window-width band))]
+           [gsum (fold-left + 0 (map (lambda (x) (max 1 (window-wgoal x)))
+                                     band))])
+      (unless (= delta 0)
+        (let ([g (if (<= ssum 0)
+                     delta
+                     (let ([g (round (/ (* delta gsum) ssum))])
+                       (if (= g 0) (if (> delta 0) 1 -1) g)))])
+          (window-wgoal-set! w (max 1 (+ (max 1 (window-wgoal w)) g)))
+          (window-wgoal-set! partner
+                             (max 1 (- (max 1 (window-wgoal partner))
+                                       g)))))))
 
   (define (window-position w start height x y)
     ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
@@ -3125,15 +3295,15 @@
     ;; so the band row is walked through the segment counts.
     (let* ([v (buffer-lines (window-buffer w))]
            [k (max 0 (- y 1 start))]
-           [col (max 0 (- x 1))])
+           [col (max 0 (- x 1 (window-xoff w)))])
       (if (window-wrapped? w)
           (let loop ([i (window-top w)] [k (+ k (window-topseg w))])
             (if (>= i (vector-length v))
                 (cons (max 0 (- (vector-length v) 1)) col)
                 (let ([segs (line-segments w (vector-ref v i))])
                   (if (< k segs)
-                      (cons i (+ (* k (wrap-width))
-                                 (min col (- (wrap-width) 1))))
+                      (cons i (+ (* k (wrap-width w))
+                                 (min col (- (wrap-width w) 1))))
                       (loop (+ i 1) (- k segs))))))
           (cons (+ (window-top w) k) (+ (window-left w) col)))))
 
@@ -3147,51 +3317,62 @@
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
     (set! drag-status #f)
+    (set! drag-divider #f)
     (let ([prev last-press]
           [now (real-time)])
       (set! last-press (list x y now))
-      (window-under-row (- y 1)
-        (lambda (entry)
-          (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-            (set! current-window w)
-            (cond
-              [(= (- y 1) (+ start height))        ; the status bar
-               (when (pair? (cdr (memq w windows)))
-                 (set! drag-status w))]
-              [else                                ; a text row
-               (goto-point! (window-position w start height x y))
-               (set! mark-row point-row)
-               (set! mark-col point-col)
-               (set! mark-active? #f)
-               (when (and prev
+      (cond
+        [(divider-at (- x 1) (- y 1)) =>
+         (lambda (pair) (set! drag-divider pair))]
+        [else
+         (window-at (- x 1) (- y 1)
+           (lambda (entry)
+             (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+               (set! current-window w)
+               (cond
+                 [(= (- y 1) (+ start height))        ; the status bar
+                  (when (pair? (cdr (memq (window-band w) bands)))
+                    (set! drag-status w))]
+                 [else                                ; a text row
+                  (goto-point! (window-position w start height x y))
+                  (set! mark-row point-row)
+                  (set! mark-col point-col)
+                  (set! mark-active? #f)
+                  (when (and prev
                           (= (car prev) x) (= (cadr prev) y)
                           (< (- now (caddr prev)) 450))
-                 (select-word!))]))))))
+                    (select-word!))]))))])))
 
   (define (mouse-drag! x y)
-    ;; A status-bar drag resizes; otherwise extend the selection armed
-    ;; by the press -- the mark activates and point follows the pointer
-    ;; within the focused window's text area.
-    (if drag-status
-        (let ([entry (assq drag-status (window-layout))])
-          (when entry
-            (let ([delta (- (- y 1) (cadr entry) (caddr entry))])
-              (unless (= delta 0)
-                (transfer-lines! drag-status
-                                 (cadr (memq drag-status windows))
-                                 delta)))))
-        (window-under-row (- y 1)
-          (lambda (entry)
-            (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-              (when (and (eq? w current-window)
-                         (< (- y 1) (+ start height)))
-                (set! mark-active? #t)
-                (goto-point! (window-position w start height x y))))))))
+    ;; A status-bar drag resizes bands, a divider drag resizes its
+    ;; columns; otherwise extend the selection armed by the press --
+    ;; the mark activates and point follows the pointer within the
+    ;; focused window's text area.
+    (cond
+      [drag-divider
+       (let ([delta (- x (window-xoff (cdr drag-divider)))])
+         (unless (= delta 0)
+           (transfer-width! (car drag-divider) (cdr drag-divider) delta)))]
+      [drag-status
+       (let ([entry (assq drag-status (window-layout))])
+         (when entry
+           (let ([delta (- (- y 1) (cadr entry) (caddr entry))])
+             (unless (= delta 0)
+               (let ([tail (memq (window-band drag-status) bands)])
+                 (transfer-lines! (car tail) (cadr tail) delta))))))]
+      [else
+       (window-at (- x 1) (- y 1)
+         (lambda (entry)
+           (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+             (when (and (eq? w current-window)
+                        (< (- y 1) (+ start height)))
+               (set! mark-active? #t)
+               (goto-point! (window-position w start height x y))))))]))
 
-  (define (mouse-wheel! y mover)
+  (define (mouse-wheel! x y mover)
     ;; Scroll the window under the pointer by moving its point (redraw
     ;; scrolls it to follow); the focused window stays focused.
-    (window-under-row (- y 1)
+    (window-at (- x 1) (- y 1)
       (lambda (entry)
         (let ([old current-window])
           (set! current-window (car entry))
@@ -3225,9 +3406,11 @@
                                            acc)]))])
             (when (and (char? c) (= (length nums) 3))
               (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
-                (cond [(char=? c #\m) (set! drag-status #f)]     ; release
+                (cond [(char=? c #\m)                           ; release
+                       (set! drag-status #f)
+                       (set! drag-divider #f)]
                       [(= (bitwise-and b 64) 64)                 ; wheel
-                       (mouse-wheel! y (wheel-mover (bitwise-and b 3)))]
+                       (mouse-wheel! x y (wheel-mover (bitwise-and b 3)))]
                       [(= (bitwise-and b 32) 32)                 ; drag
                        (when (< (bitwise-and b 3) 3)
                          (mouse-drag! x y))]
@@ -3361,6 +3544,7 @@
          [(48) (delete-window!)]                               ; C-x 0
          [(49) (delete-other-windows!)]                        ; C-x 1
          [(50) (split-window!)]                                ; C-x 2
+         [(51) (split-window-right!)]                          ; C-x 3
          [(116) (wrap!)]                                       ; C-x t
          [else (set! message "C-x is undefined for that key")])]))
 
