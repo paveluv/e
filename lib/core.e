@@ -24,7 +24,7 @@
     switch-buffer!! kill-buffer!!
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
-    resize-window! wrap! wrap-lines
+    resize-window! wrap! wrap-lines column-native-scroll
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
@@ -38,7 +38,7 @@
     register-indenter! register-formatter!
     add-status-hint!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
-    load-config! indent-on-tab!
+    load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook!
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
     min-window-lines
@@ -2168,6 +2168,33 @@
     (ansi "\x1b;[2J")
     (invalidate-screen-cache!))
 
+  ;; Side-by-side columns can scroll natively too -- on terminals
+  ;; with VT420 left/right margins (DECLRMM/DECSLRM: xterm, iTerm2,
+  ;; WezTerm, foot, ...), the scroll then moves just the column's
+  ;; rectangle.  Off by default: a terminal without the feature would
+  ;; scroll the neighbors along.  (column-native-scroll #t) in
+  ;; config.e turns it on.
+  (define column-native-scroll (make-parameter #f))
+
+  (define (shift-column-cache! xoff delta start height)
+    ;; shift-screen-cache!, but only the keys of the column at xoff.
+    (define (seg-at i)
+      (let ([e (vector-ref screen-cache i)])
+        (and (pair? e) (assv xoff e))))
+    (define (seg-set! i hit)
+      (let* ([e (vector-ref screen-cache i)]
+             [old (and (pair? e) (assv xoff e))]
+             [rest (if old (remq old e) (or e '()))])
+        (vector-set! screen-cache i
+                     (if hit (cons (cons xoff (cdr hit)) rest) rest))))
+    (let ([end (+ start height)])
+      (if (> delta 0)
+          (do ([i start (+ i 1)]) ((= i end))
+            (seg-set! i (and (< (+ i delta) end) (seg-at (+ i delta)))))
+          (do ([i (- end 1) (- i 1)]) ((< i start))
+            (seg-set! i (and (>= (+ i delta) start)
+                             (seg-at (+ i delta))))))))
+
   (define (shift-screen-cache! delta start height)
     ;; Mirror a native delta-row terminal scroll in cache rows
     ;; [start, start+height); rows the scroll uncovered become #f.
@@ -2214,14 +2241,26 @@
                                              (and n (- n))))])
                                 (and d (+ d (- ts ss))))
                               (- t s))))])
-      (when (and vdelta (not (= vdelta 0)) (< (abs vdelta) height)
-                 (= (window-width w) cols))    ; region scrolls span rows
-        (ansi "\x1b;[?25l"
-              "\x1b;[" (number->string (+ start 1)) ";"
-              (number->string (+ start height)) "r"
-              (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
-              "\x1b;[r")
-        (shift-screen-cache! vdelta start height))))
+      (when (and vdelta (not (= vdelta 0)) (< (abs vdelta) height))
+        (cond
+          [(= (window-width w) cols)
+           (ansi "\x1b;[?25l"
+                 "\x1b;[" (number->string (+ start 1)) ";"
+                 (number->string (+ start height)) "r"
+                 (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
+                 "\x1b;[r")
+           (shift-screen-cache! vdelta start height)]
+          [(column-native-scroll)
+           ;; margins on, the column's rectangle, scroll, margins off
+           (ansi "\x1b;[?25l\x1b;[?69h"
+                 (format "\x1b;[~a;~as"
+                         (+ (window-xoff w) 1)
+                         (+ (window-xoff w) (window-width w)))
+                 "\x1b;[" (number->string (+ start 1)) ";"
+                 (number->string (+ start height)) "r"
+                 (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
+                 "\x1b;[r\x1b;[s\x1b;[?69l")
+           (shift-column-cache! (window-xoff w) vdelta start height)]))))
 
   (define (paint-dividers! layout)
     ;; The vertical line between side-by-side columns, through their
@@ -3753,6 +3792,88 @@
                (parameterize ([registering-module 'config])
                  (load path))
                #t)))))
+
+  (define (probe-terminal!)
+    ;; Cooperative feature detection, for M-x: asks the terminal about
+    ;; VT420 left/right margins (DECRQM chased by DA1, which every
+    ;; terminal answers), falls back to a visual test you judge when
+    ;; the protocol is silent on the question, applies the verdict to
+    ;; column-native-scroll for the session, and offers to record it
+    ;; in config.e.  The probe owns the keyboard for the moment: run
+    ;; it, don't type into it.
+    (define (gather deadline)
+      ;; everything the terminal sends until DA1's final c (or time out)
+      (let loop ([acc '()])
+        (cond
+          [(char-ready? stdin)
+           (let ([c (read-char stdin)])
+             (cond [(eof-object? c) (list->string (reverse acc))]
+                   [(char=? c #\c) (list->string (reverse (cons c acc)))]
+                   [else (loop (cons c acc))]))]
+          [(> (real-time) deadline) (list->string (reverse acc))]
+          [else (sleep (make-time 'time-duration 10000000 0)) (loop acc)])))
+    (define (visual-test!)
+      ;; two half-and-half rows at the top; scroll the left half up by
+      ;; one inside margins -- a supporting terminal shows C's beside
+      ;; B's on the first row
+      (parameterize ([message-source #f])
+        (set-message! "Top row all C's then B's?  y or n"))
+      (redraw!)
+      (let ([half (max 4 (div cols 2))])
+        (ansi "\x1b;[?25l"
+              "\x1b;[1;1H" (make-string half #\A)
+              (make-string (- cols half) #\B)
+              "\x1b;[2;1H" (make-string half #\C)
+              (make-string (- cols half) #\D)
+              "\x1b;[?69h" (format "\x1b;[1;~as" half)
+              "\x1b;[1;2r" "\x1b;[1S"
+              "\x1b;[r\x1b;[s\x1b;[?69l")
+        (flush-output-port stdout)
+        (let ([k (read-key)])
+          (invalidate-screen-cache!)
+          (and k (memv (char->integer k) '(121 89))))))
+    (parameterize ([message-source #f])
+      (set-message! "Probing the terminal..."))
+    (redraw!)
+    (ansi "\x1b;[?69$p" "\x1b;[c")
+    (flush-output-port stdout)
+    (let* ([reply (gather (+ (real-time) 300))]
+           [says (lambda (s)
+                   (string-search reply s 0 (string-length reply)))]
+           [verdict (cond
+                      [(or (says "[?69;1$y") (says "[?69;2$y")) 'yes]
+                      [(or (says "[?69;0$y") (says "[?69;4$y")) 'no]
+                      [(says "c") 'ask]         ; DA1 came, DECRQM didn't
+                      [else 'silent])])
+      (case verdict
+        [(silent)
+         (parameterize ([message-source 'probe-terminal!])
+           (set-message! "No reply -- not an interactive terminal?"))]
+        [else
+         (let ([margins? (case verdict
+                           [(yes) #t]
+                           [(no) #f]
+                           [else (visual-test!)])])
+           (column-native-scroll margins?)
+           (parameterize ([message-source 'probe-terminal!])
+             (set-message!
+               (format "Left/right margins ~a: column-native-scroll ~a"
+                       (if margins? "supported" "not supported")
+                       (if margins? "on" "off"))))
+           (let* ([k (query-key!
+                       (format "Record (column-native-scroll ~a) in config.e? (y or n)"
+                               (if margins? "#t" "#f")))]
+                  [n (and k (char->integer k))])
+             (when (memv n '(121 89))
+               (call-with-output-file (config-file)
+                 (lambda (p)
+                   (put-string p
+                     (format "(column-native-scroll ~a)   ; recorded by probe-terminal!\n"
+                             (if margins? "#t" "#f"))))
+                 'append)
+               (parameterize ([message-source 'probe-terminal!])
+                 (set-message! "Recorded in config.e")))))]))
+    (void))
 
   (define (reload-on-save! path)
     ;; The post-save hook.  A reload that fails (a module saved mid-edit,

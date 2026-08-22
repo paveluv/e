@@ -86,7 +86,12 @@ Each window has its own status line, point, and scroll position; the
 same buffer can be shown in several windows at once.  `C-x 3` puts
 windows side by side -- columns sharing a band of rows, a grey divider
 between them, each wrapping at its own width; `C-x 2` under such a
-band splits below the whole band. Windows resize by
+band splits below the whole band.  Columns repaint when they scroll;
+on a terminal with VT420 left/right margins (xterm, iTerm2, WezTerm,
+foot, ...), `(column-native-scroll #t)` in config.e lets them scroll
+natively like full-width windows -- `M-x (probe-terminal!)` detects
+the support cooperatively (asking the terminal, and you, when its
+protocol is silent) and offers to record the line in config.e. Windows resize by
 dragging a status bar (or a column divider) with the mouse, or with
 `M-x (resize-window! n)`, which grows the current window by n text
 lines (negative shrinks), trading lines with its neighbor; splits halve
