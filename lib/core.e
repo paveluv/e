@@ -207,6 +207,8 @@
   ;; remains of the screen.
   (define echo-cursor #f)   ; content index to park the cursor at, or #f
   (define echo-indent #f)   ; prompt continuation indent; #f = no prompt
+  (define echo-input-end #f) ; content index past the prompt's input,
+                             ; before any completion note
   (define echo-height 1)
   (define echo-scroll 0)
   (define echo-spans '((0 . 0)))
@@ -3135,6 +3137,7 @@
         (define (cursor-on-bottom?)
           (= (car (echo-position echo-cursor)) (- (length echo-spans) 1)))
         (set! message (string-append label s note))
+        (set! echo-input-end (+ (string-length label) len))
         (set! message-ghost
           (if (string=? note "") (or ((prompt-ghost) s) "") ""))
         (set! echo-indent (string-length label))
@@ -3247,6 +3250,7 @@
           (lambda ()
             (set! echo-cursor #f)
             (set! echo-indent #f)
+            (set! echo-input-end #f)
             (set! echo-scroll 0)
             (set! message-ghost "")
             (dismiss-completions!))))))
@@ -3267,10 +3271,39 @@
 
   (define (pending-input?) (char-ready? stdin))
 
+  (define (file-prompt-styler label)
+    ;; Existence shown in the face, component-wise: the typed path's
+    ;; longest leading run of components that exists on disk stays
+    ;; upright, the rest leans italic -- so a TAB that landed on a
+    ;; mere common prefix (no such file yet) is telling at a glance,
+    ;; without another TAB to ask.
+    (let ([llen (string-length label)])
+      (define (exists? p)
+        (guard (ex [else #f]) (file-exists? (expand-path p))))
+      (lambda (content)
+        (let* ([v (make-vector (string-length content) 'plain)]
+               [end (min (or echo-input-end (string-length content))
+                         (string-length content))]
+               [path (substring content (min llen end) end)]
+               [split                    ; length of the existing prefix
+                (let loop ([k (string-length path)])
+                  (cond [(= k 0) 0]
+                        [(exists? (substring path 0 k)) k]
+                        [else (loop (let prev ([i (- k 2)])
+                                      (cond [(< i 0) 0]
+                                            [(char=? (string-ref path i) #\/)
+                                             (+ i 1)]
+                                            [else (prev (- i 1))])))]))])
+          (vector-fill-range! v (+ llen split) end 'italic)
+          v))))
+
   (define (save!!)
     (if file-name
         (save-file! file-name)
-        (let ([s (prompt! "Write file: " complete-file-name (default-directory))])
+        (let ([s (parameterize ([echo-highlight
+                                 (file-prompt-styler "Write file: ")])
+                   (prompt! "Write file: " complete-file-name
+                            (default-directory)))])
           (when (and s (> (string-length s) 0)) (save-file! s))))
     (void))
 
@@ -3278,11 +3311,12 @@
     ;; Prompt for a path -- prefilled with the current file, ready to
     ;; edit -- and save the buffer there: the buffer visits the new
     ;; file from then on, its name and mode following.
-    (let ([s (prompt! "Save as: " complete-file-name
-                      (if file-name
-                          (abbreviate-path (absolute-path file-name))
-                          (default-directory))
-                      (box (log-history 'save-file! cdr)))])
+    (let ([s (parameterize ([echo-highlight (file-prompt-styler "Save as: ")])
+               (prompt! "Save as: " complete-file-name
+                        (if file-name
+                            (abbreviate-path (absolute-path file-name))
+                            (default-directory))
+                        (box (log-history 'save-file! cdr))))])
       (when (and s (> (string-length s) 0)) (save-file! s)))
     (void))
 
@@ -3290,8 +3324,10 @@
     ;; Visiting a file never loses the old buffer, so no confirmation
     ;; needed.  Up and down browse the paths visited before, off the
     ;; log.
-    (let ([s (prompt! "Find file: " complete-file-name (default-directory)
-                      (box (log-history 'visit-file! cdr)))])
+    (let ([s (parameterize ([echo-highlight
+                             (file-prompt-styler "Find file: ")])
+               (prompt! "Find file: " complete-file-name (default-directory)
+                        (box (log-history 'visit-file! cdr))))])
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
   (define (quit!!)
