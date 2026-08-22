@@ -2507,25 +2507,50 @@
           (ansi "\x1b;[0m" (style-code st) (substring content i j))
           (emit j)))))
 
-  (define (display-echo-log-line prefix text styler)
-    ;; One transient-log row: the component prefix grey, the text
-    ;; under its component's styler, cut to the width.
-    (let* ([prefix (if (> (string-length prefix) cols)
-                       (substring prefix 0 cols)
-                       prefix)]
-           [avail (- cols (string-length prefix))]
-           [shown (if (> (string-length text) avail)
-                      (substring text 0 (max 0 avail))
-                      text)]
+  (define (echo-log-prefix e)
+    (let ([p (format "~a: " (car e))])
+      (if (> (string-length p) cols) (substring p 0 cols) p)))
+
+  (define (echo-log-spans prefix-len len)
+    ;; Content index ranges of a transient-log entry's visual rows: a
+    ;; long line wraps rather than being cut -- there is no way to
+    ;; scroll past the echo area's edge.  The first row follows the
+    ;; prefix, continuations indent to it (capped at half the width),
+    ;; and every wrapped row gives its last column to the wrap mark.
+    (let ([indent (min prefix-len (quotient cols 2))])
+      (let loop ([start 0] [first? #t] [acc '()])
+        (let ([avail (max 1 (- cols (if first? prefix-len indent)))])
+          (if (<= (- len start) avail)
+              (reverse (cons (cons start len) acc))
+              (let ([take (max 1 (- avail 1))])
+                (loop (+ start take) #f
+                      (cons (cons start (+ start take)) acc))))))))
+
+  (define (echo-log-rows e)
+    (length (echo-log-spans (string-length (echo-log-prefix e))
+                            (string-length (cadr e)))))
+
+  (define (display-echo-log-row prefix text styler k span wrapped?)
+    ;; One visual row of a transient-log entry: the grey prefix on the
+    ;; first, its indent on continuations, the slice under the
+    ;; component's styler, a mark closing every wrapped row.
+    (let* ([lead (if (= k 0)
+                     prefix
+                     (make-string (min (string-length prefix)
+                                       (quotient cols 2))
+                                  #\space))]
+           [start (car span)]
+           [end (cdr span)]
            [styles (and styler (guard (ex [else #f]) (styler text)))])
-      (ansi "\x1b;[0m\x1b;[90m" prefix)
+      (ansi "\x1b;[0m\x1b;[90m" lead)
       (if styles
-          (emit-runs shown styles 0 (string-length shown))
-          (ansi "\x1b;[0m" shown))
+          (emit-runs text styles start end)
+          (ansi "\x1b;[0m" (substring text start end)))
       (ansi "\x1b;[0m"
-            (make-string (max 0 (- cols (string-length prefix)
-                                   (string-length shown)))
-                         #\space))))
+            (make-string (max 0 (- cols (string-length lead) (- end start)
+                                   (if wrapped? 1 0)))
+                         #\space)
+            (if wrapped? "\\" ""))))
 
   (define (paint-echo-area!)
     ;; Paint the pending transient-log lines, then the visible
@@ -2535,12 +2560,24 @@
     (update-echo-geometry!)
     (let loop ([es echo-pending] [row (- rows echo-height)])
       (when (pair? es)
-        (let ([e (car es)])
-          (paint! row 0 (cons 'echo-log e)
-                  (lambda ()
-                    (display-echo-log-line (format "~a: " (car e))
-                                           (cadr e) (caddr e)))))
-        (loop (cdr es) (+ row 1))))
+        (let* ([e (car es)]
+               [prefix (echo-log-prefix e)]
+               [spans (echo-log-spans (string-length prefix)
+                                      (string-length (cadr e)))]
+               [limit (- rows echo-live-height)])
+          ;; the entry's rows in turn; clipped at the area's edge when
+          ;; a single entry alone overflows the cap (the tail is in
+          ;; *log*)
+          (let rloop ([spans spans] [k 0] [row row])
+            (if (or (null? spans) (>= row limit))
+                (loop (cdr es) row)
+                (let ([span (car spans)]
+                      [wrapped? (pair? (cdr spans))])
+                  (paint! row 0 (list 'echo-log e k span wrapped?)
+                          (lambda ()
+                            (display-echo-log-row prefix (cadr e) (caddr e)
+                                                  k span wrapped?)))
+                  (rloop (cdr spans) (+ k 1) (+ row 1))))))))
     (when (> echo-live-height 0)
       (let* ([content (string-append message message-ghost)]
              [ghost-at (string-length message)]
@@ -2735,12 +2772,20 @@
              [live (if (or cursor (> len 0) (null? echo-pending))
                        (min total (max 1 (min 8 (- rows 3))))
                        0)]
-             [room (max (if (= live 0) 1 0) (- (echo-cap) live))])
-        (when (> (length echo-pending) room)
-          (set! echo-pending
-            (list-tail echo-pending (- (length echo-pending) room))))
+             [room (max (if (= live 0) 1 0) (- (echo-cap) live))]
+             [pending-rows (lambda ()
+                             (fold-left + 0 (map echo-log-rows
+                                                 echo-pending)))])
+        ;; a long entry wraps over several rows, so eviction counts
+        ;; rows, whole oldest entries first; a lone entry past the cap
+        ;; stays, clipped by the painter
+        (let drop ()
+          (when (and (pair? echo-pending) (pair? (cdr echo-pending))
+                     (> (pending-rows) room))
+            (set! echo-pending (cdr echo-pending))
+            (drop)))
         (set! echo-live-height live)
-        (set! echo-height (+ live (length echo-pending)))
+        (set! echo-height (+ live (min room (pending-rows))))
         (when cursor
           (let ([line (car (echo-position cursor))])
             (when (< line echo-scroll) (set! echo-scroll line))
