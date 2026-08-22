@@ -2346,7 +2346,10 @@
                                              (and n (- n))))])
                                 (and d (+ d (- ts ss))))
                               (- t s))))])
-      (when (and vdelta (not (= vdelta 0)) (< (abs vdelta) height))
+      ;; Worth it only while most rows survive the shift: a page-sized
+      ;; scroll visibly flings the window's content before overwriting
+      ;; nearly all of it anyway, where an in-place repaint sits still.
+      (when (and vdelta (not (= vdelta 0)) (<= (* 2 (abs vdelta)) height))
         (cond
           [(= (window-width w) cols)
            (ansi "\x1b;[?25l"
@@ -2747,6 +2750,11 @@
           (max 0 (min echo-scroll (- total (max live 1))))))))
 
   (define (redraw!)
+    ;; The frame goes out inside a synchronized update (mode 2026):
+    ;; a supporting terminal holds rendering until the closing pair,
+    ;; so a scroll and the repaint over it appear as one; others
+    ;; ignore the mode.
+    (ansi "\x1b;[?2026h")
     (terminal-size!)
     (update-echo-geometry!)
     (refresh-visible-views!)
@@ -2781,7 +2789,9 @@
                                                  (window-topseg (car entry)))))
                   layout))
       (paint-echo-area!))
-    (place-cursor!))
+    (place-cursor!)
+    (ansi "\x1b;[?2026l")
+    (flush-output-port stdout))
 
   (define (window-screen-position w prow pcol)
     ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
