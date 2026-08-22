@@ -3,10 +3,13 @@
 ;; An e extension module: the library (scheme-mode), loaded at startup by
 ;; the core, which calls init!.  Registers a mode tied to Scheme file
 ;; extensions and to #! interpreter lines naming a Scheme, so only Scheme
-;; buffers are highlighted.  The style symbols it produces are rendered
-;; by the editor's style-code, and brackets styled 'delimiter take part
-;; in bracket matching (so brackets inside strings and comments don't
-;; count).
+;; buffers are highlighted.  Lines are lexed individually, but whether a
+;; line starts inside a string constant or a #| |# block comment comes
+;; from a whole-buffer scan, memoized per buffer and redone only when
+;; some line changed (the c-mode pattern), so both span lines correctly.
+;; The style symbols it produces are rendered by the editor's
+;; style-code, and brackets styled 'delimiter take part in bracket
+;; matching (so brackets inside strings and comments don't count).
 
 (library (scheme-mode)
   (export init! scheme-format-on-save)
@@ -64,11 +67,41 @@
            'plain]
           [else 'italic]))
 
-  (define (scheme-styles s)
-    (let* ([n (string-length s)]
-           [styles (make-vector n 'plain)])
-      (let loop ([i 0])
-        (when (< i n)
+  (define (scheme-line-styles s state)
+    ;; One line's styles, given the state it starts in: #f (plain
+    ;; code), 'string (inside a string constant), or the nesting
+    ;; depth of an open #| |# block comment.  -> (values styles the
+    ;; state at the end of the line).
+    (define n (string-length s))
+    (define styles (make-vector n 'plain))
+    (define (string-body i)
+      ;; a string's continuation from i (past its opening quote):
+      ;; escapes honored -- a backslash may escape the newline itself,
+      ;; carrying the string on; unterminated it spans the line
+      (let body ([j i] [escaped? #f])
+        (cond [(= j n) (vector-fill-range! styles i n 'string) 'string]
+              [(and (char=? (string-ref s j) #\") (not escaped?))
+               (vector-fill-range! styles i (+ j 1) 'string)
+               (scan (+ j 1))]
+              [else (body (+ j 1) (and (char=? (string-ref s j) #\\)
+                                       (not escaped?)))])))
+    (define (comment-body i depth)
+      ;; inside #| |# from i, nesting honored
+      (let body ([j i] [depth depth])
+        (cond [(>= j n) (vector-fill-range! styles i n 'comment) depth]
+              [(and (char=? (string-ref s j) #\|) (< (+ j 1) n)
+                    (char=? (string-ref s (+ j 1)) #\#))
+               (if (= depth 1)
+                   (begin (vector-fill-range! styles i (+ j 2) 'comment)
+                          (scan (+ j 2)))
+                   (body (+ j 2) (- depth 1)))]
+              [(and (char=? (string-ref s j) #\#) (< (+ j 1) n)
+                    (char=? (string-ref s (+ j 1)) #\|))
+               (body (+ j 2) (+ depth 1))]
+              [else (body (+ j 1) depth)])))
+    (define (scan i)
+      (if (>= i n)
+          #f
           (let ([c (string-ref s i)])
             (cond
               [(and (char=? c #\#) (< (+ i 1) n)
@@ -80,23 +113,22 @@
                  (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
                      (lit-loop (+ j 1))
                      (begin (vector-fill-range! styles i j 'literal)
-                            (loop j))))]
+                            (scan j))))]
+              [(and (char=? c #\#) (< (+ i 1) n)
+                    (char=? (string-ref s (+ i 1)) #\|))
+               (vector-fill-range! styles i (+ i 2) 'comment)
+               (comment-body (+ i 2) 1)]
               [(char=? c #\;)
-               (vector-fill-range! styles i n 'comment)]
+               (vector-fill-range! styles i n 'comment)
+               #f]
               [(char=? c #\")
-               (let string-loop ([j (+ i 1)] [escaped? #f])
-                 (cond [(= j n) (vector-fill-range! styles i n 'string)]
-                       [(and (char=? (string-ref s j) #\") (not escaped?))
-                        (vector-fill-range! styles i (+ j 1) 'string)
-                        (loop (+ j 1))]
-                       [else
-                        (string-loop (+ j 1)
-                                     (and (char=? (string-ref s j) #\\) (not escaped?)))]))]
+               (vector-set! styles i 'string)
+               (string-body (+ i 1))]
               [(memv c '(#\( #\) #\[ #\] #\{ #\}))
-               (vector-set! styles i 'delimiter) (loop (+ i 1))]
+               (vector-set! styles i 'delimiter) (scan (+ i 1))]
               [(memv c '(#\' #\` #\,))
-               (vector-set! styles i 'quote) (loop (+ i 1))]
-              [(char-whitespace? c) (loop (+ i 1))]
+               (vector-set! styles i 'quote) (scan (+ i 1))]
+              [(char-whitespace? c) (scan (+ i 1))]
               [else
                (let token-loop ([j (+ i 1)])
                  (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
@@ -104,8 +136,56 @@
                      (begin
                        (vector-fill-range! styles i j
                          (scheme-token-style (substring s i j)))
-                       (loop j))))]))))
+                       (scan j))))]))))
+    (values styles
+            (cond [(eq? state 'string) (string-body 0)]
+                  [(number? state) (comment-body 0 state)]
+                  [else (scan 0)])))
+
+  (define (scheme-styles s)
+    ;; The per-line fallback (md-mode borrows it for code inside
+    ;; fences): lexed as if outside any string or block comment.
+    (let-values ([(styles state) (scheme-line-styles s #f)])
       styles))
+
+  (define (analyze v)
+    ;; Every line's styles, the string/block-comment state threaded
+    ;; through.
+    (let ([out (make-vector (vector-length v))])
+      (let loop ([i 0] [state #f])
+        (if (= i (vector-length v))
+            out
+            (let-values ([(styles next)
+                          (scheme-line-styles (vector-ref v i) state)])
+              (vector-set! out i styles)
+              (loop (+ i 1) next))))))
+
+  (define (lines-eq? a b)
+    (and (= (vector-length a) (vector-length b))
+         (let loop ([i 0])
+           (or (= i (vector-length a))
+               (and (eq? (vector-ref a i) (vector-ref b i))
+                    (loop (+ i 1)))))))
+
+  (define (memoized analyze)
+    ;; A per-buffer memo of a whole-buffer analysis, redone only when
+    ;; some line changed (slot-eq? snapshot compare).  -> (b row) ->
+    ;; the analysis row, or #f past the end.
+    (let ([cache (make-weak-eq-hashtable)])
+      (lambda (b row)
+        (let* ([v (buffer-vector b)]
+               [hit (eq-hashtable-ref cache b #f)])
+          (unless (and hit (lines-eq? (car hit) v))
+            (set! hit (cons v (analyze v)))
+            (eq-hashtable-set! cache b hit))
+          (let ([product (cdr hit)])
+            (and (< row (vector-length product))
+                 (vector-ref product row)))))))
+
+  (define scheme-row (memoized analyze))
+
+  (define (scheme-row-styles b row line)
+    (scheme-row b row))
 
   ;;; Indentation and formatting ------------------------------------------------
 
@@ -133,7 +213,7 @@
     (register-mode! "scheme"
                     '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
                     '("scheme" "petite" "chez" "guile" "racket")
-                    scheme-styles)
+                    scheme-styles #f scheme-row-styles)
     (register-indenter! "scheme" scheme-indent)
     (register-formatter! "scheme" scheme-format)
     (add-pre-save-hook! format-on-save!)))
