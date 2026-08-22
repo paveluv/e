@@ -714,12 +714,22 @@
           (string-append "~" (string-tail path (string-length home)))
           path)))
 
+  (define (absolute-path path)
+    ;; A relative path is relative to the process working directory,
+    ;; which never changes.
+    (if (or (string-prefix? "/" path) (string-prefix? "~" path))
+        path
+        (string-append (current-directory) "/" path)))
+
   (define (default-directory)
     ;; The directory of the current buffer's file (or the working
-    ;; directory), with a trailing slash, abbreviated for display.
+    ;; directory), with a trailing slash, absolute -- a file visited
+    ;; by a relative path has a relative directory-part, useless as a
+    ;; prompt offer on its own -- and abbreviated for display.
     (abbreviate-path
-      (or (and file-name (directory-part file-name))
-          (string-append (current-directory) "/"))))
+      (absolute-path
+        (or (and file-name (directory-part file-name))
+            (string-append (current-directory) "/")))))
 
   (define (complete-file-name s)
     ;; Completion candidates for the partial path s: the entries of its
@@ -3214,7 +3224,9 @@
     ;; edit -- and save the buffer there: the buffer visits the new
     ;; file from then on, its name and mode following.
     (let ([s (prompt! "Save as: " complete-file-name
-                      (or file-name (default-directory))
+                      (if file-name
+                          (abbreviate-path (absolute-path file-name))
+                          (default-directory))
                       (box (log-history 'save-file! cdr)))])
       (when (and s (> (string-length s) 0)) (save-file! s)))
     (void))
