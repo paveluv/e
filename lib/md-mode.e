@@ -5,8 +5,10 @@
 ;; the editor's per-line styles contract: headings, blockquotes, list
 ;; bullets, fences, and rules are recognized from the line start, then
 ;; code spans, bold, italics, and links inline.  Fenced code block
-;; *contents* are not highlighted specially -- a line-local highlighter
-;; cannot know it is inside a fence.
+;; contents need cross-line state -- whether a row sits inside ``` ```
+;; -- which a memoized whole-buffer scan provides (the c-mode
+;; pattern); code in Scheme documents is Scheme, so fence interiors
+;; delegate to the scheme mode, like indented blocks.
 
 (library (md-mode)
   (export init!)
@@ -111,5 +113,60 @@
              [else i0]))
          styles])))
 
+  (define (fence-line? s)
+    (let skip ([i 0])
+      (cond [(and (< i (string-length s))
+                  (char=? (string-ref s i) #\space))
+             (skip (+ i 1))]
+            [else (and (<= (+ i 3) (string-length s))
+                       (string=? (substring s i (+ i 3)) "```"))])))
+
+  (define (analyze v)
+    ;; Which rows sit inside a code fence.
+    (let ([out (make-vector (vector-length v) #f)])
+      (let loop ([i 0] [in #f])
+        (cond [(= i (vector-length v)) out]
+              [(fence-line? (vector-ref v i)) (loop (+ i 1) (not in))]
+              [else (when in (vector-set! out i 'code))
+                    (loop (+ i 1) in)]))))
+
+  (define (buffer-vector b)
+    (let* ([n (buffer-line-count b)]
+           [v (make-vector n)])
+      (do ([i 0 (+ i 1)]) ((= i n) v)
+        (vector-set! v i (buffer-line b i)))))
+
+  (define (lines-eq? a b)
+    (and (= (vector-length a) (vector-length b))
+         (let loop ([i 0])
+           (or (= i (vector-length a))
+               (and (eq? (vector-ref a i) (vector-ref b i))
+                    (loop (+ i 1)))))))
+
+  (define (memoized analyze)
+    ;; A per-buffer memo of a whole-buffer analysis, redone only when
+    ;; some line changed (slot-eq? snapshot compare).  -> (b row) ->
+    ;; the analysis row, or #f past the end.
+    (let ([cache (make-weak-eq-hashtable)])
+      (lambda (b row)
+        (let* ([v (buffer-vector b)]
+               [hit (eq-hashtable-ref cache b #f)])
+          (unless (and hit (lines-eq? (car hit) v))
+            (set! hit (cons v (analyze v)))
+            (eq-hashtable-set! cache b hit))
+          (let ([product (cdr hit)])
+            (and (< row (vector-length product))
+                 (vector-ref product row)))))))
+
+  (define md-row (memoized analyze))
+
+  (define (md-row-styles b row line)
+    ;; Inside a fence the line is Scheme; elsewhere #f falls back to
+    ;; the cached per-line markdown styles.
+    (and (eq? (md-row b row) 'code)
+         (let ([scheme (find-mode "scheme")])
+           (and scheme ((mode-styles scheme) line)))))
+
   (define (init!)
-    (register-mode! "markdown" '(".md" ".markdown") '() md-styles)))
+    (register-mode! "markdown" '(".md" ".markdown") '() md-styles
+                    #f md-row-styles)))

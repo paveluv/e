@@ -117,18 +117,27 @@
           (set! tt #f)
           (cond [(string=? content "") (void)]
                 [(find-str content "\n" 0)
-                 ;; a code block: markdown's four-space indentation (hard
-                 ;; spaces, so tidy keeps them), which md-mode styles as
-                 ;; Scheme line by line
-                 (put-string out "\n\n")
-                 (let loop ([i 0] [line-start #t])
-                   (when (< i (string-length content))
-                     (when line-start
-                       (put-string out (make-string 4 hard-space)))
-                     (let ([c (string-ref content i)])
-                       (put-char out c)
-                       (loop (+ i 1) (char=? c #\newline)))))
-                 (put-string out "\n\n")]
+                 ;; an example group: a fenced scheme block.  Each
+                 ;; line's soft leading spaces drop (artifacts of the
+                 ;; HTML source's own line wrapping); the hard
+                 ;; alignment spaces stay.
+                 (let* ([end (let trim ([e (string-length content)])
+                               (if (and (> e 0)
+                                        (memv (string-ref content (- e 1))
+                                              '(#\newline #\space)))
+                                   (trim (- e 1))
+                                   e))])
+                   (put-string out "\n\n```scheme\n")
+                   (let loop ([i 0] [line-start #t])
+                     (when (< i end)
+                       (let ([c (string-ref content i)])
+                         (cond
+                           [(and line-start (char=? c #\space))
+                            (loop (+ i 1) #t)]
+                           [else
+                            (put-char out c)
+                            (loop (+ i 1) (char=? c #\newline))]))))
+                   (put-string out "\n```\n\n"))]
                 [(find-str content "`" 0)
                  ;; a literal backtick inside: markdown's double-tick
                  ;; delimiters, spaces keeping the ticks apart
@@ -613,28 +622,33 @@
 
   (define (entry-lines entry)
     (append
-      (map (lambda (form)
-             (if (find-str (cdr form) "`" 0)
-                 ;; a template holding a backtick (quasiquote's
-                 ;; abbreviations): double-tick delimiters
-                 (format "**~a**: `` ~a ``" (car form) (cdr form))
-                 (format "**~a**: `~a`" (car form) (cdr form))))
-           (doc-forms entry))
-      (if (doc-returns entry)
-          (wrapped-lines (format "returns: ~a" (doc-returns entry)) 72)
-          '())
-      (if (pair? (doc-libraries entry))
-          (list (format "libraries: ~a"
-                        (string-join (doc-libraries entry) ", ")))
-          '())
-      (list (format "source: ~a, ~a"
-                    (case (doc-source entry)
-                      [(tspl) "TSPL4"]
-                      [(csug) "Chez Scheme User's Guide"]
-                      [else (doc-source entry)])
-                    (doc-chapter entry))
-            (format "url: ~a" (doc-browser-url entry))
-            "")
+      ;; the header block: each line carries markdown's hard break
+      ;; (two trailing spaces), so a renderer keeps them as lines
+      (map (lambda (l) (string-append l "  "))
+           (append
+             (map (lambda (form)
+                    (if (find-str (cdr form) "`" 0)
+                        ;; a template holding a backtick (quasiquote's
+                        ;; abbreviations): double-tick delimiters
+                        (format "**~a**: `` ~a ``" (car form) (cdr form))
+                        (format "**~a**: `~a`" (car form) (cdr form))))
+                  (doc-forms entry))
+             (if (doc-returns entry)
+                 (wrapped-lines (format "returns: ~a" (doc-returns entry))
+                                72)
+                 '())
+             (if (pair? (doc-libraries entry))
+                 (list (format "libraries: ~a"
+                               (string-join (doc-libraries entry) ", ")))
+                 '())
+             (list (format "source: ~a, ~a"
+                           (case (doc-source entry)
+                             [(tspl) "TSPL4"]
+                             [(csug) "Chez Scheme User's Guide"]
+                             [else (doc-source entry)])
+                           (doc-chapter entry))
+                   (format "url: ~a" (doc-browser-url entry)))))
+      (list "")
       (wrapped-lines (doc-description entry) 72)))
 
   (define (describe! name)
