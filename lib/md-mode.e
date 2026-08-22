@@ -39,9 +39,16 @@
       (when (< i n)
         (let ([c (string-ref s i)])
           (cond
-            [(char=? c #\`)                                  ; `code`
-             (let ([close (find-char #\` (+ i 1))])
-               (cond [close (mark! i (+ close 1) 'string) (inline (+ close 1))]
+            [(char=? c #\`)             ; `code`, or `` code with ` ``
+             (let* ([double? (and (< (+ i 1) n)
+                                  (char=? (string-ref s (+ i 1)) #\`))]
+                    [close (if double?
+                               (string-search s "``" (+ i 2) n)
+                               (find-char #\` (+ i 1)))])
+               (cond [close
+                      (let ([end (+ close (if double? 2 1))])
+                        (mark! i end 'string)
+                        (inline end))]
                      [else (mark! i n 'string)]))]
             [(or (prefix-at? "**" i) (prefix-at? "__" i))    ; **bold**
              (let* ([marker (substring s i (+ i 2))]

@@ -129,8 +129,12 @@
                        (put-char out c)
                        (loop (+ i 1) (char=? c #\newline)))))
                  (put-string out "\n\n")]
-                [(find-str content "`" 0)   ; backticks cannot nest
-                 (put-string out content)]
+                [(find-str content "`" 0)
+                 ;; a literal backtick inside: markdown's double-tick
+                 ;; delimiters, spaces keeping the ticks apart
+                 (put-string out "`` ")
+                 (put-string out content)
+                 (put-string out " ``")]
                 [else (put-char out #\`)
                       (put-string out content)
                       (put-char out #\`)])))
@@ -561,11 +565,23 @@
       (define (breakable? i)
         (and (char=? (string-ref s i) #\space)
              (not (vector-ref in-span i))))
-      (let mark ([i 0] [in? #f])
+      (let mark ([i 0] [state 'out])
         (when (< i n)
-          (let ([tick? (char=? (string-ref s i) #\`)])
-            (vector-set! in-span i (or in? tick?))
-            (mark (+ i 1) (if tick? (not in?) in?)))))
+          (if (char=? (string-ref s i) #\`)
+              (let* ([j (if (and (< (+ i 1) n)
+                                 (char=? (string-ref s (+ i 1)) #\`))
+                            (+ i 2)
+                            (+ i 1))]
+                     [next (case state
+                             [(out) (if (= (- j i) 2) 'double 'single)]
+                             [(single) 'out]
+                             [(double) (if (= (- j i) 2) 'out 'double)])])
+                (do ([k i (+ k 1)]) ((= k j))
+                  (vector-set! in-span k #t))
+                (mark j next))
+              (begin
+                (vector-set! in-span i (not (eq? state 'out)))
+                (mark (+ i 1) state)))))
       (let loop ([start 0] [acc '()])
         (if (<= (- n start) width)
             (reverse (cons (substring s start n) acc))
@@ -599,7 +615,9 @@
     (append
       (map (lambda (form)
              (if (find-str (cdr form) "`" 0)
-                 (format "**~a**: ~a" (car form) (cdr form))
+                 ;; a template holding a backtick (quasiquote's
+                 ;; abbreviations): double-tick delimiters
+                 (format "**~a**: `` ~a ``" (car form) (cdr form))
                  (format "**~a**: `~a`" (car form) (cdr form))))
            (doc-forms entry))
       (if (doc-returns entry)

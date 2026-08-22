@@ -21,5 +21,6 @@
 ;; (min-window-lines 4)           ; squeezed windows keep 4 text lines
 ;; (bind-key! "M-l" show-log!)    ; pop the *log* view with one chord
 ;; (wrap-lines #f)                ; long lines truncate ($) instead of wrapping (\)
-;; (column-native-scroll #t)      ; C-x 3 columns scroll natively (VT420 margins)
+(column-native-scroll #t)      ; C-x 3 columns scroll natively (VT420 margins)
 (scroll-margin 8)             ; keep 8 rows between the cursor and the edges
+(column-native-scroll #t)   ; recorded by probe-terminal!
