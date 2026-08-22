@@ -2593,10 +2593,15 @@
                    [end (max end start)]
                    [lead (if (= line 0) 0 indent)]
                    [wrapped? (< line (- total 1))]
-                   [cut (min (max (- ghost-at start) 0) (- end start))])
+                   [cut (min (max (- ghost-at start) 0) (- end start))]
+                   ;; a prompt's label -- content up to echo-indent on
+                   ;; the first visual line -- is painted bold
+                   [lb (if (= line 0)
+                           (min (or echo-indent 0) (+ start cut))
+                           0)])
               (paint! row 0
                       (list 'echo line (substring content start end)
-                        cut lead wrapped? (and (echo-highlight) #t)
+                        cut lead lb wrapped? (and (echo-highlight) #t)
                         (and message-styles #t))
                       (lambda ()
                         (let ([styles
@@ -2610,10 +2615,15 @@
                                         ((cdr message-styles)
                                          (car message-styles)))))])
                           (ansi (make-string lead #\space))
+                          (when (> lb 0)
+                            (ansi "\x1b;[1m" (substring content 0 lb)
+                                  "\x1b;[0m"))
                           (if styles
                             ;; styled runs for the typed part
-                            (emit-runs content styles start (+ start cut))
-                            (ansi (substring content start (+ start cut))))
+                            (emit-runs content styles (+ start lb)
+                                       (+ start cut))
+                            (ansi (substring content (+ start lb)
+                                             (+ start cut))))
                           (ansi "\x1b;[0m\x1b;[90m"
                             (substring content (+ start cut) end)
                             "\x1b;[0m"
