@@ -834,8 +834,10 @@
         (set! file-name path) (set! modified? #f)
         (buffer-name-set! b (unique-name (base-name path) b))
         ;; re-detect the mode only when the name changed: a plain
-        ;; re-save must not clobber a mode chosen by hand
-        (when adopted? (assign-mode! b))
+        ;; re-save must not clobber a mode chosen by hand; adoption
+        ;; also lifts read-only -- the buffer visits an ordinary
+        ;; file now, whatever protected its previous life
+        (when adopted? (assign-mode! b) (buffer-read-only-set! b #f))
         (when mode (guard (ex [else (void)]) (chmod path mode)))
         (buffer-base-set! b (buffer-text b))
         (buffer-stamp-set! b (disk-stamp path))
