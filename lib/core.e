@@ -520,43 +520,44 @@
     ;; still treat it as one line).  The goal column is visual when
     ;; wrapped.
     (define wrapped? (window-wrapped? current-window))
+    (define (land! breaks k)
+      ;; the goal column within segment k, clamped into it
+      (set! point-col
+        (min (+ (segment-start breaks k) goal-col)
+             (segment-close breaks k (string-length (current-line))))))
     (unless (equal? goal-pos (cons point-row point-col))
-      (set! goal-col (if wrapped?
-                         (mod point-col (wrap-width current-window))
-                         point-col)))
+      (set! goal-col
+        (if wrapped?
+            (let ([breaks (line-breaks current-window (current-line))])
+              (- point-col
+                 (segment-start breaks (segment-of breaks point-col))))
+            point-col)))
     (if wrapped?
-        (let ([w (wrap-width current-window)])
-          (let step ([n delta])
-            (cond
-              [(zero? n) (void)]
-              [(negative? n)
-               (let ([seg (div point-col w)])
-                 (cond
-                   [(> seg 0)              ; up, within the same line
-                    (set! point-col
-                      (min (+ (* (- seg 1) w) goal-col)
-                           (string-length (current-line))))]
-                   [(> point-row 0)        ; onto the line above's last row
-                    (set! point-row (- point-row 1))
-                    (let* ([len (string-length (current-line))]
-                           [segs (line-segments current-window
-                                                (current-line))])
-                      (set! point-col
-                        (min (+ (* (- segs 1) w) goal-col) len)))]))
-               (step (+ n 1))]
-              [else
-               (let ([segs (line-segments current-window (current-line))]
-                     [seg (div point-col w)])
-                 (cond
-                   [(< (+ seg 1) segs)     ; down, within the same line
-                    (set! point-col
-                      (min (+ (* (+ seg 1) w) goal-col)
-                           (string-length (current-line))))]
-                   [(< point-row (- (vlen) 1))
-                    (set! point-row (+ point-row 1))
-                    (set! point-col
-                      (min goal-col (string-length (current-line))))]))
-               (step (- n 1))])))
+        (let step ([n delta])
+          (cond
+            [(zero? n) (void)]
+            [(negative? n)
+             (let* ([breaks (line-breaks current-window (current-line))]
+                    [seg (segment-of breaks point-col)])
+               (cond
+                 [(> seg 0)                ; up, within the same line
+                  (land! breaks (- seg 1))]
+                 [(> point-row 0)          ; onto the line above's last row
+                  (set! point-row (- point-row 1))
+                  (let ([breaks (line-breaks current-window
+                                             (current-line))])
+                    (land! breaks (- (vector-length breaks) 1)))]))
+             (step (+ n 1))]
+            [else
+             (let* ([breaks (line-breaks current-window (current-line))]
+                    [seg (segment-of breaks point-col)])
+               (cond
+                 [(< (+ seg 1) (vector-length breaks))
+                  (land! breaks (+ seg 1))]  ; down, within the same line
+                 [(< point-row (- (vlen) 1))
+                  (set! point-row (+ point-row 1))
+                  (land! (line-breaks current-window (current-line)) 0)]))
+             (step (- n 1))]))
         (begin
           (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
           (set! point-col (min goal-col (string-length (current-line))))))
@@ -1953,10 +1954,13 @@
                  (if (= (car r) row) (cons (cdr r) acc) acc))
                '() ranges))
 
-  (define (display-editor-line s shown span marks left styles edge width)
+  (define (display-editor-line s shown span marks left styles edge width
+                               bound)
     ;; edge: #f, or the continuation mark for the last column -- 'wrap
     ;; (the line goes on below) or 'trunc (past the right edge).
-    (define n (string-length s))
+    ;; bound: the first column past this row's content (a word-wrapped
+    ;; segment may end short of the width; the rest pads blank).
+    (define n (min (string-length s) bound))
     (define limit (+ left width (if edge -1 0)))
     (define (style-at col)
       (if (and styles (< col n)) (vector-ref styles col) 'plain))
@@ -1968,7 +1972,7 @@
       ;; The strongest background among the marks covering col:
       ;; match-point (yellow) over match (cyan), or #f.
       (fold-left (lambda (acc m)
-                   (if (covers? m col)
+                   (if (and (< col n) (covers? m col))
                        (case (mark-style m)
                          [(match-point) 'match-point]
                          [(match) (or acc 'match)]
@@ -1984,15 +1988,17 @@
       ;; become spaces, so every column is exactly one cell wide.
       (let ([out (make-string (- to from) #\space)])
         (let loop ([i from])
-          (when (and (< i to) (< i (string-length shown)))
+          (when (and (< i to) (< i (min (string-length shown) bound)))
             (let ([ch (string-ref shown i)])
               (unless (< (char->integer ch) 32)
                 (string-set! out (- i from) ch)))
             (loop (+ i 1))))
         out))
     (define (marked? col)
-      (exists (lambda (m) (and (eq? (mark-style m) 'mark) (covers? m col)))
-              marks))
+      (and (< col n)
+           (exists (lambda (m) (and (eq? (mark-style m) 'mark)
+                                    (covers? m col)))
+                   marks)))
     ;; Emit runs of identically-attributed columns as single writes.
     (let loop ([col left])
       (when (< col limit)
@@ -2086,12 +2092,57 @@
     ;; One page of the current window: its text height less one overlap line.
     (max 1 (- (caddr (assq current-window (window-layout))) 1)))
 
+  ;; Soft wrap breaks at word boundaries: each line has a break table
+  ;; -- the start position of every visual segment -- computed
+  ;; greedily (the last space that fits; a word longer than the width
+  ;; breaks mid-word) and memoized per line string and width, like the
+  ;; style cache: edits replace line strings, so identity keys it.
+  (define wrap-cache (make-weak-eq-hashtable))
+
+  (define (compute-breaks s width)
+    (let ([n (string-length s)])
+      (let loop ([start 0] [acc '(0)])
+        (if (<= (- n start) width)
+            (list->vector (reverse acc))
+            (let* ([limit (+ start width)]
+                   [p (let find ([j limit])
+                        (cond [(<= j start) limit]
+                              [(char=? (string-ref s (- j 1)) #\space) j]
+                              [else (find (- j 1))]))])
+              (loop p (cons p acc)))))))
+
+  (define (line-breaks w line)
+    ;; The break table for line in w: a vector of segment starts.
+    (let* ([width (wrap-width w)]
+           [hit (eq-hashtable-ref wrap-cache line '())]
+           [found (assv width hit)])
+      (if found
+          (cdr found)
+          (let ([breaks (compute-breaks line width)])
+            (eq-hashtable-set! wrap-cache line
+                               (cons (cons width breaks) hit))
+            breaks))))
+
+  (define (segment-of breaks col)
+    ;; The segment holding column col.
+    (let loop ([k (- (vector-length breaks) 1)])
+      (if (or (= k 0) (>= col (vector-ref breaks k)))
+          k
+          (loop (- k 1)))))
+
+  (define (segment-start breaks k) (vector-ref breaks k))
+
+  (define (segment-close breaks k len)
+    ;; The last column the cursor may occupy within segment k.
+    (if (< (+ k 1) (vector-length breaks))
+        (- (vector-ref breaks (+ k 1)) 1)
+        len))
+
   (define (line-segments w line)
     ;; How many screen rows the line takes in w: 1, or its soft-wrapped
     ;; segment count.
     (if (window-wrapped? w)
-        (let ([width (wrap-width w)])
-          (max 1 (div (+ (string-length line) width -1) width)))
+        (vector-length (line-breaks w line))
         1))
 
   (define (rows-before w prow pcol)
@@ -2100,7 +2151,9 @@
     (let ([v (buffer-lines (window-buffer w))])
       (let loop ([i (window-top w)] [n (- (window-topseg w))])
         (if (>= i prow)
-            (+ n (if (window-wrapped? w) (div pcol (wrap-width w)) 0))
+            (+ n (if (window-wrapped? w)
+                     (segment-of (line-breaks w (vector-ref v prow)) pcol)
+                     0))
             (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
 
   ;; The minimal visual distance kept between the cursor and the
@@ -2132,7 +2185,8 @@
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
       (if (window-wrapped? w)
-          (let ([pseg (div pcol (wrap-width w))])
+          (let ([pseg (segment-of (line-breaks w (vector-ref v prow))
+                                  pcol)])
             ;; a stale top (edits, toggles) clamps into the buffer
             (window-top-set! w (min (window-top w)
                                     (- (vector-length v) 1)))
@@ -2544,10 +2598,18 @@
                                                     t))))
                                     line))]
                        [wrapped? (window-wrapped? w)]
-                       [slice-left (if wrapped? (* seg (wrap-width w)) left)]
+                       [breaks (and wrapped? (line-breaks w line))]
+                       [slice-left (if wrapped?
+                                       (segment-start breaks seg)
+                                       left)]
+                       [bound (if (and wrapped?
+                                       (< (+ seg 1)
+                                          (vector-length breaks)))
+                                  (segment-start breaks (+ seg 1))
+                                  (string-length line))]
                        [edge (cond
                                [(and wrapped?
-                                     (< (+ seg 1) (line-segments w line)))
+                                     (< (+ seg 1) (vector-length breaks)))
                                 'wrap]     ; the line continues below: \
                                [(and (not wrapped?)
                                      (> (string-length line)
@@ -2570,7 +2632,8 @@
                                                    (or row-styles
                                                        (styles-of line))
                                                    edge
-                                                   (window-width w)))))
+                                                   (window-width w)
+                                                   bound))))
                   (if (< (+ seg 1) (line-segments w line))
                       (loop (+ k 1) i (+ seg 1))
                       (loop (+ k 1) (+ i 1) 0)))
@@ -2706,7 +2769,12 @@
     (let ([entry (assq w (window-layout))])
       (if (window-wrapped? w)
           (cons (+ (cadr entry) (rows-before w prow pcol) 1)
-                (+ (window-xoff w) (mod pcol (wrap-width w)) 1))
+                (let ([breaks (line-breaks
+                                w (vector-ref
+                                    (buffer-lines (window-buffer w)) prow))])
+                  (+ (window-xoff w)
+                     (- pcol (segment-start breaks (segment-of breaks pcol)))
+                     1)))
           (cons (+ (cadr entry) (- prow (window-top w)) 1)
                 (+ (window-xoff w) (- pcol (window-left w)) 1)))))
 
@@ -3378,10 +3446,13 @@
           (let loop ([i (window-top w)] [k (+ k (window-topseg w))])
             (if (>= i (vector-length v))
                 (cons (max 0 (- (vector-length v) 1)) col)
-                (let ([segs (line-segments w (vector-ref v i))])
+                (let* ([line (vector-ref v i)]
+                       [breaks (line-breaks w line)]
+                       [segs (vector-length breaks)])
                   (if (< k segs)
-                      (cons i (+ (* k (wrap-width w))
-                                 (min col (- (wrap-width w) 1))))
+                      (cons i (min (+ (segment-start breaks k) col)
+                                   (segment-close breaks k
+                                                  (string-length line))))
                       (loop (+ i 1) (- k segs))))))
           (cons (+ (window-top w) k) (+ (window-left w) col)))))
 
