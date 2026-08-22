@@ -98,6 +98,13 @@ lines (negative shrinks), trading lines with its neighbor; splits halve
 the current window, and sizes rescale proportionally when the screen
 or the prompt area changes.
 
+`(scroll-margin 8)` (in the shipped config.e) keeps at least eight
+rows between the cursor and the window's top and bottom edges: the
+view scrolls that early, and the cursor enters the zone only where
+the buffer's ends leave nothing to scroll.  PageUp and PageDown, like
+all vertical movement, shift the view through the terminal's native
+scrolling.
+
 Long lines soft-wrap onto continuation rows, Emacs-style: a wrapped
 row ends in a grey `\`, and with wrapping off a line running past the
 right edge ends in a grey `$` (the window then scrolls horizontally to

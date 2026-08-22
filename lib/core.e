@@ -24,7 +24,7 @@
     switch-buffer!! kill-buffer!!
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
-    resize-window! wrap! wrap-lines column-native-scroll
+    resize-window! wrap! wrap-lines column-native-scroll scroll-margin
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
@@ -2103,13 +2103,32 @@
             (+ n (if (window-wrapped? w) (div pcol (wrap-width w)) 0))
             (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
 
+  ;; The minimal visual distance kept between the cursor and the
+  ;; window's top and bottom edges: scrolling starts that early, and
+  ;; the cursor enters the zone only where the view cannot scroll any
+  ;; further (the ends of the buffer).  For config.e.
+  (define scroll-margin
+    (make-parameter 0 (lambda (v) (max 0 v))))
+
+  (define (view-overflows? w v height)
+    ;; Is there more content than the window holds, counting from its
+    ;; top segment?
+    (let loop ([i (window-top w)] [n (- (window-topseg w))])
+      (cond [(> n height) #t]
+            [(>= i (vector-length v)) #f]
+            [else (loop (+ i 1)
+                        (+ n (line-segments w (vector-ref v i))))])))
+
   (define (scroll-window! w height)
     ;; Clamp w's point to its buffer (edits in another window may have moved
-    ;; the ground under it) and scroll so point stays visible.
+    ;; the ground under it) and scroll so point stays visible -- at
+    ;; least scroll-margin rows from the edges, where the buffer's
+    ;; ends allow.
     (let* ([v (buffer-lines (window-buffer w))]
            [prow (max 0 (min (window-prow w) (- (vector-length v) 1)))]
            [pcol (max 0 (min (window-pcol w)
-                             (string-length (vector-ref v prow))))])
+                             (string-length (vector-ref v prow))))]
+           [m (min (scroll-margin) (div (max 0 (- height 1)) 2))])
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
       (if (window-wrapped? w)
@@ -2129,11 +2148,28 @@
                            (< pseg (window-topseg w))))
               (window-top-set! w prow)
               (window-topseg-set! w pseg))
-            ;; and below: advance one visual row at a time
+            ;; the margin above: retreat while the top of the buffer
+            ;; still allows
+            (let retreat ()
+              (when (and (< (rows-before w prow pcol) m)
+                         (or (> (window-top w) 0)
+                             (> (window-topseg w) 0)))
+                (if (> (window-topseg w) 0)
+                    (window-topseg-set! w (- (window-topseg w) 1))
+                    (begin
+                      (window-top-set! w (- (window-top w) 1))
+                      (window-topseg-set!
+                        w (- (line-segments
+                               w (vector-ref v (window-top w)))
+                             1))))
+                (retreat)))
+            ;; and below: advance one visual row at a time, only while
+            ;; content actually overflows the window
             (let advance ()
-              (when (and (>= (rows-before w prow pcol) height)
+              (when (and (>= (rows-before w prow pcol) (- height m))
                          (or (< (window-top w) prow)
-                             (< (window-topseg w) pseg)))
+                             (< (window-topseg w) pseg))
+                         (view-overflows? w v height))
                 (if (< (+ (window-topseg w) 1)
                        (line-segments w (vector-ref v (window-top w))))
                     (window-topseg-set! w (+ (window-topseg w) 1))
@@ -2142,9 +2178,12 @@
                 (advance))))
           (begin
             (window-topseg-set! w 0)
-            (when (< prow (window-top w)) (window-top-set! w prow))
-            (when (>= prow (+ (window-top w) height))
-              (window-top-set! w (- prow height -1)))
+            (when (< prow (+ (window-top w) m))
+              (window-top-set! w (max 0 (- prow m))))
+            (when (>= prow (+ (window-top w) height (- m)))
+              (window-top-set! w
+                (min (- prow (- height 1 m))
+                     (max 0 (- (vector-length v) height)))))
             (when (< pcol (window-left w)) (window-left-set! w pcol))
             (when (>= pcol (+ (window-left w) (window-width w)))
               (window-left-set! w (- pcol (window-width w) -1)))))))
