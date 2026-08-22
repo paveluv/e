@@ -3520,6 +3520,10 @@
                       (cons (char->integer (string-ref spec 2)) command))]
       [else (registry-add! user-keys (cons (code spec) command))]))
 
+  (define (settle-echo!)
+    (set! message "")
+    (set! echo-pending '()))
+
   (define (escape-sequence!)
     (let ([a (read-char stdin)])
       (cond
@@ -3528,7 +3532,7 @@
          (let ([first (read-char stdin)])
            (if (and (char? first) (char=? first #\<))
                (mouse-event!)
-               (let drain ([b first] [ps '()])
+               (let drain ([b (begin (settle-echo!) first)] [ps '()])
                  (if (and (char? b)
                           (or (char<=? #\0 b #\9) (char=? b #\;)))
                      (drain (read-char stdin) (cons b ps))
@@ -3550,6 +3554,7 @@
                                  (paste-into-buffer!)]
                                 [else (void)])]
                          [else (void)]))))))]
+        [(begin (settle-echo!) #f) (void)]        ; meta keys settle
         [(user-binding user-meta-keys (char->integer a))
          => (lambda (command) (command))]
         ;; C-M-_: redo, as in Emacs.
@@ -3598,9 +3603,12 @@
       [(eof-object? c) (set! quit? #t)]
       [else
        ;; the settlement: messages last until the next key, then the
-       ;; echo area goes back to one line
-       (set! message "")
-       (set! echo-pending '())
+       ;; echo area goes back to one line -- except mouse events (under
+       ;; ESC), which aim at the screen as displayed: a settling echo
+       ;; would relayout the windows and shift the target under the
+       ;; pointer.  escape-sequence! settles its non-mouse outcomes.
+       (unless (= (char->integer c) 27)
+         (settle-echo!))
        (cond
          [(user-binding user-keys (char->integer c))
           => (lambda (command) (command))]
