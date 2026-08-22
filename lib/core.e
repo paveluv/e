@@ -2595,7 +2595,9 @@
                    [wrapped? (< line (- total 1))]
                    [cut (min (max (- ghost-at start) 0) (- end start))]
                    ;; a prompt's label -- content up to echo-indent on
-                   ;; the first visual line -- is painted bold
+                   ;; the first visual line -- is painted grey, the
+                   ;; transient log's shade: quiet chrome, the input
+                   ;; carries the emphasis
                    [lb (if (= line 0)
                            (min (or echo-indent 0) (+ start cut))
                            0)])
@@ -2616,7 +2618,7 @@
                                          (car message-styles)))))])
                           (ansi (make-string lead #\space))
                           (when (> lb 0)
-                            (ansi "\x1b;[1m" (substring content 0 lb)
+                            (ansi "\x1b;[90m" (substring content 0 lb)
                                   "\x1b;[0m"))
                           (if styles
                             ;; styled runs for the typed part
