@@ -52,7 +52,7 @@
     echo-highlight
     register-view! view-append! register-log-formatter! log-history
     call-with-interrupt call-uninterrupted interrupted?
-    vector-fill-range! string-search
+    vector-fill-range! string-search set-style!
     string-tail string-prefix? string-suffix? string-join split-lines
     ;; the editor itself
     main)
@@ -1894,26 +1894,47 @@
                     styles))))
           no-styles)))
 
+  ;; Faces may be recolored from config.e: (set-style! 'chrome 244)
+  ;; takes a 256-color foreground number, (set-style! 'chrome
+  ;; "38;5;244;3") a raw SGR attribute list.  Overrides are owned
+  ;; registrations, so dropping the line from config.e and reloading
+  ;; restores the default.
+  (define style-overrides (make-registry))
+
+  (define (set-style! style spec)
+    (registry-add! style-overrides
+      (cons style
+            (format "\x1b;[~am"
+                    (if (number? spec) (format "38;5;~a" spec) spec)))))
+
+  (define (style-override style)
+    (let ([hit (registry-find style-overrides
+                              (lambda (e) (eq? (car e) style)))])
+      (and hit (cdr hit))))
+
   (define (style-code style)
-    (case style
-      [(comment) "\x1b;[90m"]
-      [(string) "\x1b;[32m"]
-      [(keyword) "\x1b;[1;36m"]
-      [(number) "\x1b;[35m"]
-      [(literal) "\x1b;[1;35m"]
-      [(delimiter) "\x1b;[38;5;245m"]   ; mid grey: neutral, not white
-      [(editor) "\x1b;[38;5;135m"]      ; medium purple: the editor's own
-      [(rainbow1) "\x1b;[38;5;196m"]    ; red
-      [(rainbow2) "\x1b;[38;5;208m"]    ; orange
-      [(rainbow3) "\x1b;[38;5;220m"]    ; yellow
-      [(rainbow4) "\x1b;[38;5;40m"]     ; green
-      [(rainbow5) "\x1b;[38;5;33m"]     ; blue
-      [(rainbow6) "\x1b;[38;5;57m"]     ; indigo
-      [(rainbow7) "\x1b;[38;5;129m"]    ; violet
-      [(quote) "\x1b;[36m"]
-      [(bold) "\x1b;[1m"]      ; real face attributes: terminals without
-      [(italic) "\x1b;[3m"]    ; them simply show plain text
-      [else "\x1b;[0m"]))
+    (or (style-override style)
+        (case style
+          [(chrome) "\x1b;[90m"]    ; the editor's quiet furniture: prompt
+                                    ; labels, log prefixes, ghost text
+          [(comment) "\x1b;[90m"]
+          [(string) "\x1b;[32m"]
+          [(keyword) "\x1b;[1;36m"]
+          [(number) "\x1b;[35m"]
+          [(literal) "\x1b;[1;35m"]
+          [(delimiter) "\x1b;[38;5;245m"]   ; mid grey: neutral, not white
+          [(editor) "\x1b;[38;5;135m"]      ; medium purple: the editor's own
+          [(rainbow1) "\x1b;[38;5;196m"]    ; red
+          [(rainbow2) "\x1b;[38;5;208m"]    ; orange
+          [(rainbow3) "\x1b;[38;5;220m"]    ; yellow
+          [(rainbow4) "\x1b;[38;5;40m"]     ; green
+          [(rainbow5) "\x1b;[38;5;33m"]     ; blue
+          [(rainbow6) "\x1b;[38;5;57m"]     ; indigo
+          [(rainbow7) "\x1b;[38;5;129m"]    ; violet
+          [(quote) "\x1b;[36m"]
+          [(bold) "\x1b;[1m"]      ; real face attributes: terminals without
+          [(italic) "\x1b;[3m"]    ; them simply show plain text
+          [else "\x1b;[0m"])))
 
   ;;; Rendering -------------------------------------------------------------
 
@@ -2036,10 +2057,13 @@
                           (run (+ j 1))
                           j))])
           (ansi "\x1b;[0m" (style-code style))
-          (when sel (ansi "\x1b;[44m"))     ; the selection: blue backdrop
+          (when sel (ansi (or (style-override 'selection)
+                              "\x1b;[44m")))  ; the selection: blue backdrop
           (case bg
-            [(match-point) (ansi "\x1b;[43;30m")]  ; the match point is on
-            [(match) (ansi "\x1b;[46;30m")]        ; other matches: cyan
+            [(match-point) (ansi (or (style-override 'match-point)
+                                     "\x1b;[43;30m"))] ; the match point
+            [(match) (ansi (or (style-override 'match)
+                               "\x1b;[46;30m"))]  ; other matches: cyan
             [else (void)])
           (when mk (ansi "\x1b;[4m"))
           (ansi (segment col end))
@@ -2551,7 +2575,7 @@
            [start (car span)]
            [end (cdr span)]
            [styles (and styler (guard (ex [else #f]) (styler text)))])
-      (ansi "\x1b;[0m\x1b;[90m" lead)
+      (ansi "\x1b;[0m" (style-code 'chrome) lead)
       (if styles
           (emit-runs text styles start end)
           (ansi "\x1b;[0m" (substring text start end)))
@@ -2625,15 +2649,15 @@
                                          (car message-styles)))))])
                           (ansi (make-string lead #\space))
                           (when (> lb 0)
-                            (ansi "\x1b;[90m" (substring content 0 lb)
-                                  "\x1b;[0m"))
+                            (ansi (style-code 'chrome)
+                                  (substring content 0 lb) "\x1b;[0m"))
                           (if styles
                             ;; styled runs for the typed part
                             (emit-runs content styles (+ start lb)
                                        (+ start cut))
                             (ansi (substring content (+ start lb)
                                              (+ start cut))))
-                          (ansi "\x1b;[0m\x1b;[90m"
+                          (ansi "\x1b;[0m" (style-code 'chrome)
                             (substring content (+ start cut) end)
                             "\x1b;[0m"
                             (make-string
@@ -4038,6 +4062,8 @@
       (and (file-exists? path)
            (begin
              (retract-module! 'config)
+             ;; a recolor must repaint rows cached under the old codes
+             (invalidate-screen-cache!)
              (guard (ex [else (parameterize ([message-source 'config])
                                 (set-message!
                                   (format "Error in config.e: ~a"

@@ -117,7 +117,7 @@
                            [v (make-vector n 'plain)]
                            [colon (string-search text ": " 0 n)])
                       (when colon
-                        (vector-fill-range! v 0 (+ colon 2) 'comment))
+                        (vector-fill-range! v 0 (+ colon 2) 'chrome))
                       v))))))
 
   (define (run-search!)

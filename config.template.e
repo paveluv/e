@@ -34,4 +34,11 @@
 ;; (column-native-scroll #f)      ; #t: C-x 3 columns scroll natively (VT420
 ;;                                ; margins) -- M-x (probe-terminal!) detects
 ;;                                ; the support and offers to record this line
+;; (set-style! 'chrome 244)       ; restyle a face: a 256-color number, or a
+;;                                ; raw SGR attribute string ("38;5;244;3").
+;;                                ; chrome is the editor's grey furniture
+;;                                ; (prompt labels, log prefixes, ghost text);
+;;                                ; also: comment string keyword number literal
+;;                                ; delimiter editor quote rainbow1..7, and the
+;;                                ; selection / match / match-point backdrops
 ;; (bind-key! "M-l" show-log!)    ; pop the *log* view with one chord
