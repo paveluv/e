@@ -105,8 +105,20 @@
                        (+ (cdr match) (string-length needle)))))
 
   (define (indicate! s)
-    (parameterize ([message-source #f])
-      (set-message! s)))
+    ;; The search's status line, its label greyed like any prompt's.
+    ;; The search is no prompt! -- it reads keys, not a line -- so the
+    ;; label grey comes through the message's own styler rather than
+    ;; the prompt machinery.
+    (if (string=? s "")
+        (parameterize ([message-source #f]) (set-message! s))
+        (show-message! s
+          (cons s (lambda (text)
+                    (let* ([n (string-length text)]
+                           [v (make-vector n 'plain)]
+                           [colon (string-search text ": " 0 n)])
+                      (when colon
+                        (vector-fill-range! v 0 (+ colon 2) 'comment))
+                      v))))))
 
   (define (run-search!)
     (define origin-window (selected-window))

@@ -46,7 +46,7 @@
     read-key peek-key pending-input? cursor-in-echo
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
-    set-message! current-message redraw! error-text mouse!
+    set-message! show-message! current-message redraw! error-text mouse!
     log! log-entries log-length log-record log-styler format-log-entry
     message-source message-progress
     echo-highlight
