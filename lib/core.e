@@ -2173,9 +2173,9 @@
   ;; The minimal visual distance kept between the cursor and the
   ;; window's top and bottom edges: scrolling starts that early, and
   ;; the cursor enters the zone only where the view cannot scroll any
-  ;; further (the ends of the buffer).  For config.e.
+  ;; further (the ends of the buffer).  Configurable in config.e.
   (define scroll-margin
-    (make-parameter 0 (lambda (v) (max 0 v))))
+    (make-parameter 8 (lambda (v) (max 0 v))))
 
   (define (view-overflows? w v height)
     ;; Is there more content than the window holds, counting from its
@@ -3970,12 +3970,11 @@
   ;; Saving a module's source reloads it on the spot (a fresh .e file
   ;; in the lib directory is loaded for the first time), and saving
   ;; config.e applies it, so editing the editor from inside itself
-  ;; takes effect on save.  Both off by default; the shipped config.e
-  ;; turns both on -- comment its lines out for an installation
-  ;; without them -- and M-x (modules-reload-on-save #f) or
-  ;; (config-reload-on-save #f) turns either off for a session.
-  (define modules-reload-on-save (make-parameter #f))
-  (define config-reload-on-save (make-parameter #f))
+  ;; takes effect on save.  Both on by default; (modules-reload-on-save
+  ;; #f) or (config-reload-on-save #f) -- in config.e for an
+  ;; installation, at M-x for a session -- turns either off.
+  (define modules-reload-on-save (make-parameter #t))
+  (define config-reload-on-save (make-parameter #t))
 
   (define (canonical-path path*)
     ;; path made absolute, with ".", "..", and empty segments resolved
@@ -4107,6 +4106,8 @@
                                (if margins? "#t" "#f")))]
                   [n (and k (char->integer k))])
              (when (memv n '(121 89))
+               ;; 'append creates config.e when none exists yet, so
+               ;; recording works before any template copy
                (call-with-output-file (config-file)
                  (lambda (p)
                    (put-string p

@@ -17,8 +17,8 @@
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
-  ;; Off by default; the shipped config.e turns it on.
-  (define scheme-format-on-save (make-parameter #f))
+  ;; On by default; (scheme-format-on-save #f) in config.e turns it off.
+  (define scheme-format-on-save (make-parameter #t))
 
   (define scheme-keywords
     (let ([table (make-hashtable string-hash string=?)])

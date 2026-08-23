@@ -98,7 +98,7 @@ lines (negative shrinks), trading lines with its neighbor; splits halve
 the current window, and sizes rescale proportionally when the screen
 or the prompt area changes.
 
-`(scroll-margin 8)` (in the shipped config.e) keeps at least eight
+`(scroll-margin 8)` (the default) keeps at least eight
 rows between the cursor and the window's top and bottom edges: the
 view scrolls that early, and the cursor enters the zone only where
 the buffer's ends leave nothing to scroll.  PageUp and PageDown, like
@@ -189,7 +189,7 @@ never touched.  Modules provide the rules per mode with
 the pure `(scheme-format)` library, also driving `tools/scheme-format` --
 the same treatment from the shell: `scheme-format [-i] [file ...]`, stdin
 to stdout without arguments.  With `(scheme-format-on-save #t)`
-(on in the shipped config.e) every save of a Scheme buffer formats it
+(on by default) every save of a Scheme buffer formats it
 first -- a pre-save hook; modules add their own with
 `add-pre-save-hook!` and `add-post-save-hook!` (the module reload is
 a post-save hook).
@@ -377,10 +377,21 @@ startup once the modules are up, and loads again after every module
 reload so its settings reapply on top of fresh registrations -- write
 it to tolerate being loaded any number of times.  Saving it inside
 the editor applies it on the spot, as does M-x `(load-config!)`; an
-error reports in the echo area and leaves the editor running.  The
-shipped file is a commented sampler -- for example,
-`(indent-on-tab! "scheme" #f)` turns TAB's auto-indent off for Scheme
-buffers.
+error reports in the echo area and leaves the editor running.
+
+`config.e` itself is not in version control -- git ignores it, so
+personal settings stay inside the directory without ever showing up
+in a diff.  What ships is `config.template.e`: every option as a
+commented line showing its default (the editor behaves identically
+with or without it).  Copy it to get started:
+
+```sh
+cp config.template.e config.e
+```
+
+then uncomment a line and change its value to disagree with a default
+-- for example, `(indent-on-tab! "scheme" #f)` turns TAB's
+auto-indent off for Scheme buffers.
 
 ## Architecture and extension modules
 
