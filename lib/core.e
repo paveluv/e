@@ -823,6 +823,19 @@
                               (save-file! path)))))))]
             [(file-buffer path) => show-buffer!])))
 
+  (define (read-disk-for-save path)
+    ;; #f means genuinely absent.  An existing file that cannot be read
+    ;; cannot be compared with the buffer's base, so fail closed instead
+    ;; of treating it as a new destination and replacing it unchecked.
+    (and (file-exists? path)
+         (guard (ex [else
+                     (raise
+                       (condition
+                         (make-refusal)
+                         (make-message-condition
+                           (format "Cannot verify ~a before saving: ~a"
+                                   path (error-text ex)))))])
+           (read-file path))))
   (define (save-file! path*)
     ;; Saving is guarded by content, not clocks: the disk is read and
     ;; compared with the buffer's base (what it loaded or last saved).
@@ -831,8 +844,7 @@
     (define path (expand-path path*))
     (define adopted? (not (equal? path file-name)))  ; saving under a new name
     (define b (window-buffer current-window))
-    (define disk (guard (ex [else #f])
-                   (and (file-exists? path) (read-file path))))
+    (define disk (read-disk-for-save path))
     (define (write!)
       ;; Rewriting recreates the file: remember its permissions (the
       ;; exec bit on a script, say) and put them back after.
