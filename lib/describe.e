@@ -663,10 +663,16 @@
                  [end (let fwd ([i col]) (if (on? i) (fwd (+ i 1)) i))])
              (string->symbol (substring s start end))))))
 
+  (define (scheme-buffer?)
+    ;; Scheme under any dress: the scheme mode itself and the
+    ;; pretty-scheme-* renderings, which draw the same buffer text.
+    (let ([m (buffer-mode-name (current-buffer))])
+      (and m (or (string=? m "scheme")
+                 (string-prefix? "pretty-scheme" m)))))
+
   (define (describe-at-point!)
     ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
-    (cond [(not (member (buffer-mode-name (current-buffer))
-                        '("scheme")))
+    (cond [(not (scheme-buffer?))
            (set-message! "Not a Scheme buffer")]
           [(symbol-at-point) => describe!]
           [else (set-message! "No symbol at point")])
