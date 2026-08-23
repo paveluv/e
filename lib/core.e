@@ -341,7 +341,7 @@
   (define (set-line! n s) (vector-set! lines n s))
 
   (define (editor-snapshot)
-    (list (vector-copy lines) point-row point-col modified?))
+    (list (vector-copy lines) point-row point-col trailing-newline? modified?))
 
   (define (restore-snapshot! snapshot)
     ;; The snapshot was just popped off a history stack, so nothing else
@@ -349,7 +349,16 @@
     (set! lines (car snapshot))
     (set! point-row (cadr snapshot))
     (set! point-col (caddr snapshot))
-    (set! modified? (cadddr snapshot))
+    (set! trailing-newline? (cadddr snapshot))
+    ;; The buffer may have been saved or merged since this snapshot was
+    ;; taken, changing its current disk base.  For a file buffer, derive
+    ;; modified state from that base instead of restoring a stale flag.
+    (let* ([b (window-buffer current-window)]
+           [base (buffer-base b)])
+      (set! modified?
+        (if base
+            (not (string=? (buffer-text b) base))
+            (list-ref snapshot 4))))
     (set! mark-active? #f)
     (invalidate-screen-cache!))
 
@@ -391,6 +400,17 @@
                      (substring s 0 (- n 1))
                      s)])
       (list->vector (split-lines body))))
+
+  (define (ends-in-newline? s)
+    (and (> (string-length s) 0)
+         (char=? (string-ref s (- (string-length s) 1)) #\newline)))
+
+  (define (merge-trailing-newline base mine theirs)
+    ;; Three-way merge for the one bit line vectors do not carry.  With a
+    ;; boolean, two sides that both differ from base necessarily agree.
+    (cond [(eq? mine base) theirs]
+          [(eq? theirs base) mine]
+          [else mine]))
 
   (define (query-key! question)
     ;; A single-key question, replace!!-style: show, paint, read.
@@ -951,17 +971,24 @@
     ;; buffer's name.  The buffer adopts the disk as its new base
     ;; either way -- the external change is incorporated, so the next
     ;; save writes cleanly.  One undo entry.
-    (let* ([base (string-lines (buffer-base b))])
+    (let* ([base-text (buffer-base b)]
+           [base-trailing (ends-in-newline? base-text)]
+           [mine-trailing (buffer-trailing b)]
+           [disk-trailing (ends-in-newline? disk)]
+           [base (string-lines base-text)])
       (let-values ([(merged conflicts report)
                     (merge3 base
                             (string-lines (buffer-text b))
                             (string-lines disk))])
+        (define merged-trailing
+          (merge-trailing-newline base-trailing mine-trailing disk-trailing))
         (buffer-base-set! b disk)
         (buffer-stamp-set! b (disk-stamp path))
         (record-edit! "merge from disk")
         (buffer-lines-set! b (if (null? merged)
                                (vector "")
                                (list->vector merged)))
+        (buffer-trailing-set! b merged-trailing)
         (changed!)
         (values conflicts (merge-report! b path base report conflicts)))))
 
