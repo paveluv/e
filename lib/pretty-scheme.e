@@ -335,8 +335,8 @@
     (register-mode! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
     (register-mode! "pretty-scheme-rainbow" '() '() scheme-styles #f
                     rainbow-styles)
-    (bind-key! ")" (lambda () (close! #\))))
-    (bind-key! "]" (lambda () (close! #\])))
+    (bind-default-key! ")" (lambda () (close! #\))))
+    (bind-default-key! "]" (lambda () (close! #\])))
     (add-status-hint!
       (lambda ()
         (and (pretty-buffer?)

@@ -128,7 +128,7 @@ window.
 | Key             | Action                                        |
 |-----------------|-----------------------------------------------|
 | `C-d`, Delete   | Delete the character after point              |
-| `C-h`, Backspace| Delete the character before point             |
+| Backspace       | Delete the character before point             |
 | `C-o`           | Open a line below, leaving point in place     |
 | `C-k`           | Kill to end of line (repeats accumulate)      |
 | `C-@` (`C-Space`) | Set the mark                                |
@@ -141,6 +141,21 @@ window.
 | `M-.`           | Describe the symbol at point (Scheme buffers; see below) |
 | `C-l`           | Repaint the screen and re-read its size       |
 | `C-g`           | Cancel (prompt, search, mark, running evaluation) |
+| `C-h k`         | Describe a key and where its bindings came from  |
+
+### Key customization
+
+All keyboard commands can be rebound in `config.e`. User bindings override
+built-in and module defaults, and `C-h k` describes a key, its source, and
+its contextual meanings:
+
+```scheme
+(bind-key! "C-c s" save!!)
+(unbind-key! "C-v")
+```
+
+See [Key binding configuration](docs/KEY_BINDING.md) for key syntax,
+context maps, available actions, precedence, unbinding, and module defaults.
 
 ### Search
 
@@ -149,7 +164,8 @@ again jumps to the next match (wrapping around), Backspace shortens the
 needle, `RET`/`ESC` accepts silently, `C-g` cancels and returns point
 to where the search began. In a new, empty search, `C-s` recalls and
 searches for the previous needle. Point rides just past the current
-match, so a mark set before searching leaves the found text inside the region.
+match, so a mark set before searching leaves the found text inside the
+region.
 The needle's matches in the current window are highlighted while
 searching. Matching folds case the smart way, as in Emacs: it
 ignores case only while the needle is all lowercase, and one typed
@@ -417,9 +433,9 @@ procedures, read-only state accessors (`current-buffer`, `point`,
 from (`goto-point!`; `call-with-buffer`, which runs code with another
 buffer temporarily current; `call-as-one-edit!`, which bundles edits
 into one undo step), and the extension hooks (`bind-key!`,
-`register-mode!`, `add-highlighter!`, `prompt!`, `read-key`,
-`reload-module!`, ...). `M-x (` followed by Shift-TAB lists the entire
-catalog.
+`bind-default-key!`, `unbind-key!`, `register-mode!`, `add-highlighter!`,
+`prompt!`, `read-key-event`, `reload-module!`, ...). `M-x (` followed by
+Shift-TAB lists the entire catalog.
 
 Names follow a contract. A procedure ending in `!!` waits for input
 from the user: a prompt, a confirmation, a key query. It takes no
@@ -444,6 +460,10 @@ An extension module is a library that imports `(core)` and exports an
   (define (my-styles s) ...)
   (define (init!) (register-mode! "my" '(".my") '() my-styles)))
 ```
+
+Bundled modules use `bind-default-key!`; third-party defaults should do
+the same. `bind-key!` is reserved for deliberate user or session
+overrides, so a module reload cannot displace a choice from `config.e`.
 
 At startup the core loads every `lib/*.e` library and calls its
 `init!`; the loader script is pure bootstrap. Features are built this

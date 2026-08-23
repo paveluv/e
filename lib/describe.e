@@ -709,4 +709,4 @@
   (define (init!)
     (load-signatures!)
     (prompt-inspector describe-input!)
-    (bind-key! "M-." describe-at-point!)))
+    (bind-default-key! "M-." describe-at-point!)))

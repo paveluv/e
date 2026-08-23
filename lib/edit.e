@@ -196,17 +196,6 @@
                  (cons row hit)
                  (loop (+ row 1) 0))))))
 
-  (define (drain-escape!)
-    ;; Swallow the tail of an escape sequence -- arrow keys, mouse
-    ;; reports -- so it doesn't leak into the buffer as text.
-    (when (pending-input?)
-      (let ([a (read-key)])
-        (when (and a (char=? a #\[))
-          (let drain ([c (read-key)])
-            (when (and c (or (char<=? #\0 c #\9)
-                             (memv c '(#\; #\<))))
-              (drain (read-key))))))))
-
   (define (replace!! . args)
     ;; Query-replace in the current buffer, from point to the end: each
     ;; occurrence of from is highlighted and offered -- y (or SPC)
@@ -241,30 +230,34 @@
                           (parameterize ([message-source #f]) ; an indicator
                             (set-message! question))
                           (redraw!)     ; the match highlight, not the message
-                          (let* ([key (read-key)]
-                                 [n (and key (char->integer key))])
-                            (cond
-                              [(memv n '(121 89 32))          ; y Y SPC
+                          (let* ([event (read-key-event #f)]
+                                 [action (and (not (eof-object? event))
+                                              (key-event-binding
+                                                'query-replace event))])
+                            (case action
+                              [(replace)
                                (goto-point! hit)
                                (do ([i 0 (+ i 1)]) ((= i m)) (delete-forward!))
                                (insert-text! to)
                                (set! replaced (+ replaced 1))
                                (loop (car (point)) (cdr (point)))]
-                              [(memv n '(110 78 127))         ; n N DEL
+                              [(skip)
                                (set! skipped (+ skipped 1))
                                (goto-point! hit)
                                (loop (car hit) (+ (cdr hit) m))]
-                              [(not n) (goto-point! hit)]     ; end of input
-                              [(= n 27)                       ; ESC stops
-                               (drain-escape!) (goto-point! hit)]
-                              [(memv n '(7 13 10 113))        ; C-g RET q
-                               (goto-point! hit)]
-                              [(= n 24)                       ; C-x: only the
-                               (let ([k2 (read-key)])         ; quit chord
-                                 (when (and k2 (= (char->integer k2) 3))
+                              [(stop) (goto-point! hit)]
+                              [(quit-prefix)
+                               (let ([next (read-key-event #f)])
+                                 (when (and (not (eof-object? next))
+                                            (eq? (key-event-binding
+                                                   'query-replace "C-x" next)
+                                              'quit-editor))
                                    (quit!!))
                                  (goto-point! hit))]
-                              [else (loop (car hit) (cdr hit))]))))))))
+                              [else
+                               (if (eof-object? event)
+                                   (goto-point! hit)
+                                   (loop (car hit) (cdr hit)))]))))))))
               (lambda () (set! query-match #f)))
             (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
             (void)))))
@@ -414,10 +407,17 @@
                        "Buffers:" rows)))))
 
   (define (init!)
-    (bind-key! "C-x C-b" list-buffers!)
-    (bind-key! "M-%" replace!!)
-    (bind-key! "M-n" next-conflict!)
-    (bind-key! "M-m" keep-mine!)
-    (bind-key! "M-d" keep-disk!)
+    (bind-default-key! "C-x C-b" list-buffers!)
+    (bind-default-key! "M-%" replace!!)
+    (bind-default-key! "M-n" next-conflict!)
+    (bind-default-key! "M-m" keep-mine!)
+    (bind-default-key! "M-d" keep-disk!)
+    (for-each
+      (lambda (entry)
+        (bind-default-key! 'query-replace (car entry) (cadr entry)))
+      '(("y" replace) ("Y" replace) ("SPC" replace)
+        ("n" skip) ("N" skip) ("BACKSPACE" skip)
+        ("q" stop) ("RET" stop) ("C-g" stop) ("ESC" stop)
+        ("C-x" quit-prefix) ("C-x C-c" quit-editor)))
     (add-highlighter!
       (lambda () (if query-match (list query-match) '())))))

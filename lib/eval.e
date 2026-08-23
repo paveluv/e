@@ -336,4 +336,4 @@
 
   (define (init!)
     (register-log-formatter! 'eval format-exchange style-exchange)
-    (bind-key! "M-x" eval!!)))
+    (bind-default-key! "M-x" eval!!)))

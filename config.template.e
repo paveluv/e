@@ -42,3 +42,7 @@
 ;;                                ; delimiter editor quote rainbow1..7, and the
 ;;                                ; selection / match / match-point backdrops
 ;; (bind-key! "M-l" show-log!)    ; pop the *log* view with one chord
+;; (bind-key! "C-c s" save!!)     ; arbitrary multi-key chords work
+;; (unbind-key! "C-v")            ; remove a global binding
+;; (bind-key! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
+;; (unbind-key! 'isearch "M-c")

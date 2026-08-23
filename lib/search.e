@@ -137,17 +137,12 @@
           (point)))
     (define (found hit needle)
       (list (current-buffer) (car hit) (cdr hit) (string-length needle)))
-    (define (dispatch! c)
+    (define (dispatch! event)
       ;; Keys the search does not use run through the ordinary
       ;; dispatch, so windows and buffers can be switched without
       ;; leaving the search; it then continues from point in the new
-      ;; buffer.  A C-x owns the following key: the chord completes
-      ;; here, its hint visible, before the search prompt repaints.
-      (dispatch-key! c)
-      (when (and (= (char->integer c) 24) (not (quitting?)))
-        (redraw!)
-        (let ([k (read-key)])
-          (dispatch-key! (or k (eof-object))))))
+      ;; buffer.  The global dispatcher reads a complete chord.
+      (dispatch-key! event))
     ;; A match records where it was found -- (buffer row col len) --
     ;; so the highlight and the anchors survive an excursion to
     ;; another window or buffer.
@@ -162,107 +157,82 @@
         (format "~aI-search~a: ~a" (if failed? "Failing " "")
                 (if (fold-for needle) "" " (exact)") needle))
       (redraw!)
-      (let ([c (read-key)])
-        (if (not c)
-            (dispatch-key! (eof-object))     ; end of input: quit
-            (case (char->integer c)
-              ;; RET or ESC accepts the current match, silently.  An
-              ;; escape sequence (arrow key etc.) also accepts, then
-              ;; moves point.
-              [(10 13 27)
-               (let ([k (and (= (char->integer c) 27) (pending-input?)
-                             (peek-key))])
-                 (if (and k (memv k '(#\c #\C)))
-                     ;; M-c: flip case sensitivity for this search and
-                     ;; look again from where it started
-                     (begin
-                       (read-key)
-                       (set! fold-override
-                         (if (fold-for needle) 'exact 'fold))
-                       (let ([home (if (eq? (selected-window)
-                                            origin-window)
-                                       origin
-                                       (point))])
-                         (if (string=? needle "")
-                             (loop needle match failed?)
-                             (let ([next (search-forward-from
-                                           needle (car home) (cdr home))])
-                               (when next (goto-match-end! next needle))
-                               (loop needle
-                                     (and next (found next needle))
-                                     (not next))))))
-                     (begin
-                       (set! needle-now "")
-                       (set! current-match #f)
-                       (indicate! "")
-                       (when k (dispatch-key! c)))))]
-              ;; C-g cancels the search and restores point -- back in
-              ;; the window it started in.
-              [(7)
-               (set! needle-now "")
-               (set! current-match #f)
-               (when (select-window! origin-window)
-                 (goto-point! origin))
-               (indicate! "Quit")]
-              ;; C-s repeats the current search from just beyond this
-              ;; match -- or recalls the previous needle when this new
-              ;; search is still empty.
-              [(19)
-               (if (string=? needle "")
-                   (if (string=? last-needle "")
-                       (loop needle match failed?)
-                       (let* ([home (point)]
-                              [next (search-forward-from last-needle
-                                                         (car home)
-                                                         (cdr home))])
-                         (when next (goto-match-end! next last-needle))
-                         (loop last-needle
-                               (and next (found next last-needle))
-                               (not next))))
-                   (let* ([a (anchor match)]
-                          [skip (if (match-here? match) 1 0)]
-                          [next (search-forward-from needle (car a)
-                                                     (+ (cdr a) skip))])
-                     (if next
-                         (begin (goto-match-end! next needle)
-                                (loop needle (found next needle) #f))
-                         (loop needle match #t))))]
-              ;; Backspace shortens the needle and searches again from
-              ;; the original point (or from point, away from the
-              ;; origin window).
-              [(8 127)
-               (if (string=? needle "")
+      (let* ([event (read-key-event)]
+             [action (and (not (eof-object? event))
+                          (key-event-binding 'isearch event))])
+        (cond
+          [(eof-object? event) (dispatch-key! event)]
+          [(eq? action 'accept)
+           (set! needle-now "")
+           (set! current-match #f)
+           (indicate! "")]
+          [(eq? action 'accept-dispatch)
+           (set! needle-now "")
+           (set! current-match #f)
+           (indicate! "")
+           (dispatch-key! event)]
+          [(eq? action 'toggle-case)
+           (set! fold-override (if (fold-for needle) 'exact 'fold))
+           (let ([home (if (eq? (selected-window) origin-window)
+                           origin
+                           (point))])
+             (if (string=? needle "")
+                 (loop needle match failed?)
+                 (let ([next (search-forward-from needle
+                                                  (car home) (cdr home))])
+                   (when next (goto-match-end! next needle))
+                   (loop needle (and next (found next needle)) (not next)))))]
+          [(eq? action 'cancel)
+           (set! needle-now "")
+           (set! current-match #f)
+           (when (select-window! origin-window) (goto-point! origin))
+           (indicate! "Quit")]
+          [(eq? action 'repeat)
+           (if (string=? needle "")
+               (if (string=? last-needle "")
                    (loop needle match failed?)
-                   (let ([shorter (substring needle 0
-                                    (- (string-length needle) 1))]
-                         [home (if (eq? (selected-window) origin-window)
-                                   origin
-                                   (point))])
-                     (if (string=? shorter "")
-                         (begin (goto-match! home) (loop shorter #f #f))
-                         (let ([next (search-forward-from shorter (car home)
-                                                          (cdr home))])
-                           (when next (goto-match-end! next shorter))
-                           (loop shorter (and next (found next shorter))
-                                 (not next))))))]
-              [else
-               (if (< (char->integer c) 32)
-                   ;; Any other control key runs as usual -- C-x o,
-                   ;; C-x b and friends -- and the search carries on.
-                   (begin (dispatch! c)
-                          (unless (quitting?)
-                            (loop needle match failed?)))
-                   ;; Extend the current match when possible; if it no
-                   ;; longer matches, continue forward to the next
-                   ;; candidate.
-                   (let* ([longer (string-append needle (string c))]
-                          [a (anchor match)]
-                          [next (search-forward-from longer (car a)
-                                                     (cdr a))])
-                     (if next
-                         (begin (goto-match-end! next longer)
-                                (loop longer (found next longer) #f))
-                         (loop longer match #t))))])))))
+                   (let* ([home (point)]
+                          [next (search-forward-from last-needle
+                                                     (car home) (cdr home))])
+                     (when next (goto-match-end! next last-needle))
+                     (loop last-needle
+                           (and next (found next last-needle))
+                           (not next))))
+               (let* ([a (anchor match)]
+                      [skip (if (match-here? match) 1 0)]
+                      [next (search-forward-from needle (car a)
+                                                 (+ (cdr a) skip))])
+                 (if next
+                     (begin (goto-match-end! next needle)
+                            (loop needle (found next needle) #f))
+                     (loop needle match #t))))]
+          [(eq? action 'delete-character)
+           (if (string=? needle "")
+               (loop needle match failed?)
+               (let ([shorter (substring needle 0
+                                (- (string-length needle) 1))]
+                     [home (if (eq? (selected-window) origin-window)
+                               origin
+                               (point))])
+                 (if (string=? shorter "")
+                     (begin (goto-match! home) (loop shorter #f #f))
+                     (let ([next (search-forward-from shorter (car home)
+                                                      (cdr home))])
+                       (when next (goto-match-end! next shorter))
+                       (loop shorter (and next (found next shorter))
+                             (not next))))))]
+          [(key-event-character event)
+           => (lambda (c)
+                (let* ([longer (string-append needle (string c))]
+                       [a (anchor match)]
+                       [next (search-forward-from longer (car a) (cdr a))])
+                  (if next
+                      (begin (goto-match-end! next longer)
+                             (loop longer (found next longer) #f))
+                      (loop longer match #t))))]
+          [else
+           (dispatch! event)
+           (unless (quitting?) (loop needle match failed?))]))))
 
   (define (search!!)
     ;; The search owns C-g while it runs; the match highlighting goes
@@ -278,4 +248,14 @@
 
   (define (init!)
     (add-highlighter! search-highlights)
-    (bind-key! "C-s" search!!)))
+    (bind-default-key! "C-s" search!!)
+    (for-each
+      (lambda (entry)
+        (bind-default-key! 'isearch (car entry) (cadr entry)))
+      '(("C-s" repeat) ("C-g" cancel) ("RET" accept) ("ESC" accept)
+        ("M-c" toggle-case) ("C-h" delete-character)
+        ("BACKSPACE" delete-character)
+        ("UP" accept-dispatch) ("DOWN" accept-dispatch)
+        ("LEFT" accept-dispatch) ("RIGHT" accept-dispatch)
+        ("HOME" accept-dispatch) ("END" accept-dispatch)
+        ("PAGEUP" accept-dispatch) ("PAGEDOWN" accept-dispatch)))))

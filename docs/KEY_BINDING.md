@@ -1,0 +1,236 @@
+# Key binding configuration
+
+Every keyboard command in e is resolved through a keymap. Built-in and
+extension-module bindings are defaults; bindings from `config.e` are user
+overrides and take priority regardless of registration or module reload order.
+
+Press `C-h k`, then a key or complete chord, to open `*Help*`. The report shows
+the resolved global command, where it was defined, shadowed definitions, and
+any meanings the key has inside prompts, incremental search, or query-replace.
+
+## Global bindings
+
+`bind-key!` takes a key specification and a zero-argument command:
+
+```scheme
+(bind-key! "M-l" show-log!)
+(bind-key! "C-c s" save!!)
+(bind-key! "C-c C-f" find-file!!)
+```
+
+Global specifications may contain any number of space-separated key events.
+This permits arbitrary prefixes; they are not limited to `C-x`. When a prefix
+is entered, e waits for the rest of the chord and displays the partial sequence
+in the echo area.
+
+A command must be a procedure callable with no arguments. Existing commands
+such as `save!!`, `undo!`, `beginning-of-buffer!`, and `other-window!` can be
+used directly. A lambda can adapt a command that needs arguments:
+
+```scheme
+(bind-key! "M-g" (lambda () (goto-point! '(0 . 0))))
+(bind-key! "C-c n" (lambda () (move-vertical! 10)))
+```
+
+Printable characters can also be bound. An explicit binding takes precedence
+over ordinary self-insertion:
+
+```scheme
+(bind-key! ";" (lambda () (insert-text! " — ")))
+```
+
+## Key names
+
+Ordinary printable keys are written literally: `"a"`, `"%"`, `")"`. Use
+`SPC` for a space inside a specification.
+
+Modifiers use the familiar prefixes:
+
+- `C-a` through `C-z`, plus forms such as `C-@` and `C-_`
+- `M-a`, `M-%`, `M-<`, and other Meta characters
+- `C-M-_` for a combined Control-Meta character
+
+Named terminal keys are:
+
+- `RET`, `TAB`, `ESC`, `BACKSPACE`, `DELETE`, and `S-TAB`
+- `UP`, `DOWN`, `LEFT`, `RIGHT`, `HOME`, and `END`
+- `PAGEUP` and `PAGEDOWN`
+
+`PASTE` is the synthetic event used by bracketed paste and can be rebound like
+a global key. `MOUSE` is emitted after the mouse report itself has been handled;
+it is primarily an internal event rather than a replacement for mouse handling.
+
+Examples:
+
+```scheme
+(bind-key! "C-c SPC" set-mark-command!)
+(bind-key! "PAGEUP" beginning-of-buffer!)
+(bind-key! "C-c LEFT" beginning-of-line!)
+```
+
+Terminal protocols cannot distinguish every physical key combination. In
+particular, some terminals configure the Backspace key to send `C-h`. Such a
+terminal cannot distinguish physical Backspace from e's `C-h` help prefix;
+configure it to send DEL if necessary.
+
+## Removing and replacing bindings
+
+`unbind-key!` creates a user-level unbinding, so a lower-priority default does
+not become active again:
+
+```scheme
+(unbind-key! "C-v")
+(unbind-key! "M-w")
+```
+
+Binding the same specification again replaces its effective meaning. An exact
+user binding can also reclaim a key used as a default prefix:
+
+```scheme
+(bind-key! "C-h" backspace!)
+```
+
+Here `C-h` runs `backspace!` immediately instead of waiting for the default
+`C-h k` chord. A user-defined longer chord still makes its initial keys act as
+a prefix.
+
+Bindings evaluated with `M-x` last for the current session. Put them in the
+installation's `config.e` to apply them at startup and whenever configuration
+is reloaded. Removing a line from `config.e` removes that override on the next
+reload; configuration-owned registrations do not accumulate.
+
+## Contextual keymaps
+
+Some interactions interpret keys using local state. Their bindings use a
+three-argument form consisting of the context, key, and semantic action:
+
+```scheme
+(bind-key! 'isearch "M-i" 'toggle-case)
+(unbind-key! 'isearch "M-c")
+(bind-key! 'prompt "C-u" 'kill)
+(bind-key! 'query-replace "SPC" 'skip)
+```
+
+Context bindings use action symbols rather than command procedures because the
+operation acts on the currently running prompt or search. Context keys are
+individual decoded key events; global keymaps provide arbitrary multi-key
+chords.
+
+### `isearch`
+
+Available actions are:
+
+- `repeat`: find the next match, or recall the previous needle when empty
+- `cancel`: restore the point where the search began
+- `accept`: keep the current match and leave search
+- `accept-dispatch`: accept, then run the key's global binding
+- `toggle-case`: switch this search between folded and exact matching
+- `delete-character`: remove the last character from the needle
+
+Example:
+
+```scheme
+(bind-key! 'isearch "M-i" 'toggle-case)
+(unbind-key! 'isearch "M-c")
+```
+
+Printable keys without contextual actions extend the search. Other unhandled
+keys fall through to the global map while search remains active; movement keys
+use `accept-dispatch` by default.
+
+### `prompt`
+
+Available actions are:
+
+- `accept` and `cancel`
+- `beginning`, `end`, `backward`, and `forward`
+- `up` and `down`, which move through wrapped input or prompt history
+- `delete-forward` and `delete-backward`
+- `kill` and `yank`
+- `complete` and `alternate-complete`
+- `inspect`, used by the Scheme prompt's symbol inspector
+- `paste`
+
+Example:
+
+```scheme
+(bind-key! 'prompt "C-u" 'kill)
+(bind-key! 'prompt "M-p" 'up)
+(bind-key! 'prompt "M-n" 'down)
+```
+
+Printable keys without prompt actions insert themselves. Other unhandled keys
+are ignored by the prompt.
+
+### `query-replace`
+
+The ordinary configurable actions are:
+
+- `replace`: replace the highlighted match
+- `skip`: leave it unchanged and continue
+- `stop`: finish query-replace at this match
+
+Example:
+
+```scheme
+(bind-key! 'query-replace "r" 'replace)
+(bind-key! 'query-replace "s" 'skip)
+(bind-key! 'query-replace "q" 'stop)
+```
+
+## Inspecting bindings from Scheme
+
+`key-binding` returns the effective command or action, or `#f` when the key is
+unbound or has no explicit binding:
+
+```scheme
+(key-binding "C-s")
+(key-binding 'isearch "M-c")
+```
+
+Code that has already read canonical events with `read-key-event` should use
+`key-event-binding` instead. It accepts events directly, without reparsing the
+space-separated configuration syntax:
+
+```scheme
+(let ([event (read-key-event)])
+  (key-event-binding 'isearch event))
+```
+
+`(read-key-event #f)` consumes mouse reports without applying them, which is
+appropriate for modal interactions that must not let a click change the active
+buffer while their state refers to the old one.
+
+`command-key` performs the reverse lookup for a top-level command symbol and
+returns one effective global key specification:
+
+```scheme
+(command-key 'save!!)
+```
+
+`command-hint` formats a list of command symbols with their current keys. It is
+primarily useful to extension modules when constructing status or help text.
+
+## Defaults in extension modules
+
+Modules should register suggested bindings with `bind-default-key!`, normally
+inside `init!`:
+
+```scheme
+(define (init!)
+  (bind-default-key! "M-j" jump-to-definition!))
+```
+
+Context defaults use the corresponding three-argument form:
+
+```scheme
+(bind-default-key! 'isearch "M-i" 'toggle-case)
+```
+
+Defaults remain replaceable by `bind-key!` and `unbind-key!`. Registrations are
+owned by their module, so reloading it retracts the old defaults before running
+its new `init!`; user choices remain effective.
+
+Use `bind-key!` in a module only when the module deliberately installs an
+override rather than offering a default. For normal extension behavior,
+`bind-default-key!` is the cooperative choice.

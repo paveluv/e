@@ -28,12 +28,17 @@
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
+    set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
+    redraw-command! open-line! page-up! page-down!
+    previous-line! next-line! beginning-of-buffer! end-of-buffer!
+    move-left! move-right! indent-tab!
     call-as-one-edit!
     indent-line! indent-region! indent-buffer! format-region! format-buffer!
     move-horizontal! move-vertical! goto-point!
     quit!!
     ;; extending the editor
-    bind-key! command-key command-hint
+    bind-key! bind-default-key! unbind-key! key-binding key-event-binding
+    command-key command-hint describe-key!!
     register-mode! find-mode mode-styles add-highlighter!
     register-indenter! register-formatter!
     add-status-hint!
@@ -43,7 +48,8 @@
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
     min-window-lines
     complete! show-completions! dismiss-completions!
-    read-key peek-key pending-input? cursor-in-echo
+    read-key read-key-event key-event-character
+    peek-key pending-input? cursor-in-echo
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
     set-message! show-message! current-message redraw! error-text mouse!
@@ -199,7 +205,6 @@
   (define last-command #f)
   (define suppress-history (make-parameter #f))
   (define quit? #f)
-  (define key-prefix #f)
   ;; The echo area is normally one line; during a prompt it grows with
   ;; the input, wrapping at the right edge Emacs-style with a trailing
   ;; backslash and continuation lines indented to the prompt text, up to
@@ -1583,6 +1588,8 @@
     (set-box! r (cons (cons (registering-module) item) (unbox r))))
 
   (define (registry-items r) (map cdr (unbox r)))
+
+  (define (registry-entries r) (unbox r))
 
   (define (registry-find r match?)
     (let loop ([entries (unbox r)])
@@ -3210,12 +3217,6 @@
         (let ([h (unbox history)])
           (unless (and (pair? h) (string=? (car h) s))
             (set-box! history (cons s h))))))
-    (define (read-csi)
-      ;; The rest of an ESC [ sequence: (parameter-string . final-char).
-      (let drain ([b (read-char stdin)] [params '()])
-        (if (and (char? b) (or (char<=? #\0 b #\9) (char=? b #\;)))
-            (drain (read-char stdin) (cons b params))
-            (cons (list->string (reverse params)) b))))
     (define (run-prompt)
       (let loop ([s initial] [pos (string-length initial)] [note ""])
         (define len (string-length s))
@@ -3262,102 +3263,63 @@
         (set! echo-indent (string-length label))
         (set! echo-cursor (+ (string-length label) pos))
         (redraw!)
-        (let ([c (read-char stdin)])
-          (if (eof-object? c)
-              #f
-              (case (char->integer c)
-                [(27)
-                 ;; A bare ESC cancels.  Escape sequences edit: up and down
-                 ;; browse the history, the rest move and delete as usual.
-                 (if (char-ready? stdin)
-                     (let ([a (read-char stdin)])
-                       (if (and (char? a) (char=? a #\[))
-                           (let* ([csi (read-csi)]
-                                  [params (car csi)]
-                                  [final (cdr csi)])
-                             (case final
-                               ;; Up and down move within a wrapped
-                               ;; prompt; history takes over at the edges.
-                               [(#\A) (if (cursor-on-top?)
-                                          (history-up)
-                                          (vertical-move -1))]
-                               [(#\B) (if (cursor-on-bottom?)
-                                          (history-down)
-                                          (vertical-move 1))]
-                               [(#\C) (loop s (min len (+ pos 1)) "")]
-                               [(#\D) (loop s (max 0 (- pos 1)) "")]
-                               [(#\H) (loop s 0 "")]
-                               [(#\F) (loop s len "")]
-                               [(#\Z)                       ; Shift-TAB
-                                (set! hist-pos -1)
-                                (if alt-complete
-                                    (complete! s alt-complete
-                                               (lambda (new-s note)
-                                                 (loop new-s
-                                                       (string-length new-s)
-                                                       note)))
-                                    (loop s pos ""))]
-                               [(#\<)
-                                ;; a mouse report: swallow it
-                                (let mouse ([c (read-char stdin)])
-                                  (if (and (char? c)
-                                           (not (memv c '(#\M #\m))))
-                                      (mouse (read-char stdin))
-                                      (loop s pos note)))]
-                               [(#\~)
-                                (cond [(and (string=? params "3") (< pos len))
-                                       (edited (string-delete s pos (+ pos 1)) pos)]
-                                      [(member params '("1" "7")) (loop s 0 "")]
-                                      [(member params '("4" "8")) (loop s len "")]
-                                      [(string=? params "200")
-                                       ;; A paste, inserted whole; its line
-                                       ;; breaks become spaces.
-                                       (let ([text (string-join
-                                                     (split-pasted-lines
-                                                       (read-paste))
-                                                     " ")])
-                                         (edited (string-insert s pos text)
-                                                 (+ pos (string-length text))))]
-                                      [else (loop s pos "")])]
-                               [else (loop s pos "")]))
-                           (if (and (char? a) (char=? a #\.))
-                               (begin              ; M-.: inspect
-                                 (let ([p (prompt-inspector)])
-                                   (when p
-                                     (guard (ex [else (void)])
-                                       (p s pos))))
-                                 (loop s pos ""))
-                               (loop s pos ""))))
-                     (begin (set! message "Quit") #f))]
-                [(7) (set! message "Quit") #f]
-                [(10 13)
-                 (let ([out (if normalize (normalize s) s)])
-                   (record-history! out) (set! message "") out)]
-                [(1) (loop s 0 "")]                                   ; C-a
-                [(2) (loop s (max 0 (- pos 1)) "")]                   ; C-b
-                [(5) (loop s len "")]                                 ; C-e
-                [(6) (loop s (min len (+ pos 1)) "")]                 ; C-f
-                [(4) (if (< pos len)                                  ; C-d
-                         (edited (string-delete s pos (+ pos 1)) pos)
-                         (loop s pos ""))]
-                [(11) (set! kill-ring (string-tail s pos))            ; C-k
-                 (edited (substring s 0 pos) pos)]
-                [(25) (edited (string-insert s pos kill-ring)         ; C-y
-                              (+ pos (string-length kill-ring)))]
-                [(9) (set! hist-pos -1)                               ; TAB
-                 (if complete
-                     (complete! s complete
-                                (lambda (new-s note)
-                                  (loop new-s (string-length new-s) note)))
-                     (loop s pos ""))]
-                [(8 127)
-                 (if (= pos 0)
-                     (loop s pos "")
-                     (edited (string-delete s (- pos 1) pos) (- pos 1)))]
-                [else
-                 (if (>= (char->integer c) 32)
-                     (edited (string-insert s pos (string c)) (+ pos 1))
-                     (loop s pos ""))])))))
+        (let* ([event (read-key-event #f)]
+               [action (and (not (eof-object? event))
+                            (key-event-binding 'prompt event))])
+          (cond
+            [(eof-object? event) #f]
+            [(eq? action 'cancel) (set! message "Quit") #f]
+            [(eq? action 'accept)
+             (let ([out (if normalize (normalize s) s)])
+               (record-history! out) (set! message "") out)]
+            [(eq? action 'beginning) (loop s 0 "")]
+            [(eq? action 'backward) (loop s (max 0 (- pos 1)) "")]
+            [(eq? action 'end) (loop s len "")]
+            [(eq? action 'forward) (loop s (min len (+ pos 1)) "")]
+            [(eq? action 'up)
+             (if (cursor-on-top?) (history-up) (vertical-move -1))]
+            [(eq? action 'down)
+             (if (cursor-on-bottom?) (history-down) (vertical-move 1))]
+            [(eq? action 'delete-forward)
+             (if (< pos len)
+                 (edited (string-delete s pos (+ pos 1)) pos)
+                 (loop s pos ""))]
+            [(eq? action 'delete-backward)
+             (if (= pos 0)
+                 (loop s pos "")
+                 (edited (string-delete s (- pos 1) pos) (- pos 1)))]
+            [(eq? action 'kill)
+             (set! kill-ring (string-tail s pos))
+             (edited (substring s 0 pos) pos)]
+            [(eq? action 'yank)
+             (edited (string-insert s pos kill-ring)
+                     (+ pos (string-length kill-ring)))]
+            [(eq? action 'complete)
+             (set! hist-pos -1)
+             (if complete
+                 (complete! s complete
+                            (lambda (new-s note)
+                              (loop new-s (string-length new-s) note)))
+                 (loop s pos ""))]
+            [(eq? action 'alternate-complete)
+             (set! hist-pos -1)
+             (if alt-complete
+                 (complete! s alt-complete
+                            (lambda (new-s note)
+                              (loop new-s (string-length new-s) note)))
+                 (loop s pos ""))]
+            [(eq? action 'inspect)
+             (let ([p (prompt-inspector)])
+               (when p (guard (ex [else (void)]) (p s pos))))
+             (loop s pos "")]
+            [(eq? action 'paste)
+             (let ([text (string-join (split-pasted-lines (read-paste)) " ")])
+               (edited (string-insert s pos text)
+                       (+ pos (string-length text))))]
+            [(key-event-character event)
+             => (lambda (c)
+                  (edited (string-insert s pos (string c)) (+ pos 1)))]
+            [else (loop s pos "")]))))
     ;; The prompt owns C-g while it runs, and its echo-area state is
     ;; restored however it exits -- an error unwinding through it
     ;; included.
@@ -3793,7 +3755,7 @@
       [(3) (lambda () (goto-point! (cons point-row (+ point-col 3))))]
       [else (lambda () (void))]))
 
-  (define (mouse-event!)
+  (define (mouse-event! handle?)
     ;; The rest of an ESC [ < sequence: b ; x ; y then M (press) or
     ;; m (release).  Wheel is button 64/65; releases are ignored.
     (let drain ([c (read-char stdin)] [ps '()])
@@ -3807,7 +3769,7 @@
                                            (+ (* cur 10)
                                               (- (char->integer (car chars)) 48))
                                            acc)]))])
-            (when (and (char? c) (= (length nums) 3))
+            (when (and handle? (char? c) (= (length nums) 3))
               (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
                 (cond [(char=? c #\m)                           ; release
                        (set! drag-status #f)
@@ -3822,40 +3784,141 @@
 
   ;;; Key handling ----------------------------------------------------------
 
-  ;; Keys bound by modules, consulted before the built-in bindings (so a
-  ;; module may also rebind a built-in key): plain control keys, keys
-  ;; after the C-x prefix, and keys after ESC (meta).
-  (define user-keys (make-registry))       ; entries: (key-code . command)
-  (define user-cx-keys (make-registry))
-  (define user-meta-keys (make-registry))
+  ;; Every keyboard binding, including defaults, lives in this one
+  ;; registry.  An item is (context sequence action kind spelling), where
+  ;; kind is user or default.  The registry supplies its owner: config,
+  ;; an extension module, or #f for the core and live M-x customizations.
+  ;; User entries always beat defaults; within a layer the newest wins.
+  (define key-bindings (make-registry))
 
-  (define (user-binding r code)
-    (let ([hit (registry-find r (lambda (item) (= (car item) code)))])
-      (and hit (cdr hit))))
+  (define (key-token s)
+    (cond
+      [(string=? s "SPC") " "]
+      [(string=? s "TAB") "TAB"]
+      [(string=? s "RET") "RET"]
+      [(string=? s "ESC") "ESC"]
+      [(string=? s "DEL") "DELETE"]
+      [(string=? s "BACKSPACE") "BACKSPACE"]
+      [(and (= (string-length s) 3) (string-prefix? "C-" s))
+       (format "C-~c" (char-downcase (string-ref s 2)))]
+      [(and (= (string-length s) 3) (string-prefix? "M-" s))
+       (format "M-~c" (string-ref s 2))]
+      [(and (> (string-length s) 3) (string-prefix? "M-" s))
+       (let ([base (key-token (string-tail s 2))])
+         (string-append "M-" (if (string=? base " ") "SPC" base)))]
+      [(and (= (string-length s) 5) (string-prefix? "C-M-" s))
+       (format "C-M-~c" (char-downcase (string-ref s 4)))]
+      [(= (string-length s) 1) s]
+      [(member s '("UP" "DOWN" "LEFT" "RIGHT" "HOME" "END"
+                   "DELETE" "PAGEUP" "PAGEDOWN" "S-TAB" "PASTE"
+                   "MOUSE")) s]
+      [else (error 'bind-key! "unrecognized key" s)]))
+
+  (define (key-spec spec)
+    (unless (and (string? spec) (> (string-length spec) 0))
+      (error 'bind-key! "key specification must be a nonempty string" spec))
+    (let ([n (string-length spec)])
+      (let loop ([i 0] [start 0] [parts '()])
+        (cond
+          [(= i n)
+           (reverse (cons (key-token (substring spec start i)) parts))]
+          [(char=? (string-ref spec i) #\space)
+           (when (= i start) (error 'bind-key! "empty key in sequence" spec))
+           (loop (+ i 1) (+ i 1)
+                 (cons (key-token (substring spec start i)) parts))]
+          [else (loop (+ i 1) start parts)]))))
+
+  (define (binding-item context sequence action kind spec)
+    (list context sequence action kind spec))
+  (define binding-context car)
+  (define binding-sequence cadr)
+  (define binding-action caddr)
+  (define binding-kind cadddr)
+  (define (binding-spec b) (car (cddddr b)))
+
+  (define (same-sequence? a b)
+    (and (= (length a) (length b))
+         (for-all string=? a b)))
+
+  (define (sequence-prefix? prefix whole)
+    (and (<= (length prefix) (length whole))
+         (let loop ([a prefix] [b whole])
+           (or (null? a)
+               (and (string=? (car a) (car b))
+                    (loop (cdr a) (cdr b)))))))
+
+  (define (matching-bindings context sequence exact?)
+    (filter
+      (lambda (owned)
+        (let ([b (cdr owned)])
+          (and (eq? (binding-context b) context)
+               ((if exact? same-sequence? sequence-prefix?)
+                sequence (binding-sequence b)))))
+      (registry-entries key-bindings)))
+
+  (define (choose-binding entries)
+    (or (find (lambda (owned) (eq? (binding-kind (cdr owned)) 'user))
+              entries)
+        (find (lambda (owned) (eq? (binding-kind (cdr owned)) 'default))
+              entries)))
+
+  (define (resolved-binding context sequence)
+    (choose-binding (matching-bindings context sequence #t)))
+
+  (define key-binding
+    (case-lambda
+      [(spec) (key-binding 'global spec)]
+      [(context spec)
+       (let ([hit (resolved-binding context (key-spec spec))])
+         (and hit (binding-action (cdr hit))))]))
+
+  (define (key-event-binding context . events)
+    ;; Runtime events are already canonical tokens.  Do not feed them
+    ;; back through the human key-spec parser: its spaces are separators,
+    ;; while a typed space is itself the literal " " event.
+    (let ([hit (resolved-binding context events)])
+      (and hit (binding-action (cdr hit)))))
+
+  (define (add-key-binding! context spec action kind)
+    (unless (symbol? context) (error 'bind-key! "context must be a symbol" context))
+    (unless (or (procedure? action) (symbol? action) (not action))
+      (error 'bind-key! "action must be a procedure, symbol, or #f" action))
+    (registry-add! key-bindings
+      (binding-item context (key-spec spec) action kind spec)))
+
+  (define bind-key!
+    (case-lambda
+      [(spec action) (add-key-binding! 'global spec action 'user)]
+      [(context spec action) (add-key-binding! context spec action 'user)]))
+
+  (define bind-default-key!
+    (case-lambda
+      [(spec action) (add-key-binding! 'global spec action 'default)]
+      [(context spec action) (add-key-binding! context spec action 'default)]))
+
+  (define unbind-key!
+    (case-lambda
+      [(spec) (add-key-binding! 'global spec #f 'user)]
+      [(context spec) (add-key-binding! context spec #f 'user)]))
 
   (define (command-key sym)
     ;; The key spec currently bound to the top-level command named sym
     ;; -- "M-n", "C-t", "C-x C-b" -- looked up in the live registries,
     ;; newest binding first; #f when none.
-    (define (render code)
-      (if (< code 32)
-          (format "C-~c" (integer->char (+ code 96)))
-          (string (integer->char code))))
-    (define (search r wrap)
-      (lambda (proc)
-        (let ([hit (find (lambda (e) (eq? (cdr e) proc))
-                         (registry-items r))])
-          (and hit (wrap (car hit))))))
     (guard (ex [else #f])
       (and (top-level-bound? sym)
            (let ([proc (top-level-value sym)])
-             (or ((search user-meta-keys
-                          (lambda (c) (format "M-~c" (integer->char c))))
-                  proc)
-                 ((search user-keys render) proc)
-                 ((search user-cx-keys
-                          (lambda (c) (format "C-x ~a" (render c))))
-                  proc))))))
+             (let ([hit
+                    (find
+                      (lambda (owned)
+                        (let ([b (cdr owned)])
+                          (and (eq? (binding-context b) 'global)
+                               (eq? (binding-action b) proc)
+                               (eq? owned
+                                    (resolved-binding 'global
+                                      (binding-sequence b))))))
+                      (registry-entries key-bindings))])
+               (and hit (binding-spec (cdr hit))))))))
 
   (define (command-hint syms)
     ;; "M-n next-conflict!, M-m keep-mine!" for a list of command
@@ -3867,144 +3930,291 @@
            syms)
       ", "))
 
-  (define (bind-key! spec command)
-    ;; Bind a key to a zero-argument command.  spec is "C-t" for a control
-    ;; key, "M-x" for a meta key, or "C-x <key>" where <key> is "C-t" or a
-    ;; plain character, as in "C-x e".
-    (define (code s)
-      (cond [(and (= (string-length s) 3) (string-prefix? "C-" s))
-             (bitwise-and (char->integer (string-ref s 2)) 31)]
-            [(= (string-length s) 1) (char->integer (string-ref s 0))]
-            [else (error 'bind-key! "unrecognized key" s)]))
-    (cond
-      [(string-prefix? "C-x " spec)
-       (registry-add! user-cx-keys (cons (code (string-tail spec 4)) command))]
-      [(and (= (string-length spec) 3) (string-prefix? "M-" spec))
-       (registry-add! user-meta-keys
-                      (cons (char->integer (string-ref spec 2)) command))]
-      [else (registry-add! user-keys (cons (code spec) command))]))
-
   (define (settle-echo!)
     (set! message "")
     (set! echo-pending '()))
 
-  (define (escape-sequence!)
-    (let ([a (read-char stdin)])
-      (cond
-        [(eof-object? a) (void)]
-        [(char=? a #\[)
-         (let ([first (read-char stdin)])
-           (if (and (char? first) (char=? first #\<))
-               (mouse-event!)
-               (let drain ([b (begin (settle-echo!) first)] [ps '()])
-                 (if (and (char? b)
-                          (or (char<=? #\0 b #\9) (char=? b #\;)))
-                     (drain (read-char stdin) (cons b ps))
-                     (let ([params (list->string (reverse ps))])
-                       (case b
-                         [(#\A) (move-vertical! -1)]
-                         [(#\B) (move-vertical! 1)]
-                         [(#\C) (move-right!)] [(#\D) (move-left!)]
-                         [(#\H) (set! point-col 0)]
-                         [(#\F) (set! point-col
-                                  (string-length (current-line)))]
-                         [(#\~)
-                          (cond [(string=? params "3") (delete-forward!)]
-                                [(string=? params "5")
-                                 (move-vertical! (- (page-size)))]
-                                [(string=? params "6")
-                                 (move-vertical! (page-size))]
-                                [(string=? params "200")
-                                 (paste-into-buffer!)]
-                                [else (void)])]
-                         [else (void)]))))))]
-        [(begin (settle-echo!) #f) (void)]        ; meta keys settle
-        [(user-binding user-meta-keys (char->integer a))
-         => (lambda (command) (command))]
-        ;; C-M-_: redo, as in Emacs.
-        [(char=? a #\x1f) (redo!)]
-        ;; M-w: copy the region; M-v: page up; M-< and M->:
-        ;; beginning/end of buffer.
-        [(char=? a #\w) (copy-region!)]
-        [(char=? a #\v) (move-vertical! (- (page-size)))]
-        [(char=? a #\<) (set! point-row 0) (set! point-col 0)]
-        [(char=? a #\>) (set! point-row (- (vlen) 1))
-         (set! point-col (string-length (current-line)))])))
+  (define (character-event c)
+    (let ([n (char->integer c)])
+      (cond [(= n 0) "C-@"]
+            [(= n 9) "TAB"]
+            [(or (= n 10) (= n 13)) "RET"]
+            [(= n 27) "ESC"]
+            [(= n 28) "C-\\"]
+            [(= n 29) "C-]"]
+            [(= n 30) "C-^"]
+            [(= n 31) "C-_"]
+            [(and (> n 0) (< n 27))
+             (format "C-~c" (integer->char (+ n 96)))]
+            [(= n 127) "BACKSPACE"]
+            [else (string c)])))
 
-  (define (handle-prefix! c)
-    (set! key-prefix #f)
-    (set! message "")               ; take down the C-x- hint
-    (set! echo-pending '())
-    (cond
-      [(eof-object? c) (set! quit? #t)]
-      [(user-binding user-cx-keys (char->integer c))
-       => (lambda (command) (command))]
-      [else
-       (case (char->integer c)
-         [(7) (set! message "Quit")]                           ; C-x C-g
-         [(19) (save!!)]                                ; C-x C-s
-         [(23) (save-as!!)]                             ; C-x C-w
-         [(3) (quit!!)]                                 ; C-x C-c
-         [(6) (find-file!!)]                            ; C-x C-f
-         [(98) (switch-buffer!!)]                       ; C-x b
-         [(107) (kill-buffer!!)]                        ; C-x k
-         [(111) (other-window!)]                               ; C-x o
-         [(48) (delete-window!)]                               ; C-x 0
-         [(49) (delete-other-windows!)]                        ; C-x 1
-         [(50) (split-window!)]                                ; C-x 2
-         [(51) (split-window-right!)]                          ; C-x 3
-         [(116) (wrap!)]                                       ; C-x t
-         [else (set! message "C-x is undefined for that key")])]))
+  (define (key-event-character event)
+    (and (string? event) (= (string-length event) 1)
+         (let ([c (string-ref event 0)])
+           (and (>= (char->integer c) 32) c))))
 
-  (define (handle-key! c)
-    (define chain insert-chain)     ; only an unbroken typed run keeps it
+  (define (read-csi-event handle-mouse?)
+    (let ([first (read-char stdin)])
+      (if (and (char? first) (char=? first #\<))
+          (begin (mouse-event! handle-mouse?) "MOUSE")
+          (let drain ([b first] [params '()])
+            (if (and (char? b)
+                     (or (char<=? #\0 b #\9) (char=? b #\;)))
+                (drain (read-char stdin) (cons b params))
+                (let ([p (list->string (reverse params))])
+                  (case b
+                    [(#\A) "UP"] [(#\B) "DOWN"]
+                    [(#\C) "RIGHT"] [(#\D) "LEFT"]
+                    [(#\H) "HOME"] [(#\F) "END"]
+                    [(#\Z) "S-TAB"]
+                    [(#\~) (cond [(string=? p "3") "DELETE"]
+                                 [(member p '("1" "7")) "HOME"]
+                                 [(member p '("4" "8")) "END"]
+                                 [(string=? p "5") "PAGEUP"]
+                                 [(string=? p "6") "PAGEDOWN"]
+                                 [(string=? p "200") "PASTE"]
+                                 [else #f])]
+                    [else #f])))))))
+
+  (define read-key-event
+    ;; Decode the terminal once.  Consumers see the same names whether
+    ;; they are the main editor, I-search, a prompt, or a key describer.
+    ;; A context that must not change editor focus passes #f: mouse reports
+    ;; are consumed and returned as MOUSE without applying them.
+    (case-lambda
+      [() (read-key-event #t)]
+      [(handle-mouse?)
+       (let again ()
+         (let ([c (read-char stdin)])
+           (cond
+             [(eof-object? c) c]
+             [(not (char=? c #\esc)) (character-event c)]
+             [(not (pending-input?)) "ESC"]
+             [else
+              (let ([a (read-char stdin)])
+                (cond
+                  [(eof-object? a) "ESC"]
+                  [(char=? a #\[)
+                   (or (read-csi-event handle-mouse?) (again))]
+                  [else
+                   (let ([plain (character-event a)])
+                     (if (string-prefix? "C-" plain)
+                         (string-append "C-M-" (string-tail plain 2))
+                         (string-append "M-"
+                                        (if (string=? plain " ")
+                                            "SPC"
+                                            plain))))]))])))]))
+
+  (define (set-mark-command!)
+    (set! mark-row point-row) (set! mark-col point-col)
+    (set! mark-active? #t) (set! message "Mark set"))
+  (define (beginning-of-line!) (set! point-col 0))
+  (define (end-of-line!) (set! point-col (string-length (current-line))))
+  (define (keyboard-quit!) (set! mark-active? #f) (set! message "Quit"))
+  (define (redraw-command!)
+    (set! size-dirty? #t) (erase-screen!) (set! message "Screen redrawn"))
+  (define (open-line!)
+    (let ([row point-row] [col point-col])
+      (newline!) (set! point-row row) (set! point-col col)))
+  (define (page-up!) (move-vertical! (- (page-size))))
+  (define (page-down!) (move-vertical! (page-size)))
+  (define (previous-line!) (move-vertical! -1))
+  (define (next-line!) (move-vertical! 1))
+  (define (beginning-of-buffer!) (set! point-row 0) (set! point-col 0))
+  (define (end-of-buffer!)
+    (set! point-row (- (vlen) 1))
+    (set! point-col (string-length (current-line))))
+
+  (define (binding-prefix? context sequence)
+    (let ([exact (resolved-binding context sequence)])
+      (exists
+        (lambda (owned)
+          (let* ([candidate (cdr owned)]
+                 [longer (binding-sequence candidate)]
+                 [chosen (and (> (length longer) (length sequence))
+                              (resolved-binding context longer))])
+            (and chosen
+                 (binding-action (cdr chosen))
+                 ;; An exact user binding deliberately reclaims a key
+                 ;; that used to be only a default prefix.
+                 (or (not exact)
+                     (eq? (binding-kind (cdr exact)) 'default)
+                     (eq? (binding-kind (cdr chosen)) 'user)))))
+        (matching-bindings context sequence #f))))
+
+  (define (run-key-action! action)
+    (cond [(procedure? action) (action)]
+          [(not action) (set! message "Key is unbound")]
+          [else (error 'dispatch-key! "context action used globally" action)]))
+
+  (define (sequence-text sequence) (string-join sequence " "))
+
+  (define (dispatch-sequence! first chain)
+    (let loop ([sequence (list first)])
+      (let ([hit (resolved-binding 'global sequence)]
+            [prefix? (binding-prefix? 'global sequence)])
+        (cond
+          [prefix?
+           (set! message (string-append (sequence-text sequence) "-"))
+           (set! echo-pending '())
+           (redraw!)
+           (let ([next (read-key-event)])
+             (if (eof-object? next)
+                 (set! quit? #t)
+                 (loop (append sequence (list next)))))]
+          [hit (run-key-action! (binding-action (cdr hit)))]
+          [(and (= (length sequence) 1)
+                (key-event-character first))
+           => (lambda (c) (self-insert! c chain))]
+          [else
+           (set! message
+             (format "~a is undefined" (sequence-text sequence)))]))))
+
+  (define (handle-key! input)
+    (define chain insert-chain)
     (set! insert-chain #f)
-    (when (char? c)
-      (let ([n (char->integer c)])
-        (unless (= n 11) (set! last-command #f))))              ; C-k chains kills
+    (let ([event (cond [(eof-object? input) input]
+                       [(char? input) (character-event input)]
+                       [else input])])
+      (cond
+        [(eof-object? event) (set! quit? #t)]
+        [else
+         (unless (string=? event "C-k") (set! last-command #f))
+         (unless (string=? event "MOUSE") (settle-echo!))
+         (dispatch-sequence! event chain)])))
+
+  (define (action-name action)
     (cond
-      [key-prefix (handle-prefix! c)]
-      [(eof-object? c) (set! quit? #t)]
+      [(not action) "unbound"]
+      [(symbol? action) (symbol->string action)]
       [else
-       ;; the settlement: messages last until the next key, then the
-       ;; echo area goes back to one line -- except mouse events (under
-       ;; ESC), which aim at the screen as displayed: a settling echo
-       ;; would relayout the windows and shift the target under the
-       ;; pointer.  escape-sequence! settles its non-mouse outcomes.
-       (unless (= (char->integer c) 27)
-         (settle-echo!))
-       (cond
-         [(user-binding user-keys (char->integer c))
-          => (lambda (command) (command))]
-         [else
-          (case (char->integer c)
-            [(0) (set! mark-row point-row) (set! mark-col point-col) ; C-@ set mark
-             (set! mark-active? #t) (set! message "Mark set")]
-            [(1) (set! point-col 0)]                                 ; C-a
-            [(2) (move-left!)]                                       ; C-b
-            [(4) (delete-forward!)]                                  ; C-d
-            [(5) (set! point-col (string-length (current-line)))]    ; C-e
-            [(6) (move-right!)]                                      ; C-f
-            [(7) (set! mark-active? #f) (set! message "Quit")]      ; C-g
-            [(8 127) (backspace!)]                                   ; C-h, DEL
-            [(9) (indent-tab!)]                                      ; TAB
-            [(10 13) (newline!)]                                     ; RET
-            [(11) (kill-line!)]                                      ; C-k
-            [(12) (set! size-dirty? #t) (erase-screen!)              ; C-l
-             (set! message "Screen redrawn")]
-            [(14) (move-vertical! 1)]                                ; C-n
-            [(15) (let ([row point-row] [col point-col])             ; C-o open line
-                    (newline!)
-                    (set! point-row row) (set! point-col col))]
-            [(16) (move-vertical! -1)]                               ; C-p
-            [(22) (move-vertical! (page-size))]                      ; C-v
-            [(23) (kill-region!)]                                    ; C-w
-            [(24) (set! key-prefix 'c-x) (set! message "C-x-")]      ; C-x
-            [(25) (yank!)]                                           ; C-y
-            [(27) (escape-sequence!)]                                ; ESC
-            [(31) (undo!)]                                           ; C-_
-            [else (when (>= (char->integer c) 32)
-                    (self-insert! c chain))])])]))
+       (let ([sym
+              (find
+                (lambda (s)
+                  (and (top-level-bound? s)
+                       (guard (ex [else #f])
+                         (eq? (top-level-value s) action))))
+                (environment-symbols (interaction-environment)))])
+         (if sym (symbol->string sym) "anonymous command"))]))
+
+  (define (binding-origin owned)
+    (let ([owner (car owned)] [kind (binding-kind (cdr owned))])
+      (cond [(eq? owner 'config) "config.e (user override)"]
+            [owner (format "module ~a (~a)" owner kind)]
+            [(eq? kind 'default) "core default"]
+            [else "current session (user override)"])))
+
+  (define (read-described-sequence)
+    (let loop ([sequence (list (read-key-event #f))])
+      (if (binding-prefix? 'global sequence)
+          (begin
+            (set! message (format "Describe key: ~a-" (sequence-text sequence)))
+            (redraw!)
+            (loop (append sequence (list (read-key-event #f)))))
+          sequence)))
+
+  (define (describe-key!!)
+    (parameterize ([message-source #f])
+      (set-message! "Describe key: "))
+    (redraw!)
+    (let* ([sequence (read-described-sequence)]
+           [all (filter
+                  (lambda (owned)
+                    (same-sequence? sequence
+                                    (binding-sequence (cdr owned))))
+                  (registry-entries key-bindings))]
+           [entries (filter
+                      (lambda (owned)
+                        (eq? (binding-context (cdr owned)) 'global))
+                      all)]
+           [resolved (choose-binding entries)]
+           [b (fresh-buffer "*Help*")])
+      (buffer-append! b
+        (sequence-text sequence)
+        ""
+        (if resolved
+            (format "Resolved to: ~a" (action-name (binding-action (cdr resolved))))
+            "Resolved to: self-insert or undefined")
+        "Keymap: global"
+        (if resolved
+            (format "Defined by: ~a" (binding-origin resolved))
+            "Defined by: fallback"))
+      (when (> (length entries) 1)
+        (buffer-append! b "" "Shadowed bindings:")
+        (for-each
+          (lambda (owned)
+            (unless (eq? owned resolved)
+              (buffer-append! b
+                (format "  ~a — ~a"
+                        (action-name (binding-action (cdr owned)))
+                        (binding-origin owned)))))
+          entries))
+      (let ([contexts
+             (fold-left
+               (lambda (acc owned)
+                 (let ([context (binding-context (cdr owned))])
+                   (if (or (eq? context 'global) (memq context acc))
+                       acc
+                       (append acc (list context)))))
+               '() all)])
+        (when (pair? contexts)
+          (buffer-append! b "" "Contextual bindings:")
+          (for-each
+            (lambda (context)
+              (let ([hit (resolved-binding context sequence)])
+                (when hit
+                  (buffer-append! b
+                    (format "  ~a: ~a — ~a"
+                            context
+                            (action-name (binding-action (cdr hit)))
+                            (binding-origin hit))))))
+            contexts)))
+      (buffer-read-only-set! b #t)
+      (set! message "")
+      (display-buffer! b)))
+
+  ;; Core defaults are data, just like module and config bindings.
+  (define core-keys-bound
+    (begin
+      (for-each
+        (lambda (entry) (bind-default-key! (car entry) (cadr entry)))
+        `(("C-@" ,set-mark-command!) ("C-a" ,beginning-of-line!)
+          ("C-b" ,move-left!) ("C-d" ,delete-forward!)
+          ("C-e" ,end-of-line!) ("C-f" ,move-right!)
+          ("C-g" ,keyboard-quit!) ("BACKSPACE" ,backspace!)
+          ("TAB" ,indent-tab!) ("RET" ,newline!) ("C-k" ,kill-line!)
+          ("C-l" ,redraw-command!) ("C-n" ,next-line!)
+          ("C-o" ,open-line!) ("C-p" ,previous-line!)
+          ("C-v" ,page-down!) ("C-w" ,kill-region!) ("C-y" ,yank!)
+          ("C-_" ,undo!) ("C-M-_" ,redo!) ("M-w" ,copy-region!)
+          ("M-v" ,page-up!) ("M-<" ,beginning-of-buffer!)
+          ("M->" ,end-of-buffer!) ("UP" ,previous-line!)
+          ("DOWN" ,next-line!) ("LEFT" ,move-left!)
+          ("RIGHT" ,move-right!) ("HOME" ,beginning-of-line!)
+          ("END" ,end-of-line!) ("DELETE" ,delete-forward!)
+          ("PAGEUP" ,page-up!) ("PAGEDOWN" ,page-down!)
+          ("PASTE" ,paste-into-buffer!) ("MOUSE" ,void)
+          ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!!)
+          ("C-x C-w" ,save-as!!) ("C-x C-c" ,quit!!)
+          ("C-x C-f" ,find-file!!) ("C-x b" ,switch-buffer!!)
+          ("C-x k" ,kill-buffer!!) ("C-x o" ,other-window!)
+          ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
+          ("C-x 2" ,split-window!) ("C-x 3" ,split-window-right!)
+          ("C-x t" ,wrap!) ("C-h k" ,describe-key!!)))
+      (for-each
+        (lambda (entry)
+          (bind-default-key! 'prompt (car entry) (cadr entry)))
+        '(("C-g" cancel) ("ESC" cancel) ("RET" accept)
+          ("C-a" beginning) ("HOME" beginning)
+          ("C-b" backward) ("LEFT" backward)
+          ("C-e" end) ("END" end) ("C-f" forward) ("RIGHT" forward)
+          ("UP" up) ("DOWN" down) ("C-d" delete-forward)
+          ("DELETE" delete-forward) ("C-h" delete-backward)
+          ("BACKSPACE" delete-backward) ("C-k" kill) ("C-y" yank)
+          ("TAB" complete) ("S-TAB" alternate-complete)
+          ("M-." inspect) ("PASTE" paste)))
+      #t))
 
   ;;; Modules -----------------------------------------------------------------
 
@@ -4338,7 +4548,7 @@
                         (set! message (condition-message ex))]
                        [else (parameterize ([message-source 'error])
                                (set-message! (error-text ex)))])
-              (handle-key! (read-char stdin)))
+              (handle-key! (read-key-event)))
             (clamp-point!)
             (loop))))
       (lambda () (set! screen-live? #f)
