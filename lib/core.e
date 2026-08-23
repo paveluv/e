@@ -1529,6 +1529,15 @@
                                   (unbox r))))
               registries))
 
+  (define (registration-snapshot)
+    ;; Registry lists are persistent: registration and retraction replace a
+    ;; box's list rather than mutating it, so retaining each old head is a
+    ;; complete, cheap rollback point.
+    (map (lambda (r) (cons r (unbox r))) registries))
+
+  (define (restore-registrations! snapshot)
+    (for-each (lambda (entry) (set-box! (car entry) (cdr entry))) snapshot))
+
   ;; Modules may hook the save: pre-save hooks run before anything is
   ;; checked or written (formatting, say), post-save hooks after a
   ;; successful write (the module reload lives there).  Each receives
@@ -4000,26 +4009,32 @@
     ;; keep running the old code; a module's own state starts over.  The
     ;; core itself cannot be reloaded: everything is compiled against it.
     (let* ([name (if (symbol? name*) (symbol->string name*) name*)]
-           [source (module-source name)])
-      (when (string=? name "core")
-        (error 'reload-module! "the core cannot be reloaded in place"))
-      (unless (file-exists? source)
-        (error 'reload-module! "no module source" source))
-      (load source)
-      (unless (member name loaded-modules)
-        (set! loaded-modules (append loaded-modules (list name))))
-      (for-each (lambda (m)
-                  (when (and (not (string=? m name))
-                             (module-requires? m name))
-                    (load (module-source m))))
-                loaded-modules)
-      (for-each (lambda (m) (retract-module! (string->symbol m)))
-                loaded-modules)
-      (for-each init-module! loaded-modules)
-      (load-config!)              ; the settings reapply on top
-      (refresh-buffer-modes!)
-      (invalidate-screen-cache!)
-      (set! message (format "Reloaded ~a" name))))
+           [source (module-source name)]
+           [old-loaded loaded-modules]
+           [old-registrations (registration-snapshot)])
+      (guard (ex [else
+                  (set! loaded-modules old-loaded)
+                  (restore-registrations! old-registrations)
+                  (raise ex)])
+        (when (string=? name "core")
+          (error 'reload-module! "the core cannot be reloaded in place"))
+        (unless (file-exists? source)
+          (error 'reload-module! "no module source" source))
+        (load source)
+        (unless (member name loaded-modules)
+          (set! loaded-modules (append loaded-modules (list name))))
+        (for-each (lambda (m)
+                    (when (and (not (string=? m name))
+                               (module-requires? m name))
+                      (load (module-source m))))
+                  loaded-modules)
+        (for-each (lambda (m) (retract-module! (string->symbol m)))
+                  loaded-modules)
+        (for-each init-module! loaded-modules)
+        (load-config!)              ; the settings reapply on top
+        (refresh-buffer-modes!)
+        (invalidate-screen-cache!)
+        (set! message (format "Reloaded ~a" name)))))
 
   ;; Saving a module's source reloads it on the spot (a fresh .e file
   ;; in the lib directory is loaded for the first time), and saving
