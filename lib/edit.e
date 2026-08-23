@@ -122,16 +122,44 @@
                    (call-as-one-edit!
                      (format "(replace-all! ~s ~s)" from to)
                      (lambda ()
-                       (let ([n (for-matches! r from
-                                  (lambda (row col)
-                                    (goto-point! (cons row col))
-                                    (do ([i 0 (+ i 1)])
-                                        ((= i (string-length from)))
-                                      (delete-forward!))
-                                    (insert-text! to)
-                                    (string-length to)))])
-                         (goto-point! saved)
-                         n))))))))
+                       (let* ([m (string-length from)]
+                              [start (region-start r)]
+                              [end (region-end r)])
+                         (when (= m 0) (error 'edit "empty search string"))
+                         (let loop ([row (car start)]
+                                    [col (cdr start)]
+                                    [end-row (car end)]
+                                    [end-col (cdr end)]
+                                    [count 0])
+                           (cond
+                             [(> row (min end-row (- (buffer-line-count
+                                                       (region-buffer r)) 1)))
+                              (goto-point! saved)
+                              count]
+                             [else
+                              (let* ([s (buffer-line (region-buffer r) row)]
+                                     [limit (if (= row end-row)
+                                                (min end-col (string-length s))
+                                                (string-length s))]
+                                     [hit (string-search s from col limit)])
+                                (if (not hit)
+                                    (loop (+ row 1) 0 end-row end-col count)
+                                    (begin
+                                      (goto-point! (cons row hit))
+                                      (do ([i 0 (+ i 1)]) ((= i m))
+                                        (delete-forward!))
+                                      (insert-text! to)
+                                      (let* ([next (point)]
+                                             [rows-added (- (car next) row)])
+                                        (if (< row end-row)
+                                            (loop (car next) (cdr next)
+                                                  (+ end-row rows-added) end-col
+                                                  (+ count 1))
+                                            (loop (car next) (cdr next)
+                                                  (+ end-row rows-added)
+                                                  (+ (cdr next)
+                                                     (- end-col (+ hit m)))
+                                                  (+ count 1)))))))]))))))))))
       0 (regions-of (where-of rest))))
 
   (define (region-text r)

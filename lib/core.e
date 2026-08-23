@@ -572,11 +572,39 @@
           (set! point-col (min goal-col (string-length (current-line))))))
     (set! goal-pos (cons point-row point-col)))
 
+  (define (split-inserted-lines s)
+    ;; Unlike split-lines, retain an empty final part: inserting "a\n"
+    ;; creates a new empty row and leaves point on it.
+    (let ([n (string-length s)])
+      (let loop ([i 0] [start 0] [acc '()])
+        (cond [(= i n) (reverse (cons (substring s start i) acc))]
+              [(char=? (string-ref s i) #\newline)
+               (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
+              [else (loop (+ i 1) start acc)]))))
+
   (define (insert-text! s)
-    (record-edit! (format "insert ~s" s))
-    (set-line! point-row (string-insert (current-line) point-col s))
-    (set! point-col (+ point-col (string-length s)))
-    (changed!))
+    ;; Buffer rows never contain newline characters.  Programmatic inserts
+    ;; get the same structural treatment as a paste or repeated newline!.
+    (unless (string=? s "")
+      (record-edit! (format "insert ~s" s))
+      (let* ([row point-row]
+             [col point-col]
+             [old (current-line)]
+             [parts (split-inserted-lines s)])
+        (if (null? (cdr parts))
+            (begin
+              (set-line! row (string-insert old col s))
+              (set! point-col (+ col (string-length s))))
+            (let* ([last (car (reverse parts))]
+                   [replacement
+                    (append
+                      (list (string-append (substring old 0 col) (car parts)))
+                      (reverse (cdr (reverse (cdr parts))))
+                      (list (string-append last (string-tail old col))))])
+              (set! lines (vector-splice lines row (+ row 1) replacement))
+              (set! point-row (+ row (- (length parts) 1)))
+              (set! point-col (string-length last))))
+        (changed!))))
 
   (define (newline!)
     (record-edit! "newline")
