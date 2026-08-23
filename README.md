@@ -1,10 +1,10 @@
 # e
 
 A tiny console text editor written in
-[Chez Scheme](https://cisco.github.io/ChezScheme/). Emacs-like in
-spirit (buffers, windows, a kill ring, incremental search, a Scheme
-top level), but not an Emacs clone and not trying to become one: it
-borrows the ideas that stay small and stops there.
+[Chez Scheme](https://cisco.github.io/ChezScheme/). It is Emacs-like in
+spirit—buffers, windows, a kill ring, incremental search, and a Scheme
+top level—but it is not an Emacs clone. It borrows the ideas that stay
+small and stops there.
 
 - The editor is a Scheme system. Everything is an R6RS library: a
   minimal core with a published, immutable API, and extension modules
@@ -20,9 +20,9 @@ borrows the ideas that stay small and stops there.
   picked up with `reload-module!`. Registrations are replaced,
   dependent modules recompile, buffers stay put. e is developed from
   inside itself.
-- No dependencies beyond Chez Scheme and a Unix-like terminal; no
-  build, no installation. A checkout runs in place: the first start
-  compiles the libraries, later starts take about 100 ms.
+- No dependencies beyond Chez Scheme and a Unix-like terminal. There
+  is no build or installation step: a checkout runs in place. The
+  first start compiles the libraries; later starts take about 100 ms.
 - Undo reports what it undoes: `Undo insert "hello"`,
   `Undo (replace-all! "xx" "yy")`. Typed characters coalesce into
   runs, a paste is a single step, an M-x command is one labeled step.
@@ -83,23 +83,24 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x t`   | Toggle soft-wrapping of long lines in this window       |
 
 Each window has its own status line, point, and scroll position; the
-same buffer can be shown in several windows at once.  `C-x 3` puts
-windows side by side -- columns sharing a band of rows, a grey divider
+same buffer can be shown in several windows at once. `C-x 3` puts
+windows side by side—columns sharing a band of rows, with a grey divider
 between them, each wrapping at its own width; `C-x 2` under such a
-band splits below the whole band.  Columns repaint when they scroll;
+band splits below the whole band. Columns repaint when they scroll;
 on a terminal with VT420 left/right margins (xterm, iTerm2, WezTerm,
 foot, ...), `(column-native-scroll #t)` in config.e lets them scroll
-natively like full-width windows -- `M-x (probe-terminal!)` detects
+natively like full-width windows. `M-x (probe-terminal!)` detects
 the support cooperatively (asking the terminal, and you, when its
-protocol is silent) and offers to record the line in config.e. Windows resize by
-dragging a status bar (or a column divider) with the mouse, or with
-`M-x (resize-window! n)`, which grows the current window by n text
-lines (negative shrinks), trading lines with its neighbor; splits halve
+protocol is silent) and offers to record the setting in `config.e`.
+Windows resize by dragging a status bar or column divider with the
+mouse, or with `M-x (resize-window! n)`, which grows the current window
+by `n` text lines (a negative `n` shrinks it), trading lines with its
+neighbor. Splits halve
 the current window, and sizes rescale proportionally when the screen
 or the prompt area changes.
 
-`(scroll-margin 8)` (the default) keeps at least eight
-rows between the cursor and the window's top and bottom edges: the
+`(scroll-margin 8)` (the default) keeps at least eight rows between the
+cursor and the window's top and bottom edges: the
 view scrolls that early, and the cursor enters the zone only where
 the buffer's ends leave nothing to scroll.  PageUp and PageDown, like
 all vertical movement, shift the view through the terminal's native
@@ -149,23 +150,23 @@ needle, `RET`/`ESC` accepts silently, `C-g` cancels and returns point
 to where the search began. Point rides just past the current match, so
 a mark set before searching leaves the found text inside the region.
 The needle's matches in the current window are highlighted while
-searching.  Matching folds case the smart way, as in Emacs: it
+searching. Matching folds case the smart way, as in Emacs: it
 ignores case only while the needle is all lowercase, and one typed
 capital makes it exact (the prompt then reads `I-search (exact):`).
 `M-c` toggles the current search either way, and `(search-fold-case
-#f)` in config.e makes every search exact.  Everything else -- `M-%`
-query replace included -- always matches exactly.
+#f)` in `config.e` makes every search exact. Everything else—including
+`M-%` query replace—always matches exactly.
 
 ### Indentation and formatting
 
-Indentation is the one thing enforced -- spacing within a line is the
+Indentation is the one thing enforced—spacing within a line is the
 author's (tables, alignment, and hand layout communicate structure),
 and lines are never joined or split.  The Scheme rules are
 Emacs-like: body forms (`define`, `lambda`, the `let` family, `when`,
 ...) indent their bodies two columns past the opener, a lone closer
 sits under its opener, and an application's continuation lines have
-two *stops* -- two past the opener, or aligned under the first
-argument when it shares the opener's line -- with the author picking:
+two *stops*: two past the opener, or aligned under the first
+argument when it shares the opener's line. The author picks:
 
     (very-long-function-name param1 param2
       param3)
@@ -176,7 +177,7 @@ argument when it shares the opener's line -- with the author picking:
 nearest stop to the right, wrapping around -- and puts point on the
 indentation (a blank line pads out to it); modes opt in when they
 register an indenter, and scheme-mode does.  `indent-region!` and
-`indent-buffer!` indent line by line from the top, one undo step,
+`indent-buffer!` indent line by line from the top as one undo step,
 each line settling on the stop nearest its current indentation: on a
 stop it stays, before the first it takes the first, past the last the
 last.  `format-region!` and `format-buffer!` additionally widen tabs
@@ -190,12 +191,13 @@ the `scheme-format-brackets` parameter turns that off.  A region
 format only rewrites bracket pairs it wholly contains, so it can
 never unbalance the buffer; string interiors and margin comments are
 never touched.  Modules provide the rules per mode with
-`register-indenter!` and `register-formatter!`.  The Scheme engine is
-the pure `(scheme-format)` library, also driving `tools/scheme-format` --
-the same treatment from the shell: `scheme-format [-i] [file ...]`, stdin
-to stdout without arguments.  With `(scheme-format-on-save #t)`
+`register-indenter!` and `register-formatter!`. The Scheme engine is
+the pure `(scheme-format)` library, which also drives
+`tools/scheme-format`: the same treatment from the shell with
+`scheme-format [-i] [file ...]`, or stdin to stdout without arguments.
+With `(scheme-format-on-save #t)`
 (on by default) every save of a Scheme buffer formats it
-first -- a pre-save hook; modules add their own with
+first through a pre-save hook; modules add their own with
 `add-pre-save-hook!` and `add-post-save-hook!` (the module reload is
 a post-save hook).
 
@@ -303,11 +305,11 @@ The Scheme manual is available inside the editor:
 
 pops up a `*describe*` buffer with the entry from the reference
 documentation: forms, what it returns, libraries, source, and the full
-prose. The corpus covers R6RS (from TSPL4) and the Chez extensions
-(from the Chez Scheme User's Guide); run `M-x (fetch-describe-data!)`
-once to download and extract it (about 1400 entries, kept in
-`data/describe/` next to `lib/`, out of git; the byte transfer uses curl,
-everything else is the `describe.e` module itself). The database is structured and queryable from M-x:
+prose. The corpus covers R6RS (from TSPL4) and Chez extensions
+(from the Chez Scheme User's Guide). Run `M-x (fetch-describe-data!)`
+once to download and extract it: about 1,400 entries, kept out of Git in
+`data/describe/` next to `lib/`. The download uses curl; `describe.e`
+does the rest. The database is structured and queryable from M-x:
 `doc-lookup` returns the entries for a name, `doc-entries` all of them
 (optionally filtered by a predicate), and the `doc-*` accessors take
 entries apart, so the whole corpus can be sliced by source, chapter,
@@ -316,9 +318,9 @@ symbol the cursor is on.
 
 ## Pretty parens
 
-`M-x (pretty-scheme-clusters!)` toggles the current buffer into a mode where
-each construct's parentheses draw as the unicode pair assigned to its
-cluster, while the buffer and the file keep plain ASCII:
+`M-x (pretty-scheme-clusters!)` toggles the current buffer into a mode
+in which each construct's parentheses appear as the Unicode pair
+assigned to its cluster, while the buffer and file retain plain ASCII:
 
     ｢define (twice x)
       ⟨let ([y (* x 2)])
@@ -328,7 +330,7 @@ Definitions wear `｢ ｣`, lambdas `⸦ ⸧`, the `let` family `⟨ ⟩`,
 conditionals `⦅ ⦆`, control `⟦ ⟧`, iteration `⟅ ⟆`, syntax `⧼ ⧽`,
 modules `⸨ ⸩`, quoting `‹ ›`, `set!` `⧘ ⧙`, `delay` `⌊ ⌋`.
 Applications and clause brackets stay plain, so the glyphs mark
-structure without drowning it.  The display follows the code as you
+structure without drowning it. The display follows the code as you
 type: the glyph appears when the operator completes and flips if you
 edit `define` into `cond`.  Typing `)` or `]` closes the innermost
 open construct with whatever character the source opened it with, as
@@ -358,14 +360,14 @@ the start of each edit session (one undo entry -- an unbroken typed
 run checks once), a detected external change marks the buffer with a
 red `!!` in its status bar -- no interruption, just the warning --
 and a mere `touch` passes silently because content, not clocks, is
-what counts.  Saving re-reads the file and compares contents; if
+what counts. Saving re-reads the file and compares contents; if
 somebody changed it meanwhile, the save stops and asks: `o)verwrite,
 m)erge, c)ancel`.  Merge is a three-way merge (the in-house `diff.e`,
 a patience diff) of what you loaded, what you have, and what the disk
 says: changes on one side apply silently, and colliding ones become
 `<<<<<<< buffer / ======= / >>>>>>> disk` markers in the buffer --
 the save waits until you resolve, the status bar counting the
-remaining conflicts in red.  `M-n` (`next-conflict!`) hops
+remaining conflicts in red. `M-n` (`next-conflict!`) hops
 between them; `M-m` (`keep-mine!`) and `M-d` (`keep-disk!`) settle
 the one at point, each a single undo step.  A clean merge saves both
 sides in one go.  Every merge writes a unified-diff-style report to a
@@ -375,9 +377,9 @@ conflicted one.
 
 ## Configuration
 
-`config.e` next to the loader script is plain Scheme -- no library,
+`config.e` next to the loader script is plain Scheme—no library,
 no shebang: every expression evaluates in the editor's top level, the
-M-x environment, with the whole public API in scope.  It loads at
+M-x environment, with the whole public API in scope. It loads at
 startup once the modules are up, and loads again after every module
 reload so its settings reapply on top of fresh registrations -- write
 it to tolerate being loaded any number of times.  Saving it inside
@@ -405,9 +407,9 @@ its file: `core.e` is `(core)`, `eval.e` is `(eval)`. The core is a
 kernel (buffers, windows, editing, rendering, prompts) resting on
 `sys.e`, the system-specific layer (libc, termios, ioctl, signals), the
 only library containing foreign procedures. The core's exports are the
-editor's published API: internals, all mutable state included, are
-invisible outside it and open to compiler optimization, and the exports
-are immutable; both guarantees enforced by the language (`set!` on an
+editor's published API: internals, including all mutable state, are
+invisible outside it and open to compiler optimization, while exports
+are immutable. The language enforces both guarantees (`set!` on an
 exported name raises an exception). The API comprises the command
 procedures, read-only state accessors (`current-buffer`, `point`,
 `buffer-line`, ...), the editing primitives modules compose commands
@@ -421,9 +423,9 @@ catalog.
 Names follow a contract. A procedure ending in `!!` waits for input
 from the user: a prompt, a confirmation, a key query. It takes no
 required arguments, reports through the echo area, and returns nothing;
-on success it is void, so evaluating one from M-x leaves its display
+on success it returns void, so evaluating one from M-x leaves its display
 and message in place, and failures raise, reported in the echo area
-(and the log) as errors. A single-`!` verb acts immediately with what it is given
+(and the log) as errors. A single-`!` verb acts immediately on what it is given
 (explicit arguments, a useful return value), even when it displays
 something: `list-buffers!` pops up the buffer list but asks nothing, so
 one bang. Two bangs ask you things. The `!!` commands are thin wrappers
@@ -452,11 +454,11 @@ reports itself in the message line without preventing startup.
 
 Modules reload without restarting. Saving a module source in the
 editor (any `.e` file in the running editor's `lib/`, including a new
-one) reloads it on the spot; `M-x (modules-reload-on-save #f)` turns that
-off for a session, commenting the `(modules-reload-on-save #t)` line out
-of `config.e` disables it for an installation (`config-reload-on-save`
-governs config.e's own on-save reload the same way), and a save whose
-reload fails reports the error and leaves the old version running.
+one) reloads it on the spot. `M-x (modules-reload-on-save #f)` turns that
+off for a session; `(modules-reload-on-save #f)` in `config.e` disables
+it for an installation. `config-reload-on-save` controls `config.e`'s
+own on-save reload in the same way. If a reload fails, the editor reports
+the error and keeps the old version running.
 For sources edited outside e:
 
     M-x (reload-module! "paren")
@@ -474,14 +476,15 @@ Syntax highlighting is provided by modes, registered by modules:
 ```scheme
 (register-mode! "scheme"
   '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")   ; file-name extensions
-  '("scheme" "petite" "chez" "guile")        ; #! interpreters, for
-  scheme-styles)                             ;   files without an extension
+  '("scheme" "petite" "chez" "guile" "racket") ; #! interpreters for
+  scheme-styles)                                ; files without an extension
 ```
 
 A buffer gets the first mode whose extension matches its file name, or
 whose interpreter name appears in the file's `#!` line. The styles
 function maps a line to a vector of per-column style symbols; brackets
-styled `delimiter` take part in bracket matching. Three modes ship in
+styled `delimiter` take part in bracket matching. Three file-detected
+syntax modes ship in
 `lib/`: `scheme-mode.e`, `c-mode.e` (block comments span lines through
 a memoized whole-buffer scan), and `md-mode.e` (Markdown; indented
 code blocks are styled as Scheme, modes composing per line). Context
@@ -524,11 +527,11 @@ other semantic highlighting could be added the same way.
 
 ## Limitations
 
-Kept deliberately small: windows split horizontally only (no
-side-by-side), and there is no configuration beyond extension modules.
-Tabs and other control characters are displayed as a single space
-cell. Input is read as UTF-8, but all characters are assumed to be one
-column wide.
+The window layout is deliberately simple: horizontal bands may contain
+side-by-side columns, but it is not a general-purpose tiling system.
+Tabs and other control characters are displayed as a single space cell.
+Input is read as UTF-8, but every character is assumed to occupy one
+terminal column.
 
 ## Licence
 
