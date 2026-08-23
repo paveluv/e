@@ -4029,9 +4029,15 @@
                 (interaction-environment))))))
 
   (define (load-module! name)
+    ;; Loading is idempotent.  A failed first initialization also rolls
+    ;; back any registrations it made before raising.
     (unless (member name loaded-modules)
-      (set! loaded-modules (append loaded-modules (list name))))
-    (init-module! name))
+      (let ([old-registrations (registration-snapshot)])
+        (guard (ex [else
+                    (restore-registrations! old-registrations)
+                    (raise ex)])
+          (init-module! name)
+          (set! loaded-modules (append loaded-modules (list name)))))))
 
   (define (load-modules!)
     ;; Load every module in the lib directory (the loader script has
