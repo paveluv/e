@@ -213,8 +213,8 @@
                        (loop needle match failed?)
                        (let* ([home (point)]
                               [next (search-forward-from last-needle
-                                                        (car home)
-                                                        (cdr home))])
+                                                         (car home)
+                                                         (cdr home))])
                          (when next (goto-match-end! next last-needle))
                          (loop last-needle
                                (and next (found next last-needle))
