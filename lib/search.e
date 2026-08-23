@@ -21,6 +21,10 @@
   ;; M-c inside a search toggles the current search either way.
   (define search-fold-case (make-parameter #t))
 
+  ;; The most recently entered nonempty needle.  It survives accepting
+  ;; or cancelling a search, so C-s at an empty I-search can repeat it.
+  (define last-needle "")
+
   ;; The running search's M-c override: 'fold or 'exact beats the
   ;; smart default for this search alone.
   (define fold-override #f)
@@ -149,6 +153,7 @@
     ;; another window or buffer.
     (set! fold-override #f)
     (let loop ([needle ""] [match #f] [failed? #f])
+      (unless (string=? needle "") (set! last-needle needle))
       (set! needle-now needle)
       (set! current-match
         (and match (list (car match) (cadr match) (caddr match)
@@ -200,10 +205,20 @@
                  (goto-point! origin))
                (indicate! "Quit")]
               ;; C-s repeats the current search from just beyond this
-              ;; match -- or from point, after a move to another buffer.
+              ;; match -- or recalls the previous needle when this new
+              ;; search is still empty.
               [(19)
                (if (string=? needle "")
-                   (loop needle match failed?)
+                   (if (string=? last-needle "")
+                       (loop needle match failed?)
+                       (let* ([home (point)]
+                              [next (search-forward-from last-needle
+                                                        (car home)
+                                                        (cdr home))])
+                         (when next (goto-match-end! next last-needle))
+                         (loop last-needle
+                               (and next (found next last-needle))
+                               (not next))))
                    (let* ([a (anchor match)]
                           [skip (if (match-here? match) 1 0)]
                           [next (search-forward-from needle (car a)

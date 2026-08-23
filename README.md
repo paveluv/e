@@ -147,8 +147,9 @@ window.
 `C-s` starts an incremental search: type to extend the needle, `C-s`
 again jumps to the next match (wrapping around), Backspace shortens the
 needle, `RET`/`ESC` accepts silently, `C-g` cancels and returns point
-to where the search began. Point rides just past the current match, so
-a mark set before searching leaves the found text inside the region.
+to where the search began. In a new, empty search, `C-s` recalls and
+searches for the previous needle. Point rides just past the current
+match, so a mark set before searching leaves the found text inside the region.
 The needle's matches in the current window are highlighted while
 searching. Matching folds case the smart way, as in Emacs: it
 ignores case only while the needle is all lowercase, and one typed
