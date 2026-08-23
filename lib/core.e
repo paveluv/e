@@ -284,17 +284,24 @@
                        (substring acc 0 i))))
                (car strs) (cdr strs)))
 
-  (define (string-search s needle start limit)
-    ;; Index of the first occurrence of needle inside s[start, limit), or #f.
-    (let ([len (string-length needle)])
-      (let loop ([i start])
-        (cond [(> (+ i len) limit) #f]
-              [(let match ([j 0])
-                 (or (= j len)
-                     (and (char-ci=? (string-ref s (+ i j)) (string-ref needle j))
-                          (match (+ j 1)))))
-               i]
-              [else (loop (+ i 1))]))))
+  (define string-search
+    ;; Index of the first occurrence of needle inside s[start, limit),
+    ;; or #f.  Exact by default; the optional fold? matches case
+    ;; insensitively (incremental search offers that -- lexers, mode
+    ;; detection, and replace! must not).
+    (case-lambda
+      [(s needle start limit) (string-search s needle start limit #f)]
+      [(s needle start limit fold?)
+       (let ([eq? (if fold? char-ci=? char=?)]
+             [len (string-length needle)])
+         (let loop ([i start])
+           (cond [(> (+ i len) limit) #f]
+                 [(let match ([j 0])
+                    (or (= j len)
+                        (and (eq? (string-ref s (+ i j)) (string-ref needle j))
+                             (match (+ j 1)))))
+                  i]
+                 [else (loop (+ i 1))])))]))
 
   (define (split-lines s)
     (let loop ([start 0] [i 0] [acc '()])

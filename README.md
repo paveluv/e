@@ -149,7 +149,9 @@ needle, `RET`/`ESC` accepts silently, `C-g` cancels and returns point
 to where the search began. Point rides just past the current match, so
 a mark set before searching leaves the found text inside the region.
 The needle's matches in the current window are highlighted while
-searching.
+searching.  Matching ignores case, as in Emacs; `(search-fold-case
+#f)` in config.e makes it exact.  Everything else -- `M-%` query
+replace included -- matches exactly.
 
 ### Indentation and formatting
 

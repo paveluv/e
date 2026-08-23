@@ -11,8 +11,13 @@
 ;; switched mid-search.
 
 (library (search)
-  (export init! search!!)
+  (export init! search!! search-fold-case)
   (import (chezscheme) (core))
+
+  ;; Configuration: whether the incremental search matches case
+  ;; insensitively, as Emacs does.  (search-fold-case #f) in config.e
+  ;; makes C-s exact; nothing else folds case either way.
+  (define search-fold-case (make-parameter #t))
 
   ;; The live search, feeding the registered highlighter: the needle
   ;; whose matches paint cyan, and the current match -- (buffer row
@@ -41,7 +46,8 @@
                 (let ([line (buffer-line b row)])
                   (let scan ([from 0] [acc acc])
                     (let ([hit (string-search line needle-now from
-                                              (string-length line))])
+                                              (string-length line)
+                                              (search-fold-case))])
                       (if hit
                           (scan (+ hit 1)   ; overlapping matches too
                                 (cons (list row hit (+ hit len) 'match)
@@ -60,11 +66,13 @@
             (let* ([line (buffer-line b start-row)]
                    [found (string-search line needle 0
                             (min (+ start-col (string-length needle) -1)
-                                 (string-length line)))])
+                                 (string-length line))
+                            (search-fold-case))])
               (and found (cons start-row found)))
             (let* ([line (buffer-line b row)]
                    [found (string-search line needle col
-                                         (string-length line))])
+                                         (string-length line)
+                                         (search-fold-case))])
               (if found
                   (cons row found)
                   (loop (modulo (+ row 1) rows) 0 (- remaining 1))))))))
