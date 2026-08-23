@@ -3450,12 +3450,29 @@
 
   (define (read-paste)
     ;; The text of a bracketed paste: everything up to ESC [ 2 0 1 ~.
+    ;; An ESC inside the payload is ordinary text unless the five bytes
+    ;; after it are exactly the closing sequence.
+    (define (read-up-to n)
+      (let loop ([n n] [acc '()])
+        (if (= n 0)
+            (reverse acc)
+            (let ([c (read-char stdin)])
+              (if (eof-object? c)
+                  (reverse acc)
+                  (loop (- n 1) (cons c acc)))))))
     (let loop ([acc '()])
       (let ([c (read-char stdin)])
         (cond [(eof-object? c) (list->string (reverse acc))]
               [(char=? c #\esc)
-               (do ([i 0 (+ i 1)]) ((= i 5)) (read-char stdin))
-               (list->string (reverse acc))]
+               (let* ([tail (read-up-to 5)]
+                      [sequence (cons c tail)])
+                 (if (and (= (length tail) 5)
+                          (string=? (list->string tail) "[201~"))
+                     (list->string (reverse acc))
+                     (let ([acc (append (reverse sequence) acc)])
+                       (if (< (length tail) 5)
+                           (list->string (reverse acc))
+                           (loop acc)))))]
               [else (loop (cons c acc))]))))
 
   (define (paste-into-buffer!)
