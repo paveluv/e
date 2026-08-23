@@ -291,7 +291,7 @@
         (cond [(> (+ i len) limit) #f]
               [(let match ([j 0])
                  (or (= j len)
-                     (and (char=? (string-ref s (+ i j)) (string-ref needle j))
+                     (and (char-ci=? (string-ref s (+ i j)) (string-ref needle j))
                           (match (+ j 1)))))
                i]
               [else (loop (+ i 1))]))))
