@@ -14,10 +14,27 @@
   (export init! search!! search-fold-case)
   (import (chezscheme) (core))
 
-  ;; Configuration: whether the incremental search matches case
-  ;; insensitively, as Emacs does.  (search-fold-case #f) in config.e
-  ;; makes C-s exact; nothing else folds case either way.
+  ;; Configuration: whether the incremental search folds case the
+  ;; smart way, as Emacs does -- matching ignores case only while the
+  ;; needle is all lowercase; one typed capital makes it exact.
+  ;; (search-fold-case #f) in config.e makes C-s always exact.
+  ;; M-c inside a search toggles the current search either way.
   (define search-fold-case (make-parameter #t))
+
+  ;; The running search's M-c override: 'fold or 'exact beats the
+  ;; smart default for this search alone.
+  (define fold-override #f)
+
+  (define (fold-for needle)
+    ;; Whether this needle matches case-insensitively right now.
+    (case fold-override
+      [(fold) #t]
+      [(exact) #f]
+      [else (and (search-fold-case)
+                 (let all-lower ([i 0])
+                   (or (= i (string-length needle))
+                       (and (not (char-upper-case? (string-ref needle i)))
+                            (all-lower (+ i 1))))))]))
 
   ;; The live search, feeding the registered highlighter: the needle
   ;; whose matches paint cyan, and the current match -- (buffer row
@@ -47,7 +64,7 @@
                   (let scan ([from 0] [acc acc])
                     (let ([hit (string-search line needle-now from
                                               (string-length line)
-                                              (search-fold-case))])
+                                              (fold-for needle-now))])
                       (if hit
                           (scan (+ hit 1)   ; overlapping matches too
                                 (cons (list row hit (+ hit len) 'match)
@@ -67,12 +84,12 @@
                    [found (string-search line needle 0
                             (min (+ start-col (string-length needle) -1)
                                  (string-length line))
-                            (search-fold-case))])
+                            (fold-for needle))])
               (and found (cons start-row found)))
             (let* ([line (buffer-line b row)]
                    [found (string-search line needle col
                                          (string-length line)
-                                         (search-fold-case))])
+                                         (fold-for needle))])
               (if found
                   (cons row found)
                   (loop (modulo (+ row 1) rows) 0 (- remaining 1))))))))
@@ -118,13 +135,15 @@
     ;; A match records where it was found -- (buffer row col len) --
     ;; so the highlight and the anchors survive an excursion to
     ;; another window or buffer.
+    (set! fold-override #f)
     (let loop ([needle ""] [match #f] [failed? #f])
       (set! needle-now needle)
       (set! current-match
         (and match (list (car match) (cadr match) (caddr match)
                          (+ (caddr match) (cadddr match)))))
       (indicate!
-        (format "~aI-search: ~a" (if failed? "Failing " "") needle))
+        (format "~aI-search~a: ~a" (if failed? "Failing " "")
+                (if (fold-for needle) "" " (exact)") needle))
       (redraw!)
       (let ([c (read-key)])
         (if (not c)
@@ -134,11 +153,32 @@
               ;; escape sequence (arrow key etc.) also accepts, then
               ;; moves point.
               [(10 13 27)
-               (set! needle-now "")
-               (set! current-match #f)
-               (indicate! "")
-               (when (and (= (char->integer c) 27) (pending-input?))
-                 (dispatch-key! c))]
+               (let ([k (and (= (char->integer c) 27) (pending-input?)
+                             (peek-key))])
+                 (if (and k (memv k '(#\c #\C)))
+                     ;; M-c: flip case sensitivity for this search and
+                     ;; look again from where it started
+                     (begin
+                       (read-key)
+                       (set! fold-override
+                         (if (fold-for needle) 'exact 'fold))
+                       (let ([home (if (eq? (selected-window)
+                                            origin-window)
+                                       origin
+                                       (point))])
+                         (if (string=? needle "")
+                             (loop needle match failed?)
+                             (let ([next (search-forward-from
+                                           needle (car home) (cdr home))])
+                               (when next (goto-match-end! next needle))
+                               (loop needle
+                                     (and next (found next needle))
+                                     (not next))))))
+                     (begin
+                       (set! needle-now "")
+                       (set! current-match #f)
+                       (indicate! "")
+                       (when k (dispatch-key! c)))))]
               ;; C-g cancels the search and restores point -- back in
               ;; the window it started in.
               [(7)

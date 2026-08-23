@@ -149,9 +149,12 @@ needle, `RET`/`ESC` accepts silently, `C-g` cancels and returns point
 to where the search began. Point rides just past the current match, so
 a mark set before searching leaves the found text inside the region.
 The needle's matches in the current window are highlighted while
-searching.  Matching ignores case, as in Emacs; `(search-fold-case
-#f)` in config.e makes it exact.  Everything else -- `M-%` query
-replace included -- matches exactly.
+searching.  Matching folds case the smart way, as in Emacs: it
+ignores case only while the needle is all lowercase, and one typed
+capital makes it exact (the prompt then reads `I-search (exact):`).
+`M-c` toggles the current search either way, and `(search-fold-case
+#f)` in config.e makes every search exact.  Everything else -- `M-%`
+query replace included -- always matches exactly.
 
 ### Indentation and formatting
 

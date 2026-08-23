@@ -24,7 +24,9 @@
 ;; (scheme-format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (scroll-margin 8)              ; rows kept between the cursor and the edges
 ;; (wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
-;; (search-fold-case #t)          ; C-s matches ignore case (#f: exact)
+;; (search-fold-case #t)          ; C-s smart case: all-lowercase needles
+;;                                ; ignore case, a capital makes them exact,
+;;                                ; M-c toggles (#f: always exact)
 ;; (indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
 ;; (scheme-format-brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
 ;; (scheme-tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)

@@ -43,7 +43,7 @@
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
     min-window-lines
     complete! show-completions! dismiss-completions!
-    read-key pending-input? cursor-in-echo
+    read-key peek-key pending-input? cursor-in-echo
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
     set-message! current-message redraw! error-text mouse!
@@ -3289,6 +3289,12 @@
         (let ([c (read-char stdin)]) (and (char? c) c)))))
 
   (define (pending-input?) (char-ready? stdin))
+
+  (define (peek-key)
+    ;; The waiting key without consuming it (#f at end of input):
+    ;; lets a command decide whether an ESC opens its own meta chord
+    ;; or belongs to the ordinary dispatch.
+    (let ([c (peek-char stdin)]) (and (char? c) c)))
 
   (define (file-prompt-styler label)
     ;; Existence shown in the face, component-wise: the typed path's
