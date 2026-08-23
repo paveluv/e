@@ -3526,30 +3526,30 @@
 
   (define (read-paste)
     ;; The text of a bracketed paste: everything up to ESC [ 2 0 1 ~.
-    ;; An ESC inside the payload is ordinary text unless the five bytes
-    ;; after it are exactly the closing sequence.
-    (define (read-up-to n)
-      (let loop ([n n] [acc '()])
-        (if (= n 0)
-            (reverse acc)
-            (let ([c (read-char stdin)])
-              (if (eof-object? c)
-                  (reverse acc)
-                  (loop (- n 1) (cons c acc)))))))
-    (let loop ([acc '()])
+    ;; Hold only a prefix of the closer while matching it one character at
+    ;; a time.  On a mismatch, emit that prefix as payload and reconsider
+    ;; a mismatching ESC as the start of the real closer.
+    (define closer "\x1b;[201~")
+    (define (emit-prefix acc matched)
+      (let loop ([i 0] [acc acc])
+        (if (= i matched)
+            acc
+            (loop (+ i 1) (cons (string-ref closer i) acc)))))
+    (let loop ([acc '()] [matched 0])
       (let ([c (read-char stdin)])
-        (cond [(eof-object? c) (list->string (reverse acc))]
-              [(char=? c #\esc)
-               (let* ([tail (read-up-to 5)]
-                      [sequence (cons c tail)])
-                 (if (and (= (length tail) 5)
-                          (string=? (list->string tail) "[201~"))
-                     (list->string (reverse acc))
-                     (let ([acc (append (reverse sequence) acc)])
-                       (if (< (length tail) 5)
-                           (list->string (reverse acc))
-                           (loop acc)))))]
-              [else (loop (cons c acc))]))))
+        (cond
+          [(eof-object? c)
+           (list->string (reverse (emit-prefix acc matched)))]
+          [(char=? c (string-ref closer matched))
+           (let ([matched (+ matched 1)])
+             (if (= matched (string-length closer))
+                 (list->string (reverse acc))
+                 (loop acc matched)))]
+          [else
+           (let ([acc (emit-prefix acc matched)])
+             (if (char=? c #\esc)
+                 (loop acc 1)
+                 (loop (cons c acc) 0)))]))))
 
   (define (paste-into-buffer!)
     ;; A bracketed paste: the whole text becomes one labeled edit, its
