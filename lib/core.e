@@ -859,7 +859,7 @@
   (define (visit-file! path)
     ;; Switch to the buffer visiting path, creating it if necessary.
     ;; Reopening a buffer whose file changed on disk meanwhile raises
-    ;; the same dialog a stale save would: overwrite, merge, cancel.
+    ;; a buffer-only dialog: merge, reread, cancel.  Reopening never writes.
     (let ([path (expand-path path)])
       (cond [(find (lambda (b) (equal? (buffer-file b) path)) buffers)
              => (lambda (b)
@@ -870,10 +870,14 @@
                         (let ([disk (guard (ex [else #f])
                                       (and (file-exists? path)
                                            (read-file path)))])
-                          (if (and disk
-                                   (string=? disk (buffer-base b)))
-                              (buffer-stamp-set! b stamp)
-                              (save-file! path)))))))]
+                          (cond
+                            [(and disk (string=? disk (buffer-base b)))
+                             (buffer-stamp-set! b stamp)]
+                            [disk (reopen-changed-file! b path disk)]
+                            [else
+                             (parameterize ([message-source 'visit-file!])
+                               (set-message!
+                                 (format "Cannot reread ~a" path)))]))))))]
             [(file-buffer path) => show-buffer!])))
 
   (define (read-disk-for-save path)
@@ -996,6 +1000,67 @@
         (buffer-trailing-set! b merged-trailing)
         (changed!)
         (values conflicts (merge-report! b path base report conflicts)))))
+
+  (define (reread-from-disk! b path disk)
+    ;; Discard the buffer's copy and adopt the disk verbatim.  Rereading is a
+    ;; new baseline, not an edit: it clears modification and undo state.
+    (let* ([lines (string-lines disk)]
+           [last (- (vector-length lines) 1)])
+      (buffer-lines-set! b lines)
+      (buffer-trailing-set! b (ends-in-newline? disk))
+      (buffer-base-set! b disk)
+      (buffer-stamp-set! b (disk-stamp path))
+      (buffer-stale-set! b #f)
+      (buffer-modified-set! b #f)
+      (buffer-history-set! b (vector '() '()))
+      (buffer-marked-set! b #f)
+      (set! merge-reports (remp (lambda (p) (eq? (car p) b)) merge-reports))
+      (for-each
+        (lambda (w)
+          (when (eq? (window-buffer w) b)
+            (let ([row (min (window-prow w) last)])
+              (window-prow-set! w row)
+              (window-pcol-set! w
+                (min (window-pcol w)
+                     (string-length (vector-ref lines row))))
+              (window-top-set! w (min (window-top w) last)))))
+        windows)
+      (parameterize ([message-source 'visit-file!])
+        (set-message! (format "Reread ~a" path)))
+      #t))
+
+  (define (reopen-changed-file! b path disk)
+    (let ask ()
+      (let* ([k (query-key!
+                  (format "~a changed on disk: m)erge, r)eread, c)ancel"
+                          (base-name path)))]
+             [n (and k (char->integer k))])
+        (cond
+          [(memv n '(109 77))                                 ; m
+           (let-values ([(conflicts report-name)
+                         (merge-from-disk! b path disk)])
+             ;; The merge incorporated this disk version into the buffer's
+             ;; baseline.  It remains modified only when it differs from disk.
+             (buffer-stale-set! b #f)
+             (buffer-modified-set! b (not (string=? (buffer-text b) disk)))
+             (when (> conflicts 0)
+               (set! merge-reports
+                 (cons (cons b report-name)
+                       (remp (lambda (p) (eq? (car p) b)) merge-reports))))
+             (parameterize ([message-source 'visit-file!])
+               (set-message!
+                 (if (zero? conflicts)
+                     (format "Merged from disk -- details in ~a" report-name)
+                     (format "Merged with ~a conflict~a -- resolve (~a)"
+                             conflicts (if (= conflicts 1) "" "s")
+                             (command-hint
+                               '(next-conflict! keep-mine! keep-disk!))))))
+             #t)]
+          [(memv n '(114 82)) (reread-from-disk! b path disk)] ; r
+          [(or (not n) (memv n '(99 67 7 27)))                ; c, C-g, ESC
+           (keyboard-quit!)
+           #f]
+          [else (ask)]))))
 
   ;; Merge reports awaiting resolution -- (buffer . report-name): a
   ;; conflicted merge does not announce its report buffer up front;

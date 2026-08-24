@@ -392,6 +392,11 @@ read-only `*merge-<name>*` buffer, named in the echo once the merge is
 done -- immediately for a clean one, after the resolving save for a
 conflicted one.
 
+Opening an already visited file whose disk copy changed asks only to
+`m)erge, r)eread, c)ancel`. These choices affect the buffer alone: merge
+incorporates both versions without saving, reread replaces the buffer with the
+disk copy, and cancel behaves like `C-g`.
+
 ## Configuration
 
 `config.e` next to the loader script is plain Scheme—no library,
