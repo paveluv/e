@@ -14,11 +14,17 @@
 ;; down arrows browse the history, and C-g interrupts a runaway
 ;; evaluation. Parameter suggestions are read live from the describe
 ;; module's structured entries, with source and arity as fallbacks.
+;; C-x C-e runs eval! over the whole current buffer, or an explicit
+;; region/buffer target, in that same top level.
 
 (library (eval)
-  (export init! eval!!)
+  (export init! eval! eval!! eval-copy-result)
   (import (chezscheme) (core)
-          (only (describe) doc-lookup doc-forms))
+          (only (describe) doc-lookup doc-forms register-descriptions!)
+          (only (edit) regions-of region-text)
+          (only (scheme-format) scheme-indent-lines)
+          (only (sys) call-with-streamed-output
+                duplicate-standard-output-port terminal-output-port))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -30,7 +36,7 @@
     (let* ([start (let loop ([i (- (string-length s) 1)])
                     (cond [(< i 0) 0]
                           [(memv (string-ref s i)
-                                 '(#\space #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,))
+                                 '(#\space #\newline #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,))
                            (+ i 1)]
                           [else (loop (- i 1))]))]
            [head (substring s 0 start)]
@@ -157,7 +163,7 @@
     (define (atom-end i)
       (if (or (>= i n)
               (memv (string-ref text i)
-                    '(#\space #\tab #\( #\) #\[ #\] #\")))
+                    '(#\space #\tab #\newline #\( #\) #\[ #\] #\")))
           i
           (atom-end (+ i 1))))
     (define (string-end j)
@@ -179,7 +185,8 @@
           stack
           (let ([c (string-ref text i)])
             (cond
-              [(memv c '(#\space #\tab #\' #\` #\,)) (loop (+ i 1) stack)]
+              [(memv c '(#\space #\tab #\newline #\' #\` #\,))
+               (loop (+ i 1) stack)]
               [(memv c '(#\( #\[)) (loop (+ i 1) (cons (cons 'pending 0) stack))]
               [(memv c '(#\) #\]))
                (loop (+ i 1) (if (pair? stack) (datum (cdr stack) #f) stack))]
@@ -203,6 +210,8 @@
                              (string-join left " "))))))))))
 
   ;;; Evaluation ----------------------------------------------------------------
+
+  (define eval-copy-result (make-parameter #t))
 
   (define (close-expression text)
     ;; text completed with the parentheses it is missing (up to a few), so
@@ -229,7 +238,7 @@
     ;; of cells the base styling left plain or italic.
     (let ([n (string-length text)])
       (define (boundary? c)
-        (memv c '(#\space #\tab #\( #\) #\[ #\] #\" #\' #\` #\,
+        (memv c '(#\space #\tab #\newline #\( #\) #\[ #\] #\" #\' #\` #\,
                   #\;)))
       (let loop ([i 0])
         (when (< i n)
@@ -287,6 +296,153 @@
           t
           (or (close-expression t) t))))
 
+  (define (leading-blanks text)
+    (let loop ([i 0])
+      (if (and (< i (string-length text))
+               (memv (string-ref text i) '(#\space #\tab)))
+          (loop (+ i 1))
+          i)))
+
+  (define (nearest-stop stops current)
+    (if (pair? stops)
+        (fold-left (lambda (best stop)
+                     (if (< (abs (- stop current))
+                            (abs (- best current)))
+                         stop
+                         best))
+                   (car stops) stops)
+        stops))
+
+  (define (reindent-scheme-input text pos)
+    ;; Reindent every logical line and keep the cursor attached to the same
+    ;; text even when an earlier edit shifts this line left or right.
+    (let* ([lines (split-lines text)]
+           [v (list->vector lines)]
+           [stops (scheme-indent-lines v 0 (- (vector-length v) 1))]
+           [before (split-lines (substring text 0 pos))]
+           [point-row (- (length before) 1)]
+           [point-col (string-length (car (reverse before)))])
+      (let loop ([rows lines] [cols stops] [row 0]
+                 [built '()] [offset 0] [cursor #f])
+        (if (null? rows)
+            (cons (string-join (reverse built) "\n") cursor)
+            (let* ([line (car rows)]
+                   [old (leading-blanks line)]
+                   [target (and (car cols) (nearest-stop (car cols) old))]
+                   [laid (if target
+                             (string-append (make-string target #\space)
+                                            (string-tail line old))
+                             line)]
+                   [cursor (if (= row point-row)
+                               (+ offset
+                                  (if target
+                                      (max target (+ point-col (- target old)))
+                                      point-col))
+                               cursor)])
+              (loop (cdr rows) (cdr cols) (+ row 1)
+                    (cons laid built) (+ offset (string-length laid) 1)
+                    cursor))))))
+
+  (define (indent-scheme-insertion text pos inserted)
+    ;; Preserve multiline insertion as entered; the prompt's central edit path
+    ;; immediately runs reindent-scheme-input over the complete result.
+    (cons (string-append (substring text 0 pos) inserted
+                         (string-tail text pos))
+          (+ pos (string-length inserted))))
+
+  (define (mx-edge-motion action text pos second?)
+    ;; First C-a/C-e addresses the logical line; a consecutive second press
+    ;; addresses the whole M-x input even when the first did not move point.
+    (if second?
+        (if (eq? action 'beginning) 0 (string-length text))
+        (let* ([start (let back ([i pos])
+                        (if (and (> i 0)
+                                 (not (char=? (string-ref text (- i 1))
+                                              #\newline)))
+                            (back (- i 1))
+                            i))]
+               [end (let forward ([i pos])
+                      (if (and (< i (string-length text))
+                               (not (char=? (string-ref text i) #\newline)))
+                          (forward (+ i 1))
+                          i))])
+          (if (eq? action 'end)
+              end
+              (let skip ([i start])
+                (if (and (< i end)
+                         (memv (string-ref text i) '(#\space #\tab)))
+                    (skip (+ i 1))
+                    i))))))
+
+  (define (evaluate-text text)
+    ;; Evaluate every datum in text in the M-x interaction environment and
+    ;; return the values of the last one. An empty input returns no values.
+    (let ([in (open-input-string text)])
+      (let loop ([last '()])
+        (let ([form (read in)])
+          (if (eof-object? form)
+              (apply values last)
+              (loop (call-with-values
+                      (lambda () (eval form (interaction-environment)))
+                      list)))))))
+
+  (define (evaluation-outcome label text)
+    ;; Evaluation is one undo step in every buffer it edits, and C-g can
+    ;; interrupt it whether it came from M-x or eval!.
+    (define (run)
+      (guard (ex [(interrupted? ex) "interrupted"]
+                 [else (format "error: ~a" (error-text ex))])
+        (call-with-interrupt
+          (lambda ()
+            (call-as-one-edit! label
+              (lambda ()
+                (let-values ([vals (evaluate-text text)]) vals)))))))
+    (let ([lock (make-mutex)]
+          [terminal (duplicate-standard-output-port)])
+      (define (record! component line)
+        (parameterize ([terminal-output-port terminal])
+          (with-mutex lock (log! component line))))
+      (dynamic-wind
+        void
+        (lambda ()
+          (values
+            (parameterize ([terminal-output-port terminal])
+              (call-with-streamed-output
+                (lambda (line) (record! 'stdout line))
+                (lambda (line) (record! 'stderr line))
+                run))
+            '()))
+        (lambda () (close-port terminal)))))
+
+  (define (report-evaluation! query outcome output-records)
+    (let* ([failed? (string? outcome)]
+           [void? (and (not failed?)
+                       (or (null? outcome)
+                           (and (null? (cdr outcome))
+                                (eq? (car outcome) (void)))))]
+           [result (if failed?
+                       outcome
+                       (string-join (map (lambda (v) (format "~s" v)) outcome)
+                                    ", "))])
+      (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
+             [result-record
+              (log! 'eval (cons query (if void? "#<void>" result)) #f)])
+        (when copied? (copy-to-kill-buffer! result))
+        (present-log-entries!
+          (append output-records (list result-record))
+          (if copied? " [copied to kill buffer]" "")))))
+
+  (define (eval! . rest)
+    ;; Evaluate the text in where (the whole current buffer by default) in
+    ;; the M-x interaction environment and show its result in the echo area.
+    (let* ([where (if (pair? rest) (car rest) (current-buffer))]
+           [query (if (pair? rest) (format "(eval! ~s)" where) "(eval!)")]
+           [text (string-join (map region-text (regions-of where)) "\n")])
+      (let-values ([(outcome output-records)
+                    (evaluation-outcome query text)])
+        (report-evaluation! query outcome output-records))
+      (void)))
+
   (define (eval!!)
     ;; Read an expression -- the prompt pretypes "(", deletable, so a
     ;; bare symbol evaluates too -- and evaluate it in the editor's
@@ -294,6 +450,9 @@
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
     (let ([s (parameterize ([prompt-ghost signature-ghost]
+                            [prompt-multiline indent-scheme-insertion]
+                            [prompt-edge-motion mx-edge-motion]
+                            [prompt-reindent reindent-scheme-input]
                             [completion-highlight
                              (lambda (label)
                                (editor-symbol? (string->symbol label)))]
@@ -302,44 +461,28 @@
                         (box (log-history 'eval car))
                         complete-editor-symbol normalize-input))])
       (when (and s (> (string-length s) 0) (not (string=? s "(")))
-        (let ([kept (string-append "M-x " s)])
-          ;; Keep the prompt on screen while its expression evaluates --
-          ;; forgiven parentheses included -- with the cursor parked at
-          ;; its end, drawn as the evaluation-in-progress underline.
-          ;; An indicator, not a record: the expression is already
-          ;; logged under eval.
-          (parameterize ([message-source #f])
-            (set-message! kept))
-          (let ([outcome
-                 (parameterize ([cursor-in-echo #t])
-                   (redraw!)
-                   (guard (ex [(interrupted? ex) "interrupted"]
-                              [else (format "error: ~a" (error-text ex))])
-                     (call-with-interrupt
-                       (lambda ()
-                         ;; The whole expression is one undo step in every
-                         ;; buffer it edits, labeled with itself.
-                         (call-as-one-edit! s
-                           (lambda ()
-                             (let-values ([vals (eval (with-input-from-string
-                                                        s read)
-                                                      (interaction-environment))])
-                               vals)))))))])
-            (let* ([failed? (string? outcome)]
-                   [void? (and (not failed?)
-                               (or (null? outcome)
-                                   (and (null? (cdr outcome))
-                                        (eq? (car outcome) (void)))))]
-                   [result (if failed?
-                               outcome
-                               (string-join (map (lambda (v) (format "~s" v))
-                                                 outcome)
-                                            ", "))])
-              ;; one structured record per exchange: history reads the
-              ;; queries, the view and the echo the formatted pair --
-              ;; #<void> spoken like any other result
-              (log! 'eval (cons s (if void? "#<void>" result)))))))))
+        ;; Keep the prompt on screen while its expression evaluates --
+        ;; forgiven parentheses included -- with the cursor parked at
+        ;; its end, drawn as the evaluation-in-progress underline.
+        ;; An indicator, not a record: the expression is already
+        ;; logged under eval.
+        (show-prompt-message! "M-x " s mx-echo-styles)
+        (let-values ([(outcome output-records)
+                      (parameterize ([cursor-in-echo #t])
+                        (redraw!)
+                        (evaluation-outcome s s))])
+          ;; One structured record per exchange: history reads the query,
+          ;; while the view and echo show the formatted pair.
+          (report-evaluation! s outcome output-records)))))
 
   (define (init!)
+    (register-descriptions!
+      '(((eval!) (("procedure" . "(eval! [where])")) "void"
+         ("(eval)") eval "Evaluation commands" #f
+         "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are copied to the kill buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
+        ((eval!!) (("procedure" . "(eval!!)")) "void"
+         ("(eval)") eval "Evaluation commands" #f
+         "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are copied to the kill buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (register-log-formatter! 'eval format-exchange style-exchange)
+    (bind-default-key! "C-x C-e" eval!)
     (bind-default-key! "M-x" eval!!)))

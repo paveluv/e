@@ -139,6 +139,7 @@ window.
 | `TAB`           | Indent the line by its mode's rules           |
 | `M-%`           | Query replace from point: `y`/`SPC` replaces, `n`/`DEL` skips, `q`/`RET`/`C-g` stops |
 | `M-.`           | Describe the symbol at point (Scheme buffers; see below) |
+| `C-x C-e`       | Evaluate the current buffer as Scheme            |
 | `C-l`           | Repaint the screen and re-read its size       |
 | `C-g`           | Cancel (prompt, search, mark, running evaluation) |
 | `C-h k`         | Describe a key and where its bindings came from  |
@@ -287,7 +288,29 @@ as a grey suggestion, shrinking as you enter arguments:
 live from structured describe entries, including those registered by
 modules, then from procedure sources or the arity (`arg1 arg2`) when no
 documentation is available.
+`M-Enter` inserts a Scheme-indented newline; multiline paste preserves its
+line breaks and is indented the same way. Every edit reindents the complete
+M-x input, so structural changes immediately redraw affected later lines.
+In multiline input, repeated
+`C-a`/`C-e` move first within the logical line and then across the whole input.
 Up and down arrows browse the history, newest first.
+
+`C-x C-e` (`eval!`) evaluates every Scheme datum in the current buffer in
+the same live interaction environment as M-x and shows the last result in the
+echo area. Its optional `where` argument accepts buffers, names, regions,
+buffer predicates, and lists, like the editing helpers.
+
+Output written during `eval!` or M-x evaluation is captured per line as it is
+produced. Standard output and standard error appear in the echo area and in
+`*log*` under the `stdout` and `stderr` components, including output from
+child processes started with `system`.
+
+Non-void evaluation results are also copied to the kill buffer, ready for
+`C-y`; the echo result carries a grey `[copied to kill buffer]` tail. Set
+`(eval-copy-result #f)` in `config.e` to disable this.
+
+See [Evaluation](docs/EVAL.md) for the complete command, streaming, logging,
+history, interruption, undo, and configuration reference.
 
 Buffers print as the expression that looks them up: `(current-buffer)`
 shows `(buffer "e")`, not the record's contents, so a printed result
@@ -323,9 +346,7 @@ The Scheme manual is available inside the editor:
 `C-h f` (`describe!!`) prompts for a documented function name with
 completion. Its input uses the same match styling as other prompts: a partial
 name is italic, a complete Scheme name is upright, and an e-specific name is
-highlighted.
-
-pops up a `*describe*` buffer with the entry from the reference
+highlighted. It opens a `*describe*` buffer with the entry from the reference
 documentation: forms, what it returns, libraries, source, and the full
 prose. When the described name is a command, the page also lists every key
 currently bound to it. `*describe*` is a live view, so rebinding or unbinding
@@ -442,9 +463,12 @@ auto-indent off for Scheme buffers.
 
 Everything in `lib/` is a library with the `.e` extension, named after
 its file: `core.e` is `(core)`, `eval.e` is `(eval)`. The core is a
-kernel (buffers, windows, editing, rendering, prompts) resting on
-`sys.e`, the system-specific layer (libc, termios, ioctl, signals), the
-only library containing foreign procedures. The core's exports are the
+generic kernel (buffers, windows, editing, rendering, prompts).
+`sys.e` is the system-specific layer (libc, termios, ioctl, signals and
+file-descriptor plumbing), and the only library containing foreign procedures.
+Features such as eval compose core facilities and import the narrowly scoped
+system mechanisms they need directly; their policy does not live in core.
+The core's exports are the
 editor's published API: internals, including all mutable state, are
 invisible outside it and open to compiler optimization, while exports
 are immutable. The language enforces both guarantees (`set!` on an

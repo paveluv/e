@@ -1,15 +1,16 @@
 ;; sys.e -- the e editor's system-specific layer: the library (sys).
 ;;
 ;; Everything that touches the operating system through libc lives here:
-;; terminal modes via termios, the window size via ioctl, and the
-;; SIGWINCH registration.  The core imports this library and stays free
-;; of foreign procedures and platform constants.  Everything degrades
-;; softly: without a terminal (or without libc) the calls below become
-;; no-ops and terminal-size returns #f.
+;; terminal modes via termios, the window size via ioctl, SIGWINCH
+;; registration, and pipes for evaluated programs' process output. The core
+;; imports this library and stays free of foreign procedures and platform
+;; constants. Terminal operations degrade softly: without a terminal (or
+;; without libc) they become no-ops and terminal-size returns #f.
 
 (library (sys)
   (export terminal-raw! terminal-restore! terminal-isig!
-          terminal-size watch-terminal-resize!)
+          terminal-size watch-terminal-resize! call-with-streamed-output
+          duplicate-standard-output-port terminal-output-port)
   (import (chezscheme))
 
   (define os
@@ -50,6 +51,95 @@
     (and libc-loaded?
          (guard (ex [else #f])
            (foreign-procedure "cfmakeraw" (u8*) void))))
+
+  (define c-pipe
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "pipe" (u8*) int))))
+  (define c-dup
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "dup" (int) int))))
+  (define c-dup2
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "dup2" (int int) int))))
+  (define c-close
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "close" (int) int))))
+
+  ;; The destination for terminal-control output. Normally this is stdout;
+  ;; clients that temporarily redirect process stdout can preserve a separate
+  ;; terminal descriptor here so the interface remains drawable.
+  (define terminal-output-port (make-parameter (current-output-port)))
+
+  (define (make-pipe)
+    (and c-pipe
+         (let ([fds (make-bytevector 8 0)])
+           (and (= (c-pipe fds) 0)
+                (cons (bytevector-s32-native-ref fds 0)
+                      (bytevector-s32-native-ref fds 4))))))
+
+  (define (duplicate-standard-output-port)
+    ;; A stable route to the terminal while fd 1 is temporarily redirected
+    ;; into an evaluated program's stdout pipe.
+    (unless c-dup
+      (error 'duplicate-standard-output-port "dup is unavailable"))
+    (open-fd-output-port (c-dup 1) 'block (native-transcoder)))
+
+  (define (stream-lines fd emit!)
+    (let ([p (open-fd-input-port fd 'block (native-transcoder))])
+      (let loop ()
+        (let ([line (get-line p)])
+          (unless (eof-object? line)
+            (emit! line)
+            (loop))))
+      (close-port p)))
+
+  (define (call-with-streamed-output stdout! stderr! thunk)
+    ;; Run thunk with Scheme's current ports and the process-level stdout and
+    ;; stderr descriptors connected to pipes. Reader threads emit each line
+    ;; as it arrives, including output inherited by child processes.
+    (let ([out-pipe (make-pipe)] [err-pipe (make-pipe)])
+      (unless (and out-pipe err-pipe c-dup c-dup2 c-close)
+        (error 'call-with-streamed-output "output capture is unavailable"))
+      (let* ([saved-out (c-dup 1)]
+             [saved-err (c-dup 2)]
+             [out (open-fd-output-port (c-dup (cdr out-pipe)) 'line
+                                       (native-transcoder))]
+             [err (open-fd-output-port (c-dup (cdr err-pipe)) 'line
+                                       (native-transcoder))]
+             [out-reader (fork-thread
+                           (lambda () (stream-lines (car out-pipe) stdout!)))]
+             [err-reader (fork-thread
+                           (lambda () (stream-lines (car err-pipe) stderr!)))]
+             [value #f])
+        (dynamic-wind
+          (lambda ()
+            (flush-output-port (standard-output-port))
+            (flush-output-port (standard-error-port))
+            (c-dup2 (cdr out-pipe) 1)
+            (c-dup2 (cdr err-pipe) 2))
+          (lambda ()
+            (set! value
+              (parameterize ([current-output-port out]
+                             [current-error-port err])
+                (thunk))))
+          (lambda ()
+            (flush-output-port out)
+            (flush-output-port err)
+            (close-port out)
+            (close-port err)
+            (c-dup2 saved-out 1)
+            (c-dup2 saved-err 2)
+            (c-close saved-out)
+            (c-close saved-err)
+            (c-close (cdr out-pipe))
+            (c-close (cdr err-pipe))))
+        (thread-join out-reader)
+        (thread-join err-reader)
+        value)))
 
   (define winsize-ioctl
     ;; ioctl is variadic, and on ARM64 macOS variadic C functions use a

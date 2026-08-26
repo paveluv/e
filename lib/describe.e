@@ -759,10 +759,7 @@
         ((fetch-describe-data!)
          (("procedure" . "(fetch-describe-data!)")) "void"
          ("(describe)") describe "Documentation commands" #f
-         "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the local describe database, and load it.")
-        ((eval!!) (("procedure" . "(eval!!)")) "void"
-         ("(eval)") eval "Evaluation commands" #f
-         "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log.")))
+         "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the local describe database, and load it.")))
     (prompt-inspector describe-input!)
     (bind-default-key! "C-h f" describe!!)
     (bind-default-key! "M-." describe-at-point!)))

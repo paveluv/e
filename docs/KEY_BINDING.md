@@ -149,6 +149,7 @@ Available actions are:
 - `kill` and `yank`
 - `complete` and `alternate-complete`
 - `inspect`, used by the Scheme prompt's symbol inspector
+- `newline`, used by M-x for an indented logical newline
 - `paste`
 
 Example:
@@ -157,6 +158,7 @@ Example:
 (bind-key! 'prompt "C-u" 'kill)
 (bind-key! 'prompt "M-p" 'up)
 (bind-key! 'prompt "M-n" 'down)
+(bind-key! 'prompt "M-RET" 'newline)
 ```
 
 Printable keys without prompt actions insert themselves. Other unhandled keys
@@ -206,6 +208,14 @@ returns one effective global key specification:
 
 ```scheme
 (command-key 'save!!)
+```
+
+`command-keys` returns every effective global binding for the command. This is
+the live lookup used by describe pages, so adding, replacing, or removing a
+binding is reflected the next time the view redraws:
+
+```scheme
+(command-keys 'eval!)
 ```
 
 `command-hint` formats a list of command symbols with their current keys. It is

@@ -28,6 +28,7 @@
     ;; editing and movement
     insert-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
+    copy-to-kill-buffer!
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
     redraw-command! open-line! page-up! page-down!
     previous-line! next-line! beginning-of-buffer! end-of-buffer!
@@ -45,7 +46,9 @@
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook!
-    prompt! confirm? prompt-ghost prompt-inspector completion-highlight
+    prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
+    prompt-edge-motion prompt-reindent
+    completion-highlight
     prompt-styler completion-styler
     min-window-lines
     complete! show-completions! dismiss-completions!
@@ -53,8 +56,11 @@
     peek-key pending-input? cursor-in-echo
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
-    set-message! show-message! current-message redraw! error-text mouse!
-    log! log-entries log-length log-record log-styler format-log-entry
+    set-message! show-message! show-prompt-message!
+    current-message redraw! error-text mouse!
+    log! present-log-entry! present-log-entries!
+    log-entries log-length log-record log-styler
+    format-log-entry
     message-source message-progress
     echo-highlight
     register-view! view-append! view-replace! register-log-formatter! log-history
@@ -219,14 +225,13 @@
   (define echo-height 1)
   (define echo-scroll 0)
   (define echo-spans '((0 . 0)))
-  (define echo-pending '())      ; transient-log lines: (prefix text styler)
+  ;; transient-log lines: (component text styler ghost)
+  (define echo-pending '())
   (define echo-live-height 1)    ; rows of the live line inside echo-height
   (define message-ghost "") ; grey suggestion drawn after the message text
   (define rows 24)
   (define cols 80)
   (define stdin (current-input-port))
-  (define stdout (current-output-port))
-
   ;;; Terminal size ---------------------------------------------------------
 
   ;; The system-specific work (termios, ioctl, SIGWINCH) lives in (sys);
@@ -674,6 +679,13 @@
     (set! kill-ring
       (if (eq? last-command 'kill) (string-append kill-ring text) text))
     (set! last-command 'kill))
+
+  (define (copy-to-kill-buffer! text)
+    ;; Replace the text yanked by C-y without changing a buffer or point.
+    (unless (string? text)
+      (error 'copy-to-kill-buffer! "expected a string" text))
+    (set! kill-ring text)
+    (void))
 
   (define (kill-line!)
     (let* ([s (current-line)] [n (string-length s)])
@@ -1369,10 +1381,25 @@
       (guard (ex [else (format "~s" d)])
         (if f ((cadr f) d) (if (string? d) d (format "~s" d))))))
 
-  (define (one-line s)
-    ;; s with its newlines flattened, for the echo area.
-    (list->string (map (lambda (c) (if (char=? c #\newline) #\space c))
-                       (string->list s))))
+  (define (present-log-entry! e)
+    ;; Present an existing record in the echo area without logging it again.
+    (present-log-entries! (list e)))
+
+  (define (present-log-entries! entries . tail)
+    ;; Queue several existing records and repaint once, avoiding a full echo
+    ;; geometry change and terminal redraw for every streamed line.
+    (let loop ([left entries])
+      (when (pair? left)
+        (let* ([e (car left)]
+               [text (format-log-entry e)]
+               [f (log-formatter (cadr e))]
+               [styler (and f (caddr f))]
+               [ghost (if (and (null? (cdr left)) (pair? tail))
+                          (car tail)
+                          "")])
+          (echo-queue! (cadr e) text styler #f ghost)
+          (loop (cdr left)))))
+    (when (pair? entries) (present-echo!)))
 
   (define (log! component datum . show)
     ;; Append a structured record -- visible views catch up at the next
@@ -1387,10 +1414,13 @@
       (vector-set! log-store log-count e)
       (set! log-count (+ log-count 1))
       (when (or (null? show) (car show))
-        (let* ([text (one-line (format-log-entry e))]
-               [f (log-formatter component)]
-               [styler (and f (caddr f))])
-          (echo-append! component text styler (message-progress))))))
+        (if (message-progress)
+            (let* ([text (format-log-entry e)]
+                   [f (log-formatter component)]
+                   [styler (and f (caddr f))])
+              (echo-append! component text styler #t))
+            (present-log-entry! e)))
+      e))
 
   (define (log-history component . select)
     ;; Command history off the log: a component's datums through select
@@ -2121,7 +2151,8 @@
 
   ;;; Rendering -------------------------------------------------------------
 
-  (define (ansi . xs) (for-each (lambda (x) (display x stdout)) xs))
+  (define (ansi . xs)
+    (for-each (lambda (x) (display x (terminal-output-port))) xs))
   (define (goto r c) (ansi "\x1b;[" (number->string r) ";" (number->string c) "H"))
 
   (define (fit s width)
@@ -2623,24 +2654,35 @@
     ;; whose label alone overflows the screen still wraps usefully.
     (min (or echo-indent 0) (quotient cols 2)))
 
-  (define (compute-echo-spans len)
+  (define (compute-echo-spans content len)
     ;; Content index ranges of the echo area's visual lines: the first
-    ;; line spans the full width, continuations start at the indent, and
-    ;; every wrapped line gives its last column to the wrap mark.
+    ;; line spans the full width, explicit newlines force a new visual line,
+    ;; continuations start at the indent, and every soft-wrapped line gives
+    ;; its last column to the wrap mark.
     (let ([indent (echo-indent-now)])
       (let loop ([start 0] [first? #t] [acc '()])
-        (let ([avail (if first? cols (- cols indent))])
-          (if (<= (- len start) avail)
-              (reverse (cons (cons start len) acc))
-              (let ([take (- avail 1)])
-                (loop (+ start take) #f
-                      (cons (cons start (+ start take)) acc))))))))
+        (let* ([avail (if first? cols (- cols indent))]
+               [limit (min len (+ start avail))]
+               [hard (let find ([i start])
+                       (cond [(>= i (min limit (string-length content))) #f]
+                             [(char=? (string-ref content i) #\newline) i]
+                             [else (find (+ i 1))]))])
+          (cond [hard
+                 (loop (+ hard 1) #f (cons (cons start hard) acc))]
+                [(<= (- len start) avail)
+                 (reverse (cons (cons start len) acc))]
+                [else
+                 (let ([take (- avail 1)])
+                   (loop (+ start take) #f
+                         (cons (cons start (+ start take)) acc)))])))))
 
   (define (echo-position k)
     ;; Visual (line . column) of content index k, per echo-spans.
     (let loop ([spans echo-spans] [line 0])
       (let ([span (car spans)])
-        (if (or (null? (cdr spans)) (< k (cdr span)))
+        (if (or (null? (cdr spans)) (< k (cdr span))
+                (and (= k (cdr span)) (< k (string-length message))
+                     (char=? (string-ref message k) #\newline)))
             (cons line (+ (if (= line 0) 0 (echo-indent-now))
                           (- k (car span))))
             (loop (cdr spans) (+ line 1))))))
@@ -2697,10 +2739,24 @@
   (define (show-message! s styles-pair)
     ;; Put s in the echo area and paint right away (once the screen is
     ;; the editor's).
+    (set! echo-indent #f)
+    (set! echo-input-end #f)
     (set! message s)
     (set! message-ghost "")
     (set! message-styles styles-pair)
     (present-echo!))
+
+  (define (show-prompt-message! label input styler)
+    ;; Preserve a completed prompt's exact layout and styling while its
+    ;; command runs.  In particular, hard-newline continuations retain the
+    ;; prompt indentation instead of becoming an unrelated plain message.
+    (let ([content (string-append label input)])
+      (set! echo-indent (string-length label))
+      (set! echo-input-end (string-length content))
+      (set! message content)
+      (set! message-ghost "")
+      (set! message-styles (and styler (cons content styler)))
+      (present-echo!)))
 
   (define (echo-append! component text styler replace?)
     ;; Append one line to the echo area's transient log: every logged
@@ -2711,7 +2767,14 @@
     ;; stale indicator gives way; a prompt's input line stays put
     ;; below, and so does a running evaluation's kept query -- the
     ;; user sees what is running.
-    (let* ([entry (list component text styler)]
+    (echo-queue! component text styler replace?)
+    (present-echo!))
+
+  (define (echo-queue! component text styler replace? . rest)
+    ;; Update transient echo state without painting it; batch publishers use
+    ;; this before one final present-echo!.
+    (let* ([ghost (if (pair? rest) (car rest) "")]
+           [entry (list component text styler ghost)]
            [rev (reverse echo-pending)]
            [rev (if (and replace? (pair? rev) (eq? (caar rev) component))
                     (cdr rev)
@@ -2720,8 +2783,9 @@
     (unless (echo-cursor-now)
       (set! message "")
       (set! message-ghost "")
-      (set! message-styles #f))
-    (present-echo!))
+      (set! message-styles #f)
+      (set! echo-indent #f)
+      (set! echo-input-end #f)))
 
   (define (present-echo!)
     ;; Present the echo area now, mid-command included (once the
@@ -2734,7 +2798,7 @@
         (if (= h echo-height)
             (paint-echo-area!)
             (redraw!)))
-      (flush-output-port stdout)))
+      (flush-output-port (terminal-output-port))))
 
   (define (emit-runs content styles start end)
     ;; content[start,end) in styled runs, each under its style's code;
@@ -2757,26 +2821,35 @@
     (let ([p (format "~a: " (car e))])
       (if (> (string-length p) cols) (substring p 0 cols) p)))
 
-  (define (echo-log-spans prefix-len len)
+  (define (echo-log-spans prefix-len content)
     ;; Content index ranges of a transient-log entry's visual rows: a
     ;; long line wraps rather than being cut -- there is no way to
     ;; scroll past the echo area's edge.  The first row follows the
     ;; prefix, continuations indent to it (capped at half the width),
     ;; and every wrapped row gives its last column to the wrap mark.
     (let ([indent (min prefix-len (quotient cols 2))])
-      (let loop ([start 0] [first? #t] [acc '()])
-        (let ([avail (max 1 (- cols (if first? prefix-len indent)))])
-          (if (<= (- len start) avail)
-              (reverse (cons (cons start len) acc))
-              (let ([take (max 1 (- avail 1))])
-                (loop (+ start take) #f
-                      (cons (cons start (+ start take)) acc))))))))
+      (let ([len (string-length content)])
+        (let loop ([start 0] [first? #t] [acc '()])
+          (let* ([avail (max 1 (- cols (if first? prefix-len indent)))]
+                 [limit (min len (+ start avail))]
+                 [hard (let find ([i start])
+                         (cond [(>= i limit) #f]
+                               [(char=? (string-ref content i) #\newline) i]
+                               [else (find (+ i 1))]))])
+            (cond [hard
+                   (loop (+ hard 1) #f (cons (cons start hard) acc))]
+                  [(<= (- len start) avail)
+                   (reverse (cons (cons start len) acc))]
+                  [else
+                   (let ([take (max 1 (- avail 1))])
+                     (loop (+ start take) #f
+                           (cons (cons start (+ start take)) acc)))]))))))
 
   (define (echo-log-rows e)
     (length (echo-log-spans (string-length (echo-log-prefix e))
-                            (string-length (cadr e)))))
+                            (string-append (cadr e) (cadddr e)))))
 
-  (define (display-echo-log-row prefix text styler k span wrapped?)
+  (define (display-echo-log-row prefix text styler ghost k span wrapped?)
     ;; One visual row of a transient-log entry: the grey prefix on the
     ;; first, its indent on continuations, the slice under the
     ;; component's styler, a mark closing every wrapped row.
@@ -2787,11 +2860,18 @@
                                   #\space))]
            [start (car span)]
            [end (cdr span)]
-           [styles (and styler (guard (ex [else #f]) (styler text)))])
+           [styles (and styler (guard (ex [else #f]) (styler text)))]
+           [text-end (min end (string-length text))]
+           [ghost-start (max start (string-length text))]
+           [content (string-append text ghost)])
       (ansi "\x1b;[0m" (style-code 'chrome) lead)
-      (if styles
-          (emit-runs text styles start end)
-          (ansi "\x1b;[0m" (substring text start end)))
+      (when (< start text-end)
+        (if styles
+            (emit-runs text styles start text-end)
+            (ansi "\x1b;[0m" (substring text start text-end))))
+      (when (< ghost-start end)
+        (ansi "\x1b;[0m" (style-code 'chrome)
+              (substring content ghost-start end)))
       (ansi "\x1b;[0m"
             (make-string (max 0 (- cols (string-length lead) (- end start)
                                    (if wrapped? 1 0)))
@@ -2808,8 +2888,10 @@
       (when (pair? es)
         (let* ([e (car es)]
                [prefix (echo-log-prefix e)]
+               [text (cadr e)]
+               [ghost (cadddr e)]
                [spans (echo-log-spans (string-length prefix)
-                                      (string-length (cadr e)))]
+                                      (string-append text ghost))]
                [limit (- rows echo-live-height)])
           ;; the entry's rows in turn; clipped at the area's edge when
           ;; a single entry alone overflows the cap (the tail is in
@@ -2821,7 +2903,7 @@
                       [wrapped? (pair? (cdr spans))])
                   (paint! row 0 (list 'echo-log e k span wrapped?)
                           (lambda ()
-                            (display-echo-log-row prefix (cadr e) (caddr e)
+                            (display-echo-log-row prefix text (caddr e) ghost
                                                   k span wrapped?)))
                   (rloop (cdr spans) (+ k 1) (+ row 1))))))))
     (when (> echo-live-height 0)
@@ -3022,10 +3104,11 @@
     ;; away.  The whole area grows until the windows above hit their
     ;; minimum; past that the oldest pending lines are evicted -- they
     ;; remain in *log*.
-    (let* ([len (+ (string-length message) (string-length message-ghost))]
+    (let* ([content (string-append message message-ghost)]
+           [len (string-length content)]
            [cursor (echo-cursor-now)]
            [padded (max len (if cursor (+ cursor 1) 1))])
-      (set! echo-spans (compute-echo-spans padded))
+      (set! echo-spans (compute-echo-spans content padded))
       (let* ([total (length echo-spans)]
              [live (if (or cursor (> len 0) (null? echo-pending))
                        (min total (max 1 (min 8 (- rows 3))))
@@ -3094,7 +3177,7 @@
       (paint-echo-area!))
     (place-cursor!)
     (ansi "\x1b;[?2026l")
-    (flush-output-port stdout))
+    (flush-output-port (terminal-output-port)))
 
   (define (window-screen-position w prow pcol)
     ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
@@ -3136,7 +3219,7 @@
       (unless (string=? style cursor-style-shown)
         (set! cursor-style-shown style)
         (ansi style)))
-    (ansi "\x1b;[?25h") (flush-output-port stdout))
+    (ansi "\x1b;[?25h") (flush-output-port (terminal-output-port)))
 
   ;;; Prompts and commands --------------------------------------------------
 
@@ -3297,6 +3380,21 @@
   ;; (or just before) the cursor.  A procedure (text pos), or #f.
   (define prompt-inspector (make-parameter #f))
 
+  ;; A structured multiline prompt supplies (text position inserted-text ->
+  ;; (new-text . new-position)). M-x uses this for M-RET and bracketed paste;
+  ;; ordinary prompts retain compact single-line paste behavior.
+  (define prompt-multiline (make-parameter #f))
+
+  ;; Optional prompt-specific C-a/C-e behavior: (action text position second?
+  ;; -> new-position). second? records the immediately preceding edge command,
+  ;; independently of where the cursor happened to be.
+  (define prompt-edge-motion (make-parameter #f))
+
+  ;; Optional whole-input normalization after every prompt edit:
+  ;; (text position -> (new-text . new-position)). M-x uses this to reindent
+  ;; all logical lines after each character, deletion, completion, or paste.
+  (define prompt-reindent (make-parameter #f))
+
   (define (complete! s complete k)
     ;; TAB in a prompt, as in Emacs: extend s to the longest common prefix
     ;; of its completions; when it cannot be extended, pop up the candidate
@@ -3318,7 +3416,7 @@
                                                  " ")))]))])))
 
   (define (prompt! label . rest)
-    ;; Read a line in the echo area, with the cursor parked there.  Optional
+    ;; Read input in the echo area, with the cursor parked there. Optional
     ;; arguments: a completer (string -> list of candidate strings) enabling
     ;; TAB completion, initial input (pre-filled, editable), a history box
     ;; (a list of previous inputs, newest first) navigated with the up and
@@ -3342,6 +3440,7 @@
     (define normalize (optional 4))
     (define hist-pos -1)   ; -1: editing; 0..: showing that history entry
     (define stash "")      ; the in-progress input while browsing history
+    (define last-edge #f)  ; beginning/end, only across consecutive presses
     (define (record-history! s)
       (when (and history (> (string-length s) 0))
         (let ([h (unbox history)])
@@ -3352,7 +3451,12 @@
         (define len (string-length s))
         (define (edited new-s new-pos) ; an edit restarts history browsing
           (set! hist-pos -1)
-          (loop new-s new-pos ""))
+          (let ([reindent (prompt-reindent)])
+            (if reindent
+                (let ([result (guard (ex [else (cons new-s new-pos)])
+                                (reindent new-s new-pos))])
+                  (loop (car result) (cdr result) ""))
+                (loop new-s new-pos ""))))
         (define (history-show entry)
           (loop entry (string-length entry) ""))
         (define (history-up)
@@ -3395,16 +3499,31 @@
         (redraw!)
         (let* ([event (read-key-event #f)]
                [action (and (not (eof-object? event))
-                            (key-event-binding 'prompt event))])
+                            (key-event-binding 'prompt event))]
+               [previous-edge last-edge])
+          (set! last-edge #f)
           (cond
             [(eof-object? event) #f]
             [(eq? action 'cancel) (set! message "Quit") #f]
             [(eq? action 'accept)
              (let ([out (if normalize (normalize s) s)])
                (record-history! out) (set! message "") out)]
-            [(eq? action 'beginning) (loop s 0 "")]
+            [(eq? action 'beginning)
+             (set! last-edge 'beginning)
+             (let ([move (prompt-edge-motion)])
+               (loop s (if move
+                           (move 'beginning s pos
+                                 (eq? previous-edge 'beginning))
+                           0)
+                     ""))]
             [(eq? action 'backward) (loop s (max 0 (- pos 1)) "")]
-            [(eq? action 'end) (loop s len "")]
+            [(eq? action 'end)
+             (set! last-edge 'end)
+             (let ([move (prompt-edge-motion)])
+               (loop s (if move
+                           (move 'end s pos (eq? previous-edge 'end))
+                           len)
+                     ""))]
             [(eq? action 'forward) (loop s (min len (+ pos 1)) "")]
             [(eq? action 'up)
              (if (cursor-on-top?) (history-up) (vertical-move -1))]
@@ -3429,23 +3548,38 @@
              (if complete
                  (complete! s complete
                             (lambda (new-s note)
-                              (loop new-s (string-length new-s) note)))
+                              (if (string=? note "")
+                                  (edited new-s (string-length new-s))
+                                  (loop new-s (string-length new-s) note))))
                  (loop s pos ""))]
             [(eq? action 'alternate-complete)
              (set! hist-pos -1)
              (if alt-complete
                  (complete! s alt-complete
                             (lambda (new-s note)
-                              (loop new-s (string-length new-s) note)))
+                              (if (string=? note "")
+                                  (edited new-s (string-length new-s))
+                                  (loop new-s (string-length new-s) note))))
                  (loop s pos ""))]
             [(eq? action 'inspect)
              (let ([p (prompt-inspector)])
                (when p (guard (ex [else (void)]) (p s pos))))
              (loop s pos "")]
+            [(eq? action 'newline)
+             (let ([insert (prompt-multiline)])
+               (if insert
+                   (let ([result (insert s pos "\n")])
+                     (edited (car result) (cdr result)))
+                   (loop s pos "")))]
             [(eq? action 'paste)
-             (let ([text (string-join (split-pasted-lines (read-paste)) " ")])
-               (edited (string-insert s pos text)
-                       (+ pos (string-length text))))]
+             (let* ([lines (split-pasted-lines (read-paste))]
+                    [insert (prompt-multiline)])
+               (if insert
+                   (let ([result (insert s pos (string-join lines "\n"))])
+                     (edited (car result) (cdr result)))
+                   (let ([text (string-join lines " ")])
+                     (edited (string-insert s pos text)
+                             (+ pos (string-length text))))))]
             [(key-event-character event)
              => (lambda (c)
                   (edited (string-insert s pos (string c)) (+ pos 1)))]
@@ -3688,7 +3822,7 @@
   (define (set-mouse! on)
     (set! mouse-on? on)
     (ansi (if on "\x1b;[?1002;1006h" "\x1b;[?1002;1006l"))
-    (flush-output-port stdout))
+    (flush-output-port (terminal-output-port)))
 
   (define (mouse! on)
     ;; Turn mouse tracking on or off (off restores native selection).
@@ -4345,7 +4479,7 @@
           ("DELETE" delete-forward) ("C-h" delete-backward)
           ("BACKSPACE" delete-backward) ("C-k" kill) ("C-y" yank)
           ("TAB" complete) ("S-TAB" alternate-complete)
-          ("M-." inspect) ("PASTE" paste)))
+          ("M-." inspect) ("M-RET" newline) ("PASTE" paste)))
       #t))
 
   ;;; Modules -----------------------------------------------------------------
@@ -4555,7 +4689,7 @@
               "\x1b;[?69h" (format "\x1b;[1;~as" half)
               "\x1b;[1;2r" "\x1b;[1S"
               "\x1b;[r\x1b;[s\x1b;[?69l")
-        (flush-output-port stdout)
+        (flush-output-port (terminal-output-port))
         (let ([k (read-key)])
           (invalidate-screen-cache!)
           (and k (memv (char->integer k) '(121 89))))))
@@ -4563,7 +4697,7 @@
       (set-message! "Probing the terminal..."))
     (redraw!)
     (ansi "\x1b;[?69$p" "\x1b;[c")
-    (flush-output-port stdout)
+    (flush-output-port (terminal-output-port))
     (let* ([reply (gather (+ (real-time) 300))]
            [says (lambda (s)
                    (string-search reply s 0 (string-length reply)))]
@@ -4687,7 +4821,7 @@
         (unless (string=? cursor-style-shown "\x1b;[0 q")
           (ansi "\x1b;[0 q"))
         (ansi "\x1b;[?1002;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
-        (flush-output-port stdout)
+        (flush-output-port (terminal-output-port))
         (terminal-restore!))))
 
 ) ;; library (core)
