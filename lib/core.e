@@ -4707,10 +4707,16 @@
 
   (define (module-requires? name target)
     ;; Does library (name) build on (target), directly or through others?
-    (let ([t (string->symbol target)])
+    (let ([t (string->symbol target)]
+          [seen (make-hashtable equal-hash equal?)])
       (let walk ([lib (list (string->symbol name))])
-        (exists (lambda (req) (or (eq? (car req) t) (walk req)))
-                (guard (ex [else '()]) (library-requirements lib))))))
+        (if (hashtable-ref seen lib #f)
+            #f
+            (begin
+              (hashtable-set! seen lib #t)
+              (exists (lambda (req) (or (eq? (car req) t) (walk req)))
+                      (guard (ex [else '()])
+                        (library-requirements lib))))))))
 
   (define (refresh-buffer-modes!)
     ;; Re-resolve every buffer's mode by name, so buffers pick up a
