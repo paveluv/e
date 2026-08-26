@@ -50,29 +50,34 @@
   (define (longest-increasing pairs)
     ;; The longest chain of anchors increasing on both sides; pairs
     ;; come a-sorted, so filter to a b-increasing subsequence
-    ;; (patience sorting, O(n^2) -- honest prototype speed).
+    ;; with patience sorting.  tails[k] is the index of the smallest
+    ;; b-coordinate ending a chain of length k+1.
     (let* ([v (list->vector pairs)]
            [n (vector-length v)]
-           [len (make-vector n 1)]
+           [tails (make-vector n 0)]
            [prev (make-vector n -1)])
-      (if (= n 0)
-          '()
-          (begin
-            (do ([i 1 (+ i 1)]) ((= i n))
-              (do ([j 0 (+ j 1)]) ((= j i))
-                (when (and (< (cdr (vector-ref v j)) (cdr (vector-ref v i)))
-                           (>= (vector-ref len j) (vector-ref len i)))
-                  (vector-set! len i (+ (vector-ref len j) 1))
-                  (vector-set! prev i j))))
-            (let ([best 0])
-              (do ([i 1 (+ i 1)]) ((= i n))
-                (when (> (vector-ref len i) (vector-ref len best))
-                  (set! best i)))
-              (let loop ([i best] [acc '()])
-                (if (< i 0)
-                    acc
-                    (loop (vector-ref prev i)
-                          (cons (vector-ref v i) acc)))))))))
+      (let loop ([i 0] [size 0])
+        (if (= i n)
+            (if (= size 0)
+                '()
+                (let build ([i (vector-ref tails (- size 1))] [acc '()])
+                  (if (< i 0)
+                      acc
+                      (build (vector-ref prev i)
+                             (cons (vector-ref v i) acc)))))
+            (let* ([x (cdr (vector-ref v i))]
+                   [place
+                    (let search ([lo 0] [hi size])
+                      (if (= lo hi)
+                          lo
+                          (let ([mid (div (+ lo hi) 2)])
+                            (if (< (cdr (vector-ref v (vector-ref tails mid))) x)
+                                (search (+ mid 1) hi)
+                                (search lo mid)))))])
+              (when (> place 0)
+                (vector-set! prev i (vector-ref tails (- place 1))))
+              (vector-set! tails place i)
+              (loop (+ i 1) (if (= place size) (+ size 1) size)))))))
 
   (define (diff-matches a b)
     ;; Matching line pairs ((ai . bi) ...) between vectors a and b,
