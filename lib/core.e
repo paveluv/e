@@ -293,8 +293,13 @@
       (and (>= n m) (string=? (substring s 0 m) prefix))))
 
   (define (string-join xs sep)
-    (if (null? xs) ""
-        (fold-left (lambda (acc x) (string-append acc sep x)) (car xs) (cdr xs))))
+    ;; Build small separator-prefixed pieces, then concatenate them all once;
+    ;; repeatedly extending the complete prefix would copy it quadratically.
+    (if (null? xs)
+        ""
+        (apply string-append
+               (cons (car xs)
+                     (map (lambda (x) (string-append sep x)) (cdr xs))))))
 
   (define (common-prefix strs)
     ;; The longest prefix shared by every string in the non-empty list.
