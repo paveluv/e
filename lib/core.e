@@ -797,6 +797,23 @@
         path
         (string-append (current-directory) "/" path)))
 
+  (define (canonical-visit-path path)
+    ;; One stable identity for visited files. Existing paths chase symbolic
+    ;; links; for a new file, chase its existing parent and retain the final
+    ;; component. Textual normalization is the portable fallback.
+    (let* ([full (canonical-path (expand-path path))]
+           [real (canonical-file-path full)])
+      (or real
+          (let* ([dir (or (directory-part full) "/")]
+                 [parent (if (and (> (string-length dir) 1)
+                                  (string-suffix? "/" dir))
+                             (substring dir 0 (- (string-length dir) 1))
+                             dir)]
+                 [real-parent (canonical-file-path parent)])
+            (if real-parent
+                (string-append real-parent "/" (base-name full))
+                full)))))
+
   (define (default-directory)
     ;; The directory of the current buffer's file (or the working
     ;; directory), with a trailing slash, absolute -- a file visited
@@ -874,24 +891,26 @@
     ;; Switch to the buffer visiting path, creating it if necessary.
     ;; Reopening a buffer whose file changed on disk meanwhile raises
     ;; a buffer-only dialog: merge, reread, cancel.  Reopening never writes.
-    (let ([path (expand-path path)])
+    (let ([path (canonical-visit-path path)])
       (cond [(find (lambda (b) (equal? (buffer-file b) path)) buffers)
              => (lambda (b)
                   (show-buffer! b)
                   (when (buffer-base b)
-                    (let ([stamp (disk-stamp path)])
-                      (unless (equal? stamp (buffer-stamp b))
-                        (let ([disk (guard (ex [else #f])
-                                      (and (file-exists? path)
-                                           (read-file path)))])
-                          (cond
-                            [(and disk (string=? disk (buffer-base b)))
-                             (buffer-stamp-set! b stamp)]
-                            [disk (reopen-changed-file! b path disk)]
-                            [else
-                             (parameterize ([message-source 'visit-file!])
-                               (set-message!
-                                 (format "Cannot reread ~a" path)))]))))))]
+                    ;; Reopening is explicit and uncommon, so compare content
+                    ;; every time. This catches preserved timestamps and a
+                    ;; stale buffer whose cached stamp was already refreshed.
+                    (let ([disk (guard (ex [else #f])
+                                  (and (file-exists? path)
+                                       (read-file path)))])
+                      (cond
+                        [(and disk (string=? disk (buffer-base b)))
+                         (buffer-stamp-set! b (disk-stamp path))
+                         (buffer-stale-set! b #f)]
+                        [disk (reopen-changed-file! b path disk)]
+                        [else
+                         (parameterize ([message-source 'visit-file!])
+                           (set-message!
+                             (format "Cannot reread ~a" path)))]))))]
             [(file-buffer path) => show-buffer!])))
 
   (define (read-disk-for-save path)
@@ -912,7 +931,7 @@
     ;; compared with the buffer's base (what it loaded or last saved).
     ;; A mismatch means somebody changed the file meanwhile -- the
     ;; save stops and asks: overwrite, merge three-way, or cancel.
-    (define path (expand-path path*))
+    (define path (canonical-visit-path path*))
     (define adopted? (not (equal? path file-name)))  ; saving under a new name
     (define b (window-buffer current-window))
     (define disk (read-disk-for-save path))
@@ -4347,7 +4366,7 @@
         [(eof-object? event) (set! quit? #t)]
         [else
          (unless (string=? event "C-k") (set! last-command #f))
-         (unless (string=? event "MOUSE") (settle-echo!))
+         (settle-echo!)
          (dispatch-sequence! event chain)])))
 
   (define (action-name action)

@@ -254,7 +254,7 @@ logs stacks on its own line, prefixed with its component in grey, so a
 save that reloads a module and then reports a merge shows all three
 lines at once.  The area grows as messages arrive, the windows above
 shrinking down to their minimum, past which the oldest lines give way;
-the next keystroke settles it back to a single line.  A message logged
+the next keyboard or mouse event settles it back to a single line. A message logged
 under `(parameterize ([message-progress #t]) ...)` is progress: it
 supersedes its component's newest line instead of stacking -- never
 another component's -- so a download reports fourteen steps as one
@@ -387,7 +387,9 @@ conflicted one.
 Opening an already visited file whose disk copy changed asks only to
 `m)erge, r)eread, c)ancel`. These choices affect the buffer alone: merge
 incorporates both versions without saving, reread replaces the buffer with the
-disk copy, and cancel behaves like `C-g`.
+disk copy, and cancel behaves like `C-g`. Visited paths are canonicalized, so
+relative paths, `.`/`..`, and symbolic-link aliases of the same file reuse one
+buffer and perform the same disk-content check.
 
 ## Configuration
 

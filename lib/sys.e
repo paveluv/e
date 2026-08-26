@@ -10,7 +10,8 @@
 (library (sys)
   (export terminal-raw! terminal-restore! terminal-isig!
           terminal-size watch-terminal-resize! call-with-streamed-output
-          duplicate-standard-output-port terminal-output-port)
+          duplicate-standard-output-port terminal-output-port
+          canonical-file-path)
   (import (chezscheme))
 
   (define os
@@ -68,6 +69,24 @@
     (and libc-loaded?
          (guard (ex [else #f])
            (foreign-procedure "close" (int) int))))
+  (define c-realpath
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "realpath" (string u8*) uptr))))
+
+  (define (canonical-file-path path)
+    ;; The absolute, symlink-resolved spelling of an existing path, or #f.
+    ;; PATH_MAX is commonly 4096; realpath fails instead of overflowing the
+    ;; caller-provided buffer.
+    (and c-realpath
+         (let ([out (make-bytevector 4096 0)])
+           (and (not (= (c-realpath path out) 0))
+                (let find ([n 0])
+                  (if (= (bytevector-u8-ref out n) 0)
+                      (let ([trimmed (make-bytevector n)])
+                        (bytevector-copy! out 0 trimmed 0 n)
+                        (utf8->string trimmed))
+                      (find (+ n 1))))))))
 
   ;; The destination for terminal-control output. Normally this is stdout;
   ;; clients that temporarily redirect process stdout can preserve a separate

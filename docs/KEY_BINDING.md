@@ -58,7 +58,9 @@ Named terminal keys are:
 
 `PASTE` is the synthetic event used by bracketed paste and can be rebound like
 a global key. `MOUSE` is emitted after the mouse report itself has been handled;
-it is primarily an internal event rather than a replacement for mouse handling.
+clicks, drags, releases, and wheel events settle the transient echo area like
+keyboard input. `MOUSE` is primarily an internal event rather than a replacement
+for mouse handling.
 
 Examples:
 
