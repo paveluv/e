@@ -316,14 +316,31 @@
       [(s needle start limit fold?)
        (let ([eq? (if fold? char-ci=? char=?)]
              [len (string-length needle)])
-         (let loop ([i start])
-           (cond [(> (+ i len) limit) #f]
-                 [(let match ([j 0])
-                    (or (= j len)
-                        (and (eq? (string-ref s (+ i j)) (string-ref needle j))
-                             (match (+ j 1)))))
-                  i]
-                 [else (loop (+ i 1))])))]))
+         (if (= len 0)
+             start
+             (let ([failure (make-vector len 0)])
+               ;; KMP prefix table: the longest proper prefix ending here.
+               (let build ([i 1] [matched 0])
+                 (when (< i len)
+                   (cond
+                     [(eq? (string-ref needle i) (string-ref needle matched))
+                      (let ([matched (+ matched 1)])
+                        (vector-set! failure i matched)
+                        (build (+ i 1) matched))]
+                     [(> matched 0)
+                      (build i (vector-ref failure (- matched 1)))]
+                     [else (build (+ i 1) 0)])))
+               (let scan ([i start] [matched 0])
+                 (cond
+                   [(>= i limit) #f]
+                   [(eq? (string-ref s i) (string-ref needle matched))
+                    (let ([matched (+ matched 1)])
+                      (if (= matched len)
+                          (+ (- i len) 1)
+                          (scan (+ i 1) matched)))]
+                   [(> matched 0)
+                    (scan i (vector-ref failure (- matched 1)))]
+                   [else (scan (+ i 1) 0)])))))]))
 
   (define (split-lines s)
     (let loop ([start 0] [i 0] [acc '()])
