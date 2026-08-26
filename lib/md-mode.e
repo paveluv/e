@@ -21,11 +21,29 @@
     (define (prefix-at? sub i)
       (let ([m (string-length sub)])
         (and (<= (+ i m) n) (string=? (substring s i (+ i m)) sub))))
-    (define (find-char c from)
-      (let loop ([i from])
-        (cond [(>= i n) #f]
-              [(char=? (string-ref s i) c) i]
-              [else (loop (+ i 1))])))
+    (define (next-table match?)
+      ;; Nearest matching position at or after every column.  Inline parsing
+      ;; then finds delimiters in O(1), including repeated unmatched openers.
+      (let ([out (make-vector (+ n 1) #f)])
+        (let loop ([i (- n 1)] [next #f])
+          (if (< i 0)
+              out
+              (let ([next (if (match? i) i next)])
+                (vector-set! out i next)
+                (loop (- i 1) next))))))
+    (define (at c i)
+      (and (< i n) (char=? (string-ref s i) c)))
+    (define next-tick (next-table (lambda (i) (at #\` i))))
+    (define next-star (next-table (lambda (i) (at #\* i))))
+    (define next-bracket (next-table (lambda (i) (at #\] i))))
+    (define next-paren (next-table (lambda (i) (at #\) i))))
+    (define next-double-tick
+      (next-table (lambda (i) (and (at #\` i) (at #\` (+ i 1))))))
+    (define next-double-star
+      (next-table (lambda (i) (and (at #\* i) (at #\* (+ i 1))))))
+    (define next-double-underscore
+      (next-table (lambda (i) (and (at #\_ i) (at #\_ (+ i 1))))))
+    (define (next table from) (vector-ref table (min from n)))
     (define (skip-spaces i)
       (if (and (< i n) (char=? (string-ref s i) #\space)) (skip-spaces (+ i 1)) i))
     (define (rule? i)
@@ -45,31 +63,33 @@
              (let* ([double? (and (< (+ i 1) n)
                                   (char=? (string-ref s (+ i 1)) #\`))]
                     [close (if double?
-                               (string-search s "``" (+ i 2) n)
-                               (find-char #\` (+ i 1)))])
+                               (next next-double-tick (+ i 2))
+                               (next next-tick (+ i 1)))])
                (cond [close
                       (let ([end (+ close (if double? 2 1))])
                         (mark! i end 'string)
                         (inline end))]
                      [else (mark! i n 'string)]))]
             [(or (prefix-at? "**" i) (prefix-at? "__" i))    ; **bold**
-             (let* ([marker (substring s i (+ i 2))]
-                    [close (string-search s marker (+ i 2) n)])
+             (let ([close (next (if (char=? c #\*)
+                                    next-double-star
+                                    next-double-underscore)
+                                (+ i 2))])
                (cond [close (mark! i (+ close 2) 'bold) (inline (+ close 2))]
                      [else (inline (+ i 2))]))]
             [(char=? c #\*)                                  ; *italic*
-             (let ([close (find-char #\* (+ i 1))])
+             (let ([close (next next-star (+ i 1))])
                (cond [close (mark! i (+ close 1) 'italic) (inline (+ close 1))]
                      [else (inline (+ i 1))]))]
             [(char=? c #\[)                                  ; [text](url)
-             (let ([close (find-char #\] (+ i 1))])
+             (let ([close (next next-bracket (+ i 1))])
                (cond
                  [(not close) (inline (+ i 1))]
                  [else
                   (mark! i (+ close 1) 'quote)
                   (if (and (< (+ close 1) n)
                            (char=? (string-ref s (+ close 1)) #\())
-                      (let ([pclose (find-char #\) (+ close 2))])
+                      (let ([pclose (next next-paren (+ close 2))])
                         (cond [pclose (mark! (+ close 1) (+ pclose 1) 'comment)
                                       (inline (+ pclose 1))]
                               [else (mark! (+ close 1) n 'comment)]))
