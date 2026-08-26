@@ -510,7 +510,10 @@ styled `delimiter` take part in bracket matching. Three file-detected
 syntax modes ship in
 `lib/`: `scheme-mode.e`, `c-mode.e` (block comments span lines through
 a memoized whole-buffer scan), and `md-mode.e` (Markdown; indented
-code blocks are styled as Scheme, modes composing per line). Context
+code blocks are styled as Scheme, modes composing per line).
+Stateful modes build their row provider with `memoize-buffer-analysis`:
+the analyzer receives a snapshot vector of lines and returns a vector of
+per-row results, recomputed once when the buffer content changes. Context
 highlighting, markup that depends on where point is, is provided by
 highlighters: `add-highlighter!` registers a function consulted at
 every redraw that returns `(row start end)` or `(row start end style)`

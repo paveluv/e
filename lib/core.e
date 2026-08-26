@@ -40,7 +40,7 @@
     ;; extending the editor
     bind-key! bind-default-key! unbind-key! key-binding key-event-binding
     command-key command-keys command-hint describe-key!!
-    register-mode! find-mode mode-styles add-highlighter!
+    register-mode! find-mode mode-styles memoize-buffer-analysis add-highlighter!
     register-indenter! register-formatter!
     add-status-hint!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
@@ -92,7 +92,10 @@
   ;;; Buffers and windows ----------------------------------------------------
 
   (define-record-type buffer
-    (fields (mutable name) (mutable lines) (mutable file) (mutable trailing)
+    (fields (mutable name)
+            (mutable lines buffer-lines buffer-lines-raw-set!)
+            (mutable revision)
+            (mutable file) (mutable trailing)
             (mutable modified) (mutable history)
             (mutable mark-row) (mutable mark-col)
             (mutable marked)
@@ -134,8 +137,15 @@
             (mutable wrap)))
 
   (define (new-buffer name)
-    (make-buffer name (vector "") #f #t #f (vector '() '())
+    (make-buffer name (vector "") 0 #f #t #f (vector '() '())
                  0 0 #f 0 0 0 #f #f #f #f #f))
+
+  (define (bump-buffer-revision! b)
+    (buffer-revision-set! b (+ (buffer-revision b) 1)))
+
+  (define (buffer-lines-set! b new-lines)
+    (buffer-lines-raw-set! b new-lines)
+    (bump-buffer-revision! b))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
   (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)))
@@ -350,7 +360,9 @@
   (define (vlen) (vector-length lines))
   (define (line-at n) (vector-ref lines n))
   (define (current-line) (line-at point-row))
-  (define (set-line! n s) (vector-set! lines n s))
+  (define (set-line! n s)
+    (vector-set! lines n s)
+    (bump-buffer-revision! (window-buffer current-window)))
 
   (define (editor-snapshot)
     (list (vector-copy lines) point-row point-col trailing-newline? modified?))
@@ -1214,6 +1226,22 @@
   (define (mark) (and mark-active? (cons mark-row mark-col)))
   (define (buffer-line-count b) (vector-length (buffer-lines b)))
   (define (buffer-line b n) (vector-ref (buffer-lines b) n))
+
+  (define (memoize-buffer-analysis analyze)
+    ;; Turn a whole-buffer analyzer into a row provider.  Buffer content has
+    ;; one revision stamp, so validation is O(1) and analysis runs at most
+    ;; once between edits, however many visible rows ask for its result.
+    (let ([cache (make-weak-eq-hashtable)])
+      (lambda (b row)
+        (let* ([revision (buffer-revision b)]
+               [hit (eq-hashtable-ref cache b #f)])
+          (unless (and hit (= (car hit) revision))
+            (set! hit
+              (cons revision (analyze (vector-copy (buffer-lines b)))))
+            (eq-hashtable-set! cache b hit))
+          (let ([product (cdr hit)])
+            (and (< row (vector-length product))
+                 (vector-ref product row)))))))
 
   (define (call-with-buffer b thunk)
     ;; Run thunk with b temporarily the current buffer: in the window

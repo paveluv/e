@@ -227,31 +227,9 @@
       (do ([i 0 (+ i 1)]) ((= i n) v)
         (vector-set! v i (buffer-line b i)))))
 
-  (define (lines-eq? a b)
-    (and (= (vector-length a) (vector-length b))
-         (let loop ([i 0])
-           (or (= i (vector-length a))
-               (and (eq? (vector-ref a i) (vector-ref b i))
-                    (loop (+ i 1)))))))
-
-  (define (memoized analyze)
-    ;; A per-buffer memo of a whole-buffer analysis, redone only when
-    ;; some line changed (slot-eq? snapshot compare).  -> (b row) ->
-    ;; the analysis row, or #f past the end.
-    (let ([cache (make-weak-eq-hashtable)])
-      (lambda (b row)
-        (let* ([v (buffer-vector b)]
-               [hit (eq-hashtable-ref cache b #f)])
-          (unless (and hit (lines-eq? (car hit) v))
-            (set! hit (cons v (analyze v)))
-            (eq-hashtable-set! cache b hit))
-          (let ([product (cdr hit)])
-            (and (< row (vector-length product))
-                 (vector-ref product row)))))))
-
-  (define cluster-row (memoized analyze))
-  (define depth-row (memoized analyze-depth))
-  (define rainbow-row (memoized analyze-rainbow))
+  (define cluster-row (memoize-buffer-analysis analyze))
+  (define depth-row (memoize-buffer-analysis analyze-depth))
+  (define rainbow-row (memoize-buffer-analysis analyze-rainbow))
 
   (define (rendered b row line)
     (or (cluster-row b row) line))
