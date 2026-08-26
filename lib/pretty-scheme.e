@@ -166,9 +166,9 @@
   (define depth-pairs
     ;; The rotation for pretty-scheme-depth: one pair per nesting level,
     ;; cycling when exhausted.
-    '((#\｢ . #\｣) (#\⸦ . #\⸧) (#\⟨ . #\⟩) (#\⦅ . #\⦆)
-      (#\⟦ . #\⟧) (#\⟅ . #\⟆) (#\⧼ . #\⧽) (#\⸨ . #\⸩)
-      (#\⟪ . #\⟫) (#\⦇ . #\⦈) (#\⌈ . #\⌉) (#\⌊ . #\⌋)))
+    '#((#\｢ . #\｣) (#\⸦ . #\⸧) (#\⟨ . #\⟩) (#\⦅ . #\⦆)
+       (#\⟦ . #\⟧) (#\⟅ . #\⟆) (#\⧼ . #\⧽) (#\⸨ . #\⸩)
+       (#\⟪ . #\⟫) (#\⦇ . #\⦈) (#\⌈ . #\⌉) (#\⌊ . #\⌋)))
 
   (define rainbow
     ;; The rotation for pretty-scheme-rainbow: seven colors, rainbow order.
@@ -181,20 +181,22 @@
     (let ([out (let ([o (make-vector (vector-length v))])
                  (do ([i 0 (+ i 1)]) ((= i (vector-length v)) o)
                    (vector-set! o i (string-copy (vector-ref v i)))))]
-          [stack '()])
+          [stack '()]
+          [depth 0])
       (walk v
         (lambda (r c ch)
           (cond
             [(memv ch '(#\( #\[))
-             (let ([pair (list-ref depth-pairs
-                                   (mod (length stack)
-                                        (length depth-pairs)))])
+             (let ([pair (vector-ref depth-pairs
+                                     (mod depth (vector-length depth-pairs)))])
                (string-set! (vector-ref out r) c (car pair))
-               (set! stack (cons (cdr pair) stack)))]
+               (set! stack (cons (cdr pair) stack))
+               (set! depth (+ depth 1)))]
             [(memv ch '(#\) #\]))
              (when (pair? stack)
                (string-set! (vector-ref out r) c (car stack))
-               (set! stack (cdr stack)))])))
+               (set! stack (cdr stack))
+               (set! depth (- depth 1)))])))
       out))
 
   (define (analyze-rainbow v)
