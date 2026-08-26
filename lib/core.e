@@ -4276,6 +4276,23 @@
   (define (resolved-binding context sequence)
     (choose-binding (matching-bindings context sequence #t)))
 
+  (define (effective-bindings context)
+    ;; One chosen entry per sequence.  Registry order handles newest-first;
+    ;; a user entry replaces a previously seen default regardless of age.
+    (let ([chosen (make-hashtable equal-hash equal?)])
+      (for-each
+        (lambda (owned)
+          (let ([b (cdr owned)])
+            (when (eq? (binding-context b) context)
+              (let* ([sequence (binding-sequence b)]
+                     [old (hashtable-ref chosen sequence #f)])
+                (when (or (not old)
+                          (and (eq? (binding-kind (cdr old)) 'default)
+                               (eq? (binding-kind b) 'user)))
+                  (hashtable-set! chosen sequence owned))))))
+        (registry-entries key-bindings))
+      (vector->list (hashtable-values chosen))))
+
   (define key-binding
     (case-lambda
       [(spec) (key-binding 'global spec)]
@@ -4447,17 +4464,16 @@
       (exists
         (lambda (owned)
           (let* ([candidate (cdr owned)]
-                 [longer (binding-sequence candidate)]
-                 [chosen (and (> (length longer) (length sequence))
-                              (resolved-binding context longer))])
-            (and chosen
-                 (binding-action (cdr chosen))
+                 [longer (binding-sequence candidate)])
+            (and (> (length longer) (length sequence))
+                 (sequence-prefix? sequence longer)
+                 (binding-action candidate)
                  ;; An exact user binding deliberately reclaims a key
                  ;; that used to be only a default prefix.
                  (or (not exact)
                      (eq? (binding-kind (cdr exact)) 'default)
-                     (eq? (binding-kind (cdr chosen)) 'user)))))
-        (matching-bindings context sequence #f))))
+                     (eq? (binding-kind candidate) 'user)))))
+        (effective-bindings context))))
 
   (define (run-key-action! action)
     (cond [(procedure? action) (action)]
