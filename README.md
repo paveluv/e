@@ -236,15 +236,18 @@ edges.
 
 ## Evaluating Scheme
 
-`M-x` prompts for an expression (the opening parenthesis is pretyped
-and deletable, so a bare symbol works too; missing closing parentheses
-are forgiven) and evaluates it in the editor's own top level, where the
-whole published API lives.  The expression styles as Scheme while you
-type, and the result shows in the echo area, transiently like any
-message:
+`M-x` evaluates Scheme in the editor's live top level, where the published
+API and loaded modules are available. `C-x C-e` evaluates the current buffer.
+Results appear in the echo area and structured log:
 
     M-x (buffer-name (current-buffer))
     eval: (buffer-name (current-buffer)) => "sa.txt"
+
+See [Evaluation](docs/EVAL.md) for multiline entry, completion, `eval!`
+targets, output capture, result copying, interruption, history, and
+configuration.
+
+## Echo area and log
 
 The echo area is a transient tail of the log: each message a command
 logs stacks on its own line, prefixed with its component in grey, so a
@@ -276,54 +279,6 @@ CapsLock light, never logged.  `log-entries` returns the records
 themselves for slicing from M-x, `log-history` derives a command
 history from any component (find-file and save-as browse their past
 paths this way), and `log!` adds your own.
-
-TAB completes the symbol being typed against everything bound in the
-top level: Chez itself, the editor, loaded modules. A unique completion
-appends a space so the next argument can start at once. Shift-TAB
-completes against only the editor's own definitions, which the
-`*Completions*` pop-up also highlights. While you type, the parameters
-still to be supplied to the innermost open call appear after the cursor
-as a grey suggestion, shrinking as you enter arguments:
-`M-x (vector-sort` suggests `predicate vector`. Parameter names come
-live from structured describe entries, including those registered by
-modules, then from procedure sources or the arity (`arg1 arg2`) when no
-documentation is available.
-`M-Enter` inserts a Scheme-indented newline; multiline paste preserves its
-line breaks and is indented the same way. Every edit reindents the complete
-M-x input, so structural changes immediately redraw affected later lines.
-In multiline input, repeated
-`C-a`/`C-e` move first within the logical line and then across the whole input.
-Up and down arrows browse the history, newest first.
-
-`C-x C-e` (`eval!`) evaluates every Scheme datum in the current buffer in
-the same live interaction environment as M-x and shows the last result in the
-echo area. Its optional `where` argument accepts buffers, names, regions,
-buffer predicates, and lists, like the editing helpers.
-
-Output written during `eval!` or M-x evaluation is captured per line as it is
-produced. Standard output and standard error appear in the echo area and in
-`*log*` under the `stdout` and `stderr` components, including output from
-child processes started with `system`.
-
-Non-void evaluation results are also copied to the kill buffer, ready for
-`C-y`; the echo result carries a grey `[copied to kill buffer]` tail. Set
-`(eval-copy-result #f)` in `config.e` to disable this.
-
-See [Evaluation](docs/EVAL.md) for the complete command, streaming, logging,
-history, interruption, undo, and configuration reference.
-
-Buffers print as the expression that looks them up: `(current-buffer)`
-shows `(buffer "e")`, not the record's contents, so a printed result
-pastes straight into the next expression:
-`(buffer-line-count (buffer "e"))`. Regions print the same way.
-
-While an expression runs, its full closed form stays in the echo area
-with the cursor parked at its end as a blinking underline, so a running
-evaluation is visible at a glance. `C-g` interrupts it, even out of one
-of its own prompts, logging `interrupted` as the result. An expression
-that returns a value pops the transcript up; one that returns nothing
-(the interactive commands) is recorded without disturbing whatever it
-displayed.
 
 Generic editing helpers live in the `(edit)` module and take an
 optional `where` argument. Omitted, it means the selected region or the
