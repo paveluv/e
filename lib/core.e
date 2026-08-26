@@ -899,13 +899,16 @@
 
   (define (unique-name base self)
     ;; base, or base<2>, base<3>, ... -- whichever no other buffer uses.
-    (let loop ([k 1])
-      (let ([name (if (= k 1) base (format "~a<~a>" base k))])
-        (if (find (lambda (b) (and (not (eq? b self))
-                                   (string=? (buffer-name b) name)))
-                  buffers)
-            (loop (+ k 1))
-            name))))
+    (let ([used (make-hashtable string-hash string=?)])
+      (for-each (lambda (b)
+                  (unless (eq? b self)
+                    (hashtable-set! used (buffer-name b) #t)))
+                buffers)
+      (let loop ([k 1])
+        (let ([name (if (= k 1) base (format "~a<~a>" base k))])
+          (if (hashtable-ref used name #f)
+              (loop (+ k 1))
+              name)))))
 
   (define (file-buffer path)
     ;; A fresh buffer visiting path; #f (with a message) when it cannot be read.
