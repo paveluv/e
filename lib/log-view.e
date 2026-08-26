@@ -10,7 +10,8 @@
 
 (library (log-view)
   (export init! log-view show-log!)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core)
+          (only (describe) register-descriptions!))
 
   (define (log-line-prefix e)
     ;; The view's row prefix; the stored time keeps nanoseconds, the
@@ -82,5 +83,9 @@
     (void))
 
   (define (init!)
+    (register-descriptions!
+      '(((show-log!) (("procedure" . "(show-log!)")) "void"
+         ("(log-view)") log-view "Log commands" #f
+         "Display the live `*log*` view, containing timestamped editor messages and command results.")))
     (register-mode! "log" '() '() style-log-line)
     (log-view)))                ; the *log* view, listed from startup

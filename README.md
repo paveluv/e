@@ -284,9 +284,9 @@ completes against only the editor's own definitions, which the
 still to be supplied to the innermost open call appear after the cursor
 as a grey suggestion, shrinking as you enter arguments:
 `M-x (vector-sort` suggests `predicate vector`. Parameter names come
-from procedure sources when available, from documented signatures in
-the describe corpus for the documented builtins (generated into
-`data/describe/signatures.sdata`), or from the arity (`arg1 arg2`).
+live from structured describe entries, including those registered by
+modules, then from procedure sources or the arity (`arg1 arg2`) when no
+documentation is available.
 Up and down arrows browse the history, newest first.
 
 Buffers print as the expression that looks them up: `(current-buffer)`
@@ -320,9 +320,17 @@ The Scheme manual is available inside the editor:
 
     M-x (describe eq-hashtable-ref)
 
+`C-h f` (`describe!!`) prompts for a documented function name with
+completion. Its input uses the same match styling as other prompts: a partial
+name is italic, a complete Scheme name is upright, and an e-specific name is
+highlighted.
+
 pops up a `*describe*` buffer with the entry from the reference
 documentation: forms, what it returns, libraries, source, and the full
-prose. The corpus covers R6RS (from TSPL4) and Chez extensions
+prose. When the described name is a command, the page also lists every key
+currently bound to it. `*describe*` is a live view, so rebinding or unbinding
+a key updates an already visible page on the next redraw. The corpus covers
+R6RS (from TSPL4) and Chez extensions
 (from the Chez Scheme User's Guide). Run `M-x (fetch-describe-data!)`
 once to download and extract it: about 1,400 entries, kept out of Git in
 `data/describe/` next to `lib/`. The download uses curl; `describe.e`
@@ -332,6 +340,14 @@ does the rest. The database is structured and queryable from M-x:
 entries apart, so the whole corpus can be sliced by source, chapter,
 library, or anything else. In a Scheme buffer, `M-.` describes the
 symbol the cursor is on.
+
+Modules may add pages for their published commands with
+`register-descriptions!`. Each entry has the same fields as a corpus entry:
+`(names forms returns libraries source chapter url description)`. Registrations
+are owned by the calling module and are replaced with its other hooks on
+reload. A URL may be `#f`. The `(edit)` module uses this hook for
+`replace!!` and `replace-all!`, so those commands are documented without the
+downloaded Scheme corpus.
 
 ## Pretty parens
 

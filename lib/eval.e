@@ -12,12 +12,13 @@
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
 ;; down arrows browse the history, and C-g interrupts a runaway
-;; evaluation.  Exports register-signatures!; the describe module
-;; supplies the signatures, generated from its reference corpus.
+;; evaluation. Parameter suggestions are read live from the describe
+;; module's structured entries, with source and arity as fallbacks.
 
 (library (eval)
-  (export init! eval!! register-signatures!)
-  (import (chezscheme) (core))
+  (export init! eval!!)
+  (import (chezscheme) (core)
+          (only (describe) doc-lookup doc-forms))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -80,40 +81,54 @@
               (if (> i hi) '() (cons (format "[arg~a]" i) (loop (+ i 1)))))
             (if rest? '("...") '())))))
 
-  ;; Builtins are compiled without source, so their parameter names are not
-  ;; recoverable at run time; other modules can supply them (transcribed
-  ;; from the documentation) with register-signatures!.
-  (define signature-table (make-eq-hashtable))
+  (define (signature-arity sig)
+    (let loop ([p (cdr sig)] [n 0])
+      (if (pair? p) (loop (cdr p) (+ n 1)) n)))
 
-  (define (register-signatures! signatures)
-    ;; Each signature is the documented call shape as a datum:
-    ;; (name param ...), where a parenthesized param is optional, ... allows
-    ;; any more, and a dotted tail is a rest parameter.  They are converted
-    ;; to display tokens ("param", "[param]", ". param") once, here.
-    (for-each
-      (lambda (sig)
-        (eq-hashtable-set! signature-table (car sig)
-          (let loop ([p (cdr sig)])
-            (cond [(null? p) '()]
-                  [(symbol? p) (list (format ". ~a" p))]
-                  [(pair? (car p))
-                   (cons (format "[~a]"
-                                 (string-join (map (lambda (x) (format "~a" x))
-                                                   (car p))
-                                              " "))
-                         (loop (cdr p)))]
-                  [else (cons (format "~a" (car p)) (loop (cdr p)))]))))
-      signatures))
+  (define (signature-tokens sig)
+    ;; A documented call shape becomes display tokens. A parenthesized
+    ;; parameter is optional and a dotted tail is a rest parameter.
+    (let loop ([p (cdr sig)])
+      (cond [(null? p) '()]
+            [(symbol? p) (list (format ". ~a" p))]
+            [(pair? (car p))
+             (cons (format "[~a]"
+                           (string-join (map (lambda (x) (format "~a" x))
+                                             (car p))
+                                        " "))
+                   (loop (cdr p)))]
+            [else (cons (format "~a" (car p)) (loop (cdr p)))])))
+
+  (define (described-params sym)
+    ;; Pick the longest documented procedure form for this name.
+    (guard (ex [else #f])
+      (let ([best #f])
+        (for-each
+          (lambda (entry)
+            (for-each
+              (lambda (form)
+                (when (equal? (car form) "procedure")
+                  (let ([sig (guard (ex [else #f])
+                               (with-input-from-string (cdr form) read))])
+                    (when (and (pair? sig) (eq? (car sig) sym)
+                               (or (not best)
+                                   (> (signature-arity sig)
+                                      (signature-arity best))))
+                      (set! best sig)))))
+              (doc-forms entry)))
+          (doc-lookup sym))
+        (and best (signature-tokens best)))))
 
   (define (symbol-params sym)
     ;; The parameters of the procedure sym names, as a list of display
-    ;; tokens: from its source when available, else a registered signature,
+    ;; tokens: from its live describe entry when available, else its source,
     ;; else its arity in brackets.  #f for anything else.
     (and (top-level-bound? sym)
          (let ([v (top-level-value sym)])
            (and (procedure? v)
                 (let ([src (((inspect/object v) 'code) 'source)])
                   (cond
+                    [(described-params sym)]
                     [(and src
                           (pair? (src 'value))
                           (eq? (car (src 'value)) 'lambda))
@@ -122,7 +137,6 @@
                              [(symbol? p) (list (format ". ~a" p))]
                              [else (cons (format "~a" (car p))
                                          (loop (cdr p)))]))]
-                    [(eq-hashtable-ref signature-table sym #f)]
                     [else (arity-params (procedure-arity-mask v))]))))))
 
   (define (drop-params tokens n)
@@ -243,24 +257,16 @@
     (let ([scheme (find-mode "scheme")])
       (and scheme (editorize! text ((mode-styles scheme) text)))))
 
-  (define (mx-echo-styles content)
+  (define mx-echo-styles
     ;; Scheme highlighting for the M-x prompt: the label stays grey,
     ;; the expression styles as Scheme with the editor's own names in
     ;; the editor style.
-    (guard (ex [else #f])
-      (and (string-prefix? "M-x " content)
-           (let ([scheme (find-mode "scheme")])
-             (and scheme
-                  (let* ([tail (string-tail content 4)]
-                         [styles (make-vector (string-length content)
-                                              'comment)]
-                         [inner (editorize! tail
-                                            ((mode-styles scheme) tail))])
-                    (let loop ([i 4])
-                      (when (< i (string-length content))
-                        (vector-set! styles i (vector-ref inner (- i 4)))
-                        (loop (+ i 1))))
-                    styles))))))
+    (prompt-styler "M-x "
+      (lambda (input)
+        (guard (ex [else #f])
+          (let ([scheme (find-mode "scheme")])
+            (and scheme
+                 (editorize! input ((mode-styles scheme) input))))))))
 
   (define (trim-right s)
     ;; s without trailing blanks, so auto-closed parentheses attach

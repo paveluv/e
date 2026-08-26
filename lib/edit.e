@@ -20,7 +20,8 @@
           replace-all! count-matches replace!!
           next-conflict! keep-mine! keep-disk!
           list-buffers!)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core)
+          (only (describe) register-descriptions!))
 
   ;;; Regions -----------------------------------------------------------------
 
@@ -407,6 +408,27 @@
                        "Buffers:" rows)))))
 
   (define (init!)
+    (register-descriptions!
+      '(((replace-all!)
+         (("procedure" . "(replace-all! from to [where])"))
+         "integer" ("(edit)") edit "Editing commands" #f
+         "Replace every occurrence of `from` with `to` in `where`. Each buffer is changed as one undo step and point is preserved. If `where` is omitted, use the selected region or the whole current buffer; it may also be a buffer, buffer name, region, buffer predicate, or list of these.")
+        ((replace!!)
+         (("procedure" . "(replace!! [from] [to] [where])"))
+         "void" ("(edit)") edit "Editing commands" #f
+         "Interactively visit occurrences of `from` in `where`, asking whether to replace each one with `to`. Any omitted arguments are prompted for. The query accepts `y` or Space to replace, `n` to skip, and `q` or Return to stop.")
+        ((next-conflict!) (("procedure" . "(next-conflict!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Move point to the next merge conflict marker in the current buffer, wrapping at the end. Report a message if the buffer has no conflicts.")
+        ((keep-mine!) (("procedure" . "(keep-mine!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Resolve the merge conflict at point by keeping the buffer side. The complete resolution is one undo step.")
+        ((keep-disk!) (("procedure" . "(keep-disk!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
+        ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Display a freshly rebuilt `*Buffer List*` showing each buffer's current, read-only, and modified marks, line count, mode, and file.")))
     (bind-default-key! "C-x C-b" list-buffers!)
     (bind-default-key! "M-%" replace!!)
     (bind-default-key! "M-n" next-conflict!)

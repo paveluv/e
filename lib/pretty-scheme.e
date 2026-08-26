@@ -16,7 +16,8 @@
 
 (library (pretty-scheme)
   (export init! pretty-scheme-clusters! pretty-scheme-depth! pretty-scheme-rainbow!)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core)
+          (only (describe) register-descriptions!))
 
   ;;; Clusters ------------------------------------------------------------------
 
@@ -331,6 +332,19 @@
     (toggle-mode! "pretty-scheme-rainbow"))
 
   (define (init!)
+    (register-descriptions!
+      '(((pretty-scheme-clusters!)
+         (("procedure" . "(pretty-scheme-clusters!)")) "void"
+         ("(pretty-scheme)") pretty-scheme "Display commands" #f
+         "Toggle the current Scheme buffer between its normal mode and a view that renders parentheses with glyph pairs chosen by syntactic construct.")
+        ((pretty-scheme-depth!)
+         (("procedure" . "(pretty-scheme-depth!)")) "void"
+         ("(pretty-scheme)") pretty-scheme "Display commands" #f
+         "Toggle the current Scheme buffer between its normal mode and a view whose parenthesis glyph pairs rotate with nesting depth.")
+        ((pretty-scheme-rainbow!)
+         (("procedure" . "(pretty-scheme-rainbow!)")) "void"
+         ("(pretty-scheme)") pretty-scheme "Display commands" #f
+         "Toggle the current Scheme buffer between its normal mode and a view that colors parentheses by nesting depth.")))
     (register-mode! "pretty-scheme-clusters" '() '() scheme-styles rendered)
     (register-mode! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
     (register-mode! "pretty-scheme-rainbow" '() '() scheme-styles #f

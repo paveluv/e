@@ -38,7 +38,7 @@
     quit!!
     ;; extending the editor
     bind-key! bind-default-key! unbind-key! key-binding key-event-binding
-    command-key command-hint describe-key!!
+    command-key command-keys command-hint describe-key!!
     register-mode! find-mode mode-styles add-highlighter!
     register-indenter! register-formatter!
     add-status-hint!
@@ -46,6 +46,7 @@
     load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook!
     prompt! confirm? prompt-ghost prompt-inspector completion-highlight
+    prompt-styler completion-styler
     min-window-lines
     complete! show-completions! dismiss-completions!
     read-key read-key-event key-event-character
@@ -56,7 +57,8 @@
     log! log-entries log-length log-record log-styler format-log-entry
     message-source message-progress
     echo-highlight
-    register-view! view-append! register-log-formatter! log-history
+    register-view! view-append! view-replace! register-log-formatter! log-history
+    publish-descriptions! published-descriptions
     call-with-interrupt call-uninterrupted interrupted?
     vector-fill-range! string-search set-style!
     string-tail string-prefix? string-suffix? string-join split-lines
@@ -1216,8 +1218,8 @@
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
 
   (define (fresh-buffer name)
-    ;; The named tool buffer, emptied for rebuilding -- *describe*,
-    ;; *Buffer List*, and their kin.  An existing one is reused: the
+    ;; The named tool buffer, emptied for rebuilding -- *Buffer List* and
+    ;; its kin.  An existing one is reused: the
     ;; windows showing it keep showing it and display-buffer! finds it
     ;; on screen -- no kill, no second window, no duplication.
     (let ([b (or (buffer-named name) (new-buffer name))])
@@ -1290,6 +1292,28 @@
                       (window-pcol-set! w
                         (string-length (vector-ref nv last))))
                     tails)))))
+
+  (define (view-replace! b lines)
+    ;; Replace a view's rendering without disturbing windows when it has not
+    ;; changed. On a real change, keep point and the viewport where possible,
+    ;; clamping them only when the new rendering is shorter.
+    (let ([new (if (null? lines) (vector "") (list->vector lines))])
+      (unless (equal? (buffer-lines b) new)
+        (buffer-lines-set! b new)
+        (let ([last (- (vector-length new) 1)])
+          (buffer-spot-row-set! b (min (buffer-spot-row b) last))
+          (buffer-spot-col-set!
+            b (min (buffer-spot-col b)
+                   (string-length (vector-ref new (buffer-spot-row b)))))
+          (for-each
+            (lambda (w)
+              (when (eq? (window-buffer w) b)
+                (window-prow-set! w (min (window-prow w) last))
+                (window-pcol-set!
+                  w (min (window-pcol w)
+                         (string-length (vector-ref new (window-prow w)))))
+                (window-top-set! w (min (window-top w) last))))
+            windows)))))
 
   ;;; The log -----------------------------------------------------------------
 
@@ -1653,6 +1677,17 @@
     (set-box! r (cons (cons (registering-module) item) (unbox r))))
 
   (define (registry-items r) (map cdr (unbox r)))
+
+  ;; Describe keeps the presentation and record format in its own module;
+  ;; the core only owns these opaque batches so normal module retraction also
+  ;; removes documentation when a registration disappears on reload.
+  (define description-registry (make-registry))
+
+  (define (publish-descriptions! entries)
+    (registry-add! description-registry entries))
+
+  (define (published-descriptions)
+    (apply append (reverse (registry-items description-registry))))
 
   (define (registry-entries r) (unbox r))
 
@@ -2621,6 +2656,36 @@
   ;; style nothing; a raising styler paints plain.
   (define echo-highlight (make-parameter #f))
 
+  (define (prompt-styler label input-styler)
+    ;; Lift a styler for the editable input into one for the complete echo
+    ;; content. The prompt label and any note stay grey; only the input is
+    ;; delegated. Shared by file, symbol, and expression prompts.
+    (let ([llen (string-length label)])
+      (lambda (content)
+        (and (string-prefix? label content)
+             (let* ([styles (make-vector (string-length content) 'comment)]
+                    [end (min (or echo-input-end (string-length content))
+                              (string-length content))]
+                    [input (substring content (min llen end) end)]
+                    [inner (input-styler input)])
+               (and inner
+                    (begin
+                      (let loop ([i llen])
+                        (when (< i end)
+                          (vector-set! styles i (vector-ref inner (- i llen)))
+                          (loop (+ i 1))))
+                      styles)))))))
+
+  (define (completion-styler match? highlight?)
+    ;; Style one completion input by its semantic state: an incomplete or
+    ;; unknown value is italic, an exact match is plain, and a distinguished
+    ;; match (an editor symbol, for example) uses the editor face.
+    (lambda (input)
+      (make-vector (string-length input)
+                   (cond [(highlight? input) 'editor]
+                         [(match? input) 'plain]
+                         [else 'italic]))))
+
   (define (echo-cursor-now)
     (or echo-cursor
         (and (cursor-in-echo)
@@ -3429,14 +3494,11 @@
     ;; upright, the rest leans italic -- so a TAB that landed on a
     ;; mere common prefix (no such file yet) is telling at a glance,
     ;; without another TAB to ask.
-    (let ([llen (string-length label)])
-      (define (exists? p)
-        (guard (ex [else #f]) (file-exists? (expand-path p))))
-      (lambda (content)
-        (let* ([v (make-vector (string-length content) 'plain)]
-               [end (min (or echo-input-end (string-length content))
-                         (string-length content))]
-               [path (substring content (min llen end) end)]
+    (define (exists? p)
+      (guard (ex [else #f]) (file-exists? (expand-path p))))
+    (prompt-styler label
+      (lambda (path)
+        (let* ([v (make-vector (string-length path) 'plain)]
                [split                    ; length of the existing prefix
                 (let loop ([k (string-length path)])
                   (cond [(= k 0) 0]
@@ -3446,7 +3508,7 @@
                                             [(char=? (string-ref path i) #\/)
                                              (+ i 1)]
                                             [else (prev (- i 1))])))]))])
-          (vector-fill-range! v (+ llen split) end 'italic)
+          (vector-fill-range! v split (string-length path) 'italic)
           v))))
 
   (define (save!!)
@@ -3966,24 +4028,29 @@
       [(spec) (add-key-binding! 'global spec #f 'user)]
       [(context spec) (add-key-binding! context spec #f 'user)]))
 
+  (define (command-keys sym)
+    ;; Every global key spec currently resolved to the top-level command
+    ;; named sym. Bindings are read live, so overrides and module reloads are
+    ;; reflected immediately.
+    (guard (ex [else '()])
+      (if (top-level-bound? sym)
+          (let ([proc (top-level-value sym)])
+            (map (lambda (owned) (binding-spec (cdr owned)))
+                 (filter
+                   (lambda (owned)
+                     (let ([b (cdr owned)])
+                       (and (eq? (binding-context b) 'global)
+                            (eq? (binding-action b) proc)
+                            (eq? owned
+                                 (resolved-binding 'global
+                                   (binding-sequence b))))))
+                   (registry-entries key-bindings))))
+          '())))
+
   (define (command-key sym)
-    ;; The key spec currently bound to the top-level command named sym
-    ;; -- "M-n", "C-t", "C-x C-b" -- looked up in the live registries,
-    ;; newest binding first; #f when none.
-    (guard (ex [else #f])
-      (and (top-level-bound? sym)
-           (let ([proc (top-level-value sym)])
-             (let ([hit
-                    (find
-                      (lambda (owned)
-                        (let ([b (cdr owned)])
-                          (and (eq? (binding-context b) 'global)
-                               (eq? (binding-action b) proc)
-                               (eq? owned
-                                    (resolved-binding 'global
-                                      (binding-sequence b))))))
-                      (registry-entries key-bindings))])
-               (and hit (binding-spec (cdr hit))))))))
+    ;; The most recently registered key currently bound to sym, or #f.
+    (let ([keys (command-keys sym)])
+      (and (pair? keys) (car keys))))
 
   (define (command-hint syms)
     ;; "M-n next-conflict!, M-m keep-mine!" for a list of command

@@ -27,14 +27,13 @@
 ;;           (doc-entries))
 
 (library (describe)
-  (export init! describe describe! describe-at-point! fetch-describe-data!
+  (export init! describe describe! describe!! describe-at-point!
+          fetch-describe-data!
+          register-descriptions!
           doc-lookup doc-entries
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
-  ;; (only ...) because (eval) also exports an init!, which a library
-  ;; body may not shadow; the import also orders the two modules'
-  ;; initialization, whatever their load order.
-  (import (chezscheme) (core) (only (eval) register-signatures!))
+  (import (chezscheme) (core))
 
   (define-record-type (doc-entry make-doc-entry doc-entry?)
     (fields (immutable names doc-names)           ; symbols defined
@@ -48,9 +47,6 @@
 
   (define (data-dir)
     (string-append (data-directory) "/describe"))
-
-  (define (signatures-path)
-    (string-append (data-dir) "/signatures.sdata"))
 
   (define (data-path)
     (string-append (data-dir) "/describe.sdata"))
@@ -403,12 +399,14 @@
 
   (define (doc-browser-url entry)
     ;; The entry's documentation in the browser: its page anchor made
-    ;; absolute against its book's site.
-    (string-append (case (doc-source entry)
-                     [(tspl) tspl-base]
-                     [(csug) csug-base]
-                     [else ""])
-                   (doc-url entry)))
+    ;; absolute against its book's site.  Locally registered entries may
+    ;; have no URL.
+    (and (doc-url entry)
+         (string-append (case (doc-source entry)
+                          [(tspl) tspl-base]
+                          [(csug) csug-base]
+                          [else ""])
+                        (doc-url entry))))
 
   (define (ensure-directory! path)
     (unless (file-directory? path) (mkdir path)))
@@ -465,11 +463,8 @@
         (write-data! (append (parse-book ref "tspl4" 'tspl tspl-pages)
                              (parse-book ref "csug" 'csug csug-pages)))
         (set! all-entries #f)
+        (set! by-name #f)
         (load-data!)
-        (let ([sigs (generate-signatures)])
-          (write-signatures! sigs)
-          (register-signatures! sigs)
-          (set-message! (format "Generated ~a signatures" (length sigs))))
         (set-message!
           (format "Describe database ready: ~a entries covering ~a names"
                   (length all-entries)
@@ -481,61 +476,32 @@
 
   (define all-entries #f)   ; list of doc-entry, or #f before loading
   (define by-name #f)       ; symbol -> (doc-entry ...), tspl first
+  (define (entry-datum->doc-entry entry)
+    (unless (and (list? entry) (= (length entry) 8))
+      (error 'register-descriptions!
+             "expected (names forms returns libraries source chapter url description)"
+             entry))
+    (apply make-doc-entry entry))
 
-  (define (generate-signatures)
-    ;; The documented procedure call shapes, one per name (the longest
-    ;; when a procedure has several forms), read off the corpus
-    ;; templates -- what scheme-sigs.e used to transcribe by hand.
-    (define (arity d)
-      (let loop ([d (cdr d)] [n 0])
-        (if (pair? d) (loop (cdr d) (+ n 1)) n)))
-    (load-data!)
-    (let ([best (make-eq-hashtable)])
-      (for-each
-        (lambda (e)
-          (for-each
-            (lambda (form)
-              (when (equal? (car form) "procedure")
-                (let ([datum (guard (ex [else #f])
-                               (with-input-from-string (cdr form) read))])
-                  (when (and (pair? datum) (symbol? (car datum)))
-                    (let ([prev (eq-hashtable-ref best (car datum) #f)])
-                      (when (or (not prev) (> (arity datum) (arity prev)))
-                        (eq-hashtable-set! best (car datum) datum)))))))
-            (doc-forms e)))
-        all-entries)
-      (vector->list (hashtable-values best))))
+  (define (register-descriptions! entries)
+    ;; Publish module documentation in the same eight-field format used by
+    ;; describe.sdata. The core owns the opaque registration so module reload
+    ;; retracts it along with the module's other hooks.
+    (for-each entry-datum->doc-entry entries)
+    (publish-descriptions! entries)
+    (void))
 
-  (define (write-signatures! sigs)
-    (with-output-to-file (signatures-path)
-      (lambda ()
-        (display ";; generated from the describe corpus -- do not edit\n")
-        (write sigs)
-        (newline))
-      'replace))
-
-  (define (load-signatures!)
-    ;; Register the cached signatures with eval -- the cache is small
-    ;; and loads at startup; when it is missing but the corpus is
-    ;; there, build it once from the corpus.
-    (guard (ex [else (void)])
-      (cond
-        [(file-exists? (signatures-path))
-         (register-signatures!
-           (with-input-from-file (signatures-path) read))]
-        [(file-exists? (data-path))
-         (let ([sigs (generate-signatures)])
-           (write-signatures! sigs)
-           (register-signatures! sigs))])))
+  (define (registered-entries)
+    (map entry-datum->doc-entry (published-descriptions)))
 
   (define (load-data!)
     (unless all-entries
-      (unless (file-exists? (data-path))
-        (error 'describe
-               "no reference data -- run (fetch-describe-data!) once"))
       (set! all-entries
-        (map (lambda (e) (apply make-doc-entry e))
-             (with-input-from-file (data-path) read)))
+        (if (file-exists? (data-path))
+            (map entry-datum->doc-entry
+                 (with-input-from-file (data-path) read))
+            '())))
+    (unless by-name
       (set! by-name (make-eq-hashtable))
       (for-each (lambda (entry)
                   (for-each (lambda (name)
@@ -550,16 +516,18 @@
     ;; The entries documenting name (a symbol or its string), TSPL
     ;; before CSUG; '() when it is not in the corpus.
     (load-data!)
-    (eq-hashtable-ref by-name
-                      (if (string? name) (string->symbol name) name)
-                      '()))
+    (let* ([name (if (string? name) (string->symbol name) name)]
+           [local (filter (lambda (entry) (memq name (doc-names entry)))
+                          (registered-entries))])
+      (append (eq-hashtable-ref by-name name '()) local)))
 
   (define (doc-entries . maybe-pred)
     ;; Every entry, or those a predicate accepts.
     (load-data!)
-    (if (pair? maybe-pred)
-        (filter (car maybe-pred) all-entries)
-        all-entries))
+    (let ([entries (append all-entries (registered-entries))])
+      (if (pair? maybe-pred)
+          (filter (car maybe-pred) entries)
+          entries)))
 
   ;;; Display -------------------------------------------------------------------
 
@@ -602,10 +570,53 @@
                              [(tspl) "TSPL4"]
                              [(csug) "Chez Scheme User's Guide"]
                              [else (doc-source entry)])
-                           (doc-chapter entry))
-                   (format "url: ~a" (doc-browser-url entry)))))
+                           (doc-chapter entry)))
+             (if (doc-url entry)
+                 (list (format "url: ~a" (doc-browser-url entry)))
+                 '())))
       (list "")
       (split-on-newlines (doc-description entry))))
+
+  (define described-name #f)
+  (define describe-buffer #f)
+
+  (define-record-type describe-page
+    (fields name entries keys))
+
+  (define (current-page name)
+    ;; The structured source of truth for one rendering. Both registered
+    ;; documentation and bindings are live and may change between redraws.
+    (make-describe-page name (doc-lookup name) (command-keys name)))
+
+  (define (page-lines page)
+    ;; Render a structured page as Markdown buffer lines.
+    (append
+      (if (pair? (describe-page-keys page))
+          (list (format "**keys**: ~a  "
+                        (string-join (describe-page-keys page) ", "))
+                "")
+          '())
+      (let loop ([entries (describe-page-entries page)] [acc '()])
+        (if (null? entries)
+            (reverse acc)
+            (loop (cdr entries)
+                  (append
+                    (reverse (entry-lines (car entries)))
+                    (if (null? acc)
+                        acc
+                        (cons "" (cons (make-string 72 #\-)
+                                       (cons "" acc))))))))))
+
+  (define (refresh-describe!)
+    (when (and describe-buffer described-name)
+      (view-replace! describe-buffer
+                     (page-lines (current-page described-name)))))
+
+  (define (describe-view)
+    (unless (and describe-buffer (memq describe-buffer (buffer-list)))
+      (set! describe-buffer (register-view! "*describe*" refresh-describe!))
+      (set-buffer-mode! describe-buffer "markdown"))
+    describe-buffer)
 
   (define (describe! name)
     ;; Pop up a *describe* buffer with the documentation for name (a
@@ -613,31 +624,58 @@
     (let ([entries (doc-lookup name)])
       (if (null? entries)
           (set-message! (format "No documentation for ~a" name))
-          (begin
-            (let ([b (fresh-buffer "*describe*")])
-              (apply buffer-append! b
-                     (let loop ([es entries] [acc '()])
-                       (if (null? es)
-                           (reverse acc)
-                           (loop (cdr es)
-                                 (append
-                                   (reverse (entry-lines (car es)))
-                                   (if (null? acc)
-                                       acc
-                                       (cons "" (cons (make-string 72 #\-)
-                                                      (cons "" acc)))))))))
-              (set-buffer-read-only! b #t)
-              (set-buffer-mode! b "markdown")
-              (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
-              (if (display-buffer! b)
-                  (set-message! "")
-                  (set-message!
-                    (format "~a: see the *describe* buffer" name))))))
+          (let ([b (describe-view)])
+            (set! described-name
+              (if (string? name) (string->symbol name) name))
+            (refresh-describe!)
+            (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
+            (if (display-buffer! b)
+                (set-message! "")
+                (set-message!
+                  (format "~a: see the *describe* buffer" name)))))
       (void)))
 
   (define-syntax describe
     (syntax-rules ()
       [(_ name) (describe! 'name)]))
+
+  (define (complete-described-name part)
+    ;; Complete against the names that actually have a describe page.
+    (let ([seen (make-eq-hashtable)])
+      (sort string<?
+            (fold-left
+              (lambda (names entry)
+                (fold-left
+                  (lambda (names name)
+                    (let ([text (symbol->string name)])
+                      (if (or (eq-hashtable-ref seen name #f)
+                              (not (string-prefix? part text)))
+                          names
+                          (begin
+                            (eq-hashtable-set! seen name #t)
+                            (cons text names)))))
+                  names (doc-names entry)))
+              '() (doc-entries)))))
+
+  (define (describe!!)
+    ;; Prompt for a documented name and display its live describe page.
+    (define label "Describe function: ")
+    (define (editor-name? text)
+      (and (> (string-length text) 0)
+           (editor-symbol? (string->symbol text))))
+    (define (described-name? text)
+      (and (> (string-length text) 0)
+           (pair? (doc-lookup (string->symbol text)))))
+    (let ([name (parameterize ([completion-highlight editor-name?]
+                               [echo-highlight
+                                (prompt-styler
+                                  label
+                                  (completion-styler described-name?
+                                                     editor-name?))])
+                  (prompt! label complete-described-name))])
+      (when (and name (> (string-length name) 0))
+        (describe! (string->symbol name))))
+    (void))
 
   ;;; The symbol at point ---------------------------------------------------------
 
@@ -707,6 +745,24 @@
         (describe! (string->symbol (substring text start end))))))
 
   (define (init!)
-    (load-signatures!)
+    (register-descriptions!
+      '(((describe!) (("procedure" . "(describe! name)")) "void"
+         ("(describe)") describe "Documentation commands" #f
+         "Display every documentation entry for `name` in a read-only Markdown `*describe*` buffer.")
+        ((describe-at-point!)
+         (("procedure" . "(describe-at-point!)")) "void"
+         ("(describe)") describe "Documentation commands" #f
+         "Display documentation for the symbol at point in the current Scheme buffer.")
+        ((describe!!) (("procedure" . "(describe!!)")) "void"
+         ("(describe)") describe "Documentation commands" #f
+         "Prompt for a documented function name with completion, then display its live describe page.")
+        ((fetch-describe-data!)
+         (("procedure" . "(fetch-describe-data!)")) "void"
+         ("(describe)") describe "Documentation commands" #f
+         "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the local describe database, and load it.")
+        ((eval!!) (("procedure" . "(eval!!)")) "void"
+         ("(eval)") eval "Evaluation commands" #f
+         "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log.")))
     (prompt-inspector describe-input!)
+    (bind-default-key! "C-h f" describe!!)
     (bind-default-key! "M-." describe-at-point!)))

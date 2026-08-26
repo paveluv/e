@@ -12,7 +12,8 @@
 
 (library (search)
   (export init! search!! search-fold-case)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core)
+          (only (describe) register-descriptions!))
 
   ;; Configuration: whether the incremental search folds case the
   ;; smart way, as Emacs does -- matching ignores case only while the
@@ -247,6 +248,10 @@
             (set! current-match #f))))))
 
   (define (init!)
+    (register-descriptions!
+      '(((search!!) (("procedure" . "(search!!)")) "void"
+         ("(search)") search "Search commands" #f
+         "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
     (add-highlighter! search-highlights)
     (bind-default-key! "C-s" search!!)
     (for-each
