@@ -66,7 +66,7 @@
     register-view! view-append! view-replace! register-log-formatter! log-history
     publish-descriptions! published-descriptions
     call-with-interrupt call-uninterrupted interrupted?
-    vector-fill-range! string-search set-style!
+    vector-fill-range! string-search compile-style set-style!
     string-tail string-prefix? string-suffix? string-join split-lines
     ;; the editor itself
     main)
@@ -2126,47 +2126,120 @@
                     styles))))
           no-styles)))
 
-  ;; Faces may be recolored from config.e: (set-style! 'chrome 244)
-  ;; takes a 256-color foreground number, (set-style! 'chrome
-  ;; "38;5;244;3") a raw SGR attribute list.  Overrides are owned
-  ;; registrations, so dropping the line from config.e and reloading
-  ;; restores the default.
+  ;; Faces may be recolored from config.e. Overrides are owned registrations,
+  ;; so dropping the line from config.e and reloading restores the default.
   (define style-overrides (make-registry))
+
+  (define style-attributes
+    '((reset . 0) (bold . 1) (dim . 2) (italic . 3) (underline . 4)
+      (blink . 5) (reverse . 7) (hidden . 8) (strike . 9)))
+
+  (define style-colors
+    '((black . 0) (red . 1) (green . 2) (yellow . 3)
+      (blue . 4) (magenta . 5) (cyan . 6) (white . 7)))
+
+  (define (style-byte who value)
+    (unless (and (integer? value) (exact? value) (<= 0 value 255))
+      (error who "color component must be an integer from 0 through 255"
+             value))
+    value)
+
+  (define (named-color value)
+    (and (symbol? value)
+         (let* ([text (symbol->string value)]
+                [bright? (string-prefix? "bright-" text)]
+                [name (if bright? (string->symbol (string-tail text 7)) value)]
+                [hit (assq name style-colors)])
+           (and hit (cons (cdr hit) bright?)))))
+
+  (define (compile-color clause foreground?)
+    (unless (= (length clause) 2)
+      (error 'compile-style "color clause must contain exactly one color"
+             clause))
+    (let ([value (cadr clause)] [base (if foreground? 30 40)])
+      (cond
+        [(named-color value)
+         => (lambda (named)
+              (list (+ base (car named) (if (cdr named) 60 0))))]
+        [(number? value)
+         (list (+ base 8) 5 (style-byte 'compile-style value))]
+        [(and (list? value) (= (length value) 4) (eq? (car value) 'rgb))
+         (cons (+ base 8)
+               (cons 2 (map (lambda (v) (style-byte 'compile-style v))
+                            (cdr value))))]
+        [else
+         (error 'compile-style
+                "color must be named, 0..255, or (rgb red green blue)"
+                value)])))
+
+  (define (compile-style expression)
+    ;; Compile a declarative style into the raw SGR parameter string used by
+    ;; terminals: ((foreground 244) italic), for example.
+    (unless (list? expression)
+      (error 'compile-style "expected a list of style clauses" expression))
+    (let ([codes
+           (apply append
+             (map (lambda (clause)
+                    (cond
+                      [(assq clause style-attributes) => (lambda (x) (list (cdr x)))]
+                      [(and (list? clause) (pair? clause)
+                            (memq (car clause) '(foreground fg)))
+                       (compile-color clause #t)]
+                      [(and (list? clause) (pair? clause)
+                            (memq (car clause) '(background bg)))
+                       (compile-color clause #f)]
+                      [else (error 'compile-style "unknown style clause" clause)]))
+                  expression))])
+      (string-join (map number->string (if (null? codes) '(0) codes)) ";")))
+
+  (define (style-escape expression)
+    (format "\x1b;[~am" (compile-style expression)))
 
   (define (set-style! style spec)
     (registry-add! style-overrides
       (cons style
-            (format "\x1b;[~am"
-                    (if (number? spec) (format "38;5;~a" spec) spec)))))
+            (cond [(number? spec)
+                   (style-escape `((foreground ,spec)))]
+                  [(string? spec) (format "\x1b;[~am" spec)]
+                  [else (style-escape spec)]))))
 
   (define (style-override style)
     (let ([hit (registry-find style-overrides
                               (lambda (e) (eq? (car e) style)))])
       (and hit (cdr hit))))
 
+  (define default-styles
+    ;; Built-in faces use the public DSL too, keeping one compilation path for
+    ;; defaults and config.e overrides.
+    (map (lambda (entry) (cons (car entry) (style-escape (cadr entry))))
+      '((plain (reset))
+        (chrome ((foreground bright-black)))
+        (comment ((foreground bright-black)))
+        (string ((foreground green)))
+        (keyword (bold (foreground cyan)))
+        (number ((foreground magenta)))
+        (literal (bold (foreground magenta)))
+        (delimiter ((foreground 245)))
+        (editor ((foreground 135)))
+        (rainbow1 ((foreground 196)))
+        (rainbow2 ((foreground 208)))
+        (rainbow3 ((foreground 220)))
+        (rainbow4 ((foreground 40)))
+        (rainbow5 ((foreground 33)))
+        (rainbow6 ((foreground 57)))
+        (rainbow7 ((foreground 129)))
+        (quote ((foreground cyan)))
+        (bold (bold))
+        (italic (italic))
+        (mark (underline))
+        (selection ((background blue)))
+        (match ((background cyan) (foreground black)))
+        (match-point ((background yellow) (foreground black))))))
+
   (define (style-code style)
     (or (style-override style)
-        (case style
-          [(chrome) "\x1b;[90m"]    ; the editor's quiet furniture: prompt
-                                    ; labels, log prefixes, ghost text
-          [(comment) "\x1b;[90m"]
-          [(string) "\x1b;[32m"]
-          [(keyword) "\x1b;[1;36m"]
-          [(number) "\x1b;[35m"]
-          [(literal) "\x1b;[1;35m"]
-          [(delimiter) "\x1b;[38;5;245m"]   ; mid grey: neutral, not white
-          [(editor) "\x1b;[38;5;135m"]      ; medium purple: the editor's own
-          [(rainbow1) "\x1b;[38;5;196m"]    ; red
-          [(rainbow2) "\x1b;[38;5;208m"]    ; orange
-          [(rainbow3) "\x1b;[38;5;220m"]    ; yellow
-          [(rainbow4) "\x1b;[38;5;40m"]     ; green
-          [(rainbow5) "\x1b;[38;5;33m"]     ; blue
-          [(rainbow6) "\x1b;[38;5;57m"]     ; indigo
-          [(rainbow7) "\x1b;[38;5;129m"]    ; violet
-          [(quote) "\x1b;[36m"]
-          [(bold) "\x1b;[1m"]      ; real face attributes: terminals without
-          [(italic) "\x1b;[3m"]    ; them simply show plain text
-          [else "\x1b;[0m"])))
+        (let ([hit (assq style default-styles)])
+          (if hit (cdr hit) (cdar default-styles)))))
 
   ;;; Rendering -------------------------------------------------------------
 
@@ -2290,19 +2363,17 @@
                           (run (+ j 1))
                           j))])
           (ansi "\x1b;[0m" (style-code style))
-          (when sel (ansi (or (style-override 'selection)
-                              "\x1b;[44m")))  ; the selection: blue backdrop
+          (when sel (ansi (style-code 'selection)))
           (case bg
-            [(match-point) (ansi (or (style-override 'match-point)
-                                     "\x1b;[43;30m"))] ; the match point
-            [(match) (ansi (or (style-override 'match)
-                               "\x1b;[46;30m"))]  ; other matches: cyan
+            [(match-point) (ansi (style-code 'match-point))]
+            [(match) (ansi (style-code 'match))]
             [else (void)])
-          (when mk (ansi "\x1b;[4m"))
+          (when mk (ansi (style-code 'mark)))
           (ansi (segment col end))
           (loop end))))
     (when edge
-      (ansi "\x1b;[0m\x1b;[90m" (if (eq? edge 'wrap) "\\" "$")))
+      (ansi "\x1b;[0m" (style-code 'chrome)
+            (if (eq? edge 'wrap) "\\" "$")))
     (ansi "\x1b;[0m"))
 
   (define (layout-columns! band)
@@ -2651,7 +2722,7 @@
                   (do ([r start (+ r 1)]) ((> r (+ start height)))
                     (paint! r x '(divider)
                             (lambda ()
-                              (ansi "\x1b;[90m\x2502;\x1b;[0m"))))))
+                              (ansi (style-code 'chrome) "\x2502;\x1b;[0m"))))))
               (cdr band)))))
       bands))
 

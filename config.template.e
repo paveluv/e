@@ -35,13 +35,15 @@
 ;; (column-native-scroll #f)      ; #t: C-x 3 columns scroll natively (VT420
 ;;                                ; margins) -- M-x (probe-terminal!) detects
 ;;                                ; the support and offers to record this line
-;; (set-style! 'chrome 244)       ; restyle a face: a 256-color number, or a
-;;                                ; raw SGR attribute string ("38;5;244;3").
+;; (set-style! 'chrome '((foreground 244) italic))
+;;                                ; style DSL: bold, dim, italic, underline,
+;;                                ; blink, reverse, hidden, strike; foreground
+;;                                ; or background colors may be named, 0..255,
+;;                                ; or (rgb 0 0 0). Numbers and raw SGR strings
+;;                                ; remain accepted for compatibility.
+;;                                ; Full reference: docs/STYLES.md
 ;;                                ; chrome is the editor's grey furniture
-;;                                ; (prompt labels, log prefixes, ghost text);
-;;                                ; also: comment string keyword number literal
-;;                                ; delimiter editor quote rainbow1..7, and the
-;;                                ; selection / match / match-point backdrops
+;;                                ; (prompt labels, log prefixes, ghost text)
 ;; (bind-key! "M-l" show-log!)    ; pop the *log* view with one chord
 ;; (bind-key! "C-c s" save!!)     ; arbitrary multi-key chords work
 ;; (unbind-key! "C-v")            ; remove a global binding

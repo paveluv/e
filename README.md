@@ -520,6 +520,10 @@ backgrounds. Bracket matching is such a module, `paren.e`, and the
 incremental search itself is another, `search.e`; local-variable or
 other semantic highlighting could be added the same way.
 
+Faces can be customized declaratively with `set-style!`; see
+[Styles](docs/STYLES.md) for the DSL, colors, attributes, built-in faces,
+terminal behavior, and configuration lifecycle.
+
 ## Details worth knowing
 
 - Per-buffer undo history and mark; per-window point and scroll; a

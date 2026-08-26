@@ -756,6 +756,12 @@
         ((describe!!) (("procedure" . "(describe!!)")) "void"
          ("(describe)") describe "Documentation commands" #f
          "Prompt for a documented function name with completion, then display its live describe page.")
+        ((compile-style) (("procedure" . "(compile-style expression)")) "string"
+         ("(core)") core "Style customization" #f
+         "Compile a style expression to terminal SGR parameters. The expression is a list containing attributes (`reset`, `bold`, `dim`, `italic`, `underline`, `blink`, `reverse`, `hidden`, or `strike`) and color clauses `(foreground color)` or `(background color)`; `fg` and `bg` are aliases. A color is a basic name from `black` through `white`, a `bright-` variant, an integer from 0 through 255, or `(rgb red green blue)`.")
+        ((set-style!) (("procedure" . "(set-style! face style)")) "void"
+         ("(core)") core "Style customization" #f
+         "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
         ((fetch-describe-data!)
          (("procedure" . "(fetch-describe-data!)")) "void"
          ("(describe)") describe "Documentation commands" #f
