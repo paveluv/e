@@ -2567,9 +2567,11 @@
                              1))))
                 (retreat)))
             ;; and below: advance one visual row at a time, only while
-            ;; content actually overflows the window
-            (let advance ()
-              (when (and (>= (rows-before w prow pcol) (- height m))
+            ;; content actually overflows the window.  Each step reduces
+            ;; distance by exactly one; carrying it avoids rescanning from
+            ;; top to point at every step on a large jump.
+            (let advance ([distance (rows-before w prow pcol)])
+              (when (and (>= distance (- height m))
                          (or (< (window-top w) prow)
                              (< (window-topseg w) pseg))
                          (view-overflows? w v height))
@@ -2578,7 +2580,7 @@
                     (window-topseg-set! w (+ (window-topseg w) 1))
                     (begin (window-top-set! w (+ (window-top w) 1))
                            (window-topseg-set! w 0)))
-                (advance))))
+                (advance (- distance 1)))))
           (begin
             (window-topseg-set! w 0)
             (when (< prow (+ (window-top w) m))
