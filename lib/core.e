@@ -26,7 +26,7 @@
     delete-window! delete-other-windows! other-window!
     resize-window! wrap! wrap-lines column-native-scroll scroll-margin
     ;; editing and movement
-    insert-text! newline! delete-forward! backspace!
+    insert-text! replace-region-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
     copy-to-kill-buffer!
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
@@ -757,6 +757,19 @@
         (let ([joined (string-append (substring (line-at sr) 0 sc)
                                      (string-tail (line-at er) ec))])
           (set! lines (vector-splice lines sr (+ er 1) (list joined))))))
+
+  (define (replace-region-text! start end text)
+    ;; Replace one ordered buffer range in a single structural operation.
+    ;; Bulk editors use this instead of rebuilding a line once per match.
+    (let ([sr (car start)] [sc (cdr start)]
+          [er (car end)] [ec (cdr end)])
+      (record-edit! "replace region")
+      (parameterize ([suppress-history #t])
+        (delete-region! sr sc er ec)
+        (set! point-row sr)
+        (set! point-col sc)
+        (insert-text! text))
+      (changed!)))
 
   (define (copy-region!)
     ;; Save the region to the kill ring without deleting it -- M-w, as

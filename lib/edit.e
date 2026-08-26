@@ -115,6 +115,38 @@
   (define (replace-all! from to . rest)
     ;; Replace every occurrence of from with to inside `where`: one undo
     ;; step per buffer, point left where it was.  The replacement count.
+    (define m (string-length from))
+    (define (replace-line s)
+      ;; Accumulate pieces and join once instead of copying the growing line
+      ;; for every non-overlapping match.
+      (let loop ([at 0] [pieces '()] [count 0])
+        (let ([hit (string-search s from at (string-length s))])
+          (if hit
+              (loop (+ hit m)
+                    (cons to (cons (substring s at hit) pieces))
+                    (+ count 1))
+              (values (apply string-append
+                             (reverse (cons (string-tail s at) pieces)))
+                      count)))))
+    (define (rewritten-region r)
+      ;; Preserve the single-line-needle contract by rewriting each selected
+      ;; row independently, including only the selected edge fragments.
+      (let* ([b (region-buffer r)]
+             [start (region-start r)]
+             [end (region-end r)]
+             [last (min (car end) (- (buffer-line-count b) 1))])
+        (let loop ([row (max 0 (car start))] [lines '()] [count 0])
+          (if (> row last)
+              (values (string-join (reverse lines) "\n") count)
+              (let* ([s (buffer-line b row)]
+                     [n (string-length s)]
+                     [from-col (if (= row (car start)) (min (cdr start) n) 0)]
+                     [to-col (if (= row (car end)) (min (cdr end) n) n)])
+                (let-values ([(line found)
+                              (replace-line
+                                (substring s from-col (max from-col to-col)))])
+                  (loop (+ row 1) (cons line lines) (+ count found))))))))
+    (when (= m 0) (error 'edit "empty search string"))
     (fold-left
       (lambda (n r)
         (+ n (call-with-buffer (region-buffer r)
@@ -123,44 +155,12 @@
                    (call-as-one-edit!
                      (format "(replace-all! ~s ~s)" from to)
                      (lambda ()
-                       (let* ([m (string-length from)]
-                              [start (region-start r)]
-                              [end (region-end r)])
-                         (when (= m 0) (error 'edit "empty search string"))
-                         (let loop ([row (car start)]
-                                    [col (cdr start)]
-                                    [end-row (car end)]
-                                    [end-col (cdr end)]
-                                    [count 0])
-                           (cond
-                             [(> row (min end-row (- (buffer-line-count
-                                                       (region-buffer r)) 1)))
-                              (goto-point! saved)
-                              count]
-                             [else
-                              (let* ([s (buffer-line (region-buffer r) row)]
-                                     [limit (if (= row end-row)
-                                                (min end-col (string-length s))
-                                                (string-length s))]
-                                     [hit (string-search s from col limit)])
-                                (if (not hit)
-                                    (loop (+ row 1) 0 end-row end-col count)
-                                    (begin
-                                      (goto-point! (cons row hit))
-                                      (do ([i 0 (+ i 1)]) ((= i m))
-                                        (delete-forward!))
-                                      (insert-text! to)
-                                      (let* ([next (point)]
-                                             [rows-added (- (car next) row)])
-                                        (if (< row end-row)
-                                            (loop (car next) (cdr next)
-                                                  (+ end-row rows-added) end-col
-                                                  (+ count 1))
-                                            (loop (car next) (cdr next)
-                                                  (+ end-row rows-added)
-                                                  (+ (cdr next)
-                                                     (- end-col (+ hit m)))
-                                                  (+ count 1)))))))]))))))))))
+                       (let-values ([(text count) (rewritten-region r)])
+                         (when (> count 0)
+                           (replace-region-text! (region-start r)
+                                                 (region-end r) text))
+                         (goto-point! saved)
+                         count))))))))
       0 (regions-of (where-of rest))))
 
   (define (region-text r)
