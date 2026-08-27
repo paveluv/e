@@ -198,7 +198,14 @@ windows can otherwise opt into terminal-native column scrolling with
 ## Scrolling, wrapping, and windows
 
 `(scroll-margin 8)` keeps point that many rows away from the top and bottom when
-the buffer has room. PageUp and PageDown move through the buffer by windows.
+the buffer has room. PageUp and PageDown operate on the viewport rather than
+point: in the middle they shift its top by exactly one full window body and put
+point in the middle of the result. A partial page clamps at the first or last
+viewport and still centers point; pressing outward again moves point to the
+first or last line. If the whole buffer fits, its viewport stays at the top and
+PageUp/PageDown put point at the first/last line. Wrapped screen rows count
+individually, while sticky app headers are excluded from page height.
+
 Mousewheel scrolls the hovered window without focusing it; horizontal wheel
 ticks move point sideways.
 

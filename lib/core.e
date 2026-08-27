@@ -2826,8 +2826,12 @@
                             acc)))))))
 
   (define (page-size)
-    ;; One page of the current window: its text height less one overlap line.
-    (max 1 (- (caddr (assq current-window (window-layout))) 1)))
+    ;; The scrollable body height. Sticky app rows are fixed chrome and do not
+    ;; form part of a page.
+    (let ([height (caddr (assq current-window (window-layout)))])
+      (max 1 (- height
+                (min height
+                     (buffer-sticky-lines (current-buffer)))))))
 
   ;; Soft wrap breaks at word boundaries: each line has a break table
   ;; -- the start position of every visual segment -- computed
@@ -2881,6 +2885,74 @@
     (if (window-wrapped? w)
         (vector-length (line-breaks w line))
         1))
+
+  (define (page-window! direction)
+    ;; Pagination is a viewport operation. Shift its top by exactly one body
+    ;; height in visual rows, clamp at either end, then put point in the middle.
+    ;; A second outward page at an already-clamped edge moves point to that
+    ;; edge. Wrapped segments count as rows; the visual column is preserved.
+    (let* ([w current-window]
+           [v (buffer-lines (current-buffer))]
+           [n (vector-length v)]
+           [sticky (min (buffer-sticky-lines (current-buffer)) (- n 1))]
+           [height (page-size)]
+           [wrapped? (window-wrapped? w)]
+           [visual-col (if wrapped?
+                           (let* ([line (vector-ref v point-row)]
+                                  [breaks (line-breaks w line)])
+                             (- point-col
+                                (segment-start breaks
+                                  (segment-of breaks point-col))))
+                           point-col)])
+      (define (visual-total)
+        (let loop ([row sticky] [total 0])
+          (if (= row n)
+              total
+              (loop (+ row 1)
+                    (+ total (line-segments w (vector-ref v row)))))))
+      (define (top-offset)
+        (let loop ([row sticky] [offset 0])
+          (if (>= row (window-top w))
+              (+ offset (window-topseg w))
+              (loop (+ row 1)
+                    (+ offset (line-segments w (vector-ref v row)))))))
+      (define (position-at offset)
+        (let loop ([row sticky] [left offset])
+          (let ([segments (line-segments w (vector-ref v row))])
+            (if (or (= row (- n 1)) (< left segments))
+                (cons row (min left (- segments 1)))
+                (loop (+ row 1) (- left segments))))))
+      (define (column-at position)
+        (let* ([row (car position)]
+               [line (vector-ref v row)])
+          (if wrapped?
+              (let ([breaks (line-breaks w line)] [seg (cdr position)])
+                (min (+ (segment-start breaks seg) visual-col)
+                     (segment-close breaks seg (string-length line))))
+              (min visual-col (string-length line)))))
+      (define (land! top-offset point-offset)
+        (let ([top (position-at top-offset)]
+              [point (position-at point-offset)])
+          (goto-point! (cons (car point) (column-at point)))
+          (window-top-set! w (car top))
+          (window-topseg-set! w (cdr top))))
+      (let* ([total (max 1 (visual-total))]
+             [last-top (max 0 (- total height))]
+             [old-top (min last-top (max 0 (top-offset)))]
+             [short? (<= total height)])
+        (cond
+          [short?
+           (land! 0 (if (negative? direction) 0 (- total 1)))]
+          [(negative? direction)
+           (if (= old-top 0)
+               (land! 0 0)
+               (let ([top (max 0 (- old-top height))])
+                 (land! top (+ top (quotient (- height 1) 2)))))]
+          [else
+           (if (= old-top last-top)
+               (land! last-top (- total 1))
+               (let ([top (min last-top (+ old-top height))])
+                 (land! top (+ top (quotient (- height 1) 2)))))]))))
 
   (define (rows-before w prow pcol)
     ;; Screen rows between w's top -- its first visible segment -- and
@@ -5055,8 +5127,8 @@
   (define (open-line!)
     (let ([row point-row] [col point-col])
       (newline!) (set! point-row row) (set! point-col col)))
-  (define (page-up!) (move-vertical! (- (page-size))))
-  (define (page-down!) (move-vertical! (page-size)))
+  (define (page-up!) (page-window! -1))
+  (define (page-down!) (page-window! 1))
   (define (previous-line!) (move-vertical! -1))
   (define (next-line!) (move-vertical! 1))
   (define (beginning-of-buffer!) (set! point-row 0) (set! point-col 0))
