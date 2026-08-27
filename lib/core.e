@@ -3466,9 +3466,13 @@
                               (quotient (* (max 0 (- top sticky)) travel)
                                         scrollable))]
                [j (- k sticky)]
+               [thumb? (and (>= j thumb-start)
+                            (< j (+ thumb-start thumb-size)))]
                [glyph (cond [(< k sticky) " "]
-                        [(and (>= j thumb-start)
-                              (< j (+ thumb-start thumb-size))) "\x2503;"]
+                        [thumb?
+                         ;; Heavy box drawing stays centered and joins adjacent
+                         ;; thumb rows without seams.
+                         "\x2503;"]
                         [else "\x2502;"])])
           (paint! row
                   (+ (window-xoff w)
