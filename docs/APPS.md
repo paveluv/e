@@ -97,7 +97,8 @@ replaces the app.
 supports these controls:
 
 Its heading is sticky at the top of every window. The remaining rows scroll
-under it, with the left column showing the visible body's position and extent.
+under it, with the configured edge showing the visible body's position and
+extent.
 
 - Up or `C-p`: move the active row up without changing the target.
 - Down or `C-n`: move the active row down without changing the target.

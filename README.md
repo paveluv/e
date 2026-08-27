@@ -85,35 +85,11 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x t`   | Toggle soft-wrapping of long lines in this window       |
 
 Each window has its own status line, point, and scroll position; the
-same buffer can be shown in several windows at once. `C-x 3` puts
-windows side by side—columns sharing a band of rows, with a grey divider
-between them, each wrapping at its own width; `C-x 2` under such a
-band splits below the whole band. Columns repaint when they scroll;
-on a terminal with VT420 left/right margins (xterm, iTerm2, WezTerm,
-foot, ...), `(column-native-scroll #t)` in config.e lets them scroll
-natively like full-width windows. `M-x (probe-terminal!)` detects
-the support cooperatively (asking the terminal, and you, when its
-protocol is silent) and offers to record the setting in `config.e`.
-Windows resize by dragging a status bar or column divider with the
-mouse, or with `M-x (resize-window! n)`, which grows the current window
-by `n` text lines (a negative `n` shrinks it), trading lines with its
-neighbor. Splits halve
-the current window, and sizes rescale proportionally when the screen
-or the prompt area changes.
-
-`(scroll-margin 8)` (the default) keeps at least eight rows between the
-cursor and the window's top and bottom edges: the
-view scrolls that early, and the cursor enters the zone only where
-the buffer's ends leave nothing to scroll.  PageUp and PageDown, like
-all vertical movement, shift the view through the terminal's native
-scrolling.
-
-Long lines soft-wrap onto continuation rows, Emacs-style: a wrapped
-row ends in a grey `\`, and with wrapping off a line running past the
-right edge ends in a grey `$` (the window then scrolls horizontally to
-follow point).  Wrapping is on by default -- `(wrap-lines #f)` in
-config.e flips the default -- and `C-x t` (`wrap!`) toggles it per
-window.
+same buffer can be shown in several windows at once. Buffers have per-buffer
+history and marks; windows have independent point, scrolling, wrapping, and
+status. A right-side scrollbar is shown by default. See
+[Buffers](docs/BUFFERS.md) for switching, `*buffers*`, file integrity, target
+windows, mouse behavior, scrollbars, wrapping, splits, and the public API.
 
 ### Movement
 
@@ -365,40 +341,11 @@ editor, italic is nobody's.
 
 ## Integrity
 
-The editor never quietly overwrites work -- yours or anybody's.
-Every file buffer remembers the disk state it last agreed with: at
-the start of each edit session (one undo entry -- an unbroken typed
-run checks once), a detected external change marks the buffer with a
-red `!!` in its status bar -- no interruption, just the warning --
-and a mere `touch` passes silently because content, not clocks, is
-what counts. Saving re-reads the file and compares contents; if
-somebody changed it meanwhile, the save stops and asks: `overwrite,
-merge, cancel`.  Merge is a three-way merge (the in-house `diff.e`,
-a patience diff) of what you loaded, what you have, and what the disk
-says: changes on one side apply silently, and colliding ones become
-`<<<<<<< buffer / ======= / >>>>>>> disk` markers in the buffer --
-the save waits until you resolve, the status bar counting the
-remaining conflicts in red. `M-n` (`next-conflict!`) hops
-between them; `M-m` (`keep-mine!`) and `M-d` (`keep-disk!`) settle
-the one at point, each a single undo step.  A clean merge saves both
-sides in one go.  Every merge writes a unified-diff-style report to a
-read-only `*merge-<name>*` buffer, named in the echo once the merge is
-done -- immediately for a clean one, after the resolving save for a
-conflicted one.
-
-Opening an already visited file whose disk copy changed asks only to
-`merge, reread, cancel`. These choices affect the buffer alone: merge
-incorporates both versions without saving, reread replaces the buffer with the
-disk copy, and cancel behaves like `C-g`. The focused prompt highlights its
-choice letters; any key or mouse event other than a listed choice, `C-g`, or
-ESC briefly flashes the echo area without sound and leaves it waiting. Visited
-paths are canonicalized, so
-relative paths, `.`/`..`, and symbolic-link aliases of the same file reuse one
-buffer and perform the same disk-content check.
-
-The same focused choice engine handles overwrite and stale-save decisions,
-killing modified buffers, quitting with modified buffers, and terminal-probe
-questions.
+The editor compares file contents before editing and saving, canonicalizes
+visited paths, and never silently overwrites an external change. It offers
+overwrite, reread, or three-way merge as appropriate and records merge reports.
+See [Buffers: File buffers](docs/BUFFERS.md#file-buffers) for the complete
+lifecycle and conflict workflow.
 
 ## Configuration
 
@@ -539,14 +486,11 @@ terminal behavior, and configuration lifecycle.
 Dynamic tools are app buffers: views are non-interactive apps, while an app
 may handle controls and act on the window that was current before entry.
 `*buffers*` highlights a navigable row and opens it in that target window.
-See [App buffers](docs/APPS.md) for registration, event handling, and target
-semantics.
+See [Buffers](docs/BUFFERS.md) for its user interface and [App buffers](docs/APPS.md)
+for registration, event handling, and target semantics.
 
 ## Details worth knowing
 
-- Per-buffer undo history and mark; per-window point and scroll; a
-  global kill ring (kill in one buffer, yank in another); buffers
-  remember where you were when you come back.
 - Bracketed paste: the editor enables it itself, so a paste from
   anywhere is one edit, and one undo step, with no pasted control
   characters running commands; in a prompt, the paste lands whole.
@@ -563,12 +507,9 @@ semantics.
   with `C-l`.
 - Kill ring entries accumulate across consecutive kill commands, so
   `C-k C-k C-k ... C-y` reassembles whole blocks.
-- Incremental screen updates: only rows whose content changed repaint,
-  single-row scrolls use the terminal's native scroll operation, and
-  line styling is memoized per line.
-- Files round-trip byte-for-byte, including the presence or absence of
-  a trailing newline, and quitting never asks about "modified" buffers
-  whose text is identical to the file on disk.
+- Incremental screen updates: only changed rows repaint, line styling is
+  memoized, and windows without fixed scrollbar or sticky-header chrome may
+  use the terminal's native scroll operation.
 
 ## Limitations
 
