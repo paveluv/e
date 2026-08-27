@@ -25,6 +25,7 @@
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
     resize-window! wrap! wrap-lines column-native-scroll scroll-margin
+    scrollbar scrollbar-position
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
@@ -63,7 +64,9 @@
     format-log-entry
     message-source message-progress
     echo-highlight
-    register-view! view-append! view-replace! register-log-formatter! log-history
+    register-app! register-view! set-app-presentation! display-app!
+    target-window target-buffer show-buffer-in-target!
+    view-append! view-replace! register-log-formatter! log-history
     publish-descriptions! published-descriptions
     call-with-interrupt call-uninterrupted interrupted?
     vector-fill-range! string-search compile-style set-style!
@@ -157,8 +160,20 @@
   (define bands (list windows))
 
   (define (set-bands! bs)
-    (set! bands (filter pair? bs))
-    (set! windows (apply append bands)))
+    (let* ([old windows]
+           [new-bands (filter pair? bs)]
+           [new-windows (apply append new-bands)])
+      ;; A removed app target becomes ephemeral. Preserve the buffer it last
+      ;; displayed; the app will materialize a fresh target window on demand.
+      (for-each
+        (lambda (a)
+          (let ([target (app-target-window a)])
+            (when (and target (memq target old) (not (memq target new-windows)))
+              (app-target-buffer-set! a (window-buffer target))
+              (app-target-window-set! a #f))))
+        (registered-apps))
+      (set! bands new-bands)
+      (set! windows new-windows)))
 
   (define (window-band w)
     (find (lambda (b) (memq w b)) bands))
@@ -179,7 +194,7 @@
 
   (define (wrap-width w)
     ;; a wrapped row keeps its last column for the \ continuation mark
-    (max 1 (- (window-width w) 1)))
+    (max 1 (- (window-content-width w) 1)))
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -458,12 +473,100 @@
           [(eq? theirs base) mine]
           [else mine]))
 
-  (define (query-key! question)
-    ;; A single-key question, replace!!-style: show, paint, read.
-    (parameterize ([message-source #f])
-      (set-message! question))
-    (redraw!)
-    (read-key))
+  (define (visual-bell!)
+    ;; Flash only the echo-area band, not the whole terminal, and never emit
+    ;; BEL. The normal echo painter restores its styled content and cursor.
+    (when screen-live?
+      (let loop ([row (- rows echo-height)])
+        (when (< row rows)
+          (goto (+ row 1) 1)
+          (ansi "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
+          (loop (+ row 1))))
+      (flush-output-port (terminal-output-port))
+      (sleep (make-time 'time-duration 50000000 0))
+      ;; Direct terminal painting bypassed screen-cache. A full synchronized
+      ;; redraw rebuilds the cache and reliably restores the echo content;
+      ;; calling paint-echo-area! alone could incorrectly skip unchanged rows.
+      (invalidate-screen-cache!)
+      (redraw!)))
+
+  (define (query-key! question allowed . rest)
+    ;; A focused single-key question. Decode complete terminal events so an
+    ;; arrow's leading ESC cannot cancel the question and leave its remaining
+    ;; bytes to move point. Callers mark an option as m)erge internally; the
+    ;; marker is removed for display and its first letter uses the bold choice
+    ;; face. This keeps option structure separate from presentation.
+    (define (render-question text)
+      (let loop ([i 0] [chars '()] [marked '()])
+        (if (= i (string-length text))
+            (let* ([out (list->string (reverse chars))]
+                   [styles (make-vector (string-length out) 'plain)])
+              (let mark ([flags (reverse marked)] [j 0])
+                (unless (null? flags)
+                  (when (car flags) (vector-set! styles j 'choice))
+                  (mark (cdr flags) (+ j 1))))
+              (cons out styles))
+            (let* ([ch (string-ref text i)]
+                   [marker? (and (< (+ i 2) (string-length text))
+                                 (char=? (string-ref text (+ i 1)) #\))
+                                 (char-alphabetic?
+                                   (string-ref text (+ i 2)))
+                                 (string-search allowed
+                                   (string (char-downcase ch)) 0
+                                   (string-length allowed)))])
+              (loop (+ i (if marker? 2 1))
+                    (cons ch chars) (cons marker? marked))))))
+    (let* ([rendered (render-question question)]
+           [shown (string-append (car rendered) " ")]
+           [shown-styles (let* ([source (cdr rendered)]
+                                [v (make-vector (string-length shown) 'plain)])
+                           (let copy ([i 0])
+                             (when (< i (vector-length source))
+                               (vector-set! v i (vector-ref source i))
+                               (copy (+ i 1))))
+                           v)]
+           [repaint (and (pair? rest) (car rest))])
+      (define (repaint-extra!)
+        (when repaint
+          (repaint)
+          (place-cursor!)))
+      (call-uninterrupted
+        (lambda ()
+          (dynamic-wind
+            (lambda ()
+              (set! message shown)
+              (set! message-ghost "")
+              (set! message-styles (cons shown (lambda (_) shown-styles)))
+              (set! echo-indent 0)
+              (set! echo-input-end (string-length shown))
+              (set! echo-cursor (string-length shown))
+              (redraw!)
+              (repaint-extra!))
+            (lambda ()
+              (let wait ()
+                (let ([event (read-key-event #f)])
+                  (cond [(eof-object? event) #f]
+                    [(string=? event "C-g") #\alarm]
+                    [(string=? event "ESC") #\esc]
+                    [(key-event-character event)
+                     => (lambda (choice)
+                          (if (string-search allowed
+                                (string (char-downcase choice))
+                                0 (string-length allowed))
+                              choice
+                              (begin
+                                (visual-bell!)
+                                (repaint-extra!)
+                                (wait))))]
+                    [else
+                     (visual-bell!)
+                     (repaint-extra!)
+                     (wait)]))))
+            (lambda ()
+              (set! echo-cursor #f)
+              (set! echo-indent #f)
+              (set! echo-input-end #f)
+              (set! message-styles #f)))))))
 
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
@@ -580,7 +683,18 @@
   (define (goto-point! p)
     ;; Move point straight to (row . col), clamped into the buffer.
     (set! point-row (max 0 (min (car p) (- (vlen) 1))))
-    (set! point-col (max 0 (min (cdr p) (string-length (current-line))))))
+    (set! point-col (max 0 (min (cdr p) (string-length (current-line)))))
+    ;; App interaction state belongs to the buffer: every window showing the
+    ;; same app mirrors its cursor and selection row.
+    (when (app-buffer? (current-buffer))
+      (buffer-spot-row-set! (current-buffer) point-row)
+      (buffer-spot-col-set! (current-buffer) point-col)
+      (for-each
+        (lambda (w)
+          (when (eq? (window-buffer w) (current-buffer))
+            (window-prow-set! w point-row)
+            (window-pcol-set! w point-col)))
+        windows)))
 
   ;; Vertical moves aim for a goal column, so point comes back to it after
   ;; passing through shorter lines (as in Emacs).  The goal survives exactly
@@ -1037,8 +1151,9 @@
       [(and disk adopted?)
        ;; saving under a new name onto an existing file
        (let ask ()
-         (let* ([k (query-key! (format "~a exists; overwrite? (y or n)"
-                                       (base-name path)))]
+         (let* ([k (query-key! (format "~a exists; overwrite? y)es or n)o"
+                                       (base-name path))
+                               "yn")]
                 [n (and k (char->integer k))])
            (cond [(memv n '(121 89)) (write!)]
                  [(or (not n) (memv n '(110 78 7 27)))
@@ -1116,7 +1231,8 @@
     (let ask ()
       (let* ([k (query-key!
                   (format "~a changed on disk: m)erge, r)eread, c)ancel"
-                          (base-name path)))]
+                          (base-name path))
+                  "mrc")]
              [n (and k (char->integer k))])
         (cond
           [(memv n '(109 77))                                 ; m
@@ -1169,7 +1285,8 @@
     (let ask ()
       (let* ([k (query-key!
                   (format "~a changed on disk: o)verwrite, m)erge, c)ancel"
-                          (base-name path)))]
+                          (base-name path))
+                  "omc")]
              [n (and k (char->integer k))])
         (cond
           [(memv n '(111 79)) (write!)]                       ; o
@@ -1241,6 +1358,8 @@
     (window-left-set! w 0))
 
   (define (show-buffer! b)
+    (when (and (app-buffer? b) (not (eq? b (window-buffer current-window))))
+      (set-app-target! b current-window (window-buffer current-window)))
     (set! buffers (cons b (remq b buffers)))   ; most recently used first
     (set-window-buffer! current-window b))
 
@@ -1315,8 +1434,8 @@
     (find (lambda (b) (string=? (buffer-name b) name)) buffers))
 
   (define (fresh-buffer name)
-    ;; The named tool buffer, emptied for rebuilding -- *Buffer List* and
-    ;; its kin.  An existing one is reused: the
+    ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
+    ;; use register-view! instead. An existing buffer is reused: the
     ;; windows showing it keep showing it and display-buffer! finds it
     ;; on screen -- no kill, no second window, no duplication.
     (let ([b (or (buffer-named name) (new-buffer name))])
@@ -1333,37 +1452,194 @@
                 windows)
       b))
 
-  ;;; Views ---------------------------------------------------------------------
+  ;;; Apps and views ------------------------------------------------------------
 
-  ;; A view is a buffer rendered on the fly from a source of truth,
-  ;; named like any buffer and marked [] in its status bar.  A view
-  ;; sits in the buffer list like any buffer and reads as an ordinary
-  ;; read-only buffer; its refresh procedure brings the content up to
-  ;; date incrementally, run at every redraw while the view is
-  ;; visible.  A window whose point sits at the very end follows
-  ;; appended content -- tail mode, M-> to enter -- and anywhere else
-  ;; the viewport holds still while the source grows.  Killing a view
-  ;; buffer discards it; asking for the view again builds it afresh.
-  (define views '())   ; (buffer . refresh!)
+  ;; An app is a dynamic read-only buffer with a renderer and, optionally, an
+  ;; event handler. A view is the degenerate app with no handler. Apps remember
+  ;; the window and buffer that were active before entry, so controls can act
+  ;; on that target while the app window itself remains current.
+  (define-record-type app
+    (fields buffer refresh! handle-event!
+            (mutable target-window) (mutable target-buffer)
+            (mutable refresh-error)
+            (mutable sticky-lines) (mutable scrollbar)))
 
-  (define (register-view! name refresh!)
-    (let ([b (or (buffer-named name) (new-buffer name))])
+  ;; Created lazily because the general registry machinery is initialized
+  ;; later in this library. Once created it participates in module retraction
+  ;; and transactional reload rollback like every other extension registry.
+  (define app-registry #f)
+  ;; The latest record for each app buffer also persists outside the registry.
+  ;; Module retraction removes executable callbacks, while target/selection
+  ;; state survives and is inherited by the replacement registration.
+  (define known-apps '())
+
+  (define (ensure-app-registry!)
+    (unless app-registry (set! app-registry (make-registry)))
+    app-registry)
+
+  (define (registered-apps)
+    (if app-registry (registry-items app-registry) '()))
+
+  (define (app-of b)
+    (find (lambda (a) (eq? (app-buffer a) b)) (registered-apps)))
+
+  (define (known-app-of b)
+    (find (lambda (a) (eq? (app-buffer a) b)) known-apps))
+
+  (define (app-buffer? b) (and (app-of b) #t))
+
+  (define (set-app-target! b w prior)
+    (let ([a (app-of b)])
+      (when a
+        (app-target-window-set! a w)
+        (app-target-buffer-set! a prior))))
+
+  (define (register-app! name refresh! . handler)
+    (let* ([named (buffer-named name)]
+           [_ (when (and named (not (known-app-of named)))
+                (error 'register-app! "buffer name is already in use" name))]
+           [b (or named (new-buffer name))]
+           [old (or (app-of b) (known-app-of b))]
+           [a (make-app b refresh! (and (pair? handler) (car handler))
+                        (and old (app-target-window old))
+                        (and old (app-target-buffer old)) #f
+                        (if old (app-sticky-lines old) 0)
+                        (and old (app-scrollbar old)))]
+           [registry (ensure-app-registry!)])
+      (unless (procedure? refresh!)
+        (error 'register-app! "refresh must be a procedure" refresh!))
+      (when (and (pair? handler) (not (procedure? (car handler))))
+        (error 'register-app! "event handler must be a procedure" (car handler)))
       (buffer-read-only-set! b #t)
       (unless (memq b buffers) (set! buffers (append buffers (list b))))
-      (set! views (cons (cons b refresh!) views))
+      (set! known-apps
+        (cons a (remp (lambda (old) (eq? (app-buffer old) b)) known-apps)))
+      ;; Re-registration in one init replaces rather than duplicates refreshes.
+      (set-box! registry
+        (remp (lambda (entry) (eq? (app-buffer (cdr entry)) b))
+              (unbox registry)))
+      (registry-add! registry a)
       b))
 
+  (define (set-app-presentation! b sticky-lines scrollbar)
+    ;; Configure buffer-level presentation shared by every window showing the
+    ;; app. Sticky rows stay above the scrollable body; scrollbar is #f, #t
+    ;; (enabled using the configured side), left, or right.
+    (let ([a (app-of b)])
+      (unless a (error 'set-app-presentation! "not an app buffer" b))
+      (unless (and (integer? sticky-lines) (exact? sticky-lines)
+                   (>= sticky-lines 0))
+        (error 'set-app-presentation! "sticky line count must be nonnegative"
+               sticky-lines))
+      (unless (memq scrollbar '(#f #t left right))
+        (error 'set-app-presentation!
+               "scrollbar must be #f, #t, left, or right" scrollbar))
+      (app-sticky-lines-set! a sticky-lines)
+      (app-scrollbar-set! a scrollbar)
+      (invalidate-screen-cache!)
+      b))
+
+  (define (buffer-sticky-lines b)
+    (let ([a (app-of b)])
+      (if a (min (app-sticky-lines a) (buffer-line-count b)) 0)))
+
+  ;; Ordinary buffers use the global setting. An app can force the bar on
+  ;; with #t, force a particular side, or otherwise inherit the global choice.
+  (define scrollbar
+    (make-parameter #t
+      (lambda (visible?)
+        (unless (boolean? visible?)
+          (error 'scrollbar "must be #t or #f" visible?))
+        visible?)))
+  (define scrollbar-position
+    (make-parameter 'right
+      (lambda (side)
+        (unless (memq side '(left right))
+          (error 'scrollbar-position "must be left or right" side))
+        side)))
+
+  (define (window-scrollbar? w)
+    (let* ([a (app-of (window-buffer w))]
+           [choice (and a (app-scrollbar a))])
+      (cond [(memq choice '(left right)) choice]
+            [(or choice (scrollbar)) (scrollbar-position)]
+            [else #f])))
+
+  (define (window-content-width w)
+    (max 1 (- (window-width w) (if (window-scrollbar? w) 1 0))))
+
+  (define (window-scrollbar-column w)
+    (case (window-scrollbar? w)
+      [(left) (window-xoff w)]
+      [(right) (+ (window-xoff w) (window-width w) -1)]
+      [else #f]))
+
+  (define (register-view! name refresh!)
+    (register-app! name refresh!))
+
   (define (view-buffer? b)
-    (and (assq b views) #t))
+    (app-buffer? b))
+
+  (define (target-window)
+    (let ([a (app-of (current-buffer))])
+      (cond [(not a) current-window]
+            [(memq (app-target-window a) windows) (app-target-window a)]
+            [else #f])))
+
+  (define (target-buffer)
+    (let* ([a (app-of (current-buffer))]
+           [w (and a (app-target-window a))])
+      (cond [(not a) (current-buffer)]
+            [(and w (memq w windows)
+                  (not (eq? (window-buffer w) (app-buffer a))))
+             (window-buffer w)]
+            [(app-target-buffer a)]
+            [else (current-buffer)])))
+
+  (define (show-buffer-in-target! b)
+    (let* ([a (app-of (current-buffer))]
+           [w (or (target-window)
+                  (and a (create-ephemeral-target-window! b)))])
+      (unless (memq b buffers) (set! buffers (append buffers (list b))))
+      (set! buffers (cons b (remq b buffers)))
+      (when a (app-target-buffer-set! a b))
+      (if w
+          (begin
+            (when a (app-target-window-set! a w))
+            (set-window-buffer! w b))
+          (parameterize ([message-source 'app])
+            (set-message! "Cannot create a target window: the screen is too small")))
+      b))
+
+  (define (display-app! b)
+    (unless (app-buffer? b)
+      (error 'display-app! "not an app buffer" b))
+    (let* ([origin current-window]
+           [prior (window-buffer origin)]
+           [w (display-buffer! b)])
+      (and w
+           (begin
+             (unless (eq? prior b)
+               (set-app-target! b origin prior))
+             (set! current-window w)
+             w))))
 
   (define (refresh-visible-views!)
-    (set! views (filter (lambda (e) (memq (car e) buffers)) views))
-    (for-each (lambda (entry)
-                (when (find (lambda (w) (eq? (window-buffer w) (car entry)))
+    (for-each (lambda (a)
+                (when (find (lambda (w) (eq? (window-buffer w) (app-buffer a)))
                             windows)
-                  (guard (ex [else (void)])   ; a broken view stays stale
-                    ((cdr entry)))))
-              views))
+                  (guard (ex [else
+                              (let ([text
+                                     (format "App ~a refresh failed: ~a"
+                                             (buffer-name (app-buffer a))
+                                             (error-text ex))])
+                                (unless (equal? text (app-refresh-error a))
+                                  (app-refresh-error-set! a text)
+                                  (log! 'app text)))])
+                    ((app-refresh! a))
+                    (app-refresh-error-set! a #f))))
+              (filter (lambda (a) (memq (app-buffer a) buffers))
+                      (registered-apps))))
 
   (define (view-append! b lines)
     ;; Append lines to view b: windows whose point was at the very end
@@ -1566,6 +1842,12 @@
 
   (define (kill-buffer! b)
     (set! buffers (remq b buffers))
+    (set! known-apps
+      (remp (lambda (a) (eq? (app-buffer a) b)) known-apps))
+    (when app-registry
+      (set-box! app-registry
+        (remp (lambda (entry) (eq? (app-buffer (cdr entry)) b))
+              (unbox app-registry))))
     (when (null? buffers) (set! buffers (list (new-buffer "*scratch*"))))
     (for-each (lambda (w)
                 (when (eq? (window-buffer w) b)
@@ -1583,7 +1865,7 @@
         (let ([b (if (string=? s "") current (buffer-named s))])
           (cond [(not b) (set! message (format "No buffer named ~a" s))]
                 [(or (buffer-clean? b)
-                     (confirm? (format "Buffer ~a modified; kill anyway? (yes or no) "
+                     (confirm? (format "Buffer ~a modified; kill anyway?"
                                        (buffer-name b))))
                  (kill-buffer! b)])))))
 
@@ -1591,8 +1873,18 @@
     (let ([tail (cdr (memq w windows))])
       (if (pair? tail) (car tail) (car windows))))
 
+  (define (focus-window! w)
+    ;; All user-visible focus changes pass here so entering an app by keyboard
+    ;; or mouse records the window and buffer being left as its target.
+    (when (and (memq w windows) (not (eq? w current-window)))
+      (let ([old current-window])
+        (when (app-buffer? (window-buffer w))
+          (set-app-target! (window-buffer w) old (window-buffer old)))
+        (set! current-window w)))
+    current-window)
+
   (define (other-window!)
-    (set! current-window (next-window current-window)))
+    (focus-window! (next-window current-window)))
 
   (define (selected-window)
     ;; The current window, an opaque token: hold it, compare it, give
@@ -1601,8 +1893,7 @@
 
   (define (select-window! w)
     ;; Make w current when it is still on screen; -> whether it was.
-    (and (memq w windows)
-         (begin (set! current-window w) #t)))
+    (and (memq w windows) (begin (focus-window! w) #t)))
 
   (define (quitting?)
     ;; Has a quit been requested?  A module driving its own key loop
@@ -1724,10 +2015,20 @@
           (band-replace! (window-band current-window)
                          (list (remq current-window
                                      (window-band current-window))))
-          (set! current-window next))))
+          (focus-window! next))))
 
   (define (delete-other-windows!)
     (set-bands! (list (list current-window))))
+
+  (define (create-ephemeral-target-window! b)
+    ;; Materialize an app target that was removed. Unlike display-buffer!, this
+    ;; always creates a new window and never appropriates an unrelated one.
+    (let ([new (halved-size!)])
+      (and new
+           (let ([w (make-window b 0 0 0 0 0 #f new new 0 0 1 'default)])
+             (band-replace! (window-band current-window)
+                            (list (window-band current-window) (list w)))
+             w))))
 
   (define (display-buffer! b)
     ;; Show b without leaving the current window: in the window already
@@ -1742,6 +2043,8 @@
          w)]
       [(halved-size!) =>
        (lambda (new)
+         ;; The size was already proven above; this is the ordinary pop-up
+         ;; path, which has the same geometry as an ephemeral app target.
          (let ([w (make-window b 0 0 0 0 0 #f new new 0 0 1 'default)])
            (band-replace! (window-band current-window)
                           (list (window-band current-window) (list w)))
@@ -2299,6 +2602,9 @@
         (italic (italic))
         (mark (underline))
         (selection ((background blue)))
+        (active ((background 24)))
+        (active-shadow ((background 31)))
+        (choice (bold (foreground 135)))
         (match ((background cyan) (foreground black)))
         (match-point ((background yellow) (foreground black))))))
 
@@ -2333,9 +2639,12 @@
   ;; with add-highlighter!, is called at every redraw and returns ranges
   ;; of the current buffer to mark up -- a list of (row start end) or
   ;; (row start end style) entries, drawn in the current window on top
-  ;; of the syntax styles.  Styles: mark (the default) underlines --
+  ;; of the syntax styles. A scoped (buffer row start end style) or
+  ;; (window row start end style) entry may decorate inactive buffers or one
+  ;; particular window. Styles: mark (the default) underlines --
   ;; the paren module matches brackets this way -- while match and
-  ;; match-point are the search's cyan and yellow backgrounds.  A
+  ;; match-point are the search's cyan and yellow backgrounds, and active is
+  ;; the selected row in an app. A
   ;; broken highlighter is ignored for that redraw rather than taking
   ;; the editor down.
   ;; Modules may add a status hint: a thunk returning a short string
@@ -2363,9 +2672,18 @@
     (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
                '() (registry-items highlighters)))
 
-  (define (ranges-on-row ranges row)
+  (define (ranges-on-row ranges w b row current?)
     (fold-left (lambda (acc r)
-                 (if (= (car r) row) (cons (cdr r) acc) acc))
+                 (let* ([buffer-scoped? (and (pair? r) (buffer? (car r)))]
+                        [window-scoped? (and (pair? r) (window? (car r)))]
+                        [scoped? (or buffer-scoped? window-scoped?)]
+                        [range (if scoped? (cdr r) r)])
+                   (if (and (or (and buffer-scoped? (eq? (car r) b))
+                                (and window-scoped? (eq? (car r) w))
+                                (and (not scoped?) current?))
+                            (= (car range) row))
+                       (cons (cdr range) acc)
+                       acc)))
                '() ranges))
 
   (define (display-editor-line s shown span marks left styles edge width
@@ -2384,11 +2702,13 @@
       (and (<= (car m) col) (< col (cadr m))))
     (define (bg-at col)
       ;; The strongest background among the marks covering col:
-      ;; match-point (yellow) over match (cyan), or #f.
+      ;; match-point and app selections over match, or #f.
       (fold-left (lambda (acc m)
                    (if (and (< col n) (covers? m col))
                        (case (mark-style m)
                          [(match-point) 'match-point]
+                         [(active) 'active]
+                         [(active-shadow) (or acc 'active-shadow)]
                          [(match) (or acc 'match)]
                          [else acc])
                        acc))
@@ -2432,6 +2752,8 @@
           (when sel (ansi (style-code 'selection)))
           (case bg
             [(match-point) (ansi (style-code 'match-point))]
+            [(active) (ansi (style-code 'active))]
+            [(active-shadow) (ansi (style-code 'active-shadow))]
             [(match) (ansi (style-code 'match))]
             [else (void)])
           (when mk (ansi (style-code 'mark)))
@@ -2563,8 +2885,10 @@
   (define (rows-before w prow pcol)
     ;; Screen rows between w's top -- its first visible segment -- and
     ;; point, wrap-aware.
-    (let ([v (buffer-lines (window-buffer w))])
-      (let loop ([i (window-top w)] [n (- (window-topseg w))])
+    (let* ([v (buffer-lines (window-buffer w))]
+           [sticky (buffer-sticky-lines (window-buffer w))])
+      (let loop ([i (max sticky (window-top w))]
+                 [n (- (window-topseg w))])
         (if (>= i prow)
             (+ n (if (window-wrapped? w)
                      (segment-of (line-breaks w (vector-ref v prow)) pcol)
@@ -2581,7 +2905,9 @@
   (define (view-overflows? w v height)
     ;; Is there more content than the window holds, counting from its
     ;; top segment?
-    (let loop ([i (window-top w)] [n (- (window-topseg w))])
+    (let loop ([i (max (buffer-sticky-lines (window-buffer w))
+                       (window-top w))]
+               [n (- (window-topseg w))])
       (cond [(> n height) #t]
             [(>= i (vector-length v)) #f]
             [else (loop (+ i 1)
@@ -2593,6 +2919,8 @@
     ;; least scroll-margin rows from the edges, where the buffer's
     ;; ends allow.
     (let* ([v (buffer-lines (window-buffer w))]
+           [sticky (buffer-sticky-lines (window-buffer w))]
+           [height (max 1 (- height sticky))]
            [prow (max 0 (min (window-prow w) (- (vector-length v) 1)))]
            [pcol (max 0 (min (window-pcol w)
                              (string-length (vector-ref v prow))))]
@@ -2603,8 +2931,9 @@
           (let ([pseg (segment-of (line-breaks w (vector-ref v prow))
                                   pcol)])
             ;; a stale top (edits, toggles) clamps into the buffer
-            (window-top-set! w (min (window-top w)
-                                    (- (vector-length v) 1)))
+            (window-top-set! w
+              (max sticky
+                   (min (window-top w) (- (vector-length v) 1))))
             (window-topseg-set!
               w (min (window-topseg w)
                      (- (line-segments w (vector-ref v (window-top w)))
@@ -2612,16 +2941,17 @@
             ;; point above the view: its own segment row becomes the
             ;; top, so moving up scrolls by one visual row, not by the
             ;; whole wrapped line
-            (when (or (< prow (window-top w))
-                      (and (= prow (window-top w))
-                           (< pseg (window-topseg w))))
+            (when (and (>= prow sticky)
+                       (or (< prow (window-top w))
+                         (and (= prow (window-top w))
+                           (< pseg (window-topseg w)))))
               (window-top-set! w prow)
               (window-topseg-set! w pseg))
             ;; the margin above: retreat while the top of the buffer
             ;; still allows
             (let retreat ()
               (when (and (< (rows-before w prow pcol) m)
-                         (or (> (window-top w) 0)
+                         (or (> (window-top w) sticky)
                              (> (window-topseg w) 0)))
                 (if (> (window-topseg w) 0)
                     (window-topseg-set! w (- (window-topseg w) 1))
@@ -2650,14 +2980,15 @@
           (begin
             (window-topseg-set! w 0)
             (when (< prow (+ (window-top w) m))
-              (window-top-set! w (max 0 (- prow m))))
+              (window-top-set! w (max sticky (- prow m))))
             (when (>= prow (+ (window-top w) height (- m)))
               (window-top-set! w
                 (min (- prow (- height 1 m))
-                     (max 0 (- (vector-length v) height)))))
+                     (max sticky (- (vector-length v) height)))))
             (when (< pcol (window-left w)) (window-left-set! w pcol))
-            (when (>= pcol (+ (window-left w) (window-width w)))
-              (window-left-set! w (- pcol (window-width w) -1)))))))
+            (when (>= pcol (+ (window-left w) (window-content-width w)))
+              (window-left-set! w
+                (- pcol (window-content-width w) -1)))))))
 
   ;; The cache holds, per screen row, the key describing what that row
   ;; currently shows; a row is repainted only when its key changes.  Any
@@ -3120,12 +3451,42 @@
                             (if wrapped? "\\" ""))))))
             (loop (+ line 1) (+ row 1)))))))
 
+  (define (paint-scrollbar! w row k height sticky top total)
+    (let ([side (window-scrollbar? w)])
+      (when side
+        (let* ([body-height (max 1 (- height sticky))]
+               [body-total (max 0 (- total sticky))]
+               [thumb-size (if (<= body-total body-height)
+                             body-height
+                             (max 1 (quotient (* body-height body-height)
+                                              body-total)))]
+               [travel (max 0 (- body-height thumb-size))]
+               [scrollable (max 1 (- body-total body-height))]
+               [thumb-start (if (= travel 0) 0
+                              (quotient (* (max 0 (- top sticky)) travel)
+                                        scrollable))]
+               [j (- k sticky)]
+               [glyph (cond [(< k sticky) " "]
+                        [(and (>= j thumb-start)
+                              (< j (+ thumb-start thumb-size))) "\x2503;"]
+                        [else "\x2502;"])])
+          (paint! row
+                  (+ (window-xoff w)
+                    (if (eq? side 'right) (- (window-width w) 1) 0))
+                  (list 'scrollbar glyph)
+                  (lambda ()
+                    (ansi (style-code 'chrome) glyph "\x1b;[0m")))))))
+
   (define (paint-window! w start height ranges)
     (let* ([b (window-buffer w)]
            [v (buffer-lines b)]
            [n (vector-length v)]
-           [top (window-top w)]
+           [sticky (min height (buffer-sticky-lines b))]
+           [top (max sticky (window-top w))]
            [left (window-left w)]
+           [content-x (+ (window-xoff w)
+                         (if (eq? (window-scrollbar? w) 'left) 1 0))]
+           [content-width (window-content-width w)]
            [styles-of (buffer-line-styles b)]
            [mode-tag (let ([m (buffer-mode b)]) (and m (mode-name m)))]
            [current? (eq? w current-window)])
@@ -3133,9 +3494,11 @@
       ;; a soft-wrapping window painting a long line as successive
       ;; slices (the same line at successive left offsets), others one
       ;; row per line.
-      (let loop ([k 0] [i top] [seg (window-topseg w)])
+      (let loop ([k 0] [i (if (> sticky 0) 0 top)]
+                 [seg (if (> sticky 0) 0 (window-topseg w))])
         (when (< k height)
           (let ([row (+ start k)])
+            (paint-scrollbar! w row k height sticky top n)
             (if (< i n)
                 (let* ([line (vector-ref v i)]
                        [shown (let ([r (let ([m (buffer-mode b)])
@@ -3147,7 +3510,7 @@
                                                        (string-length line))
                                                     t))))
                                     line))]
-                       [wrapped? (window-wrapped? w)]
+                       [wrapped? (and (>= i sticky) (window-wrapped? w))]
                        [breaks (and wrapped? (line-breaks w line))]
                        [slice-left (if wrapped?
                                        (segment-start breaks seg)
@@ -3163,17 +3526,17 @@
                                 'wrap]     ; the line continues below: \
                                [(and (not wrapped?)
                                      (> (string-length line)
-                                        (+ left (window-width w))))
+                                        (+ left content-width)))
                                 'trunc]    ; it continues past the edge: $
                                [else #f])]
                        [span (and current? (region-span i (string-length line)))]
-                       [marks (if current? (ranges-on-row ranges i) '())])
+                       [marks (ranges-on-row ranges w b i current?)])
                   (let ([row-styles
                          (let ([m (buffer-mode b)])
                            (and m (mode-row-styles m)
                                 (guard (ex [else #f])
                                   ((mode-row-styles m) b i line))))])
-                    (paint! row (window-xoff w)
+                    (paint! row content-x
                             (list i line shown span marks slice-left
                                   mode-tag row-styles edge)
                             (lambda ()
@@ -3182,19 +3545,26 @@
                                                    (or row-styles
                                                        (styles-of line))
                                                    edge
-                                                   (window-width w)
+                                                   content-width
                                                    bound))))
-                  (if (< (+ seg 1) (line-segments w line))
+                  (if (and (>= i sticky)
+                           (< (+ seg 1) (line-segments w line)))
                       (loop (+ k 1) i (+ seg 1))
-                      (loop (+ k 1) (+ i 1) 0)))
+                      (loop (+ k 1)
+                            (if (= (+ k 1) sticky) top (+ i 1)) 0)))
                 (begin
-                  (paint! row (window-xoff w) '(empty)
-                          (lambda () (ansi (fit "~" (window-width w)))))
+                  (paint! row content-x '(empty)
+                          (lambda () (ansi (fit "~" content-width))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let* ([conflicts (and (assq b merge-reports)
+      (let* ([active-app (app-of (current-buffer))]
+             [target? (and active-app
+                           (eq? (app-target-window active-app) w)
+                           (memq w windows))]
+             [conflicts (and (assq b merge-reports)
                              (let ([n (buffer-conflict-count b)])
                                (and (> n 0) n)))]
-             [head (format " ~a~a  ~a  L~a C~a"
+             [head (format "~a~a~a  ~a  L~a C~a"
+                           (if target? ">" " ")
                            (cond [(buffer-stale b) "!!"]
                                  [(view-buffer? b) "[]"]
                                  [(buffer-read-only b) "%%"]
@@ -3219,7 +3589,7 @@
                                  ""))])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (window-xoff w)
-                  (list 'status status current? stale?)
+                  (list 'status status current? target? stale?)
                   (lambda ()
                     ;; Reversed cells take the bar's shade from the
                     ;; foreground color, so full reverse tracks the
@@ -3315,14 +3685,33 @@
                                     (window-xoff (car entry))
                                     (window-width (car entry))))
                             layout)
-                       (map window-wrapped? windows))])
+                       ;; A scrollbar changes one window row from a single
+                       ;; full-width cached segment into two overlapping
+                       ;; segments (the bar and the content).  Row cache
+                       ;; entries are keyed by their starting column, so a
+                       ;; later full-width paint cannot selectively evict a
+                       ;; covered content segment.  Treat presentation
+                       ;; topology as part of the view and discard those
+                       ;; incompatible segment keys when buffers are switched.
+                       (map (lambda (w)
+                              (list (window-wrapped? w)
+                                    (window-scrollbar? w)
+                                    (buffer-sticky-lines (window-buffer w))))
+                            windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                 layout)
       (if (not (equal? view cached-view))
           (begin (set! screen-cache (make-vector rows #f))
                  (set! cached-view view))
           (for-each (lambda (entry)
-                      (native-scroll! (car entry) (cadr entry) (caddr entry)))
+                      ;; Native terminal scrolling moves the whole window
+                      ;; rectangle. Sticky rows and scrollbar columns must
+                      ;; remain fixed, so those presentations use ordinary
+                      ;; cached repainting instead.
+                      (unless (or (> (buffer-sticky-lines
+                                       (window-buffer (car entry))) 0)
+                                  (window-scrollbar? (car entry)))
+                        (native-scroll! (car entry) (cadr entry) (caddr entry))))
                     layout))
       (paint-dividers! layout)
       (let ([ranges (highlight-ranges)])
@@ -3339,17 +3728,23 @@
 
   (define (window-screen-position w prow pcol)
     ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
-    (let ([entry (assq w (window-layout))])
-      (if (window-wrapped? w)
-          (cons (+ (cadr entry) (rows-before w prow pcol) 1)
+    (let* ([entry (assq w (window-layout))]
+           [sticky (buffer-sticky-lines (window-buffer w))]
+           [x (+ (window-xoff w)
+                 (if (eq? (window-scrollbar? w) 'left) 1 0))]
+           [screen-row (if (< prow sticky)
+                           (+ (cadr entry) prow 1)
+                           (+ (cadr entry) sticky
+                              (rows-before w prow pcol) 1))])
+      (if (and (>= prow sticky) (window-wrapped? w))
+          (cons screen-row
                 (let ([breaks (line-breaks
                                 w (vector-ref
                                     (buffer-lines (window-buffer w)) prow))])
-                  (+ (window-xoff w)
+                  (+ x
                      (- pcol (segment-start breaks (segment-of breaks pcol)))
                      1)))
-          (cons (+ (cadr entry) (- prow (window-top w)) 1)
-                (+ (window-xoff w) (- pcol (window-left w)) 1)))))
+          (cons screen-row (+ x (- pcol (window-left w)) 1)))))
 
   (define (place-cursor!)
     ;; Park the cursor in the echo area (a prompt, or a running
@@ -3408,7 +3803,7 @@
                   (loop xs (cons line acc))
                   (row (+ i 1) (cdr xs) (string-append line (fit (car xs) w)))))))))
 
-  ;; The *Completions* pop-up: shown on a TAB that cannot extend the input,
+  ;; The *completions* pop-up: shown on a TAB that cannot extend the input,
   ;; in the next window when there are several, in a temporary split when
   ;; there is one, and taken down again when the prompt finishes.
   (define completions-buffer #f)
@@ -3477,7 +3872,7 @@
       [(let ([n (length bands)])
          (>= (- rows echo-height (+ n 1))
              (+ (* n (min-window-lines)) 1)))
-       (set! completions-buffer (new-buffer "*Completions*"))
+       (set! completions-buffer (new-buffer "*completions*"))
        (buffer-read-only-set! completions-buffer #t)
        (buffer-mode-set! completions-buffer (completions-mode))
        (set! completions-labels labels)
@@ -3759,7 +4154,10 @@
             (dismiss-completions!))))))
 
   (define (confirm? label)
-    (let ([s (prompt! label)]) (and s (string-ci=? s "yes"))))
+    ;; Ordinary yes/no questions share the focused, highlighted, visual-bell
+    ;; choice engine used by file conflict decisions.
+    (let ([answer (query-key! (string-append label " y)es or n)o") "yn")])
+      (and answer (memv (char->integer answer) '(121 89)))))
 
   ;; Key-at-a-time input, for modules building interactive commands
   ;; (single-key queries, search-like loops): the next key as a
@@ -3837,9 +4235,19 @@
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
   (define (quit!!)
-    (when (or (for-all buffer-clean? buffers)
-              (confirm? "Modified buffers exist; quit anyway? (yes or no) "))
-      (set! quit? #t)))
+    (if (for-all buffer-clean? buffers)
+        (set! quit? #t)
+        (let ([answer (query-key!
+                        "Modified buffers exist; quit anyway? y)es, n)o, v)iew"
+                        "ynv")])
+          (case (and answer (char-downcase answer))
+            [(#\y) (set! quit? #t)]
+            [(#\v)
+             (let ([b (buffer-named "*buffers*")])
+               (if b
+                   (display-app! b)
+                   (set-message! "The *buffers* app is not available")))]
+            [else (void)]))))
 
   ;;; Interruptible execution -------------------------------------------------
 
@@ -4030,6 +4438,100 @@
   ;; The window whose status bar is being dragged to resize it, or #f.
   (define drag-status #f)
   (define drag-divider #f)   ; (left . right) columns astride the bar
+  (define drag-scrollbar #f) ; (window grab-offset-within-thumb)
+
+  (define (scrollbar-set-top! w height requested)
+    (let* ([b (window-buffer w)]
+           [sticky (min height (buffer-sticky-lines b))]
+           [body-height (max 1 (- height sticky))]
+           [total (buffer-line-count b)]
+           [top (min (max sticky requested)
+                     (max sticky (- total body-height)))]
+           [inside (min (quotient (- body-height 1) 2)
+                        (max 0 (- total top 1)))])
+      (goto-point! (cons (+ top inside) point-col))
+      (window-top-set! w top)
+      (window-topseg-set! w 0)
+      (set! mark-active? #f)))
+
+  (define (scrollbar-move! w start height y)
+    ;; Invert the painter's thumb-position calculation so the rendered thumb
+    ;; is centered on (and always contains) the clicked track cell.
+    (let* ([b (window-buffer w)]
+           [sticky (min height (buffer-sticky-lines b))]
+           [body-height (max 1 (- height sticky))]
+           [body-total (max 0 (- (buffer-line-count b) sticky))]
+           [thumb-size (if (<= body-total body-height)
+                           body-height
+                           (max 1 (quotient (* body-height body-height)
+                                            body-total)))]
+           [thumb-travel (max 0 (- body-height thumb-size))]
+           [scrollable (max 0 (- body-total body-height))]
+           [track-row (min (- body-height 1)
+                           (max 0 (- y 1 start sticky)))]
+           [thumb-start (min thumb-travel
+                             (max 0 (- track-row
+                                       (quotient thumb-size 2))))]
+           [top (if (or (= thumb-travel 0) (= scrollable 0))
+                    sticky
+                    (+ sticky
+                       (ceiling (/ (* thumb-start scrollable)
+                                   thumb-travel))))])
+      (scrollbar-set-top! w height top)))
+
+  (define (scrollbar-thumb-at? w start height y)
+    (let* ([b (window-buffer w)]
+           [sticky (min height (buffer-sticky-lines b))]
+           [body-height (max 1 (- height sticky))]
+           [body-total (max 0 (- (buffer-line-count b) sticky))]
+           [thumb-size (if (<= body-total body-height)
+                           body-height
+                           (max 1 (quotient (* body-height body-height)
+                                            body-total)))]
+           [travel (max 0 (- body-height thumb-size))]
+           [scrollable (max 1 (- body-total body-height))]
+           [thumb-start (if (= travel 0)
+                            0
+                            (quotient
+                              (* (max 0 (- (window-top w) sticky)) travel)
+                              scrollable))]
+           [track-row (- y 1 start sticky)])
+      (and (>= track-row thumb-start)
+           (< track-row (+ thumb-start thumb-size)))))
+
+  (define (scrollbar-thumb-position w height)
+    ;; (sticky thumb-size thumb-travel scrollable thumb-start)
+    (let* ([b (window-buffer w)]
+           [sticky (min height (buffer-sticky-lines b))]
+           [body-height (max 1 (- height sticky))]
+           [body-total (max 0 (- (buffer-line-count b) sticky))]
+           [thumb-size (if (<= body-total body-height)
+                           body-height
+                           (max 1 (quotient (* body-height body-height)
+                                            body-total)))]
+           [thumb-travel (max 0 (- body-height thumb-size))]
+           [scrollable (max 0 (- body-total body-height))]
+           [thumb-start (if (or (= thumb-travel 0) (= scrollable 0))
+                            0
+                            (quotient
+                              (* (max 0 (- (window-top w) sticky)) thumb-travel)
+                              scrollable))])
+      (list sticky thumb-size thumb-travel scrollable thumb-start)))
+
+  (define (scrollbar-drag-to! w start height y grab-offset)
+    (let* ([position (scrollbar-thumb-position w height)]
+           [sticky (car position)]
+           [thumb-travel (caddr position)]
+           [scrollable (cadddr position)]
+           [track-row (- y 1 start sticky)]
+           [thumb-start (min thumb-travel
+                             (max 0 (- track-row grab-offset)))]
+           [top (if (or (= thumb-travel 0) (= scrollable 0))
+                    sticky
+                    (+ sticky
+                       (ceiling (/ (* thumb-start scrollable)
+                                   thumb-travel))))])
+      (scrollbar-set-top! w height top)))
 
   (define (divider-at x0 r0)
     ;; The (left . right) column pair whose divider bar sits at
@@ -4075,25 +4577,34 @@
     ;; band, wrap-aware: wrapped lines occupy successive screen rows,
     ;; so the band row is walked through the segment counts.
     (let* ([v (buffer-lines (window-buffer w))]
+           [sticky (buffer-sticky-lines (window-buffer w))]
            [k (max 0 (- y 1 start))]
-           [col (max 0 (- x 1 (window-xoff w)))])
-      (if (window-wrapped? w)
-          (let loop ([i (window-top w)] [k (+ k (window-topseg w))])
-            (if (>= i (vector-length v))
-                (cons (max 0 (- (vector-length v) 1)) col)
-                (let* ([line (vector-ref v i)]
-                       [breaks (line-breaks w line)]
-                       [segs (vector-length breaks)])
-                  (if (< k segs)
-                      (cons i (min (+ (segment-start breaks k) col)
-                                   (segment-close breaks k
-                                                  (string-length line))))
-                      (loop (+ i 1) (- k segs))))))
-          (cons (+ (window-top w) k) (+ (window-left w) col)))))
+           [col (max 0 (- x 1 (window-xoff w)
+                          (if (eq? (window-scrollbar? w) 'left) 1 0)))])
+      (cond
+        [(< k sticky)
+         (cons (min k (- (vector-length v) 1)) col)]
+        [(window-wrapped? w)
+         (let loop ([i (max sticky (window-top w))]
+                    [k (+ (- k sticky) (window-topseg w))])
+           (if (>= i (vector-length v))
+               (cons (max 0 (- (vector-length v) 1)) col)
+               (let* ([line (vector-ref v i)]
+                      [breaks (line-breaks w line)]
+                      [segs (vector-length breaks)])
+                 (if (< k segs)
+                     (cons i (min (+ (segment-start breaks k) col)
+                                  (segment-close breaks k
+                                                 (string-length line))))
+                     (loop (+ i 1) (- k segs))))))]
+        [else
+         (cons (+ (max sticky (window-top w)) (- k sticky))
+               (+ (window-left w) col))])))
 
   (define (mouse-press! x y)
-    ;; Focus the window at 1-based screen position (x, y).  A press in
-    ;; its text area also places point at the clicked cell and arms the
+    ;; A normal-buffer press focuses its window and places point. An app text
+    ;; press instead updates and invokes the app without stealing focus; only
+    ;; an app status-bar press focuses that window. A text press also arms the
     ;; mark there -- dragging activates it, a motionless click does not;
     ;; a second press on the same cell within half a second is a double
     ;; click, selecting the word there.  A press on a status bar (other
@@ -4102,22 +4613,66 @@
     ;; (erasing on every press flickers); C-l clears it.
     (set! drag-status #f)
     (set! drag-divider #f)
+    (set! drag-scrollbar #f)
     (let ([prev last-press]
           [now (real-time)])
       (set! last-press (list x y now))
       (cond
         [(divider-at (- x 1) (- y 1)) =>
-         (lambda (pair) (set! drag-divider pair))]
+         (lambda (pair) (set! drag-divider pair) "MOUSE-HANDLED")]
         [else
          (window-at (- x 1) (- y 1)
            (lambda (entry)
              (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-               (set! current-window w)
                (cond
                  [(= (- y 1) (+ start height))        ; the status bar
+                  (focus-window! w)
                   (when (pair? (cdr (memq (window-band w) bands)))
-                    (set! drag-status w))]
+                    (set! drag-status w))
+                  "MOUSE-HANDLED"]
+                 [(and (window-scrollbar-column w)
+                       (= (- x 1) (window-scrollbar-column w)))
+                  ;; App bars navigate like their wheel controls: they do not
+                  ;; take focus and do not invoke the row's click action.
+                  (let ([old current-window])
+                    (unless (app-buffer? (window-buffer w))
+                      (focus-window! w))
+                    (set! current-window w)
+                    ;; A thumb grab keeps the viewport in place. Both forms
+                    ;; of scrollbar interaction put point at its visual center.
+                    (let ([on-thumb? (scrollbar-thumb-at? w start height y)])
+                      (if on-thumb?
+                          (scrollbar-set-top! w height (window-top w))
+                          (scrollbar-move! w start height y))
+                      (let* ([position (scrollbar-thumb-position w height)]
+                             [sticky (car position)]
+                             [thumb-size (cadr position)]
+                             [thumb-start (list-ref position 4)]
+                             [track-row (- y 1 start sticky)]
+                             [grab (min (- thumb-size 1)
+                                        (max 0 (- track-row thumb-start)))])
+                        (set! drag-scrollbar (list w grab))))
+                    (when (and (app-buffer? (window-buffer w))
+                               (memq old windows))
+                      (set! current-window old)))
+                  "MOUSE-HANDLED"]
+                 [(app-buffer? (window-buffer w))
+                  (let ([old current-window])
+                    (unless (eq? w old)
+                      (set-app-target! (window-buffer w) old
+                                       (window-buffer old)))
+                    (set! current-window w)
+                    (goto-point! (window-position w start height x y))
+                    (set! mark-active? #f)
+                    ;; Focusing the clicked window is the default. An app may
+                    ;; perform a target action and explicitly preserve the
+                    ;; old focus by returning keep-focus for MOUSE-CLICK.
+                    (let ([result (dispatch-app-event! "MOUSE-CLICK")])
+                      (when (and (eq? result 'keep-focus) (memq old windows))
+                        (set! current-window old)))
+                    "MOUSE-HANDLED")]
                  [else                                ; a text row
+                  (focus-window! w)
                   (goto-point! (window-position w start height x y))
                   (set! mark-row point-row)
                   (set! mark-col point-col)
@@ -4125,7 +4680,8 @@
                   (when (and prev
                           (= (car prev) x) (= (cadr prev) y)
                           (< (- now (caddr prev)) 450))
-                    (select-word!))]))))])))
+                    (select-word!))
+                  "MOUSE-HANDLED"]))))])))
 
   (define (mouse-drag! x y)
     ;; A status-bar drag resizes bands, a divider drag resizes its
@@ -4144,6 +4700,17 @@
              (unless (= delta 0)
                (let ([tail (memq (window-band drag-status) bands)])
                  (transfer-lines! (car tail) (cadr tail) delta))))))]
+      [drag-scrollbar
+       (let* ([w (car drag-scrollbar)]
+              [grab-offset (cadr drag-scrollbar)]
+              [entry (assq w (window-layout))]
+              [old current-window])
+         (when entry
+           (set! current-window w)
+           (scrollbar-drag-to! w (cadr entry) (caddr entry) y grab-offset)
+           (when (and (app-buffer? (window-buffer w))
+                      (memq old windows))
+             (set! current-window old))))]
       [else
        (window-at (- x 1) (- y 1)
          (lambda (entry)
@@ -4153,15 +4720,32 @@
                (set! mark-active? #t)
                (goto-point! (window-position w start height x y))))))]))
 
-  (define (mouse-wheel! x y mover)
+  (define (mouse-wheel! x y dir meta?)
     ;; Scroll the window under the pointer by moving its point (redraw
-    ;; scrolls it to follow); the focused window stays focused.
+    ;; scrolls it to follow); the focused window stays focused. Meta-wheel
+    ;; applies the corresponding global buffer-switch binding to the hovered
+    ;; window instead. Apps get an ordinary directional tick first so list
+    ;; controls can choose their wheel step.
     (window-at (- x 1) (- y 1)
       (lambda (entry)
-        (let ([old current-window])
-          (set! current-window (car entry))
-          (mover)
-          (set! current-window old)))))
+        (let ([old current-window]
+              [w (car entry)])
+          (set! current-window w)
+          (if (and meta? (memv dir '(0 1)))
+              (dispatch-sequence! (if (= dir 0) "M-UP" "M-DOWN") #f)
+              (begin
+                (when (and (app-buffer? (window-buffer w)) (not (eq? w old)))
+                  (set-app-target! (window-buffer w) old (window-buffer old)))
+                (unless (dispatch-app-event!
+                          (case dir
+                            [(0) "WHEEL-UP"]
+                            [(1) "WHEEL-DOWN"]
+                            [(2) "WHEEL-LEFT"]
+                            [(3) "WHEEL-RIGHT"]
+                            [else "WHEEL"]))
+                  ((wheel-mover dir)))))
+          (when (memq old windows) (set! current-window old))
+          "MOUSE-HANDLED"))))
 
   (define (wheel-mover dir)
     ;; Wheel direction (the low bits of a 64-flagged button): up, down,
@@ -4188,18 +4772,23 @@
                                            (+ (* cur 10)
                                               (- (char->integer (car chars)) 48))
                                            acc)]))])
-            (when (and handle? (char? c) (= (length nums) 3))
-              (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
-                (cond [(char=? c #\m)                           ; release
-                       (set! drag-status #f)
-                       (set! drag-divider #f)]
-                      [(= (bitwise-and b 64) 64)                 ; wheel
-                       (mouse-wheel! x y (wheel-mover (bitwise-and b 3)))]
-                      [(= (bitwise-and b 32) 32)                 ; drag
-                       (when (< (bitwise-and b 3) 3)
-                         (mouse-drag! x y))]
-                      [(< (bitwise-and b 3) 3)                   ; a press
-                       (mouse-press! x y)])))))))
+            (and handle? (char? c) (= (length nums) 3)
+                 (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
+                   (cond [(char=? c #\m)                         ; release
+                          (set! drag-status #f)
+                          (set! drag-divider #f)
+                          (set! drag-scrollbar #f)
+                          "MOUSE-HANDLED"]
+                         [(= (bitwise-and b 64) 64)               ; wheel
+                          (mouse-wheel! x y (bitwise-and b 3)
+                                        (= (bitwise-and b 8) 8))]
+                         [(= (bitwise-and b 32) 32)               ; drag
+                          (when (< (bitwise-and b 3) 3)
+                            (mouse-drag! x y))
+                          "MOUSE-HANDLED"]
+                         [(< (bitwise-and b 3) 3)                 ; a press
+                          (mouse-press! x y)]
+                         [else "MOUSE-HANDLED"])))))))
 
   ;;; Key handling ----------------------------------------------------------
 
@@ -4398,15 +4987,19 @@
   (define (read-csi-event handle-mouse?)
     (let ([first (read-char stdin)])
       (if (and (char? first) (char=? first #\<))
-          (begin (mouse-event! handle-mouse?) "MOUSE")
+          (or (mouse-event! handle-mouse?) "MOUSE-HANDLED")
           (let drain ([b first] [params '()])
             (if (and (char? b)
                      (or (char<=? #\0 b #\9) (char=? b #\;)))
                 (drain (read-char stdin) (cons b params))
                 (let ([p (list->string (reverse params))])
+                  (define (direction name)
+                    (if (member p '("1;3" "3"))
+                        (string-append "M-" name)
+                        name))
                   (case b
-                    [(#\A) "UP"] [(#\B) "DOWN"]
-                    [(#\C) "RIGHT"] [(#\D) "LEFT"]
+                    [(#\A) (direction "UP")] [(#\B) (direction "DOWN")]
+                    [(#\C) (direction "RIGHT")] [(#\D) (direction "LEFT")]
                     [(#\H) "HOME"] [(#\F) "END"]
                     [(#\Z) "S-TAB"]
                     [(#\~) (cond [(string=? p "3") "DELETE"]
@@ -4511,6 +5104,11 @@
            (set! message
              (format "~a is undefined" (sequence-text sequence)))]))))
 
+  (define (dispatch-app-event! event)
+    (let* ([a (app-of (current-buffer))]
+           [handler (and a (app-handle-event! a))])
+      (and handler (handler event))))
+
   (define (handle-key! input)
     (define chain insert-chain)
     (set! insert-chain #f)
@@ -4519,10 +5117,14 @@
                        [else input])])
       (cond
         [(eof-object? event) (set! quit? #t)]
+        [(string=? event "MOUSE-HANDLED")
+         (settle-echo!)
+         (void)]
         [else
          (unless (string=? event "C-k") (set! last-command #f))
          (settle-echo!)
-         (dispatch-sequence! event chain)])))
+         (unless (dispatch-app-event! event)
+           (dispatch-sequence! event chain))])))
 
   (define (action-name action)
     (cond
@@ -4622,7 +5224,8 @@
         `(("C-@" ,set-mark-command!) ("C-a" ,beginning-of-line!)
           ("C-b" ,move-left!) ("C-d" ,delete-forward!)
           ("C-e" ,end-of-line!) ("C-f" ,move-right!)
-          ("C-g" ,keyboard-quit!) ("BACKSPACE" ,backspace!)
+          ("C-g" ,keyboard-quit!) ("ESC" ,keyboard-quit!)
+          ("BACKSPACE" ,backspace!)
           ("TAB" ,indent-tab!) ("RET" ,newline!) ("C-k" ,kill-line!)
           ("C-l" ,redraw-command!) ("C-n" ,next-line!)
           ("C-o" ,open-line!) ("C-p" ,previous-line!)
@@ -4857,20 +5460,19 @@
       ;; two half-and-half rows at the top; scroll the left half up by
       ;; one inside margins -- a supporting terminal shows C's beside
       ;; B's on the first row
-      (parameterize ([message-source #f])
-        (set-message! "Top row all C's then B's?  y or n"))
-      (redraw!)
       (let ([half (max 4 (div cols 2))])
-        (ansi "\x1b;[?25l"
-              "\x1b;[1;1H" (make-string half #\A)
-              (make-string (- cols half) #\B)
-              "\x1b;[2;1H" (make-string half #\C)
-              (make-string (- cols half) #\D)
-              "\x1b;[?69h" (format "\x1b;[1;~as" half)
-              "\x1b;[1;2r" "\x1b;[1S"
-              "\x1b;[r\x1b;[s\x1b;[?69l")
-        (flush-output-port (terminal-output-port))
-        (let ([k (read-key)])
+        (define (paint-test!)
+          (ansi "\x1b;[?25l"
+                "\x1b;[1;1H" (make-string half #\A)
+                (make-string (- cols half) #\B)
+                "\x1b;[2;1H" (make-string half #\C)
+                (make-string (- cols half) #\D)
+                "\x1b;[?69h" (format "\x1b;[1;~as" half)
+                "\x1b;[1;2r" "\x1b;[1S"
+                "\x1b;[r\x1b;[s\x1b;[?69l")
+          (flush-output-port (terminal-output-port)))
+        (let ([k (query-key! "Top row all C's then B's? y)es or n)o"
+                   "yn" paint-test!)])
           (invalidate-screen-cache!)
           (and k (memv (char->integer k) '(121 89))))))
     (parameterize ([message-source #f])
@@ -4902,8 +5504,9 @@
                        (if margins? "supported" "not supported")
                        (if margins? "on" "off"))))
            (let* ([k (query-key!
-                       (format "Record (column-native-scroll ~a) in config.e? (y or n)"
-                               (if margins? "#t" "#f")))]
+                       (format "Record (column-native-scroll ~a) in config.e? y)es or n)o"
+                               (if margins? "#t" "#f"))
+                       "yn")]
                   [n (and k (char->integer k))])
              (when (memv n '(121 89))
                ;; 'append creates config.e when none exists yet, so

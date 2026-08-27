@@ -762,6 +762,27 @@
         ((set-style!) (("procedure" . "(set-style! face style)")) "void"
          ("(core)") core "Style customization" #f
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
+        ((register-app!)
+         (("procedure" . "(register-app! name refresh! [handle-event!])"))
+         "buffer" ("(core)") core "App buffers" #f
+         "Create or update a module-owned dynamic read-only app buffer. Its name must not collide with an ordinary buffer. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. Returning `keep-focus` from `MOUSE-CLICK` consumes the click while preserving the previously focused window. A view is an app without a handler.")
+        ((display-app!) (("procedure" . "(display-app! buffer)")) "window or #f"
+         ("(core)") core "App buffers" #f
+         "Display and focus an app buffer, recording the previously current window and buffer as its target.")
+        ((set-app-presentation!)
+         (("procedure" . "(set-app-presentation! buffer sticky-lines scrollbar)"))
+         "buffer" ("(core)") core "App buffers" #f
+         "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is `left` or #f.")
+        ((target-window) (("procedure" . "(target-window)")) "window or #f"
+         ("(core)") core "App buffers" #f
+         "Return the current app's target window, #f while its target is ephemeral, or the current window outside an app.")
+        ((target-buffer) (("procedure" . "(target-buffer)")) "buffer"
+         ("(core)") core "App buffers" #f
+         "Return the buffer associated with the current app's target, including the remembered buffer of an ephemeral target.")
+        ((show-buffer-in-target!)
+         (("procedure" . "(show-buffer-in-target! buffer)")) "buffer"
+         ("(core)") core "App buffers" #f
+         "Show a buffer in the current app's target window. A separate app window remains focused; a same-window app is replaced by the selected buffer.")
         ((fetch-describe-data!)
          (("procedure" . "(fetch-describe-data!)")) "void"
          ("(describe)") describe "Documentation commands" #f

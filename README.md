@@ -73,7 +73,9 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | Key       | Action                                                  |
 |-----------|---------------------------------------------------------|
 | `C-x b`   | Switch buffer (default: most recent other; new name creates a buffer) |
-| `C-x C-b` | Pop up `*Buffer List*`: marks (`.` current, `%` read-only, `*` modified), lines, mode, file |
+| `C-x C-b` | Open `*buffers*`: move with Up/Down, Enter to select; click selects immediately |
+| `M-Up`     | Switch to the previous buffer alphabetically             |
+| `M-Down`   | Switch to the next buffer alphabetically                 |
 | `C-x k`   | Kill a buffer (default: current; asks if modified)      |
 | `C-x 2`   | Split the current window in two (stacked)               |
 | `C-x 3`   | Split the current window in two (side by side)          |
@@ -225,7 +227,7 @@ Prompt input is line-editable with the usual bindings (`C-a`/`C-e`,
 arrows, Home/End, `C-k`/`C-y` through the shared kill ring), and
 completes with TAB: file names in the file prompts, buffer names in the
 buffer prompts. TAB extends to the longest common prefix; when nothing
-extends, a second TAB pops up a `*Completions*` window, which
+extends, a second TAB pops up a `*completions*` window, which
 disappears when the prompt finishes. Input longer than the screen is
 wide wraps onto continuation lines, marked with a trailing `\` and
 indented under the prompt text, the windows above shrinking to make
@@ -263,7 +265,7 @@ line redrawn in place, while `*log*` still records every step.
 Nothing is lost when it settles: every message that passes through the
 echo area lands in the log -- the editor's syslog, structured records
 of time (nanosecond precision), component, and text.  The `*log*`
-buffer is a *view*: rendered from the records on the fly, always in
+buffer is a *view* -- a non-interactive app rendered from records on the fly -- always in
 the buffer list (`C-x b *log*`), read-only, refreshed while visible,
 wearing `[]` in its status bar where ordinary buffers show `--`.
 With the cursor at the end (`M->`) it tails the log; anywhere else
@@ -370,8 +372,8 @@ run checks once), a detected external change marks the buffer with a
 red `!!` in its status bar -- no interruption, just the warning --
 and a mere `touch` passes silently because content, not clocks, is
 what counts. Saving re-reads the file and compares contents; if
-somebody changed it meanwhile, the save stops and asks: `o)verwrite,
-m)erge, c)ancel`.  Merge is a three-way merge (the in-house `diff.e`,
+somebody changed it meanwhile, the save stops and asks: `overwrite,
+merge, cancel`.  Merge is a three-way merge (the in-house `diff.e`,
 a patience diff) of what you loaded, what you have, and what the disk
 says: changes on one side apply silently, and colliding ones become
 `<<<<<<< buffer / ======= / >>>>>>> disk` markers in the buffer --
@@ -385,11 +387,18 @@ done -- immediately for a clean one, after the resolving save for a
 conflicted one.
 
 Opening an already visited file whose disk copy changed asks only to
-`m)erge, r)eread, c)ancel`. These choices affect the buffer alone: merge
+`merge, reread, cancel`. These choices affect the buffer alone: merge
 incorporates both versions without saving, reread replaces the buffer with the
-disk copy, and cancel behaves like `C-g`. Visited paths are canonicalized, so
+disk copy, and cancel behaves like `C-g`. The focused prompt highlights its
+choice letters; any key or mouse event other than a listed choice, `C-g`, or
+ESC briefly flashes the echo area without sound and leaves it waiting. Visited
+paths are canonicalized, so
 relative paths, `.`/`..`, and symbolic-link aliases of the same file reuse one
 buffer and perform the same disk-content check.
+
+The same focused choice engine handles overwrite and stale-save decisions,
+killing modified buffers, quitting with modified buffers, and terminal-probe
+questions.
 
 ## Configuration
 
@@ -526,6 +535,12 @@ other semantic highlighting could be added the same way.
 Faces can be customized declaratively with `set-style!`; see
 [Styles](docs/STYLES.md) for the DSL, colors, attributes, built-in faces,
 terminal behavior, and configuration lifecycle.
+
+Dynamic tools are app buffers: views are non-interactive apps, while an app
+may handle controls and act on the window that was current before entry.
+`*buffers*` highlights a navigable row and opens it in that target window.
+See [App buffers](docs/APPS.md) for registration, event handling, and target
+semantics.
 
 ## Details worth knowing
 

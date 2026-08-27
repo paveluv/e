@@ -365,26 +365,45 @@
           (string-append "~" (string-tail path (string-length home)))
           path)))
 
-  (define (list-buffers!)
-    ;; Pop up a *Buffer List*, Emacs-style: every buffer with its marks
-    ;; (. current, % read-only, * modified), length in lines, mode, and
-    ;; file, most recently used first.  Rebuilt on every invocation; on
-    ;; a screen too small for a second window, a one-line summary.
+  (define buffers-view #f)
+  (define buffer-rows '())
+
+  (define (buffers-styles line)
+    ;; Separate the headings from the data; in data rows the third status cell
+    ;; is M, where a star makes the complete modified-buffer row italic.
+    (make-vector (string-length line)
+                 (cond [(string-prefix? "CRM  Buffer" line) 'bold]
+                       [(and (> (string-length line) 2)
+                             (char=? (string-ref line 2) #\*))
+                        'italic]
+                       [else 'plain])))
+
+  (define (buffer-table)
+    ;; The complete rendering and its source rows. Keeping this pure lets the
+    ;; view refresh on every redraw without mutation hooks throughout core.
     (let* ([current (current-buffer)]
+           [listed (sort (lambda (a b)
+                           (string-ci<? (buffer-name a) (buffer-name b)))
+                         (buffer-list))]
+           [view-lines (+ (length listed) 1)]
            [rows (map (lambda (b)
                         (list (string-append
                                 (if (eq? b current) "." " ")
                                 (if (buffer-read-only b) "%" " ")
                                 (if (buffer-modified b) "*" " "))
                               (buffer-name b)
-                              (number->string (buffer-line-count b))
+                              (number->string
+                                (if (eq? b buffers-view)
+                                    view-lines
+                                    (buffer-line-count b)))
                               (or (buffer-mode-name b) "")
                               (let ([f (buffer-file b)])
                                 (if f (abbreviate-home f) ""))))
-                      (buffer-list))]
+                      listed)]
            [all (cons (list "CRM" "Buffer" "Lines" "Mode" "File") rows)]
            [width (lambda (i)
-                    (fold-left (lambda (w r) (max w (string-length (list-ref r i))))
+                    (fold-left (lambda (w r)
+                                 (max w (string-length (list-ref r i))))
                                0 all))]
            [wname (width 1)] [wlines (width 2)] [wmode (width 3)]
            [render (lambda (r)
@@ -393,13 +412,114 @@
                              (pad (list-ref r 1) wname)
                              (pad-left (list-ref r 2) wlines)
                              (pad (list-ref r 3) wmode)
-                             (list-ref r 4)))]
-           [b (fresh-buffer "*Buffer List*")])
-      (apply buffer-append! b (map render all))
-      (set-buffer-read-only! b #t)
-      (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
-      (if (display-buffer! b)
-          (set-message! "")
+                             (list-ref r 4)))])
+      (set! buffer-rows listed)
+      (cons (map render all) rows)))
+
+  (define (refresh-buffers-view!)
+    (view-replace! buffers-view (car (buffer-table))))
+
+  (define (buffer-row b)
+    (let loop ([left buffer-rows] [row 1])
+      (cond [(null? left) #f]
+            [(eq? (car left) b) row]
+            [else (loop (cdr left) (+ row 1))])))
+
+  (define (select-buffer-row! b)
+    (let ([row (buffer-row b)])
+      (when row (goto-point! (cons row 0)))))
+
+  (define (clamp-buffer-row!)
+    (when (pair? buffer-rows)
+      (goto-point! (cons (min (max 1 (car (point))) (length buffer-rows)) 0))))
+
+  (define (move-buffer-row! delta)
+    (clamp-buffer-row!)
+    (goto-point! (cons (min (max 1 (+ (car (point)) delta))
+                            (length buffer-rows))
+                       0)))
+
+  (define (activate-buffer-row!)
+    (clamp-buffer-row!)
+    (let* ([row (car (point))]
+           [b (and (<= 1 row (length buffer-rows))
+                   (list-ref buffer-rows (- row 1)))])
+      (when b
+        (show-buffer-in-target! b)
+        ;; A separate target leaves the app focused. Its MRU update may move
+        ;; the activated buffer, so keep the active row attached to it.
+        (when (eq? (current-buffer) buffers-view)
+          (refresh-buffers-view!)
+          (select-buffer-row! b)))))
+
+  (define (handle-buffers-event! event)
+    (cond [(member event '("UP" "C-p"))
+           (move-buffer-row! -1) #t]
+          [(member event '("DOWN" "C-n"))
+           (move-buffer-row! 1) #t]
+          [(string=? event "WHEEL-UP")
+           (move-buffer-row! -1) (activate-buffer-row!) #t]
+          [(string=? event "WHEEL-DOWN")
+           (move-buffer-row! 1) (activate-buffer-row!) #t]
+          [(string=? event "RET") (activate-buffer-row!) #t]
+          [(string=? event "MOUSE-CLICK")
+           (when (<= 1 (car (point)) (length buffer-rows))
+             (activate-buffer-row!))
+           'keep-focus]
+          [else #f]))
+
+  (define (switch-buffer-by-row! delta)
+    ;; Global alphabetical traversal, matching the stable order in *buffers*.
+    (let* ([current (current-buffer)]
+           [listed (sort (lambda (a b)
+                           (string-ci<? (buffer-name a) (buffer-name b)))
+                         (buffer-list))]
+           [tail (memq current listed)])
+      (when (and tail (pair? (cdr listed)))
+        (let ([next
+               (cond [(positive? delta)
+                      (if (pair? (cdr tail)) (cadr tail) (car listed))]
+                     [(eq? current (car listed)) (car (reverse listed))]
+                     [else
+                      (let loop ([left listed])
+                        (if (eq? (cadr left) current)
+                            (car left)
+                            (loop (cdr left))))])])
+          (show-buffer! next)
+          ;; Each window has its own point. If traversal enters the buffers app
+          ;; in this window, its active row must describe what this window now
+          ;; shows rather than inherit an unrelated row from another app window.
+          (when (eq? next buffers-view)
+            (refresh-buffers-view!)
+            (select-buffer-row! buffers-view))))))
+
+  (define (previous-buffer!) (switch-buffer-by-row! -1))
+  (define (next-buffer!) (switch-buffer-by-row! 1))
+
+  (define (buffers-view-buffer)
+    ;; Created at startup, or recreated after the user kills the view.
+    (or (and buffers-view (memq buffers-view (buffer-list)) buffers-view)
+        (begin
+          (set! buffers-view (register-app! "*buffers*"
+                               refresh-buffers-view!
+                               handle-buffers-event!))
+          ;; Always show its position bar, using the globally selected side.
+          (set-app-presentation! buffers-view 1 #t)
+          (set-buffer-mode! buffers-view "buffers")
+          (refresh-buffers-view!)
+          buffers-view)))
+
+  (define (list-buffers!)
+    ;; Pop up the live *buffers* view; on a screen too small for a second
+    ;; window, retain the compact one-line summary.
+    (let* ([table (buffer-table)] [rows (cdr table)]
+           [b (buffers-view-buffer)])
+      (refresh-buffers-view!)
+      (if (display-app! b)
+          (begin
+            (refresh-buffers-view!)
+            (select-buffer-row! (target-buffer))
+            (set-message! ""))
           (set-message!
             (fold-left (lambda (acc r)
                          (format "~a ~a~a" acc
@@ -408,6 +528,7 @@
                        "Buffers:" rows)))))
 
   (define (init!)
+    (register-mode! "buffers" '() '() buffers-styles)
     (register-descriptions!
       '(((replace-all!)
          (("procedure" . "(replace-all! from to [where])"))
@@ -428,8 +549,38 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Display a freshly rebuilt `*Buffer List*` showing each buffer's current, read-only, and modified marks, line count, mode, and file.")))
+         "Display the live `*buffers*` view. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to switch the target window, or click a row to switch immediately.")
+        ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")
+        ((next-buffer!) (("procedure" . "(next-buffer!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Switch the current window to the next buffer in alphabetical order, wrapping at the end.")))
+    (buffers-view-buffer)
+    (add-highlighter!
+      (lambda ()
+        (cond
+          [(and buffers-view (eq? (current-buffer) buffers-view))
+           (if (> (car (point)) 0)
+               (let ([row (car (point))])
+                 (list
+                   (list buffers-view row 0
+                         (string-length (buffer-line buffers-view row))
+                         'active-shadow)
+                   (list (selected-window) row 0
+                         (string-length (buffer-line buffers-view row))
+                         'active)))
+               '())]
+          [(and buffers-view (memq buffers-view (buffer-list))
+                (buffer-row (current-buffer)))
+           => (lambda (row)
+                (list (list buffers-view row 0
+                            (string-length (buffer-line buffers-view row))
+                            'active-shadow)))]
+          [else '()])))
     (bind-default-key! "C-x C-b" list-buffers!)
+    (bind-default-key! "M-UP" previous-buffer!)
+    (bind-default-key! "M-DOWN" next-buffer!)
     (bind-default-key! "M-%" replace!!)
     (bind-default-key! "M-n" next-conflict!)
     (bind-default-key! "M-m" keep-mine!)
