@@ -109,6 +109,24 @@ The kill buffer is global: text killed or copied in one buffer can be yanked in
 another. Consecutive kill commands accumulate, so repeated `C-k` followed by
 `C-y` reconstructs the complete block.
 
+## Line numbers
+
+`C-x l` toggles line numbers for the current buffer. The setting belongs to the
+buffer, so every window displaying it agrees. New and otherwise untoggled
+buffers follow the configurable default:
+
+```scheme
+(line-numbers #t) ; default is #f
+```
+
+The gutter is left of the text (and right of a left-side scrollbar). It expands
+to the decimal width of the buffer's largest line number plus one separating
+space: a 1,000-line buffer therefore uses four digits and one space. Wrapped
+continuation rows leave the number blank. The gutter is display chrome: it is
+not part of buffer text, point cannot enter it, and selections cannot include
+it. Clicking or dragging there addresses column zero of the corresponding text
+line.
+
 ## The `*buffers*` app
 
 `*buffers*` is a live, read-only table with these columns:
@@ -206,7 +224,8 @@ first or last line. If the whole buffer fits, its viewport stays at the top and
 PageUp/PageDown put point at the first/last line. Wrapped screen rows count
 individually, while sticky app headers are excluded from page height.
 
-Mousewheel scrolls the hovered window without focusing it; horizontal wheel
+Each vertical mousewheel tick pages the hovered window without focusing it,
+using the same viewport behavior as `PageUp` or `PageDown`; horizontal wheel
 ticks move point sideways.
 
 Long lines soft-wrap by default. A continuation row ends in `\`. With wrapping

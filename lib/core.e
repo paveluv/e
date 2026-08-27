@@ -12,7 +12,7 @@
     ;; state, read-only
     current-buffer buffer-list point mark
     buffer? buffer-name buffer-file buffer-text buffer-clean? buffer-modified
-    buffer-read-only buffer-mode-name
+    buffer-read-only buffer-mode-name buffer-line-numbers
     buffer-line buffer-line-count buffer-line-styles
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
@@ -25,7 +25,7 @@
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
     resize-window! wrap! wrap-lines column-native-scroll scroll-margin
-    scrollbar scrollbar-position
+    scrollbar scrollbar-position line-numbers line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
@@ -105,6 +105,10 @@
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
             (mutable mode) (mutable read-only)
+            ;; #t/#f after a local toggle, or default to follow the global
+            ;; line-numbers parameter
+            (mutable line-numbers buffer-line-numbers-setting
+                     buffer-line-numbers-setting-set!)
             ;; the disk state this buffer last agreed with: the mtime
             ;; stamp raising suspicion cheaply, and the content as
             ;; loaded or last saved -- the base for comparisons and
@@ -141,7 +145,7 @@
 
   (define (new-buffer name)
     (make-buffer name (vector "") 0 #f #t #f (vector '() '())
-                 0 0 #f 0 0 0 #f #f #f #f #f))
+                 0 0 #f 0 0 0 #f #f 'default #f #f #f))
 
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
@@ -1558,6 +1562,30 @@
           (error 'scrollbar-position "must be left or right" side))
         side)))
 
+  (define line-numbers
+    (make-parameter #f
+      (lambda (visible?)
+        (unless (boolean? visible?)
+          (error 'line-numbers "must be #t or #f" visible?))
+        visible?)))
+
+  (define (buffer-line-numbers b)
+    (let ([setting (buffer-line-numbers-setting b)])
+      (if (eq? setting 'default) (line-numbers) setting)))
+
+  (define (line-numbers!)
+    (let ([b (current-buffer)])
+      (buffer-line-numbers-setting-set! b (not (buffer-line-numbers b)))
+      (invalidate-screen-cache!)
+      (set-message!
+        (format "Line numbers ~a" (if (buffer-line-numbers b) "on" "off")))))
+
+  (define (window-line-number-width w)
+    (if (buffer-line-numbers (window-buffer w))
+        (+ 1 (string-length
+               (number->string (buffer-line-count (window-buffer w)))))
+        0))
+
   (define (window-scrollbar? w)
     (let* ([a (app-of (window-buffer w))]
            [choice (and a (app-scrollbar a))])
@@ -1566,7 +1594,9 @@
             [else #f])))
 
   (define (window-content-width w)
-    (max 1 (- (window-width w) (if (window-scrollbar? w) 1 0))))
+    (max 1 (- (window-width w)
+              (if (window-scrollbar? w) 1 0)
+              (window-line-number-width w))))
 
   (define (window-scrollbar-column w)
     (case (window-scrollbar? w)
@@ -2904,16 +2934,10 @@
                                 (segment-start breaks
                                   (segment-of breaks point-col))))
                            point-col)])
-      (define (visual-total)
-        (let loop ([row sticky] [total 0])
-          (if (= row n)
-              total
-              (loop (+ row 1)
-                    (+ total (line-segments w (vector-ref v row)))))))
-      (define (top-offset)
+      (define (offset-at target segment)
         (let loop ([row sticky] [offset 0])
-          (if (>= row (window-top w))
-              (+ offset (window-topseg w))
+          (if (>= row target)
+              (+ offset segment)
               (loop (+ row 1)
                     (+ offset (line-segments w (vector-ref v row)))))))
       (define (position-at offset)
@@ -2936,23 +2960,21 @@
           (goto-point! (cons (car point) (column-at point)))
           (window-top-set! w (car top))
           (window-topseg-set! w (cdr top))))
-      (let* ([total (max 1 (visual-total))]
+      (let* ([total (max 1 (offset-at n 0))]
              [last-top (max 0 (- total height))]
-             [old-top (min last-top (max 0 (top-offset)))]
-             [short? (<= total height)])
-        (cond
-          [short?
-           (land! 0 (if (negative? direction) 0 (- total 1)))]
-          [(negative? direction)
-           (if (= old-top 0)
-               (land! 0 0)
-               (let ([top (max 0 (- old-top height))])
-                 (land! top (+ top (quotient (- height 1) 2)))))]
-          [else
-           (if (= old-top last-top)
-               (land! last-top (- total 1))
-               (let ([top (min last-top (+ old-top height))])
-                 (land! top (+ top (quotient (- height 1) 2)))))]))))
+             [old-top (min last-top
+                           (max 0 (offset-at (window-top w)
+                                             (window-topseg w))))]
+             [up? (negative? direction)]
+             [at-edge? (= old-top (if up? 0 last-top))]
+             [top (cond [(<= total height) 0]
+                        [up? (max 0 (- old-top height))]
+                        [else (min last-top (+ old-top height))])]
+             [middle (+ top (quotient (- height 1) 2))]
+             [point (cond [(<= total height) (if up? 0 (- total 1))]
+                          [at-edge? (if up? 0 (- total 1))]
+                          [else middle])])
+        (land! top point))))
 
   (define (rows-before w prow pcol)
     ;; Screen rows between w's top -- its first visible segment -- and
@@ -3553,6 +3575,19 @@
                   (lambda ()
                     (ansi (style-code 'chrome) glyph "\x1b;[0m")))))))
 
+  (define (paint-line-number! row x width line first-segment?)
+    (when (> width 0)
+      (let* ([label (if (and line first-segment?)
+                        (number->string (+ line 1))
+                        "")]
+             [text (string-append
+                     (make-string (max 0 (- width 1 (string-length label)))
+                                  #\space)
+                     label " ")])
+        (paint! row x (list 'line-number text)
+                (lambda ()
+                  (ansi (style-code 'chrome) text "\x1b;[0m"))))))
+
   (define (paint-window! w start height ranges)
     (let* ([b (window-buffer w)]
            [v (buffer-lines b)]
@@ -3560,8 +3595,10 @@
            [sticky (min height (buffer-sticky-lines b))]
            [top (max sticky (window-top w))]
            [left (window-left w)]
-           [content-x (+ (window-xoff w)
-                         (if (eq? (window-scrollbar? w) 'left) 1 0))]
+           [gutter-width (window-line-number-width w)]
+           [gutter-x (+ (window-xoff w)
+                        (if (eq? (window-scrollbar? w) 'left) 1 0))]
+           [content-x (+ gutter-x gutter-width)]
            [content-width (window-content-width w)]
            [styles-of (buffer-line-styles b)]
            [mode-tag (let ([m (buffer-mode b)]) (and m (mode-name m)))]
@@ -3575,6 +3612,8 @@
         (when (< k height)
           (let ([row (+ start k)])
             (paint-scrollbar! w row k height sticky top n)
+            (paint-line-number! row gutter-x gutter-width
+                                (and (< i n) i) (= seg 0))
             (if (< i n)
                 (let* ([line (vector-ref v i)]
                        [shown (let ([r (let ([m (buffer-mode b)])
@@ -3772,6 +3811,7 @@
                        (map (lambda (w)
                               (list (window-wrapped? w)
                                     (window-scrollbar? w)
+                                    (window-line-number-width w)
                                     (buffer-sticky-lines (window-buffer w))))
                             windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
@@ -3786,7 +3826,8 @@
                       ;; cached repainting instead.
                       (unless (or (> (buffer-sticky-lines
                                        (window-buffer (car entry))) 0)
-                                  (window-scrollbar? (car entry)))
+                                  (window-scrollbar? (car entry))
+                                  (> (window-line-number-width (car entry)) 0))
                         (native-scroll! (car entry) (cadr entry) (caddr entry))))
                     layout))
       (paint-dividers! layout)
@@ -3807,7 +3848,8 @@
     (let* ([entry (assq w (window-layout))]
            [sticky (buffer-sticky-lines (window-buffer w))]
            [x (+ (window-xoff w)
-                 (if (eq? (window-scrollbar? w) 'left) 1 0))]
+                 (if (eq? (window-scrollbar? w) 'left) 1 0)
+                 (window-line-number-width w))]
            [screen-row (if (< prow sticky)
                            (+ (cadr entry) prow 1)
                            (+ (cadr entry) sticky
@@ -4656,7 +4698,8 @@
            [sticky (buffer-sticky-lines (window-buffer w))]
            [k (max 0 (- y 1 start))]
            [col (max 0 (- x 1 (window-xoff w)
-                          (if (eq? (window-scrollbar? w) 'left) 1 0)))])
+                          (if (eq? (window-scrollbar? w) 'left) 1 0)
+                          (window-line-number-width w)))])
       (cond
         [(< k sticky)
          (cons (min k (- (vector-length v) 1)) col)]
@@ -4798,7 +4841,7 @@
 
   (define (mouse-wheel! x y dir meta?)
     ;; Scroll the window under the pointer by moving its point (redraw
-    ;; scrolls it to follow); the focused window stays focused. Meta-wheel
+    ;; pages it); the focused window stays focused. Meta-wheel
     ;; applies the corresponding global buffer-switch binding to the hovered
     ;; window instead. Apps get an ordinary directional tick first so list
     ;; controls can choose their wheel step.
@@ -4825,11 +4868,11 @@
 
   (define (wheel-mover dir)
     ;; Wheel direction (the low bits of a 64-flagged button): up, down,
-    ;; left, right.  Vertical ticks move point by lines; horizontal ones
-    ;; move it sideways within its line.
+    ;; left, right.  Vertical ticks page the hovered window; horizontal
+    ;; ones move point sideways within its line.
     (case dir
-      [(0) (lambda () (move-vertical! -3))]
-      [(1) (lambda () (move-vertical! 3))]
+      [(0) page-up!]
+      [(1) page-down!]
       [(2) (lambda () (goto-point! (cons point-row (- point-col 3))))]
       [(3) (lambda () (goto-point! (cons point-row (+ point-col 3))))]
       [else (lambda () (void))]))
@@ -5320,7 +5363,8 @@
           ("C-x k" ,kill-buffer!!) ("C-x o" ,other-window!)
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
           ("C-x 2" ,split-window!) ("C-x 3" ,split-window-right!)
-          ("C-x t" ,wrap!) ("C-h k" ,describe-key!!)))
+          ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
+          ("C-h k" ,describe-key!!)))
       (for-each
         (lambda (entry)
           (bind-default-key! 'prompt (car entry) (cadr entry)))

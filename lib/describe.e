@@ -762,6 +762,9 @@
         ((set-style!) (("procedure" . "(set-style! face style)")) "void"
          ("(core)") core "Style customization" #f
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
+        ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
+         ("(core)") core "Buffer display" #f
+         "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")
         ((register-app!)
          (("procedure" . "(register-app! name refresh! [handle-event!])"))
          "buffer" ("(core)") core "App buffers" #f

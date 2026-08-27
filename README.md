@@ -87,7 +87,8 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 Each window has its own status line, point, and scroll position; the
 same buffer can be shown in several windows at once. Buffers have per-buffer
 history and marks; windows have independent point, scrolling, wrapping, and
-status. A right-side scrollbar is shown by default. See
+status. A right-side scrollbar is shown by default; `C-x l` toggles a
+buffer-owned line-number gutter. See
 [Buffers](docs/BUFFERS.md) for switching, `*buffers*`, file integrity, target
 windows, mouse behavior, scrollbars, wrapping, splits, and the public API.
 
@@ -499,7 +500,7 @@ for registration, event handling, and target semantics.
   were set at the press and point moved (so `C-w`, `C-y`, and friends
   apply); a double click selects the word under the pointer; dragging
   a status bar resizes the windows it separates; the wheel
-  scrolls the window under the pointer, wherever the focus is, and
+  pages the window under the pointer, wherever the focus is, and
   horizontal wheel ticks move point sideways within its line. The
   terminal's own mouse selection needs Shift held while tracking is
   on; `M-x (mouse! #f)` turns tracking off (and native selection back
