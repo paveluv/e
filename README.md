@@ -83,6 +83,7 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x 0`   | Delete the current window                               |
 | `C-x o`   | Move to the next window                                 |
 | `C-x t`   | Toggle soft-wrapping of long lines in this window       |
+| `C-x g`   | Browse Git commits, changed files, and patches          |
 
 Each window has its own status line, point, and scroll position; the
 same buffer can be shown in several windows at once. Buffers have per-buffer
@@ -91,6 +92,8 @@ status. A right-side scrollbar is shown by default; `C-x l` toggles a
 buffer-owned line-number gutter. See
 [Buffers](docs/BUFFERS.md) for switching, `*buffers*`, file integrity, target
 windows, mouse behavior, scrollbars, wrapping, splits, and the public API.
+Structured, read-only repository queries are available through the
+[Git API](docs/GIT.md).
 
 ### Movement
 
