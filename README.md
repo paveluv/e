@@ -471,6 +471,13 @@ syntax modes ship in
 `lib/`: `scheme-mode.e`, `c-mode.e` (block comments span lines through
 a memoized whole-buffer scan), and `md-mode.e` (Markdown; indented
 code blocks are styled as Scheme, modes composing per line).
+Additional extensions belong in `config.e`; they augment the registered mode
+without copying or replacing its implementation:
+
+```scheme
+(add-mode-extension! "scheme" ".foo")
+```
+
 Stateful modes build their row provider with `memoize-buffer-analysis`:
 the analyzer receives a snapshot vector of lines and returns a vector of
 per-row results, recomputed once when the buffer content changes. Context

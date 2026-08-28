@@ -765,6 +765,10 @@
         ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
          ("(core)") core "Buffer display" #f
          "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")
+        ((add-mode-extension!)
+         (("procedure" . "(add-mode-extension! mode extension)")) "void"
+         ("(core)") core "Mode customization" #f
+         "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
         ((register-app!)
          (("procedure" . "(register-app! name refresh! [handle-event!])"))
          "buffer" ("(core)") core "App buffers" #f

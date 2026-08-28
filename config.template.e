@@ -32,6 +32,7 @@
 ;;                                ; M-c toggles (#f: always exact)
 ;; (eval-copy-result #t)          ; copy non-void eval!/M-x results for C-y
 ;; (indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
+;; (add-mode-extension! "scheme" ".foo") ; highlight *.foo as Scheme
 ;; (scheme-format-brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
 ;; (scheme-tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
 ;; (min-window-lines 2)           ; squeezed windows keep this many text lines

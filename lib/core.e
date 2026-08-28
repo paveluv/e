@@ -41,7 +41,8 @@
     ;; extending the editor
     bind-key! bind-default-key! unbind-key! key-binding key-event-binding
     command-key command-keys command-hint describe-key!!
-    register-mode! find-mode mode-styles memoize-buffer-analysis add-highlighter!
+    register-mode! add-mode-extension! find-mode mode-styles
+    memoize-buffer-analysis add-highlighter!
     register-indenter! register-formatter!
     add-status-hint!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
@@ -104,7 +105,7 @@
             (mutable marked)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
-            (mutable mode) (mutable read-only)
+            (mutable mode) (mutable mode-auto) (mutable read-only)
             ;; #t/#f after a local toggle, or default to follow the global
             ;; line-numbers parameter
             (mutable line-numbers buffer-line-numbers-setting
@@ -145,7 +146,7 @@
 
   (define (new-buffer name)
     (make-buffer name (vector "") 0 #f #t #f (vector '() '())
-                 0 0 #f 0 0 0 #f #f 'default #f #f #f))
+                 0 0 #f 0 0 0 #f #t #f 'default #f #f #f))
 
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
@@ -2221,6 +2222,7 @@
                   [(n e i s r rs) (new n e i s r rs)]))))
 
   (define modes (make-registry))
+  (define mode-extension-additions (make-registry))
 
   (define (register-mode! name extensions interpreters styles . extra)
     ;; extra: an optional render transform, then an optional
@@ -2230,9 +2232,29 @@
                  (and (pair? extra) (car extra))
                  (and (pair? extra) (pair? (cdr extra)) (cadr extra)))))
 
+  (define (add-mode-extension! name extension)
+    ;; Add a suffix to an existing mode without replacing its implementation.
+    ;; This is a registry so config-owned additions disappear on config reload.
+    (unless (and (string? extension) (> (string-length extension) 1)
+                 (char=? (string-ref extension 0) #\.))
+      (error 'add-mode-extension! "expected an extension beginning with ."
+             extension))
+    (unless (find-mode name)
+      (error 'add-mode-extension! "no such mode" name))
+    (registry-add! mode-extension-additions (cons extension name))
+    (for-each (lambda (b) (when (buffer-mode-auto b) (assign-mode! b)))
+              buffers)
+    (void))
+
   (define (detect-mode path first-line)
     ;; The mode for a file: by extension, then by the #! interpreter line.
     (or (and path
+             (let ([addition
+                    (find (lambda (entry)
+                            (string-suffix? (car entry) path))
+                          (registry-items mode-extension-additions))])
+               (and addition (find-mode (cdr addition)))))
+        (and path
              (registry-find modes
                (lambda (m)
                  (exists (lambda (ext) (string-suffix? ext path))
@@ -2247,7 +2269,8 @@
 
   (define (assign-mode! b)
     (buffer-mode-set! b
-      (detect-mode (buffer-file b) (vector-ref (buffer-lines b) 0))))
+      (detect-mode (buffer-file b) (vector-ref (buffer-lines b) 0)))
+    (buffer-mode-auto-set! b #t))
 
   (define (find-mode name)
     (registry-find modes (lambda (m) (string=? (mode-name m) name))))
@@ -2255,7 +2278,8 @@
   (define (set-buffer-mode! b name)
     ;; Give b the registered mode called name (#f for none), regardless of
     ;; its file name -- how transcript buffers get their highlighting.
-    (buffer-mode-set! b (and name (find-mode name))))
+    (buffer-mode-set! b (and name (find-mode name)))
+    (buffer-mode-auto-set! b #f))
 
   (define (set-buffer-read-only! b flag)
     (buffer-read-only-set! b flag))
@@ -5450,8 +5474,11 @@
     ;; Re-resolve every buffer's mode by name, so buffers pick up a
     ;; reloaded mode's new styles (or lose a mode that is gone).
     (for-each (lambda (b)
-                (let ([m (buffer-mode b)])
-                  (when m (buffer-mode-set! b (find-mode (mode-name m))))))
+                (if (buffer-mode-auto b)
+                    (assign-mode! b)
+                    (let ([m (buffer-mode b)])
+                      (when m
+                        (buffer-mode-set! b (find-mode (mode-name m)))))))
               buffers))
 
   (define (reload-module! name*)
@@ -5557,6 +5584,8 @@
                               #f])
                (parameterize ([registering-module 'config])
                  (load path))
+               (refresh-buffer-modes!)
+               (invalidate-screen-cache!)
                #t)))))
 
   (define (probe-terminal!)
