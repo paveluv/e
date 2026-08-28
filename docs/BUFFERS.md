@@ -224,9 +224,10 @@ first or last line. If the whole buffer fits, its viewport stays at the top and
 PageUp/PageDown put point at the first/last line. Wrapped screen rows count
 individually, while sticky app headers are excluded from page height.
 
-Each vertical mousewheel tick pages the hovered window without focusing it,
-using the same viewport behavior as `PageUp` or `PageDown`; horizontal wheel
-ticks move point sideways.
+Each vertical mousewheel tick moves the hovered viewport by one eighth of its
+height without focusing it. It otherwise behaves like `PageUp` or `PageDown`:
+point is centered and movement clamps at the buffer boundaries. Horizontal
+wheel ticks move point sideways.
 
 Long lines soft-wrap by default. A continuation row ends in `\`. With wrapping
 off, truncated lines end in `$` and the window scrolls horizontally to follow

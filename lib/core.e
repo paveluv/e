@@ -2916,9 +2916,10 @@
         (vector-length (line-breaks w line))
         1))
 
-  (define (page-window! direction)
-    ;; Pagination is a viewport operation. Shift its top by exactly one body
-    ;; height in visual rows, clamp at either end, then put point in the middle.
+  (define (page-window! direction fraction)
+    ;; Pagination is a viewport operation. Shift its top by the requested
+    ;; fraction of the body height in visual rows, clamp at either end, then
+    ;; put point in the middle.
     ;; A second outward page at an already-clamped edge moves point to that
     ;; edge. Wrapped segments count as rows; the visual column is preserved.
     (let* ([w current-window]
@@ -2966,10 +2967,11 @@
                            (max 0 (offset-at (window-top w)
                                              (window-topseg w))))]
              [up? (negative? direction)]
+             [step (max 1 (quotient height fraction))]
              [at-edge? (= old-top (if up? 0 last-top))]
              [top (cond [(<= total height) 0]
-                        [up? (max 0 (- old-top height))]
-                        [else (min last-top (+ old-top height))])]
+                        [up? (max 0 (- old-top step))]
+                        [else (min last-top (+ old-top step))])]
              [middle (+ top (quotient (- height 1) 2))]
              [point (cond [(<= total height) (if up? 0 (- total 1))]
                           [at-edge? (if up? 0 (- total 1))]
@@ -4840,8 +4842,8 @@
                (goto-point! (window-position w start height x y))))))]))
 
   (define (mouse-wheel! x y dir meta?)
-    ;; Scroll the window under the pointer by moving its point (redraw
-    ;; pages it); the focused window stays focused. Meta-wheel
+    ;; Scroll the window under the pointer; the focused window stays focused.
+    ;; Meta-wheel
     ;; applies the corresponding global buffer-switch binding to the hovered
     ;; window instead. Apps get an ordinary directional tick first so list
     ;; controls can choose their wheel step.
@@ -4868,11 +4870,11 @@
 
   (define (wheel-mover dir)
     ;; Wheel direction (the low bits of a 64-flagged button): up, down,
-    ;; left, right.  Vertical ticks page the hovered window; horizontal
-    ;; ones move point sideways within its line.
+    ;; left, right. Vertical ticks move the hovered viewport by one eighth
+    ;; of its height; horizontal ones move point sideways within its line.
     (case dir
-      [(0) page-up!]
-      [(1) page-down!]
+      [(0) (lambda () (page-window! -1 8))]
+      [(1) (lambda () (page-window! 1 8))]
       [(2) (lambda () (goto-point! (cons point-row (- point-col 3))))]
       [(3) (lambda () (goto-point! (cons point-row (+ point-col 3))))]
       [else (lambda () (void))]))
@@ -5170,8 +5172,8 @@
   (define (open-line!)
     (let ([row point-row] [col point-col])
       (newline!) (set! point-row row) (set! point-col col)))
-  (define (page-up!) (page-window! -1))
-  (define (page-down!) (page-window! 1))
+  (define (page-up!) (page-window! -1 1))
+  (define (page-down!) (page-window! 1 1))
   (define (previous-line!) (move-vertical! -1))
   (define (next-line!) (move-vertical! 1))
   (define (beginning-of-buffer!) (set! point-row 0) (set! point-col 0))

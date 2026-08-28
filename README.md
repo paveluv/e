@@ -500,7 +500,7 @@ for registration, event handling, and target semantics.
   were set at the press and point moved (so `C-w`, `C-y`, and friends
   apply); a double click selects the word under the pointer; dragging
   a status bar resizes the windows it separates; the wheel
-  pages the window under the pointer, wherever the focus is, and
+  scrolls the window under the pointer by one eighth of its height, and
   horizontal wheel ticks move point sideways within its line. The
   terminal's own mouse selection needs Shift held while tracking is
   on; `M-x (mouse! #f)` turns tracking off (and native selection back
