@@ -4,9 +4,10 @@
 ;; indenter and formatter and behind the standalone scheme-format tool.
 ;; It operates on vectors of lines; nothing here touches the editor.
 ;;
-;; Indentation is the one thing enforced -- spacing within a line is
-;; the author's (tables, alignment, and the like communicate
-;; structure), and lines are never joined or split.  A line can have
+;; Conservative formatting preserves spacing and line boundaries. The optional
+;; intrusive pass may collapse code whitespace and continuation lines, place
+;; inline comments consistently, and break code toward a target width. A line
+;; can have
 ;; several valid indentations, its stops: an application whose first
 ;; argument shares the opener's line may indent two past the opener
 ;; or align under that argument, whichever reads better.
@@ -23,14 +24,21 @@
 
 (library (scheme-format)
   (export scheme-indent-lines scheme-format-lines scheme-delimiter?
-          scheme-format-brackets scheme-tab-width)
+          scheme-format-brackets scheme-tab-width
+          scheme-format-intrusive scheme-format-width)
   (import (chezscheme))
 
-  ;; Configuration: whether format-* normalizes ( ) vs
-  ;; [ ] by convention, and how many spaces a tab widens to (#f: tabs
-  ;; stay).
+  ;; Configuration: bracket convention, tab expansion, and the opt-in
+  ;; width-aware layout pass.
   (define scheme-format-brackets (make-parameter #t))
   (define scheme-tab-width (make-parameter 2))
+  (define scheme-format-intrusive (make-parameter #f))
+  (define scheme-format-width
+    (make-parameter 100
+      (lambda (width)
+        (unless (and (integer? width) (exact? width) (>= width 20))
+          (error 'scheme-format-width "expected an integer >= 20" width))
+        width)))
 
   (define (string-prefix? prefix s)
     (let ([np (string-length prefix)])
@@ -38,6 +46,13 @@
            (string=? prefix (substring s 0 np)))))
 
   (define (string-tail s i) (substring s i (string-length s)))
+
+  (define (string-find s needle)
+    (let ([n (string-length s)] [m (string-length needle)])
+      (let loop ([i 0])
+        (cond [(> (+ i m) n) #f]
+              [(string=? (substring s i (+ i m)) needle) i]
+              [else (loop (+ i 1))]))))
 
   (define (scheme-delimiter? c)
     (or (char-whitespace? c) (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\'))))
@@ -398,7 +413,7 @@
                                 [else stops])
                           acc)))))))
 
-  (define (scheme-format-lines v from to)
+  (define (scheme-basic-format-lines v from to)
     ;; The formatter: rows [from, to] indented to their nearest stops,
     ;; tabs outside strings widened, brackets normalized to convention
     ;; (only pairs the range wholly contains), trailing whitespace
@@ -441,5 +456,184 @@
               (scan-line! st laid r #t plan)
               (loop (+ r 1) (cons laid acc)
                     (cons (sstate-str st) ends-in-string)))))))
+
+  (define (comment-at s)
+    ;; The first line-comment semicolon outside strings and character
+    ;; literals. Block-comment lines are left to the structural formatter.
+    (let ([n (string-length s)])
+      (let loop ([i 0] [string? #f] [escaped? #f])
+        (cond [(= i n) #f]
+              [string?
+               (let ([c (string-ref s i)])
+                 (cond [escaped? (loop (+ i 1) #t #f)]
+                       [(char=? c #\\) (loop (+ i 1) #t #t)]
+                       [(char=? c #\") (loop (+ i 1) #f #f)]
+                       [else (loop (+ i 1) #t #f)]))]
+              [(char=? (string-ref s i) #\")
+               (loop (+ i 1) #t #f)]
+              [(and (char=? (string-ref s i) #\#) (< (+ i 1) n)
+                    (char=? (string-ref s (+ i 1)) #\\))
+               (let literal ([j (+ i 2)])
+                 (if (and (< j n)
+                          (not (scheme-delimiter? (string-ref s j))))
+                     (literal (+ j 1))
+                     (loop j #f #f)))]
+              [(and (char=? (string-ref s i) #\#) (< (+ i 1) n)
+                    (char=? (string-ref s (+ i 1)) #\;))
+               (loop (+ i 2) #f #f)]
+              [(char=? (string-ref s i) #\;) i]
+              [else (loop (+ i 1) #f #f)]))))
+
+  (define (block-comment-line? s)
+    (or (string-find s "#|") (string-find s "|#")))
+
+  (define (collapse-code-space s)
+    ;; One horizontal space per run, preserving leading indentation and every
+    ;; byte inside strings and character literals.
+    (let ([out (open-output-string)] [n (string-length s)])
+      (let leading ([i 0])
+        (if (and (< i n) (memv (string-ref s i) '(#\space #\tab)))
+            (begin (put-char out #\space) (leading (+ i 1)))
+            (let loop ([i i] [string? #f] [escaped? #f] [pending? #f])
+              (cond
+                [(= i n) (trim-right (get-output-string out))]
+                [string?
+                 (let ([c (string-ref s i)])
+                   (put-char out c)
+                   (cond [escaped? (loop (+ i 1) #t #f #f)]
+                         [(char=? c #\\) (loop (+ i 1) #t #t #f)]
+                         [(char=? c #\") (loop (+ i 1) #f #f #f)]
+                         [else (loop (+ i 1) #t #f #f)]))]
+                [(memv (string-ref s i) '(#\space #\tab))
+                 (loop (+ i 1) #f #f #t)]
+                [else
+                 (when pending? (put-char out #\space))
+                 (let ([c (string-ref s i)])
+                   (put-char out c)
+                   (cond
+                     [(char=? c #\") (loop (+ i 1) #t #f #f)]
+                     [(and (char=? c #\#) (< (+ i 1) n)
+                           (char=? (string-ref s (+ i 1)) #\\))
+                      (put-char out #\\)
+                      (when (< (+ i 2) n)
+                        (put-char out (string-ref s (+ i 2))))
+                      (let literal ([j (min n (+ i 3))])
+                        (if (and (< j n)
+                                 (not (scheme-delimiter? (string-ref s j))))
+                            (begin (put-char out (string-ref s j))
+                                   (literal (+ j 1)))
+                            (loop j #f #f #f)))]
+                     [else (loop (+ i 1) #f #f #f)]))]))))))
+
+  (define (normalize-layout-line s)
+    (if (or (block-comment-line? s) (string-find s "#\\"))
+        s
+        (let ([comment (comment-at s)])
+          (if comment
+              (let ([code (trim-right (substring s 0 comment))]
+                    [text (substring s comment (string-length s))])
+                (if (blank? code)
+                    (string-append
+                      (make-string (indent-of s) #\space) text)
+                    (string-append (collapse-code-space code) "  " text)))
+              (collapse-code-space s)))))
+
+  (define (layout-lines lines width)
+    ;; Fold adjacent continuation lines when they fit. scan-line! supplies the
+    ;; reader-aware depth and protects comments, block comments, and continued
+    ;; strings from joining.
+    (let ([st (fresh-state)])
+      (let loop ([rest (map normalize-layout-line lines)]
+                 [current #f] [depth 0] [protected? #f] [out '()])
+        (if (null? rest)
+            (reverse (if current (cons current out) out))
+            (let* ([line (car rest)]
+                   [before-string (sstate-str st)]
+                   [before-block (sstate-blk st)]
+                   [comment? (comment-at line)])
+              (scan-line! st line 0 #f #f)
+              (let* ([next-depth (length (sstate-stack st))]
+                     [next-protected?
+                      (or before-string (> before-block 0) comment?
+                          (sstate-str st) (> (sstate-blk st) 0))]
+                     [candidate
+                      (and current
+                           (string-append current " "
+                             (string-tail line (indent-of line))))]
+                     [join? (and current (> depth 0) (not protected?)
+                                 (not next-protected?) (not (blank? line))
+                                 (<= (string-length candidate) width))])
+                (loop (cdr rest) (if join? candidate line) next-depth
+                      next-protected?
+                      (if (or (not current) join?) out
+                          (cons current out)))))))))
+
+  (define (break-at s limit)
+    ;; Last whitespace at or before limit that is outside a string. Lines with
+    ;; comments and block comments never reach this function.
+    (let loop ([i 0] [string? #f] [escaped? #f] [last #f])
+      (if (or (= i (string-length s)) (> i limit))
+          last
+          (let ([c (string-ref s i)])
+            (cond
+              [string?
+               (cond [escaped? (loop (+ i 1) #t #f last)]
+                     [(char=? c #\\) (loop (+ i 1) #t #t last)]
+                     [(char=? c #\") (loop (+ i 1) #f #f last)]
+                     [else (loop (+ i 1) #t #f last)])]
+              [(char=? c #\") (loop (+ i 1) #t #f last)]
+              [(char-whitespace? c) (loop (+ i 1) #f #f i)]
+              [else (loop (+ i 1) #f #f last)])))))
+
+  (define (break-layout-line s width)
+    (if (or (<= (string-length s) width) (comment-at s)
+            (block-comment-line? s))
+        (list s)
+        (let ([at (break-at s width)])
+          (if (or (not at) (<= at (indent-of s)))
+              (list s)
+              (cons (trim-right (substring s 0 at))
+                    (break-layout-line
+                      (string-append
+                        (make-string (+ (indent-of s) 2) #\space)
+                        (string-tail s (+ at 1)))
+                      width))))))
+
+  (define (lines-text lines)
+    (apply string-append
+      (map (lambda (line) (string-append line "\n")) lines)))
+
+  (define (read-all text)
+    (guard (ex [else #f])
+      (let ([port (open-string-input-port text)])
+        (let loop ([data '()])
+          (let ([datum (read port)])
+            (if (eof-object? datum)
+                (cons #t (reverse data))
+                (loop (cons datum data))))))))
+
+  (define (same-data? before after)
+    (let ([a (read-all (lines-text before))]
+          [b (read-all (lines-text after))])
+      (and a b (equal? (cdr a) (cdr b)))))
+
+  (define (scheme-format-lines v from to)
+    ;; Intrusive, line-count-changing layout is opt-in and limited to a whole
+    ;; buffer; region formatting retains the old structural guarantees.
+    (let ([basic (scheme-basic-format-lines v from to)])
+      (if (and (scheme-format-intrusive)
+               (= from 0) (= to (- (vector-length v) 1)))
+          (let* ([laid (apply append
+                         (map (lambda (line)
+                                (break-layout-line line
+                                                   (scheme-format-width)))
+                              (layout-lines basic (scheme-format-width))))]
+                 [all (list->vector laid)])
+            (let ([formatted
+                   (if (zero? (vector-length all)) '()
+                       (scheme-basic-format-lines
+                         all 0 (- (vector-length all) 1)))])
+              (if (same-data? (vector->list v) formatted) formatted basic)))
+          basic)))
 
 )

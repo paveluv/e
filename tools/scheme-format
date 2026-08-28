@@ -2,12 +2,13 @@
 ;; scheme-format -- Scheme source formatter: the e editor's normal form,
 ;; from the shell.
 ;;
-;; usage: scheme-format [-i] [file ...]
+;; usage: scheme-format [-i] [--intrusive] [--width columns] [file ...]
 ;;
 ;; Formats Scheme source -- indentation (each line settling on the
 ;; stop nearest its current column), tabs widened, the ( ) vs [ ]
 ;; conventions, trailing whitespace trimmed, one final newline;
-;; spacing within lines is the author's and stays.  See the e
+;; spacing within lines is the author's and stays unless --intrusive enables
+;; comment-aware whitespace folding and width-based layout. See the e
 ;; README's "Indentation and formatting".  Without arguments,
 ;; stdin formats to stdout.  With -i the files are rewritten in
 ;; place (only when changed, permissions kept); without it their
@@ -67,14 +68,42 @@
       (error 'scheme-format "the result does not read back as the same data"))
     new))
 
-(define (run format-lines)
-  (let* ([args (command-line-arguments)]
-         [in-place? (and (pair? args) (string=? (car args) "-i"))]
-         [files (if in-place? (cdr args) args)])
+(define (usage)
+  (display "usage: scheme-format [-i] [--intrusive] [--width columns] [file ...]\n"
+           (current-error-port)))
+
+(define (options args)
+  (let loop ([args args] [in-place? #f] [intrusive? #f] [width 100]
+             [files '()])
+    (cond [(null? args) (values in-place? intrusive? width (reverse files))]
+          [(string=? (car args) "-i")
+           (loop (cdr args) #t intrusive? width files)]
+          [(string=? (car args) "--intrusive")
+           (loop (cdr args) in-place? #t width files)]
+          [(member (car args) '("-w" "--width"))
+           (if (null? (cdr args))
+               (begin (usage) (exit 1))
+               (let ([n (string->number (cadr args))])
+                 (unless (and n (integer? n) (exact? n) (>= n 20))
+                   (display "scheme-format: width must be an integer >= 20\n"
+                            (current-error-port))
+                   (exit 1))
+                 (loop (cddr args) in-place? #t n files)))]
+          [(and (> (string-length (car args)) 0)
+                (char=? (string-ref (car args) 0) #\-))
+           (usage) (exit 1)]
+          [else (loop (cdr args) in-place? intrusive? width
+                      (cons (car args) files))])))
+
+(define (run format-lines intrusive width-parameter)
+  (let-values ([(in-place? intrusive? width files)
+                (options (command-line-arguments))])
+    (intrusive intrusive?)
+    (width-parameter width)
     (cond
       [(null? files)
        (when in-place?
-         (display "usage: scheme-format [-i] [file ...]\n" (current-error-port))
+         (usage)
          (exit 1))
        (display (format-text (get-string-all (current-input-port))
                              format-lines))]
@@ -101,4 +130,6 @@
          files)])))
 
 (eval '(import (scheme-format)) (interaction-environment))
-(run (eval 'scheme-format-lines (interaction-environment)))
+(run (eval 'scheme-format-lines (interaction-environment))
+     (eval 'scheme-format-intrusive (interaction-environment))
+     (eval 'scheme-format-width (interaction-environment)))

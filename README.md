@@ -195,6 +195,19 @@ never touched.  Modules provide the rules per mode with
 the pure `(scheme-format)` library, which also drives
 `tools/scheme-format`: the same treatment from the shell with
 `scheme-format [-i] [file ...]`, or stdin to stdout without arguments.
+More intrusive whole-buffer layout is optional and off by default:
+
+```scheme
+(scheme-format-intrusive #t)
+(scheme-format-width 100)
+```
+
+It collapses excess spacing outside literals, joins continuation lines that
+fit, places inline comments after two spaces, and breaks long code toward the
+target width. Partial-region formatting stays structurally conservative. From
+the shell, use `scheme-format --intrusive --width 100`; specifying `--width`
+also enables intrusive mode. The tool still refuses any result that does not
+read back as the same sequence of Scheme data.
 With `(scheme-format-on-save #t)`
 (on by default) every save of a Scheme buffer formats it
 first through a pre-save hook; modules add their own with

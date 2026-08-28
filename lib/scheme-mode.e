@@ -13,7 +13,8 @@
 
 (library (scheme-mode)
   (export init! scheme-format-on-save)
-  (import (chezscheme) (core) (scheme-format))
+  (import (chezscheme) (core) (scheme-format)
+          (only (describe) register-descriptions!))
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
@@ -194,4 +195,13 @@
                     scheme-styles #f scheme-row-styles)
     (register-indenter! "scheme" scheme-indent)
     (register-formatter! "scheme" scheme-format)
+    (register-descriptions!
+      '(((scheme-format-intrusive)
+         (("parameter" . "(scheme-format-intrusive [enabled?])")) "boolean"
+         ("(scheme-format)") scheme-format "Scheme formatting" #f
+         "Control intrusive Scheme formatting. It is off by default; when enabled, whole-buffer formatting collapses excess code spacing, joins fitting continuation lines, normalizes inline-comment gaps, and breaks code toward `scheme-format-width`.")
+        ((scheme-format-width)
+         (("parameter" . "(scheme-format-width [columns])")) "integer"
+         ("(scheme-format)") scheme-format "Scheme formatting" #f
+         "Get or set the target width used when `scheme-format-intrusive` is enabled. The default is 100 columns and the minimum is 20.")))
     (add-pre-save-hook! format-on-save!)))
