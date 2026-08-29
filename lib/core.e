@@ -4761,6 +4761,14 @@
     (set! drag-scrollbar #f)
     (let ([prev last-press]
           [now (real-time)])
+      (define (arm-text-selection!)
+        (set! mark-row point-row)
+        (set! mark-col point-col)
+        (set! mark-active? #f)
+        (when (and prev
+                   (= (car prev) x) (= (cadr prev) y)
+                   (< (- now (caddr prev)) 450))
+          (select-word!)))
       (set! last-press (list x y now))
       (cond
         [(divider-at (- x 1) (- y 1)) =>
@@ -4813,19 +4821,18 @@
                     ;; perform a target action and explicitly preserve the
                     ;; old focus by returning keep-focus for MOUSE-CLICK.
                     (let ([result (dispatch-app-event! "MOUSE-CLICK")])
-                      (when (and (eq? result 'keep-focus) (memq old windows))
-                        (set! current-window old)))
+                      (cond [(and (eq? result 'keep-focus) (memq old windows))
+                             (set! current-window old)]
+                            [(not result)
+                             ;; Views and unhandled app text select like
+                             ;; ordinary read-only buffer text. Arm the mark at
+                             ;; this press instead of reusing stale state.
+                             (arm-text-selection!)]))
                     "MOUSE-HANDLED")]
                  [else                                ; a text row
                   (focus-window! w)
                   (goto-point! (window-position w start height x y))
-                  (set! mark-row point-row)
-                  (set! mark-col point-col)
-                  (set! mark-active? #f)
-                  (when (and prev
-                          (= (car prev) x) (= (cadr prev) y)
-                          (< (- now (caddr prev)) 450))
-                    (select-word!))
+                  (arm-text-selection!)
                   "MOUSE-HANDLED"]))))])))
 
   (define (mouse-drag! x y)

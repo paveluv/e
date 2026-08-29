@@ -23,7 +23,9 @@ lets the normal global key dispatcher handle it. For `"MOUSE-CLICK"`, returning
 the symbol `keep-focus` consumes the click but restores keyboard focus to the
 previously focused window. Any other result follows the normal rule that
 clicking app content focuses the app and places its cursor at the clicked
-position.
+position. If the handler returns false—or the buffer is a view with no
+handler—the press also starts an ordinary text selection, so dragging selects
+from the clicked cell even though the buffer is read-only.
 Registrations belong to their module and disappear transactionally on unload
 or reload like modes, key bindings, and hooks.
 

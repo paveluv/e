@@ -1,7 +1,7 @@
 ;; git-view.e -- interactive Git history and patch views.
 
 (library (git-view)
-  (export init! git-log!!)
+  (export init! git-log!! git-log-refresh!)
   (import (chezscheme) (core) (except (git) init!)
           (only (describe) register-descriptions!))
 
@@ -13,6 +13,9 @@
   (define selected-patch #f)
   (define log-dirty? #t)
   (define diff-dirty? #t)
+  (define refresh-label "[refresh]")
+  (define refresh-column 0)
+  (define refresh-pressed? #f)
 
   (define (pad text width)
     (string-append text (make-string (max 0 (- width (string-length text)))
@@ -61,9 +64,10 @@
             (git-commit-files repo commit)))
         (git-log repo 20))
       (set! log-rows (reverse rows))
-      (set! log-lines
-        (cons (format "Git log: ~a" (git-repository-path repo))
-              (reverse lines)))
+      (let ([prefix (format "Git log: ~a  " (git-repository-path repo))])
+        (set! refresh-column (string-length prefix))
+        (set! log-lines
+          (cons (string-append prefix refresh-label) (reverse lines))))
       (set! log-dirty? #t)))
 
   (define (refresh-log!)
@@ -107,14 +111,46 @@
         (refresh-diff!)
         (show-buffer-in-target! diff-buffer))))
 
+  (define (reload-log!)
+    (unless repository (error 'git-log-refresh! "Git log is not open"))
+    (load-log! repository)
+    (refresh-log!)
+    (when (eq? (current-buffer) log-buffer)
+      (goto-point! (cons (if (null? log-rows) 0 1) 0)))
+    (set-message! "Git log refreshed"))
+
+  (define (git-log-refresh!)
+    (let ([visible? (eq? (current-buffer) log-buffer)]
+          [started (real-time)])
+      (dynamic-wind
+        (lambda ()
+          (when visible?
+            (set! refresh-pressed? #t)
+            (redraw!)))
+        reload-log!
+        (lambda ()
+          (when visible?
+            ;; Keep a very fast refresh visible as a press instead of a
+            ;; one-frame color flicker.
+            (let ([remaining (- 80 (- (real-time) started))])
+              (when (> remaining 0)
+                (sleep (make-time 'time-duration (* remaining 1000000) 0))))
+            (set! refresh-pressed? #f))))))
+
+  (define (refresh-button?)
+    (and (= (car (point)) 0)
+         (<= refresh-column (cdr (point)))
+         (< (cdr (point)) (+ refresh-column (string-length refresh-label)))))
+
   (define (handle-log-event! event)
     (cond [(member event '("UP" "C-p")) (move-row! -1) #t]
           [(member event '("DOWN" "C-n")) (move-row! 1) #t]
           [(string=? event "WHEEL-UP") (move-row! -1) #t]
           [(string=? event "WHEEL-DOWN") (move-row! 1) #t]
+          [(member event '("r" "R")) (git-log-refresh!) #t]
           [(string=? event "RET") (show-row-diff!) #t]
           [(string=? event "MOUSE-CLICK")
-           (show-row-diff!)
+           (if (refresh-button?) (git-log-refresh!) (show-row-diff!))
            'keep-focus]
           [else #f]))
 
@@ -122,7 +158,15 @@
     (make-vector (string-length line) style))
 
   (define (log-styles line)
-    (cond [(string-prefix? "Git log:" line) (fill-style line 'bold)]
+    (cond [(string-prefix? "Git log:" line)
+           (let ([styles (fill-style line 'bold)])
+             (when (<= (+ refresh-column (string-length refresh-label))
+                       (string-length line))
+               (vector-fill-range!
+                 styles refresh-column
+                 (+ refresh-column (string-length refresh-label))
+                 (if refresh-pressed? 'active 'editor)))
+             styles)]
           [(string-prefix? "    " line)
            (let ([styles (fill-style line 'plain)])
              (when (> (string-length line) 5)
@@ -172,7 +216,11 @@
     (register-descriptions!
       '(((git-log!!) (("procedure" . "(git-log!! [path])")) "void"
          ("(git-view)") git-view "Git" #f
-         "Open the interactive `*git-log*` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")))
+         "Open the interactive `*git-log*` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
+        ((git-log-refresh!)
+         (("procedure" . "(git-log-refresh!)")) "void"
+         ("(git-view)") git-view "Git" #f
+         "Reload commits and changed files in the open `*git-log*` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
     (add-highlighter!
       (lambda ()
         (if (and log-buffer (memq log-buffer (buffer-list)))

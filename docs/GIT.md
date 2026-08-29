@@ -75,8 +75,10 @@ containing the current file. Pass a path explicitly to browse another one:
 ```
 
 The app shows the latest 20 commits followed by each commit's changed files.
-The repository heading stays fixed while the body scrolls. Use Up/Down or the
-wheel to move one row at a time. Enter on a file opens that file's patch in a
+The repository heading stays fixed while the body scrolls. Click `[refresh]`
+beside the repository name, or press `r`, to reload it; the control changes
+color briefly while pressed. Use Up/Down or the wheel
+to move one row at a time. Enter on a file opens that file's patch in a
 read-only `*git-diff*` view in the app's target window. Clicking a file performs
 the same action immediately and preserves focus in the target window, following
 the normal app mouse convention.
