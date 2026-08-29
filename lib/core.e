@@ -50,6 +50,7 @@
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
+    add-shutdown-hook!
     prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
     prompt-edge-motion prompt-reindent
     completion-highlight
@@ -1496,6 +1497,7 @@
   ;; and transactional reload rollback like every other extension registry.
   (define app-registry #f)
   (define buffer-kill-hook-registry #f)
+  (define shutdown-hook-registry #f)
   ;; The latest record for each app buffer also persists outside the registry.
   ;; Module retraction removes executable callbacks, while target/selection
   ;; state survives and is inherited by the replacement registration.
@@ -1511,6 +1513,18 @@
     (unless buffer-kill-hook-registry
       (set! buffer-kill-hook-registry (make-registry)))
     (registry-add! buffer-kill-hook-registry proc))
+
+  (define (add-shutdown-hook! proc)
+    (unless (procedure? proc)
+      (error 'add-shutdown-hook! "expected a procedure" proc))
+    (unless shutdown-hook-registry
+      (set! shutdown-hook-registry (make-registry)))
+    (registry-add! shutdown-hook-registry proc))
+
+  (define (run-shutdown-hooks!)
+    (when shutdown-hook-registry
+      (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
+                (registry-items shutdown-hook-registry))))
 
   (define (registered-apps)
     (if app-registry (registry-items app-registry) '()))
@@ -1556,7 +1570,7 @@
                         (if old (app-wrap old) 'default)
                         (if old (app-cursor-style old) 'default)
                         (and old (app-capture old))
-                        (and old (app-cursor-visible? old)))]
+                        (if old (app-cursor-visible? old) 'default))]
            [registry (ensure-app-registry!)])
       (unless (procedure? refresh!)
         (error 'register-app! "refresh must be a procedure" refresh!))
@@ -1603,7 +1617,9 @@
   (define (app-cursor-visible-in? w)
     (let* ([a (app-of (window-buffer w))]
            [visibility (and a (app-cursor-visible? a))])
-      (cond [(procedure? visibility)
+      (cond [(not a) #t]
+            [(eq? visibility 'default) #t]
+            [(procedure? visibility)
              (guard (ex [else #t]) (visibility w))]
             [(boolean? visibility) visibility]
             [else #t])))
@@ -6074,7 +6090,9 @@
               (handle-key! (read-key-event)))
             (clamp-point!)
             (loop))))
-      (lambda () (set! screen-live? #f)
+      (lambda ()
+        (run-shutdown-hooks!)
+        (set! screen-live? #f)
         (unless (string=? cursor-style-shown "\x1b;[0 q")
           (ansi "\x1b;[0 q"))
         (ansi "\x1b;[?1002;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")

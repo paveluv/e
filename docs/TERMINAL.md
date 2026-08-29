@@ -18,6 +18,7 @@ Pass a shell command to run it instead:
 (terminal!! "top")
 (terminal!! "python3")
 (terminal!! "e README.md")
+(terminal!! "legmacs README.md")
 ```
 
 This is a PTY, not redirected pipes. The child sees `TERM=xterm-256color`, a
@@ -51,7 +52,8 @@ disabled and the retained terminal buffer remains a read-only transcript with
 the normal vertical read-only cursor. It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
 Killing this buffer terminates a process that is still running; deleting one
-of several windows displaying it does not.
+of several windows displaying it does not. Exiting e terminates every live
+terminal process, including terminals whose buffers are not currently shown.
 
 `C-]` temporarily suspends terminal capture for one complete global e command:
 

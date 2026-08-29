@@ -808,6 +808,10 @@
          (("procedure" . "(add-buffer-kill-hook! procedure)")) "unspecified"
          ("(core)") core "Buffer lifecycle" #f
          "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
+        ((add-shutdown-hook!)
+         (("procedure" . "(add-shutdown-hook! procedure)")) "unspecified"
+         ("(core)") core "Editor lifecycle" #f
+         "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
         ((add-buffer-status-hint!)
          (("procedure" . "(add-buffer-status-hint! procedure)")) "unspecified"
          ("(core)") core "Buffer lifecycle" #f

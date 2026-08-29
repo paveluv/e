@@ -794,6 +794,14 @@
         (close-terminal-process! (terminal-state-process state))
         (set! terminals (remq state terminals)))))
 
+  (define (terminal-close-all!)
+    (for-each
+      (lambda (state)
+        (terminal-state-alive-set! state #f)
+        (close-terminal-process! (terminal-state-process state)))
+      (list-copy terminals))
+    (set! terminals '()))
+
   (define (handle-terminal-event! state event)
     (cond
       ;; Once the PTY has closed, this is an ordinary read-only app again.
@@ -922,6 +930,7 @@
                     #f terminal-row-styles)
     (bind-key! "C-c t" terminal!!)
     (add-buffer-kill-hook! terminal-close!)
+    (add-shutdown-hook! terminal-close-all!)
     (add-buffer-status-hint!
       (lambda (buffer active?)
         (let ([state (terminal-of buffer)])
