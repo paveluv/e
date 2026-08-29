@@ -20,7 +20,7 @@
     visit-file! save-file! save!! save-as!! find-file!! data-directory
     show-buffer! kill-buffer! display-buffer! buffer-append!
     fresh-buffer
-    set-buffer-mode! set-buffer-read-only! call-with-buffer
+    set-buffer-mode! set-buffer-read-only! set-buffer-wrap! call-with-buffer
     switch-buffer!! kill-buffer!!
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
@@ -32,6 +32,8 @@
     copy-to-kill-buffer!
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
     redraw-command! open-line! page-up! page-down!
+    page-window-fraction! set-point-without-scroll! point-visible?
+    reset-buffer-viewports!
     previous-line! next-line! beginning-of-buffer! end-of-buffer!
     move-left! move-right! indent-tab!
     call-as-one-edit!
@@ -44,7 +46,7 @@
     register-mode! add-mode-extension! find-mode mode-styles
     memoize-buffer-analysis add-highlighter!
     register-indenter! register-formatter!
-    add-status-hint!
+    add-status-hint! add-buffer-status-hint!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
@@ -66,6 +68,8 @@
     message-source message-progress
     echo-highlight
     register-app! register-view! set-app-presentation! set-app-capture!
+    app-capture-escaped? set-app-cursor-visible! detach-app!
+    app-event-position
     escape-app-capture! display-app!
     buffer-window-size
     target-window target-buffer show-buffer-in-target!
@@ -112,6 +116,9 @@
             ;; line-numbers parameter
             (mutable line-numbers buffer-line-numbers-setting
                      buffer-line-numbers-setting-set!)
+            ;; #t/#f overrides wrapping for every window showing this buffer;
+            ;; default leaves wrapping as a window/global presentation choice.
+            (mutable wrap buffer-wrap-setting buffer-wrap-setting-set!)
             ;; the disk state this buffer last agreed with: the mtime
             ;; stamp raising suspicion cheaply, and the content as
             ;; loaded or last saved -- the base for comparisons and
@@ -148,7 +155,7 @@
 
   (define (new-buffer name)
     (make-buffer name (vector "") 0 #f #t #f (vector '() '())
-                 0 0 #f 0 0 0 #f #t #f 'default #f #f #f))
+                 0 0 #f 0 0 0 #f #t #f 'default 'default #f #f #f))
 
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
@@ -198,8 +205,11 @@
   (define (window-wrapped? w)
     (let* ([a (app-of (window-buffer w))]
            [choice (and a (app-wrap a))]
-           [x (if (and a (not (eq? choice 'default)))
-                  choice (window-wrap w))])
+           [buffer-choice (buffer-wrap-setting (window-buffer w))]
+           [x (cond
+                [(and a (not (eq? choice 'default))) choice]
+                [(not (eq? buffer-choice 'default)) buffer-choice]
+                [else (window-wrap w)])])
       (if (eq? x 'default) (wrap-lines) x)))
 
   (define (wrap-width w)
@@ -1478,7 +1488,8 @@
             (mutable target-window) (mutable target-buffer)
             (mutable refresh-error)
             (mutable sticky-lines) (mutable scrollbar) (mutable wrap)
-            (mutable cursor-style) (mutable capture)))
+            (mutable cursor-style) (mutable capture)
+            (mutable cursor-visible?)))
 
   ;; Created lazily because the general registry machinery is initialized
   ;; later in this library. Once created it participates in module retraction
@@ -1512,6 +1523,19 @@
 
   (define (app-buffer? b) (and (app-of b) #t))
 
+  (define (detach-app! b)
+    ;; Preserve the app's current buffer contents while removing dynamic
+    ;; refresh, event capture, target-window behavior, and app presentation.
+    ;; The buffer thereafter behaves like an ordinary read-only buffer.
+    (let ([a (app-of b)])
+      (when a
+        (when (eq? a capture-bypass-app) (clear-capture-bypass!))
+        (set-box! app-registry
+          (remp (lambda (entry) (eq? (app-buffer (cdr entry)) b))
+                (unbox app-registry))))
+      (buffer-read-only-set! b #t)
+      b))
+
   (define (set-app-target! b w prior)
     (let ([a (app-of b)])
       (when a
@@ -1531,7 +1555,8 @@
                         (and old (app-scrollbar old))
                         (if old (app-wrap old) 'default)
                         (if old (app-cursor-style old) 'default)
-                        (and old (app-capture old)))]
+                        (and old (app-capture old))
+                        (and old (app-cursor-visible? old)))]
            [registry (ensure-app-registry!)])
       (unless (procedure? refresh!)
         (error 'register-app! "refresh must be a procedure" refresh!))
@@ -1558,7 +1583,30 @@
       (unless (boolean? capture?)
         (error 'set-app-capture! "capture must be #t or #f" capture?))
       (app-capture-set! a capture?)
+      (when (and (not capture?) (eq? a capture-bypass-app))
+        (clear-capture-bypass!))
       b))
+
+  (define (app-capture-escaped? b)
+    (let ([a (app-of b)])
+      (and a (eq? a capture-bypass-app))))
+
+  (define (set-app-cursor-visible! b visible?)
+    (let ([a (app-of b)])
+      (unless a (error 'set-app-cursor-visible! "not an app buffer" b))
+      (unless (or (boolean? visible?) (procedure? visible?))
+        (error 'set-app-cursor-visible!
+               "visibility must be a boolean or procedure" visible?))
+      (app-cursor-visible?-set! a visible?)
+      b))
+
+  (define (app-cursor-visible-in? w)
+    (let* ([a (app-of (window-buffer w))]
+           [visibility (and a (app-cursor-visible? a))])
+      (cond [(procedure? visibility)
+             (guard (ex [else #t]) (visibility w))]
+            [(boolean? visibility) visibility]
+            [else #t])))
 
   (define (escape-app-capture! escape-event literal!)
     ;; Suspend a fully capturing app for the next complete global command.
@@ -1572,6 +1620,7 @@
       (set! capture-bypass-app a)
       (set! capture-escape-event escape-event)
       (set! capture-literal! literal!)
+      (redraw!)
       (void)))
 
   (define (set-app-presentation! b sticky-lines scrollbar . options)
@@ -1593,9 +1642,11 @@
         (unless (memq wrap '(default #t #f))
           (error 'set-app-presentation!
                  "wrap must be default, #t, or #f" wrap))
-        (unless (memq cursor-style '(default block underline bar))
+        (unless (memq cursor-style
+                      '(default block underline bar
+                                blinking-block blinking-underline blinking-bar))
           (error 'set-app-presentation!
-                 "cursor style must be default, block, underline, or bar"
+                 "invalid cursor style"
                  cursor-style))
         (app-wrap-set! a wrap)
         (app-cursor-style-set! a cursor-style))
@@ -2370,6 +2421,12 @@
   (define (set-buffer-read-only! b flag)
     (buffer-read-only-set! b flag))
 
+  (define (set-buffer-wrap! b setting)
+    (unless (memq setting '(default #t #f))
+      (error 'set-buffer-wrap! "expected default, #t, or #f" setting))
+    (buffer-wrap-setting-set! b setting)
+    b)
+
   (define (buffer-mode-name b)
     ;; The name of b's mode, or #f without one.
     (let ([m (buffer-mode b)]) (and m (mode-name m))))
@@ -2791,17 +2848,36 @@
   ;; (or #f) appended to the current window's status line -- the
   ;; pretty-parens mode shows the source paren under point this way.
   (define status-hints (make-registry))
+  (define buffer-status-hints (make-registry))
 
   (define (add-status-hint! proc)
     (registry-add! status-hints proc))
 
-  (define (status-hint-text)
-    (apply string-append
-           (map (lambda (p)
-                  (or (guard (ex [else #f])
-                        (let ([s (p)]) (and (string? s) s)))
-                      ""))
-                (registry-items status-hints))))
+  (define (add-buffer-status-hint! proc)
+    ;; Unlike a conventional status hint, this is evaluated for every painted
+    ;; window as (proc buffer active?) and can therefore describe passive
+    ;; windows too.
+    (registry-add! buffer-status-hints proc))
+
+  (define (status-hint-values b active?)
+    (let loop ([procs (append (if active? (registry-items status-hints) '())
+                              (registry-items buffer-status-hints))]
+               [ordinary (and active? (length (registry-items status-hints)))]
+               [out '()])
+      (if (null? procs)
+          (reverse out)
+          (let ([value
+                 (guard (ex [else #f])
+                   (let ([v (if (and ordinary (> ordinary 0))
+                                ((car procs))
+                                ((car procs) b active?))])
+                     (cond
+                       [(string? v) (cons v #f)]
+                       [(and (pair? v) (string? (car v))) v]
+                       [else #f])))])
+            (loop (cdr procs)
+                  (and ordinary (> ordinary 1) (- ordinary 1))
+                  (if value (cons value out) out))))))
 
   (define highlighters (make-registry))
 
@@ -3088,6 +3164,42 @@
                           [else middle])])
         (land! top point))))
 
+  (define (page-window-fraction! direction fraction)
+    (page-window! direction fraction))
+
+  (define (set-point-without-scroll! position)
+    (let* ([v (buffer-lines (current-buffer))]
+           [row (max 0 (min (car position) (- (vector-length v) 1)))])
+      (window-prow-set! current-window row)
+      (window-pcol-set! current-window
+                        (max 0 (min (cdr position)
+                                    (string-length (vector-ref v row)))))))
+
+  (define (reset-buffer-viewports! b position)
+    (let* ([v (buffer-lines b)]
+           [row (max 0 (min (car position) (- (vector-length v) 1)))]
+           [col (max 0 (min (cdr position)
+                            (string-length (vector-ref v row))))])
+      (buffer-spot-row-set! b row)
+      (buffer-spot-col-set! b col)
+      (buffer-spot-top-set! b 0)
+      (for-each
+        (lambda (w)
+          (when (eq? (window-buffer w) b)
+            (window-top-set! w 0)
+            (window-topseg-set! w 0)
+            (window-left-set! w 0)
+            (window-prow-set! w row)
+            (window-pcol-set! w col)))
+        windows)
+      b))
+
+  (define (point-visible?)
+    (let* ([entry (assq current-window (window-layout))]
+           [p (window-screen-position current-window point-row point-col)])
+      (and entry (< (cadr entry) (car p))
+           (<= (car p) (+ (cadr entry) (caddr entry))))))
+
   (define (rows-before w prow pcol)
     ;; Screen rows between w's top -- its first visible segment -- and
     ;; point, wrap-aware.
@@ -3133,7 +3245,8 @@
            [m (min (scroll-margin) (div (max 0 (- height 1)) 2))])
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
-      (if (window-wrapped? w)
+      (unless (not (app-cursor-visible-in? w))
+        (if (window-wrapped? w)
           (let ([pseg (segment-of (line-breaks w (vector-ref v prow))
                                   pcol)])
             ;; a stale top (edits, toggles) clamps into the buffer
@@ -3194,7 +3307,7 @@
             (when (< pcol (window-left w)) (window-left-set! w pcol))
             (when (>= pcol (+ (window-left w) (window-content-width w)))
               (window-left-set! w
-                (- pcol (window-content-width w) -1)))))))
+                (- pcol (window-content-width w) -1))))))))
 
   ;; The cache holds, per screen row, the key describing what that row
   ;; currently shows; a row is repainted only when its key changes.  Any
@@ -3426,7 +3539,10 @@
   (define (echo-cursor-now)
     (or echo-cursor
         (and (cursor-in-echo)
-             (+ (string-length message) (string-length message-ghost)))))
+             (+ (string-length message) (string-length message-ghost)))
+        (and capture-bypass-app
+             (eq? (app-of (current-buffer)) capture-bypass-app)
+             (string-length message))))
 
   (define message-styles #f)  ; (text . styler) for the current message:
                               ; applied while the text still matches
@@ -3790,30 +3906,35 @@
              [conflicts (and (assq b merge-reports)
                              (let ([n (buffer-conflict-count b)])
                                (and (> n 0) n)))]
-             [head (format "~a~a~a  ~a  L~a C~a"
-                           (if target? ">" " ")
-                           (cond [(buffer-stale b) "!!"]
-                                 [(view-buffer? b) "[]"]
-                                 [(buffer-read-only b) "%%"]
-                                 [(buffer-modified b) "**"]
-                                 [else "--"])
-                           editor-name
-                           (buffer-name b)
+             [head-prefix
+              (format "~a~a~a  "
+                      (if target? ">" " ")
+                      (cond [(buffer-stale b) "!!"]
+                            [(view-buffer? b) "[]"]
+                            [(buffer-read-only b) "%%"]
+                            [(buffer-modified b) "**"]
+                            [else "--"])
+                      editor-name)]
+             [name (buffer-name b)]
+             [head (format "~a~a  L~a C~a"
+                           head-prefix name
                            (+ (window-prow w) 1) (+ (window-pcol w) 1))]
              [conf (if conflicts
                        (format "  ~a conflict~a"
                                conflicts (if (= conflicts 1) "" "s"))
                        "")]
+             [mode-text (if mode-tag (format "  (~a)" mode-tag) "")]
+             [hint-values (status-hint-values b current?)]
+             [hint-text (apply string-append (map car hint-values))]
+             [page-text
+              (if (and (eq? b completions-buffer)
+                       (> completions-pages 1))
+                  (format "  page ~a/~a"
+                          (+ completions-page 1)
+                          completions-pages)
+                  "")]
              [status (format "~a~a~a~a~a "
-                             head conf
-                             (if mode-tag (format "  (~a)" mode-tag) "")
-                             (if current? (status-hint-text) "")
-                             (if (and (eq? b completions-buffer)
-                                      (> completions-pages 1))
-                                 (format "  page ~a/~a"
-                                         (+ completions-page 1)
-                                         completions-pages)
-                                 ""))])
+                             head conf mode-text hint-text page-text)])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (window-xoff w)
                   (list 'status status current? target? stale?)
@@ -3829,18 +3950,40 @@
                            [text (fit status (window-width w))]
                            [n (string-length text)]
                            [cs (min (string-length head) n)]
-                           [ce (min (+ cs (string-length conf)) n)])
+                           [ce (min (+ cs (string-length conf)) n)]
+                           [ns (min (string-length head-prefix) n)]
+                           [ne (min (+ ns (string-length name)) n)]
+                           [hs (min (+ (string-length head)
+                                       (string-length conf)
+                                       (string-length mode-text))
+                                    n)]
+                           [he (min (+ hs (string-length hint-text)) n)]
+                           [normal-start (if stale? (min 3 n) 0)])
                       (ansi bar)
-                      (if stale?
-                          ;; the !! flag in red, the rest as usual
-                          (ansi "\x1b;[31m" (substring text 0 (min 3 n))
-                                fg (substring text (min 3 n) cs))
-                          (ansi (substring text 0 cs)))
+                      (when stale?
+                        ;; the !! flag in red, the rest as usual
+                        (ansi "\x1b;[31m" (substring text 0 normal-start)
+                              fg))
+                      (ansi (substring text normal-start ns)
+                            "\x1b;[1m" (substring text ns ne)
+                            "\x1b;[22m" (substring text ne cs))
                       (unless (= cs ce)
                         ;; the conflict count in red too
                         (ansi "\x1b;[31m" (substring text cs ce)
                               fg))
-                      (ansi (substring text ce n) "\x1b;[0m"))))))))
+                      (ansi (substring text ce hs))
+                      (let loop ([values hint-values] [at hs])
+                        (when (and (pair? values) (< at he))
+                          (let* ([value (car values)]
+                                 [end (min (+ at (string-length (car value)))
+                                           he)])
+                            (when (eq? (cdr value) 'italic)
+                              (ansi "\x1b;[3m"))
+                            (ansi (substring text at end))
+                            (when (eq? (cdr value) 'italic)
+                              (ansi "\x1b;[23m"))
+                            (loop (cdr values) end))))
+                      (ansi (substring text he n) "\x1b;[0m"))))))))
 
   (define (echo-cap)
     ;; How tall the whole echo area may grow: everything but each
@@ -3989,34 +4132,42 @@
     ;; put it at point in the current window.  Also called on its own
     ;; when an interaction is about to wait for a key, so its cursor
     ;; rules take effect without a repaint.
-    (let ([cursor (echo-cursor-now)])
+    (let* ([cursor (echo-cursor-now)]
+           [a (app-of (window-buffer current-window))]
+           [visible? (or cursor (app-cursor-visible-in? current-window))])
       (if cursor
           (let ([p (echo-position cursor)])
             (goto (+ (- rows echo-live-height) (- (car p) echo-scroll) 1)
                   (min (+ (cdr p) 1) cols)))
-          (let ([p (window-screen-position current-window
-                                           point-row point-col)])
-            (goto (min (car p) rows) (min (cdr p) cols)))))
-    (let* ([a (app-of (window-buffer current-window))]
-           [app-style (and a (app-cursor-style a))]
-           [style (cond
-                    [(cursor-in-echo) "\x1b;[3 q"]
-                    ;; a prompt: the cursor is in the echo area's input,
-                    ;; which is editable whatever the buffer behind it
-                    [echo-cursor "\x1b;[0 q"]
-                    [(and app-style (not (eq? app-style 'default)))
-                     (case app-style
-                       [(block) "\x1b;[2 q"]
-                       [(underline) "\x1b;[4 q"]
-                       [(bar) "\x1b;[6 q"])]
-                    ;; a bar where typing cannot land: a read-only buffer
-                    [(buffer-read-only (window-buffer current-window))
-                     "\x1b;[5 q"]
-                    [else "\x1b;[0 q"])])
-      (unless (string=? style cursor-style-shown)
-        (set! cursor-style-shown style)
-        (ansi style)))
-    (ansi "\x1b;[?25h") (flush-output-port (terminal-output-port)))
+          (when visible?
+            (let ([p (window-screen-position current-window
+                                             point-row point-col)])
+              (goto (min (car p) rows) (min (cdr p) cols)))))
+      (let* ([a (app-of (window-buffer current-window))]
+             [app-style (and a (app-cursor-style a))]
+             [style (cond
+                      [(cursor-in-echo) "\x1b;[3 q"]
+                      ;; a prompt: the cursor is in the echo area's input,
+                      ;; which is editable whatever the buffer behind it
+                      [echo-cursor "\x1b;[0 q"]
+                      [(app-capture-escaped? (current-buffer)) "\x1b;[0 q"]
+                      [(and app-style (not (eq? app-style 'default)))
+                       (case app-style
+                         [(block) "\x1b;[2 q"]
+                         [(underline) "\x1b;[4 q"]
+                         [(bar) "\x1b;[6 q"]
+                         [(blinking-block) "\x1b;[1 q"]
+                         [(blinking-underline) "\x1b;[3 q"]
+                         [(blinking-bar) "\x1b;[5 q"])]
+                      ;; a bar where typing cannot land: a read-only buffer
+                      [(buffer-read-only (window-buffer current-window))
+                       "\x1b;[5 q"]
+                      [else "\x1b;[0 q"])])
+        (unless (string=? style cursor-style-shown)
+          (set! cursor-style-shown style)
+          (ansi style)))
+      (ansi (if visible? "\x1b;[?25h" "\x1b;[?25l"))
+      (flush-output-port (terminal-output-port))))
 
   ;;; Prompts and commands --------------------------------------------------
 
@@ -4681,6 +4832,9 @@
 
   ;; The window whose status bar is being dragged to resize it, or #f.
   (define drag-status #f)
+  ;; 1-based cell coordinates within the app's text viewport while a mouse
+  ;; event is dispatched, or #f for keyboard events.
+  (define app-event-position (make-parameter #f))
   (define drag-divider #f)   ; (left . right) columns astride the bar
   (define drag-scrollbar #f) ; (window grab-offset-within-thumb)
 
@@ -4985,7 +5139,7 @@
             (goto-point! (window-position w start height x y))
             (dispatch-app-event! "MOUSE-RELEASE"))))))
 
-  (define (mouse-wheel! x y dir meta?)
+  (define (mouse-wheel! x y dir meta? shift?)
     ;; Scroll the window under the pointer; the focused window stays focused.
     ;; Meta-wheel
     ;; applies the corresponding global buffer-switch binding to the hovered
@@ -5001,13 +5155,19 @@
               (begin
                 (when (and (app-buffer? (window-buffer w)) (not (eq? w old)))
                   (set-app-target! (window-buffer w) old (window-buffer old)))
-                (unless (dispatch-app-event!
-                          (case dir
-                            [(0) "WHEEL-UP"]
-                            [(1) "WHEEL-DOWN"]
-                            [(2) "WHEEL-LEFT"]
-                            [(3) "WHEEL-RIGHT"]
-                            [else "WHEEL"]))
+                (unless (parameterize
+                          ([app-event-position
+                            (cons (max 1 (- x (window-xoff w)))
+                                  (max 1 (- y (cadr entry))))])
+                          (dispatch-app-event!
+                            (string-append
+                              (if shift? "S-" "")
+                              (case dir
+                                [(0) "WHEEL-UP"]
+                                [(1) "WHEEL-DOWN"]
+                                [(2) "WHEEL-LEFT"]
+                                [(3) "WHEEL-RIGHT"]
+                                [else "WHEEL"]))))
                   ((wheel-mover dir)))))
           (when (memq old windows) (set! current-window old))
           "MOUSE-HANDLED"))))
@@ -5047,7 +5207,8 @@
                           "MOUSE-HANDLED"]
                          [(= (bitwise-and b 64) 64)               ; wheel
                           (mouse-wheel! x y (bitwise-and b 3)
-                                        (= (bitwise-and b 8) 8))]
+                                        (= (bitwise-and b 8) 8)
+                                        (= (bitwise-and b 4) 4))]
                          [(= (bitwise-and b 32) 32)               ; drag
                           (when (< (bitwise-and b 3) 3)
                             (mouse-drag! x y))
@@ -5274,6 +5435,8 @@
                                  [(member p '("4" "8")) "END"]
                                  [(string=? p "5") "PAGEUP"]
                                  [(string=? p "6") "PAGEDOWN"]
+                                 [(string=? p "5;2") "S-PAGEUP"]
+                                 [(string=? p "6;2") "S-PAGEDOWN"]
                                  [(string=? p "15") "F5"]
                                  [(string=? p "17") "F6"]
                                  [(string=? p "18") "F7"]
@@ -5416,13 +5579,15 @@
            (if (and capture-bypass-app (eq? a capture-bypass-app))
                (let ([escape capture-escape-event]
                      [literal! capture-literal!])
-                 ;; Clear first: a command that returns to this app resumes
-                 ;; capture immediately, while prompts and key prefixes remain
-                 ;; inside this synchronous dispatch.
-                 (clear-capture-bypass!)
                  (if (string=? event escape)
-                     (literal!)
-                     (dispatch-sequence! event chain)))
+                     (begin (clear-capture-bypass!) (literal!))
+                     ;; Keep the escaped state visible throughout prefixes and
+                     ;; synchronous prompts. Capture resumes when the complete
+                     ;; global command returns.
+                     (dynamic-wind
+                       (lambda () (void))
+                       (lambda () (dispatch-sequence! event chain))
+                       clear-capture-bypass!)))
                (begin
                  ;; Focus may have changed since an app requested escape.
                  (when capture-bypass-app (clear-capture-bypass!))

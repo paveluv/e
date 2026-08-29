@@ -30,10 +30,28 @@ instance of e work normally.
 
 Printable keys, control and Meta keys, arrows, Home/End, PageUp/PageDown,
 Delete, F1–F12, and bracketed paste are sent to the child. Applications may
-enable xterm mouse reporting; clicks and wheel reports are then forwarded.
-Without mouse reporting, the ordinary editor selection and wheel behavior
-remain available. A steady block cursor distinguishes the terminal's live
-input position from the editor's ordinary read-only-buffer cursor.
+enable xterm mouse reporting; clicks and wheel reports are then forwarded
+through the PTY, including through nested terminal emulators. Without mouse
+reporting, wheel ticks scroll the local terminal history by one eighth of the
+window. `Shift-PageUp` and `Shift-PageDown` move by a full window;
+`Shift-wheel` explicitly selects local history even while the child reports
+mouse input. Scrolling is per window when several windows mirror one terminal.
+The terminal cursor disappears while that window is browsing history; the
+next keyboard or paste input returns it to the live cursor before sending the
+input. Ordinary mouse selection remains available when the child is not
+tracking the mouse. A blinking block cursor marks the terminal's live input
+position by default. Programs can change its shape and blinking behavior with
+the standard `DECSCUSR` terminal sequence.
+
+The italic status text distinguishes a focused terminal that is capturing
+input (`running; capturing input, C-] to escape`), its temporarily escaped
+state (`running; escaped`), and a terminal running in a passive window
+(`running`). After the process exits, every window shows `exited`; capture is
+disabled and the retained terminal buffer remains a read-only transcript with
+the normal vertical read-only cursor. It is then an ordinary text buffer:
+keyboard and mouse navigation, selection, and `M-w` copying work normally.
+Killing this buffer terminates a process that is still running; deleting one
+of several windows displaying it does not.
 
 `C-]` temporarily suspends terminal capture for one complete global e command:
 

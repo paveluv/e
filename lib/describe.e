@@ -780,6 +780,18 @@
          (("procedure" . "(set-app-capture! buffer capture?)")) "buffer"
          ("(core)") core "App buffers" #f
          "Enable or disable catch-all input capture for an app. A partial app propagates handler events returning false to global e bindings; a capturing app consumes them.")
+        ((set-app-cursor-visible!)
+         (("procedure" . "(set-app-cursor-visible! buffer visibility)")) "buffer"
+         ("(core)") core "App buffers" #f
+         "Set app cursor visibility to a boolean or a procedure receiving the window token. This supports per-window cursor hiding while an app viewport is detached from its live cursor.")
+        ((detach-app!)
+         (("procedure" . "(detach-app! buffer)")) "buffer"
+         ("(core)") core "App buffers" #f
+         "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, input capture, target-window behavior, and app presentation.")
+        ((set-buffer-wrap!)
+         (("procedure" . "(set-buffer-wrap! buffer setting)")) "buffer"
+         ("(core)") core "Buffers" #f
+         "Set a buffer-wide wrapping override to #t or #f, or use `default` to follow each window and the global wrapping preference.")
         ((escape-app-capture!)
          (("procedure" . "(escape-app-capture! escape-event literal!)")) "void"
          ("(core)") core "App buffers" #f
@@ -787,7 +799,7 @@
         ((set-app-presentation!)
          (("procedure" . "(set-app-presentation! buffer sticky-lines scrollbar [wrap cursor-style])"))
          "buffer" ("(core)") core "App buffers" #f
-         "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, or `default`.")
+         "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, a `blinking-` variant of those, or `default`.")
         ((buffer-window-size)
          (("procedure" . "(buffer-window-size buffer)")) "pair or #f"
          ("(core)") core "App buffers" #f
@@ -796,6 +808,10 @@
          (("procedure" . "(add-buffer-kill-hook! procedure)")) "unspecified"
          ("(core)") core "Buffer lifecycle" #f
          "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
+        ((add-buffer-status-hint!)
+         (("procedure" . "(add-buffer-status-hint! procedure)")) "unspecified"
+         ("(core)") core "Buffer lifecycle" #f
+         "Register a module-owned status hint procedure called as `(procedure buffer active?)` for every window. It may return a string, a `(string . style)` pair, or #f.")
         ((target-window) (("procedure" . "(target-window)")) "window or #f"
          ("(core)") core "App buffers" #f
          "Return the current app's target window, #f while its target is ephemeral, or the current window outside an app.")

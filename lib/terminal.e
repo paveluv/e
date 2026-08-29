@@ -12,11 +12,14 @@
             (mutable saved-row) (mutable saved-col)
             (mutable scroll-top) (mutable scroll-bottom)
             (mutable parser) (mutable parameters)
-            (mutable osc-escape) (mutable charset) (mutable shift)
+            (mutable osc-escape) (mutable osc-text)
+            (mutable charset) (mutable shift)
             (mutable dirty) (mutable alive) (mutable prefix)
             (mutable mouse) (mutable bracketed) (mutable main-screen)
-            (mutable history)
+            (mutable main-row) (mutable main-col)
+            (mutable history) (mutable unfollowed-windows)
             (mutable styles) (mutable main-styles) (mutable history-styles)
+            (mutable rendered-styles)
             (mutable sgr) (mutable style)))
 
   (define terminals '())
@@ -34,6 +37,32 @@
   (define (terminal-of buffer)
     (find (lambda (state) (eq? (terminal-state-buffer state) buffer))
           terminals))
+
+  (define (terminal-cursor-position state)
+    (cons (+ (if (terminal-state-main-screen state)
+                 0 (length (terminal-state-history state)))
+             (terminal-state-row state))
+          (min (- (terminal-state-cols state) 1)
+               (terminal-state-col state))))
+
+  (define (terminal-follow! state)
+    (terminal-state-unfollowed-windows-set!
+      state (remq (selected-window)
+                  (terminal-state-unfollowed-windows state)))
+    (goto-point! (terminal-cursor-position state)))
+
+  (define (terminal-scroll! state direction fraction)
+    (unless (memq (selected-window)
+                  (terminal-state-unfollowed-windows state))
+      (terminal-state-unfollowed-windows-set!
+        state (cons (selected-window)
+                    (terminal-state-unfollowed-windows state))))
+    (page-window-fraction! direction fraction)
+    (set-point-without-scroll! (terminal-cursor-position state))
+    (when (point-visible?)
+      (terminal-state-unfollowed-windows-set!
+        state (remq (selected-window)
+                    (terminal-state-unfollowed-windows state)))))
 
   (define (blank-line cols) (make-string cols #\space))
   (define (blank-styles cols style) (make-vector cols style))
@@ -198,10 +227,65 @@
                            (string->list plain))))])
       (map (lambda (part) (or (string->number part) 0)) parts)))
 
+  (define (split-parameter part separator)
+    (let loop ([chars (string->list part)] [field '()] [out '()])
+      (cond
+        [(null? chars)
+         (reverse (cons (list->string (reverse field)) out))]
+        [(char=? (car chars) separator)
+         (loop (cdr chars) '()
+               (cons (list->string (reverse field)) out))]
+        [else (loop (cdr chars) (cons (car chars) field) out)])))
+
+  (define (sgr-parameter-list text)
+    ;; ISO 8613-6 permits colon-delimited color subparameters. Normalize
+    ;; 38:5:n and 38:2:[colorspace:]r:g:b (and their 48 background forms) to
+    ;; the semicolon form understood by the canonical SGR state machine.
+    (apply append
+      (map (lambda (part)
+             (let ([fields (split-parameter part #\:)])
+               (if (null? (cdr fields))
+                   (list (or (string->number part) 0))
+                   (let ([values (map (lambda (field)
+                                        (and (not (string=? field ""))
+                                             (string->number field)))
+                                      fields)])
+                     (cond
+                       [(and (memv (car values) '(38 48))
+                             (pair? (cdr values))
+                             (= (cadr values) 5))
+                        (list (car values) 5 (or (caddr values) 0))]
+                       [(and (memv (car values) '(38 48))
+                             (pair? (cdr values))
+                             (= (cadr values) 2))
+                        (let ([rgb (filter number? (cddr values))])
+                          (if (>= (length rgb) 3)
+                              (list (car values) 2
+                                    (list-ref rgb (- (length rgb) 3))
+                                    (list-ref rgb (- (length rgb) 2))
+                                    (list-ref rgb (- (length rgb) 1)))
+                              '(0)))]
+                       [else (list (or (car values) 0))])))))
+           (split-parameter text #\;))))
+
   (define (param parameters index default)
     (let ([value (and (< index (length parameters))
                       (list-ref parameters index))])
       (if (or (not value) (= value 0)) default value)))
+
+  (define (terminal-reply! state text)
+    (let ([output (terminal-process-output (terminal-state-process state))])
+      (put-bytevector output (string->utf8 text))
+      (flush-output-port output)))
+
+  (define (dispatch-osc! state)
+    (let ([text (terminal-state-osc-text state)])
+      (cond
+        [(string=? text "10;?")
+         (terminal-reply! state "\x1b;]10;rgb:0000/0000/0000\x1b;\\")]
+        [(string=? text "11;?")
+         (terminal-reply! state "\x1b;]11;rgb:ffff/ffff/ffff\x1b;\\")]
+        [else (void)])))
 
   (define (delete-characters! state count)
     (let* ([line (vector-ref (terminal-state-screen state)
@@ -248,29 +332,109 @@
                 (hashtable-set! style-cache sequence name)
                 name)))))
 
+  (define (sgr-operations codes)
+    ;; Group extended colors so zero-valued components remain color data.
+    (let loop ([xs codes] [out '()])
+      (if (null? xs)
+          (reverse out)
+          (let* ([code (car xs)]
+                 [count (if (and (memv code '(38 48)) (pair? (cdr xs)))
+                            (case (cadr xs) [(5) 3] [(2) 5] [else 1])
+                            1)])
+            (let take ([ys xs] [n count] [op '()])
+              (if (or (= n 0) (null? ys))
+                  (loop ys (cons (reverse op) out))
+                  (take (cdr ys) (- n 1) (cons (car ys) op))))))))
+
+  (define (sgr-category op)
+    (let ([code (car op)])
+      (cond
+        [(or (= code 1) (= code 2)) 'intensity]
+        [(= code 3) 'italic]
+        [(or (= code 4) (= code 21)) 'underline]
+        [(or (= code 5) (= code 6)) 'blink]
+        [(= code 7) 'reverse]
+        [(= code 8) 'hidden]
+        [(= code 9) 'strike]
+        [(or (= code 38) (<= 30 code 37) (<= 90 code 97)) 'foreground]
+        [(or (= code 48) (<= 40 code 47) (<= 100 code 107)) 'background]
+        [else code])))
+
+  (define (canonical-sgr current additions)
+    (define (remove-category state category)
+      (remp (lambda (op) (eqv? (sgr-category op) category)) state))
+    (let loop ([ops (append (sgr-operations (parameter-list current))
+                            (sgr-operations additions))]
+               [state '()])
+      (if (null? ops)
+          (apply append (reverse state))
+          (let* ([op (car ops)] [code (car op)])
+            (cond
+              [(= code 0) (loop (cdr ops) '())]
+              [(= code 22) (loop (cdr ops)
+                                 (remove-category state 'intensity))]
+              [(memv code '(23 24 25 27 28 29))
+               (loop (cdr ops)
+                     (remove-category
+                       state
+                       (case code
+                         [(23) 'italic] [(24) 'underline] [(25) 'blink]
+                         [(27) 'reverse] [(28) 'hidden] [else 'strike])))]
+              [(= code 39) (loop (cdr ops)
+                                 (remove-category state 'foreground))]
+              [(= code 49) (loop (cdr ops)
+                                 (remove-category state 'background))]
+              [else
+               (let ([category (sgr-category op)])
+                 (loop (cdr ops)
+                       (cons op (remove-category state category))))])))))
+
   (define (set-sgr! state text)
-    ;; Keeping the sequence since the last reset preserves cumulative SGR
-    ;; semantics (31m followed by 1m means bold red). Later codes naturally
-    ;; override earlier ones when the renderer emits the combined sequence.
-    (let* ([codes (parameter-list text)]
-           [last-reset
-            (let loop ([xs codes] [index 0] [found #f])
-              (if (null? xs) found
-                  (loop (cdr xs) (+ index 1)
-                        (if (= (car xs) 0) index found))))]
-           [kept (if last-reset (list-tail codes (+ last-reset 1)) codes)]
-           [addition (string-join (map number->string kept) ";")]
-           [sequence
-            (cond [last-reset addition]
-                  [(string=? addition "") (terminal-state-sgr state)]
-                  [(string=? (terminal-state-sgr state) "") addition]
-                  [else (string-append (terminal-state-sgr state)
-                                       ";" addition)])])
+    ;; Store the effective face, not a history of every SGR command. This
+    ;; makes selective resets exact and keeps emitted sequences bounded.
+    (let* ([codes (canonical-sgr (terminal-state-sgr state)
+                                 (sgr-parameter-list text))]
+           [sequence (string-join (map number->string codes) ";")])
       (terminal-state-sgr-set! state sequence)
       (terminal-state-style-set! state (sgr-style sequence))))
 
+  (define (reset-terminal-state! state)
+    (let ([rows (terminal-state-rows state)]
+          [cols (terminal-state-cols state)])
+      (terminal-state-screen-set! state (make-screen rows cols))
+      (terminal-state-styles-set! state (make-style-screen rows cols 'plain))
+      (terminal-state-row-set! state 0)
+      (terminal-state-col-set! state 0)
+      (terminal-state-saved-row-set! state 0)
+      (terminal-state-saved-col-set! state 0)
+      (terminal-state-scroll-top-set! state 0)
+      (terminal-state-scroll-bottom-set! state (- rows 1))
+      (terminal-state-parameters-set! state "")
+      (terminal-state-osc-escape-set! state #f)
+      (terminal-state-charset-set! state 'ascii)
+      (terminal-state-shift-set! state 0)
+      (terminal-state-mouse-set! state #f)
+      (terminal-state-bracketed-set! state #f)
+      (terminal-state-main-screen-set! state #f)
+      (terminal-state-main-styles-set! state #f)
+      (terminal-state-history-set! state '())
+      (terminal-state-history-styles-set! state '())
+      (terminal-state-sgr-set! state "")
+      (terminal-state-style-set! state 'plain)
+      (terminal-state-dirty-set! state #t)
+      (set-app-presentation! (terminal-state-buffer state)
+                             0 #f #f 'blinking-block)))
+
   (define (dispatch-csi! state final text)
-    (let* ([parameters (parameter-list text)]
+    (let* ([cursor-shape? (and (char=? final #\q)
+                               (> (string-length text) 0)
+                               (char=? (string-ref text
+                                                   (- (string-length text) 1))
+                                       #\space))]
+           [parameter-text (if cursor-shape?
+                               (substring text 0 (- (string-length text) 1))
+                               text)]
+           [parameters (parameter-list parameter-text)]
            [n (param parameters 0 1)]
            [row (terminal-state-row state)]
            [col (terminal-state-col state)]
@@ -286,12 +450,18 @@
                   [(1000 1002 1003 1006) (terminal-state-mouse-set! state on?)]
                   [(2004) (terminal-state-bracketed-set! state on?)]
                   [(1049)
+                   ;; The alternate and primary screens have unrelated row
+                   ;; spaces. A scrollback offset from one is meaningless in
+                   ;; the other and can crop a nested full-screen program.
+                   (terminal-state-unfollowed-windows-set! state '())
                    (if on?
                        (unless (terminal-state-main-screen state)
                          (terminal-state-main-screen-set!
                            state (terminal-state-screen state))
                          (terminal-state-main-styles-set!
                            state (terminal-state-styles state))
+                         (terminal-state-main-row-set! state row)
+                         (terminal-state-main-col-set! state col)
                          (terminal-state-screen-set!
                            state (make-screen rows cols))
                          (terminal-state-styles-set!
@@ -306,8 +476,13 @@
                            state (terminal-state-main-styles state))
                          (terminal-state-main-screen-set! state #f)
                          (terminal-state-main-styles-set! state #f)
-                         (terminal-state-row-set! state 0)
-                         (terminal-state-col-set! state 0)))]
+                         (terminal-state-row-set! state
+                                                  (terminal-state-main-row state))
+                         (terminal-state-col-set! state
+                                                  (terminal-state-main-col state))))
+                   (reset-buffer-viewports!
+                     (terminal-state-buffer state)
+                     (terminal-cursor-position state))]
                   [else (void)]))
               parameters))
           (case final
@@ -367,6 +542,26 @@
             [(#\u) (terminal-state-row-set! state (terminal-state-saved-row state))
              (terminal-state-col-set! state (terminal-state-saved-col state))]
             [(#\m) (set-sgr! state text)]
+            [(#\n)
+             (when (= (param parameters 0 0) 6)
+               (terminal-reply!
+                 state
+                 (format "\x1b;[~a;~aR" (+ row 1) (+ col 1))))]
+            [(#\c)
+             (when (string=? text "")
+               (terminal-reply! state "\x1b;[?1;2c"))]
+            [(#\q)
+             (when cursor-shape?
+               (set-app-presentation!
+                 (terminal-state-buffer state) 0 #f #f
+                 (case (param parameters 0 0)
+                   [(0 1) 'blinking-block]
+                   [(2) 'block]
+                   [(3) 'blinking-underline]
+                   [(4) 'underline]
+                   [(5) 'blinking-bar]
+                   [(6) 'bar]
+                   [else 'blinking-block])))]
             [else (void)]))))
 
   (define line-drawing
@@ -401,6 +596,12 @@
          [(#\[) (terminal-state-parser-set! state 'csi)
           (terminal-state-parameters-set! state "")]
          [(#\]) (terminal-state-parser-set! state 'osc)
+          (terminal-state-osc-escape-set! state #f)
+          (terminal-state-osc-text-set! state "")]
+         ;; String controls carry arbitrary printable payload terminated by
+         ;; ST (ESC \). They are metadata/protocol traffic, never screen text.
+         [(#\P #\X #\^ #\_)
+          (terminal-state-parser-set! state 'control-string)
           (terminal-state-osc-escape-set! state #f)]
          [(#\7) (terminal-state-saved-row-set! state (terminal-state-row state))
           (terminal-state-saved-col-set! state (terminal-state-col state))
@@ -415,9 +616,7 @@
                     (terminal-state-row-set!
                       state (max 0 (- (terminal-state-row state) 1))))
           (terminal-state-parser-set! state 'normal)]
-         [(#\c) (clear-rows! state 0 (terminal-state-rows state))
-          (terminal-state-row-set! state 0)
-          (terminal-state-col-set! state 0)
+         [(#\c) (reset-terminal-state! state)
           (terminal-state-parser-set! state 'normal)]
          [(#\( #\)) (terminal-state-parser-set! state 'charset)]
          [else (terminal-state-parser-set! state 'normal)])]
@@ -435,12 +634,28 @@
                                   (string character))))]
       [(osc)
        (cond [(= (char->integer character) 7)
+              (dispatch-osc! state)
               (terminal-state-parser-set! state 'normal)]
              [(and (terminal-state-osc-escape state) (char=? character #\\))
+              (dispatch-osc! state)
               (terminal-state-parser-set! state 'normal)
               (terminal-state-osc-escape-set! state #f)]
              [else
-              (terminal-state-osc-escape-set! state (char=? character #\esc))])]))
+              (if (char=? character #\esc)
+                  (terminal-state-osc-escape-set! state #t)
+                  (begin
+                    (terminal-state-osc-escape-set! state #f)
+                    (terminal-state-osc-text-set!
+                      state (string-append (terminal-state-osc-text state)
+                                           (string character)))))])]
+      [(control-string)
+       (cond
+         [(and (terminal-state-osc-escape state) (char=? character #\\))
+          (terminal-state-parser-set! state 'normal)
+          (terminal-state-osc-escape-set! state #f)]
+         [else
+          (terminal-state-osc-escape-set! state
+                                          (char=? character #\esc))])]))
 
   (define (refresh-terminal! state)
     (let ([size (buffer-window-size (terminal-state-buffer state))])
@@ -448,40 +663,32 @@
         (with-mutex (terminal-state-lock state)
           (resize-screen! state (max 1 (car size)) (max 1 (cdr size)))
           (when (terminal-state-dirty state)
-            (view-replace!
-              (terminal-state-buffer state)
-              ;; The emulator mutates its cell grid in place.  The generic
-              ;; view and paint caches need immutable snapshots; sharing these
-              ;; strings made character echo invisible until a later scroll
-              ;; happened to replace an entire row.
-              (map string-copy
+            ;; Snapshot cells and faces together while the PTY grid is locked.
+            ;; Painting either one live can combine different stages of a
+            ;; full-screen application's redisplay into one torn frame.
+            (let ([lines
                    (append (if (terminal-state-main-screen state)
                                '() (terminal-state-history state))
-                           (vector->list (terminal-state-screen state)))))
+                           (vector->list (terminal-state-screen state)))]
+                  [styles
+                   (append (if (terminal-state-main-screen state)
+                               '() (terminal-state-history-styles state))
+                           (vector->list (terminal-state-styles state)))])
+              (view-replace! (terminal-state-buffer state)
+                             (map string-copy lines))
+              (terminal-state-rendered-styles-set!
+                state (list->vector (map vector-copy styles))))
             (terminal-state-dirty-set! state #f))
-          (when (eq? (current-buffer) (terminal-state-buffer state))
-            (goto-point!
-              (cons (+ (if (terminal-state-main-screen state)
-                           0 (length (terminal-state-history state)))
-                       (terminal-state-row state))
-                    (min (- (terminal-state-cols state) 1)
-                         (terminal-state-col state)))))))))
+          (when (and (eq? (current-buffer) (terminal-state-buffer state))
+                     (not (memq (selected-window)
+                                (terminal-state-unfollowed-windows state))))
+            (goto-point! (terminal-cursor-position state)))))))
 
   (define (terminal-row-styles buffer row line)
     (let ([state (terminal-of buffer)])
       (and state
-           (if (terminal-state-main-screen state)
-               (and (< row (terminal-state-rows state))
-                    (vector-copy (vector-ref (terminal-state-styles state)
-                                             row)))
-               (let ([history (terminal-state-history-styles state)])
-                 (if (< row (length history))
-                     (vector-copy (list-ref history row))
-                     (let ([screen-row (- row (length history))])
-                       (and (< screen-row (terminal-state-rows state))
-                            (vector-copy
-                              (vector-ref (terminal-state-styles state)
-                                          screen-row))))))))))
+           (< row (vector-length (terminal-state-rendered-styles state)))
+           (vector-ref (terminal-state-rendered-styles state) row))))
 
   (define (reader-loop state)
     (define (display-redraw!)
@@ -491,12 +698,12 @@
       (terminal-state-alive-set! state #f)
       (guard (ex [else (void)])
         (set-app-capture! (terminal-state-buffer state) #f))
+      (guard (ex [else (void)])
+        (set-buffer-wrap! (terminal-state-buffer state) #f))
+      (guard (ex [else (void)])
+        (detach-app! (terminal-state-buffer state)))
       ;; Publish the dead state before waiting for the session leader.  A
       ;; platform-specific wait must never make the editor appear frozen.
-      (let ([notice
-             "Terminal process exited; editor keys are active (C-] q closes it)"])
-        (log! 'terminal notice)
-        (parameterize ([message-source #f]) (set-message! notice)))
       (guard (ex [else (void)]) (display-redraw!))
       (guard (ex [else (void)])
         (reap-terminal-process! (terminal-state-process state)))
@@ -596,15 +803,24 @@
       [(string=? event "C-]")
        (escape-app-capture!
          "C-]" (lambda () (write-bytes! state (bytevector 29))))
-       (set-message! "Terminal capture suspended for one e command")
        #t]
       [(string=? event "PASTE")
+       (terminal-follow! state)
        (let ([text (read-paste)])
          (write-bytes!
            state
            (string->utf8
              (if (terminal-state-bracketed state)
                  (string-append "\x1b;[200~" text "\x1b;[201~") text))))
+       #t]
+      [(string=? event "S-PAGEUP")
+       (terminal-scroll! state -1 1)
+       #t]
+      [(string=? event "S-PAGEDOWN")
+       (terminal-scroll! state 1 1)
+       #t]
+      [(member event '("S-WHEEL-UP" "S-WHEEL-DOWN"))
+       (terminal-scroll! state (if (string=? event "S-WHEEL-UP") -1 1) 8)
        #t]
       [(string=? event "MOUSE-CLICK")
        (if (terminal-state-mouse state)
@@ -626,14 +842,24 @@
            #f)]
       [(member event '("WHEEL-UP" "WHEEL-DOWN"))
        (if (terminal-state-mouse state)
-           (let ([x (+ (cdr (point)) 1)] [y (+ (car (point)) 1)])
+           (let* ([position (or (app-event-position)
+                                (cons (+ (cdr (point)) 1)
+                                      (+ (car (point)) 1)))]
+                  [x (car position)] [y (cdr position)])
              (terminal-send!
                (format "\x1b;[<~a;~a;~aM"
                        (if (string=? event "WHEEL-UP") 64 65) x y))
              #t)
-           #f)]
+           (begin
+             (terminal-scroll!
+               state (if (string=? event "WHEEL-UP") -1 1) 8)
+             #t))]
       [(string=? event "MOUSE") #f]
-      [(event-bytes event) => (lambda (bytes) (write-bytes! state bytes) #t)]
+      [(event-bytes event)
+       => (lambda (bytes)
+            (terminal-follow! state)
+            (write-bytes! state bytes)
+            #t)]
       [else #t]))
 
   (define (shell-command)
@@ -663,8 +889,14 @@
             name
             (lambda () (when state (refresh-terminal! state)))
             (lambda (event) (and state (handle-terminal-event! state event)))))
-        (set-app-presentation! buffer 0 #f #f 'block)
+        (set-app-presentation! buffer 0 #f #f 'blinking-block)
         (set-app-capture! buffer #t)
+        (set-app-cursor-visible!
+          buffer
+          (lambda (window)
+            (and state
+                 (not (memq window
+                            (terminal-state-unfollowed-windows state))))))
         (set-buffer-mode! buffer "terminal")
         (show-buffer! buffer)
         (let* ([size (or (buffer-window-size buffer) '(24 . 80))]
@@ -676,10 +908,11 @@
             (make-terminal-state buffer process display (make-mutex)
                                  rows cols (make-screen rows cols)
                                  0 0 0 0 0 (- rows 1)
-                                 'normal "" #f 'ascii 0 #t #t #f
-                                 #f #f #f '()
+                                 'normal "" #f "" 'ascii 0 #t #t #f
+                                 #f #f #f 0 0 '() '()
                                  (make-style-screen rows cols 'plain)
-                                 #f '() "" 'plain))
+                                 #f '() (make-style-screen rows cols 'plain)
+                                 "" 'plain))
           (set! terminals (cons state terminals))
           (fork-thread (lambda () (reader-loop state)))
           (void)))))
@@ -689,13 +922,18 @@
                     #f terminal-row-styles)
     (bind-key! "C-c t" terminal!!)
     (add-buffer-kill-hook! terminal-close!)
-    (add-status-hint!
-      (lambda ()
-        (let ([state (terminal-of (current-buffer))])
+    (add-buffer-status-hint!
+      (lambda (buffer active?)
+        (let ([state (terminal-of buffer)])
           (and state
                (if (terminal-state-alive state)
-                   "C-] terminal commands"
-                   "process exited")))))
+                   (cond
+                     [(not active?) '("  running" . italic)]
+                     [(app-capture-escaped? buffer)
+                      '("  running; escaped" . italic)]
+                     [else
+                      '("  running; capturing input, C-] to escape" . italic)])
+                   '("  exited" . italic))))))
     (register-descriptions!
       '(((terminal!!)
          (("procedure" . "(terminal!! [command])")) "void"
