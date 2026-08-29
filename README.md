@@ -15,6 +15,8 @@ small and stops there.
 - M-x evaluates Scheme against the editor's live top level, with
   symbol completion, parameter hints as you type, history, and a
   transcript buffer.
+- `C-c t` opens a PTY-backed terminal buffer capable of running shells,
+  full-screen programs, and another instance of e.
 - Modules hot-reload. Saving a module's source inside the editor
   reloads it into the running session; sources edited elsewhere are
   picked up with `reload-module!`. Registrations are replaced,
@@ -84,6 +86,7 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x o`   | Move to the next window                                 |
 | `C-x t`   | Toggle soft-wrapping of long lines in this window       |
 | `C-x g`   | Browse Git commits, changed files, and patches          |
+| `C-c t`   | Open a full virtual terminal in the current window      |
 
 Each window has its own status line, point, and scroll position; the
 same buffer can be shown in several windows at once. Buffers have per-buffer
@@ -94,6 +97,8 @@ buffer-owned line-number gutter. See
 windows, mouse behavior, scrollbars, wrapping, splits, and the public API.
 Structured, read-only repository queries are available through the
 [Git API](docs/GIT.md).
+See [Terminal buffers](docs/TERMINAL.md) for PTY behavior, controls,
+scrollback, configuration, and the Scheme API.
 
 ### Movement
 

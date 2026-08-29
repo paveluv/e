@@ -10,8 +10,13 @@
 (library (sys)
   (export terminal-raw! terminal-restore! terminal-isig!
           terminal-size watch-terminal-resize! call-with-streamed-output
-          duplicate-standard-output-port terminal-output-port
-          canonical-file-path)
+          duplicate-standard-output-port duplicate-output-port
+          terminal-output-port
+          canonical-file-path
+          spawn-terminal-process terminal-process?
+          terminal-process-input terminal-process-output
+          terminal-process-pid resize-terminal-process!
+          close-terminal-process! reap-terminal-process!)
   (import (chezscheme))
 
   (define os
@@ -74,6 +79,156 @@
          (guard (ex [else #f])
            (foreign-procedure "realpath" (string u8*) uptr))))
 
+  ;; PTYs are deliberately kept in the system layer.  The terminal emulator
+  ;; consumes byte ports and never needs platform constants or libc details.
+  ;; openpty lives in libc on Linux and libutil on the BSD family.
+  (define libutil-loaded?
+    (or (and libc-loaded?
+             (guard (ex [else #f])
+               (load-shared-object
+                 (os-case "libutil.so.1" "libutil.dylib" "libutil.so"))
+               #t))
+        #f))
+  (define c-openpty
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "openpty" (u8* u8* u8* u8* u8*) int))))
+  (define c-fork
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "fork" () int))))
+  (define c-setsid
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "setsid" () int))))
+  (define c-system
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "system" (string) int))))
+  (define c-chdir
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "chdir" (string) int))))
+  (define c-setenv
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "setenv" (string string int) int))))
+  (define c-kill
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "kill" (int int) int))))
+  (define c-exit
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "_exit" (int) void))))
+  (define c-waitpid
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "waitpid" (int u8* int) int))))
+  (define c-close-range
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "close_range"
+                              (unsigned-int unsigned-int unsigned-int) int))))
+  (define c-closefrom
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "closefrom" (int) void))))
+  (define c-getdtablesize
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "getdtablesize" () int))))
+  (define pty-ioctl
+    (and libc-loaded?
+         (or (guard (ex [else #f])
+               (eval '(foreign-procedure (__varargs_after 2) "ioctl"
+                                         (int unsigned-long u8*) int)))
+             (guard (ex [else #f])
+               (foreign-procedure "ioctl" (int unsigned-long u8*) int)))))
+
+  (define-record-type terminal-process
+    (fields input output pid master (mutable closed)))
+
+  (define tiocsctty-request (os-case #x540e #x20007461 #x20007461))
+  (define tiocswinsz-request (os-case #x5414 #x80087467 #x80087467))
+
+  (define (winsize rows cols)
+    (let ([size (make-bytevector 8 0)])
+      (bytevector-u16-native-set! size 0 rows)
+      (bytevector-u16-native-set! size 2 cols)
+      size))
+
+  (define (close-child-descriptors!)
+    ;; M-x temporarily owns extra stdout/stderr pipe descriptors. A PTY child
+    ;; must not inherit them: otherwise the evaluator waits forever for pipe
+    ;; EOF while the interactive shell keeps their hidden copies open.
+    (cond [c-close-range (c-close-range 3 #xffffffff 0)]
+          [c-closefrom (c-closefrom 3)]
+          [c-getdtablesize
+           (do ([fd 3 (+ fd 1)]) ((= fd (min 65536 (c-getdtablesize))))
+             (c-close fd))]))
+
+  (define (resize-terminal-process! process rows cols)
+    (unless (terminal-process? process)
+      (error 'resize-terminal-process! "expected a terminal process" process))
+    (when (and pty-ioctl (not (terminal-process-closed process)))
+      (pty-ioctl (terminal-process-master process) tiocswinsz-request
+                 (winsize rows cols))
+      ;; The child is a session and process-group leader after setsid.
+      (when c-kill (c-kill (- (terminal-process-pid process)) 28))))
+
+  (define (spawn-terminal-process command directory rows cols)
+    (unless (and c-openpty c-fork c-setsid c-system c-dup2 c-close c-exit)
+      (error 'spawn-terminal-process "PTY processes are unavailable"))
+    (let ([master (make-bytevector 4 0)]
+          [slave (make-bytevector 4 0)]
+          [size (winsize rows cols)])
+      (unless (= (c-openpty master slave #f #f size) 0)
+        (error 'spawn-terminal-process "openpty failed"))
+      (let* ([master-fd (bytevector-s32-native-ref master 0)]
+             [slave-fd (bytevector-s32-native-ref slave 0)]
+             [pid (c-fork)])
+        (cond
+          [(< pid 0)
+           (c-close master-fd)
+           (c-close slave-fd)
+           (error 'spawn-terminal-process "fork failed")]
+          [(= pid 0)
+           (c-close master-fd)
+           (c-setsid)
+           (when pty-ioctl
+             (pty-ioctl slave-fd tiocsctty-request #f)
+             (pty-ioctl slave-fd tiocswinsz-request size))
+           (c-dup2 slave-fd 0)
+           (c-dup2 slave-fd 1)
+           (c-dup2 slave-fd 2)
+           (when (> slave-fd 2) (c-close slave-fd))
+           (close-child-descriptors!)
+           (when c-chdir (c-chdir directory))
+           (when c-setenv (c-setenv "TERM" "xterm-256color" 1))
+           (c-system command)
+           (c-exit 0)]
+          [else
+           (c-close slave-fd)
+           (let ([input (open-fd-input-port (c-dup master-fd) 'block #f)]
+                 [output (open-fd-output-port (c-dup master-fd) 'none #f)])
+             (make-terminal-process input output pid master-fd #f))]))))
+
+  (define (close-terminal-process! process)
+    (unless (terminal-process-closed process)
+      (terminal-process-closed-set! process #t)
+      (guard (ex [else (void)]) (close-port (terminal-process-input process)))
+      (guard (ex [else (void)]) (close-port (terminal-process-output process)))
+      (when c-close (c-close (terminal-process-master process)))
+      (when c-kill (c-kill (- (terminal-process-pid process)) 15))
+      (when c-waitpid
+        (c-waitpid (terminal-process-pid process) (make-bytevector 4 0) 0))))
+
+  (define (reap-terminal-process! process)
+    ;; Called after the master reports EOF: the child has closed the slave and
+    ;; can be waited without delaying the editor.
+    (unless (terminal-process-closed process)
+      (terminal-process-closed-set! process #t)
+      (guard (ex [else (void)]) (close-port (terminal-process-input process)))
+      (guard (ex [else (void)]) (close-port (terminal-process-output process)))
+      (when c-close (c-close (terminal-process-master process))))
+    (when c-waitpid
+      (c-waitpid (terminal-process-pid process) (make-bytevector 4 0) 0)))
+
   (define (canonical-file-path path)
     ;; The absolute, symlink-resolved spelling of an existing path, or #f.
     ;; PATH_MAX is commonly 4096; realpath fails instead of overflowing the
@@ -106,6 +261,14 @@
     (unless c-dup
       (error 'duplicate-standard-output-port "dup is unavailable"))
     (open-fd-output-port (c-dup 1) 'block (native-transcoder)))
+
+  (define (duplicate-output-port port)
+    ;; Keep an independently closeable route to an existing descriptor.  PTY
+    ;; readers use this to outlive M-x's temporary evaluation display port.
+    (unless c-dup
+      (error 'duplicate-output-port "dup is unavailable"))
+    (open-fd-output-port (c-dup (port-file-descriptor port))
+                         'block (native-transcoder)))
 
   (define (stream-lines fd emit!)
     (let ([p (open-fd-input-port fd 'block (native-transcoder))])

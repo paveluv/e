@@ -37,6 +37,7 @@
 ;; (scheme-tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
 ;; (scheme-format-intrusive #f)   ; #t: also fold whitespace and reflow lines
 ;; (scheme-format-width 100)      ; target columns for intrusive formatting
+;; (terminal-scrollback 10000)    ; retained shell lines; alternate screens excluded
 ;; (min-window-lines 2)           ; squeezed windows keep this many text lines
 ;; (column-native-scroll #f)      ; #t: C-x 3 columns scroll natively (VT420
 ;;                                ; margins) -- M-x (probe-terminal!) detects

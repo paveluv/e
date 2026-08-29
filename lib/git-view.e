@@ -193,9 +193,24 @@
            (fill-style line 'comment)]
           [else (fill-style line 'plain)]))
 
+  (define (ensure-git-buffers!)
+    ;; Git views are application state, not startup furniture. Create them
+    ;; together on first use; re-register existing buffers after a hot reload
+    ;; without making fresh sessions expose empty Git buffers.
+    (unless log-buffer
+      (set! log-buffer
+        (register-app! "*git-log*" refresh-log! handle-log-event!))
+      (set-app-presentation! log-buffer 1 #t)
+      (set-buffer-mode! log-buffer "git-log"))
+    (unless diff-buffer
+      (set! diff-buffer (register-view! "*git-diff*" refresh-diff!))
+      (set-app-presentation! diff-buffer 1 #t)
+      (set-buffer-mode! diff-buffer "git-diff")))
+
   (define (git-log!! . path)
     (let ([source (if (pair? path) (car path)
                       (or (buffer-file (current-buffer)) "."))])
+      (ensure-git-buffers!)
       (set! repository (git-open source))
       (load-log! repository)
       (refresh-log!)
@@ -206,13 +221,10 @@
   (define (init!)
     (register-mode! "git-log" '() '() log-styles)
     (register-mode! "git-diff" '() '() diff-styles)
-    (set! log-buffer
-      (register-app! "*git-log*" refresh-log! handle-log-event!))
-    (set-app-presentation! log-buffer 1 #t)
-    (set-buffer-mode! log-buffer "git-log")
-    (set! diff-buffer (register-view! "*git-diff*" refresh-diff!))
-    (set-app-presentation! diff-buffer 1 #t)
-    (set-buffer-mode! diff-buffer "git-diff")
+    ;; A reload after Git was opened reconnects its surviving app buffers;
+    ;; ordinary startup remains lazy.
+    (when (or (buffer-named "*git-log*") (buffer-named "*git-diff*"))
+      (ensure-git-buffers!))
     (register-descriptions!
       '(((git-log!!) (("procedure" . "(git-log!! [path])")) "void"
          ("(git-view)") git-view "Git" #f

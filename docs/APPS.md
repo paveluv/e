@@ -29,6 +29,40 @@ from the clicked cell even though the buffer is read-only.
 Registrations belong to their module and disappear transactionally on unload
 or reload like modes, key bindings, and hooks.
 
+## Input capture and propagation
+
+App input is layered: an active prompt first, then the focused app, then e's
+global bindings, then the ordinary buffer fallback such as self-insertion.
+Most apps are partial: their handler consumes only their own controls and
+returns false for everything else. Thus `*buffers*` owns navigation and row
+activation while `M-x`, window commands, and other global bindings pass
+through naturally.
+
+An app that embeds a complete interactive environment can capture every event:
+
+```scheme
+(set-app-capture! app-buffer #t)
+```
+
+Its handler still receives events normally, but a false result is consumed
+instead of propagating. This applies uniformly to keyboard, paste, mouse
+presses, drags, releases, and wheel events.
+
+A capturing app can grant e one complete global command:
+
+```scheme
+(escape-app-capture! "C-]" send-literal-control-bracket!)
+```
+
+If the next event is `C-]`, the supplied procedure sends the literal event.
+Any other key begins ordinary global dispatch. Multi-key bindings remain in e
+until complete, and commands retain control through their synchronous prompts.
+When the command finishes, capture is recomputed from the focused buffer: it
+resumes if the capturing app is active again, or the newly focused app/buffer
+takes over. An unbound printable key follows the global self-insertion fallback
+and therefore reports read-only in a read-only app; it is never silently sent
+back to the embedded application.
+
 The handler is optional. Thus these are equivalent:
 
 ```scheme
@@ -42,14 +76,18 @@ records the window that was current before entry as the app's target.
 Table-like apps can request shared presentation chrome:
 
 ```scheme
-(set-app-presentation! app-buffer 1 #t)
+(set-app-presentation! app-buffer 1 #t 'default 'default)
 ```
 
 The second argument is the number of sticky leading rows. The third is either
 `#t` for a one-column vertical scrollbar on the configured side, `'left` or
-`'right` for a fixed side, or `#f`. Sticky rows, scrollbar
-geometry, cursor placement, mouse hit-testing, and scrolling are handled
-together by the core and apply to every window showing the app.
+`'right` for a fixed side, or `#f`. The optional fourth argument overrides
+soft wrapping with `#t` or `#f`; `default` (and omission) follows the ordinary
+window and global setting. A fifth argument selects `block`, `underline`,
+`bar`, or the normal `default` cursor; these explicit shapes are steady.
+Sticky rows, scrollbar geometry, cursor placement,
+mouse hit-testing, and scrolling are handled together by the core and apply
+to every window showing the app.
 
 The same bar is enabled for ordinary buffers by default; `(scrollbar #f)`
 hides it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`

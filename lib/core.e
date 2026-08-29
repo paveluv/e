@@ -47,14 +47,14 @@
     add-status-hint!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab! probe-terminal!
-    add-pre-save-hook! add-post-save-hook!
+    add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
     prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
     prompt-edge-motion prompt-reindent
     completion-highlight
     prompt-styler completion-styler
     min-window-lines
     complete! show-completions! dismiss-completions!
-    read-key read-key-event key-event-character
+    read-key read-key-event key-event-character read-paste
     peek-key pending-input? cursor-in-echo
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
@@ -65,7 +65,9 @@
     format-log-entry
     message-source message-progress
     echo-highlight
-    register-app! register-view! set-app-presentation! display-app!
+    register-app! register-view! set-app-presentation! set-app-capture!
+    escape-app-capture! display-app!
+    buffer-window-size
     target-window target-buffer show-buffer-in-target!
     view-append! view-replace! register-log-formatter! log-history
     publish-descriptions! published-descriptions
@@ -194,7 +196,10 @@
   (define wrap-lines (make-parameter #t))
 
   (define (window-wrapped? w)
-    (let ([x (window-wrap w)])
+    (let* ([a (app-of (window-buffer w))]
+           [choice (and a (app-wrap a))]
+           [x (if (and a (not (eq? choice 'default)))
+                  choice (window-wrap w))])
       (if (eq? x 'default) (wrap-lines) x)))
 
   (define (wrap-width w)
@@ -1354,7 +1359,12 @@
       (unless (eq? old b)
         (buffer-spot-row-set! old (window-prow w))
         (buffer-spot-col-set! old (window-pcol w))
-        (buffer-spot-top-set! old (window-top w))))
+        (buffer-spot-top-set! old (window-top w))
+        ;; Buffer identity is part of every content and status row, even when
+        ;; the new buffer happens to have equal text and presentation chrome.
+        ;; This is especially important when an asynchronous app paints its
+        ;; final frame while the main thread replaces it.
+        (invalidate-screen-cache!)))
     (window-buffer-set! w b)
     (window-prow-set! w (buffer-spot-row b))
     (window-pcol-set! w (buffer-spot-col b))
@@ -1467,12 +1477,14 @@
     (fields buffer refresh! handle-event!
             (mutable target-window) (mutable target-buffer)
             (mutable refresh-error)
-            (mutable sticky-lines) (mutable scrollbar)))
+            (mutable sticky-lines) (mutable scrollbar) (mutable wrap)
+            (mutable cursor-style) (mutable capture)))
 
   ;; Created lazily because the general registry machinery is initialized
   ;; later in this library. Once created it participates in module retraction
   ;; and transactional reload rollback like every other extension registry.
   (define app-registry #f)
+  (define buffer-kill-hook-registry #f)
   ;; The latest record for each app buffer also persists outside the registry.
   ;; Module retraction removes executable callbacks, while target/selection
   ;; state survives and is inherited by the replacement registration.
@@ -1481,6 +1493,13 @@
   (define (ensure-app-registry!)
     (unless app-registry (set! app-registry (make-registry)))
     app-registry)
+
+  (define (add-buffer-kill-hook! proc)
+    (unless (procedure? proc)
+      (error 'add-buffer-kill-hook! "expected a procedure" proc))
+    (unless buffer-kill-hook-registry
+      (set! buffer-kill-hook-registry (make-registry)))
+    (registry-add! buffer-kill-hook-registry proc))
 
   (define (registered-apps)
     (if app-registry (registry-items app-registry) '()))
@@ -1509,7 +1528,10 @@
                         (and old (app-target-window old))
                         (and old (app-target-buffer old)) #f
                         (if old (app-sticky-lines old) 0)
-                        (and old (app-scrollbar old)))]
+                        (and old (app-scrollbar old))
+                        (if old (app-wrap old) 'default)
+                        (if old (app-cursor-style old) 'default)
+                        (and old (app-capture old)))]
            [registry (ensure-app-registry!)])
       (unless (procedure? refresh!)
         (error 'register-app! "refresh must be a procedure" refresh!))
@@ -1526,7 +1548,33 @@
       (registry-add! registry a)
       b))
 
-  (define (set-app-presentation! b sticky-lines scrollbar)
+  (define capture-bypass-app #f)
+  (define capture-escape-event #f)
+  (define capture-literal! #f)
+
+  (define (set-app-capture! b capture?)
+    (let ([a (app-of b)])
+      (unless a (error 'set-app-capture! "not an app buffer" b))
+      (unless (boolean? capture?)
+        (error 'set-app-capture! "capture must be #t or #f" capture?))
+      (app-capture-set! a capture?)
+      b))
+
+  (define (escape-app-capture! escape-event literal!)
+    ;; Suspend a fully capturing app for the next complete global command.
+    ;; dispatch-sequence! owns multi-key prefixes and commands own their
+    ;; prompts synchronously, so the bypass naturally lasts through both.
+    (let ([a (app-of (current-buffer))])
+      (unless (and a (app-capture a))
+        (error 'escape-app-capture! "current app does not capture input"))
+      (unless (and (string? escape-event) (procedure? literal!))
+        (error 'escape-app-capture! "expected an event and literal procedure"))
+      (set! capture-bypass-app a)
+      (set! capture-escape-event escape-event)
+      (set! capture-literal! literal!)
+      (void)))
+
+  (define (set-app-presentation! b sticky-lines scrollbar . options)
     ;; Configure buffer-level presentation shared by every window showing the
     ;; app. Sticky rows stay above the scrollable body; scrollbar is #f, #t
     ;; (enabled using the configured side), left, or right.
@@ -1539,6 +1587,18 @@
       (unless (memq scrollbar '(#f #t left right))
         (error 'set-app-presentation!
                "scrollbar must be #f, #t, left, or right" scrollbar))
+      (let ([wrap (if (pair? options) (car options) 'default)]
+            [cursor-style (if (and (pair? options) (pair? (cdr options)))
+                              (cadr options) 'default)])
+        (unless (memq wrap '(default #t #f))
+          (error 'set-app-presentation!
+                 "wrap must be default, #t, or #f" wrap))
+        (unless (memq cursor-style '(default block underline bar))
+          (error 'set-app-presentation!
+                 "cursor style must be default, block, underline, or bar"
+                 cursor-style))
+        (app-wrap-set! a wrap)
+        (app-cursor-style-set! a cursor-style))
       (app-sticky-lines-set! a sticky-lines)
       (app-scrollbar-set! a scrollbar)
       (invalidate-screen-cache!)
@@ -1598,6 +1658,17 @@
     (max 1 (- (window-width w)
               (if (window-scrollbar? w) 1 0)
               (window-line-number-width w))))
+
+  (define (buffer-window-size b)
+    ;; The text grid of the preferred window displaying b.  App-owned terminal
+    ;; state uses one grid per buffer, so the focused window wins when several
+    ;; windows mirror it.
+    (let ([w (if (eq? (window-buffer current-window) b)
+                 current-window
+                 (find (lambda (candidate)
+                         (eq? (window-buffer candidate) b))
+                       windows))])
+      (and w (cons (window-size w) (window-content-width w)))))
 
   (define (window-scrollbar-column w)
     (case (window-scrollbar? w)
@@ -1704,6 +1775,12 @@
     (let ([new (if (null? lines) (vector "") (list->vector lines))])
       (unless (equal? (buffer-lines b) new)
         (buffer-lines-set! b new)
+        ;; A view may be refreshed by a worker thread while the main input
+        ;; loop is between frames.  Its old row keys can otherwise survive a
+        ;; racing redraw even though the buffer revision changed.  Dynamic
+        ;; view replacement is comparatively rare (terminal emulation is the
+        ;; demanding case), so prefer a guaranteed coherent frame.
+        (invalidate-screen-cache!)
         (let ([last (- (vector-length new) 1)])
           (buffer-spot-row-set! b (min (buffer-spot-row b) last))
           (buffer-spot-col-set!
@@ -1872,6 +1949,15 @@
                     (set! message (format "New buffer ~a" s))]))))
 
   (define (kill-buffer! b)
+    (when buffer-kill-hook-registry
+      (for-each
+        (lambda (hook)
+          (guard (ex [else
+                      (log! 'kill-buffer!
+                            (format "Buffer cleanup failed for ~a: ~a"
+                                    (buffer-name b) (error-text ex)))])
+            (hook b)))
+        (registry-items buffer-kill-hook-registry)))
     (set! buffers (remq b buffers))
     (set! known-apps
       (remp (lambda (a) (eq? (app-buffer a) b)) known-apps))
@@ -3804,7 +3890,9 @@
         (set! echo-scroll
           (max 0 (min echo-scroll (- total (max live 1))))))))
 
-  (define (redraw!)
+  (define redraw-lock (make-mutex))
+
+  (define (redraw-frame!)
     ;; The frame goes out inside a synchronized update (mode 2026):
     ;; a supporting terminal holds rendering until the closing pair,
     ;; so a scroll and the repaint over it appear as one; others
@@ -3869,6 +3957,11 @@
     (ansi "\x1b;[?2026l")
     (flush-output-port (terminal-output-port)))
 
+  (define (redraw!)
+    ;; PTY readers may request a frame while the main thread waits for input.
+    ;; Keep the cache and terminal output as one indivisible transaction.
+    (with-mutex redraw-lock (redraw-frame!)))
+
   (define (window-screen-position w prow pcol)
     ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
     (let* ([entry (assq w (window-layout))]
@@ -3904,15 +3997,22 @@
           (let ([p (window-screen-position current-window
                                            point-row point-col)])
             (goto (min (car p) rows) (min (cdr p) cols)))))
-    (let ([style (cond
-                   [(cursor-in-echo) "\x1b;[3 q"]
-                   ;; a prompt: the cursor is in the echo area's input,
-                   ;; which is editable whatever the buffer behind it
-                   [echo-cursor "\x1b;[0 q"]
-                   ;; a bar where typing cannot land: a read-only buffer
-                   [(buffer-read-only (window-buffer current-window))
-                    "\x1b;[5 q"]
-                   [else "\x1b;[0 q"])])
+    (let* ([a (app-of (window-buffer current-window))]
+           [app-style (and a (app-cursor-style a))]
+           [style (cond
+                    [(cursor-in-echo) "\x1b;[3 q"]
+                    ;; a prompt: the cursor is in the echo area's input,
+                    ;; which is editable whatever the buffer behind it
+                    [echo-cursor "\x1b;[0 q"]
+                    [(and app-style (not (eq? app-style 'default)))
+                     (case app-style
+                       [(block) "\x1b;[2 q"]
+                       [(underline) "\x1b;[4 q"]
+                       [(bar) "\x1b;[6 q"])]
+                    ;; a bar where typing cannot land: a read-only buffer
+                    [(buffer-read-only (window-buffer current-window))
+                     "\x1b;[5 q"]
+                    [else "\x1b;[0 q"])])
       (unless (string=? style cursor-style-shown)
         (set! cursor-style-shown style)
         (ansi style)))
@@ -4869,8 +4969,21 @@
            (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
              (when (and (eq? w current-window)
                         (< (- y 1) (+ start height)))
-               (set! mark-active? #t)
-               (goto-point! (window-position w start height x y))))))]))
+               (goto-point! (window-position w start height x y))
+               (if (app-buffer? (window-buffer w))
+                   (unless (dispatch-app-event! "MOUSE-DRAG")
+                     (set! mark-active? #t))
+                   (set! mark-active? #t))))))]))
+
+  (define (mouse-release! x y)
+    (window-at (- x 1) (- y 1)
+      (lambda (entry)
+        (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+          (when (and (eq? w current-window)
+                     (< (- y 1) (+ start height))
+                     (app-buffer? (window-buffer w)))
+            (goto-point! (window-position w start height x y))
+            (dispatch-app-event! "MOUSE-RELEASE"))))))
 
   (define (mouse-wheel! x y dir meta?)
     ;; Scroll the window under the pointer; the focused window stays focused.
@@ -4927,6 +5040,7 @@
             (and handle? (char? c) (= (length nums) 3)
                  (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
                    (cond [(char=? c #\m)                         ; release
+                          (mouse-release! x y)
                           (set! drag-status #f)
                           (set! drag-divider #f)
                           (set! drag-scrollbar #f)
@@ -4971,7 +5085,8 @@
       [(= (string-length s) 1) s]
       [(member s '("UP" "DOWN" "LEFT" "RIGHT" "HOME" "END"
                    "DELETE" "PAGEUP" "PAGEDOWN" "S-TAB" "PASTE"
-                   "MOUSE")) s]
+                   "F1" "F2" "F3" "F4" "F5" "F6" "F7" "F8"
+                   "F9" "F10" "F11" "F12" "MOUSE")) s]
       [else (error 'bind-key! "unrecognized key" s)]))
 
   (define (key-spec spec)
@@ -5159,6 +5274,14 @@
                                  [(member p '("4" "8")) "END"]
                                  [(string=? p "5") "PAGEUP"]
                                  [(string=? p "6") "PAGEDOWN"]
+                                 [(string=? p "15") "F5"]
+                                 [(string=? p "17") "F6"]
+                                 [(string=? p "18") "F7"]
+                                 [(string=? p "19") "F8"]
+                                 [(string=? p "20") "F9"]
+                                 [(string=? p "21") "F10"]
+                                 [(string=? p "23") "F11"]
+                                 [(string=? p "24") "F12"]
                                  [(string=? p "200") "PASTE"]
                                  [else #f])]
                     [else #f])))))))
@@ -5183,6 +5306,14 @@
                   [(eof-object? a) "ESC"]
                   [(char=? a #\[)
                    (or (read-csi-event handle-mouse?) (again))]
+                  [(char=? a #\O)
+                   (case (read-char stdin)
+                     [(#\P) "F1"] [(#\Q) "F2"]
+                     [(#\R) "F3"] [(#\S) "F4"]
+                     [(#\A) "UP"] [(#\B) "DOWN"]
+                     [(#\C) "RIGHT"] [(#\D) "LEFT"]
+                     [(#\H) "HOME"] [(#\F) "END"]
+                     [else (again)])]
                   [else
                    (let ([plain (character-event a)])
                      (if (string-prefix? "C-" plain)
@@ -5258,8 +5389,14 @@
 
   (define (dispatch-app-event! event)
     (let* ([a (app-of (current-buffer))]
-           [handler (and a (app-handle-event! a))])
-      (and handler (handler event))))
+           [handler (and a (app-handle-event! a))]
+           [result (and handler (handler event))])
+      (or result (and a (app-capture a)))))
+
+  (define (clear-capture-bypass!)
+    (set! capture-bypass-app #f)
+    (set! capture-escape-event #f)
+    (set! capture-literal! #f))
 
   (define (handle-key! input)
     (define chain insert-chain)
@@ -5275,8 +5412,22 @@
         [else
          (unless (string=? event "C-k") (set! last-command #f))
          (settle-echo!)
-         (unless (dispatch-app-event! event)
-           (dispatch-sequence! event chain))])))
+         (let ([a (app-of (current-buffer))])
+           (if (and capture-bypass-app (eq? a capture-bypass-app))
+               (let ([escape capture-escape-event]
+                     [literal! capture-literal!])
+                 ;; Clear first: a command that returns to this app resumes
+                 ;; capture immediately, while prompts and key prefixes remain
+                 ;; inside this synchronous dispatch.
+                 (clear-capture-bypass!)
+                 (if (string=? event escape)
+                     (literal!)
+                     (dispatch-sequence! event chain)))
+               (begin
+                 ;; Focus may have changed since an app requested escape.
+                 (when capture-bypass-app (clear-capture-bypass!))
+                 (unless (dispatch-app-event! event)
+                   (dispatch-sequence! event chain)))))])))
 
   (define (action-name action)
     (cond

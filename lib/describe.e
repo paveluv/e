@@ -776,10 +776,26 @@
         ((display-app!) (("procedure" . "(display-app! buffer)")) "window or #f"
          ("(core)") core "App buffers" #f
          "Display and focus an app buffer, recording the previously current window and buffer as its target.")
+        ((set-app-capture!)
+         (("procedure" . "(set-app-capture! buffer capture?)")) "buffer"
+         ("(core)") core "App buffers" #f
+         "Enable or disable catch-all input capture for an app. A partial app propagates handler events returning false to global e bindings; a capturing app consumes them.")
+        ((escape-app-capture!)
+         (("procedure" . "(escape-app-capture! escape-event literal!)")) "void"
+         ("(core)") core "App buffers" #f
+         "Suspend the current app's catch-all capture for one complete global e command. Repeating `escape-event` invokes `literal!`; other keys use normal global dispatch through multi-key bindings and synchronous prompts.")
         ((set-app-presentation!)
-         (("procedure" . "(set-app-presentation! buffer sticky-lines scrollbar)"))
+         (("procedure" . "(set-app-presentation! buffer sticky-lines scrollbar [wrap cursor-style])"))
          "buffer" ("(core)") core "App buffers" #f
-         "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is `left` or #f.")
+         "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, or `default`.")
+        ((buffer-window-size)
+         (("procedure" . "(buffer-window-size buffer)")) "pair or #f"
+         ("(core)") core "App buffers" #f
+         "Return `(rows . columns)` for the preferred window displaying `buffer`, choosing the focused window when it displays the buffer, or #f when it is not visible.")
+        ((add-buffer-kill-hook!)
+         (("procedure" . "(add-buffer-kill-hook! procedure)")) "unspecified"
+         ("(core)") core "Buffer lifecycle" #f
+         "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
         ((target-window) (("procedure" . "(target-window)")) "window or #f"
          ("(core)") core "App buffers" #f
          "Return the current app's target window, #f while its target is ephemeral, or the current window outside an app.")
