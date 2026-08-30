@@ -12,6 +12,7 @@
           terminal-size watch-terminal-resize! call-with-streamed-output
           duplicate-standard-output-port duplicate-output-port
           terminal-output-port
+          terminal-character-width
           canonical-file-path
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
@@ -78,6 +79,25 @@
     (and libc-loaded?
          (guard (ex [else #f])
            (foreign-procedure "realpath" (string u8*) uptr))))
+  (define c-setlocale
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "setlocale" (int string) uptr))))
+  (define c-wcwidth
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "wcwidth" (unsigned-int) int))))
+
+  ;; wcwidth follows LC_CTYPE. Chez strings are Unicode regardless of the C
+  ;; locale, so initialize libc's character classification explicitly.
+  (define libc-character-locale
+    (and c-setlocale (c-setlocale 0 "")))
+
+  (define (terminal-character-width character)
+    (let ([width (and c-wcwidth (c-wcwidth (char->integer character)))])
+      (cond [(and width (>= width 0)) width]
+            [(memq (char-general-category character) '(Mn Me Cf)) 0]
+            [else 1])))
 
   ;; PTYs are deliberately kept in the system layer.  The terminal emulator
   ;; consumes byte ports and never needs platform constants or libc details.

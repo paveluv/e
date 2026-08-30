@@ -40,8 +40,9 @@ instance of e work normally.
 
 ## Input and leaving the terminal
 
-Printable keys, control and Meta keys, arrows, Home/End, PageUp/PageDown,
-Delete, F1–F12, and bracketed paste are sent to the child. Applications may
+Printable keys, control and Meta keys, arrows, Home/End, Insert/Delete,
+PageUp/PageDown, F1–F63, application-keypad keys, their xterm modifier
+combinations, and bracketed paste are sent to the child. Applications may
 enable xterm mouse reporting; clicks and wheel reports are then forwarded
 through the PTY, including through nested terminal emulators. Without mouse
 reporting, wheel ticks scroll the local terminal history by one eighth of the
@@ -94,6 +95,15 @@ screen is kept separate: entering `top`, less, or nested e preserves the shell
 screen and restores it when the application exits.
 DEC screen-reverse mode is applied non-destructively, including the brief
 reverse-video transition used by terminfo's visual bell capability.
+
+The grid stores Unicode grapheme strings in terminal cells. Combining marks,
+emoji presentation selectors, regional-indicator flags, and ZWJ emoji remain
+one grapheme; CJK and other wide characters occupy two cells without being
+split by editing or reflow. Resizing reflows primary-screen scrollback by its
+recorded soft-wrap boundaries while preserving explicit newlines, styles, and
+the logical cursor position. The primary screen also reflows while an
+alternate-screen application is active; the alternate screen itself remains a
+fixed application grid.
 OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
 asterisks, such as `*bash*`; duplicate names receive a numeric suffix.
 
@@ -139,6 +149,7 @@ output:
 ```scheme
 (define vt (make-terminal-emulator 24 80))
 (terminal-emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
+(terminal-emulator-resize! vt 40 100)
 (terminal-emulator-screen vt)       ; copied vector of cell rows
 (terminal-emulator-styles vt)       ; copied vector of cell-style rows
 (terminal-emulator-state vt)        ; dimensions, cursor, and active modes

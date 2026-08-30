@@ -2402,9 +2402,10 @@
   (define-record-type mode
     (fields name extensions interpreters styles
             ;; optional display transform: (render buffer row line) ->
-            ;; a string of the SAME length, shown in place of the line
-            ;; (the buffer text is untouched), or #f for the line as
-            ;; is.  Presentation only: columns stay 1:1.
+            ;; a string of the SAME length, or a same-length vector containing
+            ;; one display string per logical cell. The latter permits a cell
+            ;; to contain a grapheme and represents a wide glyph's continuation
+            ;; with "". The buffer text is untouched and columns stay 1:1.
             render
             ;; optional buffer-aware styling: (row-styles buffer row
             ;; line) -> a styles vector, or #f for the plain styles
@@ -2994,14 +2995,22 @@
       ;; mode's display transform, usually the line itself); control
       ;; characters (notably tabs) and columns past the end of the line
       ;; become spaces, so every column is exactly one cell wide.
-      (let ([out (make-string (- to from) #\space)])
-        (let loop ([i from])
-          (when (and (< i to) (< i (min (string-length shown) bound)))
-            (let ([ch (string-ref shown i)])
-              (unless (< (char->integer ch) 32)
-                (string-set! out (- i from) ch)))
-            (loop (+ i 1))))
-        out))
+      (if (vector? shown)
+          (let loop ([i from] [parts '()])
+            (if (= i to)
+                (apply string-append (reverse parts))
+                (loop (+ i 1)
+                      (cons (if (and (< i (vector-length shown)) (< i bound))
+                                (vector-ref shown i) " ")
+                            parts))))
+          (let ([out (make-string (- to from) #\space)])
+            (let loop ([i from])
+              (when (and (< i to) (< i (min (string-length shown) bound)))
+                (let ([ch (string-ref shown i)])
+                  (unless (< (char->integer ch) 32)
+                    (string-set! out (- i from) ch)))
+                (loop (+ i 1))))
+            out)))
     (define (marked? col)
       (and (< col n)
            (exists (lambda (m) (and (eq? (mark-style m) 'mark)
@@ -3938,9 +3947,14 @@
                                          (and m (mode-render m)))])
                                 (or (and r (guard (ex [else #f])
                                              (let ([t (r b i line)])
-                                               (and (string? t)
-                                                    (= (string-length t)
-                                                       (string-length line))
+                                               (and (or (and (string? t)
+                                                             (= (string-length t)
+                                                                (string-length line)))
+                                                        (and (vector? t)
+                                                             (= (vector-length t)
+                                                                (string-length line))
+                                                             (for-all string?
+                                                                      (vector->list t))))
                                                     t))))
                                     line))]
                        [wrapped? (and (>= i sticky) (window-wrapped? w))]
@@ -5502,6 +5516,28 @@
   ;; User entries always beat defaults; within a layer the newest wins.
   (define key-bindings (make-registry))
 
+  (define special-key-names
+    (append
+      '("UP" "DOWN" "LEFT" "RIGHT" "HOME" "END" "BEGIN" "INSERT"
+        "DELETE" "PAGEUP" "PAGEDOWN" "TAB" "RET" "ESC" "BACKSPACE"
+        "PASTE" "MOUSE")
+      (map (lambda (number) (format "F~a" (+ number 1))) (iota 63))
+      '("KP-0" "KP-1" "KP-2" "KP-3" "KP-4" "KP-5" "KP-6"
+        "KP-7" "KP-8" "KP-9" "KP-DECIMAL" "KP-DIVIDE" "KP-MULTIPLY"
+        "KP-SUBTRACT" "KP-ADD" "KP-COMMA" "KP-EQUAL" "KP-ENTER")))
+
+  (define special-key-prefixes
+    '("C-M-S-" "C-M-" "C-S-" "M-S-" "C-" "M-" "S-"))
+
+  (define (special-key-name? name)
+    (or (member name special-key-names)
+        (exists
+          (lambda (prefix)
+            (and (string-prefix? prefix name)
+                 (member (string-tail name (string-length prefix))
+                         special-key-names)))
+          special-key-prefixes)))
+
   (define (key-token s)
     (cond
       [(string=? s "SPC") " "]
@@ -5520,12 +5556,7 @@
       [(and (= (string-length s) 5) (string-prefix? "C-M-" s))
        (format "C-M-~c" (char-downcase (string-ref s 4)))]
       [(= (string-length s) 1) s]
-      [(member s '("UP" "DOWN" "LEFT" "RIGHT" "HOME" "END"
-                   "DELETE" "PAGEUP" "PAGEDOWN" "S-TAB" "PASTE"
-                   "S-UP" "S-DOWN" "S-LEFT" "S-RIGHT"
-                   "S-PAGEUP" "S-PAGEDOWN"
-                   "F1" "F2" "F3" "F4" "F5" "F6" "F7" "F8"
-                   "F9" "F10" "F11" "F12" "MOUSE")) s]
+      [(special-key-name? s) s]
       [else (error 'bind-key! "unrecognized key" s)]))
 
   (define (key-spec spec)
@@ -5690,6 +5721,39 @@
          (let ([c (string-ref event 0)])
            (and (>= (char->integer c) 32) c))))
 
+  (define (csi-numbers text)
+    (let loop ([characters (string->list text)] [digits '()] [out '()])
+      (cond [(null? characters)
+             (reverse
+               (if (null? digits) out
+                   (cons (string->number (list->string (reverse digits)))
+                         out)))]
+            [(char=? (car characters) #\;)
+             (loop (cdr characters) '()
+                   (cons (and (pair? digits)
+                              (string->number
+                                (list->string (reverse digits))))
+                         out))]
+            [else (loop (cdr characters) (cons (car characters) digits) out)])))
+
+  (define (xterm-modified-name name modifier)
+    (string-append
+      (case modifier [(2) "S-"] [(3) "M-"] [(4) "M-S-"]
+        [(5) "C-"] [(6) "C-S-"] [(7) "C-M-"] [(8) "C-M-S-"]
+        [else ""])
+      name))
+
+  (define (xterm-function-name base modifier)
+    (let ([offset (case modifier [(2) 12] [(5) 24] [(6) 36]
+                    [(3) 48] [(4) 60] [else 0])])
+      (if (and (= modifier 4) (> base 3))
+          (xterm-modified-name (format "F~a" base) modifier)
+          (format "F~a" (+ base offset)))))
+
+  (define (xterm-function-base code)
+    (case code [(15) 5] [(17) 6] [(18) 7] [(19) 8]
+      [(20) 9] [(21) 10] [(23) 11] [(24) 12] [else #f]))
+
   (define (read-csi-event handle-mouse?)
     (let ([first (read-char stdin)])
       (if (and (char? first) (char=? first #\<))
@@ -5699,36 +5763,36 @@
                      (or (char<=? #\0 b #\9) (char=? b #\;)))
                 (drain (read-char stdin) (cons b params))
                 (let ([p (list->string (reverse params))])
-                  (define (direction name)
-                    (cond [(member p '("1;4" "4"))
-                           (string-append "M-S-" name)]
-                          [(member p '("1;3" "3"))
-                           (string-append "M-" name)]
-                          [(member p '("1;2" "2"))
-                           (string-append "S-" name)]
-                          [else name]))
+                  (define numbers (csi-numbers p))
+                  (define modifier
+                    (cond [(and (pair? numbers) (pair? (cdr numbers)))
+                           (or (cadr numbers) 1)]
+                          [(and (pair? numbers) (memv (car numbers) '(2 3 4)))
+                           (car numbers)]
+                          [else 1]))
+                  (define (named name) (xterm-modified-name name modifier))
                   (case b
-                    [(#\A) (direction "UP")] [(#\B) (direction "DOWN")]
-                    [(#\C) (direction "RIGHT")] [(#\D) (direction "LEFT")]
-                    [(#\H) "HOME"] [(#\F) "END"]
+                    [(#\A) (named "UP")] [(#\B) (named "DOWN")]
+                    [(#\C) (named "RIGHT")] [(#\D) (named "LEFT")]
+                    [(#\H) (named "HOME")] [(#\F) (named "END")]
+                    [(#\P #\Q #\R #\S)
+                     (xterm-function-name
+                       (+ 1 (- (char->integer b) (char->integer #\P)))
+                       modifier)]
                     [(#\Z) "S-TAB"]
-                    [(#\~) (cond [(string=? p "3") "DELETE"]
-                                 [(member p '("1" "7")) "HOME"]
-                                 [(member p '("4" "8")) "END"]
-                                 [(string=? p "5") "PAGEUP"]
-                                 [(string=? p "6") "PAGEDOWN"]
-                                 [(string=? p "5;2") "S-PAGEUP"]
-                                 [(string=? p "6;2") "S-PAGEDOWN"]
-                                 [(string=? p "15") "F5"]
-                                 [(string=? p "17") "F6"]
-                                 [(string=? p "18") "F7"]
-                                 [(string=? p "19") "F8"]
-                                 [(string=? p "20") "F9"]
-                                 [(string=? p "21") "F10"]
-                                 [(string=? p "23") "F11"]
-                                 [(string=? p "24") "F12"]
-                                 [(string=? p "200") "PASTE"]
-                                 [else #f])]
+                    [(#\~)
+                     (let ([code (and (pair? numbers) (car numbers))])
+                       (cond [(eqv? code 200) "PASTE"]
+                             [(memv code '(1 7)) (named "HOME")]
+                             [(memv code '(4 8)) (named "END")]
+                             [(eqv? code 2) (named "INSERT")]
+                             [(eqv? code 3) (named "DELETE")]
+                             [(eqv? code 5) (named "PAGEUP")]
+                             [(eqv? code 6) (named "PAGEDOWN")]
+                             [(xterm-function-base code)
+                              => (lambda (base)
+                                   (xterm-function-name base modifier))]
+                             [else #f]))]
                     [else #f])))))))
 
   (define read-key-event
@@ -5758,6 +5822,16 @@
                      [(#\A) "UP"] [(#\B) "DOWN"]
                      [(#\C) "RIGHT"] [(#\D) "LEFT"]
                      [(#\H) "HOME"] [(#\F) "END"]
+                     [(#\E) "BEGIN"]
+                     [(#\p) "KP-0"] [(#\q) "KP-1"]
+                     [(#\r) "KP-2"] [(#\s) "KP-3"]
+                     [(#\t) "KP-4"] [(#\u) "KP-5"]
+                     [(#\v) "KP-6"] [(#\w) "KP-7"]
+                     [(#\x) "KP-8"] [(#\y) "KP-9"]
+                     [(#\n) "KP-DECIMAL"] [(#\o) "KP-DIVIDE"]
+                     [(#\j) "KP-MULTIPLY"] [(#\m) "KP-SUBTRACT"]
+                     [(#\k) "KP-ADD"] [(#\l) "KP-COMMA"]
+                     [(#\X) "KP-EQUAL"] [(#\M) "KP-ENTER"]
                      [else (again)])]
                   [else
                    (let ([plain (character-event a)])

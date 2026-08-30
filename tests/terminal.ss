@@ -197,4 +197,118 @@
               (vector->list (terminal-emulator-screen terminal))
               '("abcd    ")))
 
+     (let ([terminal (make-terminal-emulator 2 8)])
+       (check 'control-shift-navigation
+              (terminal-emulator-input terminal "C-S-LEFT")
+              (string->utf8 "\x1b;[1;6D"))
+       (check 'modified-page-key
+              (terminal-emulator-input terminal "M-PAGEDOWN")
+              (string->utf8 "\x1b;[6;3~"))
+       (check 'insert-key
+              (terminal-emulator-input terminal "INSERT")
+              (string->utf8 "\x1b;[2~"))
+       (check 'extended-function-key
+              (terminal-emulator-input terminal "F37")
+              (string->utf8 "\x1b;[1;6P"))
+       (check 'named-modified-function-key
+              (terminal-emulator-input terminal "S-F12")
+              (string->utf8 "\x1b;[24;2~"))
+       (check 'keypad-numeric
+              (terminal-emulator-input terminal "KP-7")
+              (string->utf8 "7"))
+       (terminal-emulator-feed! terminal "\x1b;=")
+       (check 'keypad-application
+              (terminal-emulator-input terminal "KP-7")
+              (string->utf8 "\x1b;Ow")))
+
+     (let ([terminal (make-terminal-emulator 2 6)])
+       (terminal-emulator-feed! terminal "e\x301;\x4e2d;X")
+       (check 'unicode-cell-geometry
+              (vector->list (terminal-emulator-screen terminal))
+              '("\xe9;\x4e2d;X  " "      "))
+       (check 'unicode-cell-cursor (state-ref terminal 'cursor) '(0 . 4)))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1f469;\x200d;\x1f4bb;X")
+       (check 'emoji-grapheme-cluster
+              (vector->list (terminal-emulator-screen terminal))
+              '("\x1f469;\x200d;\x1f4bb;X "))
+       (check 'emoji-cell-cursor (state-ref terminal 'cursor) '(0 . 3)))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1f1fa;\x1f1f8;X")
+       (check 'regional-indicator-grapheme
+              (vector->list (terminal-emulator-screen terminal))
+              '("\x1f1fa;\x1f1f8;X "))
+       (check 'regional-indicator-width (state-ref terminal 'cursor) '(0 . 3)))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1100;\x1161;\x11a8;X")
+       (check 'hangul-grapheme-cluster
+              (vector->list (terminal-emulator-screen terminal))
+              '("\xac01;X "))
+       (check 'hangul-cell-width (state-ref terminal 'cursor) '(0 . 3)))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x4e2d;X\x1b;[2G\x1b;[K")
+       (check 'erase-wide-cell-atomically
+              (vector->list (terminal-emulator-screen terminal))
+              '("    ")))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x4e2d;X\x1b;[1G\x1b;[P")
+       (check 'delete-wide-cell-boundary
+              (vector->list (terminal-emulator-screen terminal))
+              '(" X  ")))
+
+     (let ([terminal (make-terminal-emulator 2 6)])
+       (terminal-emulator-feed! terminal "abcdefg")
+       (terminal-emulator-resize! terminal 2 4)
+       (check 'narrow-resize-reflows
+              (vector->list (terminal-emulator-screen terminal))
+              '("abcd" "efg "))
+       (check 'narrow-resize-cursor (state-ref terminal 'cursor) '(1 . 3))
+       (terminal-emulator-resize! terminal 2 6)
+       (check 'wide-resize-reflows
+              (vector->list (terminal-emulator-screen terminal))
+              '("abcdef" "g     "))
+       (check 'wide-resize-cursor (state-ref terminal 'cursor) '(1 . 1)))
+
+     (let ([terminal (make-terminal-emulator 2 4)])
+       (terminal-emulator-feed! terminal "AB\x4e2d;")
+       (terminal-emulator-resize! terminal 2 3)
+       (check 'wide-cell-never-split
+              (vector->list (terminal-emulator-screen terminal))
+              '("AB " "\x4e2d; "))
+       (terminal-emulator-resize! terminal 2 4)
+       (check 'wide-cell-reflow-restores
+              (vector->list (terminal-emulator-screen terminal))
+              '("AB\x4e2d;" "    ")))
+
+     (let ([terminal (make-terminal-emulator 2 6)])
+       (terminal-emulator-feed! terminal "abcdefg\x1b;[?1049hALT")
+       (terminal-emulator-resize! terminal 2 4)
+       (terminal-emulator-feed! terminal "\x1b;[?1049l")
+       (check 'primary-reflows-behind-alternate-screen
+              (vector->list (terminal-emulator-screen terminal))
+              '("abcd" "efg ")))
+
+     (let ([terminal (make-terminal-emulator 2 4)])
+       (terminal-emulator-feed! terminal "abcdefghij")
+       (check 'scrollback-before-reflow
+              (state-ref terminal 'scrollback-lines) 1)
+       (terminal-emulator-resize! terminal 2 5)
+       (check 'scrollback-participates-in-reflow
+              (vector->list (terminal-emulator-screen terminal))
+              '("abcde" "fghij"))
+       (check 'reflow-can-consume-scrollback
+              (state-ref terminal 'scrollback-lines) 0))
+
+     (let ([terminal (make-terminal-emulator 2 4)])
+       (terminal-emulator-feed! terminal "abcd\r\nX")
+       (terminal-emulator-resize! terminal 3 3)
+       (check 'explicit-newline-survives-reflow
+              (vector->list (terminal-emulator-screen terminal))
+              '("abc" "d  " "X  ")))
+
      (format #t "~a terminal checks passed\n" checks)))
