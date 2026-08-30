@@ -1,7 +1,11 @@
 ;; terminal.e -- PTY-backed terminal emulator app.
 
 (library (terminal)
-  (export init! terminal!! terminal-send! terminal-close! terminal-scrollback)
+  (export init! terminal!! terminal-send! terminal-close! terminal-scrollback
+          make-terminal-emulator terminal-emulator?
+          terminal-emulator-feed! terminal-emulator-screen
+          terminal-emulator-styles terminal-emulator-state terminal-emulator-input
+          terminal-emulator-replies)
   (import (chezscheme) (core) (sys)
           (only (describe) register-descriptions!))
 
@@ -9,13 +13,18 @@
     (fields buffer process display lock
             (mutable rows) (mutable cols) (mutable screen)
             (mutable row) (mutable col)
-            (mutable saved-row) (mutable saved-col)
+            (mutable saved-row) (mutable saved-col) (mutable saved-state)
             (mutable scroll-top) (mutable scroll-bottom)
             (mutable parser) (mutable parameters)
-            (mutable osc-escape) (mutable osc-text)
+            (mutable osc-escape) (mutable osc-text) (mutable replies)
             (mutable charset) (mutable shift)
+            (mutable wrap-pending) (mutable autowrap) (mutable origin)
+            (mutable insert) (mutable cursor-keys) (mutable keypad)
+            (mutable cursor-visible) (mutable tab-stops)
+            (mutable last-character)
             (mutable dirty) (mutable alive) (mutable prefix)
-            (mutable mouse) (mutable bracketed) (mutable main-screen)
+            (mutable mouse) (mutable mouse-sgr)
+            (mutable bracketed) (mutable main-screen)
             (mutable main-row) (mutable main-col)
             (mutable history) (mutable unfollowed-windows)
             (mutable styles) (mutable main-styles) (mutable history-styles)
@@ -33,6 +42,73 @@
         (unless (and (integer? lines) (exact? lines) (>= lines 0))
           (error 'terminal-scrollback "must be a nonnegative integer" lines))
         lines)))
+
+  (define (terminal-emulator? value) (terminal-state? value))
+
+  (define (make-terminal-emulator rows cols)
+    (unless (and (integer? rows) (exact? rows) (> rows 0)
+                 (integer? cols) (exact? cols) (> cols 0))
+      (error 'make-terminal-emulator
+             "rows and columns must be positive exact integers" rows cols))
+    (make-terminal-state #f #f #f (make-mutex)
+                         rows cols (make-screen rows cols)
+                         0 0 0 0 #f 0 (- rows 1)
+                         'normal "" #f "" '() 'ascii 0
+                         #f #t #f #f #f #f #t
+                         (default-tab-stops cols) #\space
+                         #f #f #f #f #f #f #f 0 0 '() '()
+                         (make-style-screen rows cols 'plain)
+                         #f '() (make-style-screen rows cols 'plain)
+                         "" 'plain))
+
+  (define (terminal-emulator-feed! emulator text)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-feed! "expected a terminal emulator" emulator))
+    (unless (string? text)
+      (error 'terminal-emulator-feed! "expected a string" text))
+    (string-for-each (lambda (character) (feed-character! emulator character))
+                     text)
+    (void))
+
+  (define (terminal-emulator-screen emulator)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-screen "expected a terminal emulator" emulator))
+    (vector-map string-copy (terminal-state-screen emulator)))
+
+  (define (terminal-emulator-styles emulator)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-styles "expected a terminal emulator" emulator))
+    (vector-map vector-copy (terminal-state-styles emulator)))
+
+  (define (terminal-emulator-state emulator)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-state "expected a terminal emulator" emulator))
+    `((rows . ,(terminal-state-rows emulator))
+      (columns . ,(terminal-state-cols emulator))
+      (cursor . ,(cons (terminal-state-row emulator)
+                       (terminal-state-col emulator)))
+      (wrap-pending . ,(terminal-state-wrap-pending emulator))
+      (autowrap . ,(terminal-state-autowrap emulator))
+      (origin . ,(terminal-state-origin emulator))
+      (insert . ,(terminal-state-insert emulator))
+      (cursor-visible . ,(terminal-state-cursor-visible emulator))
+      (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
+      (application-keypad . ,(terminal-state-keypad emulator))
+      (mouse-tracking . ,(terminal-state-mouse emulator))
+      (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
+      (bracketed-paste . ,(terminal-state-bracketed emulator))))
+
+  (define (terminal-emulator-input emulator event)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-input "expected a terminal emulator" emulator))
+    (unless (string? event)
+      (error 'terminal-emulator-input "expected an event string" event))
+    (event-bytes emulator event))
+
+  (define (terminal-emulator-replies emulator)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-replies "expected a terminal emulator" emulator))
+    (list-copy (terminal-state-replies emulator)))
 
   (define (terminal-of buffer)
     (find (lambda (state) (eq? (terminal-state-buffer state) buffer))
@@ -66,6 +142,11 @@
 
   (define (blank-line cols) (make-string cols #\space))
   (define (blank-styles cols style) (make-vector cols style))
+
+  (define (default-tab-stops cols)
+    (let ([stops (make-vector cols #f)])
+      (do ([col 8 (+ col 8)]) ((>= col cols) stops)
+        (vector-set! stops col #t))))
 
   (define (copy-vector-range! source source-start target target-start count)
     (if (<= target-start source-start)
@@ -102,7 +183,42 @@
         (copy-vector-range! (vector-ref old row) 0
                             (vector-ref new row) 0 copy-cols))))
 
+  (define (resized-tab-stops old old-cols cols)
+    (let ([new (default-tab-stops cols)])
+      (do ([col 0 (+ col 1)]) ((= col (min old-cols cols)) new)
+        (vector-set! new col (vector-ref old col)))))
+
   (define (clamp value low high) (min high (max low value)))
+
+  (define (save-cursor! state)
+    (terminal-state-saved-row-set! state (terminal-state-row state))
+    (terminal-state-saved-col-set! state (terminal-state-col state))
+    (terminal-state-saved-state-set!
+      state
+      (list (terminal-state-sgr state)
+            (terminal-state-style state)
+            (terminal-state-charset state)
+            (terminal-state-shift state)
+            (terminal-state-origin state)
+            (terminal-state-autowrap state)
+            (terminal-state-wrap-pending state))))
+
+  (define (restore-cursor! state)
+    (terminal-state-row-set!
+      state (clamp (terminal-state-saved-row state)
+                   0 (- (terminal-state-rows state) 1)))
+    (terminal-state-col-set!
+      state (clamp (terminal-state-saved-col state)
+                   0 (- (terminal-state-cols state) 1)))
+    (when (terminal-state-saved-state state)
+      (let ([saved (terminal-state-saved-state state)])
+        (terminal-state-sgr-set! state (list-ref saved 0))
+        (terminal-state-style-set! state (list-ref saved 1))
+        (terminal-state-charset-set! state (list-ref saved 2))
+        (terminal-state-shift-set! state (list-ref saved 3))
+        (terminal-state-origin-set! state (list-ref saved 4))
+        (terminal-state-autowrap-set! state (list-ref saved 5))
+        (terminal-state-wrap-pending-set! state (list-ref saved 6)))))
 
   (define (resize-screen! state rows cols)
     (unless (and (= rows (terminal-state-rows state))
@@ -125,12 +241,16 @@
                                   (terminal-state-style state))))
         (terminal-state-screen-set! state new)
         (terminal-state-styles-set! state new-styles)
+        (terminal-state-tab-stops-set!
+          state
+          (resized-tab-stops (terminal-state-tab-stops state) old-cols cols))
         (terminal-state-rows-set! state rows)
         (terminal-state-cols-set! state cols)
         (terminal-state-row-set! state
                                  (clamp (terminal-state-row state) 0 (- rows 1)))
         (terminal-state-col-set! state
                                  (clamp (terminal-state-col state) 0 (- cols 1)))
+        (terminal-state-wrap-pending-set! state #f)
         (terminal-state-scroll-top-set! state 0)
         (terminal-state-scroll-bottom-set! state (- rows 1))
         (terminal-state-dirty-set! state #t)
@@ -187,16 +307,24 @@
                      (+ (terminal-state-row state) 1)))))
 
   (define (put-character! state character)
-    (when (>= (terminal-state-col state) (terminal-state-cols state))
-      (terminal-state-col-set! state 0)
-      (line-feed! state))
+    ;; VT autowrap is delayed until the next printable character. Cursor
+    ;; motion and controls can therefore cancel a pending wrap at the margin.
+    (when (terminal-state-wrap-pending state)
+      (terminal-state-wrap-pending-set! state #f)
+      (when (terminal-state-autowrap state)
+        (terminal-state-col-set! state 0)
+        (line-feed! state)))
+    (when (terminal-state-insert state) (insert-characters! state 1))
     (string-set! (vector-ref (terminal-state-screen state)
                              (terminal-state-row state))
                  (terminal-state-col state) character)
     (vector-set! (vector-ref (terminal-state-styles state)
                              (terminal-state-row state))
                  (terminal-state-col state) (terminal-state-style state))
-    (terminal-state-col-set! state (+ (terminal-state-col state) 1)))
+    (terminal-state-last-character-set! state character)
+    (if (= (terminal-state-col state) (- (terminal-state-cols state) 1))
+        (terminal-state-wrap-pending-set! state #t)
+        (terminal-state-col-set! state (+ (terminal-state-col state) 1))))
 
   (define (erase-line! state start end)
     (let ([line (vector-ref (terminal-state-screen state)
@@ -274,9 +402,12 @@
       (if (or (not value) (= value 0)) default value)))
 
   (define (terminal-reply! state text)
-    (let ([output (terminal-process-output (terminal-state-process state))])
-      (put-bytevector output (string->utf8 text))
-      (flush-output-port output)))
+    (terminal-state-replies-set!
+      state (append (terminal-state-replies state) (list text)))
+    (when (terminal-state-process state)
+      (let ([output (terminal-process-output (terminal-state-process state))])
+        (put-bytevector output (string->utf8 text))
+        (flush-output-port output))))
 
   (define (dispatch-osc! state)
     (let ([text (terminal-state-osc-text state)])
@@ -289,7 +420,7 @@
               (memv (string-ref text 0) '(#\0 #\1 #\2))
               (char=? (string-ref text 1) #\;))
          (let ([title (substring text 2 (string-length text))])
-           (unless (string=? title "")
+           (unless (or (string=? title "") (not (terminal-state-buffer state)))
              (set-buffer-name! (terminal-state-buffer state)
                                (format "*~a*" title))))]
         [else (void)])))
@@ -414,13 +545,24 @@
       (terminal-state-col-set! state 0)
       (terminal-state-saved-row-set! state 0)
       (terminal-state-saved-col-set! state 0)
+      (terminal-state-saved-state-set! state #f)
       (terminal-state-scroll-top-set! state 0)
       (terminal-state-scroll-bottom-set! state (- rows 1))
       (terminal-state-parameters-set! state "")
       (terminal-state-osc-escape-set! state #f)
       (terminal-state-charset-set! state 'ascii)
       (terminal-state-shift-set! state 0)
+      (terminal-state-wrap-pending-set! state #f)
+      (terminal-state-autowrap-set! state #t)
+      (terminal-state-origin-set! state #f)
+      (terminal-state-insert-set! state #f)
+      (terminal-state-cursor-keys-set! state #f)
+      (terminal-state-keypad-set! state #f)
+      (terminal-state-cursor-visible-set! state #t)
+      (terminal-state-tab-stops-set! state (default-tab-stops cols))
+      (terminal-state-last-character-set! state #\space)
       (terminal-state-mouse-set! state #f)
+      (terminal-state-mouse-sgr-set! state #f)
       (terminal-state-bracketed-set! state #f)
       (terminal-state-main-screen-set! state #f)
       (terminal-state-main-styles-set! state #f)
@@ -429,10 +571,13 @@
       (terminal-state-sgr-set! state "")
       (terminal-state-style-set! state 'plain)
       (terminal-state-dirty-set! state #t)
-      (set-app-presentation! (terminal-state-buffer state)
-                             0 #f #f 'blinking-block)))
+      (when (terminal-state-buffer state)
+        (set-app-presentation! (terminal-state-buffer state)
+                               0 #f #f 'blinking-block))))
 
   (define (dispatch-csi! state final text)
+    (unless (char=? final #\m)
+      (terminal-state-wrap-pending-set! state #f))
     (let* ([cursor-shape? (and (char=? final #\q)
                                (> (string-length text) 0)
                                (char=? (string-ref text
@@ -454,9 +599,22 @@
             (for-each
               (lambda (mode)
                 (case mode
-                  [(1000 1002 1003 1006) (terminal-state-mouse-set! state on?)]
+                  [(1) (terminal-state-cursor-keys-set! state on?)]
+                  [(6)
+                   (terminal-state-origin-set! state on?)
+                   (terminal-state-row-set!
+                     state (if on? (terminal-state-scroll-top state) 0))
+                   (terminal-state-col-set! state 0)]
+                  [(7) (terminal-state-autowrap-set! state on?)]
+                  [(25) (terminal-state-cursor-visible-set! state on?)]
+                  [(1000 1002 1003)
+                   (if on?
+                       (terminal-state-mouse-set! state mode)
+                       (when (eqv? (terminal-state-mouse state) mode)
+                         (terminal-state-mouse-set! state #f)))]
+                  [(1006) (terminal-state-mouse-sgr-set! state on?)]
                   [(2004) (terminal-state-bracketed-set! state on?)]
-                  [(1049)
+                  [(47 1047 1049)
                    ;; The alternate and primary screens have unrelated row
                    ;; spaces. A scrollback offset from one is meaningless in
                    ;; the other and can crop a nested full-screen program.
@@ -487,14 +645,27 @@
                                                   (terminal-state-main-row state))
                          (terminal-state-col-set! state
                                                   (terminal-state-main-col state))))
-                   (reset-buffer-viewports!
-                     (terminal-state-buffer state)
-                     (terminal-cursor-position state))]
+                   (when (terminal-state-buffer state)
+                     (reset-buffer-viewports!
+                       (terminal-state-buffer state)
+                       (terminal-cursor-position state)))]
                   [else (void)]))
               parameters))
           (case final
-            [(#\A) (terminal-state-row-set! state (max 0 (- row n)))]
-            [(#\B #\e) (terminal-state-row-set! state (min (- rows 1) (+ row n)))]
+            [(#\h #\l)
+             (when (and (not (string-prefix? "?" text))
+                        (memv 4 parameters))
+               (terminal-state-insert-set! state (char=? final #\h)))]
+            [(#\A)
+             (terminal-state-row-set!
+               state (max (if (terminal-state-origin state)
+                              (terminal-state-scroll-top state) 0)
+                          (- row n)))]
+            [(#\B #\e)
+             (terminal-state-row-set!
+               state (min (if (terminal-state-origin state)
+                              (terminal-state-scroll-bottom state) (- rows 1))
+                          (+ row n)))]
             [(#\C #\a) (terminal-state-col-set! state (min (- cols 1) (+ col n)))]
             [(#\D) (terminal-state-col-set! state (max 0 (- col n)))]
             [(#\E) (terminal-state-row-set! state (min (- rows 1) (+ row n)))
@@ -504,11 +675,21 @@
             [(#\G #\`) (terminal-state-col-set! state
                                                 (clamp (- n 1) 0 (- cols 1)))]
             [(#\d) (terminal-state-row-set! state
-                                            (clamp (- n 1) 0 (- rows 1)))]
+                                            (if (terminal-state-origin state)
+                                                (clamp (+ (terminal-state-scroll-top state)
+                                                          (- n 1))
+                                                       (terminal-state-scroll-top state)
+                                                       (terminal-state-scroll-bottom state))
+                                                (clamp (- n 1) 0 (- rows 1))))]
             [(#\H #\f)
              (terminal-state-row-set! state
-                                      (clamp (- (param parameters 0 1) 1)
-                                        0 (- rows 1)))
+                                      (if (terminal-state-origin state)
+                                          (clamp (+ (terminal-state-scroll-top state)
+                                                    (- (param parameters 0 1) 1))
+                                                 (terminal-state-scroll-top state)
+                                                 (terminal-state-scroll-bottom state))
+                                          (clamp (- (param parameters 0 1) 1)
+                                                 0 (- rows 1))))
              (terminal-state-col-set! state
                                       (clamp (- (param parameters 1 1) 1)
                                         0 (- cols 1)))]
@@ -529,6 +710,19 @@
             [(#\P) (delete-characters! state n)]
             [(#\@) (insert-characters! state n)]
             [(#\X) (erase-line! state col (+ col n))]
+            [(#\Z)
+             (let loop ([candidate (- col 1)] [left n])
+               (cond [(or (< candidate 0) (= left 0))
+                      (terminal-state-col-set! state (max 0 candidate))]
+                     [(vector-ref (terminal-state-tab-stops state) candidate)
+                      (if (= left 1)
+                          (terminal-state-col-set! state candidate)
+                          (loop (- candidate 1) (- left 1)))]
+                     [else (loop (- candidate 1) left)]))]
+            [(#\g)
+             (case (param parameters 0 0)
+               [(0) (vector-set! (terminal-state-tab-stops state) col #f)]
+               [(3) (vector-fill! (terminal-state-tab-stops state) #f)])]
             [(#\L) (let ([old (terminal-state-scroll-top state)])
                      (terminal-state-scroll-top-set! state row)
                      (scroll-down! state n)
@@ -542,13 +736,30 @@
                state (clamp (- (param parameters 0 1) 1) 0 (- rows 1)))
              (terminal-state-scroll-bottom-set!
                state (clamp (- (param parameters 1 rows) 1) 0 (- rows 1)))
-             (terminal-state-row-set! state 0)
+             (terminal-state-row-set!
+               state (if (terminal-state-origin state)
+                         (terminal-state-scroll-top state) 0))
              (terminal-state-col-set! state 0)]
-            [(#\s) (terminal-state-saved-row-set! state row)
-             (terminal-state-saved-col-set! state col)]
-            [(#\u) (terminal-state-row-set! state (terminal-state-saved-row state))
-             (terminal-state-col-set! state (terminal-state-saved-col state))]
+            [(#\s) (save-cursor! state)]
+            [(#\u) (restore-cursor! state)]
             [(#\m) (set-sgr! state text)]
+            [(#\b)
+             (do ([left n (- left 1)])
+                 ((= left 0))
+               (put-character! state (terminal-state-last-character state)))]
+            [(#\p)
+             (when (string-prefix? "!" text)
+               (terminal-state-origin-set! state #f)
+               (terminal-state-autowrap-set! state #t)
+               (terminal-state-insert-set! state #f)
+               (terminal-state-cursor-keys-set! state #f)
+               (terminal-state-keypad-set! state #f)
+               (terminal-state-row-set! state 0)
+               (terminal-state-col-set! state 0)
+               (terminal-state-scroll-top-set! state 0)
+               (terminal-state-scroll-bottom-set! state (- rows 1))
+               (terminal-state-sgr-set! state "")
+               (terminal-state-style-set! state 'plain))]
             [(#\n)
              (when (= (param parameters 0 0) 6)
                (terminal-reply!
@@ -558,7 +769,7 @@
              (when (string=? text "")
                (terminal-reply! state "\x1b;[?1;2c"))]
             [(#\q)
-             (when cursor-shape?
+             (when (and cursor-shape? (terminal-state-buffer state))
                (set-app-presentation!
                  (terminal-state-buffer state) 0 #f #f
                  (case (param parameters 0 0)
@@ -581,18 +792,28 @@
         (cond [(assv character line-drawing) => cdr] [else character])
         character))
 
+  (define (next-tab-stop state)
+    (let ([cols (terminal-state-cols state)]
+          [stops (terminal-state-tab-stops state)])
+      (let loop ([col (+ (terminal-state-col state) 1)])
+        (cond [(>= col cols) (- cols 1)]
+              [(vector-ref stops col) col]
+              [else (loop (+ col 1))]))))
+
   (define (feed-character! state character)
     (case (terminal-state-parser state)
       [(normal)
        (case (char->integer character)
          [(7) (void)]
-         [(8) (terminal-state-col-set! state
-                                       (max 0 (- (terminal-state-col state) 1)))]
-         [(9) (terminal-state-col-set!
-                state (min (- (terminal-state-cols state) 1)
-                           (* 8 (+ 1 (quotient (terminal-state-col state) 8)))))]
-         [(10 11 12) (line-feed! state)]
-         [(13) (terminal-state-col-set! state 0)]
+         [(8) (terminal-state-wrap-pending-set! state #f)
+          (terminal-state-col-set! state
+                                   (max 0 (- (terminal-state-col state) 1)))]
+         [(9) (terminal-state-wrap-pending-set! state #f)
+          (terminal-state-col-set! state (next-tab-stop state))]
+         [(10 11 12) (terminal-state-wrap-pending-set! state #f)
+          (line-feed! state)]
+         [(13) (terminal-state-wrap-pending-set! state #f)
+          (terminal-state-col-set! state 0)]
          [(14) (terminal-state-shift-set! state 1)]
          [(15) (terminal-state-shift-set! state 0)]
          [(27) (terminal-state-parser-set! state 'escape)]
@@ -610,13 +831,18 @@
          [(#\P #\X #\^ #\_)
           (terminal-state-parser-set! state 'control-string)
           (terminal-state-osc-escape-set! state #f)]
-         [(#\7) (terminal-state-saved-row-set! state (terminal-state-row state))
-          (terminal-state-saved-col-set! state (terminal-state-col state))
+         [(#\7) (save-cursor! state)
           (terminal-state-parser-set! state 'normal)]
-         [(#\8) (terminal-state-row-set! state (terminal-state-saved-row state))
-          (terminal-state-col-set! state (terminal-state-saved-col state))
+         [(#\8) (restore-cursor! state)
           (terminal-state-parser-set! state 'normal)]
          [(#\D) (line-feed! state) (terminal-state-parser-set! state 'normal)]
+         [(#\E) (line-feed! state)
+          (terminal-state-col-set! state 0)
+          (terminal-state-parser-set! state 'normal)]
+         [(#\H)
+          (vector-set! (terminal-state-tab-stops state)
+                       (terminal-state-col state) #t)
+          (terminal-state-parser-set! state 'normal)]
          [(#\M) (if (= (terminal-state-row state)
                        (terminal-state-scroll-top state))
                     (scroll-down! state 1)
@@ -625,6 +851,10 @@
           (terminal-state-parser-set! state 'normal)]
          [(#\c) (reset-terminal-state! state)
           (terminal-state-parser-set! state 'normal)]
+         [(#\=) (terminal-state-keypad-set! state #t)
+          (terminal-state-parser-set! state 'normal)]
+         [(#\>) (terminal-state-keypad-set! state #f)
+          (terminal-state-parser-set! state 'normal)]
          [(#\( #\)) (terminal-state-parser-set! state 'charset)]
          [else (terminal-state-parser-set! state 'normal)])]
       [(charset)
@@ -632,13 +862,23 @@
                                               'line 'ascii))
        (terminal-state-parser-set! state 'normal)]
       [(csi)
-       (if (char<=? #\@ character #\~)
-           (begin
-             (dispatch-csi! state character (terminal-state-parameters state))
-             (terminal-state-parser-set! state 'normal))
-           (terminal-state-parameters-set!
-             state (string-append (terminal-state-parameters state)
-                                  (string character))))]
+       (cond [(memv (char->integer character) '(24 26))
+              (terminal-state-parser-set! state 'normal)
+              (terminal-state-parameters-set! state "")]
+             [(char=? character #\esc)
+              (terminal-state-parser-set! state 'escape)
+              (terminal-state-parameters-set! state "")]
+             [(char<=? #\@ character #\~)
+              (dispatch-csi! state character
+                             (terminal-state-parameters state))
+              (terminal-state-parser-set! state 'normal)]
+             [(< (string-length (terminal-state-parameters state)) 1024)
+              (terminal-state-parameters-set!
+                state (string-append (terminal-state-parameters state)
+                                     (string character)))]
+             [else
+              (terminal-state-parser-set! state 'normal)
+              (terminal-state-parameters-set! state "")])]
       [(osc)
        (cond [(= (char->integer character) 7)
               (dispatch-osc! state)
@@ -652,9 +892,14 @@
                   (terminal-state-osc-escape-set! state #t)
                   (begin
                     (terminal-state-osc-escape-set! state #f)
-                    (terminal-state-osc-text-set!
-                      state (string-append (terminal-state-osc-text state)
-                                           (string character)))))])]
+                    (if (< (string-length (terminal-state-osc-text state))
+                           8192)
+                        (terminal-state-osc-text-set!
+                          state (string-append (terminal-state-osc-text state)
+                                               (string character)))
+                        (begin
+                          (terminal-state-parser-set! state 'normal)
+                          (terminal-state-osc-text-set! state "")))))])]
       [(control-string)
        (cond
          [(and (terminal-state-osc-escape state) (char=? character #\\))
@@ -716,7 +961,15 @@
         (reap-terminal-process! (terminal-state-process state)))
       (guard (ex [else (void)])
         (close-port (terminal-state-display state))))
-    (guard (ex [else (finished!)])
+    (guard (ex [else
+                ;; Linux reports PTY-master closure as EIO rather than EOF.
+                ;; Other reader failures indicate an emulator or redraw bug
+                ;; and must not masquerade as an ordinary process exit.
+                (unless (i/o-read-error? ex)
+                  (parameterize ([message-source 'terminal])
+                    (set-message!
+                      (format "Terminal reader failed: ~a" (error-text ex)))))
+                (finished!)])
       (let ([input (transcoded-port
                      (terminal-process-input (terminal-state-process state))
                      (make-transcoder (utf-8-codec) 'none 'replace))])
@@ -761,11 +1014,13 @@
                         (bytevector-length right))
       result))
 
-  (define (event-bytes event)
+  (define (event-bytes state event)
     (cond
       [(= (string-length event) 1) (string->utf8 event)]
       [(assoc event
-              '(("M-UP" . "\x1b;[1;3A") ("M-DOWN" . "\x1b;[1;3B")
+              '(("S-UP" . "\x1b;[1;2A") ("S-DOWN" . "\x1b;[1;2B")
+                ("S-RIGHT" . "\x1b;[1;2C") ("S-LEFT" . "\x1b;[1;2D")
+                ("M-UP" . "\x1b;[1;3A") ("M-DOWN" . "\x1b;[1;3B")
                 ("M-RIGHT" . "\x1b;[1;3C") ("M-LEFT" . "\x1b;[1;3D")
                 ("M-S-UP" . "\x1b;[1;4A") ("M-S-DOWN" . "\x1b;[1;4B")
                 ("M-S-RIGHT" . "\x1b;[1;4C") ("M-S-LEFT" . "\x1b;[1;4D")))
@@ -780,7 +1035,13 @@
       [(and (string-prefix? "C-" event) (= (string-length event) 3))
        (control-byte (string-ref event 2))]
       [else
-       (cond [(assoc event
+       (cond [(and (terminal-state-cursor-keys state)
+                   (assoc event
+                          '(("UP" . "\x1b;OA") ("DOWN" . "\x1b;OB")
+                            ("RIGHT" . "\x1b;OC") ("LEFT" . "\x1b;OD")
+                            ("HOME" . "\x1b;OH") ("END" . "\x1b;OF"))))
+              => (lambda (entry) (string->utf8 (cdr entry)))]
+             [(assoc event
                      '(("RET" . "\r") ("TAB" . "\t")
                        ("BACKSPACE" . "\x7f;") ("ESC" . "\x1b;")
                        ("UP" . "\x1b;[A") ("DOWN" . "\x1b;[B")
@@ -815,6 +1076,25 @@
       (list-copy terminals))
     (set! terminals '()))
 
+  (define (send-mouse! state code x y release?)
+    (if (terminal-state-mouse-sgr state)
+        (write-bytes!
+          state
+          (string->utf8
+            (format "\x1b;[<~a;~a;~a~a" code x y (if release? "m" "M"))))
+        ;; The original X10 encoding is limited to coordinates below 224.
+        (write-bytes!
+          state
+          (bytevector 27 91 77
+                      (+ 32 (if release? 3 code))
+                      (+ 32 (min x 223))
+                      (+ 32 (min y 223))))))
+
+  (define (mouse-position state)
+    (or (app-event-position)
+        (cons (+ (cdr (point)) 1)
+              (+ (- (car (point)) (length (terminal-state-history state))) 1))))
+
   (define (handle-terminal-event! state event)
     (cond
       ;; Once the PTY has closed, this is an ordinary read-only app again.
@@ -845,38 +1125,39 @@
        #t]
       [(string=? event "MOUSE-CLICK")
        (if (terminal-state-mouse state)
-           (let ([x (+ (cdr (point)) 1)] [y (+ (car (point)) 1)])
-             (terminal-send! (format "\x1b;[<0;~a;~aM" x y))
+           (let* ([position (mouse-position state)]
+                  [x (car position)] [y (cdr position)])
+             (send-mouse! state 0 x y #f)
              #t)
            #f)]
       [(string=? event "MOUSE-DRAG")
-       (if (terminal-state-mouse state)
-           (let ([x (+ (cdr (point)) 1)] [y (+ (car (point)) 1)])
-             (terminal-send! (format "\x1b;[<32;~a;~aM" x y))
+       (if (and (terminal-state-mouse state)
+                (>= (terminal-state-mouse state) 1002))
+           (let* ([position (mouse-position state)]
+                  [x (car position)] [y (cdr position)])
+             (send-mouse! state 32 x y #f)
              #t)
            #f)]
       [(string=? event "MOUSE-RELEASE")
        (if (terminal-state-mouse state)
-           (let ([x (+ (cdr (point)) 1)] [y (+ (car (point)) 1)])
-             (terminal-send! (format "\x1b;[<0;~a;~am" x y))
+           (let* ([position (mouse-position state)]
+                  [x (car position)] [y (cdr position)])
+             (send-mouse! state 0 x y #t)
              #t)
            #f)]
       [(member event '("WHEEL-UP" "WHEEL-DOWN"))
        (if (terminal-state-mouse state)
-           (let* ([position (or (app-event-position)
-                                (cons (+ (cdr (point)) 1)
-                                      (+ (car (point)) 1)))]
+           (let* ([position (mouse-position state)]
                   [x (car position)] [y (cdr position)])
-             (terminal-send!
-               (format "\x1b;[<~a;~a;~aM"
-                       (if (string=? event "WHEEL-UP") 64 65) x y))
+             (send-mouse! state
+                          (if (string=? event "WHEEL-UP") 64 65) x y #f)
              #t)
            (begin
              (terminal-scroll!
                state (if (string=? event "WHEEL-UP") -1 1) 8)
              #t))]
       [(string=? event "MOUSE") #f]
-      [(event-bytes event)
+      [(event-bytes state event)
        => (lambda (bytes)
             (terminal-follow! state)
             (write-bytes! state bytes)
@@ -936,6 +1217,7 @@
             buffer
             (lambda (window)
               (and state
+                   (terminal-state-cursor-visible state)
                    (not (memq window
                               (terminal-state-unfollowed-windows state))))))
           (set-buffer-mode! buffer "terminal")
@@ -948,9 +1230,11 @@
             (set! state
               (make-terminal-state buffer process display (make-mutex)
                                    rows cols (make-screen rows cols)
-                                   0 0 0 0 0 (- rows 1)
-                                   'normal "" #f "" 'ascii 0 #t #t #f
-                                   #f #f #f 0 0 '() '()
+                                   0 0 0 0 #f 0 (- rows 1)
+                                   'normal "" #f "" '() 'ascii 0
+                                   #f #t #f #f #f #f #t
+                                   (default-tab-stops cols) #\space
+                                   #t #t #f #f #f #f #f 0 0 '() '()
                                    (make-style-screen rows cols 'plain)
                                    #f '() (make-style-screen rows cols 'plain)
                                    "" 'plain))
@@ -988,6 +1272,34 @@
         ((terminal-close!)
          (("procedure" . "(terminal-close! [buffer])")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Terminate and detach the process owned by a terminal buffer."))))
+         "Terminate and detach the process owned by a terminal buffer.")
+        ((make-terminal-emulator)
+         (("procedure" . "(make-terminal-emulator rows columns)"))
+         "terminal-emulator" ("(terminal)") terminal "Terminal" #f
+         "Create a headless terminal emulator for tests and structured protocol processing.")
+        ((terminal-emulator-feed!)
+         (("procedure" . "(terminal-emulator-feed! emulator text)")) "void"
+         ("(terminal)") terminal "Terminal" #f
+         "Feed terminal output into a headless emulator.")
+        ((terminal-emulator-screen)
+         (("procedure" . "(terminal-emulator-screen emulator)")) "vector"
+         ("(terminal)") terminal "Terminal" #f
+         "Return a copy of a headless emulator's visible cell rows.")
+        ((terminal-emulator-styles)
+         (("procedure" . "(terminal-emulator-styles emulator)")) "vector"
+         ("(terminal)") terminal "Terminal" #f
+         "Return copies of the style rows for a headless emulator's visible cells.")
+        ((terminal-emulator-state)
+         (("procedure" . "(terminal-emulator-state emulator)")) "alist"
+         ("(terminal)") terminal "Terminal" #f
+         "Return the cursor, dimensions, and active modes of a headless emulator.")
+        ((terminal-emulator-input)
+         (("procedure" . "(terminal-emulator-input emulator event)"))
+         "bytevector or #f" ("(terminal)") terminal "Terminal" #f
+         "Encode an editor key event according to a headless emulator's active modes.")
+        ((terminal-emulator-replies)
+         (("procedure" . "(terminal-emulator-replies emulator)")) "list"
+         ("(terminal)") terminal "Terminal" #f
+         "Return protocol replies emitted by a headless emulator."))))
 
 ) ;; library (terminal)

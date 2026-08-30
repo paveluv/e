@@ -112,6 +112,23 @@ and marks the status line `process exited`. It also stops capturing input, so
 ordinary editor chords such as `C-x b`, `C-x k`, and `C-x o` work immediately;
 kill the buffer normally when it is no longer needed.
 
+The same state machine can run without a PTY or editor buffer. This is useful
+for tests, protocol experiments, and tools that need structured terminal
+output:
+
+```scheme
+(define vt (make-terminal-emulator 24 80))
+(terminal-emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
+(terminal-emulator-screen vt)       ; copied vector of cell rows
+(terminal-emulator-styles vt)       ; copied vector of cell-style rows
+(terminal-emulator-state vt)        ; dimensions, cursor, and active modes
+(terminal-emulator-input vt "UP")  ; mode-aware input bytevector
+(terminal-emulator-replies vt)      ; DSR/DA and other protocol replies
+```
+
+`terminal-emulator-feed!` currently accepts decoded Scheme text. The live PTY
+reader performs UTF-8 decoding before feeding the same state machine.
+
 The OS-specific PTY creation, resize, cleanup, and process-group operations
 live in `sys.e`. Escape parsing, screen state, scrollback, input translation,
 and the app lifecycle live entirely in `terminal.e`; the core contains only
