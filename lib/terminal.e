@@ -17,7 +17,8 @@
             (mutable scroll-top) (mutable scroll-bottom)
             (mutable parser) (mutable parameters)
             (mutable osc-escape) (mutable osc-text) (mutable replies)
-            (mutable charset) (mutable shift)
+            (mutable charset) (mutable charset-g1) (mutable charset-target)
+            (mutable shift)
             (mutable wrap-pending) (mutable autowrap) (mutable origin)
             (mutable insert) (mutable cursor-keys) (mutable keypad)
             (mutable cursor-visible) (mutable tab-stops)
@@ -25,7 +26,9 @@
             (mutable dirty) (mutable alive) (mutable prefix)
             (mutable mouse) (mutable mouse-sgr)
             (mutable bracketed) (mutable main-screen)
-            (mutable main-row) (mutable main-col)
+            (mutable main-row) (mutable main-col) (mutable main-state)
+            (mutable alternate-screen) (mutable alternate-styles)
+            (mutable alternate-state)
             (mutable history) (mutable unfollowed-windows)
             (mutable styles) (mutable main-styles) (mutable history-styles)
             (mutable rendered-styles)
@@ -53,10 +56,10 @@
     (make-terminal-state #f #f #f (make-mutex)
                          rows cols (make-screen rows cols)
                          0 0 0 0 #f 0 (- rows 1)
-                         'normal "" #f "" '() 'ascii 0
+                         'normal "" #f "" '() 'ascii 'ascii 0 0
                          #f #t #f #f #f #f #t
                          (default-tab-stops cols) #\space
-                         #f #f #f #f #f #f #f 0 0 '() '()
+                         #f #f #f #f #f #f #f 0 0 #f #f #f #f '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() (make-style-screen rows cols 'plain)
                          "" 'plain))
@@ -87,6 +90,8 @@
       (columns . ,(terminal-state-cols emulator))
       (cursor . ,(cons (terminal-state-row emulator)
                        (terminal-state-col emulator)))
+      (scroll-region . ,(cons (terminal-state-scroll-top emulator)
+                              (terminal-state-scroll-bottom emulator)))
       (wrap-pending . ,(terminal-state-wrap-pending emulator))
       (autowrap . ,(terminal-state-autowrap emulator))
       (origin . ,(terminal-state-origin emulator))
@@ -198,6 +203,7 @@
       (list (terminal-state-sgr state)
             (terminal-state-style state)
             (terminal-state-charset state)
+            (terminal-state-charset-g1 state)
             (terminal-state-shift state)
             (terminal-state-origin state)
             (terminal-state-autowrap state)
@@ -215,10 +221,105 @@
         (terminal-state-sgr-set! state (list-ref saved 0))
         (terminal-state-style-set! state (list-ref saved 1))
         (terminal-state-charset-set! state (list-ref saved 2))
-        (terminal-state-shift-set! state (list-ref saved 3))
-        (terminal-state-origin-set! state (list-ref saved 4))
-        (terminal-state-autowrap-set! state (list-ref saved 5))
-        (terminal-state-wrap-pending-set! state (list-ref saved 6)))))
+        (terminal-state-charset-g1-set! state (list-ref saved 3))
+        (terminal-state-shift-set! state (list-ref saved 4))
+        (terminal-state-origin-set! state (list-ref saved 5))
+        (terminal-state-autowrap-set! state (list-ref saved 6))
+        (terminal-state-wrap-pending-set! state (list-ref saved 7)))))
+
+  (define (capture-screen-state state)
+    (list (terminal-state-row state)
+          (terminal-state-col state)
+          (terminal-state-saved-row state)
+          (terminal-state-saved-col state)
+          (terminal-state-saved-state state)
+          (terminal-state-scroll-top state)
+          (terminal-state-scroll-bottom state)
+          (terminal-state-charset state)
+          (terminal-state-charset-g1 state)
+          (terminal-state-charset-target state)
+          (terminal-state-shift state)
+          (terminal-state-wrap-pending state)
+          (terminal-state-autowrap state)
+          (terminal-state-origin state)
+          (terminal-state-insert state)
+          (terminal-state-sgr state)
+          (terminal-state-style state)
+          (vector-copy (terminal-state-tab-stops state))
+          (terminal-state-last-character state)))
+
+  (define (restore-screen-state! state saved)
+    (terminal-state-row-set!
+      state (clamp (list-ref saved 0) 0 (- (terminal-state-rows state) 1)))
+    (terminal-state-col-set!
+      state (clamp (list-ref saved 1) 0 (- (terminal-state-cols state) 1)))
+    (terminal-state-saved-row-set! state (list-ref saved 2))
+    (terminal-state-saved-col-set! state (list-ref saved 3))
+    (terminal-state-saved-state-set! state (list-ref saved 4))
+    (let* ([rows (terminal-state-rows state)]
+           [top (clamp (list-ref saved 5) 0 (- rows 1))]
+           [bottom (clamp (list-ref saved 6) 0 (- rows 1))])
+      (terminal-state-scroll-top-set! state (if (< top bottom) top 0))
+      (terminal-state-scroll-bottom-set!
+        state (if (< top bottom) bottom (- rows 1))))
+    (terminal-state-charset-set! state (list-ref saved 7))
+    (terminal-state-charset-g1-set! state (list-ref saved 8))
+    (terminal-state-charset-target-set! state (list-ref saved 9))
+    (terminal-state-shift-set! state (list-ref saved 10))
+    (terminal-state-wrap-pending-set! state (list-ref saved 11))
+    (terminal-state-autowrap-set! state (list-ref saved 12))
+    (terminal-state-origin-set! state (list-ref saved 13))
+    (terminal-state-insert-set! state (list-ref saved 14))
+    (terminal-state-sgr-set! state (list-ref saved 15))
+    (terminal-state-style-set! state (list-ref saved 16))
+    (let ([tabs (list-ref saved 17)])
+      (terminal-state-tab-stops-set!
+        state (resized-tab-stops tabs (vector-length tabs)
+                                 (terminal-state-cols state))))
+    (terminal-state-last-character-set! state (list-ref saved 18)))
+
+  (define (enter-alternate-screen! state clear?)
+    (unless (terminal-state-main-screen state)
+      (terminal-state-main-screen-set! state (terminal-state-screen state))
+      (terminal-state-main-styles-set! state (terminal-state-styles state))
+      (terminal-state-main-row-set! state (terminal-state-row state))
+      (terminal-state-main-col-set! state (terminal-state-col state))
+      (terminal-state-main-state-set! state (capture-screen-state state))
+      (if (and (not clear?) (terminal-state-alternate-screen state))
+          (begin
+            (terminal-state-screen-set!
+              state (terminal-state-alternate-screen state))
+            (terminal-state-styles-set!
+              state (terminal-state-alternate-styles state))
+            (restore-screen-state! state (terminal-state-alternate-state state)))
+          (begin
+            (terminal-state-screen-set!
+              state (make-screen (terminal-state-rows state)
+                                 (terminal-state-cols state)))
+            (terminal-state-styles-set!
+              state (make-style-screen (terminal-state-rows state)
+                                       (terminal-state-cols state)
+                                       (terminal-state-style state)))
+            (terminal-state-row-set! state 0)
+            (terminal-state-col-set! state 0)
+            (terminal-state-scroll-top-set! state 0)
+            (terminal-state-scroll-bottom-set!
+              state (- (terminal-state-rows state) 1))
+            (terminal-state-origin-set! state #f)
+            (terminal-state-wrap-pending-set! state #f)))))
+
+  (define (leave-alternate-screen! state)
+    (when (terminal-state-main-screen state)
+      (terminal-state-alternate-screen-set! state (terminal-state-screen state))
+      (terminal-state-alternate-styles-set! state (terminal-state-styles state))
+      (terminal-state-alternate-state-set! state (capture-screen-state state))
+      (terminal-state-screen-set! state (terminal-state-main-screen state))
+      (terminal-state-styles-set! state (terminal-state-main-styles state))
+      (when (terminal-state-main-state state)
+        (restore-screen-state! state (terminal-state-main-state state)))
+      (terminal-state-main-screen-set! state #f)
+      (terminal-state-main-styles-set! state #f)
+      (terminal-state-main-state-set! state #f)))
 
   (define (resize-screen! state rows cols)
     (unless (and (= rows (terminal-state-rows state))
@@ -237,6 +338,15 @@
         (when (terminal-state-main-styles state)
           (terminal-state-main-styles-set!
             state (resized-styles (terminal-state-main-styles state)
+                                  old-rows old-cols rows cols
+                                  (terminal-state-style state))))
+        (when (terminal-state-alternate-screen state)
+          (terminal-state-alternate-screen-set!
+            state (resized-screen (terminal-state-alternate-screen state)
+                                  old-rows old-cols rows cols)))
+        (when (terminal-state-alternate-styles state)
+          (terminal-state-alternate-styles-set!
+            state (resized-styles (terminal-state-alternate-styles state)
                                   old-rows old-cols rows cols
                                   (terminal-state-style state))))
         (terminal-state-screen-set! state new)
@@ -551,6 +661,8 @@
       (terminal-state-parameters-set! state "")
       (terminal-state-osc-escape-set! state #f)
       (terminal-state-charset-set! state 'ascii)
+      (terminal-state-charset-g1-set! state 'ascii)
+      (terminal-state-charset-target-set! state 0)
       (terminal-state-shift-set! state 0)
       (terminal-state-wrap-pending-set! state #f)
       (terminal-state-autowrap-set! state #t)
@@ -566,6 +678,10 @@
       (terminal-state-bracketed-set! state #f)
       (terminal-state-main-screen-set! state #f)
       (terminal-state-main-styles-set! state #f)
+      (terminal-state-main-state-set! state #f)
+      (terminal-state-alternate-screen-set! state #f)
+      (terminal-state-alternate-styles-set! state #f)
+      (terminal-state-alternate-state-set! state #f)
       (terminal-state-history-set! state '())
       (terminal-state-history-styles-set! state '())
       (terminal-state-sgr-set! state "")
@@ -614,37 +730,15 @@
                          (terminal-state-mouse-set! state #f)))]
                   [(1006) (terminal-state-mouse-sgr-set! state on?)]
                   [(2004) (terminal-state-bracketed-set! state on?)]
+                  [(1048) (if on? (save-cursor! state) (restore-cursor! state))]
                   [(47 1047 1049)
                    ;; The alternate and primary screens have unrelated row
                    ;; spaces. A scrollback offset from one is meaningless in
                    ;; the other and can crop a nested full-screen program.
                    (terminal-state-unfollowed-windows-set! state '())
                    (if on?
-                       (unless (terminal-state-main-screen state)
-                         (terminal-state-main-screen-set!
-                           state (terminal-state-screen state))
-                         (terminal-state-main-styles-set!
-                           state (terminal-state-styles state))
-                         (terminal-state-main-row-set! state row)
-                         (terminal-state-main-col-set! state col)
-                         (terminal-state-screen-set!
-                           state (make-screen rows cols))
-                         (terminal-state-styles-set!
-                           state (make-style-screen rows cols
-                                                    (terminal-state-style state)))
-                         (terminal-state-row-set! state 0)
-                         (terminal-state-col-set! state 0))
-                       (when (terminal-state-main-screen state)
-                         (terminal-state-screen-set!
-                           state (terminal-state-main-screen state))
-                         (terminal-state-styles-set!
-                           state (terminal-state-main-styles state))
-                         (terminal-state-main-screen-set! state #f)
-                         (terminal-state-main-styles-set! state #f)
-                         (terminal-state-row-set! state
-                                                  (terminal-state-main-row state))
-                         (terminal-state-col-set! state
-                                                  (terminal-state-main-col state))))
+                       (enter-alternate-screen! state (not (= mode 47)))
+                       (leave-alternate-screen! state))
                    (when (terminal-state-buffer state)
                      (reset-buffer-viewports!
                        (terminal-state-buffer state)
@@ -668,9 +762,17 @@
                           (+ row n)))]
             [(#\C #\a) (terminal-state-col-set! state (min (- cols 1) (+ col n)))]
             [(#\D) (terminal-state-col-set! state (max 0 (- col n)))]
-            [(#\E) (terminal-state-row-set! state (min (- rows 1) (+ row n)))
+            [(#\E) (terminal-state-row-set!
+                     state
+                     (min (if (terminal-state-origin state)
+                              (terminal-state-scroll-bottom state) (- rows 1))
+                          (+ row n)))
              (terminal-state-col-set! state 0)]
-            [(#\F) (terminal-state-row-set! state (max 0 (- row n)))
+            [(#\F) (terminal-state-row-set!
+                     state
+                     (max (if (terminal-state-origin state)
+                              (terminal-state-scroll-top state) 0)
+                          (- row n)))
              (terminal-state-col-set! state 0)]
             [(#\G #\`) (terminal-state-col-set! state
                                                 (clamp (- n 1) 0 (- cols 1)))]
@@ -723,19 +825,31 @@
              (case (param parameters 0 0)
                [(0) (vector-set! (terminal-state-tab-stops state) col #f)]
                [(3) (vector-fill! (terminal-state-tab-stops state) #f)])]
-            [(#\L) (let ([old (terminal-state-scroll-top state)])
-                     (terminal-state-scroll-top-set! state row)
-                     (scroll-down! state n)
-                     (terminal-state-scroll-top-set! state old))]
-            [(#\M) (let ([old (terminal-state-scroll-top state)])
-                     (terminal-state-scroll-top-set! state row)
-                     (scroll-up! state n)
-                     (terminal-state-scroll-top-set! state old))]
+            [(#\L)
+             (when (<= (terminal-state-scroll-top state) row
+                       (terminal-state-scroll-bottom state))
+               (let ([old (terminal-state-scroll-top state)])
+                 (terminal-state-scroll-top-set! state row)
+                 (scroll-down!
+                   state (min n (+ 1 (- (terminal-state-scroll-bottom state)
+                                        row))))
+                 (terminal-state-scroll-top-set! state old)))]
+            [(#\M)
+             (when (<= (terminal-state-scroll-top state) row
+                       (terminal-state-scroll-bottom state))
+               (let ([old (terminal-state-scroll-top state)])
+                 (terminal-state-scroll-top-set! state row)
+                 (scroll-up!
+                   state (min n (+ 1 (- (terminal-state-scroll-bottom state)
+                                        row))))
+                 (terminal-state-scroll-top-set! state old)))]
             [(#\r)
-             (terminal-state-scroll-top-set!
-               state (clamp (- (param parameters 0 1) 1) 0 (- rows 1)))
-             (terminal-state-scroll-bottom-set!
-               state (clamp (- (param parameters 1 rows) 1) 0 (- rows 1)))
+             (let ([top (clamp (- (param parameters 0 1) 1) 0 (- rows 1))]
+                   [bottom (clamp (- (param parameters 1 rows) 1)
+                                  0 (- rows 1))])
+               (when (< top bottom)
+                 (terminal-state-scroll-top-set! state top)
+                 (terminal-state-scroll-bottom-set! state bottom)))
              (terminal-state-row-set!
                state (if (terminal-state-origin state)
                          (terminal-state-scroll-top state) 0))
@@ -783,12 +897,19 @@
             [else (void)]))))
 
   (define line-drawing
-    '((#\j . #\x2518) (#\k . #\x2510) (#\l . #\x250c) (#\m . #\x2514)
-      (#\n . #\x253c) (#\q . #\x2500) (#\t . #\x251c) (#\u . #\x2524)
-      (#\v . #\x2534) (#\w . #\x252c) (#\x . #\x2502)))
+    '((#\_ . #\space) (#\` . #\x25c6) (#\a . #\x2592) (#\f . #\x00b0)
+      (#\g . #\x00b1) (#\j . #\x2518) (#\k . #\x2510) (#\l . #\x250c)
+      (#\m . #\x2514) (#\n . #\x253c) (#\o . #\x23ba) (#\p . #\x23bb)
+      (#\q . #\x2500) (#\r . #\x23bc) (#\s . #\x23bd) (#\t . #\x251c)
+      (#\u . #\x2524) (#\v . #\x2534) (#\w . #\x252c) (#\x . #\x2502)
+      (#\y . #\x2264) (#\z . #\x2265) (#\{ . #\x03c0) (#\| . #\x2260)
+      (#\} . #\x00a3) (#\~ . #\x00b7)))
 
   (define (mapped-character state character)
-    (if (eq? (terminal-state-charset state) 'line)
+    (if (eq? (if (= (terminal-state-shift state) 0)
+                 (terminal-state-charset state)
+                 (terminal-state-charset-g1 state))
+             'line)
         (cond [(assv character line-drawing) => cdr] [else character])
         character))
 
@@ -855,11 +976,16 @@
           (terminal-state-parser-set! state 'normal)]
          [(#\>) (terminal-state-keypad-set! state #f)
           (terminal-state-parser-set! state 'normal)]
-         [(#\( #\)) (terminal-state-parser-set! state 'charset)]
+         [(#\() (terminal-state-charset-target-set! state 0)
+          (terminal-state-parser-set! state 'charset)]
+         [(#\)) (terminal-state-charset-target-set! state 1)
+          (terminal-state-parser-set! state 'charset)]
          [else (terminal-state-parser-set! state 'normal)])]
       [(charset)
-       (terminal-state-charset-set! state (if (char=? character #\0)
-                                              'line 'ascii))
+       (let ([designation (if (char=? character #\0) 'line 'ascii)])
+         (if (= (terminal-state-charset-target state) 0)
+             (terminal-state-charset-set! state designation)
+             (terminal-state-charset-g1-set! state designation)))
        (terminal-state-parser-set! state 'normal)]
       [(csi)
        (cond [(memv (char->integer character) '(24 26))
@@ -1231,10 +1357,10 @@
               (make-terminal-state buffer process display (make-mutex)
                                    rows cols (make-screen rows cols)
                                    0 0 0 0 #f 0 (- rows 1)
-                                   'normal "" #f "" '() 'ascii 0
+                                   'normal "" #f "" '() 'ascii 'ascii 0 0
                                    #f #t #f #f #f #f #t
                                    (default-tab-stops cols) #\space
-                                   #t #t #f #f #f #f #f 0 0 '() '()
+                                   #t #t #f #f #f #f #f 0 0 #f #f #f #f '() '()
                                    (make-style-screen rows cols 'plain)
                                    #f '() (make-style-screen rows cols 'plain)
                                    "" 'plain))

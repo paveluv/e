@@ -57,6 +57,18 @@
               (vector->list (terminal-emulator-screen terminal))
               '("a       b ")))
 
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1b;)0\x0e;q\x0f;q")
+       (check 'g1-shift-in-out
+              (vector->list (terminal-emulator-screen terminal))
+              '("\x2500;q  ")))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1b;(0lqk")
+       (check 'vt100-line-drawing
+              (vector->list (terminal-emulator-screen terminal))
+              '("\x250c;\x2500;\x2510; ")))
+
      (let ([terminal (make-terminal-emulator 1 5)])
        (terminal-emulator-feed! terminal "z\x1b;[3b")
        (check 'repeat-character
@@ -86,6 +98,53 @@
        (check 'restore-origin-mode (state-ref terminal 'origin) #t)
        (check 'restore-autowrap-mode (state-ref terminal 'autowrap) #t)
        (check 'restore-cursor (state-ref terminal 'cursor) '(1 . 0)))
+
+     (let ([terminal (make-terminal-emulator 3 5)])
+       (terminal-emulator-feed! terminal "abc\x1b;[2G\x1b;[2;3r\x1b;[?1049h")
+       (check 'alternate-screen-cleared
+              (vector->list (terminal-emulator-screen terminal))
+              '("     " "     " "     "))
+       (terminal-emulator-feed! terminal "X\x1b;[?1049l")
+       (check 'primary-screen-restored
+              (vector->list (terminal-emulator-screen terminal))
+              '("abc  " "     " "     "))
+       (check 'primary-cursor-restored (state-ref terminal 'cursor) '(0 . 0))
+       (check 'primary-margins-restored
+              (state-ref terminal 'scroll-region) '(1 . 2)))
+
+     (let ([terminal (make-terminal-emulator 2 3)])
+       (terminal-emulator-feed! terminal "\x1b;[?47hq\x1b;[?47lX\x1b;[?47h")
+       (check 'alternate-screen-persists
+              (vector->list (terminal-emulator-screen terminal))
+              '("q  " "   "))
+       (terminal-emulator-feed! terminal "\x1b;[?47l\x1b;[?1047hq\x1b;[?1047l\x1b;[?1047h")
+       (check 'alternate-screen-1047-clears
+              (vector->list (terminal-emulator-screen terminal))
+              '("   " "   ")))
+
+     (let ([terminal (make-terminal-emulator 3 4)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[1;1HAAAA\x1b;[2;1HBBBB\x1b;[3;1HCCCC\x1b;[2;3r\x1b;[2;1H\x1b;[L")
+       (check 'insert-line-in-region
+              (vector->list (terminal-emulator-screen terminal))
+              '("AAAA" "    " "BBBB")))
+
+     (let ([terminal (make-terminal-emulator 3 4)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[1;1HAAAA\x1b;[2;1HBBBB\x1b;[3;1HCCCC\x1b;[2;3r\x1b;[2;1H\x1b;[M")
+       (check 'delete-line-in-region
+              (vector->list (terminal-emulator-screen terminal))
+              '("AAAA" "CCCC" "    ")))
+
+     (let ([terminal (make-terminal-emulator 3 4)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[1;1HAAAA\x1b;[2;1HBBBB\x1b;[3;1HCCCC\x1b;[2;3r\x1b;[1;1H\x1b;[L")
+       (check 'insert-line-outside-region
+              (vector->list (terminal-emulator-screen terminal))
+              '("AAAA" "BBBB" "CCCC")))
 
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed! terminal "\x1b;[123\x18;A")
