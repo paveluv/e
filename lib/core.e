@@ -3518,16 +3518,32 @@
 
   (define (paint-dividers! layout)
     ;; Paint vertical boundaries from the same recursive geometry used for
-    ;; hit testing. Stacked boundaries are the upper leaves' status bars.
+    ;; hit testing. Stacked boundaries are the upper leaves' status bars. At
+    ;; an intersection, a spanning stacked split owns the cell and connects
+    ;; its thin horizontal stroke to the divider above with a light `┴`;
+    ;; otherwise the vertical split continues through as a thin stroke.
+    (define (stacked-divider-crosses? x row)
+      (exists (lambda (d)
+                (and (eq? (car d) 'below)
+                     (= row (cadddr d))
+                     (<= (caddr d) x)
+                     (< x (+ (caddr d) (list-ref d 4)))))
+              layout-dividers))
     (for-each
       (lambda (divider)
         (when (eq? (car divider) 'right)
           (let ([x (caddr divider)] [start (cadddr divider)]
                 [height (list-ref divider 4)])
             (do ([r start (+ r 1)]) ((>= r (+ start height)))
-              (paint! r x '(divider)
-                      (lambda ()
-                        (ansi (style-code 'chrome) "\x2502;\x1b;[0m")))))))
+              (let ([junction? (or (stacked-divider-crosses? x r)
+                                   (= r (- rows echo-height 1)))])
+                (paint! r x (if junction? '(divider junction) '(divider))
+                        (lambda ()
+                          (if junction?
+                              (ansi (style-code 'chrome)
+                                    "\x2534;\x1b;[0m")
+                              (ansi (style-code 'chrome)
+                                    "\x2502;\x1b;[0m")))))))))
       layout-dividers))
 
   (define (paint! row xoff key draw)
@@ -5062,16 +5078,19 @@
   (define (divider-at x0 r0)
     ;; Divider metadata comes directly from window-layout. A descriptor is
     ;; (orientation split x y span).
+    (define (hit? orientation d)
+      (and (eq? (car d) orientation)
+           (if (eq? orientation 'right)
+               (and (= x0 (caddr d))
+                    (<= (cadddr d) r0)
+                    (< r0 (+ (cadddr d) (list-ref d 4))))
+               (and (= r0 (cadddr d))
+                    (<= (caddr d) x0)
+                    (< x0 (+ (caddr d) (list-ref d 4)))))))
     (window-layout)
-    (find (lambda (d)
-            (if (eq? (car d) 'right)
-                (and (= x0 (caddr d))
-                     (<= (cadddr d) r0)
-                     (< r0 (+ (cadddr d) (list-ref d 4))))
-                (and (= r0 (cadddr d))
-                     (<= (caddr d) x0)
-                     (< x0 (+ (caddr d) (list-ref d 4))))))
-          layout-dividers))
+    ;; A `┴` crossing visually belongs to the spanning horizontal split.
+    (or (find (lambda (d) (hit? 'below d)) layout-dividers)
+        (find (lambda (d) (hit? 'right d)) layout-dividers)))
 
   (define (transfer-split! split delta)
     (unless (= delta 0)

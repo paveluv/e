@@ -254,6 +254,16 @@ same operation with the mouse. Beside it, `[↕]` performs the stacked `C-x 2`
 split and `[↔]` performs the side-by-side `C-x 3` split. `C-x 1` retains only
 the current window. `C-x o` moves focus. Status lines and column dividers can
 be dragged to resize their local split.
+
+Divider intersections expose the split hierarchy even when two layouts have
+the same four rectangles. A thin vertical stroke through the crossing means
+the vertical divider spans the complete layout and drags as one. A thin `┴`
+junction—a horizontal stroke connected to the divider above—means the
+horizontal divider spans the complete layout and owns that crossing; dragging
+it moves the whole horizontal boundary. The shorter perpendicular dividers
+resize only their own subtrees. The same `┴` caps a vertical divider where it
+meets a status line directly above the echo area; there it is only a visual
+termination, and dragging still resizes the vertical split.
 `*completions*` is a temporary full-width pop-up above the echo area, not a
 member of the split tree, so opening and closing it leaves the layout intact.
 `M-Up`, `M-Down`,
