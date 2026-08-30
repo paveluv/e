@@ -4142,11 +4142,11 @@
                                            he)])
                             (case (cdr value)
                               [(italic) (ansi "\x1b;[3m")]
-                              [(red-italic) (ansi "\x1b;[3;31m")])
+                              [(red) (ansi "\x1b;[31m")])
                             (ansi (substring text at end))
                             (case (cdr value)
                               [(italic) (ansi "\x1b;[23m")]
-                              [(red-italic) (ansi "\x1b;[23m" fg)])
+                              [(red) (ansi fg)])
                             (loop (cdr values) end))))
                       (ansi (substring text he content-width)
                             "\x1b;[1m"

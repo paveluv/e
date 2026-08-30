@@ -2445,11 +2445,13 @@
                             [(app-capture-escaped? buffer) " escaped"]
                             [else " capturing input, C-] to escape"])])
                      (if (terminal-state-bell-visible state)
-                         (list '(" " . italic)
-                               '("♪" . red-italic)
+                         (list '(" " . #f)
+                               '("♪" . red)
                                (cons tail 'italic))
-                         (cons (string-append " ▶" tail) 'italic)))
-                   '("  ■" . italic))))))
+                         (list '(" " . #f)
+                               '("▶" . #f)
+                               (cons tail 'italic))))
+                   '((" " . #f) ("■" . #f)))))))
     (register-descriptions!
       '(((terminal!!)
          (("procedure" . "(terminal!! [command])")) "void"
