@@ -5149,7 +5149,8 @@
   (define (widen-window!!)
     ;; A transient keyboard counterpart to pushing a window's draggable
     ;; edges outward. Meta-arrows choose another window without leaving.
-    (define help "Widen the window: use Arrows; M-Arrows switch window")
+    (define label "Widen window: ")
+    (define instructions "use arrows to widen; M-arrows to switch")
     (define (arrow-action event)
       (cond [(string=? event "LEFT") (cons 'left -1)]
             [(string=? event "RIGHT") (cons 'right 1)]
@@ -5164,7 +5165,7 @@
             [else #f]))
     (let ([forward
            (dynamic-wind
-             (lambda () (set! message help))
+             (lambda () (show-prompt-message! label instructions #f))
              (lambda ()
                (let loop ()
                  (redraw!)
@@ -5189,7 +5190,7 @@
                      [else event]))))
              (lambda ()
                (set! resize-highlight #f)
-               (set! message "")))])
+               (show-message! "" #f)))])
       (when forward (dispatch-sequence! forward #f)))
     (void))
 
