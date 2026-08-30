@@ -271,6 +271,15 @@ and focus the first window it crosses. Thus the cursor's row chooses between
 stacked windows beside a tall window, and its column chooses between adjacent
 windows above or below it. The destination keeps its own point position.
 
+`C-x w` enters transient widen-window mode. Left pushes the left edge left,
+Right pushes the right edge right, Up pushes the top edge up, and Down pushes
+the bottom edge down. Each press widens the current window by one cell and
+highlights the moved edge. Meta+Arrow focuses a window in that direction
+without leaving widen-window mode, making it easy to adjust several windows in
+one session. `C-g` or Escape finishes. Any other key leaves the mode and is
+handled normally. Edge movement respects the same split-tree ownership and
+minimum sizes as mouse dragging.
+
 ## Buffer API
 
 The public Scheme API exposes read-only inspection through `current-buffer`,

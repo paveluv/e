@@ -81,6 +81,7 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 | `C-x k`   | Kill a buffer (default: current; asks if modified)      |
 | `C-x 2`   | Split the current window in two (stacked)               |
 | `C-x 3`   | Split the current window in two (side by side)          |
+| `C-x w`   | Widen windows with Arrow; switch using Meta+Arrow       |
 | `C-x 1`   | Delete all other windows                                |
 | `C-x 0`   | Delete the current window                               |
 | `C-x o`   | Move to the next window                                 |

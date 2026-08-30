@@ -26,7 +26,7 @@
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
-    resize-window! wrap! wrap-lines column-native-scroll scroll-margin
+    resize-window! widen-window!! wrap! wrap-lines column-native-scroll scroll-margin
     scrollbar scrollbar-position line-numbers line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
@@ -3017,6 +3017,7 @@
     (ansi "\x1b;[0m"))
 
   (define layout-dividers '())
+  (define resize-highlight #f) ; the split selected by transient keyboard resize
 
   (define (layout-min-width node)
     (if (layout-split? node)
@@ -3495,16 +3496,19 @@
       (lambda (divider)
         (when (eq? (car divider) 'right)
           (let ([x (caddr divider)] [start (cadddr divider)]
-                [height (list-ref divider 4)])
+                [height (list-ref divider 4)]
+                [selected? (and resize-highlight
+                                (eq? (cadr divider) resize-highlight))])
             (do ([r start (+ r 1)]) ((>= r (+ start height)))
               (let ([junction? (or (stacked-divider-crosses? x r)
                                    (= r (- rows echo-height 1)))])
-                (paint! r x (if junction? '(divider junction) '(divider))
+                (paint! r x (list 'divider junction? selected?)
                         (lambda ()
+                          (when selected? (ansi "\x1b;[1;38;5;135m"))
                           (if junction?
-                              (ansi (style-code 'chrome)
+                              (ansi (if selected? "" (style-code 'chrome))
                                     "\x2534;\x1b;[0m")
-                              (ansi (style-code 'chrome)
+                              (ansi (if selected? "" (style-code 'chrome))
                                     "\x2502;\x1b;[0m")))))))))
       layout-dividers))
 
@@ -3999,10 +4003,21 @@
                   "")]
              [status (format "~a~a~a~a~a "
                              head conf mode-text hint-text page-text)]
-             [window-buttons " [↕][↔][×]"])
+             [window-buttons " [↕][↔][×]"]
+             [resizing?
+              (and resize-highlight
+                   (exists
+                     (lambda (d)
+                       (and (eq? (car d) 'below)
+                            (eq? (cadr d) resize-highlight)
+                            (= (+ start height) (cadddr d))
+                            (<= (caddr d) (window-xoff w))
+                            (< (window-xoff w)
+                               (+ (caddr d) (list-ref d 4)))))
+                     layout-dividers))])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (window-xoff w)
-                  (list 'status status current? target? stale?)
+                  (list 'status status current? target? stale? resizing?)
                   (lambda ()
                     ;; Reversed cells take the bar's shade from the
                     ;; foreground color, so full reverse tracks the
@@ -4010,8 +4025,12 @@
                     ;; dark) and an explicit mid grey marks inactive
                     ;; on either -- dim, the old marker, vanishes in
                     ;; reverse on light schemes.
-                    (let* ([bar (if current? "\x1b;[7m" "\x1b;[7;38;5;245m")]
-                           [fg (if current? "\x1b;[39m" "\x1b;[38;5;245m")]
+                    (let* ([bar (cond [resizing? "\x1b;[7;38;5;135m"]
+                                      [current? "\x1b;[7m"]
+                                      [else "\x1b;[7;38;5;245m"])]
+                           [fg (cond [resizing? "\x1b;[38;5;135m"]
+                                     [current? "\x1b;[39m"]
+                                     [else "\x1b;[38;5;245m"])]
                            [content-width
                             (max 0 (- (window-width w)
                                       (string-length window-buttons)))]
@@ -5063,11 +5082,116 @@
         (find (lambda (d) (hit? 'right d)) layout-dividers)))
 
   (define (transfer-split! split delta)
+    ;; Normalize stale ratio weights to the currently realized cell extents,
+    ;; then move the boundary. Thus one keyboard step is one cell even after a
+    ;; terminal resize, and mouse dragging uses the same exact arithmetic.
     (unless (= delta 0)
-      (layout-split-first-weight-set!
-        split (max 1 (+ (layout-split-first-weight split) delta)))
-      (layout-split-second-weight-set!
-        split (max 1 (- (layout-split-second-weight split) delta)))))
+      (let* ([layout (window-layout)]
+             [orientation (layout-split-orientation split)]
+             [first (layout-split-first split)]
+             [second (layout-split-second split)])
+        (define (extent node)
+          (let ([entries
+                 (map (lambda (w) (assq w layout)) (layout-leaves node))])
+            (if (eq? orientation 'right)
+                (- (apply max
+                          (map (lambda (entry)
+                                 (+ (window-xoff (car entry))
+                                    (window-width (car entry))))
+                               entries))
+                   (apply min
+                          (map (lambda (entry) (window-xoff (car entry)))
+                               entries)))
+                (- (apply max
+                          (map (lambda (entry)
+                                 (+ (cadr entry) (caddr entry) 1))
+                               entries))
+                   (apply min (map cadr entries))))))
+        (let* ([one (extent first)] [two (extent second)]
+               [m1 (if (eq? orientation 'right)
+                       (layout-min-width first)
+                       (layout-min-height first))]
+               [m2 (if (eq? orientation 'right)
+                       (layout-min-width second)
+                       (layout-min-height second))]
+               [delta (min delta (- two m2))]
+               [delta (max delta (- m1 one))])
+          (layout-split-first-weight-set! split (+ one delta))
+          (layout-split-second-weight-set! split (- two delta))))))
+
+  (define (divider-in-direction direction)
+    ;; The first matching divider crossed by a ray from point.
+    (window-layout)
+    (let* ([cursor (window-screen-position current-window point-row point-col)]
+           [x (- (cdr cursor) 1)] [y (- (car cursor) 1)]
+           [vertical? (memq direction '(left right))])
+      (define (distance d)
+        (and (eq? (car d) (if vertical? 'right 'below))
+             (if vertical?
+                 (and (<= (cadddr d) y)
+                      (< y (+ (cadddr d) (list-ref d 4)))
+                      (case direction
+                        [(left) (and (< (caddr d) x) (- x (caddr d)))]
+                        [(right) (and (> (caddr d) x) (- (caddr d) x))]))
+                 (and (<= (caddr d) x)
+                      (< x (+ (caddr d) (list-ref d 4)))
+                      (case direction
+                        [(up) (and (< (cadddr d) y) (- y (cadddr d)))]
+                        [(down) (and (> (cadddr d) y) (- (cadddr d) y))])))))
+      (let loop ([left layout-dividers] [best #f] [best-distance #f])
+        (if (null? left)
+            best
+            (let ([d (distance (car left))])
+              (if (and d (or (not best-distance) (< d best-distance)))
+                  (loop (cdr left) (car left) d)
+                  (loop (cdr left) best best-distance)))))))
+
+  (define (widen-window!!)
+    ;; A transient keyboard counterpart to pushing a window's draggable
+    ;; edges outward. Meta-arrows choose another window without leaving.
+    (define help "Widen the window: use Arrows; M-Arrows switch window")
+    (define (arrow-action event)
+      (cond [(string=? event "LEFT") (cons 'left -1)]
+            [(string=? event "RIGHT") (cons 'right 1)]
+            [(string=? event "UP") (cons 'up -1)]
+            [(string=? event "DOWN") (cons 'down 1)]
+            [else #f]))
+    (define (focus-action event)
+      (cond [(string=? event "M-LEFT") focus-window-left!]
+            [(string=? event "M-RIGHT") focus-window-right!]
+            [(string=? event "M-UP") focus-window-up!]
+            [(string=? event "M-DOWN") focus-window-down!]
+            [else #f]))
+    (let ([forward
+           (dynamic-wind
+             (lambda () (set! message help))
+             (lambda ()
+               (let loop ()
+                 (redraw!)
+                 (let* ([event (read-key-event #f)]
+                        [action (arrow-action event)]
+                        [focus (focus-action event)])
+                   (cond
+                     [action
+                      (let ([divider (divider-in-direction (car action))])
+                        (if divider
+                            (begin
+                              (set! resize-highlight (cadr divider))
+                              (transfer-split! resize-highlight (cdr action)))
+                            (begin (set! resize-highlight #f)
+                                   (visual-bell!))))
+                      (loop)]
+                     [focus
+                      (set! resize-highlight #f)
+                      (focus)
+                      (loop)]
+                     [(member event '("C-g" "ESC")) #f]
+                     [else event]))))
+             (lambda ()
+               (set! resize-highlight #f)
+               (set! message "")))])
+      (when forward (dispatch-sequence! forward #f)))
+    (void))
 
   (define (window-position w start height x y)
     ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
@@ -5855,6 +5979,7 @@
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
           ("C-x 2" ,split-window!) ("C-x 3" ,split-window-right!)
           ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
+          ("C-x w" ,widen-window!!)
           ("C-h k" ,describe-key!!)))
       (for-each
         (lambda (entry)
