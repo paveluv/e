@@ -784,14 +784,18 @@
         ((register-app!)
          (("procedure" . "(register-app! name refresh! [handle-event!])"))
          "buffer" ("(core)") core "App buffers" #f
-         "Create or update a module-owned dynamic read-only app buffer. Its name must not collide with an ordinary buffer. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. Returning `keep-focus` from `MOUSE-CLICK` consumes the click while preserving the previously focused window. A view is an app without a handler.")
+         "Create or update a module-owned dynamic read-only app buffer. Its name must not collide with an ordinary buffer. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
         ((display-app!) (("procedure" . "(display-app! buffer)")) "window or #f"
          ("(core)") core "App buffers" #f
          "Display and focus an app buffer, recording the previously current window and buffer as its target.")
-        ((display-app-at-bottom!)
-         (("procedure" . "(display-app-at-bottom! buffer)")) "window or #f"
+        ((display-app-here!)
+         (("procedure" . "(display-app-here! buffer)")) "window"
          ("(core)") core "App buffers" #f
-         "Focus the nearest window already displaying an app buffer, or create and focus a full-width window for it below the complete persistent layout. Record the originating window and buffer as its target.")
+         "Display an app in the current window and make that same window its target, remembering the buffer it replaces.")
+        ((app-event-buffer-position)
+         (("parameter" . "(app-event-buffer-position)")) "pair or #f"
+         ("(core)") core "App buffers" #f
+         "During a mouse-click app event, return the unclamped zero-based buffer position addressed by the pointer. The row may be beyond the buffer, allowing apps to distinguish empty viewport space from their last line. Return false outside such an event.")
         ((set-app-capture!)
          (("procedure" . "(set-app-capture! buffer capture?)")) "buffer"
          ("(core)") core "App buffers" #f

@@ -44,7 +44,7 @@ has focus, `>` marks the window it will act on.
 | Key | Action |
 |---|---|
 | `C-x b` | Prompt for a buffer name. Empty input selects the most recently used other buffer; an unknown name creates an unvisited buffer. |
-| `C-x C-b` | Focus the nearest visible `*buffers*` window, or open it in a new full-width window at the bottom. |
+| `C-x C-b` | Show `*buffers*` in the current window as an interactive buffer switcher. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
@@ -134,11 +134,10 @@ line.
 
 ## The `*buffers*` app
 
-`C-x C-b` reuses the nearest window already showing the app. If none is
-visible, it adds a full-width window at the bottom of the frame, directly above
-the echo area, without disturbing the split tree above it. In either case the
-command moves focus into `*buffers*` and retains the originating window as its
-target.
+`C-x C-b` replaces the current window with the app and makes that same window
+its target, while remembering the buffer it replaced. Move to a row and press
+Enter to replace `*buffers*` with that buffer, making the command an alternative
+interactive form of `C-x b`.
 
 `*buffers*` is a live, read-only table with these columns:
 

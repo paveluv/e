@@ -72,8 +72,8 @@
     echo-highlight
     register-app! register-view! set-app-presentation! set-app-capture!
     app-capture-escaped? set-app-cursor-visible! detach-app!
-    app-event-position
-    escape-app-capture! display-app! display-app-at-bottom!
+    app-event-position app-event-buffer-position
+    escape-app-capture! display-app! display-app-here!
     buffer-window-size
     target-window target-buffer show-buffer-in-target!
     view-append! view-replace! register-log-formatter! log-history
@@ -1825,57 +1825,19 @@
              (set! current-window w)
              w))))
 
-  (define (display-app-at-bottom! b)
-    ;; Focus the nearest window already displaying b. Otherwise add a
-    ;; full-width leaf below the complete persistent layout and focus it.
+  (define (display-app-here! b)
+    ;; Display an app in the selected window and make that same window its
+    ;; target. If it is already current, preserve the buffer the app was
+    ;; targeting rather than replacing that memory with the app itself.
     (unless (app-buffer? b)
-      (error 'display-app-at-bottom! "not an app buffer" b))
-    (let* ([origin current-window]
-           [prior (window-buffer origin)]
-           [layout (window-layout)]
-           [cursor (window-screen-position origin
-                                           (window-prow origin)
-                                           (window-pcol origin))]
-           [cx (- (cdr cursor) 1)]
-           [cy (- (car cursor) 1)]
-           [shown
-            (filter (lambda (entry) (eq? (window-buffer (car entry)) b))
-                    layout)])
-      (define (axis-distance p low high)
-        (cond [(< p low) (- low p)] [(> p high) (- p high)] [else 0]))
-      (define (distance entry)
-        (let ([w (car entry)])
-          (+ (axis-distance cx (window-xoff w)
-                            (+ (window-xoff w) (window-width w) -1))
-             (axis-distance cy (cadr entry)
-                            (+ (cadr entry) (caddr entry))))))
-      (define (nearest entries)
-        (let loop ([rest (cdr entries)] [best (car entries)]
-                   [best-distance (distance (car entries))])
-          (if (null? rest)
-              (car best)
-              (let ([d (distance (car rest))])
-                (if (< d best-distance)
-                    (loop (cdr rest) (car rest) d)
-                    (loop (cdr rest) best best-distance))))))
-      (cond
-        [(pair? shown) (focus-window! (nearest shown))]
-        [(>= (- rows echo-height)
-             (+ (layout-min-height layout-root) (min-window-lines) 1))
-         (let* ([available (- rows echo-height)]
-                [bottom (max (+ (min-window-lines) 1)
-                             (quotient available 2))]
-                [w (make-window b (buffer-spot-top b) 0 0
-                                (buffer-spot-row b) (buffer-spot-col b) #f
-                                (max 1 (- bottom 1))
-                                (max 1 (- bottom 1)) 0 0 cols 'default)])
-           (set-layout-root!
-             (make-layout-split 'below layout-root w
-                                (max 1 (- available bottom)) bottom))
-           (set-app-target! b origin prior)
-           (set! current-window w)
-           w)]
-        [else #f])))
+      (error 'display-app-here! "not an app buffer" b))
+    (let ([prior (if (eq? b (current-buffer))
+                     (target-buffer)
+                     (current-buffer))])
+      (set-app-target! b current-window prior)
+      (set! buffers (cons b (remq b buffers)))
+      (set-window-buffer! current-window b)
+      current-window))
 
   (define (refresh-visible-views!)
     (for-each (lambda (a)
@@ -4772,7 +4734,11 @@
             [(#\v)
              (let ([b (buffer-named "*buffers*")])
                (if b
-                   (display-app! b)
+                   (when (display-app! b)
+                     ;; A direct app entry still receives the same
+                     ;; initialization opportunity as its ordinary command.
+                     (dispatch-app-event! "FOCUS")
+                     (set! message ""))
                    (set-message! "The *buffers* app is not available")))]
             [else (void)]))))
 
@@ -4979,6 +4945,10 @@
   ;; 1-based cell coordinates within the app's text viewport while a mouse
   ;; event is dispatched, or #f for keyboard events.
   (define app-event-position (make-parameter #f))
+  ;; The unclamped (row . column) addressed by an app content click. This can
+  ;; lie beyond the buffer and lets apps distinguish empty viewport space from
+  ;; their last rendered line.
+  (define app-event-buffer-position (make-parameter #f))
   (define drag-divider #f)   ; recursive divider descriptor
   (define drag-scrollbar #f) ; (window grab-offset-within-thumb)
 
@@ -5116,7 +5086,11 @@
          (let loop ([i (max sticky (window-top w))]
                     [k (+ (- k sticky) (window-topseg w))])
            (if (>= i (vector-length v))
-               (cons (max 0 (- (vector-length v) 1)) col)
+               ;; Preserve the addressed row outside the buffer. The point
+               ;; setter clamps ordinary clicks; app handlers also receive
+               ;; this raw position so blank viewport space stays distinct
+               ;; from the final rendered line.
+               (cons i col)
                (let* ([line (vector-ref v i)]
                       [breaks (line-breaks w line)]
                       [segs (vector-length breaks)])
@@ -5213,19 +5187,28 @@
                       (set-app-target! (window-buffer w) old
                                        (window-buffer old)))
                     (set! current-window w)
-                    (goto-point! (window-position w start height x y))
-                    (set! mark-active? #f)
-                    ;; Focusing the clicked window is the default. An app may
-                    ;; perform a target action and explicitly preserve the
-                    ;; old focus by returning keep-focus for MOUSE-CLICK.
-                    (let ([result (dispatch-app-event! "MOUSE-CLICK")])
-                      (cond [(and (eq? result 'keep-focus) (memq old windows))
-                             (set! current-window old)]
-                            [(not result)
-                             ;; Views and unhandled app text select like
-                             ;; ordinary read-only buffer text. Arm the mark at
-                             ;; this press instead of reusing stale state.
-                             (arm-text-selection!)]))
+                    (let ([old-point (point)]
+                          [clicked (window-position w start height x y)])
+                      (goto-point! clicked)
+                      (set! mark-active? #f)
+                      ;; Focusing the clicked window is the default. An app may
+                      ;; perform a target action and explicitly preserve the
+                      ;; old focus by returning keep-focus for MOUSE-CLICK.
+                      (let ([result
+                             (parameterize
+                               ([app-event-buffer-position clicked])
+                               (dispatch-app-event! "MOUSE-CLICK"))])
+                        (cond [(eq? result 'ignore-click)
+                               (goto-point! old-point)
+                               (when (memq old windows)
+                                 (set! current-window old))]
+                              [(and (eq? result 'keep-focus) (memq old windows))
+                               (set! current-window old)]
+                              [(not result)
+                               ;; Views and unhandled app text select like
+                               ;; ordinary read-only buffer text. Arm the mark at
+                               ;; this press instead of reusing stale state.
+                               (arm-text-selection!)])))
                     "MOUSE-HANDLED")]
                  [else                                ; a text row
                   (focus-window! w)

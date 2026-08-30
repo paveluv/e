@@ -453,7 +453,11 @@
           (select-buffer-row! b)))))
 
   (define (handle-buffers-event! event)
-    (cond [(member event '("UP" "C-p"))
+    (cond [(string=? event "FOCUS")
+           (refresh-buffers-view!)
+           (select-buffer-row! (target-buffer))
+           #t]
+          [(member event '("UP" "C-p"))
            (move-buffer-row! -1) #t]
           [(member event '("DOWN" "C-n"))
            (move-buffer-row! 1) #t]
@@ -463,9 +467,14 @@
            (move-buffer-row! 1) (activate-buffer-row!) #t]
           [(string=? event "RET") (activate-buffer-row!) #t]
           [(string=? event "MOUSE-CLICK")
-           (when (<= 1 (car (point)) (length buffer-rows))
-             (activate-buffer-row!))
-           'keep-focus]
+           (let ([clicked (app-event-buffer-position)])
+             (if (and clicked
+                      (<= 1 (car clicked) (length buffer-rows)))
+                 (begin
+                   (goto-point! (cons (car clicked) 0))
+                   (activate-buffer-row!)
+                   'keep-focus)
+                 'ignore-click))]
           [else #f]))
 
   (define (switch-buffer-by-row! delta)
@@ -510,22 +519,15 @@
           buffers-view)))
 
   (define (list-buffers!)
-    ;; Pop up the live *buffers* view; on a screen too small for a second
-    ;; window, retain the compact one-line summary.
-    (let* ([table (buffer-table)] [rows (cdr table)]
-           [b (buffers-view-buffer)])
+    ;; Use the live table as an interactive buffer switcher in this window.
+    ;; show-buffer! records the window itself and the replaced buffer as the
+    ;; app target, so Enter completes the switch in place.
+    (let ([b (buffers-view-buffer)])
       (refresh-buffers-view!)
-      (if (display-app-at-bottom! b)
-          (begin
-            (refresh-buffers-view!)
-            (select-buffer-row! (target-buffer))
-            (set-message! ""))
-          (set-message!
-            (fold-left (lambda (acc r)
-                         (format "~a ~a~a" acc
-                                 (if (char=? (string-ref (car r) 2) #\*) "*" "")
-                                 (list-ref r 1)))
-                       "Buffers:" rows)))))
+      (display-app-here! b)
+      (refresh-buffers-view!)
+      (select-buffer-row! (target-buffer))
+      (set-message! "")))
 
   (define (init!)
     (register-mode! "buffers" '() '() buffers-styles)
@@ -549,7 +551,7 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Focus the nearest visible `*buffers*` window, or create a full-width window for it at the bottom of the frame. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to switch the target window, or click a row to switch immediately.")
+         "Show `*buffers*` in the current window and make that window its own target. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to replace the app with the selected buffer, or click a row to switch immediately.")
         ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")
