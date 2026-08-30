@@ -142,6 +142,14 @@ immediately.
 Tabs and other control characters display as one space cell. Input is UTF-8,
 but e currently assumes every character occupies one terminal column.
 
+## How to contribute
+
+Prototype a feature (AI agents are welcome) and submit a pull request. Don't
+worry about whether it's well designed or tested. Most likely, I'll merge it
+and then rewrite it.
+
+Or just open an issue on GitHub.
+
 ## Licence
 
 [MIT](LICENCE)
