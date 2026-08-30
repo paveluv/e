@@ -528,6 +528,10 @@
         (put-bytevector output (string->utf8 text))
         (flush-output-port output))))
 
+  (define (primary-device-attributes! state)
+    ;; VT100 with advanced video: matches xterm-256color's terminfo probe.
+    (terminal-reply! state "\x1b;[?1;2c"))
+
   (define (dispatch-osc! state)
     (let ([text (terminal-state-osc-text state)])
       (cond
@@ -884,13 +888,25 @@
                (terminal-state-sgr-set! state "")
                (terminal-state-style-set! state 'plain))]
             [(#\n)
-             (when (= (param parameters 0 0) 6)
-               (terminal-reply!
-                 state
-                 (format "\x1b;[~a;~aR" (+ row 1) (+ col 1))))]
+             (cond
+               [(= (param parameters 0 0) 5)
+                (terminal-reply!
+                  state (if (string-prefix? "?" text)
+                            "\x1b;[?0n" "\x1b;[0n"))]
+               [(= (param parameters 0 0) 6)
+                (let ([reported-row
+                       (if (terminal-state-origin state)
+                           (- row (terminal-state-scroll-top state)) row)])
+                  (terminal-reply!
+                    state
+                    (format "\x1b;[~a~a;~aR"
+                            (if (string-prefix? "?" text) "?" "")
+                            (+ reported-row 1) (+ col 1))))])]
             [(#\c)
-             (when (string=? text "")
-               (terminal-reply! state "\x1b;[?1;2c"))]
+             (cond [(or (string=? text "") (string=? text "0"))
+                    (primary-device-attributes! state)]
+                   [(or (string=? text ">") (string=? text ">0"))
+                    (terminal-reply! state "\x1b;[>0;276;0c")])]
             [(#\q)
              (when (and cursor-shape? (terminal-state-buffer state))
                (set-app-presentation!
@@ -980,6 +996,8 @@
                       state (max 0 (- (terminal-state-row state) 1))))
           (terminal-state-parser-set! state 'normal)]
          [(#\c) (reset-terminal-state! state)
+          (terminal-state-parser-set! state 'normal)]
+         [(#\Z) (primary-device-attributes! state)
           (terminal-state-parser-set! state 'normal)]
          [(#\=) (terminal-state-keypad-set! state #t)
           (terminal-state-parser-set! state 'normal)]

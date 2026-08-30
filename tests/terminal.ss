@@ -156,4 +156,13 @@
               (terminal-emulator-replies terminal)
               '("\x1b;[1;2R")))
 
+     (let ([terminal (make-terminal-emulator 5 8)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[5n\x1b;[?5n\x1b;[3;5r\x1b;[?6h\x1b;[2;4H\x1b;[?6n\x1b;[c\x1b;[>c\x1b;Z")
+       (check 'device-and-status-reports
+              (terminal-emulator-replies terminal)
+              '("\x1b;[0n" "\x1b;[?0n" "\x1b;[?2;4R" "\x1b;[?1;2c"
+                "\x1b;[>0;276;0c" "\x1b;[?1;2c")))
+
      (format #t "~a terminal checks passed\n" checks)))
