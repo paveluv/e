@@ -69,7 +69,7 @@
     log-entries log-length log-record log-styler
     format-log-entry
     message-source message-progress
-    echo-highlight
+    echo-highlight visual-bell!
     register-app! register-view! set-app-presentation! set-app-capture!
     app-capture-escaped? set-app-cursor-visible! detach-app!
     app-event-position app-event-buffer-position

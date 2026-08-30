@@ -95,6 +95,14 @@ screen is kept separate: entering `top`, less, or nested e preserves the shell
 screen and restores it when the application exits.
 DEC screen-reverse mode is applied non-destructively, including the brief
 reverse-video transition used by terminfo's visual bell capability.
+BEL never produces sound; the live terminal reader flashes only e's echo-area
+band after releasing the emulator lock, so terminal output and redraw remain
+responsive.
+
+DEC left/right margin mode (`DECSLRM`, enabled by `DECLRMM`) composes with the
+vertical scrolling region. Cursor addressing, wrapping, character editing,
+line insertion/deletion, and scrolling honor the resulting rectangle; a
+partial-width scroll does not leak its untouched columns into scrollback.
 
 The grid stores Unicode grapheme strings in terminal cells. Combining marks,
 emoji presentation selectors, regional-indicator flags, and ZWJ emoji remain

@@ -17,6 +17,7 @@
             (mutable row) (mutable col)
             (mutable saved-row) (mutable saved-col) (mutable saved-state)
             (mutable scroll-top) (mutable scroll-bottom)
+            (mutable left-margin) (mutable right-margin) (mutable margin-mode)
             (mutable parser) (mutable parameters)
             (mutable osc-escape) (mutable osc-text) (mutable replies)
             (mutable charset) (mutable charset-g1) (mutable charset-target)
@@ -26,7 +27,7 @@
             (mutable cursor-keys) (mutable keypad)
             (mutable cursor-visible) (mutable tab-stops)
             (mutable last-character)
-            (mutable dirty) (mutable alive) (mutable prefix)
+            (mutable dirty) (mutable alive) (mutable bell) (mutable prefix)
             (mutable mouse) (mutable mouse-sgr)
             (mutable bracketed) (mutable main-screen) (mutable main-wrapped)
             (mutable main-row) (mutable main-col) (mutable main-state)
@@ -69,11 +70,11 @@
              "rows and columns must be positive exact integers" rows cols))
     (make-terminal-state #f #f #f (make-mutex)
                          rows cols (make-screen rows cols) (make-vector rows #f)
-                         0 0 0 0 #f 0 (- rows 1)
+                         0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f
                          'normal "" #f "" '() 'ascii 'ascii 0 0
                          #f #t #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
-                         #f #f #f #f #f #f #f #f 0 0 #f #f #f #f #f '() '() '()
+                         #f #f #f #f #f #f #f #f #f 0 0 #f #f #f #f #f '() '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() #f (make-style-screen rows cols 'plain)
                          "" 'plain))
@@ -118,11 +119,15 @@
                        (terminal-state-col emulator)))
       (scroll-region . ,(cons (terminal-state-scroll-top emulator)
                               (terminal-state-scroll-bottom emulator)))
+      (horizontal-margins . ,(cons (terminal-state-left-margin emulator)
+                                   (terminal-state-right-margin emulator)))
+      (horizontal-margin-mode . ,(terminal-state-margin-mode emulator))
       (wrap-pending . ,(terminal-state-wrap-pending emulator))
       (autowrap . ,(terminal-state-autowrap emulator))
       (origin . ,(terminal-state-origin emulator))
       (insert . ,(terminal-state-insert emulator))
       (reverse-screen . ,(terminal-state-reverse-screen emulator))
+      (bell-pending . ,(terminal-state-bell emulator))
       (cursor-visible . ,(terminal-state-cursor-visible emulator))
       (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
       (application-keypad . ,(terminal-state-keypad emulator))
@@ -173,6 +178,22 @@
                     (terminal-state-unfollowed-windows state)))))
 
   (define (blank-line cols) (make-vector cols " "))
+
+  (define (left-bound state)
+    (if (terminal-state-margin-mode state)
+        (terminal-state-left-margin state) 0))
+
+  (define (right-bound state)
+    (if (terminal-state-margin-mode state)
+        (terminal-state-right-margin state)
+        (- (terminal-state-cols state) 1)))
+
+  (define (erase-row-range! state row start end)
+    (let ([line (vector-ref (terminal-state-screen state) row)]
+          [styles (vector-ref (terminal-state-styles state) row)])
+      (do ([col start (+ col 1)]) ((= col end))
+        (clear-cell! line styles col (terminal-state-style state))
+        (vector-set! styles col (terminal-state-style state)))))
   (define (blank-styles cols style) (make-vector cols style))
 
   (define (cell-row->string row)
@@ -284,7 +305,10 @@
           (terminal-state-sgr state)
           (terminal-state-style state)
           (vector-copy (terminal-state-tab-stops state))
-          (terminal-state-last-character state)))
+          (terminal-state-last-character state)
+          (terminal-state-left-margin state)
+          (terminal-state-right-margin state)
+          (terminal-state-margin-mode state)))
 
   (define (restore-screen-state! state saved)
     (terminal-state-row-set!
@@ -314,7 +338,14 @@
       (terminal-state-tab-stops-set!
         state (resized-tab-stops tabs (vector-length tabs)
                                  (terminal-state-cols state))))
-    (terminal-state-last-character-set! state (list-ref saved 18)))
+    (terminal-state-last-character-set! state (list-ref saved 18))
+    (let* ([cols (terminal-state-cols state)]
+           [left (clamp (list-ref saved 19) 0 (- cols 1))]
+           [right (clamp (list-ref saved 20) 0 (- cols 1))])
+      (terminal-state-left-margin-set! state (if (< left right) left 0))
+      (terminal-state-right-margin-set!
+        state (if (< left right) right (- cols 1))))
+    (terminal-state-margin-mode-set! state (list-ref saved 21)))
 
   (define (enter-alternate-screen! state clear?)
     (unless (terminal-state-main-screen state)
@@ -596,6 +627,9 @@
             (terminal-state-dirty-set! state #t)))
       (terminal-state-scroll-top-set! state 0)
       (terminal-state-scroll-bottom-set! state (- rows 1))
+      (terminal-state-left-margin-set! state 0)
+      (terminal-state-right-margin-set! state (- cols 1))
+      (terminal-state-margin-mode-set! state #f)
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-process state)
         (resize-terminal-process! (terminal-state-process state) rows cols))))
@@ -606,9 +640,12 @@
           [wrapped (terminal-state-wrapped state)]
           [top (terminal-state-scroll-top state)]
           [bottom (terminal-state-scroll-bottom state)]
-          [cols (terminal-state-cols state)])
+          [cols (terminal-state-cols state)]
+          [left (left-bound state)]
+          [right (right-bound state)])
       (do ([n 0 (+ n 1)]) ((= n count))
-        (when (and (= top 0) (= bottom (- (terminal-state-rows state) 1))
+        (when (and (= left 0) (= right (- cols 1))
+                   (= top 0) (= bottom (- (terminal-state-rows state) 1))
                    (not (terminal-state-main-screen state))
                    (> (terminal-scrollback) 0))
           (let ([history (append (terminal-state-history state)
@@ -630,12 +667,25 @@
               (let ([extra (- (length history) (terminal-scrollback))])
                 (if (> extra 0) (list-tail history extra) history)))))
         (do ([row top (+ row 1)]) ((= row bottom))
-          (vector-set! screen row (vector-ref screen (+ row 1)))
-          (vector-set! styles row (vector-ref styles (+ row 1)))
-          (vector-set! wrapped row (vector-ref wrapped (+ row 1))))
-        (vector-set! screen bottom (blank-line cols))
-        (vector-set! styles bottom
-                     (blank-styles cols (terminal-state-style state)))
+          (if (and (= left 0) (= right (- cols 1)))
+              (begin
+                (vector-set! screen row (vector-ref screen (+ row 1)))
+                (vector-set! styles row (vector-ref styles (+ row 1)))
+                (vector-set! wrapped row (vector-ref wrapped (+ row 1))))
+              (begin
+                (copy-vector-range! (vector-ref screen (+ row 1)) left
+                                    (vector-ref screen row) left
+                                    (+ 1 (- right left)))
+                (copy-vector-range! (vector-ref styles (+ row 1)) left
+                                    (vector-ref styles row) left
+                                    (+ 1 (- right left)))
+                (vector-set! wrapped row #f))))
+        (if (and (= left 0) (= right (- cols 1)))
+            (begin
+              (vector-set! screen bottom (blank-line cols))
+              (vector-set! styles bottom
+                           (blank-styles cols (terminal-state-style state))))
+            (erase-row-range! state bottom left (+ right 1)))
         (vector-set! wrapped bottom #f))))
 
   (define (scroll-down! state count)
@@ -644,15 +694,30 @@
           [wrapped (terminal-state-wrapped state)]
           [top (terminal-state-scroll-top state)]
           [bottom (terminal-state-scroll-bottom state)]
-          [cols (terminal-state-cols state)])
+          [cols (terminal-state-cols state)]
+          [left (left-bound state)]
+          [right (right-bound state)])
       (do ([n 0 (+ n 1)]) ((= n count))
         (do ([row bottom (- row 1)]) ((= row top))
-          (vector-set! screen row (vector-ref screen (- row 1)))
-          (vector-set! styles row (vector-ref styles (- row 1)))
-          (vector-set! wrapped row (vector-ref wrapped (- row 1))))
-        (vector-set! screen top (blank-line cols))
-        (vector-set! styles top
-                     (blank-styles cols (terminal-state-style state)))
+          (if (and (= left 0) (= right (- cols 1)))
+              (begin
+                (vector-set! screen row (vector-ref screen (- row 1)))
+                (vector-set! styles row (vector-ref styles (- row 1)))
+                (vector-set! wrapped row (vector-ref wrapped (- row 1))))
+              (begin
+                (copy-vector-range! (vector-ref screen (- row 1)) left
+                                    (vector-ref screen row) left
+                                    (+ 1 (- right left)))
+                (copy-vector-range! (vector-ref styles (- row 1)) left
+                                    (vector-ref styles row) left
+                                    (+ 1 (- right left)))
+                (vector-set! wrapped row #f))))
+        (if (and (= left 0) (= right (- cols 1)))
+            (begin
+              (vector-set! screen top (blank-line cols))
+              (vector-set! styles top
+                           (blank-styles cols (terminal-state-style state))))
+            (erase-row-range! state top left (+ right 1)))
         (vector-set! wrapped top #f))))
 
   (define (line-feed! state)
@@ -772,42 +837,46 @@
                 (loop (+ index 1))))))))
 
   (define (put-spacing-character! state character requested-width)
-    (when (terminal-state-wrap-pending state)
-      (terminal-state-wrap-pending-set! state #f)
-      (when (terminal-state-autowrap state)
-        (vector-set! (terminal-state-wrapped state)
-                     (terminal-state-row state) #t)
-        (terminal-state-col-set! state 0)
-        (line-feed! state)))
-    (let* ([cols (terminal-state-cols state)]
-           [width (min requested-width cols)])
-      (when (and (> width (- cols (terminal-state-col state)))
-                 (terminal-state-autowrap state))
-        (vector-set! (terminal-state-wrapped state)
-                     (terminal-state-row state) #t)
-        (terminal-state-col-set! state 0)
-        (line-feed! state))
-      (let* ([line (vector-ref (terminal-state-screen state)
-                               (terminal-state-row state))]
-             [styles (vector-ref (terminal-state-styles state)
+    (let ([left (left-bound state)] [right (right-bound state)])
+      (when (terminal-state-wrap-pending state)
+        (terminal-state-wrap-pending-set! state #f)
+        (when (terminal-state-autowrap state)
+          (vector-set! (terminal-state-wrapped state)
+                       (terminal-state-row state) #t)
+          (terminal-state-col-set! state left)
+          (line-feed! state)))
+      (let* ([cols (terminal-state-cols state)]
+             [limit (if (<= left (terminal-state-col state) right)
+                      (+ right 1) cols)]
+             [width (min requested-width (- limit left))])
+        (when (and (> width (- limit (terminal-state-col state)))
+                (terminal-state-autowrap state))
+          (vector-set! (terminal-state-wrapped state)
+                       (terminal-state-row state) #t)
+          (terminal-state-col-set! state left)
+          (line-feed! state))
+        (let* ([line (vector-ref (terminal-state-screen state)
                                  (terminal-state-row state))]
-             [col (terminal-state-col state)]
-             [width (min width (- cols col))])
-        (when (terminal-state-insert state) (insert-characters! state width))
-        (do ([index col (+ index 1)]) ((= index (+ col width)))
-          (clear-cell! line styles index (terminal-state-style state)))
-        (vector-set! line col (string character))
-        (vector-set! styles col (terminal-state-style state))
-        (do ([index (+ col 1) (+ index 1)]) ((= index (+ col width)))
-          (vector-set! line index "")
-          (vector-set! styles index (terminal-state-style state)))
-        (if (= (+ col width) cols)
+               [styles (vector-ref (terminal-state-styles state)
+                                   (terminal-state-row state))]
+               [col (terminal-state-col state)]
+               [limit (if (<= left col right) (+ right 1) cols)]
+               [width (min width (- limit col))])
+          (when (terminal-state-insert state) (insert-characters! state width))
+          (do ([index col (+ index 1)]) ((= index (+ col width)))
+            (clear-cell! line styles index (terminal-state-style state)))
+          (vector-set! line col (string character))
+          (vector-set! styles col (terminal-state-style state))
+          (do ([index (+ col 1) (+ index 1)]) ((= index (+ col width)))
+            (vector-set! line index "")
+            (vector-set! styles index (terminal-state-style state)))
+          (if (= (+ col width) limit)
             (begin
-              (terminal-state-col-set! state (- cols 1))
+              (terminal-state-col-set! state (- limit 1))
               (terminal-state-wrap-pending-set! state #t))
             (terminal-state-col-set! state (+ col width)))))
-    (terminal-state-last-character-set! state character)
-    (void))
+      (terminal-state-last-character-set! state character)
+      (void)))
 
   (define (erase-line! state start end)
     (let ([line (vector-ref (terminal-state-screen state)
@@ -936,11 +1005,13 @@
            [styles (vector-ref (terminal-state-styles state)
                                (terminal-state-row state))]
            [col (terminal-state-col state)]
-           [cols (terminal-state-cols state)]
-           [count (min count (- cols col))])
-      (copy-vector-range! line (+ col count) line col (- cols col count))
-      (copy-vector-range! styles (+ col count) styles col (- cols col count))
-      (do ([i (- cols count) (+ i 1)]) ((= i cols))
+           [end (if (<= (left-bound state) col (right-bound state))
+                    (+ (right-bound state) 1)
+                    (terminal-state-cols state))]
+           [count (min count (- end col))])
+      (copy-vector-range! line (+ col count) line col (- end col count))
+      (copy-vector-range! styles (+ col count) styles col (- end col count))
+      (do ([i (- end count) (+ i 1)]) ((= i end))
         (vector-set! line i " ")
         (vector-set! styles i (terminal-state-style state)))
       (normalize-cell-row! line styles)))
@@ -951,9 +1022,11 @@
            [styles (vector-ref (terminal-state-styles state)
                                (terminal-state-row state))]
            [col (terminal-state-col state)]
-           [cols (terminal-state-cols state)]
-           [count (min count (- cols col))])
-      (do ([i (- cols 1) (- i 1)]) ((< i (+ col count)))
+           [end (if (<= (left-bound state) col (right-bound state))
+                    (+ (right-bound state) 1)
+                    (terminal-state-cols state))]
+           [count (min count (- end col))])
+      (do ([i (- end 1) (- i 1)]) ((< i (+ col count)))
         (vector-set! line i (vector-ref line (- i count)))
         (vector-set! styles i (vector-ref styles (- i count))))
       (do ([i col (+ i 1)]) ((= i (+ col count)))
@@ -1086,6 +1159,9 @@
       (terminal-state-saved-state-set! state #f)
       (terminal-state-scroll-top-set! state 0)
       (terminal-state-scroll-bottom-set! state (- rows 1))
+      (terminal-state-left-margin-set! state 0)
+      (terminal-state-right-margin-set! state (- cols 1))
+      (terminal-state-margin-mode-set! state #f)
       (terminal-state-parameters-set! state "")
       (terminal-state-osc-escape-set! state #f)
       (terminal-state-charset-set! state 'ascii)
@@ -1157,6 +1233,15 @@
                      state (if on? (terminal-state-scroll-top state) 0))
                    (terminal-state-col-set! state 0)]
                   [(7) (terminal-state-autowrap-set! state on?)]
+                  [(69)
+                   (terminal-state-margin-mode-set! state on?)
+                   (unless on?
+                     (terminal-state-left-margin-set! state 0)
+                     (terminal-state-right-margin-set! state (- cols 1)))
+                   (terminal-state-row-set!
+                     state (if (terminal-state-origin state)
+                               (terminal-state-scroll-top state) 0))
+                   (terminal-state-col-set! state (if on? (left-bound state) 0))]
                   [(25) (terminal-state-cursor-visible-set! state on?)]
                   [(1000 1002 1003)
                    (if on?
@@ -1195,22 +1280,34 @@
                state (min (if (terminal-state-origin state)
                               (terminal-state-scroll-bottom state) (- rows 1))
                           (+ row n)))]
-            [(#\C #\a) (terminal-state-col-set! state (min (- cols 1) (+ col n)))]
-            [(#\D) (terminal-state-col-set! state (max 0 (- col n)))]
+            [(#\C #\a)
+             (terminal-state-col-set!
+               state (min (if (<= (left-bound state) col (right-bound state))
+                              (right-bound state) (- cols 1))
+                          (+ col n)))]
+            [(#\D)
+             (terminal-state-col-set!
+               state (max (if (<= (left-bound state) col (right-bound state))
+                              (left-bound state) 0)
+                          (- col n)))]
             [(#\E) (terminal-state-row-set!
                      state
                      (min (if (terminal-state-origin state)
                               (terminal-state-scroll-bottom state) (- rows 1))
                           (+ row n)))
-             (terminal-state-col-set! state 0)]
+             (terminal-state-col-set! state (left-bound state))]
             [(#\F) (terminal-state-row-set!
                      state
                      (max (if (terminal-state-origin state)
                               (terminal-state-scroll-top state) 0)
                           (- row n)))
-             (terminal-state-col-set! state 0)]
-            [(#\G #\`) (terminal-state-col-set! state
-                                                (clamp (- n 1) 0 (- cols 1)))]
+             (terminal-state-col-set! state (left-bound state))]
+            [(#\G #\`)
+             (terminal-state-col-set!
+               state (if (terminal-state-origin state)
+                         (clamp (+ (left-bound state) (- n 1))
+                                (left-bound state) (right-bound state))
+                         (clamp (- n 1) 0 (- cols 1))))]
             [(#\d) (terminal-state-row-set! state
                                             (if (terminal-state-origin state)
                                                 (clamp (+ (terminal-state-scroll-top state)
@@ -1227,9 +1324,12 @@
                                                  (terminal-state-scroll-bottom state))
                                           (clamp (- (param parameters 0 1) 1)
                                                  0 (- rows 1))))
-             (terminal-state-col-set! state
-                                      (clamp (- (param parameters 1 1) 1)
-                                        0 (- cols 1)))]
+             (terminal-state-col-set!
+               state (if (terminal-state-origin state)
+                         (clamp (+ (left-bound state)
+                                   (- (param parameters 1 1) 1))
+                                (left-bound state) (right-bound state))
+                         (clamp (- (param parameters 1 1) 1) 0 (- cols 1))))]
             [(#\J)
              (case (param parameters 0 0)
                [(0) (erase-line! state col cols)
@@ -1288,8 +1388,23 @@
              (terminal-state-row-set!
                state (if (terminal-state-origin state)
                          (terminal-state-scroll-top state) 0))
-             (terminal-state-col-set! state 0)]
-            [(#\s) (save-cursor! state)]
+             (terminal-state-col-set! state
+                                      (if (terminal-state-origin state)
+                                          (left-bound state) 0))]
+            [(#\s)
+             (if (terminal-state-margin-mode state)
+                 (let ([left (clamp (- (param parameters 0 1) 1)
+                                    0 (- cols 1))]
+                       [right (clamp (- (param parameters 1 cols) 1)
+                                     0 (- cols 1))])
+                   (when (< left right)
+                     (terminal-state-left-margin-set! state left)
+                     (terminal-state-right-margin-set! state right))
+                   (terminal-state-row-set!
+                     state (if (terminal-state-origin state)
+                               (terminal-state-scroll-top state) 0))
+                   (terminal-state-col-set! state (left-bound state)))
+                 (save-cursor! state))]
             [(#\u) (restore-cursor! state)]
             [(#\m) (set-sgr! state text)]
             [(#\b)
@@ -1307,6 +1422,9 @@
                (terminal-state-col-set! state 0)
                (terminal-state-scroll-top-set! state 0)
                (terminal-state-scroll-bottom-set! state (- rows 1))
+               (terminal-state-left-margin-set! state 0)
+               (terminal-state-right-margin-set! state (- cols 1))
+               (terminal-state-margin-mode-set! state #f)
                (terminal-state-sgr-set! state "")
                (terminal-state-style-set! state 'plain))]
             [(#\n)
@@ -1372,10 +1490,14 @@
     (case (terminal-state-parser state)
       [(normal)
        (case (char->integer character)
-         [(7) (void)]
+         [(7) (terminal-state-bell-set! state #t)]
          [(8) (terminal-state-wrap-pending-set! state #f)
           (terminal-state-col-set! state
-                                   (max 0 (- (terminal-state-col state) 1)))]
+                                   (max (if (<= (left-bound state)
+                                                (terminal-state-col state)
+                                                (right-bound state))
+                                            (left-bound state) 0)
+                                        (- (terminal-state-col state) 1)))]
          [(9) (terminal-state-wrap-pending-set! state #f)
           (terminal-state-col-set! state (next-tab-stop state))]
          [(10 11 12) (terminal-state-wrap-pending-set! state #f)
@@ -1383,7 +1505,7 @@
                        (terminal-state-row state) #f)
           (line-feed! state)]
          [(13) (terminal-state-wrap-pending-set! state #f)
-          (terminal-state-col-set! state 0)]
+          (terminal-state-col-set! state (left-bound state))]
          [(14) (terminal-state-shift-set! state 1)]
          [(15) (terminal-state-shift-set! state 0)]
          [(27) (terminal-state-parser-set! state 'escape)]
@@ -1393,7 +1515,7 @@
          [(133) (vector-set! (terminal-state-wrapped state)
                              (terminal-state-row state) #f)
           (line-feed! state)                           ; NEL
-          (terminal-state-col-set! state 0)]
+          (terminal-state-col-set! state (left-bound state))]
          [(136) (vector-set! (terminal-state-tab-stops state)
                              (terminal-state-col state) #t)] ; HTS
          [(141) (if (= (terminal-state-row state)
@@ -1607,15 +1729,20 @@
             (if (eof-object? character)
                 (finished!)
                 (begin
-                  (with-mutex (terminal-state-lock state)
-                    (feed-character! state character)
-                    (let drain ([remaining 4095])
-                      (when (and (> remaining 0) (char-ready? input))
-                        (let ([next (get-char input)])
-                          (unless (eof-object? next)
-                            (feed-character! state next)
-                            (drain (- remaining 1))))))
-                    (terminal-state-dirty-set! state #t))
+                  (let ([bell?
+                         (with-mutex (terminal-state-lock state)
+                           (feed-character! state character)
+                           (let drain ([remaining 4095])
+                             (when (and (> remaining 0) (char-ready? input))
+                               (let ([next (get-char input)])
+                                 (unless (eof-object? next)
+                                   (feed-character! state next)
+                                   (drain (- remaining 1))))))
+                           (terminal-state-dirty-set! state #t)
+                           (let ([bell? (terminal-state-bell state)])
+                             (terminal-state-bell-set! state #f)
+                             bell?))])
+                    (when bell? (visual-bell!)))
                   ;; Output must become visible while the main thread is
                   ;; blocked reading the editor's keyboard.
                   (display-redraw!)
@@ -1923,11 +2050,11 @@
               (make-terminal-state buffer process display (make-mutex)
                                    rows cols (make-screen rows cols)
                                    (make-vector rows #f)
-                                   0 0 0 0 #f 0 (- rows 1)
+                                   0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f
                                    'normal "" #f "" '() 'ascii 'ascii 0 0
                                    #f #t #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
-                                   #t #t #f #f #f #f #f #f 0 0 #f #f #f #f #f
+                                   #t #t #f #f #f #f #f #f #f 0 0 #f #f #f #f #f
                                    '() '() '()
                                    (make-style-screen rows cols 'plain)
                                    #f '() #f

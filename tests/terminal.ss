@@ -261,6 +261,34 @@
               (vector->list (terminal-emulator-screen terminal))
               '(" X  ")))
 
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x7;")
+       (check 'terminal-bell-is-pending
+              (state-ref terminal 'bell-pending) #t)
+       (check 'terminal-bell-does-not-print
+              (vector->list (terminal-emulator-screen terminal))
+              '("    ")))
+
+     (let ([terminal (make-terminal-emulator 3 5)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[1;1H11111\x1b;[2;1H22222\x1b;[3;1H33333\x1b;[?69h\x1b;[2;4s\x1b;[S")
+       (check 'horizontal-margins-enabled
+              (state-ref terminal 'horizontal-margins) '(1 . 3))
+       (check 'horizontal-margin-scroll
+              (vector->list (terminal-emulator-screen terminal))
+              '("12221" "23332" "3   3"))
+       (terminal-emulator-feed! terminal "\x1b;[?69l")
+       (check 'horizontal-margins-disabled
+              (state-ref terminal 'horizontal-margins) '(0 . 4)))
+
+     (let ([terminal (make-terminal-emulator 2 6)])
+       (terminal-emulator-feed!
+         terminal "\x1b;[?69h\x1b;[2;4s\x1b;[?6h\x1b;[1;1HABCD")
+       (check 'horizontal-margin-autowrap
+              (vector->list (terminal-emulator-screen terminal))
+              '(" ABC  " " D    ")))
+
      (let ([terminal (make-terminal-emulator 2 6)])
        (terminal-emulator-feed! terminal "abcdefg")
        (terminal-emulator-resize! terminal 2 4)
