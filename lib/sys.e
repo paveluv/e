@@ -265,10 +265,14 @@
   (define (duplicate-output-port port)
     ;; Keep an independently closeable route to an existing descriptor.  PTY
     ;; readers use this to outlive M-x's temporary evaluation display port.
+    ;; Chez may represent an interactive terminal as a combined custom port,
+    ;; for which port-file-descriptor raises; outside redirected evaluation,
+    ;; fd 1 is the same terminal and is the safe fallback.
     (unless c-dup
       (error 'duplicate-output-port "dup is unavailable"))
-    (open-fd-output-port (c-dup (port-file-descriptor port))
-                         'block (native-transcoder)))
+    (guard (ex [else (duplicate-standard-output-port)])
+      (open-fd-output-port (c-dup (port-file-descriptor port))
+                           'block (native-transcoder))))
 
   (define (stream-lines fd emit!)
     (let ([p (open-fd-input-port fd 'block (native-transcoder))])

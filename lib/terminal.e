@@ -903,40 +903,60 @@
       (set! serial (+ serial 1))
       (let* ([name (if (= serial 1) "*terminal*"
                        (format "*terminal*<~a>" serial))]
+             [prior (current-buffer)]
              [buffer #f]
-             [state #f])
-        (set! buffer
-          (register-app!
-            name
-            (lambda () (when state (refresh-terminal! state)))
-            (lambda (event) (and state (handle-terminal-event! state event)))))
-        (set-app-presentation! buffer 0 #f #f 'blinking-block)
-        (set-app-capture! buffer #t)
-        (set-app-cursor-visible!
-          buffer
-          (lambda (window)
-            (and state
-                 (not (memq window
-                            (terminal-state-unfollowed-windows state))))))
-        (set-buffer-mode! buffer "terminal")
-        (show-buffer! buffer)
-        (let* ([size (or (buffer-window-size buffer) '(24 . 80))]
-               [rows (max 1 (car size))]
-               [cols (max 1 (cdr size))]
-               [display (duplicate-output-port (terminal-output-port))]
-               [process (spawn-terminal-process command directory rows cols)])
-          (set! state
-            (make-terminal-state buffer process display (make-mutex)
-                                 rows cols (make-screen rows cols)
-                                 0 0 0 0 0 (- rows 1)
-                                 'normal "" #f "" 'ascii 0 #t #t #f
-                                 #f #f #f 0 0 '() '()
-                                 (make-style-screen rows cols 'plain)
-                                 #f '() (make-style-screen rows cols 'plain)
-                                 "" 'plain))
-          (set! terminals (cons state terminals))
-          (fork-thread (lambda () (reader-loop state)))
-          (void)))))
+             [state #f]
+             [display #f]
+             [process #f])
+        (guard
+          (ex [else
+               ;; Terminal creation is transactional. In particular, never
+               ;; leave a state-less app capturing every key after a display
+               ;; or PTY setup error.
+               (when process
+                 (guard (ignored [else (void)])
+                   (close-terminal-process! process)))
+               (when display
+                 (guard (ignored [else (void)]) (close-port display)))
+               (when buffer
+                 (guard (ignored [else (void)]) (set-app-capture! buffer #f))
+                 (guard (ignored [else (void)]) (detach-app! buffer))
+                 (when (eq? (current-buffer) buffer) (show-buffer! prior))
+                 (guard (ignored [else (void)]) (kill-buffer! buffer)))
+               (raise ex)])
+          (set! display (duplicate-output-port (terminal-output-port)))
+          (set! buffer
+            (register-app!
+              name
+              (lambda () (when state (refresh-terminal! state)))
+              (lambda (event) (and state (handle-terminal-event! state event)))))
+          (set-app-presentation! buffer 0 #f #f 'blinking-block)
+          (set-app-capture! buffer #t)
+          (set-app-cursor-visible!
+            buffer
+            (lambda (window)
+              (and state
+                   (not (memq window
+                              (terminal-state-unfollowed-windows state))))))
+          (set-buffer-mode! buffer "terminal")
+          (show-buffer! buffer)
+          (let* ([size (or (buffer-window-size buffer) '(24 . 80))]
+                 [rows (max 1 (car size))]
+                 [cols (max 1 (cdr size))])
+            (set! process
+              (spawn-terminal-process command directory rows cols))
+            (set! state
+              (make-terminal-state buffer process display (make-mutex)
+                                   rows cols (make-screen rows cols)
+                                   0 0 0 0 0 (- rows 1)
+                                   'normal "" #f "" 'ascii 0 #t #t #f
+                                   #f #f #f 0 0 '() '()
+                                   (make-style-screen rows cols 'plain)
+                                   #f '() (make-style-screen rows cols 'plain)
+                                   "" 'plain))
+            (set! terminals (cons state terminals))
+            (fork-thread (lambda () (reader-loop state)))
+            (void))))))
 
   (define (init!)
     (register-mode! "terminal" '() '() (lambda (line) #f)
