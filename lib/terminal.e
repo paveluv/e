@@ -1103,6 +1103,75 @@
                                (format "*~a*" title))))]
         [else (void)])))
 
+  (define (hex-string text)
+    (apply string-append
+      (map (lambda (character)
+             (let ([hex (format "~x" (char->integer character))])
+               (if (= (string-length hex) 1)
+                   (string-append "0" hex) hex)))
+           (string->list text))))
+
+  (define (unhex-string text)
+    (and (even? (string-length text))
+         (let loop ([at 0] [characters '()])
+           (if (= at (string-length text))
+               (list->string (reverse characters))
+               (let ([value (string->number (substring text at (+ at 2)) 16)])
+                 (and value
+                      (loop (+ at 2)
+                            (cons (integer->char value) characters))))))))
+
+  (define terminal-capabilities
+    '(("TN" . "xterm-256color")
+      ("Co" . "256")
+      ("RGB" . "8")
+      ("colors" . "256")
+      ("pairs" . "65536")
+      ("Tc" . #t)))
+
+  (define (reply-terminal-capability! state encoded-name)
+    (let* ([name (unhex-string encoded-name)]
+           [entry (and name (assoc name terminal-capabilities))])
+      (terminal-reply!
+        state
+        (if entry
+            (format "\x1b;P1+r~a~a\x1b;\\"
+                    encoded-name
+                    (if (eq? (cdr entry) #t) ""
+                        (string-append "=" (hex-string (cdr entry)))))
+            (format "\x1b;P0+r~a\x1b;\\" encoded-name)))))
+
+  (define (dispatch-dcs! state)
+    (let ([text (terminal-state-osc-text state)])
+      (cond
+        [(string-prefix? "$q" text)
+         (let* ([request (substring text 2 (string-length text))]
+                [value
+                 (cond
+                   [(string=? request "m")
+                    (format "~am"
+                            (if (string=? (terminal-state-sgr state) "")
+                                "0" (terminal-state-sgr state)))]
+                   [(string=? request "r")
+                    (format "~a;~ar"
+                            (+ (terminal-state-scroll-top state) 1)
+                            (+ (terminal-state-scroll-bottom state) 1))]
+                   [(string=? request "s")
+                    (format "~a;~as"
+                            (+ (terminal-state-left-margin state) 1)
+                            (+ (terminal-state-right-margin state) 1))]
+                   [else #f])])
+           (terminal-reply!
+             state
+             (format "\x1b;P~a$r~a\x1b;\\"
+                     (if value 1 0) (or value request))))]
+        [(string-prefix? "+q" text)
+         (for-each
+           (lambda (name) (reply-terminal-capability! state name))
+           (split-parameter
+             (substring text 2 (string-length text)) #\;))]
+        [else (void)])))
+
   (define (normalize-cell-row! cells styles)
     (let ([cols (vector-length cells)])
       (do ([col 0 (+ col 1)]) ((= col cols))
@@ -1716,7 +1785,11 @@
                     (scroll-down! state 1)
                     (terminal-state-row-set!
                       state (max 0 (- (terminal-state-row state) 1))))] ; RI
-         [(144 152 158 159)                         ; DCS, SOS, PM, APC
+         [(144)                                      ; DCS
+          (terminal-state-parser-set! state 'dcs)
+          (terminal-state-osc-escape-set! state #f)
+          (terminal-state-osc-text-set! state "")]
+         [(152 158 159)                              ; SOS, PM, APC
           (terminal-state-parser-set! state 'control-string)
           (terminal-state-osc-escape-set! state #f)]
          [(155) (terminal-state-parser-set! state 'csi) ; CSI
@@ -1737,7 +1810,11 @@
           (terminal-state-osc-text-set! state "")]
          ;; String controls carry arbitrary printable payload terminated by
          ;; ST (ESC \). They are metadata/protocol traffic, never screen text.
-         [(#\P #\X #\^ #\_)
+         [(#\P)
+          (terminal-state-parser-set! state 'dcs)
+          (terminal-state-osc-escape-set! state #f)
+          (terminal-state-osc-text-set! state "")]
+         [(#\X #\^ #\_)
           (terminal-state-parser-set! state 'control-string)
           (terminal-state-osc-escape-set! state #f)]
          [(#\7) (save-cursor! state)
@@ -1822,6 +1899,9 @@
                           (terminal-state-osc-text-set! state "")))))])]
       [(control-string)
        (cond
+         [(memv (char->integer character) '(24 26))
+          (terminal-state-parser-set! state 'normal)
+          (terminal-state-osc-escape-set! state #f)]
          [(= (char->integer character) 156) ; ST
           (terminal-state-parser-set! state 'normal)
           (terminal-state-osc-escape-set! state #f)]
@@ -1830,7 +1910,33 @@
           (terminal-state-osc-escape-set! state #f)]
          [else
           (terminal-state-osc-escape-set! state
-                                          (char=? character #\esc))])]))
+                                          (char=? character #\esc))])]
+      [(dcs)
+       (cond
+         [(memv (char->integer character) '(24 26))
+          (terminal-state-parser-set! state 'normal)
+          (terminal-state-osc-escape-set! state #f)
+          (terminal-state-osc-text-set! state "")]
+         [(= (char->integer character) 156) ; ST
+          (dispatch-dcs! state)
+          (terminal-state-parser-set! state 'normal)
+          (terminal-state-osc-escape-set! state #f)]
+         [(and (terminal-state-osc-escape state) (char=? character #\\))
+          (dispatch-dcs! state)
+          (terminal-state-parser-set! state 'normal)
+          (terminal-state-osc-escape-set! state #f)]
+         [else
+          (if (char=? character #\esc)
+              (terminal-state-osc-escape-set! state #t)
+              (begin
+                (terminal-state-osc-escape-set! state #f)
+                (if (< (string-length (terminal-state-osc-text state)) 8192)
+                    (terminal-state-osc-text-set!
+                      state (string-append (terminal-state-osc-text state)
+                                           (string character)))
+                    (begin
+                      (terminal-state-parser-set! state 'normal)
+                      (terminal-state-osc-text-set! state "")))))])]))
 
   (define (refresh-terminal! state)
     (let ([size (buffer-window-size (terminal-state-buffer state))])

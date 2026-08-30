@@ -122,6 +122,13 @@ with one to four hexadecimal digits per component and `#rrggbb`. Palette and
 default changes are state, not paint commands: they immediately restyle cells
 already on screen as well as subsequent output.
 
+DCS queries are parsed separately from ignored string-control metadata.
+`DECRQSS` reports the effective SGR attributes and active vertical or
+horizontal margins, with an explicit failure reply for unsupported requests.
+`XTGETTCAP` decodes hexadecimal capability names and reports the terminal name,
+color count, RGB support, and other advertised color limits; unknown names
+receive the protocol's negative reply.
+
 The main screen retains scrollback; alternate-screen frames are never added
 to it. Configure the maximum retained line count in `config.e`:
 

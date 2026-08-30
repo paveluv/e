@@ -317,6 +317,25 @@
        (check 'osc-default-foreground-reset
               (state-ref terminal 'default-colors) '(#f . #f)))
 
+     (let ([terminal (make-terminal-emulator 4 8)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[1;31m\x1b;[2;4r\x1b;P$qm\x1b;\\\x1b;P$qr\x1b;\\\x1b;P$qz\x1b;\\")
+       (check 'decrqss-replies
+              (terminal-emulator-replies terminal)
+              '("\x1b;P1$r1;31m\x1b;\\"
+                "\x1b;P1$r2;4r\x1b;\\"
+                "\x1b;P0$rz\x1b;\\")))
+
+     (let ([terminal (make-terminal-emulator 1 2)])
+       (terminal-emulator-feed!
+         terminal "\x1b;P+q544e;436f;626f677573\x1b;\\")
+       (check 'xtgettcap-replies
+              (terminal-emulator-replies terminal)
+              '("\x1b;P1+r544e=787465726D2D323536636F6C6F72\x1b;\\"
+                "\x1b;P1+r436f=323536\x1b;\\"
+                "\x1b;P0+r626f677573\x1b;\\")))
+
      (let ([terminal (make-terminal-emulator 2 6)])
        (terminal-emulator-feed! terminal "abcdefg")
        (terminal-emulator-resize! terminal 2 4)
