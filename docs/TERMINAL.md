@@ -65,6 +65,10 @@ reporting mode (`1004`) sends `CSI I` and `CSI O` as editor focus enters and
 leaves a terminal window. Mirrored windows share one terminal mode state,
 while each real focus transition produces only one report.
 
+The `xterm-256color` Meta mode (`1034`) is honored dynamically. Meta keys use
+the ordinary ESC prefix by default; while the mode is enabled, single-byte
+Meta and Control-Meta characters are encoded by setting their high bit.
+
 The italic status hint distinguishes a focused terminal that is capturing
 input (`▶ capturing input, C-] to escape`), its temporarily escaped state
 (`▶ escaped`), and a terminal running in a passive window (`▶`). After the

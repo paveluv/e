@@ -126,6 +126,23 @@
        (check 'focus-reporting-disabled
               (terminal-emulator-input terminal "FOCUS") #f))
 
+     (let ([terminal (make-terminal-emulator 1 2)])
+       (check 'meta-defaults-to-escape
+              (terminal-emulator-input terminal "M-x")
+              (bytevector 27 120))
+       (terminal-emulator-feed! terminal "\x1b;[?1034h")
+       (check 'eight-bit-meta-mode (state-ref terminal 'eight-bit-meta) #t)
+       (check 'eight-bit-meta-character
+              (terminal-emulator-input terminal "M-x")
+              (bytevector 248))
+       (check 'eight-bit-control-meta-character
+              (terminal-emulator-input terminal "C-M-a")
+              (bytevector 129))
+       (terminal-emulator-feed! terminal "\x1b;[?1034l")
+       (check 'eight-bit-meta-disabled
+              (terminal-emulator-input terminal "M-x")
+              (bytevector 27 120)))
+
      (let ([terminal (make-terminal-emulator 4 5)])
        (terminal-emulator-feed!
          terminal "\x1b;[2;3r\x1b;[?6;7h\x1b;7\x1b;[?6;7l\x1b;8")

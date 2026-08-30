@@ -24,7 +24,7 @@
             (mutable shift)
             (mutable wrap-pending) (mutable autowrap) (mutable origin)
             (mutable insert) (mutable reverse-screen)
-            (mutable cursor-keys) (mutable keypad)
+            (mutable cursor-keys) (mutable keypad) (mutable meta-eight-bit)
             (mutable cursor-visible) (mutable tab-stops)
             (mutable last-character)
             (mutable dirty) (mutable alive) (mutable bell) (mutable prefix)
@@ -99,7 +99,7 @@
                          rows cols (make-screen rows cols) (make-vector rows #f)
                          0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f
                          'normal "" #f "" '() 'ascii 'ascii 0 0
-                         #f #t #f #f #f #f #f #t
+                         #f #t #f #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
                          #f #f #f #f #f 0 #f #f #f #f #f #f #f #f
                          0 0 #f #f #f #f #f '() '() '()
@@ -160,6 +160,7 @@
       (cursor-visible . ,(terminal-state-cursor-visible emulator))
       (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
       (application-keypad . ,(terminal-state-keypad emulator))
+      (eight-bit-meta . ,(terminal-state-meta-eight-bit emulator))
       (mouse-tracking . ,(terminal-state-mouse emulator))
       (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
       (utf8-mouse . ,(terminal-state-mouse-utf8 emulator))
@@ -1443,6 +1444,7 @@
       (terminal-state-reverse-screen-set! state #f)
       (terminal-state-cursor-keys-set! state #f)
       (terminal-state-keypad-set! state #f)
+      (terminal-state-meta-eight-bit-set! state #f)
       (terminal-state-cursor-visible-set! state #t)
       (terminal-state-tab-stops-set! state (default-tab-stops cols))
       (terminal-state-last-character-set! state #\space)
@@ -1529,6 +1531,7 @@
                   [(1005) (terminal-state-mouse-utf8-set! state on?)]
                   [(1006) (terminal-state-mouse-sgr-set! state on?)]
                   [(1015) (terminal-state-mouse-urxvt-set! state on?)]
+                  [(1034) (terminal-state-meta-eight-bit-set! state on?)]
                   [(2004) (terminal-state-bracketed-set! state on?)]
                   [(1048) (if on? (save-cursor! state) (restore-cursor! state))]
                   [(47 1047 1049)
@@ -1698,6 +1701,7 @@
                (terminal-state-insert-set! state #f)
                (terminal-state-cursor-keys-set! state #f)
                (terminal-state-keypad-set! state #f)
+               (terminal-state-meta-eight-bit-set! state #f)
                (terminal-state-row-set! state 0)
                (terminal-state-col-set! state 0)
                (terminal-state-scroll-top-set! state 0)
@@ -2102,6 +2106,13 @@
   (define (control-byte letter)
     (bytevector (- (char->integer (char-upcase letter)) 64)))
 
+  (define (meta-bytes state bytes)
+    (if (and (terminal-state-meta-eight-bit state)
+             (= (bytevector-length bytes) 1)
+             (< (bytevector-u8-ref bytes 0) 128))
+        (bytevector (bitwise-ior 128 (bytevector-u8-ref bytes 0)))
+        (bytes-append (bytevector 27) bytes)))
+
   (define (bytes-append left right)
     (let ([result (make-bytevector (+ (bytevector-length left)
                                       (bytevector-length right)))])
@@ -2210,12 +2221,11 @@
       [(named-key-bytes state event) => values]
       [(keypad-bytes state event) => values]
       [(string-prefix? "C-M-" event)
-       (bytes-append (bytevector 27)
-                     (control-byte (string-ref event 4)))]
+       (meta-bytes state (control-byte (string-ref event 4)))]
       [(string-prefix? "M-" event)
-       (bytes-append (bytevector 27)
-                     (string->utf8 (substring event 2
-                                              (string-length event))))]
+       (meta-bytes state
+                   (string->utf8 (substring event 2
+                                            (string-length event))))]
       [(and (string-prefix? "C-" event) (= (string-length event) 3))
        (control-byte (string-ref event 2))]
       [else
@@ -2415,7 +2425,7 @@
                                    (make-vector rows #f)
                                    0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f
                                    'normal "" #f "" '() 'ascii 'ascii 0 0
-                                   #f #t #f #f #f #f #f #t
+                                   #f #t #f #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
                                    #t #t #f #f #f 0 #f #f #f #f #f #f #f #f
                                    0 0 #f #f #f #f #f
