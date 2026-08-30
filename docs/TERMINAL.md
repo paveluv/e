@@ -114,6 +114,13 @@ alternate-screen application is active; the alternate screen itself remains a
 fixed application grid.
 OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
 asterisks, such as `*bash*`; duplicate names receive a numeric suffix.
+OSC 4 changes and queries the 256-color palette, including multiple indexed
+colors in one command; OSC 104 restores selected entries or the complete
+xterm palette. OSC 10 and 11 change or query the default foreground and
+background, while OSC 110 and 111 restore them. Colors accept `rgb:` notation
+with one to four hexadecimal digits per component and `#rrggbb`. Palette and
+default changes are state, not paint commands: they immediately restyle cells
+already on screen as well as subsequent output.
 
 The main screen retains scrollback; alternate-screen frames are never added
 to it. Configure the maximum retained line count in `config.e`:

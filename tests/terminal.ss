@@ -289,6 +289,34 @@
               (vector->list (terminal-emulator-screen terminal))
               '(" ABC  " " D    ")))
 
+     (let ([terminal (make-terminal-emulator 1 2)])
+       (terminal-emulator-feed! terminal "\x1b;[31mX")
+       (let ([before (vector-ref
+                       (vector-ref (terminal-emulator-styles terminal) 0) 0)])
+         (terminal-emulator-feed! terminal "\x1b;]4;1;#123456\x7;")
+         (check 'osc-palette-recolors-existing-cells
+                (eq? before
+                     (vector-ref
+                       (vector-ref (terminal-emulator-styles terminal) 0) 0))
+                #f))
+       (terminal-emulator-feed! terminal "\x1b;]4;1;?\x7;")
+       (check 'osc-palette-query
+              (terminal-emulator-replies terminal)
+              '("\x1b;]4;1;rgb:1212/3434/5656\x1b;\\")))
+
+     (let ([terminal (make-terminal-emulator 1 2)])
+       (terminal-emulator-feed! terminal "\x1b;]10;#abcdef\x7;")
+       (check 'osc-default-foreground-state
+              (state-ref terminal 'default-colors) '((171 205 239) . #f))
+       (check 'osc-default-recolors-plain
+              (eq? (vector-ref
+                      (vector-ref (terminal-emulator-styles terminal) 0) 0)
+                    'plain)
+              #f)
+       (terminal-emulator-feed! terminal "\x1b;]110\x7;")
+       (check 'osc-default-foreground-reset
+              (state-ref terminal 'default-colors) '(#f . #f)))
+
      (let ([terminal (make-terminal-emulator 2 6)])
        (terminal-emulator-feed! terminal "abcdefg")
        (terminal-emulator-resize! terminal 2 4)

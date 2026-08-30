@@ -38,7 +38,9 @@
             (mutable unfollowed-windows)
             (mutable styles) (mutable main-styles) (mutable history-styles)
             (mutable rendered-cells) (mutable rendered-styles)
-            (mutable sgr) (mutable style)))
+            (mutable sgr) (mutable style)
+            (mutable palette) (mutable default-foreground)
+            (mutable default-background)))
 
   (define terminals '())
   (define serial 0)
@@ -61,6 +63,29 @@
           (error 'terminal-shell "must be a nonempty string" shell))
         shell)))
 
+  (define (make-default-palette)
+    (let* ([palette (make-vector 256 #f)]
+           [base '((0 0 0) (205 0 0) (0 205 0) (205 205 0)
+                   (0 0 238) (205 0 205) (0 205 205) (229 229 229)
+                   (127 127 127) (255 0 0) (0 255 0) (255 255 0)
+                   (92 92 255) (255 0 255) (0 255 255) (255 255 255))]
+           [levels '#(0 95 135 175 215 255)])
+      (do ([colors base (cdr colors)] [index 0 (+ index 1)])
+          ((null? colors))
+        (vector-set! palette index (car colors)))
+      (do ([red 0 (+ red 1)]) ((= red 6))
+        (do ([green 0 (+ green 1)]) ((= green 6))
+          (do ([blue 0 (+ blue 1)]) ((= blue 6))
+            (vector-set! palette
+                         (+ 16 (* red 36) (* green 6) blue)
+                         (list (vector-ref levels red)
+                               (vector-ref levels green)
+                               (vector-ref levels blue))))))
+      (do ([index 232 (+ index 1)]) ((= index 256))
+        (let ([level (+ 8 (* 10 (- index 232)))])
+          (vector-set! palette index (list level level level))))
+      palette))
+
   (define (terminal-emulator? value) (terminal-state? value))
 
   (define (make-terminal-emulator rows cols)
@@ -77,7 +102,7 @@
                          #f #f #f #f #f #f #f #f #f 0 0 #f #f #f #f #f '() '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() #f (make-style-screen rows cols 'plain)
-                         "" 'plain))
+                         "" 'plain (make-vector 256 #f) #f #f))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -133,7 +158,9 @@
       (application-keypad . ,(terminal-state-keypad emulator))
       (mouse-tracking . ,(terminal-state-mouse emulator))
       (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
-      (bracketed-paste . ,(terminal-state-bracketed emulator))))
+      (bracketed-paste . ,(terminal-state-bracketed emulator))
+      (default-colors . ,(cons (terminal-state-default-foreground emulator)
+                               (terminal-state-default-background emulator)))))
 
   (define (terminal-emulator-input emulator event)
     (unless (terminal-emulator? emulator)
@@ -966,13 +993,107 @@
     ;; VT100 with advanced video: matches xterm-256color's terminfo probe.
     (terminal-reply! state "\x1b;[?1;2c"))
 
+  (define (hex-component text)
+    (and (> (string-length text) 0)
+         (let ([value (string->number text 16)]
+               [maximum (- (expt 16 (string-length text)) 1)])
+           (and value (inexact->exact (round (* 255 (/ value maximum))))))))
+
+  (define (parse-osc-color text)
+    (cond
+      [(string-prefix? "rgb:" text)
+       (let ([parts (split-parameter
+                      (substring text 4 (string-length text)) #\/)])
+         (and (= (length parts) 3)
+              (let ([values (map hex-component parts)])
+                (and (for-all integer? values) values))))]
+      [(and (= (string-length text) 7) (char=? (string-ref text 0) #\#))
+       (let ([values
+              (map (lambda (start)
+                     (hex-component (substring text start (+ start 2))))
+                   '(1 3 5))])
+         (and (for-all integer? values) values))]
+      [else #f]))
+
+  (define (osc-color-text color)
+    (define (component value)
+      (let ([hex (format "~x" value)])
+        (let ([byte (if (= (string-length hex) 1)
+                        (string-append "0" hex) hex)])
+          (string-append byte byte))))
+    (format "rgb:~a/~a/~a"
+            (component (car color))
+            (component (cadr color))
+            (component (caddr color))))
+
+  (define (default-color state foreground?)
+    (or (if foreground?
+            (terminal-state-default-foreground state)
+            (terminal-state-default-background state))
+        (if foreground? '(0 0 0) '(255 255 255))))
+
+  (define (set-default-color! state foreground? specification)
+    (cond
+      [(string=? specification "?")
+       (terminal-reply!
+         state
+         (format "\x1b;]~a;~a\x1b;\\"
+                 (if foreground? 10 11)
+                 (osc-color-text (default-color state foreground?))))]
+      [(parse-osc-color specification) =>
+       (lambda (color)
+         (if foreground?
+             (terminal-state-default-foreground-set! state color)
+             (terminal-state-default-background-set! state color))
+         (terminal-state-dirty-set! state #t))]))
+
+  (define (dispatch-palette! state fields)
+    (let ([palette (terminal-state-palette state)])
+      (let loop ([fields fields])
+        (when (and (pair? fields) (pair? (cdr fields)))
+          (let ([index (string->number (car fields))]
+                [specification (cadr fields)])
+            (when (and (integer? index) (<= 0 index 255))
+              (if (string=? specification "?")
+                  (terminal-reply!
+                    state
+                    (format "\x1b;]4;~a;~a\x1b;\\"
+                            index
+                            (osc-color-text
+                              (or (vector-ref palette index)
+                                  (vector-ref (make-default-palette) index)))))
+                  (cond [(parse-osc-color specification) =>
+                         (lambda (color)
+                           (vector-set! palette index color)
+                           (terminal-state-dirty-set! state #t))])))
+            (loop (cddr fields)))))))
+
   (define (dispatch-osc! state)
-    (let ([text (terminal-state-osc-text state)])
+    (let* ([text (terminal-state-osc-text state)]
+           [fields (split-parameter text #\;)])
       (cond
-        [(string=? text "10;?")
-         (terminal-reply! state "\x1b;]10;rgb:0000/0000/0000\x1b;\\")]
-        [(string=? text "11;?")
-         (terminal-reply! state "\x1b;]11;rgb:ffff/ffff/ffff\x1b;\\")]
+        [(and (pair? fields) (string=? (car fields) "4"))
+         (dispatch-palette! state (cdr fields))]
+        [(and (= (length fields) 2) (string=? (car fields) "10"))
+         (set-default-color! state #t (cadr fields))]
+        [(and (= (length fields) 2) (string=? (car fields) "11"))
+         (set-default-color! state #f (cadr fields))]
+        [(and (pair? fields) (string=? (car fields) "104"))
+         (if (null? (cdr fields))
+             (vector-fill! (terminal-state-palette state) #f)
+             (for-each
+               (lambda (field)
+                 (let ([index (string->number field)])
+                   (when (and (integer? index) (<= 0 index 255))
+                     (vector-set! (terminal-state-palette state) index #f))))
+               (cdr fields)))
+         (terminal-state-dirty-set! state #t)]
+        [(string=? text "110")
+         (terminal-state-default-foreground-set! state #f)
+         (terminal-state-dirty-set! state #t)]
+        [(string=? text "111")
+         (terminal-state-default-background-set! state #f)
+         (terminal-state-dirty-set! state #t)]
         [(and (> (string-length text) 2)
               (memv (string-ref text 0) '(#\0 #\1 #\2))
               (char=? (string-ref text 1) #\;))
@@ -1072,10 +1193,79 @@
             (sgr-style
               (string-join (map number->string (apply append updated)) ";"))))))
 
+  (define (palette-index operation foreground?)
+    (let ([code (car operation)])
+      (cond
+        [(and foreground? (<= 30 code 37)) (- code 30)]
+        [(and foreground? (<= 90 code 97)) (+ 8 (- code 90))]
+        [(and (not foreground?) (<= 40 code 47)) (- code 40)]
+        [(and (not foreground?) (<= 100 code 107)) (+ 8 (- code 100))]
+        [(and (= code (if foreground? 38 48))
+              (= (length operation) 3) (= (cadr operation) 5))
+         (caddr operation)]
+        [else #f])))
+
+  (define (rgb-operation foreground? color)
+    (append (list (if foreground? 38 48) 2) color))
+
+  (define (resolved-style state style)
+    (let* ([sequence
+            (if (eq? style 'plain) ""
+                (with-mutex style-lock
+                  (hashtable-ref style-sequences style "")))]
+           [operations (if (string=? sequence "") '()
+                           (sgr-operations (parameter-list sequence)))]
+           [palette (terminal-state-palette state)]
+           [resolved
+            (map (lambda (operation)
+                   (let* ([foreground-index
+                           (palette-index operation #t)]
+                          [background-index
+                           (palette-index operation #f)]
+                          [index (or foreground-index background-index)]
+                          [color (and index (vector-ref palette index))])
+                     (cond
+                       [color
+                        (rgb-operation (and foreground-index #t) color)]
+                       [(and (= (car operation) 39)
+                             (terminal-state-default-foreground state))
+                        (rgb-operation
+                          #t (terminal-state-default-foreground state))]
+                       [(and (= (car operation) 49)
+                             (terminal-state-default-background state))
+                        (rgb-operation
+                          #f (terminal-state-default-background state))]
+                       [else operation])))
+                 operations)]
+           [resolved
+            (if (and (terminal-state-default-foreground state)
+                     (not (exists (lambda (operation)
+                                    (eq? (sgr-category operation) 'foreground))
+                                  resolved)))
+                (append resolved
+                        (list (rgb-operation
+                                #t (terminal-state-default-foreground state))))
+                resolved)]
+           [resolved
+            (if (and (terminal-state-default-background state)
+                     (not (exists (lambda (operation)
+                                    (eq? (sgr-category operation) 'background))
+                                  resolved)))
+                (append resolved
+                        (list (rgb-operation
+                                #f (terminal-state-default-background state))))
+                resolved)])
+      (if (null? resolved) 'plain
+          (sgr-style
+            (string-join (map number->string (apply append resolved)) ";")))))
+
   (define (effective-style-row state row)
-    (if (terminal-state-reverse-screen state)
-        (vector-map reversed-style row)
-        (vector-copy row)))
+    (vector-map
+      (lambda (style)
+        (let ([style (resolved-style state style)])
+          (if (terminal-state-reverse-screen state)
+              (reversed-style style) style)))
+      row))
 
   (define (effective-style-screen state styles)
     (vector-map (lambda (row) (effective-style-row state row)) styles))
@@ -1194,6 +1384,9 @@
       (terminal-state-history-styles-set! state '())
       (terminal-state-sgr-set! state "")
       (terminal-state-style-set! state 'plain)
+      (terminal-state-palette-set! state (make-vector 256 #f))
+      (terminal-state-default-foreground-set! state #f)
+      (terminal-state-default-background-set! state #f)
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-buffer state)
         (set-app-presentation! (terminal-state-buffer state)
@@ -2059,7 +2252,7 @@
                                    (make-style-screen rows cols 'plain)
                                    #f '() #f
                                    (make-style-screen rows cols 'plain)
-                                   "" 'plain))
+                                   "" 'plain (make-vector 256 #f) #f #f))
             (set! terminals (cons state terminals))
             (fork-thread (lambda () (reader-loop state)))
             (void))))))
