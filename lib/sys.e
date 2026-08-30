@@ -99,9 +99,18 @@
   (define c-setsid
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "setsid" () int))))
-  (define c-system
+  (define c-execv
     (and libc-loaded?
-         (guard (ex [else #f]) (foreign-procedure "system" (string) int))))
+         (guard (ex [else #f]) (foreign-procedure "execv" (string uptr) int))))
+  (define c-strdup
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "strdup" (string) uptr))))
+  (define c-free
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "free" (uptr) void))))
+  (define c-perror
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "perror" (string) void))))
   (define c-chdir
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "chdir" (string) int))))
@@ -141,7 +150,7 @@
                (foreign-procedure "ioctl" (int unsigned-long u8*) int)))))
 
   (define-record-type terminal-process
-    (fields input output pid master (mutable closed)))
+    (fields input output pid master (mutable closed) (mutable reaped) lock))
 
   (define tiocsctty-request (os-case #x540e #x20007461 #x20007461))
   (define tiocswinsz-request (os-case #x5414 #x80087467 #x80087467))
@@ -165,19 +174,42 @@
   (define (resize-terminal-process! process rows cols)
     (unless (terminal-process? process)
       (error 'resize-terminal-process! "expected a terminal process" process))
-    (when (and pty-ioctl (not (terminal-process-closed process)))
-      (pty-ioctl (terminal-process-master process) tiocswinsz-request
-                 (winsize rows cols))
-      ;; The child is a session and process-group leader after setsid.
-      (when c-kill (c-kill (- (terminal-process-pid process)) 28))))
+    (with-mutex (terminal-process-lock process)
+      (when (and pty-ioctl (not (terminal-process-closed process)))
+        (pty-ioctl (terminal-process-master process) tiocswinsz-request
+                   (winsize rows cols))
+        ;; The child is a session and process-group leader after setsid.
+        (when c-kill (c-kill (- (terminal-process-pid process)) 28)))))
 
-  (define (spawn-terminal-process command directory rows cols)
-    (unless (and c-openpty c-fork c-setsid c-system c-dup2 c-close c-exit)
+  (define (make-exec-arguments shell command)
+    (let* ([values (if command (list shell "-c" command) (list shell))]
+           [strings (map c-strdup values)])
+      (when (exists zero? strings)
+        (for-each (lambda (string) (unless (zero? string) (c-free string)))
+                  strings)
+        (error 'spawn-terminal-process "could not allocate exec arguments"))
+      (let* ([width (foreign-sizeof 'uptr)]
+             [arguments (foreign-alloc (* (+ (length strings) 1) width))])
+        (do ([items strings (cdr items)] [index 0 (+ index 1)])
+            ((null? items))
+          (foreign-set! 'uptr arguments (* index width) (car items)))
+        (foreign-set! 'uptr arguments (* (length strings) width) 0)
+        (cons arguments strings))))
+
+  (define (free-exec-arguments! arguments)
+    (for-each c-free (cdr arguments))
+    (foreign-free (car arguments)))
+
+  (define (spawn-terminal-process shell command directory rows cols)
+    (unless (and c-openpty c-fork c-setsid c-execv c-strdup c-free
+                 c-dup2 c-close c-exit)
       (error 'spawn-terminal-process "PTY processes are unavailable"))
     (let ([master (make-bytevector 4 0)]
           [slave (make-bytevector 4 0)]
-          [size (winsize rows cols)])
+          [size (winsize rows cols)]
+          [arguments (make-exec-arguments shell command)])
       (unless (= (c-openpty master slave #f #f size) 0)
+        (free-exec-arguments! arguments)
         (error 'spawn-terminal-process "openpty failed"))
       (let* ([master-fd (bytevector-s32-native-ref master 0)]
              [slave-fd (bytevector-s32-native-ref slave 0)]
@@ -186,48 +218,83 @@
           [(< pid 0)
            (c-close master-fd)
            (c-close slave-fd)
+           (free-exec-arguments! arguments)
            (error 'spawn-terminal-process "fork failed")]
           [(= pid 0)
            (c-close master-fd)
-           (c-setsid)
+           (when (< (c-setsid) 0)
+             (when c-perror (c-perror "setsid"))
+             (c-exit 127))
            (when pty-ioctl
-             (pty-ioctl slave-fd tiocsctty-request #f)
-             (pty-ioctl slave-fd tiocswinsz-request size))
-           (c-dup2 slave-fd 0)
-           (c-dup2 slave-fd 1)
-           (c-dup2 slave-fd 2)
+             (when (< (pty-ioctl slave-fd tiocsctty-request #f) 0)
+               (when c-perror (c-perror "TIOCSCTTY"))
+               (c-exit 127))
+             (when (< (pty-ioctl slave-fd tiocswinsz-request size) 0)
+               (when c-perror (c-perror "TIOCSWINSZ"))
+               (c-exit 127)))
+           (when (or (< (c-dup2 slave-fd 0) 0)
+                     (< (c-dup2 slave-fd 1) 0)
+                     (< (c-dup2 slave-fd 2) 0))
+             (when c-perror (c-perror "dup2"))
+             (c-exit 127))
            (when (> slave-fd 2) (c-close slave-fd))
            (close-child-descriptors!)
-           (when c-chdir (c-chdir directory))
-           (when c-setenv (c-setenv "TERM" "xterm-256color" 1))
-           (c-system command)
-           (c-exit 0)]
+           (when (and c-chdir (< (c-chdir directory) 0))
+             (when c-perror (c-perror "chdir"))
+             (c-exit 127))
+           (when (and c-setenv (< (c-setenv "TERM" "xterm-256color" 1) 0))
+             (when c-perror (c-perror "setenv TERM"))
+             (c-exit 127))
+           (c-execv shell (car arguments))
+           (when c-perror (c-perror "execv terminal shell"))
+           (c-exit 127)]
           [else
            (c-close slave-fd)
+           (free-exec-arguments! arguments)
            (let ([input (open-fd-input-port (c-dup master-fd) 'block #f)]
                  [output (open-fd-output-port (c-dup master-fd) 'none #f)])
-             (make-terminal-process input output pid master-fd #f))]))))
+             (make-terminal-process input output pid master-fd #f #f
+                                    (make-mutex)))]))))
 
-  (define (close-terminal-process! process)
+  (define (close-terminal-descriptors! process)
     (unless (terminal-process-closed process)
       (terminal-process-closed-set! process #t)
       (guard (ex [else (void)]) (close-port (terminal-process-input process)))
       (guard (ex [else (void)]) (close-port (terminal-process-output process)))
-      (when c-close (c-close (terminal-process-master process)))
-      (when c-kill (c-kill (- (terminal-process-pid process)) 15))
-      (when c-waitpid
-        (c-waitpid (terminal-process-pid process) (make-bytevector 4 0) 0))))
+      (when c-close (c-close (terminal-process-master process)))))
+
+  (define (wait-terminal-process! process options)
+    (and c-waitpid
+         (not (terminal-process-reaped process))
+         (let ([result (c-waitpid (terminal-process-pid process)
+                                  (make-bytevector 4 0) options)])
+           (when (or (= result (terminal-process-pid process)) (< result 0))
+             (terminal-process-reaped-set! process #t))
+           result)))
+
+  (define (close-terminal-process! process)
+    (with-mutex (terminal-process-lock process)
+      (close-terminal-descriptors! process)
+      (unless (terminal-process-reaped process)
+        (when c-kill (c-kill (- (terminal-process-pid process)) 15))
+        ;; Give cooperative programs a short chance to clean up. Never let a
+        ;; terminal buffer kill or editor shutdown block on a stubborn child.
+        (let poll ([attempts 8])
+          (let ([result (wait-terminal-process! process 1)]) ; WNOHANG
+            (cond [(or (not result) (terminal-process-reaped process)) (void)]
+                  [(> attempts 0)
+                   (sleep (make-time 'time-duration 25000000 0))
+                   (poll (- attempts 1))]
+                  [else
+                   (when c-kill (c-kill (- (terminal-process-pid process)) 9))
+                   (wait-terminal-process! process 0)]))))))
 
   (define (reap-terminal-process! process)
     ;; Called after the master reports EOF: the child has closed the slave and
     ;; can be waited without delaying the editor.
-    (unless (terminal-process-closed process)
-      (terminal-process-closed-set! process #t)
-      (guard (ex [else (void)]) (close-port (terminal-process-input process)))
-      (guard (ex [else (void)]) (close-port (terminal-process-output process)))
-      (when c-close (c-close (terminal-process-master process))))
-    (when c-waitpid
-      (c-waitpid (terminal-process-pid process) (make-bytevector 4 0) 0)))
+    (with-mutex (terminal-process-lock process)
+      (close-terminal-descriptors! process)
+      (wait-terminal-process! process 0)))
 
   (define (canonical-file-path path)
     ;; The absolute, symlink-resolved spelling of an existing path, or #f.

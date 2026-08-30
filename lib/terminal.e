@@ -2,6 +2,7 @@
 
 (library (terminal)
   (export init! terminal!! terminal-send! terminal-close! terminal-scrollback
+          terminal-shell
           make-terminal-emulator terminal-emulator?
           terminal-emulator-feed! terminal-emulator-screen
           terminal-emulator-styles terminal-emulator-state terminal-emulator-input
@@ -45,6 +46,14 @@
         (unless (and (integer? lines) (exact? lines) (>= lines 0))
           (error 'terminal-scrollback "must be a nonnegative integer" lines))
         lines)))
+  (define terminal-shell
+    (make-parameter
+      (let ([shell (getenv "SHELL")])
+        (if (and shell (not (string=? shell ""))) shell "/bin/sh"))
+      (lambda (shell)
+        (unless (and (string? shell) (not (string=? shell "")))
+          (error 'terminal-shell "must be a nonempty string" shell))
+        shell)))
 
   (define (terminal-emulator? value) (terminal-state? value))
 
@@ -1290,14 +1299,8 @@
             #t)]
       [else #t]))
 
-  (define (shell-command)
-    ;; A PTY on standard input is enough for shells to enter interactive mode.
-    ;; Do not assume a shared spelling for "login shell" options: several
-    ;; perfectly usable shells reject -l.
-    "exec \"${SHELL:-/bin/sh}\"")
-
   (define (terminal!! . command*)
-    (let* ([command (if (pair? command*) (car command*) (shell-command))]
+    (let* ([command (and (pair? command*) (car command*))]
            [directory (or (and (buffer-file (current-buffer))
                                (let ([path (buffer-file (current-buffer))])
                                  (let loop ([index (- (string-length path) 1)])
@@ -1352,7 +1355,8 @@
                  [rows (max 1 (car size))]
                  [cols (max 1 (cdr size))])
             (set! process
-              (spawn-terminal-process command directory rows cols))
+              (spawn-terminal-process (terminal-shell) command
+                                      directory rows cols))
             (set! state
               (make-terminal-state buffer process display (make-mutex)
                                    rows cols (make-screen rows cols)
@@ -1390,7 +1394,7 @@
       '(((terminal!!)
          (("procedure" . "(terminal!! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Open a PTY-backed terminal app running `$SHELL`, or `command` when supplied. It captures keyboard, paste, and mouse input. C-] suspends capture for one complete global e command; C-] C-] sends the character literally.")
+         "Open a PTY-backed terminal app running `terminal-shell`, or interpret `command` with that shell when supplied. It captures keyboard, paste, and mouse input. C-] suspends capture for one complete global e command; C-] C-] sends the character literally.")
         ((terminal-send!)
          (("procedure" . "(terminal-send! text)")) "void"
          ("(terminal)") terminal "Terminal" #f
@@ -1399,6 +1403,10 @@
          (("procedure" . "(terminal-close! [buffer])")) "void"
          ("(terminal)") terminal "Terminal" #f
          "Terminate and detach the process owned by a terminal buffer.")
+        ((terminal-shell)
+         (("parameter" . "(terminal-shell [path])")) "string"
+         ("(terminal)") terminal "Terminal" #f
+         "Get or set the shell used by terminal!!. It defaults to $SHELL, then /bin/sh.")
         ((make-terminal-emulator)
          (("procedure" . "(make-terminal-emulator rows columns)"))
          "terminal-emulator" ("(terminal)") terminal "Terminal" #f

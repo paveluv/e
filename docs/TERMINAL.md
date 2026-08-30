@@ -7,10 +7,17 @@ e can host a real pseudo-terminal inside an app buffer. Start one with
 (terminal!!)
 ```
 
-The command opens `*terminal*` in the current window and starts `$SHELL` as an
-interactive shell in the current file's directory (or e's current working
-directory for a file-less buffer). A second session is named
+The command opens `*terminal*` in the current window and starts
+`terminal-shell` as an interactive shell in the current file's directory (or
+e's current working directory for a file-less buffer). It defaults to
+`$SHELL`, falling back to `/bin/sh`. A second session is named
 `*terminal*<2>`, and so on.
+
+Set the shell in `config.e` when desired:
+
+```scheme
+(terminal-shell "/bin/bash")
+```
 
 Pass a shell command to run it instead:
 
@@ -20,6 +27,10 @@ Pass a shell command to run it instead:
 (terminal!! "e README.md")
 (terminal!! "legmacs README.md")
 ```
+
+Explicit command strings are interpreted by the configured shell with `-c`,
+so quoting, pipelines, redirection, and compound shell commands work. A bare
+`(terminal!!)` executes the configured shell directly.
 
 This is a PTY, not redirected pipes. The child sees `TERM=xterm-256color`, a
 controlling terminal, and the terminal buffer's actual row and column count.
@@ -101,16 +112,21 @@ the child has not requested mouse input.
 (terminal-send! text)
 (terminal-close! [buffer])
 (terminal-scrollback [lines])
+(terminal-shell [path])
 ```
 
 `terminal-send!` writes UTF-8 text to the current terminal's PTY. It is useful
 for macros and automation; it does not append text directly to the buffer.
-`terminal-close!` sends termination to the whole terminal process group,
-closes the PTY, and reaps its session leader. Killing a terminal buffer calls
-it automatically. A naturally exited process leaves its final screen visible
-and marks the status line `process exited`. It also stops capturing input, so
-ordinary editor chords such as `C-x b`, `C-x k`, and `C-x o` work immediately;
-kill the buffer normally when it is no longer needed.
+`terminal-shell` gets or sets the shell executable used by future terminal
+buffers; changing it does not affect processes that are already running.
+`terminal-close!` sends `SIGTERM` to the whole terminal process group and gives
+it a short, bounded cleanup period before using `SIGKILL`. It closes the PTY
+and reaps its session leader without allowing a stubborn child to hold up the
+editor. Killing a terminal buffer calls it automatically. A naturally exited
+process leaves its final screen visible and marks the status line `process
+exited`. It also stops capturing input, so ordinary editor chords such as
+`C-x b`, `C-x k`, and `C-x o` work immediately; kill the buffer normally when
+it is no longer needed.
 
 The same state machine can run without a PTY or editor buffer. This is useful
 for tests, protocol experiments, and tools that need structured terminal
@@ -130,7 +146,10 @@ output:
 reader performs UTF-8 decoding before feeding the same state machine.
 
 The OS-specific PTY creation, resize, cleanup, and process-group operations
-live in `sys.e`. Escape parsing, screen state, scrollback, input translation,
-and the app lifecycle live entirely in `terminal.e`; the core contains only
-the generic app sizing, wrapping override, kill hook, key decoding, and
-thread-safe redraw mechanisms used by this and other apps.
+live in `sys.e`. The PTY session leader directly executes the configured shell,
+adding `-c command` only when a command is supplied; there is no intermediate
+`system()` process, and setup failures are written to the child terminal before
+it exits. Escape parsing, screen state, scrollback, input translation, and the
+app lifecycle live entirely in `terminal.e`; the core contains only the generic
+app sizing, wrapping override, kill hook, key decoding, and thread-safe redraw
+mechanisms used by this and other apps.
