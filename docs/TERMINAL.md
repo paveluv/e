@@ -92,6 +92,8 @@ modes. Both ESC-prefixed and 8-bit C1 forms are accepted. Device attributes,
 status, and cursor-position probes receive terminal replies. The alternate
 screen is kept separate: entering `top`, less, or nested e preserves the shell
 screen and restores it when the application exits.
+DEC screen-reverse mode is applied non-destructively, including the brief
+reverse-video transition used by terminfo's visual bell capability.
 OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
 asterisks, such as `*bash*`; duplicate names receive a numeric suffix.
 

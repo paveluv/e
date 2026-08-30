@@ -83,6 +83,24 @@
                                'plain)
               #f))
 
+     (let ([terminal (make-terminal-emulator 1 2)])
+       (terminal-emulator-feed! terminal "A\x1b;[7mB")
+       (let ([normal (terminal-emulator-styles terminal)])
+         (terminal-emulator-feed! terminal "\x1b;[?5h")
+         (check 'reverse-screen-mode (state-ref terminal 'reverse-screen) #t)
+         (let ([reversed (terminal-emulator-styles terminal)])
+           (check 'reverse-screen-inverts-plain
+                  (eq? (vector-ref (vector-ref normal 0) 0)
+                       (vector-ref (vector-ref reversed 0) 0))
+                  #f)
+           (check 'reverse-screen-inverts-reversed
+                  (eq? (vector-ref (vector-ref normal 0) 1)
+                       (vector-ref (vector-ref reversed 0) 1))
+                  #f))
+         (terminal-emulator-feed! terminal "\x1b;[?5l")
+         (check 'reverse-screen-restores-styles
+                (terminal-emulator-styles terminal) normal)))
+
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed! terminal "\x1b;[?25l\x1b;[?1h\x1b;[?1002;1006h")
        (check 'cursor-hidden (state-ref terminal 'cursor-visible) #f)

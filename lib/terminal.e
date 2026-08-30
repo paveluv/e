@@ -21,7 +21,8 @@
             (mutable charset) (mutable charset-g1) (mutable charset-target)
             (mutable shift)
             (mutable wrap-pending) (mutable autowrap) (mutable origin)
-            (mutable insert) (mutable cursor-keys) (mutable keypad)
+            (mutable insert) (mutable reverse-screen)
+            (mutable cursor-keys) (mutable keypad)
             (mutable cursor-visible) (mutable tab-stops)
             (mutable last-character)
             (mutable dirty) (mutable alive) (mutable prefix)
@@ -39,6 +40,7 @@
   (define serial 0)
   (define style-serial 0)
   (define style-cache (make-hashtable string-hash string=?))
+  (define style-sequences (make-eq-hashtable))
   (define style-lock (make-mutex))
   (define terminal-scrollback
     (make-parameter 10000
@@ -66,7 +68,7 @@
                          rows cols (make-screen rows cols)
                          0 0 0 0 #f 0 (- rows 1)
                          'normal "" #f "" '() 'ascii 'ascii 0 0
-                         #f #t #f #f #f #f #t
+                         #f #t #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
                          #f #f #f #f #f #f #f 0 0 #f #f #f #f '() '()
                          (make-style-screen rows cols 'plain)
@@ -90,7 +92,7 @@
   (define (terminal-emulator-styles emulator)
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-styles "expected a terminal emulator" emulator))
-    (vector-map vector-copy (terminal-state-styles emulator)))
+    (effective-style-screen emulator (terminal-state-styles emulator)))
 
   (define (terminal-emulator-state emulator)
     (unless (terminal-emulator? emulator)
@@ -105,6 +107,7 @@
       (autowrap . ,(terminal-state-autowrap emulator))
       (origin . ,(terminal-state-origin emulator))
       (insert . ,(terminal-state-insert emulator))
+      (reverse-screen . ,(terminal-state-reverse-screen emulator))
       (cursor-visible . ,(terminal-state-cursor-visible emulator))
       (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
       (application-keypad . ,(terminal-state-keypad emulator))
@@ -591,7 +594,37 @@
                 ;; terminal, most visibly during top's frequent SGR changes.
                 (set-style! name (format "0;~a" sequence))
                 (hashtable-set! style-cache sequence name)
+                (hashtable-set! style-sequences name sequence)
                 name)))))
+
+  (define (reversed-style style)
+    (let* ([sequence
+            (if (eq? style 'plain) ""
+                (with-mutex style-lock
+                  (hashtable-ref style-sequences style #f)))]
+           [operations (and sequence
+                            (sgr-operations (parameter-list sequence)))])
+      (if (not operations) style
+          (let* ([has-reverse?
+                  (exists (lambda (operation)
+                            (eq? (sgr-category operation) 'reverse))
+                          operations)]
+                 [updated
+                  (if has-reverse?
+                      (remp (lambda (operation)
+                              (eq? (sgr-category operation) 'reverse))
+                            operations)
+                      (append operations '((7))))])
+            (sgr-style
+              (string-join (map number->string (apply append updated)) ";"))))))
+
+  (define (effective-style-row state row)
+    (if (terminal-state-reverse-screen state)
+        (vector-map reversed-style row)
+        (vector-copy row)))
+
+  (define (effective-style-screen state styles)
+    (vector-map (lambda (row) (effective-style-row state row)) styles))
 
   (define (sgr-operations codes)
     ;; Group extended colors so zero-valued components remain color data.
@@ -681,6 +714,7 @@
       (terminal-state-autowrap-set! state #t)
       (terminal-state-origin-set! state #f)
       (terminal-state-insert-set! state #f)
+      (terminal-state-reverse-screen-set! state #f)
       (terminal-state-cursor-keys-set! state #f)
       (terminal-state-keypad-set! state #f)
       (terminal-state-cursor-visible-set! state #t)
@@ -729,6 +763,9 @@
               (lambda (mode)
                 (case mode
                   [(1) (terminal-state-cursor-keys-set! state on?)]
+                  [(5)
+                   (terminal-state-reverse-screen-set! state on?)
+                   (terminal-state-dirty-set! state #t)]
                   [(6)
                    (terminal-state-origin-set! state on?)
                    (terminal-state-row-set!
@@ -1099,9 +1136,11 @@
                                '() (terminal-state-history state))
                            (vector->list (terminal-state-screen state)))]
                   [styles
-                   (append (if (terminal-state-main-screen state)
-                               '() (terminal-state-history-styles state))
-                           (vector->list (terminal-state-styles state)))])
+                   (map (lambda (row) (effective-style-row state row))
+                        (append (if (terminal-state-main-screen state)
+                                    '() (terminal-state-history-styles state))
+                                (vector->list
+                                  (terminal-state-styles state))))])
               (view-replace! (terminal-state-buffer state)
                              (map string-copy lines))
               (terminal-state-rendered-styles-set!
@@ -1403,7 +1442,7 @@
                                    rows cols (make-screen rows cols)
                                    0 0 0 0 #f 0 (- rows 1)
                                    'normal "" #f "" '() 'ascii 'ascii 0 0
-                                   #f #t #f #f #f #f #t
+                                   #f #t #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
                                    #t #t #f #f #f #f #f 0 0 #f #f #f #f '() '()
                                    (make-style-screen rows cols 'plain)
