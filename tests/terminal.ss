@@ -165,4 +165,11 @@
               '("\x1b;[0n" "\x1b;[?0n" "\x1b;[?2;4R" "\x1b;[?1;2c"
                 "\x1b;[>0;276;0c" "\x1b;[?1;2c")))
 
+     (let ([terminal (make-terminal-emulator 3 5)])
+       (terminal-emulator-feed!
+         terminal "a\x85;\x9b;2CX\x9d;2;c1-title\x9c;Y")
+       (check 'c1-controls
+              (vector->list (terminal-emulator-screen terminal))
+              '("a    " "  XY " "     ")))
+
      (format #t "~a terminal checks passed\n" checks)))

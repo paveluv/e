@@ -88,9 +88,10 @@ The emulator maintains a fixed, non-wrapping cell grid and interprets the
 common ECMA-48/VT and xterm sequences used for cursor motion, erasing,
 insertion/deletion, scrolling regions, saved cursor position, line-drawing
 characters, SGR attributes and 256/RGB colors, OSC metadata, and private
-modes. Device attributes, status, and cursor-position probes receive terminal
-replies. The alternate screen is kept separate: entering `top`, less, or
-nested e preserves the shell screen and restores it when the application exits.
+modes. Both ESC-prefixed and 8-bit C1 forms are accepted. Device attributes,
+status, and cursor-position probes receive terminal replies. The alternate
+screen is kept separate: entering `top`, less, or nested e preserves the shell
+screen and restores it when the application exits.
 OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
 asterisks, such as `*bash*`; duplicate names receive a numeric suffix.
 

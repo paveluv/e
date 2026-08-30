@@ -963,6 +963,21 @@
          [(14) (terminal-state-shift-set! state 1)]
          [(15) (terminal-state-shift-set! state 0)]
          [(27) (terminal-state-parser-set! state 'escape)]
+         [(132) (line-feed! state)]                    ; IND
+         [(133) (line-feed! state)                     ; NEL
+          (terminal-state-col-set! state 0)]
+         [(136) (vector-set! (terminal-state-tab-stops state)
+                             (terminal-state-col state) #t)] ; HTS
+         [(141) (if (= (terminal-state-row state)
+                       (terminal-state-scroll-top state))
+                    (scroll-down! state 1)
+                    (terminal-state-row-set!
+                      state (max 0 (- (terminal-state-row state) 1))))] ; RI
+         [(155) (terminal-state-parser-set! state 'csi) ; CSI
+          (terminal-state-parameters-set! state "")]
+         [(157) (terminal-state-parser-set! state 'osc) ; OSC
+          (terminal-state-osc-escape-set! state #f)
+          (terminal-state-osc-text-set! state "")]
          [else (when (>= (char->integer character) 32)
                  (put-character! state (mapped-character state character)))])]
       [(escape)
@@ -1033,7 +1048,7 @@
               (terminal-state-parser-set! state 'normal)
               (terminal-state-parameters-set! state "")])]
       [(osc)
-       (cond [(= (char->integer character) 7)
+       (cond [(memv (char->integer character) '(7 156)) ; BEL or ST
               (dispatch-osc! state)
               (terminal-state-parser-set! state 'normal)]
              [(and (terminal-state-osc-escape state) (char=? character #\\))
@@ -1055,6 +1070,9 @@
                           (terminal-state-osc-text-set! state "")))))])]
       [(control-string)
        (cond
+         [(= (char->integer character) 156) ; ST
+          (terminal-state-parser-set! state 'normal)
+          (terminal-state-osc-escape-set! state #f)]
          [(and (terminal-state-osc-escape state) (char=? character #\\))
           (terminal-state-parser-set! state 'normal)
           (terminal-state-osc-escape-set! state #f)]
