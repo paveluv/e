@@ -279,8 +279,30 @@
 
   ;;; Editor state ------------------------------------------------------------
 
+  (define (startup-greeting)
+    (let* ([date (current-date)]
+           [hour (date-hour date)]
+           [hour12 (let ([h (mod hour 12)]) (if (= h 0) 12 h))]
+           [weekdays '#("Sunday" "Monday" "Tuesday" "Wednesday" "Thursday"
+                        "Friday" "Saturday")]
+           [months '#("January" "February" "March" "April" "May" "June"
+                      "July" "August" "September" "October" "November"
+                      "December")]
+           [salutation (cond [(< hour 12) "Good morning!"]
+                             [(< hour 18) "Good afternoon!"]
+                             [else "Good evening!"])])
+      (format "Today is ~a, ~a ~a, ~a. It's ~2,'0d:~2,'0d ~a. ~a"
+              (vector-ref weekdays (date-week-day date))
+              (vector-ref months (- (date-month date) 1))
+              (date-day date)
+              (date-year date)
+              hour12
+              (date-minute date)
+              (if (< hour 12) "AM" "PM")
+              salutation)))
+
   (define editor-name "e")
-  (define message "C-s search  C-_ undo  C-x b switch  C-x C-s save  C-x C-c quit")
+  (define message (startup-greeting))
   (define kill-ring "")
   (define last-command #f)
   (define suppress-history (make-parameter #f))
