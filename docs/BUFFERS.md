@@ -5,6 +5,10 @@ editing session, or be generated dynamically by an app. Windows display
 buffers but do not own them: one buffer may appear in several windows, and
 changing its text updates every window that shows it.
 
+The focused buffer is advertised to the containing terminal as
+`e: <buffer-name>`, allowing terminal emulators such as GNOME Terminal to show
+it in their tab or window title.
+
 The initial `*scratch*` buffer is an ordinary unvisited buffer. Names wrapped in
 asterisks conventionally identify generated tools: `*buffers*`, `*log*`,
 `*describe*`, `*completions*`, and merge reports. The convention itself does not
@@ -40,7 +44,7 @@ has focus, `>` marks the window it will act on.
 | Key | Action |
 |---|---|
 | `C-x b` | Prompt for a buffer name. Empty input selects the most recently used other buffer; an unknown name creates an unvisited buffer. |
-| `C-x C-b` | Open the interactive `*buffers*` app. |
+| `C-x C-b` | Focus the nearest visible `*buffers*` window, or open it in a new full-width window at the bottom. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
@@ -129,6 +133,12 @@ it. Clicking or dragging there addresses column zero of the corresponding text
 line.
 
 ## The `*buffers*` app
+
+`C-x C-b` reuses the nearest window already showing the app. If none is
+visible, it adds a full-width window at the bottom of the frame, directly above
+the echo area, without disturbing the split tree above it. In either case the
+command moves focus into `*buffers*` and retains the originating window as its
+target.
 
 `*buffers*` is a live, read-only table with these columns:
 
@@ -235,13 +245,22 @@ off, truncated lines end in `$` and the window scrolls horizontally to follow
 point. `(wrap-lines #f)` changes the default, and `C-x t` toggles wrapping for
 one window.
 
-Each split has independent point, scrolling, wrapping, and status. Use `C-x 2`
-for a stacked split, `C-x 3` for a side-by-side split, `C-x o` to move focus,
-`C-x 0` to delete the current window, and `C-x 1` to retain only it. Status lines
-and column dividers can be dragged to resize splits. `M-Up`, `M-Down`,
-`M-Left`, and `M-Right` move directly to the nearest window in that direction;
-vertical movement prefers a window whose horizontal span overlaps the current
-one, while horizontal movement stays with the nearest aligned split.
+Each split has independent point, scrolling, wrapping, and status. Splits form
+a tree, so either half may be split again in either direction: `C-x 2` divides
+only the current window into a stacked pair, and `C-x 3` divides only it into a
+side-by-side pair. Deleting a window with `C-x 0` promotes its complete sibling
+subtree; the `[×]` button at the right edge of every status line performs the
+same operation with the mouse. Beside it, `[↕]` performs the stacked `C-x 2`
+split and `[↔]` performs the side-by-side `C-x 3` split. `C-x 1` retains only
+the current window. `C-x o` moves focus. Status lines and column dividers can
+be dragged to resize their local split.
+`*completions*` is a temporary full-width pop-up above the echo area, not a
+member of the split tree, so opening and closing it leaves the layout intact.
+`M-Up`, `M-Down`,
+`M-Left`, and `M-Right` cast an imaginary ray from the cursor in that direction
+and focus the first window it crosses. Thus the cursor's row chooses between
+stacked windows beside a tall window, and its column chooses between adjacent
+windows above or below it. The destination keeps its own point position.
 
 ## Buffer API
 

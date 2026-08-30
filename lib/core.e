@@ -73,7 +73,7 @@
     register-app! register-view! set-app-presentation! set-app-capture!
     app-capture-escaped? set-app-cursor-visible! detach-app!
     app-event-position
-    escape-app-capture! display-app!
+    escape-app-capture! display-app! display-app-at-bottom!
     buffer-window-size
     target-window target-buffer show-buffer-in-target!
     view-append! view-replace! register-log-formatter! log-history
@@ -170,16 +170,27 @@
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
   (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)))
 
-  ;; Windows grouped into horizontal bands, top to bottom: each band a
-  ;; list of side-by-side columns sharing its rows.  `windows` stays
-  ;; the flattened list (top to bottom, left to right) that every
-  ;; traversal uses; band mutations go through set-bands!.
-  (define bands (list windows))
+  ;; A persistent layout is a binary tree.  Leaves are windows; an internal
+  ;; node splits its rectangle into `below` (stacked) or `right`
+  ;; (side-by-side) children.  Weights retain the user's proportions across
+  ;; terminal and echo-area size changes.
+  (define-record-type layout-split
+    (fields orientation (mutable first) (mutable second)
+            (mutable first-weight) (mutable second-weight)))
 
-  (define (set-bands! bs)
+  (define layout-root (car windows))
+
+  (define (layout-leaves node)
+    (if (layout-split? node)
+        (append (layout-leaves (layout-split-first node))
+                (layout-leaves (layout-split-second node)))
+        (list node)))
+
+  (define (set-layout-root! root)
     (let* ([old windows]
-           [new-bands (filter pair? bs)]
-           [new-windows (apply append new-bands)])
+           [popup (completions-window)]
+           [new-windows (append (layout-leaves root)
+                                (if popup (list popup) '()))])
       ;; A removed app target becomes ephemeral. Preserve the buffer it last
       ;; displayed; the app will materialize a fresh target window on demand.
       (for-each
@@ -189,17 +200,30 @@
               (app-target-buffer-set! a (window-buffer target))
               (app-target-window-set! a #f))))
         (registered-apps))
-      (set! bands new-bands)
+      (set! layout-root root)
       (set! windows new-windows)))
 
-  (define (window-band w)
-    (find (lambda (b) (memq w b)) bands))
+  (define (layout-replace node old replacement)
+    (cond
+      [(eq? node old) replacement]
+      [(layout-split? node)
+       (layout-split-first-set!
+         node (layout-replace (layout-split-first node) old replacement))
+       (layout-split-second-set!
+         node (layout-replace (layout-split-second node) old replacement))
+       node]
+      [else node]))
 
-  (define (band-replace! old news)
-    ;; Replace the band old with the bands in news.
-    (set-bands!
-      (apply append (map (lambda (b) (if (eq? b old) news (list b)))
-                         bands))))
+  (define (replace-layout-window! old replacement)
+    (set-layout-root! (layout-replace layout-root old replacement)))
+
+  (define (layout-parent node child)
+    (and (layout-split? node)
+         (if (or (eq? child (layout-split-first node))
+                 (eq? child (layout-split-second node)))
+             node
+             (or (layout-parent (layout-split-first node) child)
+                 (layout-parent (layout-split-second node) child)))))
 
   ;; Whether windows soft-wrap by default -- for config.e; a window
   ;; toggled by hand (wrap!, C-x t) keeps its own setting.
@@ -1801,6 +1825,58 @@
              (set! current-window w)
              w))))
 
+  (define (display-app-at-bottom! b)
+    ;; Focus the nearest window already displaying b. Otherwise add a
+    ;; full-width leaf below the complete persistent layout and focus it.
+    (unless (app-buffer? b)
+      (error 'display-app-at-bottom! "not an app buffer" b))
+    (let* ([origin current-window]
+           [prior (window-buffer origin)]
+           [layout (window-layout)]
+           [cursor (window-screen-position origin
+                                           (window-prow origin)
+                                           (window-pcol origin))]
+           [cx (- (cdr cursor) 1)]
+           [cy (- (car cursor) 1)]
+           [shown
+            (filter (lambda (entry) (eq? (window-buffer (car entry)) b))
+                    layout)])
+      (define (axis-distance p low high)
+        (cond [(< p low) (- low p)] [(> p high) (- p high)] [else 0]))
+      (define (distance entry)
+        (let ([w (car entry)])
+          (+ (axis-distance cx (window-xoff w)
+                            (+ (window-xoff w) (window-width w) -1))
+             (axis-distance cy (cadr entry)
+                            (+ (cadr entry) (caddr entry))))))
+      (define (nearest entries)
+        (let loop ([rest (cdr entries)] [best (car entries)]
+                   [best-distance (distance (car entries))])
+          (if (null? rest)
+              (car best)
+              (let ([d (distance (car rest))])
+                (if (< d best-distance)
+                    (loop (cdr rest) (car rest) d)
+                    (loop (cdr rest) best best-distance))))))
+      (cond
+        [(pair? shown) (focus-window! (nearest shown))]
+        [(>= (- rows echo-height)
+             (+ (layout-min-height layout-root) (min-window-lines) 1))
+         (let* ([available (- rows echo-height)]
+                [bottom (max (+ (min-window-lines) 1)
+                             (quotient available 2))]
+                [w (make-window b (buffer-spot-top b) 0 0
+                                (buffer-spot-row b) (buffer-spot-col b) #f
+                                (max 1 (- bottom 1))
+                                (max 1 (- bottom 1)) 0 0 cols 'default)])
+           (set-layout-root!
+             (make-layout-split 'below layout-root w
+                                (max 1 (- available bottom)) bottom))
+           (set-app-target! b origin prior)
+           (set! current-window w)
+           w)]
+        [else #f])))
+
   (define (refresh-visible-views!)
     (for-each (lambda (a)
                 (when (find (lambda (w) (eq? (window-buffer w) (app-buffer a)))
@@ -2080,44 +2156,30 @@
 
   (define (focus-window-direction! direction)
     (let* ([layout (window-layout)]
-           [here (assq current-window layout)]
-           [hx0 (window-xoff current-window)]
-           [hx1 (+ hx0 (window-width current-window) -1)]
-           [hy0 (cadr here)]
-           [hy1 (+ hy0 (caddr here))]
-           [hxc (+ hx0 hx1)] [hyc (+ hy0 hy1)])
-      (define (gap a0 a1 b0 b1)
-        (cond [(< a1 b0) (- b0 a1)] [(< b1 a0) (- a0 b1)] [else 0]))
-      (define (score entry)
+           [cursor (window-screen-position current-window
+                                           point-row point-col)]
+           [cx (- (cdr cursor) 1)]
+           [cy (- (car cursor) 1)])
+      ;; Cast a ray from point. This matters in asymmetric trees: from a tall
+      ;; right-hand window, for example, the cursor row chooses which of two
+      ;; stacked windows on the left receives focus.
+      (define (distance entry)
         (let* ([w (car entry)]
                [x0 (window-xoff w)] [x1 (+ x0 (window-width w) -1)]
                [y0 (cadr entry)] [y1 (+ y0 (caddr entry))])
           (case direction
-            [(left) (and (< x1 hx0)
-                         (list (- hx0 x1) (gap hy0 hy1 y0 y1)
-                               (abs (- (+ y0 y1) hyc))))]
-            [(right) (and (> x0 hx1)
-                          (list (- x0 hx1) (gap hy0 hy1 y0 y1)
-                                (abs (- (+ y0 y1) hyc))))]
-            [(up) (and (< y1 hy0)
-                       (list (- hy0 y1) (gap hx0 hx1 x0 x1)
-                             (abs (- (+ x0 x1) hxc))))]
-            [(down) (and (> y0 hy1)
-                         (list (- y0 hy1) (gap hx0 hx1 x0 x1)
-                               (abs (- (+ x0 x1) hxc))))])))
-      (define (score<? a b)
-        (cond [(null? a) #f]
-              [(< (car a) (car b)) #t]
-              [(> (car a) (car b)) #f]
-              [else (score<? (cdr a) (cdr b))]))
-      (let loop ([entries layout] [best #f] [best-score #f])
+            [(left) (and (< x1 cx) (<= y0 cy y1) (- cx x1))]
+            [(right) (and (> x0 cx) (<= y0 cy y1) (- x0 cx))]
+            [(up) (and (< y1 cy) (<= x0 cx x1) (- cy y1))]
+            [(down) (and (> y0 cy) (<= x0 cx x1) (- y0 cy))])))
+      (let loop ([entries layout] [best #f] [best-distance #f])
         (if (null? entries)
             (when best (focus-window! (car best)))
-            (let ([s (and (not (eq? (caar entries) current-window))
-                          (score (car entries)))])
-              (if (and s (or (not best-score) (score<? s best-score)))
-                  (loop (cdr entries) (car entries) s)
-                  (loop (cdr entries) best best-score)))))))
+            (let ([d (and (not (eq? (caar entries) current-window))
+                          (distance (car entries)))])
+              (if (and d (or (not best-distance) (< d best-distance)))
+                  (loop (cdr entries) (car entries) d)
+                  (loop (cdr entries) best best-distance)))))))
 
   (define (focus-window-up!) (focus-window-direction! 'up))
   (define (focus-window-down!) (focus-window-direction! 'down))
@@ -2142,60 +2204,34 @@
   (define min-window-lines
     (make-parameter 3 (lambda (v) (max 1 v))))
 
-  (define (window-weight w) (max 1 (window-goal w)))
-
-  (define (halved-size!)
-    ;; Take the lower half of the current window's band for a new
-    ;; window (one line goes to its status); #f when too small.  Both
-    ;; goals follow the halved sizes: goals live in the same scale as
-    ;; sizes, so trades between them stay one-to-one.
-    (let ([h (window-size current-window)])
-      (and (>= (- h 1) 4)
-           (let ([new (quotient (- h 1) 2)])
-             (for-each (lambda (w)
-                         (window-size-set! w (- h 1 new))
-                         (window-goal-set! w (- h 1 new)))
-                       (window-band current-window))
-             new))))
+  (define (split-current-window! orientation b)
+    (let* ([vertical? (eq? orientation 'below)]
+           [extent (if vertical?
+                       (+ (window-size current-window) 1)
+                       (window-width current-window))]
+           [minimum (if vertical? (+ (min-window-lines) 1) 20)]
+           [usable (- extent (if vertical? 0 1))])
+      (and (>= usable (* 2 minimum))
+           (let* ([second (quotient usable 2)]
+                  [first (- usable second)]
+                  [w (make-window b top-row (window-topseg current-window)
+                                  left-col point-row point-col #f
+                                  (max 1 (- second 1))
+                                  (max 1 (- second 1)) 0 0 second
+                                  (window-wrap current-window))]
+                  [node (make-layout-split orientation current-window w
+                                           first second)])
+             (replace-layout-window! current-window node)
+             w))))
 
   (define (split-window!)
-    ;; Stack a new window under the current one, showing the same
-    ;; buffer, in the lower half of its band -- below the whole band,
-    ;; when the current one shares it with side-by-side columns.
-    (cond
-      [(halved-size!) =>
-       (lambda (new)
-         (let ([w (make-window (window-buffer current-window)
-                               top-row
-                               (window-topseg current-window)
-                               left-col
-                               point-row point-col #f new new 0 0 1
-                               (window-wrap current-window))]
-               [band (window-band current-window)])
-           (band-replace! band (list band (list w)))))]
-      [else (set! message "Not enough room to split")]))
+    ;; Split only the selected leaf, as in Emacs.
+    (unless (split-current-window! 'below (window-buffer current-window))
+      (set! message "Not enough room to split")))
 
   (define (split-window-right!)
-    ;; Put a new window beside the current one, showing the same
-    ;; buffer, in the right half of its columns.
-    (let* ([band (window-band current-window)]
-           [k (+ (length band) 1)])
-      (if (< (quotient (- cols (- k 1)) k) 20)
-          (set! message "Not enough room to split")
-          (let* ([half (quotient (- (window-width current-window) 1) 2)]
-                 [w (make-window (window-buffer current-window)
-                                 top-row
-                                 (window-topseg current-window)
-                                 left-col
-                                 point-row point-col #f
-                                 (window-size current-window)
-                                 (window-goal current-window)
-                                 0 0 half
-                                 (window-wrap current-window))])
-            (window-wgoal-set! current-window
-                               (max 1 (- (window-width current-window)
-                                         1 half)))
-            (band-replace! band (list (insert-after band current-window w))))))
+    (unless (split-current-window! 'right (window-buffer current-window))
+      (set! message "Not enough room to split"))
     (void))
 
   (define (wrap! . on)
@@ -2210,63 +2246,38 @@
     (void))
 
   (define (resize-window! delta)
-    ;; Grow the current window by delta text lines (negative shrinks),
-    ;; trading lines with the band below -- or above, for the lowest.
-    (if (null? (cdr bands))
-        (set! message "Only one window")
-        (let ([tail (memq (window-band current-window) bands)])
-          (transfer-lines! (car tail)
-                           (if (pair? (cdr tail))
-                               (cadr tail)
-                               (list-ref bands (- (length bands) 2)))
-                           delta))))
-
-  (define (band-weight b) (apply max (map window-weight b)))
-
-  (define (transfer-lines! band partner delta)
-    ;; Move up to delta text lines from the band partner to band, both
-    ;; keeping the minimum.  The trade adjusts goals, not sizes -- the
-    ;; layout realizes goals proportionally, so the delta is scaled
-    ;; between the two spaces: in the steady state the border moves
-    ;; exactly as dragged.
-    (let* ([m (min-window-lines)]
-           [delta (min delta (- (window-size (car partner)) m))]
-           [delta (max delta (- m (window-size (car band))))]
-           [ssum (fold-left + 0 (map (lambda (b) (window-size (car b)))
-                                     bands))]
-           [gsum (fold-left + 0 (map band-weight bands))])
-      (unless (= delta 0)
-        (let ([g (if (<= ssum 0)
-                     delta
-                     (let ([g (round (/ (* delta gsum) ssum))])
-                       (if (= g 0) (if (> delta 0) 1 -1) g)))]
-              [retarget (lambda (b goal)
-                          (for-each (lambda (w) (window-goal-set! w goal))
-                                    b))])
-          (retarget band (max 1 (+ (band-weight band) g)))
-          (retarget partner (max 1 (- (band-weight partner) g)))))))
+    ;; Resize at the nearest enclosing stacked split.
+    (let loop ([child current-window])
+      (let ([parent (layout-parent layout-root child)])
+        (cond
+          [(not parent) (set! message "No vertical split")]
+          [(eq? (layout-split-orientation parent) 'below)
+           (let ([signed (if (eq? child (layout-split-first parent))
+                             delta (- delta))])
+             (layout-split-first-weight-set!
+               parent (max 1 (+ (layout-split-first-weight parent) signed)))
+             (layout-split-second-weight-set!
+               parent (max 1 (- (layout-split-second-weight parent) signed))))]
+          [else (loop parent)]))))
 
   (define (delete-window!)
-    (if (null? (cdr windows))
+    (if (null? (cdr (layout-leaves layout-root)))
         (set! message "Only one window")
-        (let ([next (next-window current-window)])
-          (band-replace! (window-band current-window)
-                         (list (remq current-window
-                                     (window-band current-window))))
+        (let* ([next (next-window current-window)]
+               [parent (layout-parent layout-root current-window)]
+               [sibling (if (eq? current-window (layout-split-first parent))
+                            (layout-split-second parent)
+                            (layout-split-first parent))])
+          (replace-layout-window! parent sibling)
           (focus-window! next))))
 
   (define (delete-other-windows!)
-    (set-bands! (list (list current-window))))
+    (set-layout-root! current-window))
 
   (define (create-ephemeral-target-window! b)
     ;; Materialize an app target that was removed. Unlike display-buffer!, this
     ;; always creates a new window and never appropriates an unrelated one.
-    (let ([new (halved-size!)])
-      (and new
-           (let ([w (make-window b 0 0 0 0 0 #f new new 0 0 1 'default)])
-             (band-replace! (window-band current-window)
-                            (list (window-band current-window) (list w)))
-             w))))
+    (split-current-window! 'below b))
 
   (define (display-buffer! b)
     ;; Show b without leaving the current window: in the window already
@@ -2275,18 +2286,11 @@
     (unless (memq b buffers) (set! buffers (append buffers (list b))))
     (cond
       [(find (lambda (w) (eq? (window-buffer w) b)) windows)]
-      [(pair? (cdr windows))
+      [(pair? (cdr (layout-leaves layout-root)))
        (let ([w (next-window current-window)])
          (set-window-buffer! w b)
          w)]
-      [(halved-size!) =>
-       (lambda (new)
-         ;; The size was already proven above; this is the ordinary pop-up
-         ;; path, which has the same geometry as an ephemeral app target.
-         (let ([w (make-window b 0 0 0 0 0 #f new new 0 0 1 'default)])
-           (band-replace! (window-band current-window)
-                          (list (window-band current-window) (list w)))
-           w))]
+      [(split-current-window! 'below b)]
       [else #f]))
 
   (define (buffer-append! b . new-lines)
@@ -3050,66 +3054,83 @@
             (if (eq? edge 'wrap) "\\" "$")))
     (ansi "\x1b;[0m"))
 
-  (define (layout-columns! band)
-    ;; Tile a band's columns across the screen in proportion to their
-    ;; width goals, a divider column between neighbors.
-    (let* ([k (length band)]
-           [avail (- cols (- k 1))]
-           [sum (fold-left + 0 (map (lambda (w) (max 1 (window-wgoal w)))
-                                    band))]
-           [m (min 20 (max 1 (quotient avail k)))])
-      (let loop ([ws band] [x 0] [left avail])
-        (cond
-          [(null? (cdr ws))
-           (window-xoff-set! (car ws) x)
-           (window-width-set! (car ws) (max 1 left))]
-          [else
-           (let ([wd (min (max m (quotient (* (max 1 (window-wgoal
-                                                       (car ws)))
-                                              avail)
-                                           sum))
-                          (max m (- left (* m (length (cdr ws))))))])
-             (window-xoff-set! (car ws) x)
-             (window-width-set! (car ws) wd)
-             (loop (cdr ws) (+ x wd 1) (- left wd)))]))))
+  (define layout-dividers '())
+
+  (define (layout-min-width node)
+    (if (layout-split? node)
+        (if (eq? (layout-split-orientation node) 'right)
+            (+ 1 (layout-min-width (layout-split-first node))
+               (layout-min-width (layout-split-second node)))
+            (max (layout-min-width (layout-split-first node))
+                 (layout-min-width (layout-split-second node))))
+        20))
+
+  (define (layout-min-height node)
+    (if (layout-split? node)
+        (if (eq? (layout-split-orientation node) 'below)
+            (+ (layout-min-height (layout-split-first node))
+               (layout-min-height (layout-split-second node)))
+            (max (layout-min-height (layout-split-first node))
+                 (layout-min-height (layout-split-second node))))
+        (+ (min-window-lines) 1)))
+
+  (define (weighted-first total minimum-first minimum-second a b)
+    (min (- total minimum-second)
+         (max minimum-first (quotient (* total (max 1 a))
+                                      (+ (max 1 a) (max 1 b))))))
+
+  (define (layout-node! node x y width height)
+    ;; Lay out one persistent subtree. Rectangles include leaf status rows;
+    ;; side-by-side nodes reserve one visible divider column.
+    (if (not (layout-split? node))
+        (begin
+          (window-xoff-set! node x)
+          (window-width-set! node (max 1 width))
+          (window-size-set! node (max 1 (- height 1)))
+          (list (list node y (max 1 (- height 1)))))
+        (let* ([first (layout-split-first node)]
+               [second (layout-split-second node)]
+               [below? (eq? (layout-split-orientation node) 'below)]
+               [total (- (if below? height width) (if below? 0 1))]
+               [m1 (if below? (layout-min-height first)
+                       (layout-min-width first))]
+               [m2 (if below? (layout-min-height second)
+                       (layout-min-width second))]
+               [one (weighted-first total m1 m2
+                                    (layout-split-first-weight node)
+                                    (layout-split-second-weight node))]
+               [two (- total one)])
+          (if below?
+              (begin
+                (set! layout-dividers
+                  (cons (list 'below node x (+ y one -1) width)
+                        layout-dividers))
+                (append (layout-node! first x y width one)
+                        (layout-node! second x (+ y one) width two)))
+              (begin
+                (set! layout-dividers
+                  (cons (list 'right node (+ x one) y height)
+                        layout-dividers))
+                (append (layout-node! first x y one height)
+                        (layout-node! second (+ x one 1) y two height)))))))
 
   (define (window-layout)
-    ;; Stack the bands top to bottom, each a run of text rows shared by
-    ;; its side-by-side columns and followed by one status line; the
-    ;; last echo-height screen rows are the echo area.  The bands tile
-    ;; the text area in proportion to their goals -- the sizes the user
-    ;; chose -- realized fresh from the goals every time, at least
-    ;; min-window-lines each, so a grown echo area or a terminal resize
-    ;; cannot drift them; the columns tile the width likewise.
+    ;; Recursively tile the persistent split tree. *completions* is a
+    ;; temporary full-width overlay immediately above the echo area; it
+    ;; consumes height but never changes the tree.
     ;; -> list of (window start text-height), start 0-based.
     (let* ([popup (completions-window)]
-           [popup-band (and popup (window-band popup))]
-           [plain (remp (lambda (b) (eq? b popup-band)) bands)]
-           [n (length plain)]
-           [text (- rows echo-height (length bands))]
-           [total (- text (if popup (window-size popup) 0))]
-           [sum (fold-left + 0 (map band-weight plain))]
-           [m (min (min-window-lines) (max 1 (quotient total (max 1 n))))])
-      (let loop ([bs plain] [left total])
-        (unless (null? bs)
-          (let* ([rest (* m (length (cdr bs)))]
-                 [h (if (null? (cdr bs))
-                        (max m left)
-                        (min (max m (quotient (* (band-weight (car bs))
-                                                 total)
-                                              sum))
-                             (max m (- left rest))))])
-            (for-each (lambda (w) (window-size-set! w h)) (car bs))
-            (loop (cdr bs) (- left h)))))
-      (for-each layout-columns! bands)
-      (let loop ([bs bands] [start 0] [acc '()])
-        (if (null? bs)
-            (reverse acc)
-            (let ([h (window-size (caar bs))])
-              (loop (cdr bs) (+ start h 1)
-                    (append (reverse (map (lambda (w) (list w start h))
-                                          (car bs)))
-                            acc)))))))
+           [popup-height (if popup (+ (window-size popup) 1) 0)]
+           [height (max 2 (- rows echo-height popup-height))])
+      (set! layout-dividers '())
+      (let ([plain (layout-node! layout-root 0 0 cols height)])
+        (if popup
+            (begin
+              (window-xoff-set! popup 0)
+              (window-width-set! popup cols)
+              (append plain
+                      (list (list popup height (window-size popup)))))
+            plain))))
 
   (define (page-size)
     ;; The scrollable body height. Sticky app rows are fixed chrome and do not
@@ -3496,23 +3517,18 @@
            (shift-column-cache! (window-xoff w) vdelta start height)]))))
 
   (define (paint-dividers! layout)
-    ;; The vertical line between side-by-side columns, through their
-    ;; status row too.
+    ;; Paint vertical boundaries from the same recursive geometry used for
+    ;; hit testing. Stacked boundaries are the upper leaves' status bars.
     (for-each
-      (lambda (band)
-        (when (pair? (cdr band))
-          (let* ([entry (assq (car band) layout)]
-                 [start (cadr entry)]
-                 [height (caddr entry)])
-            (for-each
-              (lambda (w)
-                (let ([x (- (window-xoff w) 1)])
-                  (do ([r start (+ r 1)]) ((> r (+ start height)))
-                    (paint! r x '(divider)
-                            (lambda ()
-                              (ansi (style-code 'chrome) "\x2502;\x1b;[0m"))))))
-              (cdr band)))))
-      bands))
+      (lambda (divider)
+        (when (eq? (car divider) 'right)
+          (let ([x (caddr divider)] [start (cadddr divider)]
+                [height (list-ref divider 4)])
+            (do ([r start (+ r 1)]) ((>= r (+ start height)))
+              (paint! r x '(divider)
+                      (lambda ()
+                        (ansi (style-code 'chrome) "\x2502;\x1b;[0m")))))))
+      layout-dividers))
 
   (define (paint! row xoff key draw)
     ;; Repaint the segment of the 0-based screen row starting at
@@ -4004,7 +4020,8 @@
                           completions-pages)
                   "")]
              [status (format "~a~a~a~a~a "
-                             head conf mode-text hint-text page-text)])
+                             head conf mode-text hint-text page-text)]
+             [window-buttons " [↕][↔][×]"])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (window-xoff w)
                   (list 'status status current? target? stale?)
@@ -4017,18 +4034,24 @@
                     ;; reverse on light schemes.
                     (let* ([bar (if current? "\x1b;[7m" "\x1b;[7;38;5;245m")]
                            [fg (if current? "\x1b;[39m" "\x1b;[38;5;245m")]
-                           [text (fit status (window-width w))]
+                           [content-width
+                            (max 0 (- (window-width w)
+                                      (string-length window-buttons)))]
+                           [text (string-append (fit status content-width)
+                                                window-buttons)]
                            [n (string-length text)]
-                           [cs (min (string-length head) n)]
-                           [ce (min (+ cs (string-length conf)) n)]
-                           [ns (min (string-length head-prefix) n)]
-                           [ne (min (+ ns (string-length name)) n)]
+                           [cs (min (string-length head) content-width)]
+                           [ce (min (+ cs (string-length conf)) content-width)]
+                           [ns (min (string-length head-prefix) content-width)]
+                           [ne (min (+ ns (string-length name)) content-width)]
                            [hs (min (+ (string-length head)
                                        (string-length conf)
                                        (string-length mode-text))
-                                    n)]
-                           [he (min (+ hs (string-length hint-text)) n)]
-                           [normal-start (if stale? (min 3 n) 0)])
+                                    content-width)]
+                           [he (min (+ hs (string-length hint-text))
+                                    content-width)]
+                           [normal-start
+                            (if stale? (min 3 content-width) 0)])
                       (ansi bar)
                       (when stale?
                         ;; the !! flag in red, the rest as usual
@@ -4053,13 +4076,17 @@
                             (when (eq? (cdr value) 'italic)
                               (ansi "\x1b;[23m"))
                             (loop (cdr values) end))))
-                      (ansi (substring text he n) "\x1b;[0m"))))))))
+                      (ansi (substring text he content-width)
+                            "\x1b;[1m"
+                            (substring text content-width n)
+                            "\x1b;[0m"))))))))
 
   (define (echo-cap)
     ;; How tall the whole echo area may grow: everything but each
     ;; window's minimum -- min-window-lines of text (at least 2,
     ;; redraw!'s collapse threshold) plus its status line.
-    (max 1 (- rows (* (length bands) (+ (max 2 (min-window-lines)) 1)))))
+    (max 1 (- rows (layout-min-height layout-root)
+              (if (completions-window) 2 0))))
 
   (define (update-echo-geometry!)
     ;; The echo area stacks the pending transient-log lines above the
@@ -4116,10 +4143,13 @@
     (refresh-visible-views!)
     (update-completions-size!)
     ;; A terminal too small for the splits collapses back to one window.
-    (when (and (pair? (cdr windows))
-               (< (- rows echo-height (length bands))
-                  (* 2 (length bands))))
-      (set-bands! (list (list current-window))))
+    (when (and (pair? (cdr (layout-leaves layout-root)))
+               (or (< cols (layout-min-width layout-root))
+                   (< (- rows echo-height) (layout-min-height layout-root))))
+      (set-layout-root!
+        (if (memq current-window (layout-leaves layout-root))
+            current-window
+            (car (layout-leaves layout-root)))))
     (let* ([layout (window-layout)]
            [view (list rows cols
                        (map (lambda (entry)
@@ -4173,7 +4203,27 @@
   (define (redraw!)
     ;; PTY readers may request a frame while the main thread waits for input.
     ;; Keep the cache and terminal output as one indivisible transaction.
-    (with-mutex redraw-lock (redraw-frame!)))
+    (with-mutex redraw-lock
+      (update-terminal-title!)
+      (redraw-frame!)))
+
+  (define terminal-title-shown #f)
+
+  (define (safe-terminal-title s)
+    ;; OSC is terminated by BEL or ST. Do not let a buffer name inject either
+    ;; terminator (or another terminal control) into the host terminal.
+    (list->string
+      (map (lambda (c)
+             (let ([n (char->integer c)])
+               (if (or (< n 32) (= n 127)) #\space c)))
+           (string->list s))))
+
+  (define (update-terminal-title!)
+    ;; OSC 2 is understood by GNOME Terminal, xterm, and nested e terminals.
+    (let ([title (string-append "e: " (buffer-name (current-buffer)))])
+      (unless (equal? title terminal-title-shown)
+        (set! terminal-title-shown title)
+        (ansi "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
 
   (define (window-screen-position w prow pcol)
     ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
@@ -4268,9 +4318,8 @@
                   (loop xs (cons line acc))
                   (row (+ i 1) (cdr xs) (string-append line (fit (car xs) w)))))))))
 
-  ;; The *completions* pop-up: shown on a TAB that cannot extend the input,
-  ;; in the next window when there are several, in a temporary split when
-  ;; there is one, and taken down again when the prompt finishes.
+  ;; The *completions* pop-up: a temporary full-width overlay above the echo
+  ;; area. It is deliberately outside the persistent split tree.
   (define completions-buffer #f)
   (define completions-restore #f)
 
@@ -4334,19 +4383,17 @@
        (set! completions-labels labels)
        (completions-layout! labels)
        #t]
-      [(let ([n (length bands)])
-         (>= (- rows echo-height (+ n 1))
-             (+ (* n (min-window-lines)) 1)))
+      [(>= (- rows echo-height (layout-min-height layout-root)) 2)
        (set! completions-buffer (new-buffer "*completions*"))
        (buffer-read-only-set! completions-buffer #t)
        (buffer-mode-set! completions-buffer (completions-mode))
        (set! completions-labels labels)
        (completions-layout! labels)
        (let ([w (make-window completions-buffer 0 0 0 0 0 #f 1 1 0 0 1 #f)])
-         (set-bands! (append bands (list (list w))))
+         (set! windows (append (layout-leaves layout-root) (list w)))
          (set! completions-restore
            (lambda ()
-             (set-bands! (map (lambda (b) (remq w b)) bands)))))
+             (set! windows (layout-leaves layout-root)))))
        #t]
       [else #f]))
 
@@ -4358,9 +4405,8 @@
       (when w
         (unless (= completions-cols cols)        ; the width changed
           (completions-layout! completions-labels))
-        (let* ([text (- rows echo-height (length bands))]
-               [avail (max 1 (- text (* (min-window-lines)
-                                        (- (length bands) 1))))]
+        (let* ([avail (max 1 (- rows echo-height
+                                (layout-min-height layout-root) 1))]
                [all (max 1 (vector-length completions-rows))]
                [size (min all avail)])
           (set! completions-pages (div (+ all size -1) size))
@@ -4878,6 +4924,18 @@
 
   (define last-press #f)   ; (x y ms) of the previous button press
 
+  (define (window-button-at x0 r0)
+    ;; The three bracketed controls occupy the last nine status columns.
+    (window-at x0 r0
+      (lambda (entry)
+        (let ([w (car entry)])
+          (and (= r0 (+ (cadr entry) (caddr entry)))
+               (let ([from-end (- (+ (window-xoff w) (window-width w)) x0)])
+                 (cond [(<= 1 from-end 3) (cons 'close w)]
+                       [(<= 4 from-end 6) (cons 'right w)]
+                       [(<= 7 from-end 9) (cons 'below w)]
+                       [else #f])))))))
+
   (define (word-char? c)
     (not (or (char-whitespace? c)
              (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\, #\.)))))
@@ -4901,11 +4959,11 @@
         (set! mark-active? #t))))
 
   ;; The window whose status bar is being dragged to resize it, or #f.
-  (define drag-status #f)
+  (define drag-status #f)    ; retained for clearing older mouse state
   ;; 1-based cell coordinates within the app's text viewport while a mouse
   ;; event is dispatched, or #f for keyboard events.
   (define app-event-position (make-parameter #f))
-  (define drag-divider #f)   ; (left . right) columns astride the bar
+  (define drag-divider #f)   ; recursive divider descriptor
   (define drag-scrollbar #f) ; (window grab-offset-within-thumb)
 
   (define (scrollbar-set-top! w height requested)
@@ -5002,43 +5060,25 @@
       (scrollbar-set-top! w height top)))
 
   (define (divider-at x0 r0)
-    ;; The (left . right) column pair whose divider bar sits at
-    ;; 0-based screen (x0, r0); #f elsewhere.
-    (let ([layout (window-layout)])
-      (let bloop ([bs bands])
-        (and (pair? bs)
-             (let* ([band (car bs)]
-                    [entry (assq (car band) layout)])
-               (if (and entry (pair? (cdr band))
-                        (<= (cadr entry) r0
-                            (+ (cadr entry) (caddr entry))))
-                   (let wloop ([ws band])
-                     (cond [(null? (cdr ws)) #f]
-                           [(= x0 (- (window-xoff (cadr ws)) 1))
-                            (cons (car ws) (cadr ws))]
-                           [else (wloop (cdr ws))]))
-                   (bloop (cdr bs))))))))
+    ;; Divider metadata comes directly from window-layout. A descriptor is
+    ;; (orientation split x y span).
+    (window-layout)
+    (find (lambda (d)
+            (if (eq? (car d) 'right)
+                (and (= x0 (caddr d))
+                     (<= (cadddr d) r0)
+                     (< r0 (+ (cadddr d) (list-ref d 4))))
+                (and (= r0 (cadddr d))
+                     (<= (caddr d) x0)
+                     (< x0 (+ (caddr d) (list-ref d 4))))))
+          layout-dividers))
 
-  (define (transfer-width! w partner delta)
-    ;; Move up to delta columns from partner to w -- neighbors in one
-    ;; band -- keeping the split minimum; like transfer-lines!, the
-    ;; trade adjusts width goals, scaled so the bar moves as dragged.
-    (let* ([m 20]
-           [delta (min delta (- (window-width partner) m))]
-           [delta (max delta (- m (window-width w)))]
-           [band (window-band w)]
-           [ssum (fold-left + 0 (map window-width band))]
-           [gsum (fold-left + 0 (map (lambda (x) (max 1 (window-wgoal x)))
-                                     band))])
-      (unless (= delta 0)
-        (let ([g (if (<= ssum 0)
-                     delta
-                     (let ([g (round (/ (* delta gsum) ssum))])
-                       (if (= g 0) (if (> delta 0) 1 -1) g)))])
-          (window-wgoal-set! w (max 1 (+ (max 1 (window-wgoal w)) g)))
-          (window-wgoal-set! partner
-                             (max 1 (- (max 1 (window-wgoal partner))
-                                       g)))))))
+  (define (transfer-split! split delta)
+    (unless (= delta 0)
+      (layout-split-first-weight-set!
+        split (max 1 (+ (layout-split-first-weight split) delta)))
+      (layout-split-second-weight-set!
+        split (max 1 (- (layout-split-second-weight split) delta)))))
 
   (define (window-position w start height x y)
     ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
@@ -5095,8 +5135,25 @@
           (select-word!)))
       (set! last-press (list x y now))
       (cond
+        [(window-button-at (- x 1) (- y 1)) =>
+         (lambda (button)
+           (let ([action (car button)] [w (cdr button)])
+             (cond
+               [(eq? w (completions-window))
+                (if (eq? action 'close)
+                    (dismiss-completions!)
+                    (set! message "Cannot split a popup"))]
+               [else
+                (focus-window! w)
+                (case action
+                  [(below) (split-window!)]
+                  [(right) (split-window-right!)]
+                  [(close) (delete-window!)])]))
+           "MOUSE-HANDLED")]
         [(divider-at (- x 1) (- y 1)) =>
-         (lambda (pair) (set! drag-divider pair) "MOUSE-HANDLED")]
+         (lambda (divider)
+           (set! drag-divider divider)
+           "MOUSE-HANDLED")]
         [else
          (window-at (- x 1) (- y 1)
            (lambda (entry)
@@ -5104,8 +5161,6 @@
                (cond
                  [(= (- y 1) (+ start height))        ; the status bar
                   (focus-window! w)
-                  (when (pair? (cdr (memq (window-band w) bands)))
-                    (set! drag-status w))
                   "MOUSE-HANDLED"]
                  [(and (window-scrollbar-column w)
                        (= (- x 1) (window-scrollbar-column w)))
@@ -5160,22 +5215,24 @@
                   "MOUSE-HANDLED"]))))])))
 
   (define (mouse-drag! x y)
-    ;; A status-bar drag resizes bands, a divider drag resizes its
-    ;; columns; otherwise extend the selection armed by the press --
+    ;; A split-divider drag resizes its two subtrees; otherwise extend
+    ;; the selection armed by the press --
     ;; the mark activates and point follows the pointer within the
     ;; focused window's text area.
     (cond
       [drag-divider
-       (let ([delta (- x (window-xoff (cdr drag-divider)))])
+       (let* ([orientation (car drag-divider)]
+              [split (cadr drag-divider)]
+              [old (if (eq? orientation 'right)
+                       (caddr drag-divider)
+                       (cadddr drag-divider))]
+              [now (if (eq? orientation 'right) (- x 1) (- y 1))]
+              [delta (- now old)])
          (unless (= delta 0)
-           (transfer-width! (car drag-divider) (cdr drag-divider) delta)))]
-      [drag-status
-       (let ([entry (assq drag-status (window-layout))])
-         (when entry
-           (let ([delta (- (- y 1) (cadr entry) (caddr entry))])
-             (unless (= delta 0)
-               (let ([tail (memq (window-band drag-status) bands)])
-                 (transfer-lines! (car tail) (cadr tail) delta))))))]
+           (transfer-split! split delta)
+           (if (eq? orientation 'right)
+               (set-car! (cddr drag-divider) now)
+               (set-car! (cdddr drag-divider) now))))]
       [drag-scrollbar
        (let* ([w (car drag-scrollbar)]
               [grab-offset (cadr drag-scrollbar)]

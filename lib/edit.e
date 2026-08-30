@@ -515,7 +515,7 @@
     (let* ([table (buffer-table)] [rows (cdr table)]
            [b (buffers-view-buffer)])
       (refresh-buffers-view!)
-      (if (display-app! b)
+      (if (display-app-at-bottom! b)
           (begin
             (refresh-buffers-view!)
             (select-buffer-row! (target-buffer))
@@ -549,7 +549,7 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Display the live `*buffers*` view. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to switch the target window, or click a row to switch immediately.")
+         "Focus the nearest visible `*buffers*` window, or create a full-width window for it at the bottom of the frame. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to switch the target window, or click a row to switch immediately.")
         ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")

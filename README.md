@@ -542,8 +542,6 @@ for registration, event handling, and target semantics.
 
 ## Limitations
 
-The window layout is deliberately simple: horizontal bands may contain
-side-by-side columns, but it is not a general-purpose tiling system.
 Tabs and other control characters are displayed as a single space cell.
 Input is read as UTF-8, but every character is assumed to occupy one
 terminal column.

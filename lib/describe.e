@@ -767,16 +767,16 @@
          "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")
         ((focus-window-up!) (("procedure" . "(focus-window-up!)")) "void"
          ("(core)") core "Window commands" #f
-         "Focus the nearest window above the current window, preferring one whose horizontal span overlaps it.")
+         "Cast a ray upward from point and focus the first window it crosses.")
         ((focus-window-down!) (("procedure" . "(focus-window-down!)")) "void"
          ("(core)") core "Window commands" #f
-         "Focus the nearest window below the current window, preferring one whose horizontal span overlaps it.")
+         "Cast a ray downward from point and focus the first window it crosses.")
         ((focus-window-left!) (("procedure" . "(focus-window-left!)")) "void"
          ("(core)") core "Window commands" #f
-         "Focus the nearest window to the left of the current window.")
+         "Cast a ray leftward from point and focus the first window it crosses.")
         ((focus-window-right!) (("procedure" . "(focus-window-right!)")) "void"
          ("(core)") core "Window commands" #f
-         "Focus the nearest window to the right of the current window.")
+         "Cast a ray rightward from point and focus the first window it crosses.")
         ((add-mode-extension!)
          (("procedure" . "(add-mode-extension! mode extension)")) "void"
          ("(core)") core "Mode customization" #f
@@ -788,6 +788,10 @@
         ((display-app!) (("procedure" . "(display-app! buffer)")) "window or #f"
          ("(core)") core "App buffers" #f
          "Display and focus an app buffer, recording the previously current window and buffer as its target.")
+        ((display-app-at-bottom!)
+         (("procedure" . "(display-app-at-bottom! buffer)")) "window or #f"
+         ("(core)") core "App buffers" #f
+         "Focus the nearest window already displaying an app buffer, or create and focus a full-width window for it below the complete persistent layout. Record the originating window and buffer as its target.")
         ((set-app-capture!)
          (("procedure" . "(set-app-capture! buffer capture?)")) "buffer"
          ("(core)") core "App buffers" #f
