@@ -973,13 +973,18 @@
                     (scroll-down! state 1)
                     (terminal-state-row-set!
                       state (max 0 (- (terminal-state-row state) 1))))] ; RI
+         [(144 152 158 159)                         ; DCS, SOS, PM, APC
+          (terminal-state-parser-set! state 'control-string)
+          (terminal-state-osc-escape-set! state #f)]
          [(155) (terminal-state-parser-set! state 'csi) ; CSI
           (terminal-state-parameters-set! state "")]
          [(157) (terminal-state-parser-set! state 'osc) ; OSC
           (terminal-state-osc-escape-set! state #f)
           (terminal-state-osc-text-set! state "")]
-         [else (when (>= (char->integer character) 32)
-                 (put-character! state (mapped-character state character)))])]
+         [else
+          (let ([code (char->integer character)])
+            (when (and (>= code 32) (not (<= 128 code 159)))
+              (put-character! state (mapped-character state character))))])]
       [(escape)
        (case character
          [(#\[) (terminal-state-parser-set! state 'csi)

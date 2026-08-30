@@ -172,4 +172,11 @@
               (vector->list (terminal-emulator-screen terminal))
               '("a    " "  XY " "     ")))
 
+     (let ([terminal (make-terminal-emulator 1 8)])
+       (terminal-emulator-feed!
+         terminal "a\x90;hidden\x9c;b\x9e;hidden\x9c;c\x81;d")
+       (check 'c1-controls-never-print
+              (vector->list (terminal-emulator-screen terminal))
+              '("abcd    ")))
+
      (format #t "~a terminal checks passed\n" checks)))
