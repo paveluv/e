@@ -579,8 +579,8 @@
                             'active-shadow)))]
           [else '()])))
     (bind-default-key! "C-x C-b" list-buffers!)
-    (bind-default-key! "M-UP" previous-buffer!)
-    (bind-default-key! "M-DOWN" next-buffer!)
+    (bind-default-key! "M-S-UP" previous-buffer!)
+    (bind-default-key! "M-S-DOWN" next-buffer!)
     (bind-default-key! "M-%" replace!!)
     (bind-default-key! "M-n" next-conflict!)
     (bind-default-key! "M-m" keep-mine!)

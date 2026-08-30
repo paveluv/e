@@ -76,8 +76,8 @@ to `#!/usr/bin/env -S chez-scheme --script` or run
 |-----------|---------------------------------------------------------|
 | `C-x b`   | Switch buffer (default: most recent other; new name creates a buffer) |
 | `C-x C-b` | Open `*buffers*`: move with Up/Down, Enter to select; click selects immediately |
-| `M-Up`     | Switch to the previous buffer alphabetically             |
-| `M-Down`   | Switch to the next buffer alphabetically                 |
+| `M-Arrows` | Move focus to the neighboring window in that direction   |
+| `M-S-Up/Down` | Switch buffers alphabetically                         |
 | `C-x k`   | Kill a buffer (default: current; asks if modified)      |
 | `C-x 2`   | Split the current window in two (stacked)               |
 | `C-x 3`   | Split the current window in two (side by side)          |

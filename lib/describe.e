@@ -765,6 +765,18 @@
         ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
          ("(core)") core "Buffer display" #f
          "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")
+        ((focus-window-up!) (("procedure" . "(focus-window-up!)")) "void"
+         ("(core)") core "Window commands" #f
+         "Focus the nearest window above the current window, preferring one whose horizontal span overlaps it.")
+        ((focus-window-down!) (("procedure" . "(focus-window-down!)")) "void"
+         ("(core)") core "Window commands" #f
+         "Focus the nearest window below the current window, preferring one whose horizontal span overlaps it.")
+        ((focus-window-left!) (("procedure" . "(focus-window-left!)")) "void"
+         ("(core)") core "Window commands" #f
+         "Focus the nearest window to the left of the current window.")
+        ((focus-window-right!) (("procedure" . "(focus-window-right!)")) "void"
+         ("(core)") core "Window commands" #f
+         "Focus the nearest window to the right of the current window.")
         ((add-mode-extension!)
          (("procedure" . "(add-mode-extension! mode extension)")) "void"
          ("(core)") core "Mode customization" #f
@@ -792,6 +804,10 @@
          (("procedure" . "(set-buffer-wrap! buffer setting)")) "buffer"
          ("(core)") core "Buffers" #f
          "Set a buffer-wide wrapping override to #t or #f, or use `default` to follow each window and the global wrapping preference.")
+        ((set-buffer-name!)
+         (("procedure" . "(set-buffer-name! buffer name)")) "buffer"
+         ("(core)") core "Buffers" #f
+         "Rename a buffer, adding the usual numeric suffix when another buffer already uses the requested name.")
         ((escape-app-capture!)
          (("procedure" . "(escape-app-capture! escape-event literal!)")) "void"
          ("(core)") core "App buffers" #f

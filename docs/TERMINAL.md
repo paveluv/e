@@ -79,6 +79,8 @@ insertion/deletion, scrolling regions, saved cursor position, line-drawing
 characters, SGR attributes and 256/RGB colors, OSC metadata, and private
 modes. The alternate screen is kept separate: entering `top`, less, or nested
 e preserves the shell screen and restores it when the application exits.
+OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
+asterisks, such as `*bash*`; duplicate names receive a numeric suffix.
 
 The main screen retains scrollback; alternate-screen frames are never added
 to it. Configure the maximum retained line count in `config.e`:

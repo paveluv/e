@@ -285,6 +285,13 @@
          (terminal-reply! state "\x1b;]10;rgb:0000/0000/0000\x1b;\\")]
         [(string=? text "11;?")
          (terminal-reply! state "\x1b;]11;rgb:ffff/ffff/ffff\x1b;\\")]
+        [(and (> (string-length text) 2)
+              (memv (string-ref text 0) '(#\0 #\1 #\2))
+              (char=? (string-ref text 1) #\;))
+         (let ([title (substring text 2 (string-length text))])
+           (unless (string=? title "")
+             (set-buffer-name! (terminal-state-buffer state)
+                               (format "*~a*" title))))]
         [else (void)])))
 
   (define (delete-characters! state count)
@@ -757,6 +764,12 @@
   (define (event-bytes event)
     (cond
       [(= (string-length event) 1) (string->utf8 event)]
+      [(assoc event
+              '(("M-UP" . "\x1b;[1;3A") ("M-DOWN" . "\x1b;[1;3B")
+                ("M-RIGHT" . "\x1b;[1;3C") ("M-LEFT" . "\x1b;[1;3D")
+                ("M-S-UP" . "\x1b;[1;4A") ("M-S-DOWN" . "\x1b;[1;4B")
+                ("M-S-RIGHT" . "\x1b;[1;4C") ("M-S-LEFT" . "\x1b;[1;4D")))
+       => (lambda (entry) (string->utf8 (cdr entry)))]
       [(string-prefix? "C-M-" event)
        (bytes-append (bytevector 27)
                      (control-byte (string-ref event 4)))]

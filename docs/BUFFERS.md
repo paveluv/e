@@ -41,7 +41,8 @@ has focus, `>` marks the window it will act on.
 |---|---|
 | `C-x b` | Prompt for a buffer name. Empty input selects the most recently used other buffer; an unknown name creates an unvisited buffer. |
 | `C-x C-b` | Open the interactive `*buffers*` app. |
-| `M-Up` / `M-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
+| `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
+| `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
 
 Buffer-name completion is available with Tab in the prompts. Killing a modified
@@ -237,7 +238,10 @@ one window.
 Each split has independent point, scrolling, wrapping, and status. Use `C-x 2`
 for a stacked split, `C-x 3` for a side-by-side split, `C-x o` to move focus,
 `C-x 0` to delete the current window, and `C-x 1` to retain only it. Status lines
-and column dividers can be dragged to resize splits.
+and column dividers can be dragged to resize splits. `M-Up`, `M-Down`,
+`M-Left`, and `M-Right` move directly to the nearest window in that direction;
+vertical movement prefers a window whose horizontal span overlaps the current
+one, while horizontal movement stays with the nearest aligned split.
 
 ## Buffer API
 
@@ -251,6 +255,7 @@ The public Scheme API exposes read-only inspection through `current-buffer`,
 `buffer-append!`, `set-buffer-mode!`, and `set-buffer-read-only!` provide
 controlled mutation and display. `call-with-buffer` temporarily makes another
 buffer current, and `call-as-one-edit!` groups mutations into coherent undo
-entries. App authors should use `view-replace!` and `view-append!` for generated
-content. Run `M-x (describe!!)` for live signatures and registered command
-documentation.
+entries. `focus-window-up!`, `focus-window-down!`, `focus-window-left!`, and
+`focus-window-right!` expose directional focus to Scheme. App authors should
+use `view-replace!` and `view-append!` for generated content. Run
+`M-x (describe!!)` for live signatures and registered command documentation.

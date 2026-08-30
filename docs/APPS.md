@@ -154,7 +154,7 @@ Status-bar clicks always focus their window; app handlers cannot override
 them. `*buffers*` returns `keep-focus` for content clicks because the click's
 purpose is to change the target rather than enter the app.
 
-Outside the app, `M-Up` and `M-Down` switch the current window through the
+Outside the app, `M-Shift-Up` and `M-Shift-Down` switch the current window through the
 same alphabetical buffer list.
 
 The active row uses the `active` face. It can be customized like any other

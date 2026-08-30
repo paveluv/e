@@ -20,10 +20,12 @@
     visit-file! save-file! save!! save-as!! find-file!! data-directory
     show-buffer! kill-buffer! display-buffer! buffer-append!
     fresh-buffer
-    set-buffer-mode! set-buffer-read-only! set-buffer-wrap! call-with-buffer
+    set-buffer-mode! set-buffer-read-only! set-buffer-wrap! set-buffer-name!
+    call-with-buffer
     switch-buffer!! kill-buffer!!
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
+    focus-window-up! focus-window-down! focus-window-left! focus-window-right!
     resize-window! wrap! wrap-lines column-native-scroll scroll-margin
     scrollbar scrollbar-position line-numbers line-numbers!
     ;; editing and movement
@@ -1044,6 +1046,12 @@
           (if (hashtable-ref used name #f)
               (loop (+ k 1))
               name)))))
+
+  (define (set-buffer-name! b name)
+    (unless (and (buffer? b) (string? name) (> (string-length name) 0))
+      (error 'set-buffer-name! "expected a buffer and nonempty name" b name))
+    (buffer-name-set! b (unique-name name b))
+    b)
 
   (define (file-buffer path)
     ;; A fresh buffer visiting path; #f (with a message) when it cannot be read.
@@ -2069,6 +2077,52 @@
 
   (define (other-window!)
     (focus-window! (next-window current-window)))
+
+  (define (focus-window-direction! direction)
+    (let* ([layout (window-layout)]
+           [here (assq current-window layout)]
+           [hx0 (window-xoff current-window)]
+           [hx1 (+ hx0 (window-width current-window) -1)]
+           [hy0 (cadr here)]
+           [hy1 (+ hy0 (caddr here))]
+           [hxc (+ hx0 hx1)] [hyc (+ hy0 hy1)])
+      (define (gap a0 a1 b0 b1)
+        (cond [(< a1 b0) (- b0 a1)] [(< b1 a0) (- a0 b1)] [else 0]))
+      (define (score entry)
+        (let* ([w (car entry)]
+               [x0 (window-xoff w)] [x1 (+ x0 (window-width w) -1)]
+               [y0 (cadr entry)] [y1 (+ y0 (caddr entry))])
+          (case direction
+            [(left) (and (< x1 hx0)
+                         (list (- hx0 x1) (gap hy0 hy1 y0 y1)
+                               (abs (- (+ y0 y1) hyc))))]
+            [(right) (and (> x0 hx1)
+                          (list (- x0 hx1) (gap hy0 hy1 y0 y1)
+                                (abs (- (+ y0 y1) hyc))))]
+            [(up) (and (< y1 hy0)
+                       (list (- hy0 y1) (gap hx0 hx1 x0 x1)
+                             (abs (- (+ x0 x1) hxc))))]
+            [(down) (and (> y0 hy1)
+                         (list (- y0 hy1) (gap hx0 hx1 x0 x1)
+                               (abs (- (+ x0 x1) hxc))))])))
+      (define (score<? a b)
+        (cond [(null? a) #f]
+              [(< (car a) (car b)) #t]
+              [(> (car a) (car b)) #f]
+              [else (score<? (cdr a) (cdr b))]))
+      (let loop ([entries layout] [best #f] [best-score #f])
+        (if (null? entries)
+            (when best (focus-window! (car best)))
+            (let ([s (and (not (eq? (caar entries) current-window))
+                          (score (car entries)))])
+              (if (and s (or (not best-score) (score<? s best-score)))
+                  (loop (cdr entries) (car entries) s)
+                  (loop (cdr entries) best best-score)))))))
+
+  (define (focus-window-up!) (focus-window-direction! 'up))
+  (define (focus-window-down!) (focus-window-direction! 'down))
+  (define (focus-window-left!) (focus-window-direction! 'left))
+  (define (focus-window-right!) (focus-window-direction! 'right))
 
   (define (selected-window)
     ;; The current window, an opaque token: hold it, compare it, give
@@ -5167,7 +5221,7 @@
               [w (car entry)])
           (set! current-window w)
           (if (and meta? (memv dir '(0 1)))
-              (dispatch-sequence! (if (= dir 0) "M-UP" "M-DOWN") #f)
+              (dispatch-sequence! (if (= dir 0) "M-S-UP" "M-S-DOWN") #f)
               (begin
                 (when (and (app-buffer? (window-buffer w)) (not (eq? w old)))
                   (set-app-target! (window-buffer w) old (window-buffer old)))
@@ -5262,6 +5316,8 @@
       [(= (string-length s) 1) s]
       [(member s '("UP" "DOWN" "LEFT" "RIGHT" "HOME" "END"
                    "DELETE" "PAGEUP" "PAGEDOWN" "S-TAB" "PASTE"
+                   "S-UP" "S-DOWN" "S-LEFT" "S-RIGHT"
+                   "S-PAGEUP" "S-PAGEDOWN"
                    "F1" "F2" "F3" "F4" "F5" "F6" "F7" "F8"
                    "F9" "F10" "F11" "F12" "MOUSE")) s]
       [else (error 'bind-key! "unrecognized key" s)]))
@@ -5438,9 +5494,13 @@
                 (drain (read-char stdin) (cons b params))
                 (let ([p (list->string (reverse params))])
                   (define (direction name)
-                    (if (member p '("1;3" "3"))
-                        (string-append "M-" name)
-                        name))
+                    (cond [(member p '("1;4" "4"))
+                           (string-append "M-S-" name)]
+                          [(member p '("1;3" "3"))
+                           (string-append "M-" name)]
+                          [(member p '("1;2" "2"))
+                           (string-append "S-" name)]
+                          [else name]))
                   (case b
                     [(#\A) (direction "UP")] [(#\B) (direction "DOWN")]
                     [(#\C) (direction "RIGHT")] [(#\D) (direction "LEFT")]
@@ -5558,7 +5618,12 @@
              (if (eof-object? next)
                  (set! quit? #t)
                  (loop (append sequence (list next)))))]
-          [hit (run-key-action! (binding-action (cdr hit)))]
+          [hit
+           ;; A prefix is only a waiting indicator. Once its complete binding
+           ;; is known, remove it before the command runs; commands that have
+           ;; something useful to report will publish their own message.
+           (when (> (length sequence) 1) (settle-echo!))
+           (run-key-action! (binding-action (cdr hit)))]
           [(and (= (length sequence) 1)
                 (key-event-character first))
            => (lambda (c) (self-insert! c chain))]
@@ -5716,6 +5781,8 @@
           ("C-v" ,page-down!) ("C-w" ,kill-region!) ("C-y" ,yank!)
           ("C-_" ,undo!) ("C-M-_" ,redo!) ("M-w" ,copy-region!)
           ("M-v" ,page-up!) ("M-<" ,beginning-of-buffer!)
+          ("M-UP" ,focus-window-up!) ("M-DOWN" ,focus-window-down!)
+          ("M-LEFT" ,focus-window-left!) ("M-RIGHT" ,focus-window-right!)
           ("M->" ,end-of-buffer!) ("UP" ,previous-line!)
           ("DOWN" ,next-line!) ("LEFT" ,move-left!)
           ("RIGHT" ,move-right!) ("HOME" ,beginning-of-line!)
