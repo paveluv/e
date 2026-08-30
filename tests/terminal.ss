@@ -110,6 +110,22 @@
        (check 'mouse-tracking (state-ref terminal 'mouse-tracking) 1002)
        (check 'mouse-encoding (state-ref terminal 'sgr-mouse) #t))
 
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed! terminal "\x1b;[?1004;1005;1015h")
+       (check 'focus-reporting-mode
+              (state-ref terminal 'focus-reporting) #t)
+       (check 'focus-in-encoding
+              (terminal-emulator-input terminal "FOCUS")
+              (string->utf8 "\x1b;[I"))
+       (check 'focus-out-encoding
+              (terminal-emulator-input terminal "BLUR")
+              (string->utf8 "\x1b;[O"))
+       (check 'utf8-mouse-mode (state-ref terminal 'utf8-mouse) #t)
+       (check 'urxvt-mouse-mode (state-ref terminal 'urxvt-mouse) #t)
+       (terminal-emulator-feed! terminal "\x1b;[?1004;1005;1015l")
+       (check 'focus-reporting-disabled
+              (terminal-emulator-input terminal "FOCUS") #f))
+
      (let ([terminal (make-terminal-emulator 4 5)])
        (terminal-emulator-feed!
          terminal "\x1b;[2;3r\x1b;[?6;7h\x1b;7\x1b;[?6;7l\x1b;8")
@@ -278,6 +294,9 @@
        (check 'horizontal-margin-scroll
               (vector->list (terminal-emulator-screen terminal))
               '("12221" "23332" "3   3"))
+       (terminal-emulator-resize! terminal 3 5)
+       (check 'unchanged-size-preserves-horizontal-margins
+              (state-ref terminal 'horizontal-margins) '(1 . 3))
        (terminal-emulator-feed! terminal "\x1b;[?69l")
        (check 'horizontal-margins-disabled
               (state-ref terminal 'horizontal-margins) '(0 . 4)))

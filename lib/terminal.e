@@ -28,7 +28,9 @@
             (mutable cursor-visible) (mutable tab-stops)
             (mutable last-character)
             (mutable dirty) (mutable alive) (mutable bell) (mutable prefix)
-            (mutable mouse) (mutable mouse-sgr)
+            (mutable bell-visible) (mutable bell-generation)
+            (mutable mouse) (mutable mouse-sgr) (mutable mouse-utf8)
+            (mutable mouse-urxvt) (mutable focus-reporting)
             (mutable bracketed) (mutable main-screen) (mutable main-wrapped)
             (mutable main-row) (mutable main-col) (mutable main-state)
             (mutable alternate-screen) (mutable alternate-wrapped)
@@ -99,7 +101,8 @@
                          'normal "" #f "" '() 'ascii 'ascii 0 0
                          #f #t #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
-                         #f #f #f #f #f #f #f #f #f 0 0 #f #f #f #f #f '() '() '()
+                         #f #f #f #f #f 0 #f #f #f #f #f #f #f #f
+                         0 0 #f #f #f #f #f '() '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() #f (make-style-screen rows cols 'plain)
                          "" 'plain (make-vector 256 #f) #f #f))
@@ -153,11 +156,15 @@
       (insert . ,(terminal-state-insert emulator))
       (reverse-screen . ,(terminal-state-reverse-screen emulator))
       (bell-pending . ,(terminal-state-bell emulator))
+      (bell-visible . ,(terminal-state-bell-visible emulator))
       (cursor-visible . ,(terminal-state-cursor-visible emulator))
       (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
       (application-keypad . ,(terminal-state-keypad emulator))
       (mouse-tracking . ,(terminal-state-mouse emulator))
       (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
+      (utf8-mouse . ,(terminal-state-mouse-utf8 emulator))
+      (urxvt-mouse . ,(terminal-state-mouse-urxvt emulator))
+      (focus-reporting . ,(terminal-state-focus-reporting emulator))
       (bracketed-paste . ,(terminal-state-bracketed emulator))
       (default-colors . ,(cons (terminal-state-default-foreground emulator)
                                (terminal-state-default-background emulator)))))
@@ -603,9 +610,10 @@
       (restore-screen-state! state alternate-state)))
 
   (define (resize-screen! state rows cols)
-    (unless (and (= rows (terminal-state-rows state))
-                 (= cols (terminal-state-cols state)))
-      (if (not (terminal-state-main-screen state))
+    (let ([changed? (or (not (= rows (terminal-state-rows state)))
+                        (not (= cols (terminal-state-cols state))))])
+      (when changed?
+        (if (not (terminal-state-main-screen state))
           (let ([old-cols (terminal-state-cols state)])
             (reflow-primary-screen! state rows cols)
             (terminal-state-tab-stops-set!
@@ -652,14 +660,15 @@
             (terminal-state-scroll-top-set! state 0)
             (terminal-state-scroll-bottom-set! state (- rows 1))
             (terminal-state-dirty-set! state #t)))
-      (terminal-state-scroll-top-set! state 0)
-      (terminal-state-scroll-bottom-set! state (- rows 1))
-      (terminal-state-left-margin-set! state 0)
-      (terminal-state-right-margin-set! state (- cols 1))
-      (terminal-state-margin-mode-set! state #f)
-      (terminal-state-dirty-set! state #t)
-      (when (terminal-state-process state)
-        (resize-terminal-process! (terminal-state-process state) rows cols))))
+        (terminal-state-scroll-top-set! state 0)
+        (terminal-state-scroll-bottom-set! state (- rows 1))
+        (terminal-state-left-margin-set! state 0)
+        (terminal-state-right-margin-set! state (- cols 1))
+        (terminal-state-margin-mode-set! state #f)
+        (terminal-state-dirty-set! state #t)
+        (when (terminal-state-process state)
+          (resize-terminal-process!
+            (terminal-state-process state) rows cols)))))
 
   (define (scroll-up! state count)
     (let ([screen (terminal-state-screen state)]
@@ -1437,8 +1446,14 @@
       (terminal-state-cursor-visible-set! state #t)
       (terminal-state-tab-stops-set! state (default-tab-stops cols))
       (terminal-state-last-character-set! state #\space)
+      (terminal-state-bell-set! state #f)
+      (terminal-state-bell-visible-set! state #f)
+      (terminal-state-bell-generation-set! state 0)
       (terminal-state-mouse-set! state #f)
       (terminal-state-mouse-sgr-set! state #f)
+      (terminal-state-mouse-utf8-set! state #f)
+      (terminal-state-mouse-urxvt-set! state #f)
+      (terminal-state-focus-reporting-set! state #f)
       (terminal-state-bracketed-set! state #f)
       (terminal-state-main-screen-set! state #f)
       (terminal-state-main-wrapped-set! state #f)
@@ -1510,7 +1525,10 @@
                        (terminal-state-mouse-set! state mode)
                        (when (eqv? (terminal-state-mouse state) mode)
                          (terminal-state-mouse-set! state #f)))]
+                  [(1004) (terminal-state-focus-reporting-set! state on?)]
+                  [(1005) (terminal-state-mouse-utf8-set! state on?)]
                   [(1006) (terminal-state-mouse-sgr-set! state on?)]
+                  [(1015) (terminal-state-mouse-urxvt-set! state on?)]
                   [(2004) (terminal-state-bracketed-set! state on?)]
                   [(1048) (if on? (save-cursor! state) (restore-cursor! state))]
                   [(47 1047 1049)
@@ -1962,7 +1980,10 @@
               (terminal-state-rendered-cells-set!
                 state (list->vector (map vector-copy cells)))
               (terminal-state-rendered-styles-set!
-                state (list->vector (map vector-copy styles))))
+                state (list->vector (map vector-copy styles)))
+              ;; Cell/style rows are dynamic renderer data; their structural
+              ;; placeholder lines often remain identical across frames.
+              (view-invalidate! (terminal-state-buffer state)))
             (terminal-state-dirty-set! state #f))
           (when (and (eq? (current-buffer) (terminal-state-buffer state))
                      (not (memq (selected-window)
@@ -1994,6 +2015,26 @@
     (define (display-redraw!)
       (parameterize ([terminal-output-port (terminal-state-display state)])
         (redraw!)))
+    (define (show-bell!)
+      (let ([generation
+             (with-mutex (terminal-state-lock state)
+               (let ([next (+ (terminal-state-bell-generation state) 1)])
+                 (terminal-state-bell-generation-set! state next)
+                 (terminal-state-bell-visible-set! state #t)
+                 next))])
+        (fork-thread
+          (lambda ()
+            ;; A status glyph needs longer than a video flash to be legible.
+            (sleep (make-time 'time-duration 500000000 0))
+            (let ([clear?
+                   (with-mutex (terminal-state-lock state)
+                     (and (= generation
+                             (terminal-state-bell-generation state))
+                          (begin
+                            (terminal-state-bell-visible-set! state #f)
+                            #t)))])
+              (when (and clear? (terminal-state-alive state))
+                (guard (ex [else (void)]) (display-redraw!))))))))
     (define (finished!)
       (terminal-state-alive-set! state #f)
       (guard (ex [else (void)])
@@ -2041,7 +2082,7 @@
                            (let ([bell? (terminal-state-bell state)])
                              (terminal-state-bell-set! state #f)
                              bell?))])
-                    (when bell? (visual-bell!)))
+                    (when bell? (show-bell!)))
                   ;; Output must become visible while the main thread is
                   ;; blocked reading the editor's keyboard.
                   (display-redraw!)
@@ -2161,6 +2202,9 @@
 
   (define (event-bytes state event)
     (cond
+      [(and (terminal-state-focus-reporting state)
+            (member event '("FOCUS" "BLUR")))
+       (string->utf8 (if (string=? event "FOCUS") "\x1b;[I" "\x1b;[O"))]
       [(= (string-length event) 1) (string->utf8 event)]
       [(function-key-number event) => function-key-bytes]
       [(named-key-bytes state event) => values]
@@ -2200,18 +2244,34 @@
     (set! terminals '()))
 
   (define (send-mouse! state code x y release?)
-    (if (terminal-state-mouse-sgr state)
-        (write-bytes!
-          state
-          (string->utf8
-            (format "\x1b;[<~a;~a;~a~a" code x y (if release? "m" "M"))))
-        ;; The original X10 encoding is limited to coordinates below 224.
-        (write-bytes!
-          state
-          (bytevector 27 91 77
-                      (+ 32 (if release? 3 code))
-                      (+ 32 (min x 223))
-                      (+ 32 (min y 223))))))
+    (let ([button (if release? 3 code)])
+      (cond
+        [(terminal-state-mouse-sgr state)
+         (write-bytes!
+           state
+           (string->utf8
+             (format "\x1b;[<~a;~a;~a~a"
+                     code x y (if release? "m" "M"))))]
+        [(terminal-state-mouse-urxvt state)
+         (write-bytes!
+           state
+           (string->utf8 (format "\x1b;[~a;~a;~aM" (+ 32 button) x y)))]
+        [(terminal-state-mouse-utf8 state)
+         (write-bytes!
+           state
+           (string->utf8
+             (string-append "\x1b;[M"
+                            (string (integer->char (+ 32 button))
+                                    (integer->char (+ 32 x))
+                                    (integer->char (+ 32 y))))))]
+        [else
+         ;; The original X10 encoding is limited to coordinates below 223.
+         (write-bytes!
+           state
+           (bytevector 27 91 77
+                       (+ 32 button)
+                       (+ 32 (min x 223))
+                       (+ 32 (min y 223))))])))
 
   (define (mouse-position state)
     (or (app-event-position)
@@ -2227,6 +2287,10 @@
       [(string=? event "C-]")
        (escape-app-capture!
          "C-]" (lambda () (write-bytes! state (bytevector 29))))
+       #t]
+      [(member event '("FOCUS" "BLUR"))
+       (cond [(event-bytes state event) =>
+              (lambda (bytes) (write-bytes! state bytes))])
        #t]
       [(string=? event "PASTE")
        (terminal-follow! state)
@@ -2353,7 +2417,8 @@
                                    'normal "" #f "" '() 'ascii 'ascii 0 0
                                    #f #t #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
-                                   #t #t #f #f #f #f #f #f #f 0 0 #f #f #f #f #f
+                                   #t #t #f #f #f 0 #f #f #f #f #f #f #f #f
+                                   0 0 #f #f #f #f #f
                                    '() '() '()
                                    (make-style-screen rows cols 'plain)
                                    #f '() #f
@@ -2374,13 +2439,17 @@
         (let ([state (terminal-of buffer)])
           (and state
                (if (terminal-state-alive state)
-                   (cond
-                     [(not active?) '("  running" . italic)]
-                     [(app-capture-escaped? buffer)
-                      '("  running; escaped" . italic)]
-                     [else
-                      '("  running; capturing input, C-] to escape" . italic)])
-                   '("  exited" . italic))))))
+                   (let ([tail
+                          (cond
+                            [(not active?) ""]
+                            [(app-capture-escaped? buffer) " escaped"]
+                            [else " capturing input, C-] to escape"])])
+                     (if (terminal-state-bell-visible state)
+                         (list '(" " . italic)
+                               '("♪" . red-italic)
+                               (cons tail 'italic))
+                         (cons (string-append " ▶" tail) 'italic)))
+                   '("  ■" . italic))))))
     (register-descriptions!
       '(((terminal!!)
          (("procedure" . "(terminal!! [command])")) "void"

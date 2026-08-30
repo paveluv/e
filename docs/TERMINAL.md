@@ -36,7 +36,9 @@ This is a PTY, not redirected pipes. The child sees `TERM=xterm-256color`, a
 controlling terminal, and the terminal buffer's actual row and column count.
 Window changes propagate through `TIOCSWINSZ`/`SIGWINCH`, so interactive
 shells, job control, screen-addressed programs such as `top`, and another
-instance of e work normally.
+instance of e work normally. The ioctl and signal are issued only when the
+PTY grid dimensions actually change; ordinary output redraws never interrupt
+the child with spurious resize notifications.
 
 ## Input and leaving the terminal
 
@@ -56,10 +58,17 @@ tracking the mouse. A blinking block cursor marks the terminal's live input
 position by default. Programs can change its shape and blinking behavior with
 the standard `DECSCUSR` terminal sequence.
 
-The italic status text distinguishes a focused terminal that is capturing
-input (`running; capturing input, C-] to escape`), its temporarily escaped
-state (`running; escaped`), and a terminal running in a passive window
-(`running`). After the process exits, every window shows `exited`; capture is
+Mouse reports support the original X10 coordinates, UTF-8 extended
+coordinates (`1005`), SGR coordinates (`1006`), and urxvt coordinates
+(`1015`); SGR takes precedence when a child enables several encodings. Focus
+reporting mode (`1004`) sends `CSI I` and `CSI O` as editor focus enters and
+leaves a terminal window. Mirrored windows share one terminal mode state,
+while each real focus transition produces only one report.
+
+The italic status hint distinguishes a focused terminal that is capturing
+input (`▶ capturing input, C-] to escape`), its temporarily escaped state
+(`▶ escaped`), and a terminal running in a passive window (`▶`). After the
+process exits, every window shows `■`; capture is
 disabled and the retained terminal buffer remains a read-only transcript with
 the normal vertical read-only cursor. It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
@@ -95,9 +104,11 @@ screen is kept separate: entering `top`, less, or nested e preserves the shell
 screen and restores it when the application exits.
 DEC screen-reverse mode is applied non-destructively, including the brief
 reverse-video transition used by terminfo's visual bell capability.
-BEL never produces sound; the live terminal reader flashes only e's echo-area
-band after releasing the emulator lock, so terminal output and redraw remain
-responsive.
+BEL never produces sound or changes e's global echo area. It briefly replaces
+the terminal buffer's `▶` status marker with a red `♪`; both occupy the same cell
+after the single mode/status spacer. Mirrored windows show the same
+buffer-owned indication without shifting their status text. Its asynchronous expiry cannot
+delay diagnostic text or later PTY input.
 
 DEC left/right margin mode (`DECSLRM`, enabled by `DECLRMM`) composes with the
 vertical scrolling region. Cursor addressing, wrapping, character editing,

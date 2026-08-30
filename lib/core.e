@@ -76,7 +76,8 @@
     escape-app-capture! display-app! display-app-here!
     buffer-window-size
     target-window target-buffer show-buffer-in-target!
-    view-append! view-replace! register-log-formatter! log-history
+    view-append! view-replace! view-invalidate!
+    register-log-formatter! log-history
     publish-descriptions! published-descriptions
     call-with-interrupt call-uninterrupted interrupted?
     vector-fill-range! string-search compile-style set-style!
@@ -542,22 +543,34 @@
           [(eq? theirs base) mine]
           [else mine]))
 
+  (define visual-bell-generation 0)
+  (define visual-bell-active? #f)
+
   (define (visual-bell!)
-    ;; Flash only the echo-area band, not the whole terminal, and never emit
-    ;; BEL. The normal echo painter restores its styled content and cursor.
+    ;; Arm an overlay but let the caller's ordinary frame paint it. A PTY
+    ;; reader invokes this between decoding output and its scheduled redraw;
+    ;; starting a nested frame here would stop it at BEL before the diagnostic
+    ;; bytes which commonly follow.
     (when screen-live?
-      (let loop ([row (- rows echo-height)])
-        (when (< row rows)
-          (goto (+ row 1) 1)
-          (ansi "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
-          (loop (+ row 1))))
-      (flush-output-port (terminal-output-port))
-      (sleep (make-time 'time-duration 50000000 0))
-      ;; Direct terminal painting bypassed screen-cache. A full synchronized
-      ;; redraw rebuilds the cache and reliably restores the echo content;
-      ;; calling paint-echo-area! alone could incorrectly skip unchanged rows.
-      (invalidate-screen-cache!)
-      (redraw!)))
+      (let ([display (terminal-output-port)]
+            [generation
+             (with-mutex redraw-lock
+               (set! visual-bell-generation (+ visual-bell-generation 1))
+               (set! visual-bell-active? #t)
+               visual-bell-generation)])
+        (fork-thread
+          (lambda ()
+            (sleep (make-time 'time-duration 50000000 0))
+            (when screen-live?
+              (parameterize ([terminal-output-port display])
+                (with-mutex redraw-lock
+                  ;; A newer bell owns the deadline and must not be cleared by
+                  ;; an older animation's expiry.
+                  (when (= generation visual-bell-generation)
+                    (set! visual-bell-active? #f)
+                    (invalidate-screen-cache!)
+                    (update-terminal-title!)
+                    (redraw-frame!))))))))))
 
   (define (query-key! question allowed . rest)
     ;; A focused single-key question. Decode complete terminal events so an
@@ -2130,9 +2143,11 @@
     ;; or mouse records the window and buffer being left as its target.
     (when (and (memq w windows) (not (eq? w current-window)))
       (let ([old current-window])
+        (dispatch-app-event! "BLUR")
         (when (app-buffer? (window-buffer w))
           (set-app-target! (window-buffer w) old (window-buffer old)))
-        (set! current-window w)))
+        (set! current-window w)
+        (dispatch-app-event! "FOCUS")))
     current-window)
 
   (define (other-window!)
@@ -2931,12 +2946,18 @@
                                 ((car procs))
                                 ((car procs) b active?))])
                      (cond
-                       [(string? v) (cons v #f)]
-                       [(and (pair? v) (string? (car v))) v]
+                       [(string? v) (list (cons v #f))]
+                       [(and (pair? v) (string? (car v))) (list v)]
+                       [(and (list? v)
+                             (for-all (lambda (span)
+                                        (and (pair? span)
+                                             (string? (car span))))
+                                      v))
+                        v]
                        [else #f])))])
             (loop (cdr procs)
                   (and ordinary (> ordinary 1) (- ordinary 1))
-                  (if value (cons value out) out))))))
+                  (if value (append (reverse value) out) out))))))
 
   (define highlighters (make-registry))
 
@@ -3278,6 +3299,15 @@
             (window-pcol-set! w col)))
         windows)
       b))
+
+  (define (view-invalidate! b)
+    ;; Dynamic row renderers can change their presentation while the view's
+    ;; structural placeholder lines remain equal. Mark the display stale
+    ;; explicitly so the next frame asks the renderer for every visible row.
+    (unless (app-buffer? b)
+      (error 'view-invalidate! "not an app or view buffer" b))
+    (invalidate-screen-cache!)
+    b)
 
   (define (point-visible?)
     (let* ([entry (assq current-window (window-layout))]
@@ -4030,6 +4060,12 @@
              [mode-text (if mode-tag (format "  (~a)" mode-tag) "")]
              [hint-values (status-hint-values b current?)]
              [hint-text (apply string-append (map car hint-values))]
+             [hint-wide-extra
+              (fold-left
+                (lambda (extra character)
+                  (+ extra
+                     (max 0 (- (terminal-character-width character) 1))))
+                0 (string->list hint-text))]
              [page-text
               (if (and (eq? b completions-buffer)
                        (> completions-pages 1))
@@ -4069,7 +4105,8 @@
                                      [else "\x1b;[38;5;245m"])]
                            [content-width
                             (max 0 (- (window-width w)
-                                      (string-length window-buttons)))]
+                                      (string-length window-buttons)
+                                      hint-wide-extra))]
                            [text (string-append (fit status content-width)
                                                 window-buttons)]
                            [n (string-length text)]
@@ -4103,11 +4140,13 @@
                           (let* ([value (car values)]
                                  [end (min (+ at (string-length (car value)))
                                            he)])
-                            (when (eq? (cdr value) 'italic)
-                              (ansi "\x1b;[3m"))
+                            (case (cdr value)
+                              [(italic) (ansi "\x1b;[3m")]
+                              [(red-italic) (ansi "\x1b;[3;31m")])
                             (ansi (substring text at end))
-                            (when (eq? (cdr value) 'italic)
-                              (ansi "\x1b;[23m"))
+                            (case (cdr value)
+                              [(italic) (ansi "\x1b;[23m")]
+                              [(red-italic) (ansi "\x1b;[23m" fg)])
                             (loop (cdr values) end))))
                       (ansi (substring text he content-width)
                             "\x1b;[1m"
@@ -4164,6 +4203,14 @@
           (max 0 (min echo-scroll (- total (max live 1))))))))
 
   (define redraw-lock (make-mutex))
+
+  (define (paint-visual-bell!)
+    (when visual-bell-active?
+      (let loop ([row (- rows echo-height)])
+        (when (< row rows)
+          (goto (+ row 1) 1)
+          (ansi "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
+          (loop (+ row 1))))))
 
   (define (redraw-frame!)
     ;; The frame goes out inside a synchronized update (mode 2026):
@@ -4228,7 +4275,8 @@
                                            (cons (window-top (car entry))
                                                  (window-topseg (car entry)))))
                   layout))
-      (paint-echo-area!))
+      (paint-echo-area!)
+      (paint-visual-bell!))
     (place-cursor!)
     (ansi "\x1b;[?2026l")
     (flush-output-port (terminal-output-port)))
