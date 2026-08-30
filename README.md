@@ -1,12 +1,12 @@
 # e
 
-e is a tiny, fully configurable, self-aware, Emacs-like console editor written
+e is a tiny, fully customizable, self-aware, Emacs-like console editor written
 in [Chez Scheme](https://cisco.github.io/ChezScheme/). It feels like Emacs in
 many ways (buffers, recursive window splits, incremental search, built-in
 Scheme), but it's not trying to be an Emacs clone.
 
 It's "self-aware" because it knows its own internals (like most Lisp systems).
-It's "fully configurable" because its code is just one big configuration
+It's "fully customizable" because its code is just one big configuration
 (code is data :)
 
 The editor is itself a Scheme system. It's a set of R6RS libraries, all of
