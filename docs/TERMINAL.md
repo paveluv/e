@@ -190,6 +190,11 @@ exited`. It also stops capturing input, so ordinary editor chords such as
 `C-x b`, `C-x k`, and `C-x o` work immediately; kill the buffer normally when
 it is no longer needed.
 
+The automated and optional `vttest` procedures are documented in the
+[terminal testing guide](../tests/TERMINAL.md). The automated suite is
+entirely owned by e and never depends on `vttest` or the host terminfo
+database.
+
 The same state machine can run without a PTY or editor buffer. This is useful
 for tests, protocol experiments, and tools that need structured terminal
 output:
