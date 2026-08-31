@@ -162,6 +162,18 @@
               '("AAAAAAAAA " "BBBBBBBB  " "CCCCCCC   " "DDDDDD    "
                 "EEEEE     " "FFFF      ")))
 
+     (let ([terminal (make-terminal-emulator 3 5)])
+       (terminal-emulator-feed!
+         terminal
+         "ABCDE\x1b;[2;1HFGHIJ\x1b;[3;1HKLMNO\x1b;[2 @")
+       (check 'scroll-left
+              (vector->list (terminal-emulator-screen terminal))
+              '("CDE  " "HIJ  " "MNO  "))
+       (terminal-emulator-feed! terminal "\x1b;[ A")
+       (check 'scroll-right
+              (vector->list (terminal-emulator-screen terminal))
+              '(" CDE " " HIJ " " MNO ")))
+
      (let ([terminal (make-terminal-emulator 1 20)])
        (terminal-emulator-feed! terminal "\t\t\x1b;[Z")
        (check 'back-tab (state-ref terminal 'cursor) '(0 . 8))
@@ -171,6 +183,24 @@
        (terminal-emulator-feed! terminal "\x1b;H\x1b;[3g\t")
        (check 'clear-all-tab-stops
               (state-ref terminal 'cursor) '(0 . 19)))
+
+     (let ([terminal (make-terminal-emulator 1 32)])
+       (terminal-emulator-feed! terminal "\x1b;[I")
+       (check 'cursor-horizontal-tab-default
+              (state-ref terminal 'cursor) '(0 . 8))
+       (terminal-emulator-feed! terminal "\x1b;[2I")
+       (check 'cursor-horizontal-tab-parameter
+              (state-ref terminal 'cursor) '(0 . 24)))
+
+     (let ([terminal (make-terminal-emulator 2 8)])
+       (terminal-emulator-feed! terminal "\t*\t*")
+       (check 'horizontal-tab-preserves-delayed-wrap
+              (vector->list (terminal-emulator-screen terminal))
+              '("       *" "*       "))
+       (terminal-emulator-feed! terminal "\x1b;c\x1b;[I*\x1b;[I*")
+       (check 'cursor-horizontal-tab-preserves-delayed-wrap
+              (vector->list (terminal-emulator-screen terminal))
+              '("       *" "*       ")))
 
      (let ([terminal (make-terminal-emulator 1 5)])
        (terminal-emulator-feed! terminal "abc\x1b;[2G\x1b;[4hX")
@@ -255,10 +285,12 @@
               (state-ref terminal 'scroll-region) '(0 . 2)))
 
      (let ([terminal (make-terminal-emulator 1 5)])
-       (terminal-emulator-feed! terminal "z\x1b;[3b")
+       (terminal-emulator-feed! terminal "z\x1b;[3b\x1b;[10b")
        (check 'repeat-character
               (vector->list (terminal-emulator-screen terminal))
-              '("zzzz ")))
+              '("zzzz "))
+       (check 'repeat-after-control-is-ignored
+              (state-ref terminal 'cursor) '(0 . 4)))
 
      (let ([terminal (make-terminal-emulator 1 2)])
        (terminal-emulator-feed! terminal "\x1b;[1mX")
@@ -330,6 +362,19 @@
      (let ([terminal (make-terminal-emulator 2 5)])
        (check 'mouse-input-disabled
               (terminal-emulator-mouse-input terminal 0 4 5 #f) #f)
+       (terminal-emulator-feed! terminal "\x1b;[?9h")
+       (check 'x10-legacy-mode (state-ref terminal 'mouse-tracking) 9)
+       (check 'x10-legacy-press
+              (terminal-emulator-mouse-input terminal 0 4 5 #f)
+              (bytevector 27 91 77 32 36 37))
+       (check 'x10-legacy-release-suppressed
+              (terminal-emulator-mouse-input terminal 0 4 5 #t) #f)
+       (check 'x10-legacy-wheel
+              (terminal-emulator-mouse-input terminal 64 4 5 #f)
+              (bytevector 27 91 77 96 36 37))
+       (terminal-emulator-feed! terminal "\x1b;[?9l")
+       (check 'x10-legacy-mode-disabled
+              (state-ref terminal 'mouse-tracking) #f)
        (terminal-emulator-feed! terminal "\x1b;[?1000h")
        (check 'x10-mouse-press
               (terminal-emulator-mouse-input terminal 0 4 5 #f)
@@ -546,6 +591,19 @@
               '("\x1b;P!|00000000\x1b;\\"
                 "\x1b;[2;1;1;128;128;1;0x"
                 "\x1b;[3;1;1;128;128;1;0x")))
+
+     (let ([terminal (make-terminal-emulator 2 8)])
+       (terminal-emulator-feed!
+         terminal "\x1b; G\x1b;[6n\x1b;[=c\x1b; F\x1b;[6n")
+       (check 's8c1t-state (state-ref terminal 'eight-bit-controls) #f)
+       (check 's8c1t-and-s7c1t-replies
+              (terminal-emulator-replies terminal)
+              (list
+                (string-append (string (integer->char #x9b)) "1;1R")
+                (string-append (string (integer->char #x90))
+                               "!|00000000"
+                               (string (integer->char #x9c)))
+                "\x1b;[1;1R")))
 
      (let ([terminal (make-terminal-emulator 3 8)])
        (terminal-emulator-feed!

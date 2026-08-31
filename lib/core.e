@@ -73,7 +73,7 @@
     register-app! register-view! set-app-presentation! set-app-capture!
     app-capture-escaped? set-app-cursor-visible! set-app-manages-viewport!
     set-app-status-position! detach-app!
-    app-event-position app-event-buffer-position
+    app-event-position app-event-buffer-position app-event-button
     escape-app-capture! display-app! display-app-here!
     buffer-window-size
     target-window target-buffer show-buffer-in-target!
@@ -5088,6 +5088,9 @@
   ;; 1-based cell coordinates within the app's text viewport while a mouse
   ;; event is dispatched, or #f for keyboard events.
   (define app-event-position (make-parameter #f))
+  ;; Raw xterm button code (including modifier/motion bits) for an app mouse
+  ;; event, or #f for keyboard events.
+  (define app-event-button (make-parameter #f))
   ;; The unclamped (row . column) addressed by an app content click. This can
   ;; lie beyond the buffer and lets apps distinguish empty viewport space from
   ;; their last rendered line.
@@ -5352,7 +5355,7 @@
          (cons (+ (max sticky (window-top w)) (- k sticky))
                (+ (window-left w) col))])))
 
-  (define (mouse-press! x y)
+  (define (mouse-press! x y button)
     ;; A normal-buffer press focuses its window and places point. An app text
     ;; press instead updates and invokes the app without stealing focus; only
     ;; an app status-bar press focuses that window. A text press also arms the
@@ -5445,7 +5448,8 @@
                       ;; old focus by returning keep-focus for MOUSE-CLICK.
                       (let ([result
                              (parameterize
-                               ([app-event-buffer-position clicked])
+                               ([app-event-buffer-position clicked]
+                                [app-event-button button])
                                (dispatch-app-event! "MOUSE-CLICK"))])
                         (cond [(eq? result 'ignore-click)
                                (goto-point! old-point)
@@ -5465,7 +5469,7 @@
                   (arm-text-selection!)
                   "MOUSE-HANDLED"]))))])))
 
-  (define (mouse-drag! x y)
+  (define (mouse-drag! x y button)
     ;; A split-divider drag resizes its two subtrees; otherwise extend
     ;; the selection armed by the press --
     ;; the mark activates and point follows the pointer within the
@@ -5503,11 +5507,12 @@
                         (< (- y 1) (+ start height)))
                (goto-point! (window-position w start height x y))
                (if (app-buffer? (window-buffer w))
-                   (unless (dispatch-app-event! "MOUSE-DRAG")
+                   (unless (parameterize ([app-event-button button])
+                             (dispatch-app-event! "MOUSE-DRAG"))
                      (set! mark-active? #t))
                    (set! mark-active? #t))))))]))
 
-  (define (mouse-release! x y)
+  (define (mouse-release! x y button)
     (window-at (- x 1) (- y 1)
       (lambda (entry)
         (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
@@ -5515,9 +5520,10 @@
                      (< (- y 1) (+ start height))
                      (app-buffer? (window-buffer w)))
             (goto-point! (window-position w start height x y))
-            (dispatch-app-event! "MOUSE-RELEASE"))))))
+            (parameterize ([app-event-button button])
+              (dispatch-app-event! "MOUSE-RELEASE")))))))
 
-  (define (mouse-wheel! x y dir meta? shift?)
+  (define (mouse-wheel! x y button dir meta? shift?)
     ;; Scroll the window under the pointer; the focused window stays focused.
     ;; Meta-wheel
     ;; applies the corresponding global buffer-switch binding to the hovered
@@ -5536,7 +5542,8 @@
                 (unless (parameterize
                           ([app-event-position
                             (cons (max 1 (- x (window-xoff w)))
-                                  (max 1 (- y (cadr entry))))])
+                                  (max 1 (- y (cadr entry))))]
+                           [app-event-button button])
                           (dispatch-app-event!
                             (string-append
                               (if shift? "S-" "")
@@ -5578,21 +5585,21 @@
             (and handle? (char? c) (= (length nums) 3)
                  (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
                    (cond [(char=? c #\m)                         ; release
-                          (mouse-release! x y)
+                          (mouse-release! x y b)
                           (set! drag-status #f)
                           (set! drag-divider #f)
                           (set! drag-scrollbar #f)
                           "MOUSE-HANDLED"]
                          [(= (bitwise-and b 64) 64)               ; wheel
-                          (mouse-wheel! x y (bitwise-and b 3)
+                          (mouse-wheel! x y b (bitwise-and b 3)
                                         (= (bitwise-and b 8) 8)
                                         (= (bitwise-and b 4) 4))]
                          [(= (bitwise-and b 32) 32)               ; drag
                           (when (< (bitwise-and b 3) 3)
-                            (mouse-drag! x y))
+                            (mouse-drag! x y b))
                           "MOUSE-HANDLED"]
                          [(< (bitwise-and b 3) 3)                 ; a press
-                          (mouse-press! x y)]
+                          (mouse-press! x y b)]
                          [else "MOUSE-HANDLED"])))))))
 
   ;;; Key handling ----------------------------------------------------------

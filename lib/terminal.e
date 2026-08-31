@@ -26,6 +26,7 @@
             (mutable wrap-pending) (mutable autowrap) (mutable origin)
             (mutable insert) (mutable newline) (mutable reverse-screen)
             (mutable cursor-keys) (mutable keypad) (mutable meta-eight-bit)
+            (mutable controls-eight-bit)
             (mutable cursor-visible) (mutable tab-stops)
             (mutable last-character)
             (mutable dirty) (mutable alive) (mutable bell) (mutable prefix)
@@ -102,7 +103,7 @@
                          rows cols (make-screen rows cols) (make-vector rows #f)
                          0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
                          'normal "" #f "" '() 'ascii 'ascii 0 0
-                         #f #t #f #f #f #f #f #f #f #t
+                         #f #t #f #f #f #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
                          #f #f #f #f #f 0 #f #f #f #f #f #f #f #f
                          0 0 #f #f #f #f #f '() '() '()
@@ -168,6 +169,7 @@
       (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
       (application-keypad . ,(terminal-state-keypad emulator))
       (eight-bit-meta . ,(terminal-state-meta-eight-bit emulator))
+      (eight-bit-controls . ,(terminal-state-controls-eight-bit emulator))
       (mouse-tracking . ,(terminal-state-mouse emulator))
       (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
       (utf8-mouse . ,(terminal-state-mouse-utf8 emulator))
@@ -1035,13 +1037,42 @@
                       (list-ref parameters index))])
       (if (or (not value) (= value 0)) default value)))
 
+  (define (terminal-reply-wire state text)
+    (if (not (terminal-state-controls-eight-bit state))
+        (values text (string->utf8 text))
+        (cond
+          [(string-prefix? "\x1b;[" text)
+           (let* ([tail (substring text 2 (string-length text))]
+                  [bytes (string->utf8 tail)]
+                  [wire (make-bytevector (+ (bytevector-length bytes) 1))])
+             (bytevector-u8-set! wire 0 #x9b)
+             (bytevector-copy! bytes 0 wire 1 (bytevector-length bytes))
+             (values (string-append (string (integer->char #x9b)) tail) wire))]
+          [(and (string-prefix? "\x1b;P" text)
+                (>= (string-length text) 4)
+                (string=? (substring text (- (string-length text) 2)
+                                     (string-length text))
+                          "\x1b;\\"))
+           (let* ([tail (substring text 2 (- (string-length text) 2))]
+                  [bytes (string->utf8 tail)]
+                  [wire (make-bytevector (+ (bytevector-length bytes) 2))]
+                  [end (- (bytevector-length wire) 1)])
+             (bytevector-u8-set! wire 0 #x90)
+             (bytevector-copy! bytes 0 wire 1 (bytevector-length bytes))
+             (bytevector-u8-set! wire end #x9c)
+             (values (string-append (string (integer->char #x90)) tail
+                                    (string (integer->char #x9c)))
+                     wire))]
+          [else (values text (string->utf8 text))])))
+
   (define (terminal-reply! state text)
-    (terminal-state-replies-set!
-      state (append (terminal-state-replies state) (list text)))
-    (when (terminal-state-process state)
-      (let ([output (terminal-process-output (terminal-state-process state))])
-        (put-bytevector output (string->utf8 text))
-        (flush-output-port output))))
+    (let-values ([(reported wire) (terminal-reply-wire state text)])
+      (terminal-state-replies-set!
+        state (append (terminal-state-replies state) (list reported)))
+      (when (terminal-state-process state)
+        (let ([output (terminal-process-output (terminal-state-process state))])
+          (put-bytevector output wire)
+          (flush-output-port output)))))
 
   (define (primary-device-attributes! state)
     ;; VT100 with advanced video: matches xterm-256color's terminfo probe.
@@ -1278,6 +1309,18 @@
         (vector-set! styles i (terminal-state-style state)))
       (normalize-cell-row! line styles)))
 
+  (define (scroll-horizontally! state count right?)
+    (let ([row (terminal-state-row state)]
+          [col (terminal-state-col state)])
+      (do ([line (scrolling-top state) (+ line 1)])
+          ((> line (terminal-state-scroll-bottom state)))
+        (terminal-state-row-set! state line)
+        (terminal-state-col-set! state (left-bound state))
+        ((if right? insert-characters! delete-characters!) state count)
+        (vector-set! (terminal-state-wrapped state) line #f))
+      (terminal-state-row-set! state row)
+      (terminal-state-col-set! state col)))
+
   (define (sgr-style sequence)
     (if (string=? sequence "")
         'plain
@@ -1491,6 +1534,7 @@
       (terminal-state-cursor-keys-set! state #f)
       (terminal-state-keypad-set! state #f)
       (terminal-state-meta-eight-bit-set! state #f)
+      (terminal-state-controls-eight-bit-set! state #f)
       (terminal-state-cursor-visible-set! state #t)
       (terminal-state-tab-stops-set! state (default-tab-stops cols))
       (terminal-state-last-character-set! state #\space)
@@ -1554,6 +1598,7 @@
       (terminal-state-cursor-keys-set! state #f)
       (terminal-state-keypad-set! state #f)
       (terminal-state-meta-eight-bit-set! state #f)
+      (terminal-state-controls-eight-bit-set! state #f)
       (terminal-state-cursor-visible-set! state #t)
       (terminal-state-last-character-set! state #\space)
       (terminal-state-sgr-set! state "")
@@ -1561,14 +1606,19 @@
       (terminal-state-dirty-set! state #t)))
 
   (define (dispatch-csi! state final text)
-    (unless (char=? final #\m)
+    ;; HT and CHT preserve delayed wrap at the right margin.
+    (unless (memv final '(#\m #\I))
       (terminal-state-wrap-pending-set! state #f))
     (let* ([cursor-shape? (and (char=? final #\q)
                                (> (string-length text) 0)
                                (char=? (string-ref text
                                                    (- (string-length text) 1))
                                        #\space))]
-           [parameter-text (if cursor-shape?
+           [space-intermediate?
+            (and (> (string-length text) 0)
+                 (char=? (string-ref text (- (string-length text) 1))
+                         #\space))]
+           [parameter-text (if (or cursor-shape? space-intermediate?)
                                (substring text 0 (- (string-length text) 1))
                                text)]
            [parameters (parameter-list parameter-text)]
@@ -1617,7 +1667,7 @@
                                (terminal-state-scroll-top state) 0))
                    (terminal-state-col-set! state (if on? (left-bound state) 0))]
                   [(25) (terminal-state-cursor-visible-set! state on?)]
-                  [(1000 1002 1003)
+                  [(9 1000 1002 1003)
                    (if on?
                        (terminal-state-mouse-set! state mode)
                        (when (eqv? (terminal-state-mouse state) mode)
@@ -1651,10 +1701,12 @@
                (when (memv 20 parameters)
                  (terminal-state-newline-set! state (char=? final #\h))))]
             [(#\A)
-             (terminal-state-row-set!
-               state (max (if (terminal-state-origin state)
-                              (terminal-state-scroll-top state) 0)
-                          (- row n)))]
+             (if space-intermediate?
+                 (scroll-horizontally! state n #t)
+                 (terminal-state-row-set!
+                   state (max (if (terminal-state-origin state)
+                                  (terminal-state-scroll-top state) 0)
+                              (- row n))))]
             [(#\B #\e)
              (terminal-state-row-set!
                state (min (if (terminal-state-origin state)
@@ -1670,6 +1722,10 @@
                state (max (if (<= (left-bound state) col (right-bound state))
                               (left-bound state) 0)
                           (- col n)))]
+            [(#\I)
+             (do ([left n (- left 1)])
+                 ((= left 0))
+               (terminal-state-col-set! state (next-tab-stop state)))]
             [(#\E) (terminal-state-row-set!
                      state
                      (min (if (terminal-state-origin state)
@@ -1725,7 +1781,9 @@
             [(#\S) (scroll-up! state n)]
             [(#\T) (scroll-down! state n)]
             [(#\P) (delete-characters! state n)]
-            [(#\@) (insert-characters! state n)]
+            [(#\@) (if space-intermediate?
+                       (scroll-horizontally! state n #f)
+                       (insert-characters! state n))]
             [(#\X) (erase-line! state col (+ col n))]
             [(#\Z)
              (let loop ([candidate (- col 1)] [left n])
@@ -1788,9 +1846,14 @@
             [(#\u) (restore-cursor! state)]
             [(#\m) (set-sgr! state text)]
             [(#\b)
-             (do ([left n (- left 1)])
-                 ((= left 0))
-               (put-character! state (terminal-state-last-character state)))]
+             (let ([character (terminal-state-last-character state)])
+               (when character
+                 (do ([left n (- left 1)])
+                     ((= left 0))
+                   (put-character! state character)))
+               ;; REP itself is now the preceding control sequence, so a
+               ;; second REP without an intervening graphic is ignored.
+               (terminal-state-last-character-set! state #f))]
             [(#\p)
              (when (string-prefix? "!" text)
                (soft-reset-terminal-state! state))]
@@ -1925,7 +1988,6 @@
                   (left-bound state) 0)
               (- (terminal-state-col state) 1)))]
       [(9)
-       (terminal-state-wrap-pending-set! state #f)
        (terminal-state-col-set! state (next-tab-stop state))]
       [(10 11 12)
        (terminal-state-wrap-pending-set! state #f)
@@ -2027,6 +2089,7 @@
          [(#\>) (terminal-state-keypad-set! state #f)
           (terminal-state-parser-set! state 'normal)]
          [(#\#) (terminal-state-parser-set! state 'escape-hash)]
+         [(#\space) (terminal-state-parser-set! state 'escape-space)]
          [(#\l)
           ;; Lock rows above the cursor; the cursor row remains the first
           ;; scrollable row, as specified by xterm's memory-lock capability.
@@ -2057,6 +2120,11 @@
           (terminal-state-parameters-set! state "")
           (terminal-state-parser-set! state 'charset)]
          [else (terminal-state-parser-set! state 'normal)])]
+      [(escape-space)
+       (case character
+         [(#\F) (terminal-state-controls-eight-bit-set! state #f)]
+         [(#\G) (terminal-state-controls-eight-bit-set! state #t)])
+       (terminal-state-parser-set! state 'normal)]
       [(escape-hash)
        (when (char=? character #\8) (screen-alignment-test! state))
        (terminal-state-parser-set! state 'normal)]
@@ -2464,26 +2532,27 @@
     (set! terminals '()))
 
   (define (mouse-bytes state code x y release?)
-    (let ([button (if release? 3 code)])
-      (cond
-        [(terminal-state-mouse-sgr state)
-         (string->utf8
-           (format "\x1b;[<~a;~a;~a~a"
-                   code x y (if release? "m" "M")))]
-        [(terminal-state-mouse-urxvt state)
-         (string->utf8 (format "\x1b;[~a;~a;~aM" (+ 32 button) x y))]
-        [(terminal-state-mouse-utf8 state)
-         (string->utf8
-           (string-append "\x1b;[M"
-                          (string (integer->char (+ 32 button))
-                                  (integer->char (+ 32 x))
-                                  (integer->char (+ 32 y)))))]
-        [else
-         ;; The original X10 encoding is limited to coordinates below 223.
-         (bytevector 27 91 77
-                     (+ 32 button)
-                     (+ 32 (min x 223))
-                     (+ 32 (min y 223)))])))
+    (and (not (and (eqv? (terminal-state-mouse state) 9) release?))
+      (let ([button (if release? 3 code)])
+        (cond
+          [(terminal-state-mouse-sgr state)
+           (string->utf8
+             (format "\x1b;[<~a;~a;~a~a"
+                     code x y (if release? "m" "M")))]
+          [(terminal-state-mouse-urxvt state)
+           (string->utf8 (format "\x1b;[~a;~a;~aM" (+ 32 button) x y))]
+          [(terminal-state-mouse-utf8 state)
+           (string->utf8
+             (string-append "\x1b;[M"
+                            (string (integer->char (+ 32 button))
+                                    (integer->char (+ 32 x))
+                                    (integer->char (+ 32 y)))))]
+          [else
+           ;; The original X10 encoding is limited to coordinates below 223.
+           (bytevector 27 91 77
+                       (+ 32 button)
+                       (+ 32 (min x 223))
+                       (+ 32 (min y 223)))]))))
 
   (define (terminal-emulator-mouse-input emulator code x y release?)
     (unless (terminal-emulator? emulator)
@@ -2498,7 +2567,8 @@
          (mouse-bytes emulator code x y release?)))
 
   (define (send-mouse! state code x y release?)
-    (write-bytes! state (mouse-bytes state code x y release?)))
+    (cond [(mouse-bytes state code x y release?)
+           => (lambda (bytes) (write-bytes! state bytes))]))
 
   (define (mouse-position state)
     (or (app-event-position)
@@ -2541,7 +2611,7 @@
        (if (terminal-state-mouse state)
            (let* ([position (mouse-position state)]
                   [x (car position)] [y (cdr position)])
-             (send-mouse! state 0 x y #f)
+             (send-mouse! state (or (app-event-button) 0) x y #f)
              #t)
            #f)]
       [(string=? event "MOUSE-DRAG")
@@ -2549,22 +2619,25 @@
                 (>= (terminal-state-mouse state) 1002))
            (let* ([position (mouse-position state)]
                   [x (car position)] [y (cdr position)])
-             (send-mouse! state 32 x y #f)
+             (send-mouse! state (or (app-event-button) 32) x y #f)
              #t)
            #f)]
       [(string=? event "MOUSE-RELEASE")
        (if (terminal-state-mouse state)
            (let* ([position (mouse-position state)]
                   [x (car position)] [y (cdr position)])
-             (send-mouse! state 0 x y #t)
+             (send-mouse! state (or (app-event-button) 0) x y #t)
              #t)
            #f)]
       [(member event '("WHEEL-UP" "WHEEL-DOWN"))
        (if (terminal-state-mouse state)
            (let* ([position (mouse-position state)]
                   [x (car position)] [y (cdr position)])
+             ;; Wheel buttons are an xterm extension to legacy mode 9 as well.
              (send-mouse! state
-                          (if (string=? event "WHEEL-UP") 64 65) x y #f)
+                          (or (app-event-button)
+                              (if (string=? event "WHEEL-UP") 64 65))
+                          x y #f)
              #t)
            (begin
              (terminal-scroll!
@@ -2643,7 +2716,7 @@
                                    (make-vector rows #f)
                                    0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
                                    'normal "" #f "" '() 'ascii 'ascii 0 0
-                                   #f #t #f #f #f #f #f #f #f #t
+                                   #f #t #f #f #f #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
                                    #t #t #f #f #f 0 #f #f #f #f #f #f #f #f
                                    0 0 #f #f #f #f #f
