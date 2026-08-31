@@ -6,7 +6,8 @@
           make-terminal-emulator terminal-emulator?
           terminal-emulator-feed! terminal-emulator-resize!
           terminal-emulator-screen
-          terminal-emulator-styles terminal-emulator-state terminal-emulator-input
+          terminal-emulator-styles terminal-emulator-hyperlinks
+          terminal-emulator-state terminal-emulator-input
           terminal-emulator-mouse-input terminal-emulator-replies)
   (import (chezscheme) (core) (sys)
           (only (describe) register-descriptions!))
@@ -42,11 +43,32 @@
             (mutable unfollowed-windows)
             (mutable styles) (mutable main-styles) (mutable history-styles)
             (mutable rendered-cells) (mutable rendered-styles)
-            (mutable sgr) (mutable style)
+            (mutable rendered-links)
+            (mutable sgr) (mutable style) (mutable link)
             (mutable palette) (mutable default-foreground)
             (mutable default-background)
             (mutable printer-controller) (mutable printer-pending)
             (mutable printer-output)))
+
+  ;; Hyperlinks are rendition metadata just like color and attributes. Keeping
+  ;; both in the existing style grid makes every cell-moving operation carry
+  ;; the OSC 8 identity automatically.
+  (define-record-type terminal-cell-style
+    (fields face link))
+
+  (define (cell-style-face style)
+    (if (terminal-cell-style? style)
+        (terminal-cell-style-face style) style))
+
+  (define (cell-style-link style)
+    (and (terminal-cell-style? style)
+         (terminal-cell-style-link style)))
+
+  (define (printed-cell-style state)
+    (if (terminal-state-link state)
+        (make-terminal-cell-style (terminal-state-style state)
+                                  (terminal-state-link state))
+        (terminal-state-style state)))
 
   (define terminals '())
   (define serial 0)
@@ -109,7 +131,7 @@
                          0 0 #f #f #f #f #f '() '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() #f (make-style-screen rows cols 'plain)
-                         "" 'plain (make-vector 256 #f) #f #f #f "" ""))
+                         #f "" 'plain #f (make-vector 256 #f) #f #f #f "" ""))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -139,6 +161,14 @@
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-styles "expected a terminal emulator" emulator))
     (effective-style-screen emulator (terminal-state-styles emulator)))
+
+  (define (terminal-emulator-hyperlinks emulator)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-hyperlinks
+             "expected a terminal emulator" emulator))
+    (vector-map
+      (lambda (row) (vector-map cell-style-link row))
+      (terminal-state-styles emulator)))
 
   (define (terminal-emulator-state emulator)
     (unless (terminal-emulator? emulator)
@@ -927,6 +957,7 @@
                                  (terminal-state-row state))]
                [styles (vector-ref (terminal-state-styles state)
                                    (terminal-state-row state))]
+               [printed-style (printed-cell-style state)]
                [col (terminal-state-col state)]
                [limit (if (<= left col right) (+ right 1) cols)]
                [width (min width (- limit col))])
@@ -934,10 +965,10 @@
           (do ([index col (+ index 1)]) ((= index (+ col width)))
             (clear-cell! line styles index (terminal-state-style state)))
           (vector-set! line col (string character))
-          (vector-set! styles col (terminal-state-style state))
+          (vector-set! styles col printed-style)
           (do ([index (+ col 1) (+ index 1)]) ((= index (+ col width)))
             (vector-set! line index "")
-            (vector-set! styles index (terminal-state-style state)))
+            (vector-set! styles index printed-style))
           (if (= (+ col width) limit)
             (begin
               (terminal-state-col-set! state (- limit 1))
@@ -1153,12 +1184,28 @@
                            (terminal-state-dirty-set! state #t))])))
             (loop (cddr fields)))))))
 
+  (define (dispatch-hyperlink! state text)
+    ;; OSC 8 ; params ; URI ST. Only id is semantic to the emulator; unknown
+    ;; parameters remain safely ignored as tmux does. An empty URI closes it.
+    (let ([separator (string-search text ";" 2 (string-length text))])
+      (when separator
+        (let* ([parameters (substring text 2 separator)]
+               [uri (substring text (+ separator 1) (string-length text))]
+               [id (find (lambda (field) (string-prefix? "id=" field))
+                         (split-parameter parameters #\:))])
+          (terminal-state-link-set!
+            state
+            (and (not (string=? uri ""))
+                 (list uri (and id (substring id 3 (string-length id))))))))))
+
   (define (dispatch-osc! state)
     (let* ([text (terminal-state-osc-text state)]
            [fields (split-parameter text #\;)])
       (cond
         [(and (pair? fields) (string=? (car fields) "4"))
          (dispatch-palette! state (cdr fields))]
+        [(string-prefix? "8;" text)
+         (dispatch-hyperlink! state text)]
         [(and (= (length fields) 2) (string=? (car fields) "10"))
          (set-default-color! state #t (cadr fields))]
         [(and (= (length fields) 2) (string=? (car fields) "11"))
@@ -1428,7 +1475,7 @@
   (define (effective-style-row state row)
     (vector-map
       (lambda (style)
-        (let ([style (resolved-style state style)])
+        (let ([style (resolved-style state (cell-style-face style))])
           (if (terminal-state-reverse-screen state)
               (reversed-style style) style)))
       row))
@@ -1560,6 +1607,7 @@
       (terminal-state-history-styles-set! state '())
       (terminal-state-sgr-set! state "")
       (terminal-state-style-set! state 'plain)
+      (terminal-state-link-set! state #f)
       (terminal-state-palette-set! state (make-vector 256 #f))
       (terminal-state-default-foreground-set! state #f)
       (terminal-state-default-background-set! state #f)
@@ -1603,6 +1651,7 @@
       (terminal-state-last-character-set! state #\space)
       (terminal-state-sgr-set! state "")
       (terminal-state-style-set! state 'plain)
+      (terminal-state-link-set! state #f)
       (terminal-state-dirty-set! state #t)))
 
   (define (dispatch-csi! state final text)
@@ -2249,6 +2298,12 @@
                         (append (if (terminal-state-main-screen state)
                                     '() (terminal-state-history-styles state))
                                 (vector->list
+                                  (terminal-state-styles state))))]
+                  [links
+                   (map (lambda (row) (vector-map cell-style-link row))
+                        (append (if (terminal-state-main-screen state)
+                                    '() (terminal-state-history-styles state))
+                                (vector->list
                                   (terminal-state-styles state))))])
               (view-replace! (terminal-state-buffer state)
                              (map placeholder-line cells))
@@ -2256,6 +2311,8 @@
                 state (list->vector (map vector-copy cells)))
               (terminal-state-rendered-styles-set!
                 state (list->vector (map vector-copy styles)))
+              (terminal-state-rendered-links-set!
+                state (list->vector (map vector-copy links)))
               ;; Cell/style rows are dynamic renderer data; their structural
               ;; placeholder lines often remain identical across frames.
               (view-invalidate! (terminal-state-buffer state)))
@@ -2276,6 +2333,28 @@
       (and state (terminal-state-rendered-cells state)
            (< row (vector-length (terminal-state-rendered-cells state)))
            (vector-ref (terminal-state-rendered-cells state) row))))
+
+  (define (terminal-row-hyperlinks buffer row line)
+    (let ([state (terminal-of buffer)])
+      (if (and state (terminal-state-rendered-links state)
+               (< row (vector-length (terminal-state-rendered-links state))))
+          (let ([links (vector-ref (terminal-state-rendered-links state) row)])
+            (let loop ([column 0] [ranges '()])
+              (if (= column (vector-length links))
+                  (reverse ranges)
+                  (let ([link (vector-ref links column)])
+                    (if (not link)
+                        (loop (+ column 1) ranges)
+                        (let end ([at (+ column 1)])
+                          (if (and (< at (vector-length links))
+                                   (equal? (vector-ref links at) link))
+                              (end (+ at 1))
+                              (loop at
+                                    (cons (append (list column at (car link))
+                                                  (if (cadr link)
+                                                      (list (cadr link)) '()))
+                                          ranges)))))))))
+          '())))
 
   (define (materialize-terminal-transcript! state)
     (when (terminal-state-rendered-cells state)
@@ -2724,7 +2803,7 @@
                                    (make-style-screen rows cols 'plain)
                                    #f '() #f
                                    (make-style-screen rows cols 'plain)
-                                   "" 'plain (make-vector 256 #f) #f #f
+                                   #f "" 'plain #f (make-vector 256 #f) #f #f
                                    #f "" ""))
             (set-app-status-position!
               buffer
@@ -2739,6 +2818,7 @@
   (define (init!)
     (register-mode! "terminal" '() '() (lambda (line) #f)
                     terminal-row-render terminal-row-styles)
+    (add-hyperlinker! terminal-row-hyperlinks)
     (bind-key! "C-c t" terminal!!)
     (add-buffer-kill-hook! terminal-close!)
     (add-shutdown-hook! terminal-close-all!)
@@ -2797,6 +2877,10 @@
          (("procedure" . "(terminal-emulator-styles emulator)")) "vector"
          ("(terminal)") terminal "Terminal" #f
          "Return copies of the style rows for a headless emulator's visible cells.")
+        ((terminal-emulator-hyperlinks)
+         (("procedure" . "(terminal-emulator-hyperlinks emulator)")) "vector"
+         ("(terminal)") terminal "Terminal" #f
+         "Return copies of the OSC 8 hyperlink metadata for a headless emulator's visible cells.")
         ((terminal-emulator-state)
          (("procedure" . "(terminal-emulator-state emulator)")) "alist"
          ("(terminal)") terminal "Terminal" #f

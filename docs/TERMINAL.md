@@ -140,6 +140,12 @@ alternate-screen application is active; the alternate screen itself remains a
 fixed application grid.
 OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
 asterisks, such as `*bash*`; duplicate names receive a numeric suffix.
+OSC 8 hyperlinks remain attached to their cells through editing, scrolling,
+scrollback reflow, and alternate-screen rendering. They enter e's generic
+buffer hyperlink layer, which emits OSC 8 to the host terminal around the
+corresponding visible cells. Thus, links produced by an application inside an
+e terminal remain available to the outer terminal even when their labels are
+not URLs.
 OSC 4 changes and queries the 256-color palette, including multiple indexed
 colors in one command; OSC 104 restores selected entries or the complete
 xterm palette. OSC 10 and 11 change or query the default foreground and
@@ -205,6 +211,7 @@ output:
 (terminal-emulator-resize! vt 40 100)
 (terminal-emulator-screen vt)       ; copied vector of cell rows
 (terminal-emulator-styles vt)       ; copied vector of cell-style rows
+(terminal-emulator-hyperlinks vt)   ; copied vector of cell link metadata
 (terminal-emulator-state vt)        ; dimensions, cursor, and active modes
 (terminal-emulator-input vt "UP")   ; mode-aware key bytevector
 (terminal-emulator-mouse-input vt 0 20 8 #f) ; mode-aware mouse bytevector
@@ -214,6 +221,7 @@ output:
 Mouse coordinates are one-based. The numeric code uses the xterm button and
 modifier bits, and the final argument distinguishes a release from a press or
 motion event. The procedure returns `#f` while mouse tracking is disabled.
+Hyperlink cells are either `#f` or `(URI id)`, where `id` may itself be `#f`.
 
 `terminal-emulator-feed!` currently accepts decoded Scheme text. The live PTY
 reader performs UTF-8 decoding before feeding the same state machine.

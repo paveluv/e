@@ -46,7 +46,8 @@
     bind-key! bind-default-key! unbind-key! key-binding key-event-binding
     command-key command-keys command-hint describe-key!!
     register-mode! add-mode-extension! find-mode mode-styles
-    memoize-buffer-analysis add-highlighter!
+    memoize-buffer-analysis add-highlighter! add-hyperlinker!
+    detect-hyperlinks buffer-line-hyperlinks
     register-indenter! register-formatter!
     add-status-hint! add-buffer-status-hint!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
@@ -2993,6 +2994,72 @@
     (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
                '() (registry-items highlighters)))
 
+  ;; Hyperlinkers produce (start end URI [id]) ranges for one buffer line.
+  ;; They are deliberately separate from visual highlighters: links carry a
+  ;; payload, participate in hit testing, and are also exposed to an upstream
+  ;; terminal through OSC 8. Newer providers take precedence on overlap.
+  (define hyperlinkers (make-registry))
+
+  (define (add-hyperlinker! proc)
+    (registry-add! hyperlinkers proc))
+
+  (define (url-end-character? character)
+    (or (char-whitespace? character)
+        (memv character '(#\< #\> #\" #\' #\`))))
+
+  (define (url-trailing-character? character)
+    (memv character '(#\. #\, #\; #\: #\! #\? #\) #\] #\})))
+
+  (define (detect-hyperlinks text)
+    ;; Return explicit ranges rather than styling URLs directly, so callers
+    ;; can inspect the destination and modes can add non-URL labels later.
+    (let ([length (string-length text)])
+      (let loop ([from 0] [links '()])
+        (let ([http (string-search text "http://" from length)]
+              [https (string-search text "https://" from length)])
+          (let ([start (cond [(and http https) (min http https)]
+                             [http http]
+                             [else https])])
+            (if (not start)
+                (reverse links)
+                (let* ([raw-end
+                        (let scan ([at start])
+                          (if (or (= at length)
+                                  (url-end-character? (string-ref text at)))
+                              at
+                              (scan (+ at 1))))]
+                       [end
+                        (let trim ([at raw-end])
+                          (if (and (> at start)
+                                   (url-trailing-character?
+                                     (string-ref text (- at 1))))
+                              (trim (- at 1))
+                              at))])
+                  (if (= end (+ start
+                                (if (and https (= start https)) 8 7)))
+                      (loop (max (+ start 1) raw-end) links)
+                      (loop (max end (+ start 1))
+                            (cons (list start end
+                                        (substring text start end))
+                                  links))))))))))
+
+  (define (valid-hyperlink? link line-length)
+    (and (list? link) (<= 3 (length link) 4)
+         (integer? (car link)) (integer? (cadr link))
+         (<= 0 (car link)) (< (car link) (cadr link))
+         (<= (cadr link) line-length) (string? (caddr link))))
+
+  (define (buffer-line-hyperlinks buffer row)
+    (let ([line (buffer-line buffer row)])
+      (fold-left
+        (lambda (links proc)
+          (append
+            (filter (lambda (link)
+                      (valid-hyperlink? link (string-length line)))
+                    (guard (ex [else '()]) (proc buffer row line)))
+            links))
+        (detect-hyperlinks line) (registry-items hyperlinkers))))
+
   (define (ranges-on-row ranges w b row current?)
     (fold-left (lambda (acc r)
                  (let* ([buffer-scoped? (and (pair? r) (buffer? (car r)))]
@@ -3007,7 +3074,7 @@
                        acc)))
                '() ranges))
 
-  (define (display-editor-line s shown span marks left styles edge width
+  (define (display-editor-line s shown span marks links left styles edge width
                                bound)
     ;; edge: #f, or the continuation mark for the last column -- 'wrap
     ;; (the line goes on below) or 'trunc (past the right edge).
@@ -3036,6 +3103,30 @@
                  #f marks))
     (define (selected? col)
       (and (< col n) span (<= (car span) col) (< col (cdr span))))
+    (define (link-at col)
+      (find (lambda (link) (and (<= (car link) col) (< col (cadr link))))
+            links))
+    (define (safe-link-text text)
+      (list->string
+        (filter (lambda (character)
+                  (let ([code (char->integer character)])
+                    (and (>= code 32)
+                         (not (<= 127 code 159)))))
+                (string->list text))))
+    (define (safe-link-id text)
+      (list->string
+        (filter (lambda (character)
+                  (or (char-alphabetic? character)
+                      (char-numeric? character)
+                      (memv character '(#\- #\_ #\.))))
+                (string->list text))))
+    (define (open-link link)
+      (let ([id (and (pair? (cdddr link)) (cadddr link))])
+        (ansi "\x1b;]8;"
+              (if (and id (string? id))
+                  (string-append "id=" (safe-link-id id)) "")
+              ";" (safe-link-text (caddr link)) "\x1b;\\")))
+    (define (close-link) (ansi "\x1b;]8;;\x1b;\\"))
     (define (segment from to)
       ;; The characters of columns [from, to), off the shown text (the
       ;; mode's display transform, usually the line itself); control
@@ -3069,12 +3160,14 @@
                [bg (bg-at col)]
                [sel (selected? col)]
                [mk (marked? col)]
+               [link (link-at col)]
                [end (let run ([j (+ col 1)])
                       (if (and (< j limit)
                                (eq? (style-at j) style)
                                (eq? (bg-at j) bg)
                                (eq? (selected? j) sel)
-                               (eq? (marked? j) mk))
+                               (eq? (marked? j) mk)
+                               (equal? (link-at j) link))
                           (run (+ j 1))
                           j))])
           (ansi "\x1b;[0m" (style-code style))
@@ -3086,7 +3179,9 @@
             [(match) (ansi (style-code 'match))]
             [else (void)])
           (when mk (ansi (style-code 'mark)))
+          (when link (open-link link))
           (ansi (segment col end))
+          (when link (close-link))
           (loop end))))
     (when edge
       (ansi "\x1b;[0m" (style-code 'chrome)
@@ -4038,17 +4133,18 @@
                                 'trunc]    ; it continues past the edge: $
                                [else #f])]
                        [span (and current? (region-span i (string-length line)))]
-                       [marks (ranges-on-row ranges w b i current?)])
+                       [marks (ranges-on-row ranges w b i current?)]
+                       [links (buffer-line-hyperlinks b i)])
                   (let ([row-styles
                          (let ([m (buffer-mode b)])
                            (and m (mode-row-styles m)
                                 (guard (ex [else #f])
                                   ((mode-row-styles m) b i line))))])
                     (paint! row content-x
-                            (list i line shown span marks slice-left
+                            (list i line shown span marks links slice-left
                                   mode-tag row-styles edge)
                             (lambda ()
-                              (display-editor-line line shown span marks
+                              (display-editor-line line shown span marks links
                                                    slice-left
                                                    (or row-styles
                                                        (styles-of line))

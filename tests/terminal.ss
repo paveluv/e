@@ -783,6 +783,22 @@
        (check 'osc-default-foreground-reset
               (state-ref terminal 'default-colors) '(#f . #f)))
 
+     (let ([terminal (make-terminal-emulator 1 5)]
+           [link '("https://example.com/path" "sample")])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;]8;id=sample;https://example.com/path\x1b;\\abc\x1b;]8;;\x1b;\\d")
+       (check 'osc8-hyperlink-cells
+              (vector->list
+                (vector-ref (terminal-emulator-hyperlinks terminal) 0))
+              (list link link link #f #f))
+       (terminal-emulator-resize! terminal 2 3)
+       (check 'osc8-hyperlink-survives-reflow
+              (map vector->list
+                   (vector->list
+                     (terminal-emulator-hyperlinks terminal)))
+              (list (list link link link) (list #f #f #f))))
+
      (let ([terminal (make-terminal-emulator 4 8)])
        (terminal-emulator-feed!
          terminal
