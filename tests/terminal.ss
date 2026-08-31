@@ -547,6 +547,47 @@
                 "\x1b;[2;1;1;128;128;1;0x"
                 "\x1b;[3;1;1;128;128;1;0x")))
 
+     (let ([terminal (make-terminal-emulator 3 8)])
+       (terminal-emulator-feed!
+         terminal
+         (string-append
+           "contents\x1b;[?1h\x1b;[?5h\x1b;[?6h\x1b;[?7l\x1b;[4h"
+           "\x1b;[20h\x1b;[?25l\x1b;[?69h\x1b;[2;7s\x1b;[1;2r"
+           "\x1b;[31m\x1b;(0" (string (integer->char 14)) "\x1b;[!p"))
+       (check 'soft-reset-preserves-screen
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "contents")
+       (check 'soft-reset-cursor (state-ref terminal 'cursor) '(0 . 0))
+       (check 'soft-reset-scroll-region
+              (state-ref terminal 'scroll-region) '(0 . 2))
+       (check 'soft-reset-horizontal-margins
+              (state-ref terminal 'horizontal-margins) '(0 . 7))
+       (for-each
+         (lambda (key)
+           (check (string->symbol (format "soft-reset-~a" key))
+                  (state-ref terminal key) #f))
+         '(origin insert newline reverse-screen application-cursor-keys
+            application-keypad eight-bit-meta horizontal-margin-mode))
+       (check 'soft-reset-autowrap (state-ref terminal 'autowrap) #t)
+       (check 'soft-reset-cursor-visible
+              (state-ref terminal 'cursor-visible) #t)
+       (terminal-emulator-feed! terminal "q\x1b;[2;1y")
+       (check 'soft-reset-character-set-rendition-and-dectst
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "qontents")
+       (check 'soft-reset-rendition (style-at terminal 0 0) 'plain))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed!
+         terminal "dirty\x1b;[?5h\x1b;[?25l\x1b;[31m\x1b;c")
+       (check 'ris-clears-screen
+              (vector->list (terminal-emulator-screen terminal))
+              '("     " "     "))
+       (check 'ris-cursor (state-ref terminal 'cursor) '(0 . 0))
+       (check 'ris-reverse-screen
+              (state-ref terminal 'reverse-screen) #f)
+       (check 'ris-cursor-visible (state-ref terminal 'cursor-visible) #t))
+
      (let ([terminal (make-terminal-emulator 3 5)])
        (terminal-emulator-feed!
          terminal "a\x85;\x9b;2CX\x9d;2;c1-title\x9c;Y")

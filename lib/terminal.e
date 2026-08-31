@@ -1526,6 +1526,40 @@
         (set-app-presentation! (terminal-state-buffer state)
                                0 #f #f 'blinking-block))))
 
+  (define (soft-reset-terminal-state! state)
+    ;; DECSTR restores operational modes and rendition without erasing text.
+    (let ([rows (terminal-state-rows state)]
+          [cols (terminal-state-cols state)])
+      (terminal-state-row-set! state 0)
+      (terminal-state-col-set! state 0)
+      (terminal-state-saved-row-set! state 0)
+      (terminal-state-saved-col-set! state 0)
+      (terminal-state-saved-state-set! state #f)
+      (terminal-state-scroll-top-set! state 0)
+      (terminal-state-scroll-bottom-set! state (- rows 1))
+      (terminal-state-left-margin-set! state 0)
+      (terminal-state-right-margin-set! state (- cols 1))
+      (terminal-state-margin-mode-set! state #f)
+      (terminal-state-memory-lock-set! state #f)
+      (terminal-state-charset-set! state 'ascii)
+      (terminal-state-charset-g1-set! state 'ascii)
+      (terminal-state-charset-target-set! state 0)
+      (terminal-state-shift-set! state 0)
+      (terminal-state-wrap-pending-set! state #f)
+      (terminal-state-autowrap-set! state #t)
+      (terminal-state-origin-set! state #f)
+      (terminal-state-insert-set! state #f)
+      (terminal-state-newline-set! state #f)
+      (terminal-state-reverse-screen-set! state #f)
+      (terminal-state-cursor-keys-set! state #f)
+      (terminal-state-keypad-set! state #f)
+      (terminal-state-meta-eight-bit-set! state #f)
+      (terminal-state-cursor-visible-set! state #t)
+      (terminal-state-last-character-set! state #\space)
+      (terminal-state-sgr-set! state "")
+      (terminal-state-style-set! state 'plain)
+      (terminal-state-dirty-set! state #t)))
+
   (define (dispatch-csi! state final text)
     (unless (char=? final #\m)
       (terminal-state-wrap-pending-set! state #f))
@@ -1759,22 +1793,12 @@
                (put-character! state (terminal-state-last-character state)))]
             [(#\p)
              (when (string-prefix? "!" text)
-               (terminal-state-origin-set! state #f)
-               (terminal-state-autowrap-set! state #t)
-               (terminal-state-insert-set! state #f)
-               (terminal-state-cursor-keys-set! state #f)
-               (terminal-state-keypad-set! state #f)
-               (terminal-state-meta-eight-bit-set! state #f)
-               (terminal-state-row-set! state 0)
-               (terminal-state-col-set! state 0)
-               (terminal-state-scroll-top-set! state 0)
-               (terminal-state-scroll-bottom-set! state (- rows 1))
-               (terminal-state-left-margin-set! state 0)
-               (terminal-state-right-margin-set! state (- cols 1))
-               (terminal-state-margin-mode-set! state #f)
-               (terminal-state-memory-lock-set! state #f)
-               (terminal-state-sgr-set! state "")
-               (terminal-state-style-set! state 'plain))]
+               (soft-reset-terminal-state! state))]
+            [(#\y)
+             ;; DECTST asks the terminal to run its built-in confidence test.
+             ;; A software terminal with no failing hardware completes it
+             ;; silently, as xterm does.
+             (void)]
             [(#\n)
              (cond
                [(= (param parameters 0 0) 5)
