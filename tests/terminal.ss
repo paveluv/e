@@ -211,6 +211,28 @@
               (vector->list (terminal-emulator-screen terminal))
               '("333" "444" "   " "   ")))
 
+     (let ([terminal (make-terminal-emulator 2 4)])
+       (terminal-emulator-feed! terminal "AB\x1b;[i")
+       (check 'printer-screen-copy
+              (state-ref terminal 'printer-output)
+              "AB  \r\n    \r\n")
+       (terminal-emulator-feed! terminal "\x1b;[5iprinted\x1b;[4iX")
+       (check 'printer-controller-stops-echo
+              (vector->list (terminal-emulator-screen terminal))
+              '("ABX " "    "))
+       (check 'printer-controller-output
+              (state-ref terminal 'printer-output)
+              "AB  \r\n    \r\nprinted")
+       (check 'printer-controller-disabled
+              (state-ref terminal 'printer-controller) #f)
+       (terminal-emulator-feed! terminal "\x1b;[5ic1\x9b;4iY")
+       (check 'printer-controller-c1-termination
+              (state-ref terminal 'printer-output)
+              "AB  \r\n    \r\nprintedc1")
+       (check 'printer-controller-c1-resumes-display
+              (vector->list (terminal-emulator-screen terminal))
+              '("ABXY" "    ")))
+
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed! terminal "\x1b;[123\x18;A")
        (check 'cancel-csi

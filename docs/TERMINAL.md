@@ -74,6 +74,12 @@ above the cursor while scrolling continues from the cursor row downward, and
 `ESC m` restores the active vertical region's normal scrolling behavior.
 Partial-width margins compose with the locked scroll rectangle.
 
+The terminfo media-copy controls use a virtual printer sink. Printing the
+screen records its cell rows, and printer-controller mode diverts subsequent
+output until its termination sequence instead of echoing it to the grid. The
+headless emulator exposes both the controller state and accumulated output for
+tests; e never invokes a host printer or command implicitly.
+
 The italic status hint distinguishes a focused terminal that is capturing
 input (`▶ capturing input, C-] to escape`), its temporarily escaped state
 (`▶ escaped`), and a terminal running in a passive window (`▶`). After the

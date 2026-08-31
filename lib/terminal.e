@@ -43,7 +43,9 @@
             (mutable rendered-cells) (mutable rendered-styles)
             (mutable sgr) (mutable style)
             (mutable palette) (mutable default-foreground)
-            (mutable default-background)))
+            (mutable default-background)
+            (mutable printer-controller) (mutable printer-pending)
+            (mutable printer-output)))
 
   (define terminals '())
   (define serial 0)
@@ -106,7 +108,7 @@
                          0 0 #f #f #f #f #f '() '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() #f (make-style-screen rows cols 'plain)
-                         "" 'plain (make-vector 256 #f) #f #f))
+                         "" 'plain (make-vector 256 #f) #f #f #f "" ""))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -152,6 +154,8 @@
                                    (terminal-state-right-margin emulator)))
       (horizontal-margin-mode . ,(terminal-state-margin-mode emulator))
       (memory-lock . ,(terminal-state-memory-lock emulator))
+      (printer-controller . ,(terminal-state-printer-controller emulator))
+      (printer-output . ,(terminal-state-printer-output emulator))
       (wrap-pending . ,(terminal-state-wrap-pending emulator))
       (autowrap . ,(terminal-state-autowrap emulator))
       (origin . ,(terminal-state-origin emulator))
@@ -1487,6 +1491,8 @@
       (terminal-state-palette-set! state (make-vector 256 #f))
       (terminal-state-default-foreground-set! state #f)
       (terminal-state-default-background-set! state #f)
+      (terminal-state-printer-controller-set! state #f)
+      (terminal-state-printer-pending-set! state "")
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-buffer state)
         (set-app-presentation! (terminal-state-buffer state)
@@ -1746,6 +1752,26 @@
                     (primary-device-attributes! state)]
                    [(or (string=? text ">") (string=? text ">0"))
                     (terminal-reply! state "\x1b;[>0;276;0c")])]
+            [(#\i)
+             (case (param parameters 0 0)
+               [(0)
+                (let ([printed
+                       (apply string-append
+                              (map (lambda (line)
+                                     (string-append (cell-row->string line)
+                                                    "\r\n"))
+                                   (vector->list
+                                     (terminal-state-screen state))))])
+                  (terminal-state-printer-output-set!
+                    state
+                    (string-append (terminal-state-printer-output state)
+                                   printed)))]
+               [(4)
+                (terminal-state-printer-controller-set! state #f)
+                (terminal-state-printer-pending-set! state "")]
+               [(5)
+                (terminal-state-printer-controller-set! state #t)
+                (terminal-state-printer-pending-set! state "")])]
             [(#\q)
              (when (and cursor-shape? (terminal-state-buffer state))
                (set-app-presentation!
@@ -1785,7 +1811,38 @@
               [(vector-ref stops col) col]
               [else (loop (+ col 1))]))))
 
+  (define printer-controller-terminators '("\x1b;[4i" "\x9b;4i"))
+
+  (define (string-prefix-of? prefix text)
+    (and (<= (string-length prefix) (string-length text))
+         (string=? prefix (substring text 0 (string-length prefix)))))
+
+  (define (printer-prefix? text)
+    (exists (lambda (terminator) (string-prefix-of? text terminator))
+            printer-controller-terminators))
+
+  (define (printer-feed-character! state character)
+    (let ([candidate
+           (string-append (terminal-state-printer-pending state)
+                          (string character))])
+      (cond
+        [(member candidate printer-controller-terminators)
+         (terminal-state-printer-controller-set! state #f)
+         (terminal-state-printer-pending-set! state "")]
+        [(printer-prefix? candidate)
+         (terminal-state-printer-pending-set! state candidate)]
+        [else
+         (terminal-state-printer-output-set!
+           state
+           (string-append (terminal-state-printer-output state) candidate))
+         (terminal-state-printer-pending-set! state "")])))
+
   (define (feed-character! state character)
+    (if (terminal-state-printer-controller state)
+        (printer-feed-character! state character)
+        (feed-display-character! state character)))
+
+  (define (feed-display-character! state character)
     (case (terminal-state-parser state)
       [(normal)
        (case (char->integer character)
@@ -2456,7 +2513,8 @@
                                    (make-style-screen rows cols 'plain)
                                    #f '() #f
                                    (make-style-screen rows cols 'plain)
-                                   "" 'plain (make-vector 256 #f) #f #f))
+                                   "" 'plain (make-vector 256 #f) #f #f
+                                   #f "" ""))
             (set! terminals (cons state terminals))
             (fork-thread (lambda () (reader-loop state)))
             (void))))))
