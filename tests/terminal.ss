@@ -524,6 +524,29 @@
               '("\x1b;[0n" "\x1b;[?0n" "\x1b;[?2;4R" "\x1b;[?1;2c"
                 "\x1b;[>0;276;0c" "\x1b;[?1;2c")))
 
+     (let ([terminal (make-terminal-emulator 1 8)])
+       (terminal-emulator-feed! terminal "\x1b;[20h")
+       (check 'newline-mode-enabled (state-ref terminal 'newline) #t)
+       (check 'newline-mode-return
+              (terminal-emulator-input terminal "RET")
+              (string->utf8 "\r\n"))
+       (check 'newline-mode-keypad-return
+              (terminal-emulator-input terminal "KP-ENTER")
+              (string->utf8 "\r\n"))
+       (terminal-emulator-feed! terminal "\x1b;[20l")
+       (check 'newline-mode-reset-return
+              (terminal-emulator-input terminal "RET")
+              (string->utf8 "\r")))
+
+     (let ([terminal (make-terminal-emulator 1 8)])
+       (terminal-emulator-feed!
+         terminal "\x1b;[=c\x1b;[0x\x1b;[1x")
+       (check 'tertiary-attributes-and-terminal-parameters
+              (terminal-emulator-replies terminal)
+              '("\x1b;P!|00000000\x1b;\\"
+                "\x1b;[2;1;1;128;128;1;0x"
+                "\x1b;[3;1;1;128;128;1;0x")))
+
      (let ([terminal (make-terminal-emulator 3 5)])
        (terminal-emulator-feed!
          terminal "a\x85;\x9b;2CX\x9d;2;c1-title\x9c;Y")

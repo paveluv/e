@@ -24,7 +24,7 @@
             (mutable charset) (mutable charset-g1) (mutable charset-target)
             (mutable shift)
             (mutable wrap-pending) (mutable autowrap) (mutable origin)
-            (mutable insert) (mutable reverse-screen)
+            (mutable insert) (mutable newline) (mutable reverse-screen)
             (mutable cursor-keys) (mutable keypad) (mutable meta-eight-bit)
             (mutable cursor-visible) (mutable tab-stops)
             (mutable last-character)
@@ -102,7 +102,7 @@
                          rows cols (make-screen rows cols) (make-vector rows #f)
                          0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
                          'normal "" #f "" '() 'ascii 'ascii 0 0
-                         #f #t #f #f #f #f #f #f #t
+                         #f #t #f #f #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
                          #f #f #f #f #f 0 #f #f #f #f #f #f #f #f
                          0 0 #f #f #f #f #f '() '() '()
@@ -160,6 +160,7 @@
       (autowrap . ,(terminal-state-autowrap emulator))
       (origin . ,(terminal-state-origin emulator))
       (insert . ,(terminal-state-insert emulator))
+      (newline . ,(terminal-state-newline emulator))
       (reverse-screen . ,(terminal-state-reverse-screen emulator))
       (bell-pending . ,(terminal-state-bell emulator))
       (bell-visible . ,(terminal-state-bell-visible emulator))
@@ -1485,6 +1486,7 @@
       (terminal-state-autowrap-set! state #t)
       (terminal-state-origin-set! state #f)
       (terminal-state-insert-set! state #f)
+      (terminal-state-newline-set! state #f)
       (terminal-state-reverse-screen-set! state #f)
       (terminal-state-cursor-keys-set! state #f)
       (terminal-state-keypad-set! state #f)
@@ -1609,9 +1611,11 @@
               parameters))
           (case final
             [(#\h #\l)
-             (when (and (not (string-prefix? "?" text))
-                        (memv 4 parameters))
-               (terminal-state-insert-set! state (char=? final #\h)))]
+             (when (not (string-prefix? "?" text))
+               (when (memv 4 parameters)
+                 (terminal-state-insert-set! state (char=? final #\h)))
+               (when (memv 20 parameters)
+                 (terminal-state-newline-set! state (char=? final #\h))))]
             [(#\A)
              (terminal-state-row-set!
                state (max (if (terminal-state-origin state)
@@ -1790,7 +1794,16 @@
              (cond [(or (string=? text "") (string=? text "0"))
                     (primary-device-attributes! state)]
                    [(or (string=? text ">") (string=? text ">0"))
-                    (terminal-reply! state "\x1b;[>0;276;0c")])]
+                    (terminal-reply! state "\x1b;[>0;276;0c")]
+                   [(or (string=? text "=") (string=? text "=0"))
+                    (terminal-reply! state "\x1b;P!|00000000\x1b;\\")])]
+            [(#\x)
+             (when (and (not (memv #\$ (string->list text)))
+                        (memv (param parameters 0 0) '(0 1)))
+               (terminal-reply!
+                 state
+                 (format "\x1b;[~a;1;1;128;128;1;0x"
+                         (if (= (param parameters 0 0) 0) 2 3))))]
             [(#\i)
              (case (param parameters 0 0)
                [(0)
@@ -2375,7 +2388,9 @@
            (string->utf8
              (if (terminal-state-keypad state)
                  (string-append "\x1b;O" (cddr entry))
-                 (cadr entry))))))
+                 (if (and (string=? event "KP-ENTER")
+                          (terminal-state-newline state))
+                     "\r\n" (cadr entry)))))))
 
   (define (event-bytes state event)
     (cond
@@ -2397,8 +2412,11 @@
       [(and (string-prefix? "C-" event) (= (string-length event) 3))
        (control-byte (string-ref event 2))]
       [else
-       (cond [(assoc event
-                     '(("RET" . "\r") ("TAB" . "\t")
+       (cond [(string=? event "RET")
+              (string->utf8
+                (if (terminal-state-newline state) "\r\n" "\r"))]
+             [(assoc event
+                     '(("TAB" . "\t")
                        ("BACKSPACE" . "\x7f;") ("ESC" . "\x1b;")
                        ("S-TAB" . "\x1b;[Z")
                       ))
@@ -2601,7 +2619,7 @@
                                    (make-vector rows #f)
                                    0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
                                    'normal "" #f "" '() 'ascii 'ascii 0 0
-                                   #f #t #f #f #f #f #f #f #t
+                                   #f #t #f #f #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
                                    #t #t #f #f #f 0 #f #f #f #f #f #f #f #f
                                    0 0 #f #f #f #f #f
