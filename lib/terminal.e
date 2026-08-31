@@ -1835,12 +1835,12 @@
       (#\} . #\x00a3) (#\~ . #\x00b7)))
 
   (define (mapped-character state character)
-    (if (eq? (if (= (terminal-state-shift state) 0)
-                 (terminal-state-charset state)
-                 (terminal-state-charset-g1 state))
-             'line)
-        (cond [(assv character line-drawing) => cdr] [else character])
-        character))
+    (case (if (= (terminal-state-shift state) 0)
+              (terminal-state-charset state)
+              (terminal-state-charset-g1 state))
+      [(line) (cond [(assv character line-drawing) => cdr] [else character])]
+      [(british) (if (char=? character #\#) #\x00a3 character)]
+      [else character]))
 
   (define (next-tab-stop state)
     (let ([cols (terminal-state-cols state)]
@@ -1999,19 +1999,49 @@
           (terminal-state-memory-lock-set! state #f)
           (terminal-state-parser-set! state 'normal)]
          [(#\() (terminal-state-charset-target-set! state 0)
+          (terminal-state-parameters-set! state "")
           (terminal-state-parser-set! state 'charset)]
          [(#\)) (terminal-state-charset-target-set! state 1)
+          (terminal-state-parameters-set! state "")
+          (terminal-state-parser-set! state 'charset)]
+         [(#\*) (terminal-state-charset-target-set! state 2)
+          (terminal-state-parameters-set! state "")
+          (terminal-state-parser-set! state 'charset)]
+         [(#\+) (terminal-state-charset-target-set! state 3)
+          (terminal-state-parameters-set! state "")
+          (terminal-state-parser-set! state 'charset)]
+         [(#\-) (terminal-state-charset-target-set! state 1)
+          (terminal-state-parameters-set! state "")
+          (terminal-state-parser-set! state 'charset)]
+         [(#\.) (terminal-state-charset-target-set! state 2)
+          (terminal-state-parameters-set! state "")
+          (terminal-state-parser-set! state 'charset)]
+         [(#\/) (terminal-state-charset-target-set! state 3)
+          (terminal-state-parameters-set! state "")
           (terminal-state-parser-set! state 'charset)]
          [else (terminal-state-parser-set! state 'normal)])]
       [(escape-hash)
        (when (char=? character #\8) (screen-alignment-test! state))
        (terminal-state-parser-set! state 'normal)]
       [(charset)
-       (let ([designation (if (char=? character #\0) 'line 'ascii)])
-         (if (= (terminal-state-charset-target state) 0)
-             (terminal-state-charset-set! state designation)
-             (terminal-state-charset-g1-set! state designation)))
-       (terminal-state-parser-set! state 'normal)]
+       (if (char<=? #\space character #\/)
+           (terminal-state-parameters-set!
+             state
+             (string-append (terminal-state-parameters state)
+                            (string character)))
+           (let ([designation
+                  (case character
+                    [(#\0 #\2) 'line]
+                    [(#\A) 'british]
+                    [else 'ascii])])
+             ;; G2 and G3 designations must be parsed even though e does not
+             ;; currently invoke those banks into GL.  Otherwise their final
+             ;; byte is painted as ordinary text (vttest exposes this as BB).
+             (case (terminal-state-charset-target state)
+               [(0) (terminal-state-charset-set! state designation)]
+               [(1) (terminal-state-charset-g1-set! state designation)])
+             (terminal-state-parser-set! state 'normal)
+             (terminal-state-parameters-set! state "")))]
       [(csi)
        (cond [(memv (char->integer character) '(24 26))
               (terminal-state-parser-set! state 'normal)

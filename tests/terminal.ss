@@ -184,6 +184,45 @@
               (vector->list (terminal-emulator-screen terminal))
               '("\x250c;\x2500;\x2510; ")))
 
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1b;(A#\x1b;(B#")
+       (check 'vt100-british-character-set
+              (vector->list (terminal-emulator-screen terminal))
+              '("\xa3;#  ")))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1b;)A\x0e;#\x0f;#")
+       (check 'vt100-british-g1-shift
+              (vector->list (terminal-emulator-screen terminal))
+              '("\xa3;#  ")))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! terminal "\x1b;(1q\x1b;(2q")
+       (check 'vt100-alternate-rom-aliases
+              (vector->list (terminal-emulator-screen terminal))
+              '("q\x2500;  ")))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed!
+         terminal "\x1b;(B\x1b;)B\x1b;*B\x1b;+B\x1b;-%5\x1b;.&4\x1b;/>Z")
+       (check 'iso-2022-g2-g3-and-multibyte-designations
+              (vector->list (terminal-emulator-screen terminal))
+              '("Z   ")))
+
+     (let ([terminal (make-terminal-emulator 26 79)])
+       (terminal-emulator-feed!
+         terminal
+         (string-append
+           "\x1b;[22;48H\x1b;)2\x1b;(B\x0e;"
+           (list->string
+             (map (lambda (number) (integer->char (+ 96 number)))
+                  (iota 32)))
+           "\x1b;(B\x1b;)B\x0f;\x1b;[26;1H"))
+       (check 'vt100-charset-reset-after-right-margin
+              (substring
+                (vector-ref (terminal-emulator-screen terminal) 21) 0 9)
+              "         "))
+
      (let ([terminal (make-terminal-emulator 3 4)])
        (terminal-emulator-feed! terminal "abc\x1b;#8")
        (check 'screen-alignment-pattern
