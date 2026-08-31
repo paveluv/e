@@ -952,6 +952,21 @@
                    (blank-styles (terminal-state-cols state)
                                  (terminal-state-style state)))))
 
+  (define (screen-alignment-test! state)
+    (let ([rows (terminal-state-rows state)]
+          [cols (terminal-state-cols state)]
+          [style (terminal-state-style state)])
+      (let ([screen (make-vector rows)])
+        (do ([row 0 (+ row 1)]) ((= row rows))
+          (vector-set! screen row (make-vector cols "E")))
+        (terminal-state-screen-set! state screen))
+      (terminal-state-wrapped-set! state (make-vector rows #f))
+      (terminal-state-styles-set! state (make-style-screen rows cols style))
+      (terminal-state-row-set! state 0)
+      (terminal-state-col-set! state 0)
+      (terminal-state-wrap-pending-set! state #f)
+      (terminal-state-dirty-set! state #t)))
+
   (define (parameter-list text)
     (let* ([plain (if (and (> (string-length text) 0)
                            (memv (string-ref text 0) '(#\? #\> #\!)))
@@ -1523,6 +1538,19 @@
               (lambda (mode)
                 (case mode
                   [(1) (terminal-state-cursor-keys-set! state on?)]
+                  [(3)
+                   ;; DECCOLM normally asks the host to switch between 80 and
+                   ;; 132 columns. A tiled editor window cannot resize itself
+                   ;; to that width, but the mode's mandatory screen, cursor,
+                   ;; and margin reset semantics still apply.
+                   (clear-rows! state 0 rows)
+                   (terminal-state-scroll-top-set! state 0)
+                   (terminal-state-scroll-bottom-set! state (- rows 1))
+                   (terminal-state-left-margin-set! state 0)
+                   (terminal-state-right-margin-set! state (- cols 1))
+                   (terminal-state-row-set! state 0)
+                   (terminal-state-col-set! state 0)
+                   (terminal-state-dirty-set! state #t)]
                   [(5)
                    (terminal-state-reverse-screen-set! state on?)
                    (terminal-state-dirty-set! state #t)]
@@ -1837,6 +1865,31 @@
            (string-append (terminal-state-printer-output state) candidate))
          (terminal-state-printer-pending-set! state "")])))
 
+  (define (execute-c0! state code)
+    (case code
+      [(7) (terminal-state-bell-set! state #t)]
+      [(8)
+       (terminal-state-wrap-pending-set! state #f)
+       (terminal-state-col-set!
+         state
+         (max (if (<= (left-bound state) (terminal-state-col state)
+                      (right-bound state))
+                  (left-bound state) 0)
+              (- (terminal-state-col state) 1)))]
+      [(9)
+       (terminal-state-wrap-pending-set! state #f)
+       (terminal-state-col-set! state (next-tab-stop state))]
+      [(10 11 12)
+       (terminal-state-wrap-pending-set! state #f)
+       (vector-set! (terminal-state-wrapped state)
+                    (terminal-state-row state) #f)
+       (line-feed! state)]
+      [(13)
+       (terminal-state-wrap-pending-set! state #f)
+       (terminal-state-col-set! state (left-bound state))]
+      [(14) (terminal-state-shift-set! state 1)]
+      [(15) (terminal-state-shift-set! state 0)]))
+
   (define (feed-character! state character)
     (if (terminal-state-printer-controller state)
         (printer-feed-character! state character)
@@ -1846,24 +1899,8 @@
     (case (terminal-state-parser state)
       [(normal)
        (case (char->integer character)
-         [(7) (terminal-state-bell-set! state #t)]
-         [(8) (terminal-state-wrap-pending-set! state #f)
-          (terminal-state-col-set! state
-                                   (max (if (<= (left-bound state)
-                                                (terminal-state-col state)
-                                                (right-bound state))
-                                            (left-bound state) 0)
-                                        (- (terminal-state-col state) 1)))]
-         [(9) (terminal-state-wrap-pending-set! state #f)
-          (terminal-state-col-set! state (next-tab-stop state))]
-         [(10 11 12) (terminal-state-wrap-pending-set! state #f)
-          (vector-set! (terminal-state-wrapped state)
-                       (terminal-state-row state) #f)
-          (line-feed! state)]
-         [(13) (terminal-state-wrap-pending-set! state #f)
-          (terminal-state-col-set! state (left-bound state))]
-         [(14) (terminal-state-shift-set! state 1)]
-         [(15) (terminal-state-shift-set! state 0)]
+         [(7 8 9 10 11 12 13 14 15)
+          (execute-c0! state (char->integer character))]
          [(27) (terminal-state-parser-set! state 'escape)]
          [(132) (vector-set! (terminal-state-wrapped state)
                              (terminal-state-row state) #f)
@@ -1941,6 +1978,7 @@
           (terminal-state-parser-set! state 'normal)]
          [(#\>) (terminal-state-keypad-set! state #f)
           (terminal-state-parser-set! state 'normal)]
+         [(#\#) (terminal-state-parser-set! state 'escape-hash)]
          [(#\l)
           ;; Lock rows above the cursor; the cursor row remains the first
           ;; scrollable row, as specified by xterm's memory-lock capability.
@@ -1954,6 +1992,9 @@
          [(#\)) (terminal-state-charset-target-set! state 1)
           (terminal-state-parser-set! state 'charset)]
          [else (terminal-state-parser-set! state 'normal)])]
+      [(escape-hash)
+       (when (char=? character #\8) (screen-alignment-test! state))
+       (terminal-state-parser-set! state 'normal)]
       [(charset)
        (let ([designation (if (char=? character #\0) 'line 'ascii)])
          (if (= (terminal-state-charset-target state) 0)
@@ -1967,6 +2008,10 @@
              [(char=? character #\esc)
               (terminal-state-parser-set! state 'escape)
               (terminal-state-parameters-set! state "")]
+             [(< (char->integer character) 32)
+              ;; ECMA-48 C0 controls execute immediately inside a control
+              ;; sequence without cancelling it or becoming parameter text.
+              (execute-c0! state (char->integer character))]
              [(char<=? #\@ character #\~)
               (dispatch-csi! state character
                              (terminal-state-parameters state))
@@ -2301,11 +2346,13 @@
       [(named-key-bytes state event) => values]
       [(keypad-bytes state event) => values]
       [(string-prefix? "C-M-" event)
-       (meta-bytes state (control-byte (string-ref event 4)))]
+       (let ([base (substring event 4 (string-length event))])
+         (and (= (string-length base) 1)
+              (meta-bytes state (control-byte (string-ref base 0)))))]
       [(string-prefix? "M-" event)
-       (meta-bytes state
-                   (string->utf8 (substring event 2
-                                            (string-length event))))]
+       (let ([bytes (event-bytes
+                      state (substring event 2 (string-length event)))])
+         (and bytes (meta-bytes state bytes)))]
       [(and (string-prefix? "C-" event) (= (string-length event) 3))
        (control-byte (string-ref event 2))]
       [else

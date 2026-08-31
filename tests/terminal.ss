@@ -20,6 +20,10 @@
      (define (state-ref emulator key)
        (cdr (assq key (terminal-emulator-state emulator))))
 
+     (define (style-at emulator row column)
+       (vector-ref (vector-ref (terminal-emulator-styles emulator) row)
+                   column))
+
      (let ([terminal (make-terminal-emulator 2 4)])
        (terminal-emulator-feed! terminal "abcd")
        (check 'delayed-wrap-screen
@@ -45,6 +49,58 @@
               (vector-ref (terminal-emulator-screen terminal) 2)
               "  X  "))
 
+     (let ([terminal (make-terminal-emulator 5 8)])
+       (terminal-emulator-feed!
+         terminal "\x1b;[3;4H\x1b;[0A\x1b;[2C\x1b;[B\x1b;[D")
+       (check 'relative-cursor-defaults
+              (state-ref terminal 'cursor) '(2 . 4))
+       (terminal-emulator-feed! terminal "\x1b;[2E\x1b;[F")
+       (check 'cursor-next-previous-line
+              (state-ref terminal 'cursor) '(3 . 0))
+       (terminal-emulator-feed! terminal "\x1b;[7G\x1b;[2d")
+       (check 'absolute-row-column
+              (state-ref terminal 'cursor) '(1 . 6)))
+
+     (let ([terminal (make-terminal-emulator 3 5)])
+       (terminal-emulator-feed!
+         terminal "11111\x1b;[2;1H22222\x1b;[3;1H33333\x1b;[2;3H\x1b;[J")
+       (check 'erase-display-after-cursor
+              (vector->list (terminal-emulator-screen terminal))
+              '("11111" "22   " "     "))
+       (terminal-emulator-feed!
+         terminal "\x1b;[1;1H11111\x1b;[2;1H22222\x1b;[3;1H33333\x1b;[2;3H\x1b;[1J")
+       (check 'erase-display-before-cursor
+              (vector->list (terminal-emulator-screen terminal))
+              '("     " "   22" "33333"))
+       (terminal-emulator-feed! terminal "\x1b;[2J")
+       (check 'erase-display-all
+              (vector->list (terminal-emulator-screen terminal))
+              '("     " "     " "     ")))
+
+     (let ([terminal (make-terminal-emulator 1 7)])
+       (terminal-emulator-feed! terminal "abcdef\x1b;[3G\x1b;[2P")
+       (check 'delete-characters
+              (vector->list (terminal-emulator-screen terminal))
+              '("abef   "))
+       (terminal-emulator-feed! terminal "\x1b;[3G\x1b;[2@")
+       (check 'insert-characters
+              (vector->list (terminal-emulator-screen terminal))
+              '("ab  ef "))
+       (terminal-emulator-feed! terminal "\x1b;[3G\x1b;[3X")
+       (check 'erase-characters
+              (vector->list (terminal-emulator-screen terminal))
+              '("ab   f ")))
+
+     (let ([terminal (make-terminal-emulator 1 20)])
+       (terminal-emulator-feed! terminal "\t\t\x1b;[Z")
+       (check 'back-tab (state-ref terminal 'cursor) '(0 . 8))
+       (terminal-emulator-feed! terminal "\x1b;[g\x1b;[Z")
+       (check 'clear-current-tab-stop
+              (state-ref terminal 'cursor) '(0 . 0))
+       (terminal-emulator-feed! terminal "\x1b;H\x1b;[3g\t")
+       (check 'clear-all-tab-stops
+              (state-ref terminal 'cursor) '(0 . 19)))
+
      (let ([terminal (make-terminal-emulator 1 5)])
        (terminal-emulator-feed! terminal "abc\x1b;[2G\x1b;[4hX")
        (check 'insert-mode
@@ -69,6 +125,25 @@
               (vector->list (terminal-emulator-screen terminal))
               '("\x250c;\x2500;\x2510; ")))
 
+     (let ([terminal (make-terminal-emulator 3 4)])
+       (terminal-emulator-feed! terminal "abc\x1b;#8")
+       (check 'screen-alignment-pattern
+              (vector->list (terminal-emulator-screen terminal))
+              '("EEEE" "EEEE" "EEEE"))
+       (check 'screen-alignment-cursor
+              (state-ref terminal 'cursor) '(0 . 0)))
+
+     (let ([terminal (make-terminal-emulator 3 5)])
+       (terminal-emulator-feed!
+         terminal "abc\x1b;[2;3r\x1b;[3;4H\x1b;[?3l")
+       (check 'column-mode-clears-screen
+              (vector->list (terminal-emulator-screen terminal))
+              '("     " "     " "     "))
+       (check 'column-mode-homes-cursor
+              (state-ref terminal 'cursor) '(0 . 0))
+       (check 'column-mode-resets-margins
+              (state-ref terminal 'scroll-region) '(0 . 2)))
+
      (let ([terminal (make-terminal-emulator 1 5)])
        (terminal-emulator-feed! terminal "z\x1b;[3b")
        (check 'repeat-character
@@ -82,6 +157,22 @@
                                  (terminal-emulator-styles terminal) 0) 0)
                                'plain)
               #f))
+
+     (let ([terminal (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[1;3;4;5;7;8;9;38;5;123;48;2;1;2;3mA\x1b;[22;23;24;25;27;28;29;39;49mB")
+       (check 'combined-sgr-is-styled
+              (eq? (style-at terminal 0 0) 'plain) #f)
+       (check 'selective-sgr-resets-to-plain
+              (style-at terminal 0 1) 'plain))
+
+     (let ([semicolon (make-terminal-emulator 1 2)]
+           [colon (make-terminal-emulator 1 2)])
+       (terminal-emulator-feed! semicolon "\x1b;[38;2;10;20;30mX")
+       (terminal-emulator-feed! colon "\x1b;[38:2::10:20:30mX")
+       (check 'colon-rgb-matches-semicolon-rgb
+              (style-at colon 0 0) (style-at semicolon 0 0)))
 
      (let ([terminal (make-terminal-emulator 1 2)])
        (terminal-emulator-feed! terminal "A\x1b;[7mB")
@@ -143,6 +234,17 @@
               (terminal-emulator-input terminal "M-x")
               (bytevector 27 120)))
 
+     (let ([terminal (make-terminal-emulator 1 2)])
+       (check 'meta-return
+              (terminal-emulator-input terminal "M-RET")
+              (bytevector 27 13))
+       (check 'meta-backspace
+              (terminal-emulator-input terminal "M-BACKSPACE")
+              (bytevector 27 127))
+       (check 'meta-shift-tab
+              (terminal-emulator-input terminal "M-S-TAB")
+              (string->utf8 "\x1b;\x1b;[Z")))
+
      (let ([terminal (make-terminal-emulator 4 5)])
        (terminal-emulator-feed!
          terminal "\x1b;[2;3r\x1b;[?6;7h\x1b;7\x1b;[?6;7l\x1b;8")
@@ -200,6 +302,18 @@
      (let ([terminal (make-terminal-emulator 4 3)])
        (terminal-emulator-feed!
          terminal
+         "111\x1b;[2;1H222\x1b;[3;1H333\x1b;[4;1H444\x1b;[2;3r\x1b;[3;1H\x1b;D")
+       (check 'index-scrolls-active-region
+              (vector->list (terminal-emulator-screen terminal))
+              '("111" "333" "   " "444"))
+       (terminal-emulator-feed! terminal "\x1b;[2;1H\x1b;M")
+       (check 'reverse-index-scrolls-active-region
+              (vector->list (terminal-emulator-screen terminal))
+              '("111" "   " "333" "444")))
+
+     (let ([terminal (make-terminal-emulator 4 3)])
+       (terminal-emulator-feed!
+         terminal
          "\x1b;[1;1H111\x1b;[2;1H222\x1b;[3;1H333\x1b;[4;1H444\x1b;[2;1H\x1b;l\x1b;[4;1H\n")
        (check 'memory-lock-state (state-ref terminal 'memory-lock) 1)
        (check 'memory-lock-preserves-upper-rows
@@ -242,6 +356,16 @@
        (check 'cursor-report
               (terminal-emulator-replies terminal)
               '("\x1b;[1;2R")))
+
+     (let ([terminal (make-terminal-emulator 6 20)])
+       (terminal-emulator-feed!
+         terminal
+         "A B C D E F G H I\r\nA\x1b;[2\x8;CB\x1b;[2\x8;CC\x1b;[2\x8;CD\x1b;[2\x8;CE\x1b;[2\x8;CF\x1b;[2\x8;CG\x1b;[2\x8;CH\x1b;[2\x8;CI\x1b;[2\x8;C\r\nA \x1b;[\r2CB\x1b;[\r4CC\x1b;[\r6CD\x1b;[\r8CE\x1b;[\r10CF\x1b;[\r12CG\x1b;[\r14CH\x1b;[\r16CI\r\nA \x1b;[1\vAB \x1b;[1\vAC \x1b;[1\vAD \x1b;[1\vAE \x1b;[1\vAF \x1b;[1\vAG \x1b;[1\vAH \x1b;[1\vAI \x1b;[1\vA")
+       (check 'c0-controls-inside-csi
+              (vector->list (terminal-emulator-screen terminal))
+              '("A B C D E F G H I   " "A B C D E F G H I   "
+                "A B C D E F G H I   " "A B C D E F G H I   "
+                "                    " "                    ")))
 
      (let ([terminal (make-terminal-emulator 5 8)])
        (terminal-emulator-feed!

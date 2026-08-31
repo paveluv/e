@@ -38,14 +38,18 @@ read boundaries.
 
 ## Optional vttest pass
 
-Use an 80-column fixed geometry first so tests cannot silently depend on a
-successful 80/132-column resize:
+Pass the terminal app's actual drawable geometry explicitly. `vttest` otherwise
+defaults to a 24-by-80 canvas even when e's status bar, echo area, and scrollbar
+leave a smaller PTY grid. In the terminal shell, run:
 
 ```sh
-vttest -u 24x80.80
-vttest -u -8 24x80.80
-vttest -u -s 24x80.80
+set -- $(stty size)
+vttest -u "${1}x${2}.${2}"
 ```
+
+Repeat with `-8` and `-s` inserted after `-u`. Re-run `stty size` after any
+split or resize; a stale geometry makes cursor tests scroll and produces
+plausible-looking but invalid one-row or one-column offsets.
 
 Run the same case in a known-good terminal and in an e terminal. Keep both at
 the same geometry and locale. The `-u` pass exercises UTF-8 without vttest
