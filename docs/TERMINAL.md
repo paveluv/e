@@ -69,6 +69,11 @@ The `xterm-256color` Meta mode (`1034`) is honored dynamically. Meta keys use
 the ordinary ESC prefix by default; while the mode is enabled, single-byte
 Meta and Control-Meta characters are encoded by setting their high bit.
 
+The advertised memory-lock controls are also stateful: `ESC l` preserves rows
+above the cursor while scrolling continues from the cursor row downward, and
+`ESC m` restores the active vertical region's normal scrolling behavior.
+Partial-width margins compose with the locked scroll rectangle.
+
 The italic status hint distinguishes a focused terminal that is capturing
 input (`▶ capturing input, C-] to escape`), its temporarily escaped state
 (`▶ escaped`), and a terminal running in a passive window (`▶`). After the

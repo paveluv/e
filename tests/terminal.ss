@@ -197,6 +197,20 @@
               (vector->list (terminal-emulator-screen terminal))
               '("AAAA" "BBBB" "CCCC")))
 
+     (let ([terminal (make-terminal-emulator 4 3)])
+       (terminal-emulator-feed!
+         terminal
+         "\x1b;[1;1H111\x1b;[2;1H222\x1b;[3;1H333\x1b;[4;1H444\x1b;[2;1H\x1b;l\x1b;[4;1H\n")
+       (check 'memory-lock-state (state-ref terminal 'memory-lock) 1)
+       (check 'memory-lock-preserves-upper-rows
+              (vector->list (terminal-emulator-screen terminal))
+              '("111" "333" "444" "   "))
+       (terminal-emulator-feed! terminal "\x1b;m\x1b;[4;1H\n")
+       (check 'memory-unlock-state (state-ref terminal 'memory-lock) #f)
+       (check 'memory-unlock-restores-full-scroll
+              (vector->list (terminal-emulator-screen terminal))
+              '("333" "444" "   " "   ")))
+
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed! terminal "\x1b;[123\x18;A")
        (check 'cancel-csi

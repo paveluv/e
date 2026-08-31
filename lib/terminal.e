@@ -18,6 +18,7 @@
             (mutable saved-row) (mutable saved-col) (mutable saved-state)
             (mutable scroll-top) (mutable scroll-bottom)
             (mutable left-margin) (mutable right-margin) (mutable margin-mode)
+            (mutable memory-lock)
             (mutable parser) (mutable parameters)
             (mutable osc-escape) (mutable osc-text) (mutable replies)
             (mutable charset) (mutable charset-g1) (mutable charset-target)
@@ -97,7 +98,7 @@
              "rows and columns must be positive exact integers" rows cols))
     (make-terminal-state #f #f #f (make-mutex)
                          rows cols (make-screen rows cols) (make-vector rows #f)
-                         0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f
+                         0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
                          'normal "" #f "" '() 'ascii 'ascii 0 0
                          #f #t #f #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
@@ -150,6 +151,7 @@
       (horizontal-margins . ,(cons (terminal-state-left-margin emulator)
                                    (terminal-state-right-margin emulator)))
       (horizontal-margin-mode . ,(terminal-state-margin-mode emulator))
+      (memory-lock . ,(terminal-state-memory-lock emulator))
       (wrap-pending . ,(terminal-state-wrap-pending emulator))
       (autowrap . ,(terminal-state-autowrap emulator))
       (origin . ,(terminal-state-origin emulator))
@@ -229,6 +231,12 @@
       (do ([col start (+ col 1)]) ((= col end))
         (clear-cell! line styles col (terminal-state-style state))
         (vector-set! styles col (terminal-state-style state)))))
+
+  (define (scrolling-top state)
+    (let ([top (terminal-state-scroll-top state)]
+          [bottom (terminal-state-scroll-bottom state)]
+          [lock (terminal-state-memory-lock state)])
+      (if (and lock (<= lock bottom)) (max top lock) top)))
   (define (blank-styles cols style) (make-vector cols style))
 
   (define (cell-row->string row)
@@ -343,7 +351,8 @@
           (terminal-state-last-character state)
           (terminal-state-left-margin state)
           (terminal-state-right-margin state)
-          (terminal-state-margin-mode state)))
+          (terminal-state-margin-mode state)
+          (terminal-state-memory-lock state)))
 
   (define (restore-screen-state! state saved)
     (terminal-state-row-set!
@@ -380,7 +389,10 @@
       (terminal-state-left-margin-set! state (if (< left right) left 0))
       (terminal-state-right-margin-set!
         state (if (< left right) right (- cols 1))))
-    (terminal-state-margin-mode-set! state (list-ref saved 21)))
+    (terminal-state-margin-mode-set! state (list-ref saved 21))
+    (let ([lock (list-ref saved 22)])
+      (terminal-state-memory-lock-set!
+        state (and lock (clamp lock 0 (- (terminal-state-rows state) 1))))))
 
   (define (enter-alternate-screen! state clear?)
     (unless (terminal-state-main-screen state)
@@ -666,6 +678,7 @@
         (terminal-state-left-margin-set! state 0)
         (terminal-state-right-margin-set! state (- cols 1))
         (terminal-state-margin-mode-set! state #f)
+        (terminal-state-memory-lock-set! state #f)
         (terminal-state-dirty-set! state #t)
         (when (terminal-state-process state)
           (resize-terminal-process!
@@ -675,7 +688,7 @@
     (let ([screen (terminal-state-screen state)]
           [styles (terminal-state-styles state)]
           [wrapped (terminal-state-wrapped state)]
-          [top (terminal-state-scroll-top state)]
+          [top (scrolling-top state)]
           [bottom (terminal-state-scroll-bottom state)]
           [cols (terminal-state-cols state)]
           [left (left-bound state)]
@@ -729,7 +742,7 @@
     (let ([screen (terminal-state-screen state)]
           [styles (terminal-state-styles state)]
           [wrapped (terminal-state-wrapped state)]
-          [top (terminal-state-scroll-top state)]
+          [top (scrolling-top state)]
           [bottom (terminal-state-scroll-bottom state)]
           [cols (terminal-state-cols state)]
           [left (left-bound state)]
@@ -1431,6 +1444,7 @@
       (terminal-state-left-margin-set! state 0)
       (terminal-state-right-margin-set! state (- cols 1))
       (terminal-state-margin-mode-set! state #f)
+      (terminal-state-memory-lock-set! state #f)
       (terminal-state-parameters-set! state "")
       (terminal-state-osc-escape-set! state #f)
       (terminal-state-charset-set! state 'ascii)
@@ -1709,6 +1723,7 @@
                (terminal-state-left-margin-set! state 0)
                (terminal-state-right-margin-set! state (- cols 1))
                (terminal-state-margin-mode-set! state #f)
+               (terminal-state-memory-lock-set! state #f)
                (terminal-state-sgr-set! state "")
                (terminal-state-style-set! state 'plain))]
             [(#\n)
@@ -1868,6 +1883,14 @@
          [(#\=) (terminal-state-keypad-set! state #t)
           (terminal-state-parser-set! state 'normal)]
          [(#\>) (terminal-state-keypad-set! state #f)
+          (terminal-state-parser-set! state 'normal)]
+         [(#\l)
+          ;; Lock rows above the cursor; the cursor row remains the first
+          ;; scrollable row, as specified by xterm's memory-lock capability.
+          (terminal-state-memory-lock-set! state (terminal-state-row state))
+          (terminal-state-parser-set! state 'normal)]
+         [(#\m)
+          (terminal-state-memory-lock-set! state #f)
           (terminal-state-parser-set! state 'normal)]
          [(#\() (terminal-state-charset-target-set! state 0)
           (terminal-state-parser-set! state 'charset)]
@@ -2423,7 +2446,7 @@
               (make-terminal-state buffer process display (make-mutex)
                                    rows cols (make-screen rows cols)
                                    (make-vector rows #f)
-                                   0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f
+                                   0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
                                    'normal "" #f "" '() 'ascii 'ascii 0 0
                                    #f #t #f #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
