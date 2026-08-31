@@ -150,6 +150,18 @@
               (vector->list (terminal-emulator-screen terminal))
               '("ab   f ")))
 
+     (let ([terminal (make-terminal-emulator 6 10)])
+       (do ([row 1 (+ row 1)]) ((> row 6))
+         (terminal-emulator-feed!
+           terminal
+           (format "\x1b;[~a;1H~a\x1b;[~a;~aH\x1b;[~aP"
+                   row (make-string 10 (integer->char (+ 64 row)))
+                   row (- 10 row) row)))
+       (check 'delete-characters-staggered-right-edge
+              (vector->list (terminal-emulator-screen terminal))
+              '("AAAAAAAAA " "BBBBBBBB  " "CCCCCCC   " "DDDDDD    "
+                "EEEEE     " "FFFF      ")))
+
      (let ([terminal (make-terminal-emulator 1 20)])
        (terminal-emulator-feed! terminal "\t\t\x1b;[Z")
        (check 'back-tab (state-ref terminal 'cursor) '(0 . 8))
