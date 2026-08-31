@@ -206,9 +206,14 @@ output:
 (terminal-emulator-screen vt)       ; copied vector of cell rows
 (terminal-emulator-styles vt)       ; copied vector of cell-style rows
 (terminal-emulator-state vt)        ; dimensions, cursor, and active modes
-(terminal-emulator-input vt "UP")  ; mode-aware input bytevector
+(terminal-emulator-input vt "UP")   ; mode-aware key bytevector
+(terminal-emulator-mouse-input vt 0 20 8 #f) ; mode-aware mouse bytevector
 (terminal-emulator-replies vt)      ; DSR/DA and other protocol replies
 ```
+
+Mouse coordinates are one-based. The numeric code uses the xterm button and
+modifier bits, and the final argument distinguishes a release from a press or
+motion event. The procedure returns `#f` while mouse tracking is disabled.
 
 `terminal-emulator-feed!` currently accepts decoded Scheme text. The live PTY
 reader performs UTF-8 decoding before feeding the same state machine.

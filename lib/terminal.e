@@ -7,7 +7,7 @@
           terminal-emulator-feed! terminal-emulator-resize!
           terminal-emulator-screen
           terminal-emulator-styles terminal-emulator-state terminal-emulator-input
-          terminal-emulator-replies)
+          terminal-emulator-mouse-input terminal-emulator-replies)
   (import (chezscheme) (core) (sys)
           (only (describe) register-descriptions!))
 
@@ -199,11 +199,22 @@
           (min (- (terminal-state-cols state) 1)
                (terminal-state-col state))))
 
+  (define (terminal-live-screen-top state)
+    (if (terminal-state-main-screen state)
+        0 (length (terminal-state-history state))))
+
+  (define (present-terminal-live-screen! state)
+    (set-buffer-viewports!
+      (terminal-state-buffer state)
+      (terminal-cursor-position state)
+      (terminal-live-screen-top state)
+      (terminal-state-unfollowed-windows state)))
+
   (define (terminal-follow! state)
     (terminal-state-unfollowed-windows-set!
       state (remq (selected-window)
                   (terminal-state-unfollowed-windows state)))
-    (goto-point! (terminal-cursor-position state)))
+    (present-terminal-live-screen! state))
 
   (define (terminal-scroll! state direction fraction)
     (unless (memq (selected-window)
@@ -2117,7 +2128,7 @@
           (when (and (eq? (current-buffer) (terminal-state-buffer state))
                      (not (memq (selected-window)
                                 (terminal-state-unfollowed-windows state))))
-            (goto-point! (terminal-cursor-position state)))))))
+            (present-terminal-live-screen! state))))))
 
   (define (terminal-row-styles buffer row line)
     (let ([state (terminal-of buffer)])
@@ -2380,35 +2391,42 @@
       (list-copy terminals))
     (set! terminals '()))
 
-  (define (send-mouse! state code x y release?)
+  (define (mouse-bytes state code x y release?)
     (let ([button (if release? 3 code)])
       (cond
         [(terminal-state-mouse-sgr state)
-         (write-bytes!
-           state
-           (string->utf8
-             (format "\x1b;[<~a;~a;~a~a"
-                     code x y (if release? "m" "M"))))]
+         (string->utf8
+           (format "\x1b;[<~a;~a;~a~a"
+                   code x y (if release? "m" "M")))]
         [(terminal-state-mouse-urxvt state)
-         (write-bytes!
-           state
-           (string->utf8 (format "\x1b;[~a;~a;~aM" (+ 32 button) x y)))]
+         (string->utf8 (format "\x1b;[~a;~a;~aM" (+ 32 button) x y))]
         [(terminal-state-mouse-utf8 state)
-         (write-bytes!
-           state
-           (string->utf8
-             (string-append "\x1b;[M"
-                            (string (integer->char (+ 32 button))
-                                    (integer->char (+ 32 x))
-                                    (integer->char (+ 32 y))))))]
+         (string->utf8
+           (string-append "\x1b;[M"
+                          (string (integer->char (+ 32 button))
+                                  (integer->char (+ 32 x))
+                                  (integer->char (+ 32 y)))))]
         [else
          ;; The original X10 encoding is limited to coordinates below 223.
-         (write-bytes!
-           state
-           (bytevector 27 91 77
-                       (+ 32 button)
-                       (+ 32 (min x 223))
-                       (+ 32 (min y 223))))])))
+         (bytevector 27 91 77
+                     (+ 32 button)
+                     (+ 32 (min x 223))
+                     (+ 32 (min y 223)))])))
+
+  (define (terminal-emulator-mouse-input emulator code x y release?)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-mouse-input
+             "expected a terminal emulator" emulator))
+    (unless (and (integer? code) (integer? x) (> x 0)
+                 (integer? y) (> y 0) (boolean? release?))
+      (error 'terminal-emulator-mouse-input
+             "expected a button code, positive coordinates, and release flag"
+             code x y release?))
+    (and (terminal-state-mouse emulator)
+         (mouse-bytes emulator code x y release?)))
+
+  (define (send-mouse! state code x y release?)
+    (write-bytes! state (mouse-bytes state code x y release?)))
 
   (define (mouse-position state)
     (or (app-event-position)
@@ -2531,6 +2549,7 @@
               (lambda (event) (and state (handle-terminal-event! state event)))))
           (set-app-presentation! buffer 0 #f #f 'blinking-block)
           (set-app-capture! buffer #t)
+          (set-app-manages-viewport! buffer #t)
           (set-app-cursor-visible!
             buffer
             (lambda (window)
@@ -2562,6 +2581,12 @@
                                    (make-style-screen rows cols 'plain)
                                    "" 'plain (make-vector 256 #f) #f #f
                                    #f "" ""))
+            (set-app-status-position!
+              buffer
+              (lambda (ignored)
+                (and (terminal-state-alive state)
+                     (cons (terminal-state-row state)
+                           (terminal-state-col state)))))
             (set! terminals (cons state terminals))
             (fork-thread (lambda () (reader-loop state)))
             (void))))))
@@ -2635,6 +2660,10 @@
          (("procedure" . "(terminal-emulator-input emulator event)"))
          "bytevector or #f" ("(terminal)") terminal "Terminal" #f
          "Encode an editor key event according to a headless emulator's active modes.")
+        ((terminal-emulator-mouse-input)
+         (("procedure" . "(terminal-emulator-mouse-input emulator code x y release?)"))
+         "bytevector or #f" ("(terminal)") terminal "Terminal" #f
+         "Encode a mouse event according to a headless emulator's active tracking mode.")
         ((terminal-emulator-replies)
          (("procedure" . "(terminal-emulator-replies emulator)")) "list"
          ("(terminal)") terminal "Terminal" #f

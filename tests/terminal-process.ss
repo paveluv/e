@@ -39,7 +39,7 @@
      (let* ([process
              (spawn-terminal-process
                "/bin/sh"
-               "printf 'pid=%s tty=' $$; if test -t 0; then printf yes; else printf no; fi; printf ' size='; stty size"
+               "printf 'pid=%s tty=' $$; if test -t 0; then printf yes; else printf no; fi; printf ' size='; stty size; printf ' term=%s' \"$TERM\""
                (current-directory) 13 47)]
             [pid (terminal-process-pid process)]
             [output (read-process process)])
@@ -47,7 +47,21 @@
        (check 'direct-exec-pid
               (contains? output (format "pid=~a" pid)))
        (check 'controlling-terminal (contains? output "tty=yes"))
-       (check 'initial-window-size (contains? output "size=13 47")))
+       (check 'initial-window-size (contains? output "size=13 47"))
+       (check 'advertised-terminal (contains? output "term=xterm-256color")))
+
+     (let* ([process
+             (spawn-terminal-process
+               "/bin/sh"
+               "read value; printf 'input=<%s>\\n' \"$value\"; printf 'stderr-line\\n' >&2"
+               (current-directory) 5 20)]
+            [output (terminal-process-output process)])
+       (put-bytevector output (string->utf8 "hello terminal\n"))
+       (flush-output-port output)
+       (let ([text (read-process process)])
+         (reap-terminal-process! process)
+         (check 'interactive-input (contains? text "input=<hello terminal>"))
+         (check 'stderr-shares-pty (contains? text "stderr-line"))))
 
      (let* ([process
              (spawn-terminal-process

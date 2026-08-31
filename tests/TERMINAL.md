@@ -1,7 +1,7 @@
 # Terminal testing
 
 e claims the behavior advertised by `xterm-256color`, plus the extensions
-listed in [TERMINAL.md](TERMINAL.md). It does not claim every private feature
+listed in [TERMINAL.md](../docs/TERMINAL.md). It does not claim every private feature
 implemented by xterm.
 
 ## Test layers
@@ -50,6 +50,11 @@ vttest -u "${1}x${2}.${2}"
 Repeat with `-8` and `-s` inserted after `-u`. Re-run `stty size` after any
 split or resize; a stale geometry makes cursor tests scroll and produces
 plausible-looking but invalid one-row or one-column offsets.
+
+Use at least 24 drawable rows for menu 2. Its final save/restore screen writes
+three explanatory lines beginning at row 21; on a shorter terminal vttest
+itself scrolls the expected 5-by-4 `A` rectangle upward, despite continuing to
+state that all four rows should be visible.
 
 Run the same case in a known-good terminal and in an e terminal. Keep both at
 the same geometry and locale. The `-u` pass exercises UTF-8 without vttest

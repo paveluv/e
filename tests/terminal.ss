@@ -24,6 +24,65 @@
        (vector-ref (vector-ref (terminal-emulator-styles emulator) row)
                    column))
 
+     (let ([terminal (make-terminal-emulator 4 5)])
+       (do ([row 1 (+ row 1)]) ((> row 4))
+         (do ([column 1 (+ column 1)]) ((> column 5))
+           (terminal-emulator-feed!
+             terminal
+             (format "\x1b;[4;5H\x1b;7\x1b;[~a;~aHA\x1b;8" row column))))
+       (terminal-emulator-resize! terminal 5 5)
+       (check 'dec-save-restore-repeated-positioning
+              (vector->list (terminal-emulator-screen terminal))
+              '("AAAAA" "AAAAA" "AAAAA" "AAAAA" "     ")))
+
+     (let ([terminal (make-terminal-emulator 21 79)])
+       (do ([row 1 (+ row 1)]) ((> row 4))
+         (do ([column 1 (+ column 1)]) ((> column 5))
+           (terminal-emulator-feed!
+             terminal
+             (format "\x1b;[~a;~aH" (+ 8 (* 2 (- row 1)))
+                     (+ 12 (* 12 (- column 1)))))
+           (terminal-emulator-feed!
+             terminal (if (even? row) "\x1b;(0" "\x1b;(B"))
+           (terminal-emulator-feed! terminal "*****\x1b;7")
+           (terminal-emulator-feed!
+             terminal (format "\x1b;[~a;~aH" row column))
+           (terminal-emulator-feed! terminal "\x1b;[0m\x1b;(BA\x1b;8*****")))
+       (terminal-emulator-resize! terminal 22 79)
+       (check 'dec-save-restore-vttest-pattern-after-resize
+              (map (lambda (line) (substring line 0 5))
+                   (vector->list (terminal-emulator-screen terminal)))
+              (append '("AAAAA" "AAAAA" "AAAAA" "AAAAA")
+                      (make-list 18 "     "))))
+
+     (let ([terminal (make-terminal-emulator 22 79)])
+       (terminal-emulator-feed!
+         terminal "\x1b;[2J\x1b;[?6h\x1b;[1;22r\x1b;[2J\x1b;[22B")
+       (do ([line 1 (+ line 1)]) ((> line 27))
+         (terminal-emulator-feed!
+           terminal
+           (format "Soft scroll up region [1..22] size 22 Line ~a\r\n" line)))
+       (terminal-emulator-feed! terminal "\x1b;[22A")
+       (do ([line 1 (+ line 1)]) ((> line 27))
+         (terminal-emulator-feed!
+           terminal
+           (format "Soft scroll down region [1..22] size 22 Line ~a\r\n\x1b;M\x1b;M"
+                   line)))
+       (terminal-emulator-feed! terminal "Push <RETURN>")
+       (check 'full-screen-reverse-index-scroll
+              (vector->list (terminal-emulator-screen terminal))
+              (cons (string-append "Push <RETURN>" (make-string 66 #\space))
+                    (map
+                      (lambda (line)
+                        (let ([text
+                               (format
+                                 "Soft scroll down region [1..22] size 22 Line ~a"
+                                 line)])
+                          (string-append
+                            text
+                            (make-string (- 79 (string-length text)) #\space))))
+                      (reverse (map (lambda (n) (+ n 7)) (iota 21)))))))
+
      (let ([terminal (make-terminal-emulator 2 4)])
        (terminal-emulator-feed! terminal "abcd")
        (check 'delayed-wrap-screen
@@ -216,6 +275,44 @@
        (terminal-emulator-feed! terminal "\x1b;[?1004;1005;1015l")
        (check 'focus-reporting-disabled
               (terminal-emulator-input terminal "FOCUS") #f))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (check 'mouse-input-disabled
+              (terminal-emulator-mouse-input terminal 0 4 5 #f) #f)
+       (terminal-emulator-feed! terminal "\x1b;[?1000h")
+       (check 'x10-mouse-press
+              (terminal-emulator-mouse-input terminal 0 4 5 #f)
+              (bytevector 27 91 77 32 36 37))
+       (check 'x10-mouse-release
+              (terminal-emulator-mouse-input terminal 0 4 5 #t)
+              (bytevector 27 91 77 35 36 37))
+       (check 'x10-mouse-coordinate-limit
+              (terminal-emulator-mouse-input terminal 64 300 400 #f)
+              (bytevector 27 91 77 96 255 255)))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed! terminal "\x1b;[?1002;1006h")
+       (check 'sgr-mouse-motion
+              (terminal-emulator-mouse-input terminal 32 4 5 #f)
+              (string->utf8 "\x1b;[<32;4;5M"))
+       (check 'sgr-mouse-release
+              (terminal-emulator-mouse-input terminal 0 4 5 #t)
+              (string->utf8 "\x1b;[<0;4;5m")))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed! terminal "\x1b;[?1000;1015h")
+       (check 'urxvt-mouse-press
+              (terminal-emulator-mouse-input terminal 4 4 5 #f)
+              (string->utf8 "\x1b;[36;4;5M"))
+       (check 'urxvt-mouse-release
+              (terminal-emulator-mouse-input terminal 4 4 5 #t)
+              (string->utf8 "\x1b;[35;4;5M")))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed! terminal "\x1b;[?1000;1005h")
+       (check 'utf8-mouse-wheel
+              (terminal-emulator-mouse-input terminal 64 4 5 #f)
+              (string->utf8 "\x1b;[M`$%")))
 
      (let ([terminal (make-terminal-emulator 1 2)])
        (check 'meta-defaults-to-escape

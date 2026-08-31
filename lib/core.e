@@ -35,7 +35,7 @@
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
     redraw-command! open-line! page-up! page-down!
     page-window-fraction! set-point-without-scroll! point-visible?
-    reset-buffer-viewports!
+    reset-buffer-viewports! set-buffer-viewports!
     previous-line! next-line! beginning-of-buffer! end-of-buffer!
     move-left! move-right! indent-tab!
     call-as-one-edit!
@@ -71,7 +71,8 @@
     message-source message-progress
     echo-highlight visual-bell!
     register-app! register-view! set-app-presentation! set-app-capture!
-    app-capture-escaped? set-app-cursor-visible! detach-app!
+    app-capture-escaped? set-app-cursor-visible! set-app-manages-viewport!
+    set-app-status-position! detach-app!
     app-event-position app-event-buffer-position
     escape-app-capture! display-app! display-app-here!
     buffer-window-size
@@ -1557,7 +1558,8 @@
             (mutable refresh-error)
             (mutable sticky-lines) (mutable scrollbar) (mutable wrap)
             (mutable cursor-style) (mutable capture)
-            (mutable cursor-visible?)))
+            (mutable cursor-visible?) (mutable manages-viewport)
+            (mutable status-position)))
 
   ;; Created lazily because the general registry machinery is initialized
   ;; later in this library. Once created it participates in module retraction
@@ -1637,7 +1639,9 @@
                         (if old (app-wrap old) 'default)
                         (if old (app-cursor-style old) 'default)
                         (and old (app-capture old))
-                        (if old (app-cursor-visible? old) 'default))]
+                        (if old (app-cursor-visible? old) 'default)
+                        (and old (app-manages-viewport old))
+                        (and old (app-status-position old)))]
            [registry (ensure-app-registry!)])
       (unless (procedure? refresh!)
         (error 'register-app! "refresh must be a procedure" refresh!))
@@ -1681,6 +1685,23 @@
       (app-cursor-visible?-set! a visible?)
       b))
 
+  (define (set-app-manages-viewport! b manages?)
+    (let ([a (app-of b)])
+      (unless a (error 'set-app-manages-viewport! "not an app buffer" b))
+      (unless (boolean? manages?)
+        (error 'set-app-manages-viewport! "manages must be #t or #f" manages?))
+      (app-manages-viewport-set! a manages?)
+      b))
+
+  (define (set-app-status-position! b position)
+    (let ([a (app-of b)])
+      (unless a (error 'set-app-status-position! "not an app buffer" b))
+      (unless (or (not position) (procedure? position))
+        (error 'set-app-status-position!
+               "position must be #f or a procedure" position))
+      (app-status-position-set! a position)
+      b))
+
   (define (app-cursor-visible-in? w)
     (let* ([a (app-of (window-buffer w))]
            [visibility (and a (app-cursor-visible? a))])
@@ -1690,6 +1711,10 @@
              (guard (ex [else #t]) (visibility w))]
             [(boolean? visibility) visibility]
             [else #t])))
+
+  (define (app-manages-window-viewport? w)
+    (let ([a (app-of (window-buffer w))])
+      (and a (app-manages-viewport a))))
 
   (define (escape-app-capture! escape-event literal!)
     ;; Suspend a fully capturing app for the next complete global command.
@@ -3281,24 +3306,29 @@
                         (max 0 (min (cdr position)
                                     (string-length (vector-ref v row)))))))
 
-  (define (reset-buffer-viewports! b position)
+  (define (set-buffer-viewports! b position top excluded-windows)
     (let* ([v (buffer-lines b)]
            [row (max 0 (min (car position) (- (vector-length v) 1)))]
            [col (max 0 (min (cdr position)
-                            (string-length (vector-ref v row))))])
+                            (string-length (vector-ref v row))))]
+           [top (max 0 (min top (- (vector-length v) 1)))])
       (buffer-spot-row-set! b row)
       (buffer-spot-col-set! b col)
-      (buffer-spot-top-set! b 0)
+      (buffer-spot-top-set! b top)
       (for-each
         (lambda (w)
-          (when (eq? (window-buffer w) b)
-            (window-top-set! w 0)
+          (when (and (eq? (window-buffer w) b)
+                     (not (memq w excluded-windows)))
+            (window-top-set! w top)
             (window-topseg-set! w 0)
             (window-left-set! w 0)
             (window-prow-set! w row)
             (window-pcol-set! w col)))
         windows)
       b))
+
+  (define (reset-buffer-viewports! b position)
+    (set-buffer-viewports! b position 0 '()))
 
   (define (view-invalidate! b)
     ;; Dynamic row renderers can change their presentation while the view's
@@ -3360,7 +3390,8 @@
            [m (min (scroll-margin) (div (max 0 (- height 1)) 2))])
       (window-prow-set! w prow)
       (window-pcol-set! w pcol)
-      (unless (not (app-cursor-visible-in? w))
+      (unless (or (not (app-cursor-visible-in? w))
+                  (app-manages-window-viewport? w))
         (if (window-wrapped? w)
           (let ([pseg (segment-of (line-breaks w (vector-ref v prow))
                                   pcol)])
@@ -4050,9 +4081,18 @@
                             [else "--"])
                       editor-name)]
              [name (buffer-name b)]
+             [app-position
+              (let* ([a (app-of b)]
+                     [position (and a (app-status-position a))])
+                (and position
+                     (guard (ex [else #f]) (position b))))]
+             [status-row (if (pair? app-position)
+                             (car app-position) (window-prow w))]
+             [status-col (if (pair? app-position)
+                             (cdr app-position) (window-pcol w))]
              [head (format "~a~a  L~a C~a"
                            head-prefix name
-                           (+ (window-prow w) 1) (+ (window-pcol w) 1))]
+                           (+ status-row 1) (+ status-col 1))]
              [conf (if conflicts
                        (format "  ~a conflict~a"
                                conflicts (if (= conflicts 1) "" "s"))
