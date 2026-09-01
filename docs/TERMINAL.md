@@ -139,6 +139,13 @@ the two `DECDHL` halves each render as double-width. Decorated rows enter
 scrollback in their displayed form and revert to single width when a
 resize reflows the primary screen.
 
+Character-set designations cover ASCII, DEC special graphics with its
+control pictures, and the DEC national replacement sets (British, Dutch,
+Finnish, French, French Canadian, German, Italian, Norwegian/Danish,
+Spanish, Swedish, and Swiss), invoked through G0/G1 with SI/SO. The NRC
+enable mode (`?42`) is tracked and reported through DECRQM; the sets
+themselves are always available, as in xterm.
+
 The grid stores Unicode grapheme strings in terminal cells. Combining marks,
 emoji presentation selectors, regional-indicator flags, and ZWJ emoji remain
 one grapheme; CJK and other wide characters occupy two cells without being

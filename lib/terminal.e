@@ -2035,7 +2035,7 @@
           [(5) (flag (terminal-state-reverse-screen state))]
           [(6) (flag (terminal-state-origin state))]
           [(7) (flag (terminal-state-autowrap state))]
-          [(4 8 40 45)
+          [(4 8 40 42 45)
            (flag (memv mode (terminal-state-extra-modes state)))]
           [(9 1000 1002 1003) (flag (eqv? (terminal-state-mouse state) mode))]
           [(25) (flag (terminal-state-cursor-visible state))]
@@ -2145,7 +2145,7 @@
                    (terminal-state-col-set!
                      state (if on? (left-bound state) 0))]
                   [(7) (terminal-state-autowrap-set! state on?)]
-                  [(4 8 40 45)
+                  [(4 8 40 42 45)
                    (let ([extra (terminal-state-extra-modes state)])
                      (terminal-state-extra-modes-set!
                        state
@@ -2488,13 +2488,66 @@
       (#\y . #\x2264) (#\z . #\x2265) (#\{ . #\x03c0) (#\| . #\x2260)
       (#\} . #\x00a3) (#\~ . #\x00b7)))
 
+  ;; DEC national replacement character sets: each replaces a handful of
+  ;; ASCII positions, as tabulated by xterm.
+  (define national-character-sets
+    '((british (#\# . #\x00a3))
+      (dutch (#\# . #\x00a3) (#\@ . #\x00be) (#\[ . #\x0133)
+             (#\\ . #\x00bd) (#\] . #\|) (#\{ . #\x00a8)
+             (#\| . #\x0192) (#\} . #\x00bc) (#\~ . #\x00b4))
+      (finnish (#\[ . #\x00c4) (#\\ . #\x00d6) (#\] . #\x00c5)
+               (#\^ . #\x00dc) (#\` . #\x00e9) (#\{ . #\x00e4)
+               (#\| . #\x00f6) (#\} . #\x00e5) (#\~ . #\x00fc))
+      (french (#\# . #\x00a3) (#\@ . #\x00e0) (#\[ . #\x00b0)
+              (#\\ . #\x00e7) (#\] . #\x00a7) (#\{ . #\x00e9)
+              (#\| . #\x00f9) (#\} . #\x00e8) (#\~ . #\x00a8))
+      (french-canadian (#\@ . #\x00e0) (#\[ . #\x00e2) (#\\ . #\x00e7)
+                       (#\] . #\x00ea) (#\^ . #\x00ee) (#\` . #\x00f4)
+                       (#\{ . #\x00e9) (#\| . #\x00f9) (#\} . #\x00e8)
+                       (#\~ . #\x00fb))
+      (german (#\@ . #\x00a7) (#\[ . #\x00c4) (#\\ . #\x00d6)
+              (#\] . #\x00dc) (#\{ . #\x00e4) (#\| . #\x00f6)
+              (#\} . #\x00fc) (#\~ . #\x00df))
+      (italian (#\# . #\x00a3) (#\@ . #\x00a7) (#\[ . #\x00b0)
+               (#\\ . #\x00e7) (#\] . #\x00e9) (#\` . #\x00f9)
+               (#\{ . #\x00e0) (#\| . #\x00f2) (#\} . #\x00e8)
+               (#\~ . #\x00ec))
+      (norwegian-danish (#\@ . #\x00c4) (#\[ . #\x00c6) (#\\ . #\x00d8)
+                        (#\] . #\x00c5) (#\^ . #\x00dc) (#\` . #\x00e4)
+                        (#\{ . #\x00e6) (#\| . #\x00f8) (#\} . #\x00e5)
+                        (#\~ . #\x00fc))
+      (spanish (#\# . #\x00a3) (#\@ . #\x00a7) (#\[ . #\x00a1)
+               (#\\ . #\x00d1) (#\] . #\x00bf) (#\{ . #\x00b0)
+               (#\| . #\x00f1) (#\} . #\x00e7))
+      (swedish (#\@ . #\x00c9) (#\[ . #\x00c4) (#\\ . #\x00d6)
+               (#\] . #\x00c5) (#\^ . #\x00dc) (#\` . #\x00e9)
+               (#\{ . #\x00e4) (#\| . #\x00f6) (#\} . #\x00e5)
+               (#\~ . #\x00fc))
+      (swiss (#\# . #\x00f9) (#\@ . #\x00e0) (#\[ . #\x00e9)
+             (#\\ . #\x00e7) (#\] . #\x00ea) (#\^ . #\x00ee)
+             (#\_ . #\x00e8) (#\` . #\x00f4) (#\{ . #\x00e4)
+             (#\| . #\x00f6) (#\} . #\x00fc) (#\~ . #\x00fb))))
+
+  (define charset-designations
+    '((#\0 . line) (#\2 . line) (#\1 . ascii) (#\B . ascii)
+      (#\A . british) (#\4 . dutch) (#\C . finnish) (#\5 . finnish)
+      (#\R . french) (#\f . french) (#\Q . french-canadian)
+      (#\9 . french-canadian) (#\K . german) (#\Y . italian)
+      (#\E . norwegian-danish) (#\6 . norwegian-danish)
+      (#\` . norwegian-danish) (#\Z . spanish) (#\H . swedish)
+      (#\7 . swedish) (#\= . swiss)))
+
   (define (mapped-character state character)
-    (case (if (= (terminal-state-shift state) 0)
-              (terminal-state-charset state)
-              (terminal-state-charset-g1 state))
-      [(line) (cond [(assv character line-drawing) => cdr] [else character])]
-      [(british) (if (char=? character #\#) #\x00a3 character)]
-      [else character]))
+    (let ([set (if (= (terminal-state-shift state) 0)
+                   (terminal-state-charset state)
+                   (terminal-state-charset-g1 state))])
+      (cond
+        [(eq? set 'line)
+         (cond [(assv character line-drawing) => cdr] [else character])]
+        [(assq set national-character-sets) =>
+         (lambda (entry)
+           (cond [(assv character (cdr entry)) => cdr] [else character]))]
+        [else character])))
 
   (define (next-tab-stop state)
     (let ([cols (terminal-state-cols state)]
@@ -2788,17 +2841,14 @@
              (string-append (terminal-state-parameters state)
                             (string character)))
            (let ([designation
-                  (case character
-                    [(#\0 #\2) 'line]
-                    [(#\A) 'british]
-                    [else 'ascii])])
+                  (cond [(assv character charset-designations) => cdr]
+                        [else 'ascii])])
              ;; An unrecognized character set silently degrades to ASCII;
-             ;; name it so the wrong glyphs are traceable to the gap. The
-             ;; alternate-ROM set (1) is ASCII on xterm as well.
+             ;; name it so the wrong glyphs are traceable to the gap.
              (when (or (> (string-length
                             (terminal-state-parameters state))
                           0)
-                       (not (memv character '(#\0 #\1 #\2 #\A #\B))))
+                       (not (assv character charset-designations)))
                (report-unsupported!
                  state
                  (format "G~a charset designator ~s"

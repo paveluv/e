@@ -1010,16 +1010,29 @@
        ;; VT100 setup modes are tracked silently; only reverse wraparound
        ;; changes behavior.
        (terminal-emulator-feed!
-         terminal "\x1b;[?4l\x1b;[?5l\x1b;[?8l\x1b;[?40h\x1b;[?45l")
+         terminal "\x1b;[?4l\x1b;[?5l\x1b;[?8l\x1b;[?40h\x1b;[?42h\x1b;[?45l")
        (terminal-emulator-feed! terminal "\x1b;[1g\x1b;[2g\x1b;(1\x1b;%G")
        (check 'setup-modes-accepted-silently
               (terminal-emulator-unsupported terminal) '())
        (terminal-emulator-feed!
-         terminal "\x1b;[?4$p\x1b;[?8$p\x1b;[?40$p\x1b;[?45$p")
+         terminal "\x1b;[?4$p\x1b;[?8$p\x1b;[?40$p\x1b;[?42$p\x1b;[?45$p")
        (check 'setup-mode-reports
               (terminal-emulator-replies terminal)
               '("\x1b;[?4;2$y" "\x1b;[?8;2$y" "\x1b;[?40;1$y"
-                "\x1b;[?45;2$y")))
+                "\x1b;[?42;1$y" "\x1b;[?45;2$y")))
+
+     (let ([terminal (make-terminal-emulator 2 10)])
+       (terminal-emulator-feed! terminal "\x1b;(K[\\]{|}~\x1b;(B#")
+       (check 'german-replacement-set
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "\x00c4;\x00d6;\x00dc;\x00e4;\x00f6;\x00fc;\x00df;#  ")
+       (terminal-emulator-feed! terminal "\x1b;[2;1H\x1b;)=\x0e;#_\x0f;")
+       (check 'swiss-replacement-set-in-g1
+              (substring (vector-ref (terminal-emulator-screen terminal) 1)
+                         0 2)
+              "\x00f9;\x00e8;")
+       (check 'national-designators-silent
+              (terminal-emulator-unsupported terminal) '()))
 
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed! terminal "abcdef")
@@ -1047,7 +1060,7 @@
        ;; unknown ESC intermediate sequence; supported designators stay
        ;; silent and no final byte leaks onto the screen.
        (terminal-emulator-feed! terminal (string (integer->char #x8e)))
-       (terminal-emulator-feed! terminal "\x1b;(B\x1b;)0\x1b;#7\x1b; L\x1b;(4\x1b;%G")
+       (terminal-emulator-feed! terminal "\x1b;(B\x1b;)0\x1b;#7\x1b; L\x1b;(>\x1b;%G")
        (check 'unknown-escape-payload-not-painted
               (vector-ref (terminal-emulator-screen terminal) 0)
               "          ")
@@ -1055,7 +1068,7 @@
        (check 'silent-escape-paths-report
               (terminal-emulator-unsupported terminal)
               '("C1 control 0x8E" "ESC \" L\"" "ESC \"#7\"" "ESC \"%@\""
-                "G0 charset designator \"4\"")))
+                "G0 charset designator \">\"")))
 
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed!
