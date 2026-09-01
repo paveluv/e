@@ -197,7 +197,7 @@
               state
               (lambda ()
                 (log! 'terminal
-                      (format "Terminal ~a sent unsupported ~a"
+                      (format "~a sent unsupported ~a"
                               (buffer-name buffer) feature)))))))))
 
   (define (control-signature family text final)

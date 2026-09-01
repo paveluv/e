@@ -206,7 +206,7 @@ the child has not requested mouse input.
 ## Unsupported features
 
 When a child sends a terminal sequence that e does not implement, e reports
-`Terminal <buffer-name> sent unsupported <feature>` in the echo area and
+`<buffer-name> sent unsupported <feature>` in the echo area and
 `*log*`. Each distinct feature is reported only once per terminal buffer, so a
 full-screen program cannot flood the log by emitting it on every redraw.
 Diagnostics include the identifying CSI parameters or protocol selector but
