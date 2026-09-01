@@ -926,6 +926,35 @@
               (terminal-emulator-unsupported terminal)
               '("CSI \"9999z\"" "private mode 1023")))
 
+     (let ([terminal (make-terminal-emulator 4 10)])
+       ;; xterm's modifyOtherKeys configuration must not reach SGR.
+       (terminal-emulator-feed! terminal "\x1b;[1mX\x1b;[>4;2mY")
+       (check 'xtmodkeys-does-not-alter-rendition
+              (eq? (style-at terminal 0 0) (style-at terminal 0 1)) #t)
+       ;; Private media copy must not enter printer-controller mode.
+       (terminal-emulator-feed! terminal "\x1b;[?5iZ")
+       (check 'private-media-copy-not-misexecuted
+              (state-ref terminal 'printer-controller) #f)
+       ;; A kitty keyboard-protocol push is not a cursor restore.
+       (terminal-emulator-feed! terminal "\x1b;[3;4H\x1b;[>1u")
+       (check 'kitty-keyboard-push-keeps-cursor
+              (state-ref terminal 'cursor) '(2 . 3))
+       ;; Private-mode save/restore and DECSCL are not DECSTBM/SCOSC/DECSTR.
+       (terminal-emulator-feed! terminal "\x1b;[?1049r\x1b;[?1049s\x1b;[61;1\"p")
+       (check 'decorated-region-controls-keep-cursor
+              (state-ref terminal 'cursor) '(2 . 3))
+       ;; A graphics attribute query is not a scroll.
+       (terminal-emulator-feed! terminal "\x1b;[?1;1;0S")
+       (check 'graphics-query-does-not-scroll
+              (substring (vector-ref (terminal-emulator-screen terminal) 0)
+                         0 3)
+              "XYZ")
+       (check 'decorated-controls-reported
+              (terminal-emulator-unsupported terminal)
+              '("CSI \"61;1\\\"p\"" "CSI \">1u\"" "CSI \">4;2m\""
+                "CSI \"?1049r\"" "CSI \"?1049s\"" "CSI \"?1;1;0S\""
+                "CSI \"?5i\"")))
+
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed!
          terminal "\x1b;[?2004h\x1b;[?2004$p\x1b;[?7$p\x1b;[?2026$p")

@@ -1896,7 +1896,43 @@
           [(20) (flag (terminal-state-newline state))]
           [else 0])))
 
+  (define csi-decorations
+    ;; The decorations (private prefixes and intermediate bytes) each final
+    ;; accepts. A decorated sequence selects a different control from its
+    ;; plain final -- CSI >4;2m configures xterm's modifyOtherKeys, not SGR
+    ;; -- so anything not listed here is reported, never executed as the
+    ;; plain action.
+    '((#\@ "" " ") (#\A "" " ")
+      (#\h "" "?") (#\l "" "?")
+      (#\J "" "?") (#\K "" "?")
+      (#\c "" ">" "=")
+      (#\n "" "?")
+      (#\p "!" "$" "?$")
+      (#\q " ")
+      (#\m "") (#\i "") (#\u "") (#\x "") (#\y "")
+      (#\r "") (#\s "") (#\S "") (#\T "")))
+
+  (define (csi-decoration text)
+    (list->string
+      (filter (lambda (character)
+                (not (or (char<=? #\0 character #\9)
+                         (char=? character #\;)
+                         (char=? character #\:))))
+              (string->list text))))
+
+  (define (csi-decoration-allowed? final text)
+    (let ([decoration (csi-decoration text)]
+          [entry (assv final csi-decorations)])
+      (if entry
+          (and (member decoration (cdr entry)) #t)
+          (string=? decoration ""))))
+
   (define (dispatch-csi! state final text)
+    (if (not (csi-decoration-allowed? final text))
+        (report-unsupported! state (control-signature "CSI" text final))
+        (dispatch-plain-csi! state final text)))
+
+  (define (dispatch-plain-csi! state final text)
     ;; HT and CHT preserve delayed wrap at the right margin.
     (unless (memv final '(#\m #\I))
       (terminal-state-wrap-pending-set! state #f))
@@ -2078,12 +2114,18 @@
                 ;; xterm's ED 3 erases only the saved lines; clear(1) sends
                 ;; it after ED 2 to leave nothing above the fresh screen.
                 (terminal-state-history-set! state (make-empty-scrollback))
-                (terminal-state-dirty-set! state #t)])]
+                (terminal-state-dirty-set! state #t)]
+               [else
+                (report-unsupported!
+                  state (control-signature "CSI" text final))])]
             [(#\K)
              (case (param parameters 0 0)
                [(0) (erase-line! state col cols)]
                [(1) (erase-line! state 0 (+ col 1))]
-               [(2) (erase-line! state 0 cols)])]
+               [(2) (erase-line! state 0 cols)]
+               [else
+                (report-unsupported!
+                  state (control-signature "CSI" text final))])]
             [(#\S) (scroll-up! state n)]
             [(#\T) (scroll-down! state n)]
             [(#\P) (delete-characters! state n)]
@@ -2103,7 +2145,10 @@
             [(#\g)
              (case (param parameters 0 0)
                [(0) (vector-set! (terminal-state-tab-stops state) col #f)]
-               [(3) (vector-fill! (terminal-state-tab-stops state) #f)])]
+               [(3) (vector-fill! (terminal-state-tab-stops state) #f)]
+               [else
+                (report-unsupported!
+                  state (control-signature "CSI" text final))])]
             [(#\L)
              (when (<= (terminal-state-scroll-top state) row
                        (terminal-state-scroll-bottom state))
@@ -2201,21 +2246,28 @@
                     state
                     (format "\x1b;[~a~a;~aR"
                             (if (string-prefix? "?" text) "?" "")
-                            (+ reported-row 1) (+ reported-col 1))))])]
+                            (+ reported-row 1) (+ reported-col 1))))]
+               [else
+                (report-unsupported!
+                  state (control-signature "CSI" text final))])]
             [(#\c)
              (cond [(or (string=? text "") (string=? text "0"))
                     (primary-device-attributes! state)]
                    [(or (string=? text ">") (string=? text ">0"))
                     (terminal-reply! state "\x1b;[>0;276;0c")]
                    [(or (string=? text "=") (string=? text "=0"))
-                    (terminal-reply! state "\x1b;P!|00000000\x1b;\\")])]
+                    (terminal-reply! state "\x1b;P!|00000000\x1b;\\")]
+                   [else
+                    (report-unsupported!
+                      state (control-signature "CSI" text final))])]
             [(#\x)
-             (when (and (not (memv #\$ (string->list text)))
-                        (memv (param parameters 0 0) '(0 1)))
-               (terminal-reply!
-                 state
-                 (format "\x1b;[~a;1;1;128;128;1;0x"
-                         (if (= (param parameters 0 0) 0) 2 3))))]
+             (if (memv (param parameters 0 0) '(0 1))
+                 (terminal-reply!
+                   state
+                   (format "\x1b;[~a;1;1;128;128;1;0x"
+                           (if (= (param parameters 0 0) 0) 2 3)))
+                 (report-unsupported!
+                   state (control-signature "CSI" text final)))]
             [(#\i)
              (case (param parameters 0 0)
                [(0)
@@ -2232,7 +2284,10 @@
                 (terminal-state-printer-pending-set! state "")]
                [(5)
                 (terminal-state-printer-controller-set! state #t)
-                (terminal-state-printer-pending-set! state "")])]
+                (terminal-state-printer-pending-set! state "")]
+               [else
+                (report-unsupported!
+                  state (control-signature "CSI" text final))])]
             [(#\q)
              (when (and cursor-shape? (terminal-state-buffer state))
                (set-app-presentation!
