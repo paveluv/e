@@ -2082,7 +2082,7 @@
           [(5) (flag (terminal-state-reverse-screen state))]
           [(6) (flag (terminal-state-origin state))]
           [(7) (flag (terminal-state-autowrap state))]
-          [(4 8 40 42 45 2026)
+          [(4 8 12 40 42 45 2026)
            (flag (memv mode (terminal-state-extra-modes state)))]
           [(9 1000 1002 1003) (flag (eqv? (terminal-state-mouse state) mode))]
           [(25) (flag (terminal-state-cursor-visible state))]
@@ -2192,7 +2192,7 @@
                    (terminal-state-col-set!
                      state (if on? (left-bound state) 0))]
                   [(7) (terminal-state-autowrap-set! state on?)]
-                  [(4 8 40 42 45 2026)
+                  [(4 8 12 40 42 45 2026)
                    (let ([extra (terminal-state-extra-modes state)])
                      (terminal-state-extra-modes-set!
                        state
@@ -2443,6 +2443,19 @@
                     (format "\x1b;[~a~a;~a$y"
                             (if private? "?" "") mode
                             (mode-report-value state mode private?))))])]
+            [(#\t)
+             ;; XTWINOPS. The text-area size report keeps applications
+             ;; that probe geometry from timing out; the title-stack
+             ;; operations are no-ops, as in xterm with window operations
+             ;; disallowed.
+             (case (param parameters 0 0)
+               [(18)
+                (terminal-reply!
+                  state (format "\x1b;[8;~a;~at" rows cols))]
+               [(22 23) (void)]
+               [else
+                (report-unsupported!
+                  state (control-signature "CSI" text final))])]
             [(#\y)
              ;; DECTST asks the terminal to run its built-in confidence test.
              ;; A software terminal with no failing hardware completes it

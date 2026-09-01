@@ -1094,10 +1094,12 @@
          terminal "\x1b;[?2004h\x1b;[?2004$p\x1b;[?7$p\x1b;[?2026$p")
        (terminal-emulator-feed! terminal "\x1b;[4h\x1b;[4$p\x1b;[20$p")
        (terminal-emulator-feed! terminal "\x1b;[?2026h\x1b;[?2026$p")
+       (terminal-emulator-feed! terminal "\x1b;[22;0t\x1b;[23;0t\x1b;[18t")
        (check 'mode-state-reports
               (terminal-emulator-replies terminal)
               '("\x1b;[?2004;1$y" "\x1b;[?7;1$y" "\x1b;[?2026;2$y"
-                "\x1b;[4;1$y" "\x1b;[20;2$y" "\x1b;[?2026;1$y")))
+                "\x1b;[4;1$y" "\x1b;[20;2$y" "\x1b;[?2026;1$y"
+                "\x1b;[8;2;5t")))
 
      (let ([terminal (make-terminal-emulator 3 10)])
        (terminal-emulator-feed! terminal "1\r\n2\r\n3\r\n4\r\n5")
