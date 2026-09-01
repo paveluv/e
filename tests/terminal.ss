@@ -226,6 +226,12 @@
               (vector->list (terminal-emulator-screen terminal))
               '("\x250c;\x2500;\x2510; ")))
 
+     (let ([terminal (make-terminal-emulator 1 8)])
+       (terminal-emulator-feed! terminal "\x1b;(0bcdehi")
+       (check 'vt100-graphics-control-pictures
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "\x2409;\x240c;\x240d;\x240a;\x2424;\x240b;  "))
+
      (let ([terminal (make-terminal-emulator 1 4)])
        (terminal-emulator-feed! terminal "\x1b;(A#\x1b;(B#")
        (check 'vt100-british-character-set
