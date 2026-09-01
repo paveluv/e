@@ -1828,7 +1828,8 @@
                    (terminal-state-origin-set! state on?)
                    (terminal-state-row-set!
                      state (if on? (terminal-state-scroll-top state) 0))
-                   (terminal-state-col-set! state 0)]
+                   (terminal-state-col-set!
+                     state (if on? (left-bound state) 0))]
                   [(7) (terminal-state-autowrap-set! state on?)]
                   [(69)
                    (terminal-state-margin-mode-set! state on?)
@@ -2057,14 +2058,18 @@
                   state (if (string-prefix? "?" text)
                             "\x1b;[?0n" "\x1b;[0n"))]
                [(= (param parameters 0 0) 6)
+                ;; DECOM makes the cursor report relative to both margins.
                 (let ([reported-row
                        (if (terminal-state-origin state)
-                           (- row (terminal-state-scroll-top state)) row)])
+                           (- row (terminal-state-scroll-top state)) row)]
+                      [reported-col
+                       (if (terminal-state-origin state)
+                           (- col (left-bound state)) col)])
                   (terminal-reply!
                     state
                     (format "\x1b;[~a~a;~aR"
                             (if (string-prefix? "?" text) "?" "")
-                            (+ reported-row 1) (+ col 1))))])]
+                            (+ reported-row 1) (+ reported-col 1))))])]
             [(#\c)
              (cond [(or (string=? text "") (string=? text "0"))
                     (primary-device-attributes! state)]

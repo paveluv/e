@@ -771,6 +771,16 @@
               (vector->list (terminal-emulator-screen terminal))
               '(" ABC  " " D    ")))
 
+     (let ([terminal (make-terminal-emulator 10 20)])
+       (terminal-emulator-feed!
+         terminal "\x1b;[?69h\x1b;[3;10s\x1b;[2;5r\x1b;[?6h")
+       (check 'origin-mode-homes-to-left-margin
+              (state-ref terminal 'cursor) '(1 . 2))
+       (terminal-emulator-feed! terminal "\x1b;[6n")
+       (check 'cursor-report-relative-to-margins
+              (terminal-emulator-replies terminal)
+              '("\x1b;[1;1R")))
+
      (let ([terminal (make-terminal-emulator 1 2)])
        (terminal-emulator-feed! terminal "\x1b;[31mX")
        (let ([before (vector-ref
