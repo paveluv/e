@@ -322,6 +322,25 @@
        (check 'colon-rgb-matches-semicolon-rgb
               (style-at colon 0 0) (style-at semicolon 0 0)))
 
+     (let ([semicolon (make-terminal-emulator 1 4)]
+           [colon (make-terminal-emulator 1 4)]
+           [plain (make-terminal-emulator 1 4)])
+       ;; Underline colors group like the other extended colors instead of
+       ;; leaking their components as blink and unrelated codes.
+       (terminal-emulator-feed! semicolon "\x1b;[4m\x1b;[58;5;196mX")
+       (terminal-emulator-feed! colon "\x1b;[4m\x1b;[58:5:196mX")
+       (terminal-emulator-feed! plain "\x1b;[4m\x1b;[5mX")
+       (check 'underline-color-groups-as-one-operation
+              (eq? (style-at semicolon 0 0) (style-at colon 0 0)) #t)
+       (check 'underline-color-is-not-blink
+              (eq? (style-at semicolon 0 0) (style-at plain 0 0)) #f)
+       (terminal-emulator-feed! semicolon "\x1b;[59mY")
+       (terminal-emulator-feed! plain "\x1b;[2G\x1b;[0m\x1b;[4mY")
+       (check 'underline-color-reset-keeps-underline
+              (eq? (style-at semicolon 0 1)
+                   (style-at plain 0 1))
+              #t))
+
      (let ([truncated (make-terminal-emulator 1 4)]
            [bold (make-terminal-emulator 1 4)])
        (terminal-emulator-feed! truncated

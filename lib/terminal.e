@@ -1313,13 +1313,13 @@
                      ;; crash the parser or degrade into SGR 0: drop the
                      ;; malformed color and keep the surrounding rendition.
                      (cond
-                       [(and (memv (car values) '(38 48))
+                       [(and (memv (car values) '(38 48 58))
                              (pair? (cdr values))
                              (eqv? (cadr values) 5))
                         (list (car values) 5
                               (or (and (pair? (cddr values)) (caddr values))
                                   0))]
-                       [(and (memv (car values) '(38 48))
+                       [(and (memv (car values) '(38 48 58))
                              (pair? (cdr values))
                              (eqv? (cadr values) 2))
                         (let ([rgb (filter number? (cddr values))])
@@ -1329,7 +1329,7 @@
                                     (list-ref rgb (- (length rgb) 2))
                                     (list-ref rgb (- (length rgb) 1)))
                               '()))]
-                       [(memv (car values) '(38 48)) '()]
+                       [(memv (car values) '(38 48 58)) '()]
                        [else (list (or (car values) 0))])))))
            (split-parameter text #\;))))
 
@@ -1876,7 +1876,7 @@
       (if (null? xs)
           (reverse out)
           (let* ([code (car xs)]
-                 [count (if (and (memv code '(38 48)) (pair? (cdr xs)))
+                 [count (if (and (memv code '(38 48 58)) (pair? (cdr xs)))
                             (case (cadr xs) [(5) 3] [(2) 5] [else 1])
                             1)])
             (let take ([ys xs] [n count] [op '()])
@@ -1896,6 +1896,7 @@
         [(= code 9) 'strike]
         [(or (= code 38) (<= 30 code 37) (<= 90 code 97)) 'foreground]
         [(or (= code 48) (<= 40 code 47) (<= 100 code 107)) 'background]
+        [(= code 58) 'underline-color]
         [else code])))
 
   (define (canonical-sgr current additions)
@@ -1922,6 +1923,8 @@
                                  (remove-category state 'foreground))]
               [(= code 49) (loop (cdr ops)
                                  (remove-category state 'background))]
+              [(= code 59) (loop (cdr ops)
+                                 (remove-category state 'underline-color))]
               [else
                (let ([category (sgr-category op)])
                  (loop (cdr ops)
