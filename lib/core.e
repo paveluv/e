@@ -5722,6 +5722,12 @@
            "MOUSE-HANDLED")]
         [(divider-at (- x 1) (- y 1)) =>
          (lambda (divider)
+           ;; a below divider doubles as the upper window's status bar:
+           ;; pressing it focuses that window, as any status bar does,
+           ;; and still arms the drag
+           (when (eq? (car divider) 'below)
+             (window-at (- x 1) (- y 1)
+               (lambda (entry) (focus-window! (car entry)))))
            (set! drag-divider divider)
            "MOUSE-HANDLED")]
         [else
