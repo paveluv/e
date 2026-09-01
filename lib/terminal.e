@@ -1081,21 +1081,27 @@
                                         (and (not (string=? field ""))
                                              (string->number field)))
                                       fields)])
+                     ;; A truncated or non-numeric subparameter must never
+                     ;; crash the parser or degrade into SGR 0: drop the
+                     ;; malformed color and keep the surrounding rendition.
                      (cond
                        [(and (memv (car values) '(38 48))
                              (pair? (cdr values))
-                             (= (cadr values) 5))
-                        (list (car values) 5 (or (caddr values) 0))]
+                             (eqv? (cadr values) 5))
+                        (list (car values) 5
+                              (or (and (pair? (cddr values)) (caddr values))
+                                  0))]
                        [(and (memv (car values) '(38 48))
                              (pair? (cdr values))
-                             (= (cadr values) 2))
+                             (eqv? (cadr values) 2))
                         (let ([rgb (filter number? (cddr values))])
                           (if (>= (length rgb) 3)
                               (list (car values) 2
                                     (list-ref rgb (- (length rgb) 3))
                                     (list-ref rgb (- (length rgb) 2))
                                     (list-ref rgb (- (length rgb) 1)))
-                              '(0)))]
+                              '()))]
+                       [(memv (car values) '(38 48)) '()]
                        [else (list (or (car values) 0))])))))
            (split-parameter text #\;))))
 

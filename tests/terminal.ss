@@ -316,6 +316,14 @@
        (check 'colon-rgb-matches-semicolon-rgb
               (style-at colon 0 0) (style-at semicolon 0 0)))
 
+     (let ([truncated (make-terminal-emulator 1 4)]
+           [bold (make-terminal-emulator 1 4)])
+       (terminal-emulator-feed! truncated
+                                "\x1b;[1m\x1b;[38:5m\x1b;[38:2m\x1b;[48:2:1mX")
+       (terminal-emulator-feed! bold "\x1b;[1m\x1b;[38;5;0mX")
+       (check 'truncated-colon-color-keeps-rendition
+              (style-at truncated 0 0) (style-at bold 0 0)))
+
      (let ([terminal (make-terminal-emulator 1 2)])
        (terminal-emulator-feed! terminal "A\x1b;[7mB")
        (let ([normal (terminal-emulator-styles terminal)])
