@@ -759,21 +759,57 @@
           '())))
 
   (define (render-width b)
-    ;; Fit tables to the buffer's window; the fallback matches the
-    ;; renderer's own default.
-    (let ([size (buffer-window-size b)])
-      (if size (max 20 (cdr size)) 79)))
+    ;; Fit tables to the narrowest window showing the buffer -- one
+    ;; rendering serves them all; the fallback matches the renderer's
+    ;; own default.
+    (let ([width (buffer-narrowest-width b)])
+      (if width (max 20 width) 79)))
 
   (define (install-render! b lines source stash-read-only)
-    (let-values ([(rendered styles links rows)
-                  (markdown-render lines (render-width b))])
-      (hashtable-set! renders b
-                      (vector (list->vector styles)
-                              (list->vector links)
-                              (list->vector rows)
-                              source
-                              stash-read-only))
-      (view-replace! b (if (null? rendered) (list "") rendered))))
+    (let ([width (render-width b)])
+      (let-values ([(rendered styles links rows)
+                    (markdown-render lines width)])
+        (hashtable-set! renders b
+                        (vector (list->vector styles)
+                                (list->vector links)
+                                (list->vector rows)
+                                source
+                                stash-read-only
+                                lines
+                                width))
+        (view-replace! b (if (null? rendered) (list "") rendered)))))
+
+  (define (view-row-showing b source-row)
+    ;; the rendered line that came from the source row
+    (let* ([r (hashtable-ref renders b #f)]
+           [rows (vector-ref r 2)])
+      (let find ([k 0] [best 0])
+        (cond [(>= k (vector-length rows)) best]
+              [(<= (vector-ref rows k) source-row) (find (+ k 1) k)]
+              [else best]))))
+
+  (define (refit-views!)
+    ;; A view rendered for one window width re-renders when that width
+    ;; changes -- a split or resize re-fits tables and their cells.
+    (vector-for-each
+      (lambda (b)
+        (let ([r (hashtable-ref renders b #f)])
+          (when (and r (buffer-window-size b)
+                     (not (= (render-width b) (vector-ref r 6))))
+            (let* ([current? (eq? b (current-buffer))]
+                   [source-row
+                    (and current?
+                         (let ([rows (vector-ref r 2)]
+                               [row (car (point))])
+                           (if (< row (vector-length rows))
+                               (vector-ref rows row)
+                               0)))])
+              (install-render! b (vector-ref r 5) (vector-ref r 3)
+                               (vector-ref r 4))
+              (when current?
+                (goto-point!
+                  (cons (view-row-showing b source-row) 0)))))))
+      (hashtable-keys renders)))
 
   (define (markdown-view-install! b lines)
     ;; Render markdown lines into an app view; the view owns its
@@ -799,15 +835,7 @@
         (set-buffer-read-only! b #t)
         (set-buffer-mode! b "markdown-view")
         (set-buffer-wrap! b 'clean)
-        ;; land on the rendered line that came from the source row
-        (let* ([r (hashtable-ref renders b #f)]
-               [rows (vector-ref r 2)])
-          (let find ([k 0] [best 0])
-            (cond [(>= k (vector-length rows))
-                   (goto-point! (cons best 0))]
-                  [(<= (vector-ref rows k) row)
-                   (find (+ k 1) k)]
-                  [else (goto-point! (cons best 0))]))))
+        (goto-point! (cons (view-row-showing b row) 0)))
       (void)))
 
   (define (markdown-edit! . b*)
@@ -920,6 +948,7 @@
                     #f view-row-styles)
     (add-hyperlinker! view-row-links)
     (add-highlighter! link-hint)
+    (add-pre-redraw-hook! refit-views!)
     (bind-default-key! 'markdown "C-c v" markdown-view!)
     (bind-default-key! 'markdown-view "C-c v" markdown-edit!)
     (bind-default-key! 'markdown-view "RET" follow-md-link!)

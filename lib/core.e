@@ -55,7 +55,7 @@
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
-    add-shutdown-hook!
+    add-shutdown-hook! add-pre-redraw-hook!
     prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
     prompt-edge-motion prompt-reindent
     completion-highlight
@@ -78,7 +78,7 @@
     set-app-status-position! detach-app!
     app-event-position app-event-buffer-position app-event-button
     escape-app-capture! display-app! display-app-here!
-    buffer-window-size
+    buffer-window-size buffer-narrowest-width
     target-window target-buffer show-buffer-in-target!
     view-append! view-replace! view-invalidate!
     register-log-formatter! log-history
@@ -1647,6 +1647,25 @@
       (set! buffer-kill-hook-registry (make-registry)))
     (registry-add! buffer-kill-hook-registry proc))
 
+  (define pre-redraw-hook-registry #f)
+
+  (define (add-pre-redraw-hook! proc)
+    ;; Run before each main-loop frame, after the command that changed
+    ;; the layout -- where a view can re-fit itself to its window.
+    (unless (procedure? proc)
+      (error 'add-pre-redraw-hook! "expected a procedure" proc))
+    (unless pre-redraw-hook-registry
+      (set! pre-redraw-hook-registry (make-registry)))
+    (registry-add! pre-redraw-hook-registry proc))
+
+  (define (run-pre-redraw-hooks!)
+    (when pre-redraw-hook-registry
+      ;; the command that just ran may have changed the split tree;
+      ;; window geometry is otherwise only refreshed while painting
+      (window-layout)
+      (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
+                (registry-items pre-redraw-hook-registry))))
+
   (define (add-shutdown-hook! proc)
     (unless (procedure? proc)
       (error 'add-shutdown-hook! "expected a procedure" proc))
@@ -1881,6 +1900,15 @@
     (max 1 (- (window-width w)
               (if (window-scrollbar? w) 1 0)
               (window-line-number-width w))))
+
+  (define (buffer-narrowest-width b)
+    ;; The smallest content width among the windows showing b, or #f
+    ;; -- what a rendering shared by every window must fit.
+    (let ([ws (filter (lambda (w) (eq? (window-buffer w) b)) windows)])
+      (and (pair? ws)
+           (fold-left (lambda (m w) (min m (window-content-width w)))
+                      (window-content-width (car ws))
+                      (cdr ws)))))
 
   (define (buffer-window-size b)
     ;; The text grid of the preferred window displaying b.  App-owned terminal
@@ -6881,6 +6909,7 @@
       (lambda ()
         (let loop ()
           (unless quit?
+            (run-pre-redraw-hooks!)
             (redraw!)
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the

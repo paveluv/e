@@ -29,7 +29,9 @@ describe browser renders its pages through the same viewer.
   out like HTML tables: when the natural widths overflow the window,
   each column gets at least its longest word and the rest of the
   width in proportion to how much it has to wrap, and cell text wraps
-  inside its column.
+  inside its column. A view re-renders itself whenever the width of
+  its narrowest window changes -- splitting, resizing, or closing
+  windows re-fits the tables.
 - Fenced code blocks sit between two dotted rules, the fence's
   language tag on the top one; a registered mode of that name colors
   the code.
