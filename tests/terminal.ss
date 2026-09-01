@@ -956,6 +956,14 @@
                 "CSI \"?5i\"")))
 
      (let ([terminal (make-terminal-emulator 2 10)])
+       (terminal-emulator-feed! terminal "AB\x7f;C")
+       (check 'del-is-ignored
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "ABC       ")
+       (check 'del-does-not-move-cursor
+              (state-ref terminal 'cursor) '(0 . 3)))
+
+     (let ([terminal (make-terminal-emulator 2 10)])
        ;; SS2, unknown ESC # and ESC SP finals, an unknown charset, and an
        ;; unknown ESC intermediate sequence; supported designators stay
        ;; silent and no final byte leaks onto the screen.

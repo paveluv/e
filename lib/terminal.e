@@ -2444,7 +2444,9 @@
           (terminal-state-osc-text-set! state "")]
          [else
           (let ([code (char->integer character)])
-            (when (and (>= code 32) (not (<= 128 code 159)))
+            ;; DEL is a padding character and never occupies a cell.
+            (when (and (>= code 32) (not (= code 127))
+                       (not (<= 128 code 159)))
               (put-character! state (mapped-character state character)))
             (when (and (< code 32) (not (memv code '(0 1 2 3 4 5 6
                                                      7 8 9 10 11 12 13
