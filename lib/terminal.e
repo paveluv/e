@@ -169,6 +169,18 @@
   (define unsupported-features (make-weak-eq-hashtable))
   (define style-lock (make-mutex))
 
+  (define (call-with-display-output state thunk)
+    ;; Chez's script-mode console input and output ports share one lock,
+    ;; and the main thread holds it across its blocking keyboard read. A
+    ;; PTY reader thread that paints the echo area through the console
+    ;; port therefore stalls -- holding the terminal lock -- until the
+    ;; next keystroke. Route reader-thread diagnostics through the
+    ;; terminal's duplicated display port, as display-redraw! does.
+    (if (terminal-state-display state)
+        (parameterize ([terminal-output-port (terminal-state-display state)])
+          (thunk))
+        (thunk)))
+
   (define (report-unsupported! state feature)
     ;; Always record, so headless emulators expose their reports through
     ;; terminal-emulator-unsupported; log only where a buffer names the
@@ -181,9 +193,12 @@
         (hashtable-set! seen feature #t)
         (let ([buffer (terminal-state-buffer state)])
           (when buffer
-            (log! 'terminal
-                  (format "Terminal ~a sent unsupported ~a"
-                          (buffer-name buffer) feature)))))))
+            (call-with-display-output
+              state
+              (lambda ()
+                (log! 'terminal
+                      (format "Terminal ~a sent unsupported ~a"
+                              (buffer-name buffer) feature)))))))))
 
   (define (control-signature family text final)
     ;; Keep parameters because private mode numbers identify the actual
@@ -1601,12 +1616,15 @@
                 (terminal-state-clipboard-set! state clipboard)
                 (when (and (terminal-forward-clipboard-to-kill-ring)
                            (terminal-state-buffer state))
-                  (copy-to-kill-buffer! clipboard)
-                  (log! 'terminal
-                        (format
-                          "Received clipboard from ~a, stored in kill ring"
-                          (buffer-name
-                            (terminal-state-buffer state))))))))))))
+                  (call-with-display-output
+                    state
+                    (lambda ()
+                      (copy-to-kill-buffer! clipboard)
+                      (log! 'terminal
+                            (format
+                              "Received clipboard from ~a, stored in kill ring"
+                              (buffer-name
+                                (terminal-state-buffer state))))))))))))))
 
   (define (dispatch-osc! state)
     (let* ([text (control-text state)]
@@ -3191,9 +3209,13 @@
                 ;; Other reader failures indicate an emulator or redraw bug
                 ;; and must not masquerade as an ordinary process exit.
                 (unless (i/o-read-error? ex)
-                  (parameterize ([message-source 'terminal])
-                    (set-message!
-                      (format "Terminal reader failed: ~a" (error-text ex)))))
+                  (call-with-display-output
+                    state
+                    (lambda ()
+                      (parameterize ([message-source 'terminal])
+                        (set-message!
+                          (format "Terminal reader failed: ~a"
+                                  (error-text ex)))))))
                 (finished!)])
       (let ([input (transcoded-port
                      (terminal-process-input (terminal-state-process state))

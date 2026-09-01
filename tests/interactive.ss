@@ -145,6 +145,16 @@
      (settle! 800)
      (check 'ed3-empties-scrollback (not (find-cell "red line")))
 
+     ;; -- diagnostics from the reader thread must not stall the frame ----
+     ;; An unsupported sequence logs from the PTY reader thread; the output
+     ;; after it must still appear without any further input arriving
+     ;; (regression: the console ports share a lock with the main thread's
+     ;; blocking keyboard read).
+     (send! "printf '\\033[9999z'; printf 'after-report'; sleep 3\r")
+     (wait-for! 'reader-thread-log-does-not-stall-output
+                (lambda () (find-cell "after-report")) 2000)
+     (settle! 3200)
+
      ;; -- shut down cleanly ----------------------------------------------
      (send! "\x1b;[6;2~")
      (settle! 300)
