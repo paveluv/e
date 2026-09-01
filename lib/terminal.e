@@ -1778,6 +1778,34 @@
       (terminal-state-link-set! state #f)
       (terminal-state-dirty-set! state #t)))
 
+  (define (mode-report-value state mode private?)
+    ;; DECRPM values: 0 unrecognized, 1 set, 2 reset, 4 permanently reset.
+    (define (flag value) (if value 1 2))
+    (if private?
+        (case mode
+          [(1) (flag (terminal-state-cursor-keys state))]
+          ;; DECCOLM's mandatory resets are honored, but a tiled window can
+          ;; never actually be 132 columns wide.
+          [(3) 4]
+          [(5) (flag (terminal-state-reverse-screen state))]
+          [(6) (flag (terminal-state-origin state))]
+          [(7) (flag (terminal-state-autowrap state))]
+          [(9 1000 1002 1003) (flag (eqv? (terminal-state-mouse state) mode))]
+          [(25) (flag (terminal-state-cursor-visible state))]
+          [(47 1047 1049) (flag (and (terminal-state-main-screen state) #t))]
+          [(69) (flag (terminal-state-margin-mode state))]
+          [(1004) (flag (terminal-state-focus-reporting state))]
+          [(1005) (flag (terminal-state-mouse-utf8 state))]
+          [(1006) (flag (terminal-state-mouse-sgr state))]
+          [(1015) (flag (terminal-state-mouse-urxvt state))]
+          [(1034) (flag (terminal-state-meta-eight-bit state))]
+          [(2004) (flag (terminal-state-bracketed state))]
+          [else 0])
+        (case mode
+          [(4) (flag (terminal-state-insert state))]
+          [(20) (flag (terminal-state-newline state))]
+          [else 0])))
+
   (define (dispatch-csi! state final text)
     ;; HT and CHT preserve delayed wrap at the right margin.
     (unless (memv final '(#\m #\I))
@@ -2044,8 +2072,23 @@
                ;; second REP without an intervening graphic is ignored.
                (terminal-state-last-character-set! state #f))]
             [(#\p)
-             (when (string-prefix? "!" text)
-               (soft-reset-terminal-state! state))]
+             (cond
+               [(string-prefix? "!" text)
+                (soft-reset-terminal-state! state)]
+               [(and (> (string-length text) 0)
+                     (char=? (string-ref text (- (string-length text) 1))
+                             #\$))
+                ;; DECRQM: even an unrecognized mode deserves a reply, or
+                ;; the requester waits on a timeout.
+                (let* ([private? (string-prefix? "?" text)]
+                       [body (substring text (if private? 1 0)
+                                        (- (string-length text) 1))]
+                       [mode (or (string->number body) 0)])
+                  (terminal-reply!
+                    state
+                    (format "\x1b;[~a~a;~a$y"
+                            (if private? "?" "") mode
+                            (mode-report-value state mode private?))))])]
             [(#\y)
              ;; DECTST asks the terminal to run its built-in confidence test.
              ;; A software terminal with no failing hardware completes it
