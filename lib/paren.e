@@ -21,11 +21,14 @@
   (define matching-paren-style-table
     '((underline (underline))
       (box (underline overline))
-      (bold (bold))
+      ;; Bold wears the terminal's regular text color: against the
+      ;; usually colored delimiters, bold default-foreground text reads
+      ;; as the pair lighting up without changing hue family.
+      (bold (bold (foreground default)))
       (colored (bold (foreground 135)))))
 
   (define matching-paren-style
-    (make-parameter 'underline
+    (make-parameter 'bold
       (lambda (name)
         (let ([hit (assq name matching-paren-style-table)])
           (unless hit
@@ -91,4 +94,4 @@
       '(((matching-paren-style)
          (("parameter" . "(matching-paren-style [name])")) "symbol"
          ("(paren)") paren "Editing" #f
-         "Get or set how the matched bracket pair is marked: underline (the default), box (a line above and below), bold, or colored (bold accent violet).")))))
+         "Get or set how the matched bracket pair is marked: bold (the default; bold in the regular text color), underline, box (a line above and below), or colored (bold accent violet).")))))

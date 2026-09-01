@@ -2970,7 +2970,10 @@
             (cond [(number? spec)
                    (style-escape `((foreground ,spec)))]
                   [(string? spec) (format "\x1b;[~am" spec)]
-                  [else (style-escape spec)]))))
+                  [else (style-escape spec)])))
+    ;; Painted rows are cached by content and marks, not by face
+    ;; definitions; a redefined face must repaint everything now.
+    (invalidate-screen-cache!))
 
   (define (style-override style)
     (let ([hit (registry-find style-overrides
