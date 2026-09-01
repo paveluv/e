@@ -4764,40 +4764,56 @@
                                     (string-join (map completion-label cands)
                                                  " ")))]))])))
 
+  (define (prompt-window-commands)
+    ;; The global commands a prompt may run without losing its input:
+    ;; pure window management. Resolution goes through the live keymap,
+    ;; so rebinding these commands -- or binding new chords to them --
+    ;; works inside every prompt as well.
+    (list focus-window-up! focus-window-down!
+          focus-window-left! focus-window-right!
+          other-window! split-window! split-window-right!
+          delete-window! delete-other-windows!))
+
+  (define (prompt-kill-buffer!)
+    ;; kill-buffer!!'s prompt-safe stand-in: no nested prompt, and a
+    ;; file-backed buffer with unsaved changes is refused with a note.
+    (let ([b (current-buffer)])
+      (if (and (buffer-file b) (not (buffer-clean? b)))
+          (format "  ~a has unsaved changes" (buffer-name b))
+          (guard (ex [else (string-append "  " (error-text ex))])
+            (kill-buffer! b)
+            ""))))
+
   (define (prompt-window-command event)
-    ;; Window management while a prompt runs: focus moves, splits, and
-    ;; closes work without disturbing the input, and the newly focused
-    ;; window is the pending command's target -- where the file opens or
-    ;; the evaluation runs -- once the prompt is accepted. A C-x chord is
-    ;; consumed whole so an unsupported tail cannot leak into the input.
-    ;; Each action returns the note to show after it runs.
-    (define (act thunk)
-      (lambda ()
-        (guard (ex [else (string-append "  " (error-text ex))])
-          (thunk)
-          "")))
-    (cond
-      [(string=? event "M-LEFT") (act focus-window-left!)]
-      [(string=? event "M-RIGHT") (act focus-window-right!)]
-      [(string=? event "M-UP") (act focus-window-up!)]
-      [(string=? event "M-DOWN") (act focus-window-down!)]
-      [(string=? event "C-x")
-       (lambda ()
-         (let ([next (read-key-event #f)])
+    ;; Resolve the event, and any chord it opens, through the global
+    ;; keymap while a prompt runs. A window-management command yields a
+    ;; thunk that runs it and returns the note to show; any other
+    ;; complete chord is consumed whole so its tail cannot leak into the
+    ;; input; a plain key or self-inserting character that is not a
+    ;; window command stays with the prompt.
+    (define (action-thunk action)
+      (cond
+        [(memq action (prompt-window-commands))
+         (lambda ()
+           (guard (ex [else (string-append "  " (error-text ex))])
+             (action)
+             ""))]
+        [(eq? action kill-buffer!!) prompt-kill-buffer!]
+        [else #f]))
+    (and (not (key-event-character event))
+         (let loop ([sequence (list event)])
            (cond
-             [(eof-object? next) ""]
-             [(equal? next "o") ((act other-window!))]
-             [(equal? next "2") ((act split-window!))]
-             [(equal? next "3") ((act split-window-right!))]
-             [(equal? next "0") ((act delete-window!))]
-             [(equal? next "1") ((act delete-other-windows!))]
-             [(equal? next "k")
-              (let ([b (current-buffer)])
-                (if (and (buffer-file b) (not (buffer-clean? b)))
-                    (format "  ~a has unsaved changes" (buffer-name b))
-                    ((act (lambda () (kill-buffer! b))))))]
-             [else ""])))]
-      [else #f]))
+             [(binding-prefix? 'global sequence)
+              (let ([next (read-key-event #f)])
+                (if (eof-object? next)
+                    (lambda () "")
+                    (loop (append sequence (list next)))))]
+             [(resolved-binding 'global sequence)
+              => (lambda (hit)
+                   (or (action-thunk (binding-action (cdr hit)))
+                       (and (> (length sequence) 1) (lambda () ""))))]
+             [(> (length sequence) 1) (lambda () "")]
+             [else #f]))))
 
   (define (prompt! label . rest)
     ;; Read input in the echo area, with the cursor parked there. Optional
