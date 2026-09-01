@@ -196,6 +196,9 @@ full-screen program cannot flood the log by emitting it on every redraw.
 Diagnostics include the identifying CSI parameters or protocol selector but
 omit arbitrary OSC and DCS payloads, which may contain private application
 data. Unknown control strings and character controls are reported as well.
+Headless emulators record the same signatures, readable through
+`terminal-emulator-unsupported`, so a test can assert that a sequence is
+either implemented or reported rather than silently dropped.
 
 ## Scheme API
 
@@ -240,6 +243,7 @@ output:
 (terminal-emulator-input vt "UP")   ; mode-aware key bytevector
 (terminal-emulator-mouse-input vt 0 20 8 #f) ; mode-aware mouse bytevector
 (terminal-emulator-replies vt)      ; DSR/DA and other protocol replies
+(terminal-emulator-unsupported vt)  ; reported unsupported-feature signatures
 ```
 
 Mouse coordinates are one-based. The numeric code uses the xterm button and

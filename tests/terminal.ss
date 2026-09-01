@@ -921,6 +921,12 @@
               '("abc" "d  " "X  ")))
 
      (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed! terminal "\x1b;[?1023h\x1b;[?1023h\x1b;[9999z")
+       (check 'unsupported-reports-recorded-once
+              (terminal-emulator-unsupported terminal)
+              '("CSI \"9999z\"" "private mode 1023")))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed!
          terminal "\x1b;[?2004h\x1b;[?2004$p\x1b;[?7$p\x1b;[?2026$p")
        (terminal-emulator-feed! terminal "\x1b;[4h\x1b;[4$p\x1b;[20$p")

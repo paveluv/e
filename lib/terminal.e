@@ -8,7 +8,8 @@
           terminal-emulator-screen
           terminal-emulator-styles terminal-emulator-hyperlinks
           terminal-emulator-state terminal-emulator-input
-          terminal-emulator-mouse-input terminal-emulator-replies)
+          terminal-emulator-mouse-input terminal-emulator-replies
+          terminal-emulator-unsupported)
   (import (chezscheme) (core) (sys)
           (only (describe) register-descriptions!))
 
@@ -135,14 +136,17 @@
   (define style-lock (make-mutex))
 
   (define (report-unsupported! state feature)
-    (let ([buffer (terminal-state-buffer state)])
-      (when buffer
-        (let ([seen (or (hashtable-ref unsupported-features state #f)
-                        (let ([table (make-hashtable string-hash string=?)])
-                          (hashtable-set! unsupported-features state table)
-                          table))])
-          (unless (hashtable-ref seen feature #f)
-            (hashtable-set! seen feature #t)
+    ;; Always record, so headless emulators expose their reports through
+    ;; terminal-emulator-unsupported; log only where a buffer names the
+    ;; terminal.
+    (let ([seen (or (hashtable-ref unsupported-features state #f)
+                    (let ([table (make-hashtable string-hash string=?)])
+                      (hashtable-set! unsupported-features state table)
+                      table))])
+      (unless (hashtable-ref seen feature #f)
+        (hashtable-set! seen feature #t)
+        (let ([buffer (terminal-state-buffer state)])
+          (when buffer
             (log! 'terminal
                   (format "Terminal ~a sent unsupported ~a"
                           (buffer-name buffer) feature)))))))
@@ -310,6 +314,13 @@
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-replies "expected a terminal emulator" emulator))
     (list-copy (terminal-state-replies emulator)))
+
+  (define (terminal-emulator-unsupported emulator)
+    (unless (terminal-emulator? emulator)
+      (error 'terminal-emulator-unsupported
+             "expected a terminal emulator" emulator))
+    (let ([seen (hashtable-ref unsupported-features emulator #f)])
+      (if seen (sort string<? (vector->list (hashtable-keys seen))) '())))
 
   (define (terminal-of buffer)
     (find (lambda (state) (eq? (terminal-state-buffer state) buffer))
@@ -3233,6 +3244,10 @@
         ((terminal-emulator-replies)
          (("procedure" . "(terminal-emulator-replies emulator)")) "list"
          ("(terminal)") terminal "Terminal" #f
-         "Return protocol replies emitted by a headless emulator."))))
+         "Return protocol replies emitted by a headless emulator.")
+        ((terminal-emulator-unsupported)
+         (("procedure" . "(terminal-emulator-unsupported emulator)")) "list"
+         ("(terminal)") terminal "Terminal" #f
+         "Return the unsupported-feature signatures a headless emulator has reported, sorted and deduplicated."))))
 
 ) ;; library (terminal)
