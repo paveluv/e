@@ -9,8 +9,29 @@
 ;; without a mode every bracket counts.
 
 (library (paren)
-  (export init!)
-  (import (chezscheme) (core))
+  (export init! matching-paren-style)
+  (import (chezscheme) (core)
+          (only (describe) register-descriptions!))
+
+  ;; The named looks for the matched pair, in the style DSL. Box is the
+  ;; framed attribute (SGR 51), which only some terminals draw; the rest
+  ;; show nothing for it. Colored uses the accent violet that also marks
+  ;; choices and resizes.
+  (define matching-paren-style-table
+    '((underline (underline))
+      (box (framed))
+      (bold (bold))
+      (colored (bold (foreground 135)))))
+
+  (define matching-paren-style
+    (make-parameter 'underline
+      (lambda (name)
+        (let ([hit (assq name matching-paren-style-table)])
+          (unless hit
+            (error 'matching-paren-style
+                   "must be underline, box, bold, or colored" name))
+          (set-style! 'matching-paren (cadr hit))
+          name))))
 
   (define (scan-paren b styles-of start-row start-col dir)
     ;; Find the bracket balancing the one at (start-row, start-col),
@@ -59,9 +80,14 @@
              [col (or closer opener)]
              [match (and col (scan-paren b styles-of row col (if closer -1 1)))])
         (if match
-            (list (list row col (+ col 1))
-                  (list (car match) (cdr match) (+ (cdr match) 1)))
+            (list (list row col (+ col 1) 'matching-paren)
+                  (list (car match) (cdr match) (+ (cdr match) 1) 'matching-paren))
             '()))))
 
   (define (init!)
-    (add-highlighter! paren-highlights)))
+    (add-highlighter! paren-highlights)
+    (register-descriptions!
+      '(((matching-paren-style)
+         (("parameter" . "(matching-paren-style [name])")) "symbol"
+         ("(paren)") paren "Editing" #f
+         "Get or set how the matched bracket pair is marked: underline (the default), box (SGR framed, on terminals that draw it), bold, or colored (bold accent violet).")))))

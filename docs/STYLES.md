@@ -33,9 +33,11 @@ The available attribute symbols are:
 - `reverse`
 - `hidden`
 - `strike`
+- `framed`
 
 Terminal support varies. In particular, some terminals render `bold` as a
 brighter color, ignore `blink`, or do not expose italic and strike-through.
+`framed` (a box around the cells) is the rarest: most terminals ignore it.
 
 ### Colors
 

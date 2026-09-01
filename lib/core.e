@@ -2860,7 +2860,9 @@
 
   (define style-attributes
     '((reset . 0) (bold . 1) (dim . 2) (italic . 3) (underline . 4)
-      (blink . 5) (reverse . 7) (hidden . 8) (strike . 9)))
+      (blink . 5) (reverse . 7) (hidden . 8) (strike . 9)
+      ;; SGR 51: a box around the cells, on terminals that draw it.
+      (framed . 51)))
 
   (define style-colors
     '((black . 0) (red . 1) (green . 2) (yellow . 3)
@@ -3210,25 +3212,33 @@
                     (string-set! out (- i from) ch)))
                 (loop (+ i 1))))
             out)))
-    (define (marked? col)
+    (define (overlay-at col)
+      ;; The overlay style covering col: any mark style that is not one
+      ;; of the background styles is emitted on top of the base style,
+      ;; so highlighters can name their own faces (the bracket match
+      ;; does).
       (and (< col n)
-           (exists (lambda (m) (and (eq? (mark-style m) 'mark)
-                                    (covers? m col)))
-                   marks)))
+           (let ([m (find (lambda (m)
+                            (and (covers? m col)
+                                 (not (memq (mark-style m)
+                                            '(match match-point active
+                                                    active-shadow)))))
+                          marks)])
+             (and m (mark-style m)))))
     ;; Emit runs of identically-attributed columns as single writes.
     (let loop ([col left])
       (when (< col limit)
         (let* ([style (style-at col)]
                [bg (bg-at col)]
                [sel (selected? col)]
-               [mk (marked? col)]
+               [mk (overlay-at col)]
                [link (link-at col)]
                [end (let run ([j (+ col 1)])
                       (if (and (< j limit)
                                (eq? (style-at j) style)
                                (eq? (bg-at j) bg)
                                (eq? (selected? j) sel)
-                               (eq? (marked? j) mk)
+                               (eq? (overlay-at j) mk)
                                (equal? (link-at j) link))
                           (run (+ j 1))
                           j))])
@@ -3240,7 +3250,7 @@
             [(active-shadow) (ansi (style-code 'active-shadow))]
             [(match) (ansi (style-code 'match))]
             [else (void)])
-          (when mk (ansi (style-code 'mark)))
+          (when mk (ansi (style-code mk)))
           (when link (open-link link))
           (ansi (segment col end))
           (when link (close-link))
