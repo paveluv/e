@@ -240,6 +240,40 @@
           (vector-set! palette index (list level level level))))
       palette))
 
+  (define (blank-terminal-state buffer process display rows cols live?)
+    ;; The single place a terminal-state record is built, so the long
+    ;; positional field list exists exactly once. Grouped as declared;
+    ;; live terminals start dirty and alive, headless emulators idle.
+    (make-terminal-state
+      buffer process display (make-mutex)
+      rows cols (make-screen rows cols) (make-vector rows #f) ; screen
+      0 0                                        ; row col
+      0 0 #f                                     ; saved cursor and state
+      0 (- rows 1)                               ; scroll region
+      0 (- cols 1) #f                            ; horizontal margins
+      #f                                         ; memory lock
+      'normal ""                                 ; parser, parameters
+      #f (empty-control-text) '()                ; osc escape/text, replies
+      'ascii 'ascii 0 0                          ; charsets, target, shift
+      #f #t #f                                   ; wrap-pending autowrap origin
+      #f #f #f                                   ; insert newline reverse
+      #f #f #f #f                                ; cursor-keys keypad meta c1
+      #t (default-tab-stops cols) #\space        ; cursor, tabs, last char
+      live? live? #f #f                          ; dirty alive bell prefix
+      #f 0                                       ; bell visible, generation
+      #f #f #f #f #f                             ; mouse modes, focus
+      #f                                         ; bracketed paste
+      #f #f 0 0 #f                               ; saved main screen
+      #f #f #f #f                                ; saved alternate screen
+      (make-empty-scrollback) '()                ; history, unfollowed
+      (make-style-screen rows cols 'plain) #f    ; styles, main styles
+      #f (make-style-screen rows cols 'plain) #f ; rendered cells/styles/links
+      "" 'plain #f #f                            ; sgr style link clipboard
+      (make-vector 256 #f) #f #f                 ; palette, default colors
+      #f "" (cons 0 '())                         ; printer
+      '(8)                                       ; extra modes
+      (make-vector rows 'single) #f #f))         ; line attributes
+
   (define (terminal-emulator? value) (terminal-state? value))
 
   (define (make-terminal-emulator rows cols)
@@ -247,18 +281,7 @@
                  (integer? cols) (exact? cols) (> cols 0))
       (error 'make-terminal-emulator
              "rows and columns must be positive exact integers" rows cols))
-    (make-terminal-state #f #f #f (make-mutex)
-                         rows cols (make-screen rows cols) (make-vector rows #f)
-                         0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
-                         'normal "" #f (empty-control-text) '() 'ascii 'ascii 0 0
-                         #f #t #f #f #f #f #f #f #f #f #t
-                         (default-tab-stops cols) #\space
-                         #f #f #f #f #f 0 #f #f #f #f #f #f #f #f
-                         0 0 #f #f #f #f #f (make-empty-scrollback) '()
-                         (make-style-screen rows cols 'plain)
-                         #f #f (make-style-screen rows cols 'plain)
-                         #f "" 'plain #f #f (make-vector 256 #f) #f #f #f ""
-                         (cons 0 '()) '(8) (make-vector rows 'single) #f #f))
+    (blank-terminal-state #f #f #f rows cols #f))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -3559,22 +3582,7 @@
               (spawn-terminal-process (terminal-shell) command
                                       directory rows cols))
             (set! state
-              (make-terminal-state buffer process display (make-mutex)
-                                   rows cols (make-screen rows cols)
-                                   (make-vector rows #f)
-                                   0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
-                                   'normal "" #f (empty-control-text) '() 'ascii 'ascii 0 0
-                                   #f #t #f #f #f #f #f #f #f #f #t
-                                   (default-tab-stops cols) #\space
-                                   #t #t #f #f #f 0 #f #f #f #f #f #f #f #f
-                                   0 0 #f #f #f #f #f
-                                   (make-empty-scrollback) '()
-                                   (make-style-screen rows cols 'plain)
-                                   #f #f
-                                   (make-style-screen rows cols 'plain)
-                                   #f "" 'plain #f #f (make-vector 256 #f) #f #f
-                                   #f "" (cons 0 '()) '(8)
-                                   (make-vector rows 'single) #f #f))
+              (blank-terminal-state buffer process display rows cols #t))
             (set-app-status-position!
               buffer
               (lambda (ignored)
