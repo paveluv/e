@@ -2154,7 +2154,7 @@
       (#\n "" "?")
       (#\p "!" "$" "?$")
       (#\q " ")
-      (#\m "") (#\i "") (#\u "") (#\x "") (#\y "")
+      (#\m "" ">" "?") (#\i "") (#\u "") (#\x "") (#\y "")
       (#\r "") (#\s "") (#\S "") (#\T "")))
 
   (define (csi-decoration text)
@@ -2456,7 +2456,22 @@
                    (terminal-state-col-set! state (left-bound state)))
                  (save-cursor! state))]
             [(#\u) (restore-cursor! state)]
-            [(#\m) (set-sgr! state text)]
+            [(#\m)
+             (cond
+               [(string-prefix? ">" text)
+                ;; XTMODKEYS. The key encodings never change, matching the
+                ;; disabled level reported to XTQMODKEYS, so accepting the
+                ;; setting silently keeps vim's startup and exit quiet.
+                (unless (= (param parameters 0 0) 4)
+                  (report-unsupported!
+                    state (control-signature "CSI" text final)))]
+               [(string-prefix? "?" text)
+                ;; XTQMODKEYS: modifyOtherKeys is permanently off.
+                (if (= (param parameters 0 0) 4)
+                    (terminal-reply! state "\x1b;[>4;0m")
+                    (report-unsupported!
+                      state (control-signature "CSI" text final)))]
+               [else (set-sgr! state text)])]
             [(#\b)
              (let ([character (terminal-state-last-character state)])
                (when character

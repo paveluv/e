@@ -952,10 +952,14 @@
               '("CSI \"9999z\"" "private mode 1023")))
 
      (let ([terminal (make-terminal-emulator 4 10)])
-       ;; xterm's modifyOtherKeys configuration must not reach SGR.
-       (terminal-emulator-feed! terminal "\x1b;[1mX\x1b;[>4;2mY")
+       ;; xterm's modifyOtherKeys configuration must not reach SGR, and
+       ;; its query reports the feature disabled.
+       (terminal-emulator-feed! terminal "\x1b;[1mX\x1b;[>4;2mY\x1b;[>4;m")
        (check 'xtmodkeys-does-not-alter-rendition
               (eq? (style-at terminal 0 0) (style-at terminal 0 1)) #t)
+       (terminal-emulator-feed! terminal "\x1b;[?4m")
+       (check 'xtqmodkeys-reports-disabled
+              (terminal-emulator-replies terminal) '("\x1b;[>4;0m"))
        ;; Private media copy must not enter printer-controller mode.
        (terminal-emulator-feed! terminal "\x1b;[?5iZ")
        (check 'private-media-copy-not-misexecuted
@@ -976,7 +980,7 @@
               "XYZ")
        (check 'decorated-controls-reported
               (terminal-emulator-unsupported terminal)
-              '("CSI \"61;1\\\"p\"" "CSI \">1u\"" "CSI \">4;2m\""
+              '("CSI \"61;1\\\"p\"" "CSI \">1u\""
                 "CSI \"?1049r\"" "CSI \"?1049s\"" "CSI \"?1;1;0S\""
                 "CSI \"?5i\"")))
 
