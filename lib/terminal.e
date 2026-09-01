@@ -1336,9 +1336,11 @@
         [(string=? text "111")
          (terminal-state-default-background-set! state #f)
          (terminal-state-dirty-set! state #t)]
-        [(and (> (string-length text) 2)
+        [(and (>= (string-length text) 2)
               (memv (string-ref text 0) '(#\0 #\1 #\2))
               (char=? (string-ref text 1) #\;))
+         ;; An empty title is a legitimate update (xterm clears its title);
+         ;; consume it silently and keep the buffer's current name.
          (let ([title (substring text 2 (string-length text))])
            (unless (or (string=? title "") (not (terminal-state-buffer state)))
              (set-buffer-name! (terminal-state-buffer state)
