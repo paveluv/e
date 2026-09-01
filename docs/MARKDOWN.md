@@ -21,7 +21,11 @@ describe browser renders its pages through the same viewer.
   target lives in the buffer's hyperlink layer. RET or a mouse click
   follows it: web links open through `xdg-open`, relative links visit
   the file. Bare URLs link as in any buffer.
-- Tables align their columns, header row bold over a rule.
+- Tables align their columns, header row bold over a rule, and lay
+  out like HTML tables: when the natural widths overflow the window,
+  each column gets at least its longest word and the rest of the
+  width in proportion to how much it has to wrap, and cell text wraps
+  inside its column.
 - Fenced code blocks draw in a frame with the fence's language tag on
   the top edge; the interior sits on a tint that follows the host's
   reported [color scheme](TERMINAL.md) -- light grey on light, dark

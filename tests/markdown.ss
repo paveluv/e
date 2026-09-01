@@ -73,7 +73,7 @@
             (rendered-lines '("|a|bb|" "|-|-|" "|ccc|d|"))
             '("a    bb"
               "\x2500;\x2500;\x2500;  \x2500;\x2500;"
-              "ccc  d "))
+              "ccc  d"))
 
      (let* ([r (render '("```scheme" "(+ 1 2)" "```"))]
             [text (car r)]
@@ -89,6 +89,24 @@
               (list (vector-ref (cadr styles) 0)
                     (vector-ref (car styles) 0))
               '(chrome chrome)))
+
+     (check 'tables-fit-a-narrow-width
+            (let-values ([(text styles links rows)
+                          (markdown-render
+                            '("|alpha beta gamma|x|" "|-|-|" "|delta|y|")
+                            12)])
+              text)
+            '("alpha      x"
+              "beta"
+              "gamma"
+              "\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;  \x2500;"
+              "delta      y"))
+
+     (let* ([r (render '("|a|see [doc](x.md)|" "|-|-|" "|b|c|"))])
+       (check 'table-cells-keep-links
+              (list (car r) (car (caddr r)))
+              '(("a  see doc" "\x2500;  \x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;" "b  c")
+                ((7 10 "x.md")))))
 
      (check 'hard-breaks-keep-their-lines
             (rendered-lines '("**keys**: C-c t  " "**source**: here  "
