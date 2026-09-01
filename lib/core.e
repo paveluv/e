@@ -4220,7 +4220,7 @@
                             (if (= (+ k 1) sticky) top (+ i 1)) 0)))
                 (begin
                   (paint! row content-x '(empty)
-                          (lambda () (ansi (fit "~" content-width))))
+                          (lambda () (ansi (fit "" content-width))))
                   (loop (+ k 1) (+ i 1) 0))))))
       (let* ([active-app (app-of (current-buffer))]
              [target? (and active-app
