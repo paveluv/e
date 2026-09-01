@@ -2830,9 +2830,11 @@
            => (lambda (bytes) (write-bytes! state bytes))]))
 
   (define (mouse-position state)
+    ;; The alternate screen presents no scrollback rows, so the buffer row
+    ;; must be offset by the live screen top, not the history length.
     (or (app-event-position)
         (cons (+ (cdr (point)) 1)
-              (+ (- (car (point)) (length (terminal-state-history state))) 1))))
+              (+ (- (car (point)) (terminal-live-screen-top state)) 1))))
 
   (define (handle-terminal-event! state event)
     (cond
