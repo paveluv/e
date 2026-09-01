@@ -13,6 +13,10 @@ dependency on `vttest`, xterm, GNOME Terminal, terminfo, or network resources.
   and checks cells, styles, modes, replies, reflow, and encoded input.
 - `tests/terminal-process.ss` checks the PTY boundary: controlling-terminal
   setup, initial and changed geometry, process groups, and bounded shutdown.
+- `tests/interactive.ss` drives a real `./e` process on a PTY, mirroring its
+  display into the headless emulator: it opens a nested terminal, scrolls
+  back through styled scrollback, recolors it with a palette change, erases
+  it with ED 3, and shuts the editor down cleanly.
 - Manual integration checks cover properties that require a real renderer or
   human input, such as redraw atomicity, keyboard layouts, mouse capture,
   selection, dragging, and nested full-screen applications.
@@ -28,6 +32,7 @@ Run:
 ```sh
 scheme --script tests/terminal.ss
 scheme --script tests/terminal-process.ss
+scheme --script tests/interactive.ss
 ```
 
 Tests should be deterministic, should not inspect the host terminfo database,
