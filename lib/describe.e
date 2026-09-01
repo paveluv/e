@@ -33,7 +33,7 @@
           doc-lookup doc-entries
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core) (only (md-view) markdown-view-install!))
 
   (define-record-type (doc-entry make-doc-entry doc-entry?)
     (fields (immutable names doc-names)           ; symbols defined
@@ -609,13 +609,14 @@
 
   (define (refresh-describe!)
     (when (and describe-buffer described-name)
-      (view-replace! describe-buffer
-                     (page-lines (current-page described-name)))))
+      ;; The page renders through the markdown viewer: markup becomes
+      ;; faces, links stay clickable with their targets hidden.
+      (markdown-view-install! describe-buffer
+                              (page-lines (current-page described-name)))))
 
   (define (describe-view)
     (unless (and describe-buffer (memq describe-buffer (buffer-list)))
-      (set! describe-buffer (register-view! "*describe*" refresh-describe!))
-      (set-buffer-mode! describe-buffer "markdown"))
+      (set! describe-buffer (register-view! "*describe*" refresh-describe!)))
     describe-buffer)
 
   (define (describe! name)
