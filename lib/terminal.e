@@ -2922,7 +2922,17 @@
        #t]
       [(string=? event "PASTE")
        (terminal-follow! state)
-       (let ([text (read-paste)])
+       ;; Pasted text is data. Control characters other than plain
+       ;; whitespace could act as typed escape sequences or forge the
+       ;; bracketed-paste closer, so strip them, as modern terminals do.
+       (let ([text (list->string
+                     (filter
+                       (lambda (character)
+                         (let ([code (char->integer character)])
+                           (or (memv code '(9 10 13))
+                               (and (>= code 32) (not (= code 127))
+                                    (not (<= 128 code 159))))))
+                       (string->list (read-paste))))])
          (write-bytes!
            state
            (string->utf8
