@@ -5,7 +5,7 @@
 ;; emphasis markers are stripped and their text wears the face instead,
 ;; headings take level faces, soft line breaks inside a paragraph
 ;; disappear (the window's word wrap lays prose out), tables align
-;; their columns, fenced code sits on a theme-tinted background, and
+;; their columns, fenced code sits between two rules, and
 ;; [text](url) shows only the text -- the target lives in the buffer's
 ;; hyperlink layer, followed with RET or a mouse click.
 ;;
@@ -23,19 +23,13 @@
   ;;; Faces -------------------------------------------------------------
 
   (define (register-md-faces!)
-    ;; The code-block tint follows the host's reported color scheme and
-    ;; re-registers when it changes; without a report there is no tint.
     (set-style! 'md-h1 '(bold underline))
     (set-style! 'md-h2 '(bold))
     (set-style! 'md-h3 '(bold italic))
     (set-style! 'md-h4 '(italic))
     (set-style! 'md-quote '(italic (foreground bright-black)))
     (set-style! 'md-link '(underline (foreground 33)))
-    (set-style! 'md-code
-                (case (host-color-scheme)
-                  [(light) '((background 254))]
-                  [(dark) '((background 236))]
-                  [else '(reset)])))
+    (set-style! 'md-code '(reset)))
 
   ;;; Inline rendering ---------------------------------------------------
 
@@ -448,8 +442,8 @@
                  (emit! "" '#() '() r))
                (walk (+ r 1))]
               [(fence? s)
-               ;; a framed verbatim block: the fence's language tag sits
-               ;; on the top edge, the interior wears the theme tint
+               ;; a verbatim block between two rules: the fence's
+               ;; language tag sits on the top one
                (let* ([i (indentation s)]
                       [tag (let trim ([t (substring s (+ i 3)
                                                     (string-length s))])
@@ -471,35 +465,28 @@
                        (let* ([body (reverse rows)]
                               [label (if (string=? tag "")
                                          ""
-                                         (string-append "\x2500; " tag " "))]
-                              [inner (max (+ 2 (fold-left
-                                                 (lambda (m l)
-                                                   (max m
-                                                        (display-width l)))
-                                                 0 body))
+                                         (string-append "\x2504; " tag " "))]
+                              [width (max (fold-left
+                                            (lambda (m l)
+                                              (max m (display-width l)))
+                                            0 body)
                                           (+ 1 (display-width label)))]
-                              [chrome-line
-                               (lambda (text)
-                                 (emit! text
-                                        (make-vector (string-length text)
-                                                     'chrome)
-                                        '()
-                                        r))])
-                         ;; top edge with the tag
-                         (let ([top (string-append
-                                      "\x250c;" label
-                                      (make-string
-                                        (- inner (display-width label))
-                                        #\x2500)
-                                      "\x2510;")])
-                           (chrome-line top))
+                              [rule (lambda (text k)
+                                      (emit! text
+                                             (make-vector
+                                               (string-length text)
+                                               'chrome)
+                                             '() k))])
+                         ;; dotted top rule carrying the language tag
+                         (rule (string-append
+                                 label
+                                 (make-string
+                                   (- width (display-width label))
+                                   #\x2504))
+                               r)
                          (for-each
                            (lambda (l k)
-                             (let* ([padded (pad-to (string-append " " l)
-                                                    inner)]
-                                    [text (string-append "\x2502;" padded
-                                                         "\x2502;")]
-                                    [vec (make-vector (string-length text)
+                             (let* ([vec (make-vector (string-length l)
                                                       'md-code)]
                                     [mode (and (not (string=? tag ""))
                                                (find-mode tag))]
@@ -507,33 +494,22 @@
                                      (and mode
                                           (guard (ex [else #f])
                                             ((mode-styles mode) l)))])
-                               ;; the language's own faces color the
-                               ;; code; unstyled cells keep the tint
+                               ;; the language's own faces color the code
                                (when (vector? syntax)
                                  (do ([p 0 (+ p 1)])
                                      ((or (= p (vector-length syntax))
                                           (= p (string-length l))))
                                    (let ([face (vector-ref syntax p)])
                                      (unless (eq? face 'plain)
-                                       (vector-set! vec (+ p 2) face)))))
-                               (vector-set! vec 0 'chrome)
-                               (vector-set! vec (- (string-length text) 1)
-                                            'chrome)
-                               (emit! text vec '() k)))
+                                       (vector-set! vec p face)))))
+                               (emit! l vec '() k)))
                            body
                            (let index ([k (+ r 1)] [acc '()])
                              (if (= (length acc) (length body))
                                  (reverse acc)
                                  (index (+ k 1) (cons k acc)))))
-                         (let ([bottom (string-append
-                                         "\x2514;"
-                                         (make-string inner #\x2500)
-                                         "\x2518;")])
-                           (emit! bottom
-                                  (make-vector (string-length bottom)
-                                               'chrome)
-                                  '()
-                                  (min (max 0 (- count 1)) j)))
+                         (rule (make-string width #\x2504)
+                               (min (max 0 (- count 1)) j))
                          (walk (if (>= j count) j (+ j 1))))
                        (scan (+ j 1) (cons (line j) rows)))))]
               [(heading-level s)
@@ -892,7 +868,6 @@
 
   (define (init!)
     (register-md-faces!)
-    (add-color-scheme-hook! (lambda (scheme) (register-md-faces!)))
     (register-mode! "markdown-view" '() '() (lambda (line) #f)
                     #f view-row-styles)
     (add-hyperlinker! view-row-links)

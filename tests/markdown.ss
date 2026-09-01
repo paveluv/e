@@ -80,16 +80,16 @@
      (let* ([r (render '("```scheme" "(+ 1 2)" "```"))]
             [text (car r)]
             [styles (cadr r)])
-       (check 'fence-frame
+       (check 'fence-rules
               text
-              '("\x250c;\x2500; scheme \x2500;\x2510;"
-                "\x2502; (+ 1 2)  \x2502;"
-                "\x2514;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2518;"))
-       (check 'fence-interior-tinted
+              '("\x2504; scheme \x2504;"
+                "(+ 1 2)"
+                "\x2504;\x2504;\x2504;\x2504;\x2504;\x2504;\x2504;\x2504;\x2504;\x2504;"))
+       (check 'fence-interior-plain-cells
               (vector-ref (cadr styles) 1) 'md-code)
-       (check 'fence-borders-chrome
-              (list (vector-ref (cadr styles) 0)
-                    (vector-ref (car styles) 0))
+       (check 'fence-rules-chrome
+              (list (vector-ref (car styles) 0)
+                    (vector-ref (caddr styles) 0))
               '(chrome chrome)))
 
      (check 'tables-fit-a-narrow-width
@@ -113,9 +113,9 @@
      (let* ([r (render '("```scheme" "(define x 1)" "```"))]
             [interior (cadr (cadr r))])
        (check 'fence-language-styles
-              (list (vector-ref interior 1) (vector-ref interior 2)
-                    (vector-ref interior 3))
-              '(md-code delimiter keyword)))
+              (list (vector-ref interior 0) (vector-ref interior 1)
+                    (vector-ref interior 7))
+              '(delimiter keyword md-code)))
 
      (check 'hard-breaks-keep-their-lines
             (rendered-lines '("**keys**: C-c t  " "**source**: here  "
