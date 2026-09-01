@@ -2449,7 +2449,12 @@
             (when (and (< code 32) (not (memv code '(0 1 2 3 4 5 6
                                                      7 8 9 10 11 12 13
                                                      14 15 24 26 27))))
-              (report-unsupported! state (format "C0 control 0x~x" code))))])]
+              (report-unsupported! state (format "C0 control 0x~x" code)))
+            ;; A stray ST (0x9c) legally terminates nothing; every other
+            ;; unhandled C1 control names a missing capability.
+            (when (and (<= 128 code 159) (not (= code 156)))
+              (report-unsupported!
+                state (format "C1 control 0x~x" code))))])]
       [(escape)
        (case character
          [(#\[) (terminal-state-parser-set! state 'csi)
@@ -2533,15 +2538,42 @@
           (terminal-state-parameters-set! state "")
           (terminal-state-parser-set! state 'charset)]
          [else
-          (report-unsupported! state (control-signature "ESC" "" character))
-          (terminal-state-parser-set! state 'normal)])]
+          (if (char<=? #\space character #\/)
+              ;; An unhandled intermediate opens a longer sequence; consume
+              ;; it wholly so its final byte is not painted as text.
+              (begin
+                (terminal-state-parameters-set! state (string character))
+                (terminal-state-parser-set! state 'escape-unknown))
+              (begin
+                (report-unsupported!
+                  state (control-signature "ESC" "" character))
+                (terminal-state-parser-set! state 'normal)))])]
+      [(escape-unknown)
+       (if (char<=? #\space character #\/)
+           (terminal-state-parameters-set!
+             state
+             (string-append (terminal-state-parameters state)
+                            (string character)))
+           (begin
+             (report-unsupported!
+               state
+               (control-signature "ESC" (terminal-state-parameters state)
+                                  character))
+             (terminal-state-parameters-set! state "")
+             (terminal-state-parser-set! state 'normal)))]
       [(escape-space)
        (case character
          [(#\F) (terminal-state-controls-eight-bit-set! state #f)]
-         [(#\G) (terminal-state-controls-eight-bit-set! state #t)])
+         [(#\G) (terminal-state-controls-eight-bit-set! state #t)]
+         [else
+          (report-unsupported!
+            state (control-signature "ESC" " " character))])
        (terminal-state-parser-set! state 'normal)]
       [(escape-hash)
-       (when (char=? character #\8) (screen-alignment-test! state))
+       (if (char=? character #\8)
+           (screen-alignment-test! state)
+           (report-unsupported!
+             state (control-signature "ESC" "#" character)))
        (terminal-state-parser-set! state 'normal)]
       [(charset)
        (if (char<=? #\space character #\/)
@@ -2554,6 +2586,18 @@
                     [(#\0 #\2) 'line]
                     [(#\A) 'british]
                     [else 'ascii])])
+             ;; An unrecognized character set silently degrades to ASCII;
+             ;; name it so the wrong glyphs are traceable to the gap.
+             (when (or (> (string-length
+                            (terminal-state-parameters state))
+                          0)
+                       (not (memv character '(#\0 #\2 #\A #\B))))
+               (report-unsupported!
+                 state
+                 (format "G~a charset designator ~s"
+                         (terminal-state-charset-target state)
+                         (string-append (terminal-state-parameters state)
+                                        (string character)))))
              ;; G2 and G3 designations must be parsed even though e does not
              ;; currently invoke those banks into GL.  Otherwise their final
              ;; byte is painted as ordinary text (vttest exposes this as BB).

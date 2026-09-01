@@ -955,6 +955,20 @@
                 "CSI \"?1049r\"" "CSI \"?1049s\"" "CSI \"?1;1;0S\""
                 "CSI \"?5i\"")))
 
+     (let ([terminal (make-terminal-emulator 2 10)])
+       ;; SS2, unknown ESC # and ESC SP finals, an unknown charset, and an
+       ;; unknown ESC intermediate sequence; supported designators stay
+       ;; silent and no final byte leaks onto the screen.
+       (terminal-emulator-feed! terminal (string (integer->char #x8e)))
+       (terminal-emulator-feed! terminal "\x1b;(B\x1b;)0\x1b;#3\x1b; L\x1b;(4\x1b;%G")
+       (check 'unknown-escape-payload-not-painted
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "          ")
+       (check 'silent-escape-paths-report
+              (terminal-emulator-unsupported terminal)
+              '("C1 control 0x8E" "ESC \" L\"" "ESC \"#3\"" "ESC \"%G\""
+                "G0 charset designator \"4\"")))
+
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed!
          terminal "\x1b;[?2004h\x1b;[?2004$p\x1b;[?7$p\x1b;[?2026$p")
