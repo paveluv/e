@@ -2125,6 +2125,7 @@
           [(7) (flag (terminal-state-autowrap state))]
           [(4 8 12 40 42 45 2026)
            (flag (memv mode (terminal-state-extra-modes state)))]
+          [(2031) 4]
           [(9 1000 1002 1003) (flag (eqv? (terminal-state-mouse state) mode))]
           [(25) (flag (terminal-state-cursor-visible state))]
           [(47 1047 1049) (flag (and (terminal-state-main-screen state) #t))]
@@ -2153,7 +2154,7 @@
       (#\c "" ">" "=")
       (#\n "" "?")
       (#\p "!" "$" "?$")
-      (#\q " ")
+      (#\q " " ">")
       (#\m "" ">" "?") (#\i "") (#\u "") (#\x "") (#\y "")
       (#\r "") (#\s "") (#\S "") (#\T "")))
 
@@ -2233,6 +2234,13 @@
                    (terminal-state-col-set!
                      state (if on? (left-bound state) 0))]
                   [(7) (terminal-state-autowrap-set! state on?)]
+                  [(2031)
+                   ;; Color-scheme change notifications. The host's
+                   ;; preference is not observable from here, so no
+                   ;; notification can ever be delivered; accepting the
+                   ;; subscription quietly matches terminals without the
+                   ;; feature, and DECRQM reports it permanently off.
+                   (void)]
                   [(4 8 12 40 42 45 2026)
                    (let ([extra (terminal-state-extra-modes state)])
                      (terminal-state-extra-modes-set!
@@ -2578,17 +2586,25 @@
                 (report-unsupported!
                   state (control-signature "CSI" text final))])]
             [(#\q)
-             (when (and cursor-shape? (terminal-state-buffer state))
-               (set-app-presentation!
-                 (terminal-state-buffer state) 0 #f #f
-                 (case (param parameters 0 0)
-                   [(0 1) 'blinking-block]
-                   [(2) 'block]
-                   [(3) 'blinking-underline]
-                   [(4) 'underline]
-                   [(5) 'blinking-bar]
-                   [(6) 'bar]
-                   [else 'blinking-block])))]
+             (cond
+               [(string-prefix? ">" text)
+                ;; XTVERSION: report the terminal's name so probing
+                ;; programs learn what they are talking to.
+                (if (= (param parameters 0 0) 0)
+                    (terminal-reply! state "\x1b;P>|e\x1b;\\")
+                    (report-unsupported!
+                      state (control-signature "CSI" text final)))]
+               [(and cursor-shape? (terminal-state-buffer state))
+                (set-app-presentation!
+                  (terminal-state-buffer state) 0 #f #f
+                  (case (param parameters 0 0)
+                    [(0 1) 'blinking-block]
+                    [(2) 'block]
+                    [(3) 'blinking-underline]
+                    [(4) 'underline]
+                    [(5) 'blinking-bar]
+                    [(6) 'bar]
+                    [else 'blinking-block]))])]
             [else
              (report-unsupported!
                state (control-signature "CSI" text final))]))

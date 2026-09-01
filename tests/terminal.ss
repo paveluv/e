@@ -960,6 +960,15 @@
        (terminal-emulator-feed! terminal "\x1b;[?4m")
        (check 'xtqmodkeys-reports-disabled
               (terminal-emulator-replies terminal) '("\x1b;[>4;0m"))
+       ;; XTVERSION and color-scheme subscriptions, as Claude Code sends.
+       (terminal-emulator-feed! terminal "\x1b;[?2031h\x1b;[>0q\x1b;[>q")
+       (check 'xtversion-names-the-terminal
+              (terminal-emulator-replies terminal)
+              '("\x1b;[>4;0m" "\x1b;P>|e\x1b;\\" "\x1b;P>|e\x1b;\\"))
+       (terminal-emulator-feed! terminal "\x1b;[?2031l\x1b;[?2031$p")
+       (check 'color-scheme-mode-permanently-off
+              (list-ref (terminal-emulator-replies terminal) 3)
+              "\x1b;[?2031;4$y")
        ;; Private media copy must not enter printer-controller mode.
        (terminal-emulator-feed! terminal "\x1b;[?5iZ")
        (check 'private-media-copy-not-misexecuted
