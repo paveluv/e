@@ -51,6 +51,7 @@
     detect-hyperlinks buffer-line-hyperlinks
     register-indenter! register-formatter!
     add-status-hint! add-buffer-status-hint!
+    host-color-scheme add-color-scheme-hook!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
@@ -5973,6 +5974,26 @@
          (let ([c (string-ref event 0)])
            (and (>= (char->integer c) 32) c))))
 
+  ;; The host's color scheme, learned from its DSR 997 reports (mode 2031
+  ;; subscribes to them at startup): #f until the host says, then 'dark or
+  ;; 'light. Hooks run on the main thread whenever a report arrives, so
+  ;; the terminal module can forward the change to subscribed children.
+  (define host-color-scheme-value #f)
+
+  (define (host-color-scheme) host-color-scheme-value)
+
+  (define color-scheme-hooks '())
+
+  (define (add-color-scheme-hook! hook)
+    (unless (procedure? hook)
+      (error 'add-color-scheme-hook! "expected a procedure" hook))
+    (set! color-scheme-hooks (cons hook color-scheme-hooks)))
+
+  (define (note-color-scheme! scheme)
+    (set! host-color-scheme-value scheme)
+    (for-each (lambda (hook) (guard (ex [else (void)]) (hook scheme)))
+              color-scheme-hooks))
+
   (define (csi-numbers text)
     (let loop ([characters (string->list text)] [digits '()] [out '()])
       (cond [(null? characters)
@@ -6008,44 +6029,64 @@
 
   (define (read-csi-event handle-mouse?)
     (let ([first (read-char stdin)])
-      (if (and (char? first) (char=? first #\<))
-          (or (mouse-event! handle-mouse?) "MOUSE-HANDLED")
-          (let drain ([b first] [params '()])
-            (if (and (char? b)
-                     (or (char<=? #\0 b #\9) (char=? b #\;)))
-                (drain (read-char stdin) (cons b params))
-                (let ([p (list->string (reverse params))])
-                  (define numbers (csi-numbers p))
-                  (define modifier
-                    (cond [(and (pair? numbers) (pair? (cdr numbers)))
-                           (or (cadr numbers) 1)]
-                          [(and (pair? numbers) (memv (car numbers) '(2 3 4)))
-                           (car numbers)]
-                          [else 1]))
-                  (define (named name) (xterm-modified-name name modifier))
-                  (case b
-                    [(#\A) (named "UP")] [(#\B) (named "DOWN")]
-                    [(#\C) (named "RIGHT")] [(#\D) (named "LEFT")]
-                    [(#\H) (named "HOME")] [(#\F) (named "END")]
-                    [(#\P #\Q #\R #\S)
-                     (xterm-function-name
-                       (+ 1 (- (char->integer b) (char->integer #\P)))
-                       modifier)]
-                    [(#\Z) "S-TAB"]
-                    [(#\~)
-                     (let ([code (and (pair? numbers) (car numbers))])
-                       (cond [(eqv? code 200) "PASTE"]
-                             [(memv code '(1 7)) (named "HOME")]
-                             [(memv code '(4 8)) (named "END")]
-                             [(eqv? code 2) (named "INSERT")]
-                             [(eqv? code 3) (named "DELETE")]
-                             [(eqv? code 5) (named "PAGEUP")]
-                             [(eqv? code 6) (named "PAGEDOWN")]
-                             [(xterm-function-base code)
-                              => (lambda (base)
-                                   (xterm-function-name base modifier))]
-                             [else #f]))]
-                    [else #f])))))))
+      (cond
+        [(and (char? first) (char=? first #\<))
+         (or (mouse-event! handle-mouse?) "MOUSE-HANDLED")]
+        [(and (char? first) (char=? first #\?))
+         ;; A private report from the host, not a key. The color-scheme
+         ;; report (DSR 997) is acted on; any other is swallowed so its
+         ;; payload cannot leak into the buffer as typed text.
+         (let drain ([b (read-char stdin)] [params '()])
+           (if (and (char? b)
+                    (or (char<=? #\0 b #\9) (char=? b #\;)))
+               (drain (read-char stdin) (cons b params))
+               (let ([numbers (csi-numbers
+                                (list->string (reverse params)))])
+                 (when (and (char? b) (char=? b #\n)
+                            (pair? numbers) (eqv? (car numbers) 997))
+                   (note-color-scheme!
+                     (if (eqv? (and (pair? (cdr numbers))
+                                    (cadr numbers))
+                               2)
+                         'light 'dark)))
+                 #f)))]
+        [else
+         (let drain ([b first] [params '()])
+           (if (and (char? b)
+                    (or (char<=? #\0 b #\9) (char=? b #\;)))
+               (drain (read-char stdin) (cons b params))
+               (let ([p (list->string (reverse params))])
+                 (define numbers (csi-numbers p))
+                 (define modifier
+                   (cond [(and (pair? numbers) (pair? (cdr numbers)))
+                          (or (cadr numbers) 1)]
+                         [(and (pair? numbers) (memv (car numbers) '(2 3 4)))
+                          (car numbers)]
+                         [else 1]))
+                 (define (named name) (xterm-modified-name name modifier))
+                 (case b
+                   [(#\A) (named "UP")] [(#\B) (named "DOWN")]
+                   [(#\C) (named "RIGHT")] [(#\D) (named "LEFT")]
+                   [(#\H) (named "HOME")] [(#\F) (named "END")]
+                   [(#\P #\Q #\R #\S)
+                    (xterm-function-name
+                      (+ 1 (- (char->integer b) (char->integer #\P)))
+                      modifier)]
+                   [(#\Z) "S-TAB"]
+                   [(#\~)
+                    (let ([code (and (pair? numbers) (car numbers))])
+                      (cond [(eqv? code 200) "PASTE"]
+                            [(memv code '(1 7)) (named "HOME")]
+                            [(memv code '(4 8)) (named "END")]
+                            [(eqv? code 2) (named "INSERT")]
+                            [(eqv? code 3) (named "DELETE")]
+                            [(eqv? code 5) (named "PAGEUP")]
+                            [(eqv? code 6) (named "PAGEDOWN")]
+                            [(xterm-function-base code)
+                             => (lambda (base)
+                                  (xterm-function-name base modifier))]
+                            [else #f]))]
+                   [else #f]))))])))
 
   (define read-key-event
     ;; Decode the terminal once.  Consumers see the same names whether
@@ -6672,7 +6713,11 @@
       ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
       ;; making a paste one identifiable edit; others ignore the mode.
       ;; Mouse tracking likewise (see mouse!).
-      (lambda () (terminal-raw!) (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h")
+      ;; Mode 2031 subscribes to the host's color-scheme change reports
+      ;; and DSR 996 asks for the current one; hosts without the feature
+      ;; ignore both.
+      (lambda () (terminal-raw!)
+        (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h\x1b;[?996n")
         (set-mouse! #t)
         (set! screen-live? #t))
       (lambda ()
@@ -6696,7 +6741,7 @@
         (set! screen-live? #f)
         (unless (string=? cursor-style-shown "\x1b;[0 q")
           (ansi "\x1b;[0 q"))
-        (ansi "\x1b;[?1002;1006l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+        (ansi "\x1b;[?1002;1006l\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
         (flush-output-port (terminal-output-port))
         (terminal-restore!))))
 

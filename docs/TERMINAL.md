@@ -139,6 +139,14 @@ the two `DECDHL` halves each render as double-width. Decorated rows enter
 scrollback in their displayed form and revert to single width when a
 resize reflows the primary screen.
 
+Color-scheme change notifications (private mode 2031 with DSR 996/997)
+pass through: e subscribes to its host at startup, remembers the reported
+scheme, answers children's `CSI ?996n` queries from it, and forwards each
+host report to children that subscribed. A subscribing child also hears
+the current scheme immediately when it is known. Under a host without the
+feature the queries stay unanswered, exactly as they would against that
+host directly.
+
 Character-set designations cover ASCII, DEC special graphics with its
 control pictures, and the DEC national replacement sets (British, Dutch,
 Finnish, French, French Canadian, German, Italian, Norwegian/Danish,

@@ -9,7 +9,7 @@
           terminal-emulator-styles terminal-emulator-hyperlinks
           terminal-emulator-state terminal-emulator-input
           terminal-emulator-mouse-input terminal-emulator-replies
-          terminal-emulator-unsupported)
+          terminal-emulator-unsupported terminal-color-scheme!)
   (import (chezscheme) (core) (sys)
           (only (describe) register-descriptions!))
 
@@ -180,6 +180,28 @@
         (parameterize ([terminal-output-port (terminal-state-display state)])
           (thunk))
         (thunk)))
+
+  ;; The host's color scheme as last reported (see mode 2031 in core's
+  ;; startup handshake): #f until known. Children that subscribed with
+  ;; ?2031h receive a DSR 997 report on every change and on subscribing.
+  (define known-color-scheme #f)
+
+  (define (color-scheme-report scheme)
+    (format "\x1b;[?997;~an" (if (eq? scheme 'light) 2 1)))
+
+  (define (terminal-color-scheme! scheme)
+    (unless (memq scheme '(dark light #f))
+      (error 'terminal-color-scheme! "expected dark, light, or #f" scheme))
+    (set! known-color-scheme scheme)
+    (when scheme
+      (for-each
+        (lambda (state)
+          (when (and (memv 2031 (terminal-state-extra-modes state))
+                     (terminal-state-alive state))
+            (guard (ex [else (void)])
+              (write-bytes! state
+                            (string->utf8 (color-scheme-report scheme))))))
+        terminals)))
 
   (define (report-unsupported! state feature)
     ;; Always record, so headless emulators expose their reports through
@@ -2123,9 +2145,8 @@
           [(5) (flag (terminal-state-reverse-screen state))]
           [(6) (flag (terminal-state-origin state))]
           [(7) (flag (terminal-state-autowrap state))]
-          [(4 8 12 40 42 45 2026)
+          [(4 8 12 40 42 45 2026 2031)
            (flag (memv mode (terminal-state-extra-modes state)))]
-          [(2031) 4]
           [(9 1000 1002 1003) (flag (eqv? (terminal-state-mouse state) mode))]
           [(25) (flag (terminal-state-cursor-visible state))]
           [(47 1047 1049) (flag (and (terminal-state-main-screen state) #t))]
@@ -2234,14 +2255,7 @@
                    (terminal-state-col-set!
                      state (if on? (left-bound state) 0))]
                   [(7) (terminal-state-autowrap-set! state on?)]
-                  [(2031)
-                   ;; Color-scheme change notifications. The host's
-                   ;; preference is not observable from here, so no
-                   ;; notification can ever be delivered; accepting the
-                   ;; subscription quietly matches terminals without the
-                   ;; feature, and DECRQM reports it permanently off.
-                   (void)]
-                  [(4 8 12 40 42 45 2026)
+                  [(4 8 12 40 42 45 2026 2031)
                    (let ([extra (terminal-state-extra-modes state)])
                      (terminal-state-extra-modes-set!
                        state
@@ -2251,7 +2265,12 @@
                    (when (= mode 2026)
                      (if on?
                          (start-synchronized-update! state)
-                         (terminal-state-dirty-set! state #t)))]
+                         (terminal-state-dirty-set! state #t)))
+                   ;; A color-scheme subscription learns the current
+                   ;; scheme right away when the host has reported one.
+                   (when (and (= mode 2031) on? known-color-scheme)
+                     (terminal-reply!
+                       state (color-scheme-report known-color-scheme)))]
                   [(69)
                    (terminal-state-margin-mode-set! state on?)
                    (unless on?
@@ -2551,6 +2570,14 @@
                     (format "\x1b;[~a~a;~aR"
                             (if (string-prefix? "?" text) "?" "")
                             (+ reported-row 1) (+ reported-col 1))))]
+               [(and (string-prefix? "?" text)
+                     (= (param parameters 0 0) 996))
+                ;; Color-scheme query: answerable only once the host has
+                ;; reported a scheme; silence matches a host without the
+                ;; feature.
+                (when known-color-scheme
+                  (terminal-reply!
+                    state (color-scheme-report known-color-scheme)))]
                [else
                 (report-unsupported!
                   state (control-signature "CSI" text final))])]
@@ -3656,6 +3683,8 @@
   (define (init!)
     (register-mode! "terminal" '() '() (lambda (line) #f)
                     terminal-row-render terminal-row-styles)
+    (set! known-color-scheme (host-color-scheme))
+    (add-color-scheme-hook! terminal-color-scheme!)
     (add-hyperlinker! terminal-row-hyperlinks)
     (bind-key! "C-c t" terminal!!)
     (add-buffer-kill-hook! terminal-close!)
@@ -3735,6 +3764,10 @@
          (("procedure" . "(terminal-emulator-replies emulator)")) "list"
          ("(terminal)") terminal "Terminal" #f
          "Return protocol replies emitted by a headless emulator.")
+        ((terminal-color-scheme!)
+         (("procedure" . "(terminal-color-scheme! scheme)")) "void"
+         ("(terminal)") terminal "Terminal" #f
+         "Record the host's color scheme (dark, light, or #f for unknown) and report the change to terminal children subscribed with private mode 2031. Wired to the host's own reports at startup.")
         ((terminal-emulator-unsupported)
          (("procedure" . "(terminal-emulator-unsupported emulator)")) "list"
          ("(terminal)") terminal "Terminal" #f

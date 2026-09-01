@@ -145,6 +145,16 @@
      (settle! 800)
      (check 'ed3-empties-scrollback (not (find-cell "red line")))
 
+     ;; -- host color-scheme reports forward to subscribed children -------
+     ;; The child subscribes with ?2031h and blocks reading its terminal;
+     ;; the host (this driver) then reports a light scheme to e, which
+     ;; must forward it into the child's PTY.
+     (send! "printf '\\033[?2031h'; head -c 9 | cat -v; echo\r")
+     (settle! 800)
+     (send! "\x1b;[?997;2n")
+     (wait-for! 'host-theme-report-forwarded
+                (lambda () (find-cell "997;2")) 3000)
+
      ;; -- diagnostics from the reader thread must not stall the frame ----
      ;; An unsupported sequence logs from the PTY reader thread; the output
      ;; after it must still appear without any further input arriving

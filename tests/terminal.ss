@@ -966,9 +966,9 @@
               (terminal-emulator-replies terminal)
               '("\x1b;[>4;0m" "\x1b;P>|e\x1b;\\" "\x1b;P>|e\x1b;\\"))
        (terminal-emulator-feed! terminal "\x1b;[?2031l\x1b;[?2031$p")
-       (check 'color-scheme-mode-permanently-off
+       (check 'color-scheme-mode-reset-after-unsubscribe
               (list-ref (terminal-emulator-replies terminal) 3)
-              "\x1b;[?2031;4$y")
+              "\x1b;[?2031;2$y")
        ;; Private media copy must not enter printer-controller mode.
        (terminal-emulator-feed! terminal "\x1b;[?5iZ")
        (check 'private-media-copy-not-misexecuted
@@ -1053,6 +1053,24 @@
               (terminal-emulator-replies terminal)
               '("\x1b;[?4;2$y" "\x1b;[?8;2$y" "\x1b;[?40;1$y"
                 "\x1b;[?42;1$y" "\x1b;[?45;2$y")))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
+       ;; Color-scheme plumbing: silent while unknown, then DSR 996
+       ;; answers and a fresh subscription hears the current scheme.
+       (terminal-color-scheme! #f)
+       (terminal-emulator-feed! terminal "\x1b;[?996n")
+       (check 'color-scheme-unknown-stays-silent
+              (terminal-emulator-replies terminal) '())
+       (terminal-color-scheme! 'light)
+       (terminal-emulator-feed! terminal "\x1b;[?996n\x1b;[?2031h")
+       (check 'color-scheme-query-and-subscription-report
+              (terminal-emulator-replies terminal)
+              '("\x1b;[?997;2n" "\x1b;[?997;2n"))
+       (terminal-emulator-feed! terminal "\x1b;[?2031$p")
+       (check 'color-scheme-subscription-tracked
+              (list-ref (terminal-emulator-replies terminal) 2)
+              "\x1b;[?2031;1$y")
+       (terminal-color-scheme! #f))
 
      (let ([terminal (make-terminal-emulator 2 10)])
        (terminal-emulator-feed! terminal "\x1b;(K[\\]{|}~\x1b;(B#")
