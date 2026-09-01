@@ -961,6 +961,33 @@
                 "CSI \"?1049r\"" "CSI \"?1049s\"" "CSI \"?1;1;0S\""
                 "CSI \"?5i\"")))
 
+     (let ([terminal (make-terminal-emulator 2 5)])
+       ;; VT100 setup modes are tracked silently; only reverse wraparound
+       ;; changes behavior.
+       (terminal-emulator-feed!
+         terminal "\x1b;[?4l\x1b;[?5l\x1b;[?8l\x1b;[?40h\x1b;[?45l")
+       (check 'setup-modes-accepted-silently
+              (terminal-emulator-unsupported terminal) '())
+       (terminal-emulator-feed!
+         terminal "\x1b;[?4$p\x1b;[?8$p\x1b;[?40$p\x1b;[?45$p")
+       (check 'setup-mode-reports
+              (terminal-emulator-replies terminal)
+              '("\x1b;[?4;2$y" "\x1b;[?8;2$y" "\x1b;[?40;1$y"
+                "\x1b;[?45;2$y")))
+
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed! terminal "abcdef")
+       (check 'no-reverse-wrap-stops-at-left
+              (state-ref terminal 'cursor) '(1 . 1))
+       (terminal-emulator-feed! terminal "\x08;\x08;")
+       (check 'backspace-stops-at-left-margin
+              (state-ref terminal 'cursor) '(1 . 0))
+       (terminal-emulator-feed! terminal "\x1b;[?45h\x08;")
+       (check 'reverse-wraparound-backs-onto-previous-line
+              (state-ref terminal 'cursor) '(0 . 4))
+       (check 'reverse-wraparound-reported
+              (state-ref terminal 'reverse-wraparound) #t))
+
      (let ([terminal (make-terminal-emulator 2 10)])
        (terminal-emulator-feed! terminal "AB\x7f;C")
        (check 'del-is-ignored

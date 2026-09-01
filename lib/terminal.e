@@ -49,7 +49,13 @@
             (mutable palette) (mutable default-foreground)
             (mutable default-background)
             (mutable printer-controller) (mutable printer-pending)
-            (mutable printer-output)))
+            (mutable printer-output)
+            ;; VT100 setup toggles xterm accepts: smooth scroll (4),
+            ;; autorepeat (8), 80/132 switching (40), and reverse
+            ;; wraparound (45). Only 45 changes behavior here, but all four
+            ;; are tracked so DECRQM answers honestly and a vttest run does
+            ;; not flood the log with modes every terminal accepts.
+            (mutable extra-modes)))
 
   ;; Hyperlinks are rendition metadata just like color and attributes. Keeping
   ;; both in the existing style grid makes every cell-moving operation carry
@@ -224,7 +230,7 @@
                          (make-style-screen rows cols 'plain)
                          #f #f (make-style-screen rows cols 'plain)
                          #f "" 'plain #f #f (make-vector 256 #f) #f #f #f ""
-                         (cons 0 '())))
+                         (cons 0 '()) '(8)))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -300,6 +306,9 @@
       (urxvt-mouse . ,(terminal-state-mouse-urxvt emulator))
       (focus-reporting . ,(terminal-state-focus-reporting emulator))
       (bracketed-paste . ,(terminal-state-bracketed emulator))
+      (reverse-wraparound . ,(and (memv 45 (terminal-state-extra-modes
+                                             emulator))
+                                  #t))
       (default-colors . ,(cons (terminal-state-default-foreground emulator)
                                (terminal-state-default-background emulator)))))
 
@@ -1827,6 +1836,7 @@
       (terminal-state-printer-controller-set! state #f)
       (terminal-state-printer-pending-set! state "")
       (terminal-state-printer-output-set! state (cons 0 '()))
+      (terminal-state-extra-modes-set! state '(8))
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-buffer state)
         (set-app-presentation! (terminal-state-buffer state)
@@ -1866,6 +1876,7 @@
       (terminal-state-sgr-set! state "")
       (terminal-state-style-set! state 'plain)
       (terminal-state-link-set! state #f)
+      (terminal-state-extra-modes-set! state '(8))
       (terminal-state-dirty-set! state #t)))
 
   (define (mode-report-value state mode private?)
@@ -1880,6 +1891,8 @@
           [(5) (flag (terminal-state-reverse-screen state))]
           [(6) (flag (terminal-state-origin state))]
           [(7) (flag (terminal-state-autowrap state))]
+          [(4 8 40 45)
+           (flag (memv mode (terminal-state-extra-modes state)))]
           [(9 1000 1002 1003) (flag (eqv? (terminal-state-mouse state) mode))]
           [(25) (flag (terminal-state-cursor-visible state))]
           [(47 1047 1049) (flag (and (terminal-state-main-screen state) #t))]
@@ -1986,6 +1999,13 @@
                    (terminal-state-col-set!
                      state (if on? (left-bound state) 0))]
                   [(7) (terminal-state-autowrap-set! state on?)]
+                  [(4 8 40 45)
+                   (let ([extra (terminal-state-extra-modes state)])
+                     (terminal-state-extra-modes-set!
+                       state
+                       (if on?
+                           (if (memv mode extra) extra (cons mode extra))
+                           (remv mode extra))))]
                   [(69)
                    (terminal-state-margin-mode-set! state on?)
                    (unless on?
@@ -2381,12 +2401,23 @@
       [(7) (terminal-state-bell-set! state #t)]
       [(8)
        (terminal-state-wrap-pending-set! state #f)
-       (terminal-state-col-set!
-         state
-         (max (if (<= (left-bound state) (terminal-state-col state)
-                      (right-bound state))
-                  (left-bound state) 0)
-              (- (terminal-state-col state) 1)))]
+       (if (and (memv 45 (terminal-state-extra-modes state))
+                (terminal-state-autowrap state)
+                (= (terminal-state-col state) (left-bound state))
+                (> (terminal-state-row state)
+                   (terminal-state-scroll-top state)))
+           ;; Reverse wraparound: xterm backs the cursor up onto the end
+           ;; of the previous line.
+           (begin
+             (terminal-state-row-set!
+               state (- (terminal-state-row state) 1))
+             (terminal-state-col-set! state (right-bound state)))
+           (terminal-state-col-set!
+             state
+             (max (if (<= (left-bound state) (terminal-state-col state)
+                          (right-bound state))
+                      (left-bound state) 0)
+                  (- (terminal-state-col state) 1))))]
       [(9)
        (terminal-state-col-set! state (next-tab-stop state))]
       [(10 11 12)
@@ -3255,7 +3286,7 @@
                                    #f #f
                                    (make-style-screen rows cols 'plain)
                                    #f "" 'plain #f #f (make-vector 256 #f) #f #f
-                                   #f "" (cons 0 '())))
+                                   #f "" (cons 0 '()) '(8)))
             (set-app-status-position!
               buffer
               (lambda (ignored)
