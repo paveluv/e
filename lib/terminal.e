@@ -229,7 +229,7 @@
     (make-terminal-state #f #f #f (make-mutex)
                          rows cols (make-screen rows cols) (make-vector rows #f)
                          0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
-                         'normal "" #f "" '() 'ascii 'ascii 0 0
+                         'normal "" #f (empty-control-text) '() 'ascii 'ascii 0 0
                          #f #t #f #f #f #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
                          #f #f #f #f #f 0 #f #f #f #f #f #f #f #f
@@ -350,7 +350,7 @@
   (define (terminal-emulator-replies emulator)
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-replies "expected a terminal emulator" emulator))
-    (list-copy (terminal-state-replies emulator)))
+    (reverse (terminal-state-replies emulator)))
 
   (define (terminal-emulator-unsupported emulator)
     (unless (terminal-emulator? emulator)
@@ -1338,6 +1338,24 @@
                       (list-ref parameters index))])
       (if (or (not value) (= value 0)) default value)))
 
+  ;; OSC and DCS payloads accumulate one character at a time and can reach
+  ;; the megabyte ceiling (clipboard writes), so they are collected as a
+  ;; length-counted reversed character list and materialized at dispatch:
+  ;; O(1) per character where string appending would be quadratic.
+  (define (empty-control-text) (list 0))
+
+  (define (control-text-add! state limit character)
+    ;; #f when the payload has reached its ceiling.
+    (let ([text (terminal-state-osc-text state)])
+      (and (< (car text) limit)
+           (begin
+             (terminal-state-osc-text-set!
+               state (cons (+ (car text) 1) (cons character (cdr text))))
+             #t))))
+
+  (define (control-text state)
+    (list->string (reverse (cdr (terminal-state-osc-text state)))))
+
   (define (terminal-reply-wire state text)
     (if (not (terminal-state-controls-eight-bit state))
         (values text (string->utf8 text))
@@ -1368,12 +1386,17 @@
 
   (define (terminal-reply! state text)
     (let-values ([(reported wire) (terminal-reply-wire state text)])
-      (terminal-state-replies-set!
-        state (append (terminal-state-replies state) (list reported)))
-      (when (terminal-state-process state)
-        (let ([output (terminal-process-output (terminal-state-process state))])
-          (put-bytevector output wire)
-          (flush-output-port output)))))
+      (if (terminal-state-process state)
+          ;; A live terminal's replies go to the child; recording them as
+          ;; well would grow without bound over a session.
+          (let ([output (terminal-process-output
+                          (terminal-state-process state))])
+            (put-bytevector output wire)
+            (flush-output-port output))
+          ;; Headless replies accumulate newest first so each is O(1);
+          ;; terminal-emulator-replies restores emission order.
+          (terminal-state-replies-set!
+            state (cons reported (terminal-state-replies state))))))
 
   (define (primary-device-attributes! state)
     ;; VT100 with advanced video: matches xterm-256color's terminfo probe.
@@ -1542,7 +1565,7 @@
                             (terminal-state-buffer state))))))))))))
 
   (define (dispatch-osc! state)
-    (let* ([text (terminal-state-osc-text state)]
+    (let* ([text (control-text state)]
            [fields (split-parameter text #\;)])
       (cond
         [(and (pair? fields) (string=? (car fields) "4"))
@@ -1635,7 +1658,7 @@
             (format "\x1b;P0+r~a\x1b;\\" encoded-name)))))
 
   (define (dispatch-dcs! state)
-    (let ([text (terminal-state-osc-text state)])
+    (let ([text (control-text state)])
       (cond
         [(string-prefix? "$q" text)
          (let* ([request (substring text 2 (string-length text))]
@@ -2667,7 +2690,7 @@
          [(144)                                      ; DCS
           (terminal-state-parser-set! state 'dcs)
           (terminal-state-osc-escape-set! state #f)
-          (terminal-state-osc-text-set! state "")]
+          (terminal-state-osc-text-set! state (empty-control-text))]
          [(152 158 159)                              ; SOS, PM, APC
           (report-unsupported!
             state
@@ -2681,7 +2704,7 @@
           (terminal-state-parameters-set! state "")]
          [(157) (terminal-state-parser-set! state 'osc) ; OSC
           (terminal-state-osc-escape-set! state #f)
-          (terminal-state-osc-text-set! state "")]
+          (terminal-state-osc-text-set! state (empty-control-text))]
          [else
           (let ([code (char->integer character)])
             ;; DEL is a padding character and never occupies a cell.
@@ -2703,13 +2726,13 @@
           (terminal-state-parameters-set! state "")]
          [(#\]) (terminal-state-parser-set! state 'osc)
           (terminal-state-osc-escape-set! state #f)
-          (terminal-state-osc-text-set! state "")]
+          (terminal-state-osc-text-set! state (empty-control-text))]
          ;; String controls carry arbitrary printable payload terminated by
          ;; ST (ESC \). They are metadata/protocol traffic, never screen text.
          [(#\P)
           (terminal-state-parser-set! state 'dcs)
           (terminal-state-osc-escape-set! state #f)
-          (terminal-state-osc-text-set! state "")]
+          (terminal-state-osc-text-set! state (empty-control-text))]
          [(#\X #\^ #\_)
           (report-unsupported!
             state
@@ -2902,14 +2925,10 @@
                     ;; status string. Match tmux's practical one-megabyte
                     ;; control-string ceiling rather than truncating normal
                     ;; copied regions at 8 KiB.
-                    (if (< (string-length (terminal-state-osc-text state))
-                           1048576)
-                        (terminal-state-osc-text-set!
-                          state (string-append (terminal-state-osc-text state)
-                                               (string character)))
-                        (begin
-                          (terminal-state-parser-set! state 'normal)
-                          (terminal-state-osc-text-set! state "")))))])]
+                    (unless (control-text-add! state 1048576 character)
+                      (terminal-state-parser-set! state 'normal)
+                      (terminal-state-osc-text-set!
+                        state (empty-control-text)))))])]
       [(control-string)
        (cond
          [(memv (char->integer character) '(24 26))
@@ -2929,7 +2948,7 @@
          [(memv (char->integer character) '(24 26))
           (terminal-state-parser-set! state 'normal)
           (terminal-state-osc-escape-set! state #f)
-          (terminal-state-osc-text-set! state "")]
+          (terminal-state-osc-text-set! state (empty-control-text))]
          [(= (char->integer character) 156) ; ST
           (dispatch-dcs! state)
           (terminal-state-parser-set! state 'normal)
@@ -2943,13 +2962,10 @@
               (terminal-state-osc-escape-set! state #t)
               (begin
                 (terminal-state-osc-escape-set! state #f)
-                (if (< (string-length (terminal-state-osc-text state)) 8192)
-                    (terminal-state-osc-text-set!
-                      state (string-append (terminal-state-osc-text state)
-                                           (string character)))
-                    (begin
-                      (terminal-state-parser-set! state 'normal)
-                      (terminal-state-osc-text-set! state "")))))])]))
+                (unless (control-text-add! state 8192 character)
+                  (terminal-state-parser-set! state 'normal)
+                  (terminal-state-osc-text-set!
+                    state (empty-control-text)))))])]))
 
   (define (refresh-terminal! state)
     (let ([size (buffer-window-size (terminal-state-buffer state))])
@@ -3505,7 +3521,7 @@
                                    rows cols (make-screen rows cols)
                                    (make-vector rows #f)
                                    0 0 0 0 #f 0 (- rows 1) 0 (- cols 1) #f #f
-                                   'normal "" #f "" '() 'ascii 'ascii 0 0
+                                   'normal "" #f (empty-control-text) '() 'ascii 'ascii 0 0
                                    #f #t #f #f #f #f #f #f #f #f #t
                                    (default-tab-stops cols) #\space
                                    #t #t #f #f #f 0 #f #f #f #f #f #f #f #f
