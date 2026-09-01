@@ -1247,6 +1247,12 @@
                            (terminal-state-dirty-set! state #t))])))
             (loop (cddr fields)))))))
 
+  (define (printable-character? character)
+    ;; C0 and C1 controls (and DEL) inside child-supplied metadata could
+    ;; act on the host terminal when the text is redisplayed.
+    (let ([code (char->integer character)])
+      (and (>= code 32) (not (= code 127)) (not (<= 128 code 159)))))
+
   (define (dispatch-hyperlink! state text)
     ;; OSC 8 ; params ; URI ST. Only id is semantic to the emulator; unknown
     ;; parameters remain safely ignored as tmux does. An empty URI closes it.
@@ -1361,7 +1367,11 @@
               (char=? (string-ref text 1) #\;))
          ;; An empty title is a legitimate update (xterm clears its title);
          ;; consume it silently and keep the buffer's current name.
-         (let ([title (substring text 2 (string-length text))])
+         (let ([title (list->string
+                        (filter printable-character?
+                                (string->list
+                                  (substring text 2
+                                             (string-length text)))))])
            (unless (or (string=? title "") (not (terminal-state-buffer state)))
              (set-buffer-name! (terminal-state-buffer state)
                                (format "*~a*" title))))]
@@ -2928,10 +2938,8 @@
        (let ([text (list->string
                      (filter
                        (lambda (character)
-                         (let ([code (char->integer character)])
-                           (or (memv code '(9 10 13))
-                               (and (>= code 32) (not (= code 127))
-                                    (not (<= 128 code 159))))))
+                         (or (memv (char->integer character) '(9 10 13))
+                             (printable-character? character)))
                        (string->list (read-paste))))])
          (write-bytes!
            state
