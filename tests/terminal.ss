@@ -481,6 +481,14 @@
               (vector->list (terminal-emulator-screen terminal))
               '("   " "   ")))
 
+     (let ([terminal (make-terminal-emulator 2 5)])
+       (terminal-emulator-feed! terminal "ab\x1b;[?47h")
+       (check 'legacy-alternate-screen-keeps-cursor
+              (state-ref terminal 'cursor) '(0 . 2))
+       (terminal-emulator-feed! terminal "C\x1b;[?47l")
+       (check 'legacy-alternate-screen-cursor-carries-back
+              (state-ref terminal 'cursor) '(0 . 3)))
+
      (let ([terminal (make-terminal-emulator 3 4)])
        (terminal-emulator-feed!
          terminal

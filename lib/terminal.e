@@ -479,7 +479,10 @@
       (terminal-state-memory-lock-set!
         state (and lock (clamp lock 0 (- (terminal-state-rows state) 1))))))
 
-  (define (enter-alternate-screen! state clear?)
+  (define (enter-alternate-screen! state mode)
+    ;; Modes 47 and 1047 swap screen contents only: the cursor, margins,
+    ;; and rendition carry across, as in xterm. Mode 1049 additionally
+    ;; saves the primary screen's state and starts from a cleared page.
     (unless (terminal-state-main-screen state)
       (terminal-state-main-screen-set! state (terminal-state-screen state))
       (terminal-state-main-wrapped-set! state (terminal-state-wrapped state))
@@ -487,15 +490,14 @@
       (terminal-state-main-row-set! state (terminal-state-row state))
       (terminal-state-main-col-set! state (terminal-state-col state))
       (terminal-state-main-state-set! state (capture-screen-state state))
-      (if (and (not clear?) (terminal-state-alternate-screen state))
+      (if (and (not (= mode 1049)) (terminal-state-alternate-screen state))
           (begin
             (terminal-state-screen-set!
               state (terminal-state-alternate-screen state))
             (terminal-state-wrapped-set!
               state (terminal-state-alternate-wrapped state))
             (terminal-state-styles-set!
-              state (terminal-state-alternate-styles state))
-            (restore-screen-state! state (terminal-state-alternate-state state)))
+              state (terminal-state-alternate-styles state)))
           (begin
             (terminal-state-screen-set!
               state (make-screen (terminal-state-rows state)
@@ -506,24 +508,37 @@
               state (make-style-screen (terminal-state-rows state)
                                        (terminal-state-cols state)
                                        (terminal-state-style state)))
-            (terminal-state-row-set! state 0)
-            (terminal-state-col-set! state 0)
-            (terminal-state-scroll-top-set! state 0)
-            (terminal-state-scroll-bottom-set!
-              state (- (terminal-state-rows state) 1))
-            (terminal-state-origin-set! state #f)
-            (terminal-state-wrap-pending-set! state #f)))))
+            (when (= mode 1049)
+              (terminal-state-row-set! state 0)
+              (terminal-state-col-set! state 0)
+              (terminal-state-scroll-top-set! state 0)
+              (terminal-state-scroll-bottom-set!
+                state (- (terminal-state-rows state) 1))
+              (terminal-state-origin-set! state #f)
+              (terminal-state-wrap-pending-set! state #f))))))
 
-  (define (leave-alternate-screen! state)
+  (define (leave-alternate-screen! state mode)
     (when (terminal-state-main-screen state)
-      (terminal-state-alternate-screen-set! state (terminal-state-screen state))
-      (terminal-state-alternate-wrapped-set! state (terminal-state-wrapped state))
-      (terminal-state-alternate-styles-set! state (terminal-state-styles state))
-      (terminal-state-alternate-state-set! state (capture-screen-state state))
+      (if (= mode 1047)
+          ;; Mode 1047 clears the alternate screen as it is left.
+          (begin
+            (terminal-state-alternate-screen-set! state #f)
+            (terminal-state-alternate-wrapped-set! state #f)
+            (terminal-state-alternate-styles-set! state #f)
+            (terminal-state-alternate-state-set! state #f))
+          (begin
+            (terminal-state-alternate-screen-set!
+              state (terminal-state-screen state))
+            (terminal-state-alternate-wrapped-set!
+              state (terminal-state-wrapped state))
+            (terminal-state-alternate-styles-set!
+              state (terminal-state-styles state))
+            (terminal-state-alternate-state-set!
+              state (capture-screen-state state))))
       (terminal-state-screen-set! state (terminal-state-main-screen state))
       (terminal-state-wrapped-set! state (terminal-state-main-wrapped state))
       (terminal-state-styles-set! state (terminal-state-main-styles state))
-      (when (terminal-state-main-state state)
+      (when (and (= mode 1049) (terminal-state-main-state state))
         (restore-screen-state! state (terminal-state-main-state state)))
       (terminal-state-main-screen-set! state #f)
       (terminal-state-main-wrapped-set! state #f)
@@ -1889,8 +1904,8 @@
                    ;; the other and can crop a nested full-screen program.
                    (terminal-state-unfollowed-windows-set! state '())
                    (if on?
-                       (enter-alternate-screen! state (not (= mode 47)))
-                       (leave-alternate-screen! state))
+                       (enter-alternate-screen! state mode)
+                       (leave-alternate-screen! state mode))
                    (when (terminal-state-buffer state)
                      (reset-buffer-viewports!
                        (terminal-state-buffer state)
