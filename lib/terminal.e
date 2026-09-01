@@ -166,7 +166,8 @@
                          0 0 #f #f #f #f #f '() '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() #f (make-style-screen rows cols 'plain)
-                         #f "" 'plain #f #f (make-vector 256 #f) #f #f #f "" ""))
+                         #f "" 'plain #f #f (make-vector 256 #f) #f #f #f ""
+                         (cons 0 '())))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -221,7 +222,7 @@
       (horizontal-margin-mode . ,(terminal-state-margin-mode emulator))
       (memory-lock . ,(terminal-state-memory-lock emulator))
       (printer-controller . ,(terminal-state-printer-controller emulator))
-      (printer-output . ,(terminal-state-printer-output emulator))
+      (printer-output . ,(printer-output-text emulator))
       (wrap-pending . ,(terminal-state-wrap-pending emulator))
       (autowrap . ,(terminal-state-autowrap emulator))
       (origin . ,(terminal-state-origin emulator))
@@ -1735,6 +1736,7 @@
       (terminal-state-default-background-set! state #f)
       (terminal-state-printer-controller-set! state #f)
       (terminal-state-printer-pending-set! state "")
+      (terminal-state-printer-output-set! state (cons 0 '()))
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-buffer state)
         (set-app-presentation! (terminal-state-buffer state)
@@ -2087,10 +2089,7 @@
                                                     "\r\n"))
                                    (vector->list
                                      (terminal-state-screen state))))])
-                  (terminal-state-printer-output-set!
-                    state
-                    (string-append (terminal-state-printer-output state)
-                                   printed)))]
+                  (append-printer-output! state printed))]
                [(4)
                 (terminal-state-printer-controller-set! state #f)
                 (terminal-state-printer-pending-set! state "")]
@@ -2138,6 +2137,27 @@
               [(vector-ref stops col) col]
               [else (loop (+ col 1))]))))
 
+  ;; The virtual printer accumulates until the controller is turned off, so
+  ;; a chunked representation keeps appends cheap and a ceiling keeps a child
+  ;; that never sends CSI 4i from growing the capture without bound.
+  (define printer-output-limit 1048576)
+
+  (define (append-printer-output! state text)
+    (let* ([output (terminal-state-printer-output state)]
+           [room (- printer-output-limit (car output))]
+           [taken (min (string-length text) (max 0 room))])
+      (when (> taken 0)
+        (terminal-state-printer-output-set!
+          state
+          (cons (+ (car output) taken)
+                (cons (if (= taken (string-length text))
+                          text (substring text 0 taken))
+                      (cdr output)))))))
+
+  (define (printer-output-text state)
+    (apply string-append
+      (reverse (cdr (terminal-state-printer-output state)))))
+
   (define printer-controller-terminators '("\x1b;[4i" "\x9b;4i"))
 
   (define (string-prefix-of? prefix text)
@@ -2159,9 +2179,7 @@
         [(printer-prefix? candidate)
          (terminal-state-printer-pending-set! state candidate)]
         [else
-         (terminal-state-printer-output-set!
-           state
-           (string-append (terminal-state-printer-output state) candidate))
+         (append-printer-output! state candidate)
          (terminal-state-printer-pending-set! state "")])))
 
   (define (execute-c0! state code)
@@ -2966,7 +2984,7 @@
                                    #f '() #f
                                    (make-style-screen rows cols 'plain)
                                    #f "" 'plain #f #f (make-vector 256 #f) #f #f
-                                   #f "" ""))
+                                   #f "" (cons 0 '())))
             (set-app-status-position!
               buffer
               (lambda (ignored)

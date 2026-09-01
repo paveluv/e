@@ -551,7 +551,10 @@
               "AB  \r\n    \r\nprintedc1")
        (check 'printer-controller-c1-resumes-display
               (vector->list (terminal-emulator-screen terminal))
-              '("ABXY" "    ")))
+              '("ABXY" "    "))
+       (terminal-emulator-feed! terminal "\x1b;c")
+       (check 'full-reset-clears-printer-output
+              (state-ref terminal 'printer-output) ""))
 
      (let ([terminal (make-terminal-emulator 2 5)])
        (terminal-emulator-feed! terminal "\x1b;[123\x18;A")
