@@ -5748,6 +5748,16 @@
                   (focus-window! w)
                   (goto-point! (window-position w start height x y))
                   (arm-text-selection!)
+                  ;; A mode may act on the click -- following a link,
+                  ;; say -- through a MOUSE-CLICK binding in its keymap.
+                  (let ([context (mode-key-context)])
+                    (when context
+                      (let ([action (key-event-binding context
+                                                       "MOUSE-CLICK")])
+                        (when (procedure? action)
+                          (guard (ex [else
+                                      (set! message (error-text ex))])
+                            (action))))))
                   "MOUSE-HANDLED"]))))])))
 
   (define (mouse-drag! x y button)
@@ -6301,31 +6311,43 @@
 
   (define (sequence-text sequence) (string-join sequence " "))
 
+  (define (mode-key-context)
+    ;; A buffer mode may carry its own key bindings under a context
+    ;; named after the mode; they take precedence over the global map
+    ;; while a buffer of that mode is current.
+    (let ([name (buffer-mode-name (current-buffer))])
+      (and name (string->symbol name))))
+
   (define (dispatch-sequence! first chain)
-    (let loop ([sequence (list first)])
-      (let ([hit (resolved-binding 'global sequence)]
-            [prefix? (binding-prefix? 'global sequence)])
-        (cond
-          [prefix?
-           (set! message (string-append (sequence-text sequence) "-"))
-           (set! echo-pending '())
-           (redraw!)
-           (let ([next (read-key-event)])
-             (if (eof-object? next)
+    (let ([mode-context (mode-key-context)])
+      (let loop ([sequence (list first)])
+        (let ([hit (or (and mode-context
+                            (resolved-binding mode-context sequence))
+                       (resolved-binding 'global sequence))]
+              [prefix? (or (and mode-context
+                                (binding-prefix? mode-context sequence))
+                           (binding-prefix? 'global sequence))])
+          (cond
+            [prefix?
+             (set! message (string-append (sequence-text sequence) "-"))
+             (set! echo-pending '())
+             (redraw!)
+             (let ([next (read-key-event)])
+               (if (eof-object? next)
                  (set! quit? #t)
                  (loop (append sequence (list next)))))]
-          [hit
-           ;; A prefix is only a waiting indicator. Once its complete binding
-           ;; is known, remove it before the command runs; commands that have
-           ;; something useful to report will publish their own message.
-           (when (> (length sequence) 1) (settle-echo!))
-           (run-key-action! (binding-action (cdr hit)))]
-          [(and (= (length sequence) 1)
-                (key-event-character first))
-           => (lambda (c) (self-insert! c chain))]
-          [else
-           (set! message
-             (format "~a is undefined" (sequence-text sequence)))]))))
+            [hit
+             ;; A prefix is only a waiting indicator. Once its complete binding
+             ;; is known, remove it before the command runs; commands that have
+             ;; something useful to report will publish their own message.
+             (when (> (length sequence) 1) (settle-echo!))
+             (run-key-action! (binding-action (cdr hit)))]
+            [(and (= (length sequence) 1)
+               (key-event-character first))
+             => (lambda (c) (self-insert! c chain))]
+            [else
+             (set! message
+               (format "~a is undefined" (sequence-text sequence)))])))))
 
   (define (dispatch-app-event! event)
     (let* ([a (app-of (current-buffer))]
