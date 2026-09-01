@@ -13,13 +13,14 @@
   (import (chezscheme) (core)
           (only (describe) register-descriptions!))
 
-  ;; The named looks for the matched pair, in the style DSL. Box is the
-  ;; framed attribute (SGR 51), which only some terminals draw; the rest
-  ;; show nothing for it. Colored uses the accent violet that also marks
-  ;; choices and resizes.
+  ;; The named looks for the matched pair, in the style DSL. Box draws a
+  ;; line above and below the bracket -- the closest widely rendered
+  ;; approximation of a frame; a terminal that really draws SGR 51 can
+  ;; have it with (set-style! 'matching-paren '(framed)). Colored uses
+  ;; the accent violet that also marks choices and resizes.
   (define matching-paren-style-table
     '((underline (underline))
-      (box (framed))
+      (box (underline overline))
       (bold (bold))
       (colored (bold (foreground 135)))))
 
@@ -90,4 +91,4 @@
       '(((matching-paren-style)
          (("parameter" . "(matching-paren-style [name])")) "symbol"
          ("(paren)") paren "Editing" #f
-         "Get or set how the matched bracket pair is marked: underline (the default), box (SGR framed, on terminals that draw it), bold, or colored (bold accent violet).")))))
+         "Get or set how the matched bracket pair is marked: underline (the default), box (a line above and below), bold, or colored (bold accent violet).")))))
