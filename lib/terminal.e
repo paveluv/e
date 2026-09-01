@@ -2165,6 +2165,9 @@
             [(#\g)
              (case (param parameters 0 0)
                [(0) (vector-set! (terminal-state-tab-stops state) col #f)]
+               ;; 1 and 2 clear line tab stops, which this class of
+               ;; terminal does not have; they are defined no-ops.
+               [(1 2) (void)]
                [(3) (vector-fill! (terminal-state-tab-stops state) #f)]
                [else
                 (report-unsupported!
@@ -2543,6 +2546,7 @@
           (terminal-state-parser-set! state 'normal)]
          [(#\#) (terminal-state-parser-set! state 'escape-hash)]
          [(#\space) (terminal-state-parser-set! state 'escape-space)]
+         [(#\%) (terminal-state-parser-set! state 'escape-percent)]
          [(#\l)
           ;; Lock rows above the cursor; the cursor row remains the first
           ;; scrollable row, as specified by xterm's memory-lock capability.
@@ -2610,6 +2614,13 @@
            (report-unsupported!
              state (control-signature "ESC" "#" character)))
        (terminal-state-parser-set! state 'normal)]
+      [(escape-percent)
+       ;; ESC % G selects UTF-8, the permanent state here; switching to
+       ;; another coded character set is not possible.
+       (unless (char=? character #\G)
+         (report-unsupported!
+           state (control-signature "ESC" "%" character)))
+       (terminal-state-parser-set! state 'normal)]
       [(charset)
        (if (char<=? #\space character #\/)
            (terminal-state-parameters-set!
@@ -2622,11 +2633,12 @@
                     [(#\A) 'british]
                     [else 'ascii])])
              ;; An unrecognized character set silently degrades to ASCII;
-             ;; name it so the wrong glyphs are traceable to the gap.
+             ;; name it so the wrong glyphs are traceable to the gap. The
+             ;; alternate-ROM set (1) is ASCII on xterm as well.
              (when (or (> (string-length
                             (terminal-state-parameters state))
                           0)
-                       (not (memv character '(#\0 #\2 #\A #\B))))
+                       (not (memv character '(#\0 #\1 #\2 #\A #\B))))
                (report-unsupported!
                  state
                  (format "G~a charset designator ~s"

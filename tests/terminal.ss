@@ -966,6 +966,7 @@
        ;; changes behavior.
        (terminal-emulator-feed!
          terminal "\x1b;[?4l\x1b;[?5l\x1b;[?8l\x1b;[?40h\x1b;[?45l")
+       (terminal-emulator-feed! terminal "\x1b;[1g\x1b;[2g\x1b;(1\x1b;%G")
        (check 'setup-modes-accepted-silently
               (terminal-emulator-unsupported terminal) '())
        (terminal-emulator-feed!
@@ -1005,9 +1006,10 @@
        (check 'unknown-escape-payload-not-painted
               (vector-ref (terminal-emulator-screen terminal) 0)
               "          ")
+       (terminal-emulator-feed! terminal "\x1b;%@")
        (check 'silent-escape-paths-report
               (terminal-emulator-unsupported terminal)
-              '("C1 control 0x8E" "ESC \" L\"" "ESC \"#3\"" "ESC \"%G\""
+              '("C1 control 0x8E" "ESC \" L\"" "ESC \"#3\"" "ESC \"%@\""
                 "G0 charset designator \"4\"")))
 
      (let ([terminal (make-terminal-emulator 2 5)])
