@@ -877,6 +877,13 @@
        (check 'wide-resize-cursor (state-ref terminal 'cursor) '(1 . 1)))
 
      (let ([terminal (make-terminal-emulator 2 4)])
+       (terminal-emulator-feed! terminal "\x1b;[?7l\x1b;[1;4H\x4e2d;")
+       (check 'wide-cell-backs-up-at-margin-without-autowrap
+              (vector->list (terminal-emulator-screen terminal))
+              '("  \x4e2d;" "    "))
+       (check 'wide-cell-margin-cursor (state-ref terminal 'cursor) '(0 . 3)))
+
+     (let ([terminal (make-terminal-emulator 2 4)])
        (terminal-emulator-feed! terminal "AB\x4e2d;")
        (terminal-emulator-resize! terminal 2 3)
        (check 'wide-cell-never-split

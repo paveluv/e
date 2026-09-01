@@ -999,12 +999,17 @@
              [limit (if (<= left (terminal-state-col state) right)
                       (+ right 1) cols)]
              [width (min requested-width (- limit left))])
-        (when (and (> width (- limit (terminal-state-col state)))
-                (terminal-state-autowrap state))
-          (vector-set! (terminal-state-wrapped state)
-                       (terminal-state-row state) #t)
-          (terminal-state-col-set! state left)
-          (line-feed! state))
+        (when (> width (- limit (terminal-state-col state)))
+          (if (terminal-state-autowrap state)
+              (begin
+                (vector-set! (terminal-state-wrapped state)
+                             (terminal-state-row state) #t)
+                (terminal-state-col-set! state left)
+                (line-feed! state))
+              ;; Without autowrap a glyph too wide for the remaining cells
+              ;; backs the cursor up so the character stays whole instead
+              ;; of overflowing its final cell.
+              (terminal-state-col-set! state (max left (- limit width)))))
         (let* ([line (vector-ref (terminal-state-screen state)
                                  (terminal-state-row state))]
                [styles (vector-ref (terminal-state-styles state)
