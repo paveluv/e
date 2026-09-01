@@ -18,7 +18,7 @@
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
     visit-file! save-file! save!! save-as!! find-file!! data-directory
-    show-buffer! kill-buffer! display-buffer! buffer-append!
+    show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
     fresh-buffer
     set-buffer-mode! set-buffer-read-only! set-buffer-wrap! set-buffer-name!
     call-with-buffer
@@ -651,7 +651,9 @@
               (set! echo-cursor #f)
               (set! echo-indent #f)
               (set! echo-input-end #f)
-              (set! message-styles #f)))))))
+              (set! message-styles #f)
+              (set! message "")
+              (set! message-ghost "")))))))
 
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
@@ -2367,6 +2369,15 @@
          w)]
       [(split-current-window! 'below b)]
       [else #f]))
+
+  (define (pop-up-or-reuse! b)
+    ;; Help-like buffers never appropriate another leaf: reuse an existing
+    ;; window displaying b, otherwise create a new tile below the current one.
+    ;; Focus stays where it was so the popup remains a reference alongside the
+    ;; command that requested it.
+    (unless (memq b buffers) (set! buffers (append buffers (list b))))
+    (or (find (lambda (w) (eq? (window-buffer w) b)) windows)
+        (split-current-window! 'below b)))
 
   (define (buffer-append! b . new-lines)
     ;; Append lines to b, transcript style: a fresh buffer's single empty
@@ -6241,7 +6252,7 @@
                         (eq? (binding-context (cdr owned)) 'global))
                       all)]
            [resolved (choose-binding entries)]
-           [b (fresh-buffer "*Help*")])
+           [b (fresh-buffer "*help*")])
       (buffer-append! b
         (sequence-text sequence)
         ""
@@ -6284,7 +6295,8 @@
             contexts)))
       (buffer-read-only-set! b #t)
       (set! message "")
-      (display-buffer! b)))
+      (unless (pop-up-or-reuse! b)
+        (set-message! "The *help* buffer could not be displayed"))))
 
   ;; Core defaults are data, just like module and config bindings.
   (define core-keys-bound

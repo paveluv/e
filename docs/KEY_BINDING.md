@@ -4,7 +4,7 @@ Every keyboard command in e is resolved through a keymap. Built-in and
 extension-module bindings are defaults; bindings from `config.e` are user
 overrides and take priority regardless of registration or module reload order.
 
-Press `C-h k`, then a key or complete chord, to open `*Help*`. The report shows
+Press `C-h k`, then a key or complete chord, to open `*help*`. The report shows
 the resolved global command, where it was defined, shadowed definitions, and
 any meanings the key has inside prompts, incremental search, or query-replace.
 

@@ -79,7 +79,7 @@
 
   (define (show-log!)
     ;; Pop up the *log* view.
-    (display-buffer! (log-view))
+    (pop-up-or-reuse! (log-view))
     (void))
 
   (define (init!)

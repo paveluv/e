@@ -629,7 +629,7 @@
               (if (string? name) (string->symbol name) name))
             (refresh-describe!)
             (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
-            (if (display-buffer! b)
+            (if (pop-up-or-reuse! b)
                 (set-message! "")
                 (set-message!
                   (format "~a: see the *describe* buffer" name)))))

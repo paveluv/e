@@ -303,7 +303,8 @@ The public Scheme API exposes read-only inspection through `current-buffer`,
 `buffer-line`, `buffer-line-count`, and `buffer-line-styles`.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
-`new-buffer`, `fresh-buffer`, `show-buffer!`, `display-buffer!`, `kill-buffer!`,
+`new-buffer`, `fresh-buffer`, `show-buffer!`, `display-buffer!`,
+`pop-up-or-reuse!`, `kill-buffer!`,
 `buffer-append!`, `set-buffer-mode!`, and `set-buffer-read-only!` provide
 controlled mutation and display. `call-with-buffer` temporarily makes another
 buffer current, and `call-as-one-edit!` groups mutations into coherent undo
