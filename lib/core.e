@@ -4276,7 +4276,10 @@
                   "")]
              [status (format "~a~a~a~a~a "
                              head conf mode-text hint-text page-text)]
-             [window-buttons " [↕][↔][×]"]
+             ;; A transient pop-up cannot be split or resized; it offers
+             ;; only its close control.
+             [window-buttons (if (eq? b completions-buffer)
+                                 " [×]" " [↕][↔][×]")]
              [resizing?
               (and resize-highlight
                    (exists
@@ -5211,13 +5214,15 @@
   (define last-press #f)   ; (x y ms) of the previous button press
 
   (define (window-button-at x0 r0)
-    ;; The three bracketed controls occupy the last nine status columns.
+    ;; The three bracketed controls occupy the last nine status columns;
+    ;; a pop-up window shows only its close control in the last three.
     (window-at x0 r0
       (lambda (entry)
         (let ([w (car entry)])
           (and (= r0 (+ (cadr entry) (caddr entry)))
                (let ([from-end (- (+ (window-xoff w) (window-width w)) x0)])
                  (cond [(<= 1 from-end 3) (cons 'close w)]
+                       [(eq? w (completions-window)) #f]
                        [(<= 4 from-end 6) (cons 'right w)]
                        [(<= 7 from-end 9) (cons 'below w)]
                        [else #f])))))))
@@ -5546,9 +5551,8 @@
            (let ([action (car button)] [w (cdr button)])
              (cond
                [(eq? w (completions-window))
-                (if (eq? action 'close)
-                    (dismiss-completions!)
-                    (set! message "Cannot split a popup"))]
+                ;; Its only control is the close button.
+                (dismiss-completions!)]
                [else
                 (focus-window! w)
                 (case action
