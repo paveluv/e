@@ -500,7 +500,22 @@
                                     [text (string-append "\x2502;" padded
                                                          "\x2502;")]
                                     [vec (make-vector (string-length text)
-                                                      'md-code)])
+                                                      'md-code)]
+                                    [mode (and (not (string=? tag ""))
+                                               (find-mode tag))]
+                                    [syntax
+                                     (and mode
+                                          (guard (ex [else #f])
+                                            ((mode-styles mode) l)))])
+                               ;; the language's own faces color the
+                               ;; code; unstyled cells keep the tint
+                               (when (vector? syntax)
+                                 (do ([p 0 (+ p 1)])
+                                     ((or (= p (vector-length syntax))
+                                          (= p (string-length l))))
+                                   (let ([face (vector-ref syntax p)])
+                                     (unless (eq? face 'plain)
+                                       (vector-set! vec (+ p 2) face)))))
                                (vector-set! vec 0 'chrome)
                                (vector-set! vec (- (string-length text) 1)
                                             'chrome)

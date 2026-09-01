@@ -11,7 +11,9 @@
 
 (eval
   '(begin
-     (import (md-view))
+     (import (md-view) (prefix (scheme-mode) scheme-mode:))
+
+     (scheme-mode:init!)
 
      (define checks 0)
 
@@ -84,7 +86,7 @@
                 "\x2502; (+ 1 2)  \x2502;"
                 "\x2514;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2518;"))
        (check 'fence-interior-tinted
-              (vector-ref (cadr styles) 2) 'md-code)
+              (vector-ref (cadr styles) 1) 'md-code)
        (check 'fence-borders-chrome
               (list (vector-ref (cadr styles) 0)
                     (vector-ref (car styles) 0))
@@ -107,6 +109,13 @@
               (list (car r) (car (caddr r)))
               '(("a  see doc" "\x2500;  \x2500;\x2500;\x2500;\x2500;\x2500;\x2500;\x2500;" "b  c")
                 ((7 10 "x.md")))))
+
+     (let* ([r (render '("```scheme" "(define x 1)" "```"))]
+            [interior (cadr (cadr r))])
+       (check 'fence-language-styles
+              (list (vector-ref interior 1) (vector-ref interior 2)
+                    (vector-ref interior 3))
+              '(md-code delimiter keyword)))
 
      (check 'hard-breaks-keep-their-lines
             (rendered-lines '("**keys**: C-c t  " "**source**: here  "
