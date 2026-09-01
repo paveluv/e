@@ -879,4 +879,15 @@
               (vector->list (terminal-emulator-screen terminal))
               '("abc" "d  " "X  ")))
 
+     (let ([terminal (make-terminal-emulator 3 10)])
+       (terminal-emulator-feed! terminal "1\r\n2\r\n3\r\n4\r\n5")
+       (check 'erase-saved-lines-before
+              (state-ref terminal 'scrollback-lines) 2)
+       (terminal-emulator-feed! terminal "\x1b;[3J")
+       (check 'erase-saved-lines-clears-scrollback
+              (state-ref terminal 'scrollback-lines) 0)
+       (check 'erase-saved-lines-keeps-screen
+              (vector->list (terminal-emulator-screen terminal))
+              '("3         " "4         " "5         ")))
+
      (format #t "~a terminal checks passed\n" checks)))

@@ -1945,7 +1945,14 @@
                 (clear-rows! state (+ row 1) rows)]
                [(1) (clear-rows! state 0 row)
                 (erase-line! state 0 (+ col 1))]
-               [(2 3) (clear-rows! state 0 rows)])]
+               [(2) (clear-rows! state 0 rows)]
+               [(3)
+                ;; xterm's ED 3 erases only the saved lines; clear(1) sends
+                ;; it after ED 2 to leave nothing above the fresh screen.
+                (terminal-state-history-set! state '())
+                (terminal-state-history-styles-set! state '())
+                (terminal-state-history-wrapped-set! state '())
+                (terminal-state-dirty-set! state #t)])]
             [(#\K)
              (case (param parameters 0 0)
                [(0) (erase-line! state col cols)]
