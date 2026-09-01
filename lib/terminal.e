@@ -3252,7 +3252,7 @@
                     (lambda ()
                       (parameterize ([message-source 'terminal])
                         (set-message!
-                          (format "Terminal reader failed: ~a"
+                          (format "Reader failed: ~a"
                                   (error-text ex)))))))
                 (finished!)])
       (let ([input (transcoded-port
