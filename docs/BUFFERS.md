@@ -206,8 +206,8 @@ documented in [App buffers](APPS.md).
 
 ## Scrollbars
 
-Every ordinary buffer shows a one-column vertical scrollbar by default;
-`*buffers*` always shows one. The thin `│` is the track and the centered heavy
+Ordinary buffers show no scrollbar by default; `(scrollbar #t)` in config.e
+enables a one-column vertical bar for them, and `*buffers*` always shows one. The thin `│` is the track and the centered heavy
 `┃` is the visible extent. Thumb size reflects the proportion of the buffer
 visible in the window, and its position reflects the scrollable range. Sticky
 app headers do not count as part of that range.

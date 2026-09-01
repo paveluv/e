@@ -1824,7 +1824,7 @@
   ;; Ordinary buffers use the global setting. An app can force the bar on
   ;; with #t, force a particular side, or otherwise inherit the global choice.
   (define scrollbar
-    (make-parameter #t
+    (make-parameter #f
       (lambda (visible?)
         (unless (boolean? visible?)
           (error 'scrollbar "must be #t or #f" visible?))

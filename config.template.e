@@ -23,7 +23,7 @@
 ;; (config-reload-on-save #t)     ; saving config.e applies it on the spot
 ;; (scheme-format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (scroll-margin 8)              ; rows kept between the cursor and the edges
-;; (scrollbar #t)                 ; #f: hide position bars in ordinary buffers
+;; (scrollbar #f)                 ; #t: show position bars in ordinary buffers
 ;; (scrollbar-position 'right)    ; position bars on the left or right edge
 ;; (line-numbers #f)              ; #t: show line numbers in every untoggled buffer
 ;; (wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)

@@ -93,8 +93,8 @@ Sticky rows, scrollbar geometry, cursor placement,
 mouse hit-testing, and scrolling are handled together by the core and apply
 to every window showing the app.
 
-The same bar is enabled for ordinary buffers by default; `(scrollbar #f)`
-hides it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
+The same bar is off for ordinary buffers by default; `(scrollbar #t)`
+enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
 select the global side, which defaults to the right. An app's explicit side
 overrides that position. `*buffers*` always enables its bar and follows the
 global side.
