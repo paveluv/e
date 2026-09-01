@@ -973,8 +973,9 @@
        (terminal-emulator-feed! terminal "\x1b;[?5iZ")
        (check 'private-media-copy-not-misexecuted
               (state-ref terminal 'printer-controller) #f)
-       ;; A kitty keyboard-protocol push is not a cursor restore.
-       (terminal-emulator-feed! terminal "\x1b;[3;4H\x1b;[>1u")
+       ;; A kitty keyboard-protocol push is not a cursor restore, and a
+       ;; defensive pop of the empty stack is a silent no-op.
+       (terminal-emulator-feed! terminal "\x1b;[3;4H\x1b;[>1u\x1b;[<u\x1b;[<1u")
        (check 'kitty-keyboard-push-keeps-cursor
               (state-ref terminal 'cursor) '(2 . 3))
        ;; Private-mode save/restore and DECSCL are not DECSTBM/SCOSC/DECSTR.

@@ -2155,7 +2155,7 @@
       (#\n "" "?")
       (#\p "!" "$" "?$")
       (#\q " " ">")
-      (#\m "" ">" "?") (#\i "") (#\u "") (#\x "") (#\y "")
+      (#\m "" ">" "?") (#\i "") (#\u "" "<") (#\x "") (#\y "")
       (#\r "") (#\s "") (#\S "") (#\T "")))
 
   (define (csi-decoration text)
@@ -2463,7 +2463,14 @@
                                (terminal-state-scroll-top state) 0))
                    (terminal-state-col-set! state (left-bound state)))
                  (save-cursor! state))]
-            [(#\u) (restore-cursor! state)]
+            [(#\u)
+             (if (string-prefix? "<" text)
+                 ;; A kitty keyboard-protocol pop. Nothing is ever pushed
+                 ;; here, and the protocol defines popping an empty stack
+                 ;; as a no-op, so exiting programs that pop defensively
+                 ;; stay quiet.
+                 (void)
+                 (restore-cursor! state))]
             [(#\m)
              (cond
                [(string-prefix? ">" text)
