@@ -137,6 +137,27 @@
     (with-mutex rendered-scrollback-lock
       (hashtable-delete! rendered-scrollback state)))
 
+  ;; Synchronized output (private mode 2026): while set, dirty frames are
+  ;; parsed but not presented, so an application can compose a frame
+  ;; without tearing. A deadline bounds the hold in case the application
+  ;; dies mid-frame.
+  (define sync-deadlines (make-weak-eq-hashtable))
+  (define sync-lock (make-mutex))
+
+  (define (start-synchronized-update! state)
+    (with-mutex sync-lock
+      (hashtable-set!
+        sync-deadlines state
+        (add-duration (current-time 'time-monotonic)
+                      (make-time 'time-duration 0 1)))))
+
+  (define (synchronized-update-pending? state)
+    (and (memv 2026 (terminal-state-extra-modes state))
+         (let ([deadline (with-mutex sync-lock
+                           (hashtable-ref sync-deadlines state #f))])
+           (and deadline
+                (time<? (current-time 'time-monotonic) deadline)))))
+
   (define terminals '())
   (define serial 0)
   (define style-serial 0)
@@ -2061,7 +2082,7 @@
           [(5) (flag (terminal-state-reverse-screen state))]
           [(6) (flag (terminal-state-origin state))]
           [(7) (flag (terminal-state-autowrap state))]
-          [(4 8 40 42 45)
+          [(4 8 40 42 45 2026)
            (flag (memv mode (terminal-state-extra-modes state)))]
           [(9 1000 1002 1003) (flag (eqv? (terminal-state-mouse state) mode))]
           [(25) (flag (terminal-state-cursor-visible state))]
@@ -2171,13 +2192,17 @@
                    (terminal-state-col-set!
                      state (if on? (left-bound state) 0))]
                   [(7) (terminal-state-autowrap-set! state on?)]
-                  [(4 8 40 42 45)
+                  [(4 8 40 42 45 2026)
                    (let ([extra (terminal-state-extra-modes state)])
                      (terminal-state-extra-modes-set!
                        state
                        (if on?
                            (if (memv mode extra) extra (cons mode extra))
-                           (remv mode extra))))]
+                           (remv mode extra))))
+                   (when (= mode 2026)
+                     (if on?
+                         (start-synchronized-update! state)
+                         (terminal-state-dirty-set! state #t)))]
                   [(69)
                    (terminal-state-margin-mode-set! state on?)
                    (unless on?
@@ -2975,7 +3000,8 @@
       (when size
         (with-mutex (terminal-state-lock state)
           (resize-screen! state (max 1 (car size)) (max 1 (cdr size)))
-          (when (terminal-state-dirty state)
+          (when (and (terminal-state-dirty state)
+                     (not (synchronized-update-pending? state)))
             ;; Snapshot cells and faces together while the PTY grid is locked.
             ;; Painting either one live can combine different stages of a
             ;; full-screen application's redisplay into one torn frame.
