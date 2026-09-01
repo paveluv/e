@@ -23,6 +23,18 @@ Prompt input wider than the screen wraps onto continuation rows marked with
 shrinking windows to their configured minimum; after eight prompt rows, the
 prompt scrolls while keeping its cursor visible.
 
+## Window management during a prompt
+
+A prompt does not lock the window layout. While it runs, Meta-arrows and
+`C-x o` move focus between windows, `C-x 2` and `C-x 3` split, `C-x 0`
+and `C-x 1` close, and `C-x k` kills the focused window's buffer (refused
+with a note when it has unsaved changes). The mouse works too: clicks
+focus windows and the status-bar controls split and close as usual. None
+of this cancels the prompt, and the window focused when the prompt is
+accepted is the command's target -- the file opens there, the evaluation
+runs against that buffer. Other `C-x` chords are consumed without effect
+so their tail keys cannot leak into the input.
+
 ## Multiline input
 
 Prompts that enable multiline input accept Meta+Return to insert a newline.

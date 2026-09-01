@@ -4764,6 +4764,41 @@
                                     (string-join (map completion-label cands)
                                                  " ")))]))])))
 
+  (define (prompt-window-command event)
+    ;; Window management while a prompt runs: focus moves, splits, and
+    ;; closes work without disturbing the input, and the newly focused
+    ;; window is the pending command's target -- where the file opens or
+    ;; the evaluation runs -- once the prompt is accepted. A C-x chord is
+    ;; consumed whole so an unsupported tail cannot leak into the input.
+    ;; Each action returns the note to show after it runs.
+    (define (act thunk)
+      (lambda ()
+        (guard (ex [else (string-append "  " (error-text ex))])
+          (thunk)
+          "")))
+    (cond
+      [(string=? event "M-LEFT") (act focus-window-left!)]
+      [(string=? event "M-RIGHT") (act focus-window-right!)]
+      [(string=? event "M-UP") (act focus-window-up!)]
+      [(string=? event "M-DOWN") (act focus-window-down!)]
+      [(string=? event "C-x")
+       (lambda ()
+         (let ([next (read-key-event #f)])
+           (cond
+             [(eof-object? next) ""]
+             [(equal? next "o") ((act other-window!))]
+             [(equal? next "2") ((act split-window!))]
+             [(equal? next "3") ((act split-window-right!))]
+             [(equal? next "0") ((act delete-window!))]
+             [(equal? next "1") ((act delete-other-windows!))]
+             [(equal? next "k")
+              (let ([b (current-buffer)])
+                (if (and (buffer-file b) (not (buffer-clean? b)))
+                    (format "  ~a has unsaved changes" (buffer-name b))
+                    ((act (lambda () (kill-buffer! b))))))]
+             [else ""])))]
+      [else #f]))
+
   (define (prompt! label . rest)
     ;; Read input in the echo area, with the cursor parked there. Optional
     ;; arguments: a completer (string -> list of candidate strings) enabling
@@ -4846,7 +4881,9 @@
         (set! echo-indent (string-length label))
         (set! echo-cursor (+ (string-length label) pos))
         (redraw!)
-        (let* ([event (read-key-event #f)]
+        ;; Mouse reports are live here: clicks focus windows and work the
+        ;; window controls without canceling the prompt.
+        (let* ([event (read-key-event #t)]
                [action (and (not (eof-object? event))
                             (key-event-binding 'prompt event))]
                [previous-edge last-edge])
@@ -4929,6 +4966,8 @@
                    (let ([text (string-join lines " ")])
                      (edited (string-insert s pos text)
                              (+ pos (string-length text))))))]
+            [(prompt-window-command event)
+             => (lambda (run) (loop s pos (run)))]
             [(key-event-character event)
              => (lambda (c)
                   (edited (string-insert s pos (string c)) (+ pos 1)))]
@@ -5569,6 +5608,13 @@
            (lambda (entry)
              (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
                (cond
+                 ;; The pop-up is chrome: its close control and scrollbar
+                 ;; work, but its text and status bar never steal focus
+                 ;; from the window a prompt is targeting.
+                 [(and (eq? w (completions-window))
+                       (not (and (window-scrollbar-column w)
+                                 (= (- x 1) (window-scrollbar-column w)))))
+                  "MOUSE-HANDLED"]
                  [(= (- y 1) (+ start height))        ; the status bar
                   (focus-window! w)
                   "MOUSE-HANDLED"]
@@ -5577,7 +5623,8 @@
                   ;; App bars navigate like their wheel controls: they do not
                   ;; take focus and do not invoke the row's click action.
                   (let ([old current-window])
-                    (unless (app-buffer? (window-buffer w))
+                    (unless (or (app-buffer? (window-buffer w))
+                                (eq? w (completions-window)))
                       (focus-window! w))
                     (set! current-window w)
                     ;; A thumb grab keeps the viewport in place. Both forms
@@ -5594,7 +5641,8 @@
                              [grab (min (- thumb-size 1)
                                         (max 0 (- track-row thumb-start)))])
                         (set! drag-scrollbar (list w grab))))
-                    (when (and (app-buffer? (window-buffer w))
+                    (when (and (or (app-buffer? (window-buffer w))
+                                   (eq? w (completions-window)))
                                (memq old windows))
                       (set! current-window old)))
                   "MOUSE-HANDLED"]

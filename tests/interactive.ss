@@ -171,6 +171,27 @@
      (send! "exit\r")
      (wait-for! 'shell-exit-frees-buffer
                 (lambda () (not (find-cell "capturing input"))) 10000)
+     ;; -- window navigation inside a prompt ------------------------------
+     ;; Split, start find-file, move focus right mid-prompt, accept: the
+     ;; file must open in the newly focused right-hand window.
+     (send! "\x18;3")                   ; C-x 3
+     (settle! 500)
+     (send! "\x18;\x6;")                ; C-x C-f
+     (settle! 500)
+     (send! "\x1b;[1;3C")               ; M-RIGHT, prompt keeps running
+     (settle! 500)
+     (send! "README.md\r")
+     (wait-for! 'prompt-navigation-targets-focused-window
+                (lambda ()
+                  (let ([readme (find-cell "README.md  L1")]
+                        [left (find-cell "*terminal*")])
+                    (and readme left
+                         (= (car readme) (car left))
+                         (> (cdr readme) (cdr left)))))
+                5000)
+     (send! "\x18;0")                   ; C-x 0: back to one window
+     (settle! 500)
+
      (send! "\x18;\x3;")                ; C-x C-c
      (let loop ()                       ; block until the editor exits
        (let ([character (guard (ex [else (eof-object)])
