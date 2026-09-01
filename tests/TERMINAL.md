@@ -43,6 +43,14 @@ read boundaries.
 
 ## Optional vttest pass
 
+`tests/vttest-drive.ss` automates the RETURN-driven menus against the
+headless emulator: it runs `vttest` in a PTY, feeds the output into an
+emulator that answers its report queries, dumps every settled screen (plus
+the raw bytes) for review, and ends with the emulator's
+unsupported-feature report. Its header documents the menu-plan syntax.
+Keyboard, mouse, and VT52 menus, and everything below, still need a human
+and a real e terminal.
+
 Pass the terminal app's actual drawable geometry explicitly. `vttest` otherwise
 defaults to a 24-by-80 canvas even when e's status bar, echo area, and scrollbar
 leave a smaller PTY grid. In the terminal shell, run:
