@@ -889,11 +889,37 @@
     (let ([link (link-at-point)])
       (when link (open-link! (caddr link)))))
 
+  ;; A transient, unlogged echo hint while point rests on a link,
+  ;; worn like a prompt label.  Only cursor motion updates it, so
+  ;; command feedback in the echo area stays until the user moves.
+  (define hint-point #f)
+  (define hint-shown #f)
+
+  (define (link-hint)
+    (unless (or (prompt-active?) (equal? hint-point (point)))
+      (set! hint-point (point))
+      (let ([link (and (equal? (buffer-mode-name (current-buffer))
+                               "markdown-view")
+                       (link-at-point))])
+        (cond
+          [link
+           (let ([url (caddr link)])
+             (unless (equal? hint-shown url)
+               (set! hint-shown url)
+               (show-prompt-message! "hyperlink: " url #f)))]
+          [hint-shown
+           (when (equal? (current-message)
+                         (string-append "hyperlink: " hint-shown))
+             (show-message! "" #f))
+           (set! hint-shown #f)])))
+    '())
+
   (define (init!)
     (register-md-faces!)
     (register-mode! "markdown-view" '() '() (lambda (line) #f)
                     #f view-row-styles)
     (add-hyperlinker! view-row-links)
+    (add-highlighter! link-hint)
     (bind-default-key! 'markdown "C-c v" markdown-view!)
     (bind-default-key! 'markdown-view "C-c v" markdown-edit!)
     (bind-default-key! 'markdown-view "RET" follow-md-link!)

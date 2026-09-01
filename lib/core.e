@@ -67,7 +67,7 @@
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
     set-message! show-message! show-prompt-message!
-    current-message redraw! error-text mouse!
+    current-message prompt-active? redraw! error-text mouse!
     log! present-log-entry! present-log-entries!
     log-entries log-length log-record log-styler
     format-log-entry
@@ -1533,6 +1533,10 @@
           (log! src s)
           (show-message! s #f))))
   (define (current-message) message)
+
+  (define (prompt-active?)
+    ;; True while a prompt owns the echo area (cursor parked there).
+    (and echo-cursor #t))
   (define (point) (cons point-row point-col))
   (define (mark) (and mark-active? (cons mark-row mark-col)))
   (define (buffer-line-count b) (vector-length (buffer-lines b)))
