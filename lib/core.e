@@ -244,9 +244,15 @@
                 [else (window-wrap w)])])
       (if (eq? x 'default) (wrap-lines) x)))
 
+  (define (clean-wrap? w)
+    (eq? (buffer-wrap-setting (window-buffer w)) 'clean))
+
   (define (wrap-width w)
-    ;; a wrapped row keeps its last column for the \ continuation mark
-    (max 1 (- (window-content-width w) 1)))
+    ;; a wrapped row keeps its last column for the \ continuation mark;
+    ;; a clean wrap draws none and uses the full width
+    (max 1 (if (clean-wrap? w)
+               (window-content-width w)
+               (- (window-content-width w) 1))))
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -2584,8 +2590,11 @@
     (buffer-read-only-set! b flag))
 
   (define (set-buffer-wrap! b setting)
-    (unless (memq setting '(default #t #f))
-      (error 'set-buffer-wrap! "expected default, #t, or #f" setting))
+    ;; clean wraps like #t but draws no continuation marks and lets the
+    ;; text use the full width -- for formatted read-only presentations.
+    (unless (memq setting '(default #t #f clean))
+      (error 'set-buffer-wrap! "expected default, #t, #f, or clean"
+             setting))
     (buffer-wrap-setting-set! b setting)
     b)
 
@@ -4243,7 +4252,7 @@
                        [edge (cond
                                [(and wrapped?
                                      (< (+ seg 1) (vector-length breaks)))
-                                'wrap]     ; the line continues below: \
+                                (if (clean-wrap? w) #f 'wrap)]
                                [(and (not wrapped?)
                                      (> (string-length line)
                                         (+ left content-width)))
