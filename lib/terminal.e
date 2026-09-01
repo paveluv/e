@@ -103,6 +103,26 @@
   (define (scrollback-of-entries entries)
     (make-scrollback '() entries (length entries)))
 
+  ;; Scrollback lines are immutable once pushed, but their effective styles
+  ;; depend on the palette, the default colors, and reverse video. Cache
+  ;; each line's rendered form per emulator so a dirty frame restyles only
+  ;; the live screen, and drop the cache whenever one of those inputs
+  ;; changes. Both tables are weak: dropped emulators and evicted lines
+  ;; release their rendered rows with them.
+  (define rendered-scrollback (make-weak-eq-hashtable))
+  (define rendered-scrollback-lock (make-mutex))
+
+  (define (rendered-scrollback-table state)
+    (with-mutex rendered-scrollback-lock
+      (or (hashtable-ref rendered-scrollback state #f)
+          (let ([table (make-weak-eq-hashtable)])
+            (hashtable-set! rendered-scrollback state table)
+            table))))
+
+  (define (invalidate-rendered-scrollback! state)
+    (with-mutex rendered-scrollback-lock
+      (hashtable-delete! rendered-scrollback state)))
+
   (define terminals '())
   (define serial 0)
   (define style-serial 0)
@@ -1247,6 +1267,7 @@
          (if foreground?
              (terminal-state-default-foreground-set! state color)
              (terminal-state-default-background-set! state color))
+         (invalidate-rendered-scrollback! state)
          (terminal-state-dirty-set! state #t))]))
 
   (define (dispatch-palette! state fields)
@@ -1267,6 +1288,7 @@
                   (cond [(parse-osc-color specification) =>
                          (lambda (color)
                            (vector-set! palette index color)
+                           (invalidate-rendered-scrollback! state)
                            (terminal-state-dirty-set! state #t))])))
             (loop (cddr fields)))))))
 
@@ -1378,12 +1400,15 @@
                    (when (and (integer? index) (<= 0 index 255))
                      (vector-set! (terminal-state-palette state) index #f))))
                (cdr fields)))
+         (invalidate-rendered-scrollback! state)
          (terminal-state-dirty-set! state #t)]
         [(string=? text "110")
          (terminal-state-default-foreground-set! state #f)
+         (invalidate-rendered-scrollback! state)
          (terminal-state-dirty-set! state #t)]
         [(string=? text "111")
          (terminal-state-default-background-set! state #f)
+         (invalidate-rendered-scrollback! state)
          (terminal-state-dirty-set! state #t)]
         [(and (>= (string-length text) 2)
               (memv (string-ref text 0) '(#\0 #\1 #\2))
@@ -1787,6 +1812,7 @@
       (terminal-state-palette-set! state (make-vector 256 #f))
       (terminal-state-default-foreground-set! state #f)
       (terminal-state-default-background-set! state #f)
+      (invalidate-rendered-scrollback! state)
       (terminal-state-printer-controller-set! state #f)
       (terminal-state-printer-pending-set! state "")
       (terminal-state-printer-output-set! state (cons 0 '()))
@@ -1904,6 +1930,7 @@
                    (terminal-state-dirty-set! state #t)]
                   [(5)
                    (terminal-state-reverse-screen-set! state on?)
+                   (invalidate-rendered-scrollback! state)
                    (terminal-state-dirty-set! state #t)]
                   [(6)
                    (terminal-state-origin-set! state on?)
@@ -2570,26 +2597,47 @@
                     (if (terminal-state-main-screen state)
                         '()
                         (scrollback-entries (terminal-state-history state)))]
-                   [cells
-                    (append (map scrollback-line-cells entries)
-                            (vector->list (terminal-state-screen state)))]
-                   [style-rows
-                    (append (map scrollback-line-styles entries)
-                            (vector->list (terminal-state-styles state)))]
-                   [styles
-                    (map (lambda (row) (effective-style-row state row))
-                         style-rows)]
-                   [links
-                    (map (lambda (row) (vector-map cell-style-link row))
-                         style-rows)])
-              (view-replace! (terminal-state-buffer state)
-                             (map placeholder-line cells))
+                   [table (rendered-scrollback-table state)]
+                   [rendered
+                    (map (lambda (entry)
+                           (or (hashtable-ref table entry #f)
+                               (let* ([faces (scrollback-line-styles entry)]
+                                      [row (vector
+                                             (scrollback-line-cells entry)
+                                             (effective-style-row state faces)
+                                             (vector-map cell-style-link
+                                                         faces)
+                                             (placeholder-line
+                                               (scrollback-line-cells
+                                                 entry)))])
+                                 (hashtable-set! table entry row)
+                                 row)))
+                         entries)]
+                   [screen-cells
+                    (vector->list (terminal-state-screen state))]
+                   [screen-styles
+                    (vector->list (terminal-state-styles state))])
+              (view-replace!
+                (terminal-state-buffer state)
+                (append (map (lambda (row) (vector-ref row 3)) rendered)
+                        (map placeholder-line screen-cells)))
               (terminal-state-rendered-cells-set!
-                state (list->vector (map vector-copy cells)))
+                state
+                (list->vector
+                  (append (map (lambda (row) (vector-ref row 0)) rendered)
+                          (map vector-copy screen-cells))))
               (terminal-state-rendered-styles-set!
-                state (list->vector (map vector-copy styles)))
+                state
+                (list->vector
+                  (append (map (lambda (row) (vector-ref row 1)) rendered)
+                          (map (lambda (row) (effective-style-row state row))
+                               screen-styles))))
               (terminal-state-rendered-links-set!
-                state (list->vector (map vector-copy links)))
+                state
+                (list->vector
+                  (append (map (lambda (row) (vector-ref row 2)) rendered)
+                          (map (lambda (row) (vector-map cell-style-link row))
+                               screen-styles))))
               ;; Cell/style rows are dynamic renderer data; their structural
               ;; placeholder lines often remain identical across frames.
               (view-invalidate! (terminal-state-buffer state)))
