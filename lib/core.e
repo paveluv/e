@@ -3749,8 +3749,11 @@
                 [selected? (and resize-highlight
                                 (eq? (cadr divider) resize-highlight))])
             (do ([r start (+ r 1)]) ((>= r (+ start height)))
+              ;; The final row always meets whatever full-width region
+              ;; ends the divider -- the echo area, or a transient
+              ;; pop-up such as completions -- and connects to it.
               (let ([junction? (or (stacked-divider-crosses? x r)
-                                   (= r (- rows echo-height 1)))])
+                                   (= r (+ start height -1)))])
                 (paint! r x (list 'divider junction? selected?)
                         (lambda ()
                           (when selected? (ansi "\x1b;[1;38;5;135m"))
