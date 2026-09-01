@@ -245,14 +245,19 @@
       (if (eq? x 'default) (wrap-lines) x)))
 
   (define (clean-wrap? w)
-    (eq? (buffer-wrap-setting (window-buffer w)) 'clean))
+    (let ([x (buffer-wrap-setting (window-buffer w))])
+      (or (eq? x 'clean) (and (pair? x) (eq? (car x) 'clean)))))
 
   (define (wrap-width w)
     ;; a wrapped row keeps its last column for the \ continuation mark;
-    ;; a clean wrap draws none and uses the full width
-    (max 1 (if (clean-wrap? w)
-               (window-content-width w)
-               (- (window-content-width w) 1))))
+    ;; a clean wrap draws none and uses the full width -- or its own
+    ;; cap: (clean . n) wraps at n columns inside a wider window
+    (let ([x (buffer-wrap-setting (window-buffer w))])
+      (max 1 (cond
+               [(and (pair? x) (eq? (car x) 'clean))
+                (min (cdr x) (window-content-width w))]
+               [(eq? x 'clean) (window-content-width w)]
+               [else (- (window-content-width w) 1)]))))
   (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
@@ -2623,9 +2628,13 @@
 
   (define (set-buffer-wrap! b setting)
     ;; clean wraps like #t but draws no continuation marks and lets the
-    ;; text use the full width -- for formatted read-only presentations.
-    (unless (memq setting '(default #t #f clean))
-      (error 'set-buffer-wrap! "expected default, #t, #f, or clean"
+    ;; text use the full width -- for formatted read-only presentations;
+    ;; (clean . n) additionally caps the wrapping width at n columns.
+    (unless (or (memq setting '(default #t #f clean))
+                (and (pair? setting) (eq? (car setting) 'clean)
+                     (fixnum? (cdr setting)) (>= (cdr setting) 20)))
+      (error 'set-buffer-wrap!
+             "expected default, #t, #f, clean, or (clean . columns)"
              setting))
     (buffer-wrap-setting-set! b setting)
     b)

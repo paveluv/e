@@ -17,7 +17,8 @@
 
 (library (md-view)
   (export init! markdown-view! markdown-edit!
-          markdown-render markdown-view-install! markdown-browser)
+          markdown-render markdown-view-install! markdown-browser
+          markdown-view-max-width)
   (import (chezscheme) (core) (only (sys) terminal-character-width))
 
   ;;; Faces -------------------------------------------------------------
@@ -30,6 +31,16 @@
     (set-style! 'md-quote '(italic (foreground bright-black)))
     (set-style! 'md-link '(underline (foreground 33)))
     (set-style! 'md-code '(reset)))
+
+  (define markdown-view-max-width
+    ;; Reading width cap: a view in a wider window wraps at this many
+    ;; columns instead of the full width.
+    (make-parameter 80
+      (lambda (columns)
+        (unless (and (fixnum? columns) (>= columns 20))
+          (error 'markdown-view-max-width
+                 "must be an integer of at least 20" columns))
+        columns)))
 
   (define markdown-browser
     ;; The command handed a web link's quoted URL.
@@ -760,12 +771,14 @@
 
   (define (render-width b)
     ;; Fit tables to the narrowest window showing the buffer -- one
-    ;; rendering serves them all; the fallback matches the renderer's
-    ;; own default.
+    ;; rendering serves them all -- under the reading-width cap; the
+    ;; fallback matches the renderer's own default.
     (let ([width (buffer-narrowest-width b)])
-      (if width (max 20 width) 79)))
+      (min (markdown-view-max-width)
+           (if width (max 20 width) 79))))
 
   (define (install-render! b lines source stash-read-only)
+    (set-buffer-wrap! b (cons 'clean (markdown-view-max-width)))
     (let ([width (render-width b)])
       (let-values ([(rendered styles links rows)
                     (markdown-render lines width)])
@@ -816,7 +829,6 @@
     ;; lifecycle, so nothing is stashed.
     (install-render! b lines #f #f)
     (set-buffer-mode! b "markdown-view")
-    (set-buffer-wrap! b 'clean)
     b)
 
   (define (buffer-lines-list b)
@@ -834,7 +846,6 @@
         (install-render! b source source (buffer-read-only b))
         (set-buffer-read-only! b #t)
         (set-buffer-mode! b "markdown-view")
-        (set-buffer-wrap! b 'clean)
         (goto-point! (cons (view-row-showing b row) 0)))
       (void)))
 

@@ -769,6 +769,10 @@
         ((markdown-edit!) (("procedure" . "(markdown-edit! [buffer])")) "void"
          ("(md-view)") md-view "Markdown viewing" #f
          "Restore a markdown view's stashed source and make it editable again, keeping the cursor on the matching content.")
+        ((markdown-view-max-width)
+         (("parameter" . "(markdown-view-max-width [columns])"))
+         "integer" ("(md-view)") md-view "Markdown viewing" #f
+         "Get or set the reading-width cap of markdown views: in a window wider than this many columns, prose and tables wrap at the cap instead of the full width. The default is 80 and the minimum is 20.")
         ((markdown-browser)
          (("parameter" . "(markdown-browser [command])")) "string"
          ("(md-view)") md-view "Markdown viewing" #f

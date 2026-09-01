@@ -33,6 +33,8 @@
 ;; (set-style! 'matching-paren '(curly-underline (underline-color 208)))
 ;; (markdown-browser "firefox")   ; command opening a markdown view's
 ;;                                ; web links (default "xdg-open")
+;; (markdown-view-max-width 120)  ; reading-width cap of markdown views
+;;                                ; in wide windows (default 80)
 ;; (search-fold-case #t)          ; C-s smart case: all-lowercase needles
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)

@@ -32,6 +32,9 @@ describe browser renders its pages through the same viewer.
   inside its column. A view re-renders itself whenever the width of
   its narrowest window changes -- splitting, resizing, or closing
   windows re-fits the tables.
+- In a really wide window the view keeps a readable measure: prose
+  and tables wrap at `markdown-view-max-width` columns (default 80)
+  instead of the full width.
 - Fenced code blocks sit between two dotted rules, the fence's
   language tag on the top one; a registered mode of that name colors
   the code.
@@ -57,10 +60,12 @@ restyled with `set-style!` in config.e.
 `markdown-edit!` restores both. `markdown-render` is the pure renderer
 (the automated suite pins it; `width` bounds tables, default 79), and
 `markdown-view-install!` is how the describe browser presents its
-pages. The `markdown-browser` parameter holds the web-link command:
+pages. The `markdown-browser` parameter holds the web-link command,
+and `markdown-view-max-width` the reading-width cap:
 
 ```scheme
 (markdown-browser "firefox")
+(markdown-view-max-width 120)
 ```
 
 ## Mode key bindings
