@@ -31,6 +31,8 @@
 ;;                                ; box, or colored -- or design your
 ;;                                ; own marking with the style DSL:
 ;; (set-style! 'matching-paren '(curly-underline (underline-color 208)))
+;; (markdown-browser "firefox")   ; command opening a markdown view's
+;;                                ; web links (default "xdg-open")
 ;; (search-fold-case #t)          ; C-s smart case: all-lowercase needles
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)

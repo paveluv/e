@@ -763,6 +763,16 @@
         ((set-style!) (("procedure" . "(set-style! face style)")) "void"
          ("(core)") core "Style customization" #f
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
+        ((markdown-view!) (("procedure" . "(markdown-view! [buffer])")) "void"
+         ("(md-view)") md-view "Markdown viewing" #f
+         "Present a markdown buffer formatted and read-only: markup strips into faces, paragraphs join, tables align, fenced code frames. `C-c v` toggles; `markdown-edit!` restores the source.")
+        ((markdown-edit!) (("procedure" . "(markdown-edit! [buffer])")) "void"
+         ("(md-view)") md-view "Markdown viewing" #f
+         "Restore a markdown view's stashed source and make it editable again, keeping the cursor on the matching content.")
+        ((markdown-browser)
+         (("parameter" . "(markdown-browser [command])")) "string"
+         ("(md-view)") md-view "Markdown viewing" #f
+         "Get or set the command that opens a markdown view's web links; it receives the quoted URL as its argument. The default is `xdg-open`.")
         ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
          ("(core)") core "Buffer display" #f
          "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")

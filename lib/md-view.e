@@ -17,7 +17,7 @@
 
 (library (md-view)
   (export init! markdown-view! markdown-edit!
-          markdown-render markdown-view-install!)
+          markdown-render markdown-view-install! markdown-browser)
   (import (chezscheme) (core) (only (sys) terminal-character-width))
 
   ;;; Faces -------------------------------------------------------------
@@ -30,6 +30,14 @@
     (set-style! 'md-quote '(italic (foreground bright-black)))
     (set-style! 'md-link '(underline (foreground 33)))
     (set-style! 'md-code '(reset)))
+
+  (define markdown-browser
+    ;; The command handed a web link's quoted URL.
+    (make-parameter "xdg-open"
+      (lambda (command)
+        (unless (and (string? command) (> (string-length command) 0))
+          (error 'markdown-browser "must be a nonempty command" command))
+        command)))
 
   ;;; Inline rendering ---------------------------------------------------
 
@@ -842,18 +850,33 @@
       (find (lambda (l) (and (<= (car l) (cdr pt)) (< (cdr pt) (cadr l))))
             links)))
 
+  (define (markdown-file? path)
+    (or (string-suffix? ".md" path) (string-suffix? ".markdown" path)))
+
   (define (open-link! url)
-    (cond
-      [(or (string-prefix? "http://" url) (string-prefix? "https://" url))
-       (system (format "xdg-open ~a >/dev/null 2>&1 &" (shell-quoted url)))
-       (set-message! (format "Opened ~a" url))]
-      [(string-prefix? "#" url)
-       (set-message! "Anchor links are not followed yet")]
-      [else
-       (let* ([base (buffer-file (current-buffer))]
-              [dir (if base (path-parent base) "")]
-              [dir (if (string=? dir "") "." dir)])
-         (visit-file! (string-append dir "/" url)))]))
+    ;; Followed links log under the markdown source; web links go to
+    ;; the configured browser command.
+    (parameterize ([message-source 'markdown])
+      (cond
+        [(or (string-prefix? "http://" url)
+             (string-prefix? "https://" url))
+         (system (format "~a ~a >/dev/null 2>&1 &"
+                         (markdown-browser) (shell-quoted url)))
+         (set-message! (format "Opened ~a" url))]
+        [(string-prefix? "#" url)
+         (set-message! "Anchor links are not followed yet")]
+        [else
+         (let* ([base (buffer-file (current-buffer))]
+                [dir (if base (path-parent base) "")]
+                [dir (if (string=? dir "") "." dir)]
+                [target (string-append dir "/" url)])
+           (visit-file! target)
+           ;; a linked markdown document arrives already formatted
+           (when (and (markdown-file? url)
+                      (equal? (buffer-mode-name (current-buffer))
+                              "markdown"))
+             (guard (ex [else (void)]) (markdown-view!)))
+           (set-message! (format "Followed ~a" url)))])))
 
   (define (follow-md-link!)
     (let ([link (link-at-point)])
