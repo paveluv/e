@@ -39,9 +39,9 @@
             (mutable alternate-screen) (mutable alternate-wrapped)
             (mutable alternate-styles)
             (mutable alternate-state)
-            (mutable history) (mutable history-wrapped)
+            (mutable history)
             (mutable unfollowed-windows)
-            (mutable styles) (mutable main-styles) (mutable history-styles)
+            (mutable styles) (mutable main-styles)
             (mutable rendered-cells) (mutable rendered-styles)
             (mutable rendered-links)
             (mutable sgr) (mutable style) (mutable link) (mutable clipboard)
@@ -69,6 +69,39 @@
         (make-terminal-cell-style (terminal-state-style state)
                                   (terminal-state-link state))
         (terminal-state-style state)))
+
+  ;; Scrollback grows by one line per scroll and is bounded by
+  ;; terminal-scrollback, so it is kept as an amortized queue: new lines
+  ;; are consed onto the front and evictions pop the back, reversing the
+  ;; front into the back only when it empties. Every push is O(1)
+  ;; amortized where a per-line list append would copy the whole history.
+  (define-record-type scrollback
+    (fields (mutable front) (mutable back) (mutable count)))
+
+  (define-record-type scrollback-line
+    (fields cells styles wrapped))
+
+  (define (make-empty-scrollback) (make-scrollback '() '() 0))
+
+  (define (scrollback-push! queue line limit)
+    (when (> limit 0)
+      (let evict ()
+        (when (>= (scrollback-count queue) limit)
+          (when (null? (scrollback-back queue))
+            (scrollback-back-set! queue (reverse (scrollback-front queue)))
+            (scrollback-front-set! queue '()))
+          (scrollback-back-set! queue (cdr (scrollback-back queue)))
+          (scrollback-count-set! queue (- (scrollback-count queue) 1))
+          (evict)))
+      (scrollback-front-set! queue (cons line (scrollback-front queue)))
+      (scrollback-count-set! queue (+ (scrollback-count queue) 1))))
+
+  (define (scrollback-entries queue)
+    ;; Oldest first, the order the buffer presents.
+    (append (scrollback-back queue) (reverse (scrollback-front queue))))
+
+  (define (scrollback-of-entries entries)
+    (make-scrollback '() entries (length entries)))
 
   (define terminals '())
   (define serial 0)
@@ -163,9 +196,9 @@
                          #f #t #f #f #f #f #f #f #f #f #t
                          (default-tab-stops cols) #\space
                          #f #f #f #f #f 0 #f #f #f #f #f #f #f #f
-                         0 0 #f #f #f #f #f '() '() '()
+                         0 0 #f #f #f #f #f (make-empty-scrollback) '()
                          (make-style-screen rows cols 'plain)
-                         #f '() #f (make-style-screen rows cols 'plain)
+                         #f #f (make-style-screen rows cols 'plain)
                          #f "" 'plain #f #f (make-vector 256 #f) #f #f #f ""
                          (cons 0 '())))
 
@@ -211,7 +244,7 @@
       (error 'terminal-emulator-state "expected a terminal emulator" emulator))
     `((rows . ,(terminal-state-rows emulator))
       (columns . ,(terminal-state-cols emulator))
-      (scrollback-lines . ,(length (terminal-state-history emulator)))
+      (scrollback-lines . ,(scrollback-count (terminal-state-history emulator)))
       (wrapped-rows . ,(vector->list (terminal-state-wrapped emulator)))
       (cursor . ,(cons (terminal-state-row emulator)
                        (terminal-state-col emulator)))
@@ -264,14 +297,14 @@
 
   (define (terminal-cursor-position state)
     (cons (+ (if (terminal-state-main-screen state)
-                 0 (length (terminal-state-history state)))
+                 0 (scrollback-count (terminal-state-history state)))
              (terminal-state-row state))
           (min (- (terminal-state-cols state) 1)
                (terminal-state-col state))))
 
   (define (terminal-live-screen-top state)
     (if (terminal-state-main-screen state)
-        0 (length (terminal-state-history state))))
+        0 (scrollback-count (terminal-state-history state))))
 
   (define (present-terminal-live-screen! state)
     (set-buffer-viewports!
@@ -638,15 +671,16 @@
               (or new-cursor '(0 . 0)) new-wrap-pending)))
 
   (define (reflow-primary-screen! state rows cols)
-    (let* ([history-count (length (terminal-state-history state))]
+    (let* ([entries (scrollback-entries (terminal-state-history state))]
+           [history-count (scrollback-count (terminal-state-history state))]
            [all-cells (list->vector
-                        (append (terminal-state-history state)
+                        (append (map scrollback-line-cells entries)
                                 (vector->list (terminal-state-screen state))))]
            [all-styles (list->vector
-                         (append (terminal-state-history-styles state)
+                         (append (map scrollback-line-styles entries)
                                  (vector->list (terminal-state-styles state))))]
            [all-wrapped (list->vector
-                          (append (terminal-state-history-wrapped state)
+                          (append (map scrollback-line-wrapped entries)
                                   (vector->list (terminal-state-wrapped state))))]
            [cursor-row (+ history-count (terminal-state-row state))]
            [cursor-col (+ (terminal-state-col state)
@@ -682,14 +716,15 @@
                [history-count (min history-count (terminal-scrollback))]
                [display-start (- (length new-cells) rows)])
           (terminal-state-history-set!
-            state (list-tail (list-take new-cells display-start)
-                             (max 0 (- display-start history-count))))
-          (terminal-state-history-styles-set!
-            state (list-tail (list-take new-styles display-start)
-                             (max 0 (- display-start history-count))))
-          (terminal-state-history-wrapped-set!
-            state (list-tail (list-take new-wrapped display-start)
-                             (max 0 (- display-start history-count))))
+            state
+            (scrollback-of-entries
+              (let ([keep (lambda (lines)
+                            (list-tail (list-take lines display-start)
+                                       (max 0 (- display-start
+                                                 history-count))))])
+                (map make-scrollback-line
+                     (keep new-cells) (keep new-styles)
+                     (keep new-wrapped)))))
           (terminal-state-screen-set!
             state (list->vector (list-tail new-cells display-start)))
           (terminal-state-styles-set!
@@ -798,24 +833,12 @@
                    (= top 0) (= bottom (- (terminal-state-rows state) 1))
                    (not (terminal-state-main-screen state))
                    (> (terminal-scrollback) 0))
-          (let ([history (append (terminal-state-history state)
-                                 (list (vector-copy (vector-ref screen top))))])
-            (terminal-state-history-set!
-              state
-              (let ([extra (- (length history) (terminal-scrollback))])
-                (if (> extra 0) (list-tail history extra) history))))
-          (let ([history (append (terminal-state-history-styles state)
-                                 (list (vector-copy (vector-ref styles top))))])
-            (terminal-state-history-styles-set!
-              state
-              (let ([extra (- (length history) (terminal-scrollback))])
-                (if (> extra 0) (list-tail history extra) history))))
-          (let ([history (append (terminal-state-history-wrapped state)
-                                 (list (vector-ref wrapped top)))])
-            (terminal-state-history-wrapped-set!
-              state
-              (let ([extra (- (length history) (terminal-scrollback))])
-                (if (> extra 0) (list-tail history extra) history)))))
+          (scrollback-push!
+            (terminal-state-history state)
+            (make-scrollback-line (vector-copy (vector-ref screen top))
+                                  (vector-copy (vector-ref styles top))
+                                  (vector-ref wrapped top))
+            (terminal-scrollback)))
         (do ([row top (+ row 1)]) ((= row bottom))
           (if (and (= left 0) (= right (- cols 1)))
               (begin
@@ -1757,9 +1780,7 @@
       (terminal-state-alternate-wrapped-set! state #f)
       (terminal-state-alternate-styles-set! state #f)
       (terminal-state-alternate-state-set! state #f)
-      (terminal-state-history-set! state '())
-      (terminal-state-history-wrapped-set! state '())
-      (terminal-state-history-styles-set! state '())
+      (terminal-state-history-set! state (make-empty-scrollback))
       (terminal-state-sgr-set! state "")
       (terminal-state-style-set! state 'plain)
       (terminal-state-link-set! state #f)
@@ -2018,9 +2039,7 @@
                [(3)
                 ;; xterm's ED 3 erases only the saved lines; clear(1) sends
                 ;; it after ED 2 to leave nothing above the fresh screen.
-                (terminal-state-history-set! state '())
-                (terminal-state-history-styles-set! state '())
-                (terminal-state-history-wrapped-set! state '())
+                (terminal-state-history-set! state (make-empty-scrollback))
                 (terminal-state-dirty-set! state #t)])]
             [(#\K)
              (case (param parameters 0 0)
@@ -2547,22 +2566,22 @@
             ;; Snapshot cells and faces together while the PTY grid is locked.
             ;; Painting either one live can combine different stages of a
             ;; full-screen application's redisplay into one torn frame.
-            (let ([cells
-                   (append (if (terminal-state-main-screen state)
-                               '() (terminal-state-history state))
-                           (vector->list (terminal-state-screen state)))]
-                  [styles
-                   (map (lambda (row) (effective-style-row state row))
-                        (append (if (terminal-state-main-screen state)
-                                    '() (terminal-state-history-styles state))
-                                (vector->list
-                                  (terminal-state-styles state))))]
-                  [links
-                   (map (lambda (row) (vector-map cell-style-link row))
-                        (append (if (terminal-state-main-screen state)
-                                    '() (terminal-state-history-styles state))
-                                (vector->list
-                                  (terminal-state-styles state))))])
+            (let* ([entries
+                    (if (terminal-state-main-screen state)
+                        '()
+                        (scrollback-entries (terminal-state-history state)))]
+                   [cells
+                    (append (map scrollback-line-cells entries)
+                            (vector->list (terminal-state-screen state)))]
+                   [style-rows
+                    (append (map scrollback-line-styles entries)
+                            (vector->list (terminal-state-styles state)))]
+                   [styles
+                    (map (lambda (row) (effective-style-row state row))
+                         style-rows)]
+                   [links
+                    (map (lambda (row) (vector-map cell-style-link row))
+                         style-rows)])
               (view-replace! (terminal-state-buffer state)
                              (map placeholder-line cells))
               (terminal-state-rendered-cells-set!
@@ -3069,9 +3088,9 @@
                                    (default-tab-stops cols) #\space
                                    #t #t #f #f #f 0 #f #f #f #f #f #f #f #f
                                    0 0 #f #f #f #f #f
-                                   '() '() '()
+                                   (make-empty-scrollback) '()
                                    (make-style-screen rows cols 'plain)
-                                   #f '() #f
+                                   #f #f
                                    (make-style-screen rows cols 'plain)
                                    #f "" 'plain #f #f (make-vector 256 #f) #f #f
                                    #f "" (cons 0 '())))
