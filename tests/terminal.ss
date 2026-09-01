@@ -428,6 +428,11 @@
               (bytevector 27 120)))
 
      (let ([terminal (make-terminal-emulator 1 2)])
+       (check 'meta-space
+              (terminal-emulator-input terminal "M-SPC")
+              (bytevector 27 32)))
+
+     (let ([terminal (make-terminal-emulator 1 2)])
        (check 'meta-return
               (terminal-emulator-input terminal "M-RET")
               (bytevector 27 13))

@@ -2744,7 +2744,9 @@
                      '(("TAB" . "\t")
                        ("BACKSPACE" . "\x7f;") ("ESC" . "\x1b;")
                        ("S-TAB" . "\x1b;[Z")
-                      ))
+                       ;; The editor names a space "SPC" only under a
+                       ;; modifier, so this entry makes M-SPC send ESC SP.
+                       ("SPC" . " ")))
               => (lambda (entry) (string->utf8 (cdr entry)))]
              [else #f])]))
 
