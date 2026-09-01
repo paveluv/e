@@ -799,6 +799,17 @@
                      (terminal-emulator-hyperlinks terminal)))
               (list (list link link link) (list #f #f #f))))
 
+     (let ([terminal (make-terminal-emulator 1 1)])
+       (terminal-emulator-feed! terminal "\x1b;]52;c;aMOp\x1b;\\")
+       (check 'osc52-utf8-clipboard
+              (state-ref terminal 'clipboard) "hé")
+       (terminal-emulator-feed! terminal "\x1b;]52;c;not-base64!\x7;")
+       (check 'osc52-invalid-payload-ignored
+              (state-ref terminal 'clipboard) "hé")
+       (terminal-emulator-feed! terminal "\x1b;]52;c;\x1b;\\")
+       (check 'osc52-empty-clipboard
+              (state-ref terminal 'clipboard) ""))
+
      (let ([terminal (make-terminal-emulator 4 8)])
        (terminal-emulator-feed!
          terminal

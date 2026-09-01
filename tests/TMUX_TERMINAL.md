@@ -50,7 +50,7 @@ separate optional pass.
 | OSC 8 | hyperlinks | covered | generic ranges and terminal cell metadata have owned tests |
 | OSC 9;4 | progress indication | missing | decide buffer-level presentation and implement state |
 | OSC 12/112 | cursor color set/query/reset | missing | implement cursor-color state |
-| OSC 52 | clipboard set/query | missing | design explicit security policy before implementation |
+| OSC 52 | clipboard set/query | covered | writes import; reads are denied by policy |
 | OSC 133 | shell integration marks | missing | preserve semantic marks without tmux UI behavior |
 | DCS DECRQSS | effective-state queries | partial | compare every query tmux answers |
 | DCS tmux passthrough | unwrap `tmux;` payload when enabled | not applicable yet | retain as future multiplexer-boundary work |
@@ -69,7 +69,7 @@ These are sequences tmux may send to e when tmux itself runs in an e terminal.
 | Titles | OSC 0 | covered |
 | Cursor style | DECSCUSR | covered |
 | Cursor color | OSC 12/112 | missing |
-| Clipboard | OSC 52 | missing |
+| Clipboard | OSC 52 | covered, configurable |
 | Hyperlinks | OSC 8 | covered |
 | Strikethrough and overline | SGR 9/53 | partial |
 | Underline styles and color | SGR 4 subparameters, 58/59 | missing |

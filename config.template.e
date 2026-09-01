@@ -31,6 +31,11 @@
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)
 ;; (eval-copy-result #t)          ; copy non-void eval!/M-x results for C-y
+;; (forward-kill-ring-to-system-clipboard #f)
+;;                              ; #t: also request an OSC 52 system-clipboard
+;;                              ; update after kills and copies; the host
+;;                              ; terminal may ignore or prohibit the request,
+;;                              ; so this might not work in every terminal
 ;; (indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
 ;; (add-mode-extension! "scheme" ".foo") ; highlight *.foo as Scheme
 ;; (scheme-format-brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
@@ -39,6 +44,9 @@
 ;; (scheme-format-width 100)      ; target columns for intrusive formatting
 ;; (terminal-scrollback 10000)    ; retained shell lines; alternate screens excluded
 ;; (terminal-shell "/bin/bash")  ; defaults to $SHELL, then /bin/sh
+;; (terminal-forward-clipboard-to-kill-ring #t)
+;;                              ; import OSC 52 clipboard writes from terminal
+;;                              ; children into e's kill ring
 ;; (min-window-lines 2)           ; squeezed windows keep this many text lines
 ;; (column-native-scroll #f)      ; #t: C-x 3 columns scroll natively (VT420
 ;;                                ; margins) -- M-x (probe-terminal!) detects

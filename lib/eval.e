@@ -430,7 +430,7 @@
         (when copied? (copy-to-kill-buffer! result))
         (present-log-entries!
           (append output-records (list result-record))
-          (if copied? " [copied to kill buffer]" "")))))
+          (if copied? " [stored in kill ring]" "")))))
 
   (define (eval! . rest)
     ;; Evaluate the text in where (the whole current buffer by default) in
@@ -479,10 +479,10 @@
     (register-descriptions!
       '(((eval!) (("procedure" . "(eval! [where])")) "void"
          ("(eval)") eval "Evaluation commands" #f
-         "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are copied to the kill buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
+         "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
         ((eval!!) (("procedure" . "(eval!!)")) "void"
          ("(eval)") eval "Evaluation commands" #f
-         "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are copied to the kill buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
+         "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (register-log-formatter! 'eval format-exchange style-exchange)
     (bind-default-key! "C-x C-e" eval!)
     (bind-default-key! "M-x" eval!!)))

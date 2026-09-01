@@ -114,6 +114,21 @@ The kill buffer is global: text killed or copied in one buffer can be yanked in
 another. Consecutive kill commands accumulate, so repeated `C-k` followed by
 `C-y` reconstructs the complete block.
 
+Kill-ring updates may also be sent to the host terminal with OSC 52. Thus,
+`M-w`, `C-w`, repeated `C-k`, and Scheme calls to `copy-to-kill-buffer!` can
+place the exact UTF-8 text in the desktop clipboard without selecting padded
+terminal cells. The host terminal retains final control over whether clipboard
+writes are permitted. Enable forwarding in `config.e` when desired:
+
+```scheme
+(forward-kill-ring-to-system-clipboard #t) ; default is #f
+```
+
+OSC 52 can work over SSH: a supporting terminal on the local desktop decodes
+the base64 payload and owns the clipboard; e never invokes a graphical
+clipboard command on the remote host. Not every terminal supports clipboard
+writes; in particular, GNOME Terminal currently ignores them.
+
 ## Line numbers
 
 `C-x l` toggles line numbers for the current buffer. The setting belongs to the

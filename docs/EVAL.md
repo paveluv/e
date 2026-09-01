@@ -113,7 +113,7 @@ By default, a non-void result is also copied to the kill buffer, ready to
 insert with `C-y`. The echo result gains a grey ghost tail:
 
 ```text
-eval: (+ 20 22) => 42 [copied to kill buffer]
+eval: (+ 20 22) => 42 [stored in kill ring]
 ```
 
 The ghost is presentation only and is not part of the result or log record.

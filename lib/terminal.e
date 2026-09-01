@@ -2,7 +2,7 @@
 
 (library (terminal)
   (export init! terminal!! terminal-send! terminal-close! terminal-scrollback
-          terminal-shell
+          terminal-shell terminal-forward-clipboard-to-kill-ring
           make-terminal-emulator terminal-emulator?
           terminal-emulator-feed! terminal-emulator-resize!
           terminal-emulator-screen
@@ -44,7 +44,7 @@
             (mutable styles) (mutable main-styles) (mutable history-styles)
             (mutable rendered-cells) (mutable rendered-styles)
             (mutable rendered-links)
-            (mutable sgr) (mutable style) (mutable link)
+            (mutable sgr) (mutable style) (mutable link) (mutable clipboard)
             (mutable palette) (mutable default-foreground)
             (mutable default-background)
             (mutable printer-controller) (mutable printer-pending)
@@ -75,7 +75,33 @@
   (define style-serial 0)
   (define style-cache (make-hashtable string-hash string=?))
   (define style-sequences (make-eq-hashtable))
+  ;; Unknown sequences are useful compatibility reports, but full-screen
+  ;; programs may emit the same one on every redraw. Remember signatures per
+  ;; emulator so each missing feature is presented only once per terminal.
+  (define unsupported-features (make-weak-eq-hashtable))
   (define style-lock (make-mutex))
+
+  (define (report-unsupported! state feature)
+    (let ([buffer (terminal-state-buffer state)])
+      (when buffer
+        (let ([seen (or (hashtable-ref unsupported-features state #f)
+                        (let ([table (make-hashtable string-hash string=?)])
+                          (hashtable-set! unsupported-features state table)
+                          table))])
+          (unless (hashtable-ref seen feature #f)
+            (hashtable-set! seen feature #t)
+            (log! 'terminal
+                  (format "Terminal ~a sent unsupported ~a"
+                          (buffer-name buffer) feature)))))))
+
+  (define (control-signature family text final)
+    ;; Keep parameters because private mode numbers identify the actual
+    ;; capability, but bound diagnostics in case a malformed child sends a
+    ;; large payload.
+    (let* ([body (string-append text (if final (string final) ""))]
+           [shown (if (> (string-length body) 80)
+                      (string-append (substring body 0 77) "...") body)])
+      (format "~a ~s" family shown)))
   (define terminal-scrollback
     (make-parameter 10000
       (lambda (lines)
@@ -90,6 +116,15 @@
         (unless (and (string? shell) (not (string=? shell "")))
           (error 'terminal-shell "must be a nonempty string" shell))
         shell)))
+
+  (define terminal-forward-clipboard-to-kill-ring
+    (make-parameter
+      #t
+      (lambda (enabled?)
+        (unless (boolean? enabled?)
+          (error 'terminal-forward-clipboard-to-kill-ring
+                 "expected a boolean" enabled?))
+        enabled?)))
 
   (define (make-default-palette)
     (let* ([palette (make-vector 256 #f)]
@@ -131,7 +166,7 @@
                          0 0 #f #f #f #f #f '() '() '()
                          (make-style-screen rows cols 'plain)
                          #f '() #f (make-style-screen rows cols 'plain)
-                         #f "" 'plain #f (make-vector 256 #f) #f #f #f "" ""))
+                         #f "" 'plain #f #f (make-vector 256 #f) #f #f #f "" ""))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -200,6 +235,7 @@
       (application-keypad . ,(terminal-state-keypad emulator))
       (eight-bit-meta . ,(terminal-state-meta-eight-bit emulator))
       (eight-bit-controls . ,(terminal-state-controls-eight-bit emulator))
+      (clipboard . ,(terminal-state-clipboard emulator))
       (mouse-tracking . ,(terminal-state-mouse emulator))
       (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
       (utf8-mouse . ,(terminal-state-mouse-utf8 emulator))
@@ -1198,6 +1234,71 @@
             (and (not (string=? uri ""))
                  (list uri (and id (substring id 3 (string-length id))))))))))
 
+  (define clipboard-base64-alphabet
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+  (define (base64-value character)
+    (string-search clipboard-base64-alphabet (string character)
+                   0 (string-length clipboard-base64-alphabet)))
+
+  (define (decode-base64 text)
+    (let ([length (string-length text)])
+      (and (= (modulo length 4) 0)
+           (let loop ([at 0] [bytes '()])
+             (if (= at length)
+                 (guard (ex [else #f])
+                   (utf8->string (u8-list->bytevector (reverse bytes))))
+                 (let* ([last? (= (+ at 4) length)]
+                        [ca (string-ref text at)]
+                        [cb (string-ref text (+ at 1))]
+                        [cc (string-ref text (+ at 2))]
+                        [cd (string-ref text (+ at 3))]
+                        [a (base64-value ca)] [b (base64-value cb)]
+                        [c (and (not (char=? cc #\=)) (base64-value cc))]
+                        [d (and (not (char=? cd #\=)) (base64-value cd))])
+                   (and a b
+                        (or c (and last? (char=? cc #\=)
+                                   (char=? cd #\=)))
+                        (or d (and last? (char=? cd #\=)))
+                        (let* ([bits (+
+                                       (bitwise-arithmetic-shift-left a 18)
+                                       (bitwise-arithmetic-shift-left b 12)
+                                       (bitwise-arithmetic-shift-left (or c 0) 6)
+                                       (or d 0))]
+                               [bytes (cons
+                                        (bitwise-and
+                                          (bitwise-arithmetic-shift-right
+                                            bits 16) 255)
+                                        bytes)]
+                               [bytes (if (char=? cc #\=) bytes
+                                          (cons (bitwise-and
+                                                  (bitwise-arithmetic-shift-right
+                                                    bits 8) 255)
+                                                bytes))]
+                               [bytes (if (char=? cd #\=) bytes
+                                          (cons (bitwise-and bits 255) bytes))])
+                          (loop (+ at 4) bytes)))))))))
+
+  (define (dispatch-clipboard! state text)
+    ;; OSC 52 ; selection ; base64-data ST. Queries are deliberately ignored:
+    ;; importing clipboard contents is useful, exposing the kill ring to an
+    ;; untrusted child is not.
+    (let ([separator (string-search text ";" 3 (string-length text))])
+      (when separator
+        (let ([payload (substring text (+ separator 1) (string-length text))])
+          (unless (string=? payload "?")
+            (let ([clipboard (decode-base64 payload)])
+              (when clipboard
+                (terminal-state-clipboard-set! state clipboard)
+                (when (and (terminal-forward-clipboard-to-kill-ring)
+                           (terminal-state-buffer state))
+                  (copy-to-kill-buffer! clipboard)
+                  (log! 'terminal
+                        (format
+                          "Received clipboard from ~a, stored in kill ring"
+                          (buffer-name
+                            (terminal-state-buffer state))))))))))))
+
   (define (dispatch-osc! state)
     (let* ([text (terminal-state-osc-text state)]
            [fields (split-parameter text #\;)])
@@ -1206,6 +1307,8 @@
          (dispatch-palette! state (cdr fields))]
         [(string-prefix? "8;" text)
          (dispatch-hyperlink! state text)]
+        [(string-prefix? "52;" text)
+         (dispatch-clipboard! state text)]
         [(and (= (length fields) 2) (string=? (car fields) "10"))
          (set-default-color! state #t (cadr fields))]
         [(and (= (length fields) 2) (string=? (car fields) "11"))
@@ -1233,7 +1336,14 @@
            (unless (or (string=? title "") (not (terminal-state-buffer state)))
              (set-buffer-name! (terminal-state-buffer state)
                                (format "*~a*" title))))]
-        [else (void)])))
+        [else
+         ;; OSC payloads can contain secrets (titles, paths, clipboard data),
+         ;; so identify an unsupported command by its numeric selector only.
+         (let ([selector (and (pair? fields) (car fields))])
+           (report-unsupported!
+             state (format "OSC ~a" (if (and selector
+                                             (not (string=? selector "")))
+                                        selector "sequence"))))])))
 
   (define (hex-string text)
     (apply string-append
@@ -1302,7 +1412,13 @@
            (lambda (name) (reply-terminal-capability! state name))
            (split-parameter
              (substring text 2 (string-length text)) #\;))]
-        [else (void)])))
+        [else
+         ;; DCS payloads are application-defined and may be sensitive. The
+         ;; two-byte introducer is enough to identify its protocol family.
+         (report-unsupported!
+           state
+           (format "DCS ~s"
+                   (substring text 0 (min 2 (string-length text)))))])))
 
   (define (normalize-cell-row! cells styles)
     (let ([cols (vector-length cells)])
@@ -1740,15 +1856,23 @@
                      (reset-buffer-viewports!
                        (terminal-state-buffer state)
                        (terminal-cursor-position state)))]
-                  [else (void)]))
+                  [else
+                   (report-unsupported!
+                     state (format "private mode ~a" mode))]))
               parameters))
           (case final
             [(#\h #\l)
              (when (not (string-prefix? "?" text))
-               (when (memv 4 parameters)
-                 (terminal-state-insert-set! state (char=? final #\h)))
-               (when (memv 20 parameters)
-                 (terminal-state-newline-set! state (char=? final #\h))))]
+               (for-each
+                 (lambda (mode)
+                   (case mode
+                     [(4) (terminal-state-insert-set! state
+                                                      (char=? final #\h))]
+                     [(20) (terminal-state-newline-set! state
+                                                        (char=? final #\h))]
+                     [else
+                      (report-unsupported! state (format "mode ~a" mode))]))
+                 parameters))]
             [(#\A)
              (if space-intermediate?
                  (scroll-horizontally! state n #t)
@@ -1972,7 +2096,9 @@
                    [(5) 'blinking-bar]
                    [(6) 'bar]
                    [else 'blinking-block])))]
-            [else (void)]))))
+            [else
+             (report-unsupported!
+               state (control-signature "CSI" text final))]))))
 
   (define line-drawing
     '((#\_ . #\space) (#\` . #\x25c6) (#\a . #\x2592) (#\f . #\x00b0)
@@ -2080,6 +2206,12 @@
           (terminal-state-osc-escape-set! state #f)
           (terminal-state-osc-text-set! state "")]
          [(152 158 159)                              ; SOS, PM, APC
+          (report-unsupported!
+            state
+            (case (char->integer character)
+              [(152) "SOS control string"]
+              [(158) "PM control string"]
+              [else "APC control string"]))
           (terminal-state-parser-set! state 'control-string)
           (terminal-state-osc-escape-set! state #f)]
          [(155) (terminal-state-parser-set! state 'csi) ; CSI
@@ -2090,7 +2222,11 @@
          [else
           (let ([code (char->integer character)])
             (when (and (>= code 32) (not (<= 128 code 159)))
-              (put-character! state (mapped-character state character))))])]
+              (put-character! state (mapped-character state character)))
+            (when (and (< code 32) (not (memv code '(0 1 2 3 4 5 6
+                                                     7 8 9 10 11 12 13
+                                                     14 15 24 26 27))))
+              (report-unsupported! state (format "C0 control 0x~x" code))))])]
       [(escape)
        (case character
          [(#\[) (terminal-state-parser-set! state 'csi)
@@ -2105,6 +2241,11 @@
           (terminal-state-osc-escape-set! state #f)
           (terminal-state-osc-text-set! state "")]
          [(#\X #\^ #\_)
+          (report-unsupported!
+            state
+            (case character [(#\X) "SOS control string"]
+              [(#\^) "PM control string"]
+              [else "APC control string"]))
           (terminal-state-parser-set! state 'control-string)
           (terminal-state-osc-escape-set! state #f)]
          [(#\7) (save-cursor! state)
@@ -2168,7 +2309,9 @@
          [(#\/) (terminal-state-charset-target-set! state 3)
           (terminal-state-parameters-set! state "")
           (terminal-state-parser-set! state 'charset)]
-         [else (terminal-state-parser-set! state 'normal)])]
+         [else
+          (report-unsupported! state (control-signature "ESC" "" character))
+          (terminal-state-parser-set! state 'normal)])]
       [(escape-space)
        (case character
          [(#\F) (terminal-state-controls-eight-bit-set! state #f)]
@@ -2231,8 +2374,12 @@
                   (terminal-state-osc-escape-set! state #t)
                   (begin
                     (terminal-state-osc-escape-set! state #f)
+                    ;; Clipboard payloads are base64 and routinely exceed a
+                    ;; status string. Match tmux's practical one-megabyte
+                    ;; control-string ceiling rather than truncating normal
+                    ;; copied regions at 8 KiB.
                     (if (< (string-length (terminal-state-osc-text state))
-                           8192)
+                           1048576)
                         (terminal-state-osc-text-set!
                           state (string-append (terminal-state-osc-text state)
                                                (string character)))
@@ -2803,7 +2950,7 @@
                                    (make-style-screen rows cols 'plain)
                                    #f '() #f
                                    (make-style-screen rows cols 'plain)
-                                   #f "" 'plain #f (make-vector 256 #f) #f #f
+                                   #f "" 'plain #f #f (make-vector 256 #f) #f #f
                                    #f "" ""))
             (set-app-status-position!
               buffer

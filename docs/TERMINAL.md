@@ -146,6 +146,20 @@ buffer hyperlink layer, which emits OSC 8 to the host terminal around the
 corresponding visible cells. Thus, links produced by an application inside an
 e terminal remain available to the outer terminal even when their labels are
 not URLs.
+OSC 52 clipboard writes from terminal children are decoded into exact UTF-8
+text and, by default, stored in e's kill ring. The echo area and `*log*` report
+the terminal buffer that supplied the clipboard. Disable this independently
+of outbound clipboard forwarding in `config.e`:
+
+```scheme
+(terminal-forward-clipboard-to-kill-ring #f) ; default is #t
+```
+
+OSC 52 clipboard queries are ignored: a child may offer text to its containing
+editor, but it cannot read unrelated contents from e's kill ring. When
+`forward-kill-ring-to-system-clipboard` is enabled, imported text follows the
+same outbound path as `M-w` and `C-k`, allowing it to continue through another
+multiplexer or supporting host terminal.
 OSC 4 changes and queries the 256-color palette, including multiple indexed
 colors in one command; OSC 104 restores selected entries or the complete
 xterm palette. OSC 10 and 11 change or query the default foreground and
@@ -172,6 +186,16 @@ to it. Configure the maximum retained line count in `config.e`:
 The terminal buffer is read-only from the editor's perspective. Its contents
 come only from the PTY, but ordinary selection and copying still work whenever
 the child has not requested mouse input.
+
+## Unsupported features
+
+When a child sends a terminal sequence that e does not implement, e reports
+`Terminal <buffer-name> sent unsupported <feature>` in the echo area and
+`*log*`. Each distinct feature is reported only once per terminal buffer, so a
+full-screen program cannot flood the log by emitting it on every redraw.
+Diagnostics include the identifying CSI parameters or protocol selector but
+omit arbitrary OSC and DCS payloads, which may contain private application
+data. Unknown control strings and character controls are reported as well.
 
 ## Scheme API
 

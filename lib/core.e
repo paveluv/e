@@ -32,6 +32,7 @@
     insert-text! replace-region-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
     copy-to-kill-buffer!
+    forward-kill-ring-to-system-clipboard
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
     redraw-command! open-line! page-up! page-down!
     page-window-fraction! set-point-without-scroll! point-visible?
@@ -906,17 +907,66 @@
 
   ;;; Kill and yank ---------------------------------------------------------
 
+  (define forward-kill-ring-to-system-clipboard
+    (make-parameter
+      #f
+      (lambda (enabled?)
+        (unless (boolean? enabled?)
+          (error 'forward-kill-ring-to-system-clipboard
+                 "expected a boolean" enabled?))
+        enabled?)))
+
+  (define base64-alphabet
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+  (define (base64-encode bytes)
+    (let ([length (bytevector-length bytes)])
+      (let loop ([at 0] [parts '()])
+        (if (= at length)
+            (apply string-append (reverse parts))
+            (let* ([remaining (- length at)]
+                   [a (bytevector-u8-ref bytes at)]
+                   [b (if (> remaining 1)
+                          (bytevector-u8-ref bytes (+ at 1)) 0)]
+                   [c (if (> remaining 2)
+                          (bytevector-u8-ref bytes (+ at 2)) 0)]
+                   [bits (+ (bitwise-arithmetic-shift-left a 16)
+                            (bitwise-arithmetic-shift-left b 8) c)]
+                   [digit (lambda (shift)
+                            (string
+                              (string-ref
+                                base64-alphabet
+                                (bitwise-and
+                                  (bitwise-arithmetic-shift-right bits shift)
+                                  63))))]
+                   [chunk (string-append
+                            (digit 18) (digit 12)
+                            (if (> remaining 1) (digit 6) "=")
+                            (if (> remaining 2) (digit 0) "="))])
+              (loop (+ at (min 3 remaining)) (cons chunk parts)))))))
+
+  (define (publish-system-clipboard! text)
+    ;; OSC 52 lets the host terminal own the clipboard, which also works when
+    ;; e is several SSH or multiplexer layers away from the desktop. The
+    ;; payload is base64, so buffer contents cannot terminate the sequence.
+    (when (and (forward-kill-ring-to-system-clipboard) screen-live?)
+      (with-mutex redraw-lock
+        (ansi "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
+        (flush-output-port (terminal-output-port)))))
+
   (define (kill! text)
     ;; Consecutive kill commands accumulate into a single kill-ring entry.
     (set! kill-ring
       (if (eq? last-command 'kill) (string-append kill-ring text) text))
-    (set! last-command 'kill))
+    (set! last-command 'kill)
+    (publish-system-clipboard! kill-ring))
 
   (define (copy-to-kill-buffer! text)
     ;; Replace the text yanked by C-y without changing a buffer or point.
     (unless (string? text)
       (error 'copy-to-kill-buffer! "expected a string" text))
     (set! kill-ring text)
+    (publish-system-clipboard! kill-ring)
     (void))
 
   (define (kill-line!)
@@ -983,7 +1033,7 @@
           (if (and (= sr er) (= sc ec))
               (set! message "Empty region")
               (begin
-                (set! kill-ring (region-text sr sc er ec))
+                (copy-to-kill-buffer! (region-text sr sc er ec))
                 (set! mark-active? #f)
                 (set! message "Copied"))))))
 
