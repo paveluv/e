@@ -51,11 +51,18 @@
             (mutable printer-controller) (mutable printer-pending)
             (mutable printer-output)
             ;; VT100 setup toggles xterm accepts: smooth scroll (4),
-            ;; autorepeat (8), 80/132 switching (40), and reverse
-            ;; wraparound (45). Only 45 changes behavior here, but all four
-            ;; are tracked so DECRQM answers honestly and a vttest run does
+            ;; autorepeat (8), 80/132 switching (40), NRC (42), and reverse
+            ;; wraparound (45). Only 45 changes behavior here, but all are
+            ;; tracked so DECRQM answers honestly and a vttest run does
             ;; not flood the log with modes every terminal accepts.
-            (mutable extra-modes)))
+            (mutable extra-modes)
+            ;; Per-row DECSWL/DECDWL/DECDHL attribute: 'single, 'wide,
+            ;; 'top, or 'bottom. Display metadata only -- the buffer keeps
+            ;; full-width content so DECSWL restores it, and the rendering
+            ;; expands the left half of decorated rows.
+            (mutable line-attributes)
+            (mutable main-line-attributes)
+            (mutable alternate-line-attributes)))
 
   ;; Hyperlinks are rendition metadata just like color and attributes. Keeping
   ;; both in the existing style grid makes every cell-moving operation carry
@@ -230,7 +237,7 @@
                          (make-style-screen rows cols 'plain)
                          #f #f (make-style-screen rows cols 'plain)
                          #f "" 'plain #f #f (make-vector 256 #f) #f #f #f ""
-                         (cons 0 '()) '(8)))
+                         (cons 0 '()) '(8) (make-vector rows 'single) #f #f))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -251,23 +258,44 @@
     (resize-screen! emulator rows cols)
     (void))
 
+  (define (displayed-screen-row emulator row)
+    ;; The presented cells of one screen row, decorations expanded.
+    (let-values ([(cells styles fresh?) (displayed-row emulator row)])
+      cells))
+
+  (define (displayed-style-row emulator row)
+    (let-values ([(cells styles fresh?) (displayed-row emulator row)])
+      styles))
+
+  (define (screen-row-indexes emulator)
+    (iota (terminal-state-rows emulator)))
+
   (define (terminal-emulator-screen emulator)
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-screen "expected a terminal emulator" emulator))
-    (vector-map cell-row->string (terminal-state-screen emulator)))
+    (list->vector
+      (map (lambda (row)
+             (cell-row->string (displayed-screen-row emulator row)))
+           (screen-row-indexes emulator))))
 
   (define (terminal-emulator-styles emulator)
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-styles "expected a terminal emulator" emulator))
-    (effective-style-screen emulator (terminal-state-styles emulator)))
+    (list->vector
+      (map (lambda (row)
+             (effective-style-row emulator
+                                  (displayed-style-row emulator row)))
+           (screen-row-indexes emulator))))
 
   (define (terminal-emulator-hyperlinks emulator)
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-hyperlinks
              "expected a terminal emulator" emulator))
-    (vector-map
-      (lambda (row) (vector-map cell-style-link row))
-      (terminal-state-styles emulator)))
+    (list->vector
+      (map (lambda (row)
+             (vector-map cell-style-link
+                         (displayed-style-row emulator row)))
+           (screen-row-indexes emulator))))
 
   (define (terminal-emulator-state emulator)
     (unless (terminal-emulator? emulator)
@@ -336,11 +364,20 @@
           terminals))
 
   (define (terminal-cursor-position state)
-    (cons (+ (if (terminal-state-main-screen state)
-                 0 (scrollback-count (terminal-state-history state)))
-             (terminal-state-row state))
-          (min (- (terminal-state-cols state) 1)
-               (terminal-state-col state))))
+    ;; A decorated row shows each character two cells wide, so the
+    ;; presented cursor column doubles there.
+    (let* ([row (terminal-state-row state)]
+           [col (min (- (terminal-state-cols state) 1)
+                     (terminal-state-col state))]
+           [col (if (eq? (vector-ref (terminal-state-line-attributes state)
+                                     row)
+                         'single)
+                    col
+                    (min (- (terminal-state-cols state) 1) (* 2 col)))])
+      (cons (+ (if (terminal-state-main-screen state)
+                   0 (scrollback-count (terminal-state-history state)))
+               row)
+            col)))
 
   (define (terminal-live-screen-top state)
     (if (terminal-state-main-screen state)
@@ -373,6 +410,62 @@
                     (terminal-state-unfollowed-windows state)))))
 
   (define (blank-line cols) (make-vector cols " "))
+
+  (define (row-columns state row)
+    ;; The addressable width of a row: DECDWL and DECDHL rows hold half as
+    ;; many characters, each displayed two cells wide.
+    (if (eq? (vector-ref (terminal-state-line-attributes state) row) 'single)
+        (terminal-state-cols state)
+        (div (terminal-state-cols state) 2)))
+
+  (define (clamp-to-row-columns! state)
+    (let ([limit (row-columns state (terminal-state-row state))])
+      (when (>= (terminal-state-col state) limit)
+        (terminal-state-col-set! state (max 0 (- limit 1))))))
+
+  (define (double-width-pair cell)
+    ;; The two display cells for one character of a double-width row.
+    ;; ASCII has fullwidth forms; wide clusters are already two cells; the
+    ;; rest pad with a following space.
+    (let ([code (and (= (string-length cell) 1)
+                     (char->integer (string-ref cell 0)))])
+      (cond
+        [(eqv? code 32) (values "\x3000;" "")]
+        [(and code (<= #x21 code #x7e))
+         (values (string (integer->char (+ code #xfee0))) "")]
+        [(>= (grapheme-cell-width cell) 2) (values cell "")]
+        [else (values cell " ")])))
+
+  (define (expanded-wide-row cells styles)
+    ;; The displayed form of a decorated row: the left half of the buffer,
+    ;; one character per two cells. Double-height halves render the same
+    ;; way; a cell grid cannot stretch glyphs vertically.
+    (let* ([cols (vector-length cells)]
+           [new-cells (make-vector cols " ")]
+           [new-styles (make-vector cols 'plain)])
+      (do ([i 0 (+ i 1)]) ((= i (div cols 2)))
+        (let ([cell (vector-ref cells i)] [style (vector-ref styles i)])
+          (let-values ([(first second)
+                        (if (string=? cell "")
+                            (values "" "")
+                            (double-width-pair cell))])
+            (vector-set! new-cells (* 2 i) first)
+            (vector-set! new-cells (+ (* 2 i) 1) second)
+            (vector-set! new-styles (* 2 i) style)
+            (vector-set! new-styles (+ (* 2 i) 1) style))))
+      (values new-cells new-styles)))
+
+  (define (displayed-row state row)
+    ;; (values cells styles fresh?) for one screen row as presented;
+    ;; fresh? tells the caller whether the vectors are private copies.
+    (let ([cells (vector-ref (terminal-state-screen state) row)]
+          [styles (vector-ref (terminal-state-styles state) row)])
+      (if (eq? (vector-ref (terminal-state-line-attributes state) row)
+               'single)
+          (values cells styles #f)
+          (let-values ([(wide-cells wide-styles)
+                        (expanded-wide-row cells styles)])
+            (values wide-cells wide-styles #t)))))
 
   (define (left-bound state)
     (if (terminal-state-margin-mode state)
@@ -427,8 +520,8 @@
       (do ([row 0 (+ row 1)]) ((= row rows) screen)
         (vector-set! screen row (blank-styles cols style)))))
 
-  (define (resized-flags old rows)
-    (let ([new (make-vector rows #f)])
+  (define (resized-flags old rows fill)
+    (let ([new (make-vector rows fill)])
       (do ([index 0 (+ index 1)]) ((= index (min rows (vector-length old))) new)
         (vector-set! new index (vector-ref old index)))))
 
@@ -560,6 +653,8 @@
       (terminal-state-main-screen-set! state (terminal-state-screen state))
       (terminal-state-main-wrapped-set! state (terminal-state-wrapped state))
       (terminal-state-main-styles-set! state (terminal-state-styles state))
+      (terminal-state-main-line-attributes-set!
+        state (terminal-state-line-attributes state))
       (terminal-state-main-row-set! state (terminal-state-row state))
       (terminal-state-main-col-set! state (terminal-state-col state))
       (terminal-state-main-state-set! state (capture-screen-state state))
@@ -570,7 +665,9 @@
             (terminal-state-wrapped-set!
               state (terminal-state-alternate-wrapped state))
             (terminal-state-styles-set!
-              state (terminal-state-alternate-styles state)))
+              state (terminal-state-alternate-styles state))
+            (terminal-state-line-attributes-set!
+              state (terminal-state-alternate-line-attributes state)))
           (begin
             (terminal-state-screen-set!
               state (make-screen (terminal-state-rows state)
@@ -581,6 +678,8 @@
               state (make-style-screen (terminal-state-rows state)
                                        (terminal-state-cols state)
                                        (terminal-state-style state)))
+            (terminal-state-line-attributes-set!
+              state (make-vector (terminal-state-rows state) 'single))
             (when (= mode 1049)
               (terminal-state-row-set! state 0)
               (terminal-state-col-set! state 0)
@@ -598,6 +697,7 @@
             (terminal-state-alternate-screen-set! state #f)
             (terminal-state-alternate-wrapped-set! state #f)
             (terminal-state-alternate-styles-set! state #f)
+            (terminal-state-alternate-line-attributes-set! state #f)
             (terminal-state-alternate-state-set! state #f))
           (begin
             (terminal-state-alternate-screen-set!
@@ -606,16 +706,22 @@
               state (terminal-state-wrapped state))
             (terminal-state-alternate-styles-set!
               state (terminal-state-styles state))
+            (terminal-state-alternate-line-attributes-set!
+              state (terminal-state-line-attributes state))
             (terminal-state-alternate-state-set!
               state (capture-screen-state state))))
       (terminal-state-screen-set! state (terminal-state-main-screen state))
       (terminal-state-wrapped-set! state (terminal-state-main-wrapped state))
       (terminal-state-styles-set! state (terminal-state-main-styles state))
+      (terminal-state-line-attributes-set!
+        state (or (terminal-state-main-line-attributes state)
+                  (make-vector (terminal-state-rows state) 'single)))
       (when (and (= mode 1049) (terminal-state-main-state state))
         (restore-screen-state! state (terminal-state-main-state state)))
       (terminal-state-main-screen-set! state #f)
       (terminal-state-main-wrapped-set! state #f)
       (terminal-state-main-styles-set! state #f)
+      (terminal-state-main-line-attributes-set! state #f)
       (terminal-state-main-state-set! state #f)))
 
   (define (meaningful-row-length cells styles wrapped? cursor-column)
@@ -774,27 +880,38 @@
           (terminal-state-row-set!
             state (clamp (- (car cursor) display-start) 0 (- rows 1)))
           (terminal-state-col-set! state (cdr cursor))
+          ;; Reflow rebuilds rows from logical lines; DECDWL decorations
+          ;; do not survive it, as full-screen programs redraw on resize.
+          (terminal-state-line-attributes-set!
+            state (make-vector rows 'single))
           (terminal-state-wrap-pending-set! state wrap-pending?)))))
 
   (define (reflow-saved-primary! state rows cols)
     (let ([alternate-screen (terminal-state-screen state)]
           [alternate-wrapped (terminal-state-wrapped state)]
           [alternate-styles (terminal-state-styles state)]
+          [alternate-attributes (terminal-state-line-attributes state)]
           [alternate-state (capture-screen-state state)])
       (terminal-state-screen-set! state (terminal-state-main-screen state))
       (terminal-state-wrapped-set! state (terminal-state-main-wrapped state))
       (terminal-state-styles-set! state (terminal-state-main-styles state))
+      (terminal-state-line-attributes-set!
+        state (or (terminal-state-main-line-attributes state)
+                  (make-vector (terminal-state-rows state) 'single)))
       (restore-screen-state! state (terminal-state-main-state state))
       (reflow-primary-screen! state rows cols)
       (terminal-state-main-screen-set! state (terminal-state-screen state))
       (terminal-state-main-wrapped-set! state (terminal-state-wrapped state))
       (terminal-state-main-styles-set! state (terminal-state-styles state))
+      (terminal-state-main-line-attributes-set!
+        state (terminal-state-line-attributes state))
       (terminal-state-main-row-set! state (terminal-state-row state))
       (terminal-state-main-col-set! state (terminal-state-col state))
       (terminal-state-main-state-set! state (capture-screen-state state))
       (terminal-state-screen-set! state alternate-screen)
       (terminal-state-wrapped-set! state alternate-wrapped)
       (terminal-state-styles-set! state alternate-styles)
+      (terminal-state-line-attributes-set! state alternate-attributes)
       (restore-screen-state! state alternate-state)))
 
   (define (resize-screen! state rows cols)
@@ -825,7 +942,12 @@
             (when (terminal-state-alternate-wrapped state)
               (terminal-state-alternate-wrapped-set!
                 state (resized-flags
-                        (terminal-state-alternate-wrapped state) rows)))
+                        (terminal-state-alternate-wrapped state) rows #f)))
+            (when (terminal-state-alternate-line-attributes state)
+              (terminal-state-alternate-line-attributes-set!
+                state (resized-flags
+                        (terminal-state-alternate-line-attributes state)
+                        rows 'single)))
             (when (terminal-state-alternate-styles state)
               (terminal-state-alternate-styles-set!
                 state (resized-styles (terminal-state-alternate-styles state)
@@ -833,7 +955,10 @@
                                       (terminal-state-style state))))
             (terminal-state-screen-set! state new)
             (terminal-state-wrapped-set!
-              state (resized-flags (terminal-state-wrapped state) rows))
+              state (resized-flags (terminal-state-wrapped state) rows #f))
+            (terminal-state-line-attributes-set!
+              state (resized-flags (terminal-state-line-attributes state)
+                                   rows 'single))
             (terminal-state-styles-set! state new-styles)
             (terminal-state-tab-stops-set!
               state
@@ -863,6 +988,7 @@
     (let ([screen (terminal-state-screen state)]
           [styles (terminal-state-styles state)]
           [wrapped (terminal-state-wrapped state)]
+          [attributes (terminal-state-line-attributes state)]
           [top (scrolling-top state)]
           [bottom (terminal-state-scroll-bottom state)]
           [cols (terminal-state-cols state)]
@@ -873,18 +999,25 @@
                    (= top 0) (= bottom (- (terminal-state-rows state) 1))
                    (not (terminal-state-main-screen state))
                    (> (terminal-scrollback) 0))
-          (scrollback-push!
-            (terminal-state-history state)
-            (make-scrollback-line (vector-copy (vector-ref screen top))
-                                  (vector-copy (vector-ref styles top))
-                                  (vector-ref wrapped top))
-            (terminal-scrollback)))
+          ;; Decorated rows enter the transcript in their displayed form.
+          (let-values ([(cells faces)
+                        (if (eq? (vector-ref attributes top) 'single)
+                            (values (vector-copy (vector-ref screen top))
+                                    (vector-copy (vector-ref styles top)))
+                            (expanded-wide-row (vector-ref screen top)
+                                               (vector-ref styles top)))])
+            (scrollback-push!
+              (terminal-state-history state)
+              (make-scrollback-line cells faces (vector-ref wrapped top))
+              (terminal-scrollback))))
         (do ([row top (+ row 1)]) ((= row bottom))
           (if (and (= left 0) (= right (- cols 1)))
               (begin
                 (vector-set! screen row (vector-ref screen (+ row 1)))
                 (vector-set! styles row (vector-ref styles (+ row 1)))
-                (vector-set! wrapped row (vector-ref wrapped (+ row 1))))
+                (vector-set! wrapped row (vector-ref wrapped (+ row 1)))
+                (vector-set! attributes row
+                             (vector-ref attributes (+ row 1))))
               (begin
                 (copy-vector-range! (vector-ref screen (+ row 1)) left
                                     (vector-ref screen row) left
@@ -897,7 +1030,8 @@
             (begin
               (vector-set! screen bottom (blank-line cols))
               (vector-set! styles bottom
-                           (blank-styles cols (terminal-state-style state))))
+                           (blank-styles cols (terminal-state-style state)))
+              (vector-set! attributes bottom 'single))
             (erase-row-range! state bottom left (+ right 1)))
         (vector-set! wrapped bottom #f))))
 
@@ -905,6 +1039,7 @@
     (let ([screen (terminal-state-screen state)]
           [styles (terminal-state-styles state)]
           [wrapped (terminal-state-wrapped state)]
+          [attributes (terminal-state-line-attributes state)]
           [top (scrolling-top state)]
           [bottom (terminal-state-scroll-bottom state)]
           [cols (terminal-state-cols state)]
@@ -914,6 +1049,8 @@
         (do ([row bottom (- row 1)]) ((= row top))
           (if (and (= left 0) (= right (- cols 1)))
               (begin
+                (vector-set! attributes row
+                             (vector-ref attributes (- row 1)))
                 (vector-set! screen row (vector-ref screen (- row 1)))
                 (vector-set! styles row (vector-ref styles (- row 1)))
                 (vector-set! wrapped row (vector-ref wrapped (- row 1))))
@@ -929,7 +1066,8 @@
             (begin
               (vector-set! screen top (blank-line cols))
               (vector-set! styles top
-                           (blank-styles cols (terminal-state-style state))))
+                           (blank-styles cols (terminal-state-style state)))
+              (vector-set! attributes top 'single))
             (erase-row-range! state top left (+ right 1)))
         (vector-set! wrapped top #f))))
 
@@ -938,7 +1076,8 @@
         (scroll-up! state 1)
         (terminal-state-row-set!
           state (min (- (terminal-state-rows state) 1)
-                     (+ (terminal-state-row state) 1)))))
+                     (+ (terminal-state-row state) 1))))
+    (clamp-to-row-columns! state))
 
   (define (cell-owner-index line col)
     (let find ([index col])
@@ -1058,9 +1197,11 @@
                        (terminal-state-row state) #t)
           (terminal-state-col-set! state left)
           (line-feed! state)))
+      (clamp-to-row-columns! state)
       (let* ([cols (terminal-state-cols state)]
-             [limit (if (<= left (terminal-state-col state) right)
-                      (+ right 1) cols)]
+             [limit (min (if (<= left (terminal-state-col state) right)
+                             (+ right 1) cols)
+                         (row-columns state (terminal-state-row state)))]
              [width (min requested-width (- limit left))])
         (when (> width (- limit (terminal-state-col state)))
           (if (terminal-state-autowrap state)
@@ -1079,7 +1220,8 @@
                                    (terminal-state-row state))]
                [printed-style (printed-cell-style state)]
                [col (terminal-state-col state)]
-               [limit (if (<= left col right) (+ right 1) cols)]
+               [limit (min (if (<= left col right) (+ right 1) cols)
+                           (row-columns state (terminal-state-row state)))]
                [width (min width (- limit col))])
           (when (terminal-state-insert state) (insert-characters! state width))
           (do ([index col (+ index 1)]) ((= index (+ col width)))
@@ -1127,6 +1269,8 @@
         (terminal-state-screen-set! state screen))
       (terminal-state-wrapped-set! state (make-vector rows #f))
       (terminal-state-styles-set! state (make-style-screen rows cols style))
+      (terminal-state-line-attributes-set!
+        state (make-vector rows 'single))
       (terminal-state-row-set! state 0)
       (terminal-state-col-set! state 0)
       (terminal-state-wrap-pending-set! state #f)
@@ -1703,9 +1847,6 @@
               (reversed-style style) style)))
       row))
 
-  (define (effective-style-screen state styles)
-    (vector-map (lambda (row) (effective-style-row state row)) styles))
-
   (define (sgr-operations codes)
     ;; Group extended colors so zero-valued components remain color data.
     (let loop ([xs codes] [out '()])
@@ -1837,6 +1978,9 @@
       (terminal-state-printer-pending-set! state "")
       (terminal-state-printer-output-set! state (cons 0 '()))
       (terminal-state-extra-modes-set! state '(8))
+      (terminal-state-line-attributes-set! state (make-vector rows 'single))
+      (terminal-state-main-line-attributes-set! state #f)
+      (terminal-state-alternate-line-attributes-set! state #f)
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-buffer state)
         (set-app-presentation! (terminal-state-buffer state)
@@ -1981,6 +2125,8 @@
                    ;; to that width, but the mode's mandatory screen, cursor,
                    ;; and margin reset semantics still apply.
                    (clear-rows! state 0 rows)
+                   (vector-fill!
+                     (terminal-state-line-attributes state) 'single)
                    (terminal-state-scroll-top-set! state 0)
                    (terminal-state-scroll-bottom-set! state (- rows 1))
                    (terminal-state-left-margin-set! state 0)
@@ -2325,7 +2471,11 @@
                    [else 'blinking-block])))]
             [else
              (report-unsupported!
-               state (control-signature "CSI" text final))]))))
+               state (control-signature "CSI" text final))]))
+      ;; DECDWL and DECDHL rows address only half the columns.
+      (when (memv final '(#\A #\B #\C #\D #\E #\F #\G #\H
+                          #\d #\e #\f #\`))
+        (clamp-to-row-columns! state))))
 
   (define line-drawing
     '((#\_ . #\space) (#\` . #\x25c6) (#\a . #\x2592) (#\b . #\x2409)
@@ -2422,7 +2572,8 @@
                       (left-bound state) 0)
                   (- (terminal-state-col state) 1))))]
       [(9)
-       (terminal-state-col-set! state (next-tab-stop state))]
+       (terminal-state-col-set! state (next-tab-stop state))
+       (clamp-to-row-columns! state)]
       [(10 11 12)
        (terminal-state-wrap-pending-set! state #f)
        (vector-set! (terminal-state-wrapped state)
@@ -2609,10 +2760,19 @@
             state (control-signature "ESC" " " character))])
        (terminal-state-parser-set! state 'normal)]
       [(escape-hash)
-       (if (char=? character #\8)
-           (screen-alignment-test! state)
-           (report-unsupported!
-             state (control-signature "ESC" "#" character)))
+       (case character
+         [(#\8) (screen-alignment-test! state)]
+         [(#\3 #\4 #\5 #\6)
+          (vector-set! (terminal-state-line-attributes state)
+                       (terminal-state-row state)
+                       (case character
+                         [(#\3) 'top] [(#\4) 'bottom]
+                         [(#\6) 'wide] [else 'single]))
+          (clamp-to-row-columns! state)
+          (terminal-state-dirty-set! state #t)]
+         [else
+          (report-unsupported!
+            state (control-signature "ESC" "#" character))])
        (terminal-state-parser-set! state 'normal)]
       [(escape-percent)
        ;; ESC % G selects UTF-8, the permanent state here; switching to
@@ -2770,10 +2930,17 @@
                                  (hashtable-set! table entry row)
                                  row)))
                          entries)]
-                   [screen-cells
-                    (vector->list (terminal-state-screen state))]
-                   [screen-styles
-                    (vector->list (terminal-state-styles state))])
+                   [screen-pairs
+                    (map (lambda (row)
+                           (let-values ([(cells styles fresh?)
+                                         (displayed-row state row)])
+                             ;; Live rows mutate under the reader thread;
+                             ;; expanded rows are already private copies.
+                             (cons (if fresh? cells (vector-copy cells))
+                                   styles)))
+                         (screen-row-indexes state))]
+                   [screen-cells (map car screen-pairs)]
+                   [screen-styles (map cdr screen-pairs)])
               (view-replace!
                 (terminal-state-buffer state)
                 (append (map (lambda (row) (vector-ref row 3)) rendered)
@@ -2782,7 +2949,7 @@
                 state
                 (list->vector
                   (append (map (lambda (row) (vector-ref row 0)) rendered)
-                          (map vector-copy screen-cells))))
+                          screen-cells)))
               (terminal-state-rendered-styles-set!
                 state
                 (list->vector
@@ -3298,7 +3465,8 @@
                                    #f #f
                                    (make-style-screen rows cols 'plain)
                                    #f "" 'plain #f #f (make-vector 256 #f) #f #f
-                                   #f "" (cons 0 '()) '(8)))
+                                   #f "" (cons 0 '()) '(8)
+                                   (make-vector rows 'single) #f #f))
             (set-app-status-position!
               buffer
               (lambda (ignored)

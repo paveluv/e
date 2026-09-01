@@ -130,6 +130,15 @@ vertical scrolling region. Cursor addressing, wrapping, character editing,
 line insertion/deletion, and scrolling honor the resulting rectangle; a
 partial-width scroll does not leak its untouched columns into scrollback.
 
+DEC double-size lines (`DECDWL`, `DECDHL`, `DECSWL`) are per-row display
+attributes over unchanged buffer content: a decorated row addresses half
+the columns and presents its left half one character per two cells, using
+Unicode fullwidth forms for ASCII, while `DECSWL` reveals the retained
+full-width content again. A cell grid cannot stretch glyphs vertically, so
+the two `DECDHL` halves each render as double-width. Decorated rows enter
+scrollback in their displayed form and revert to single width when a
+resize reflows the primary screen.
+
 The grid stores Unicode grapheme strings in terminal cells. Combining marks,
 emoji presentation selectors, regional-indicator flags, and ZWJ emoji remain
 one grapheme; CJK and other wide characters occupy two cells without being

@@ -961,6 +961,51 @@
                 "CSI \"?1049r\"" "CSI \"?1049s\"" "CSI \"?1;1;0S\""
                 "CSI \"?5i\"")))
 
+     (let ([terminal (make-terminal-emulator 2 8)])
+       (terminal-emulator-feed! terminal "abcdefgh\x1b;[1;1H\x1b;#6")
+       (check 'decdwl-displays-left-half-fullwidth
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "\xff41;\xff42;\xff43;\xff44;")
+       (terminal-emulator-feed! terminal "\x1b;#5")
+       (check 'decswl-restores-the-right-half
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "abcdefgh"))
+
+     (let ([terminal (make-terminal-emulator 2 8)])
+       (terminal-emulator-feed! terminal "\x1b;#612345")
+       (check 'decdwl-wraps-at-half-width
+              (vector->list (terminal-emulator-screen terminal))
+              '("\xff11;\xff12;\xff13;\xff14;" "5       "))
+       (check 'decdwl-wrap-cursor (state-ref terminal 'cursor) '(1 . 1)))
+
+     (let ([terminal (make-terminal-emulator 1 8)])
+       (terminal-emulator-feed! terminal "\x1b;#6\x1b;[1;8H")
+       (check 'decdwl-clamps-cursor-to-half
+              (state-ref terminal 'cursor) '(0 . 3))
+       (terminal-emulator-feed! terminal "\x1b;[1;3HX")
+       (check 'decdwl-addresses-logical-columns
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "\x3000;\x3000;\xff38;\x3000;"))
+
+     (let ([terminal (make-terminal-emulator 3 6)])
+       (terminal-emulator-feed!
+         terminal "\x1b;[1;1HTop\x1b;#3\x1b;[2;1HTop\x1b;#4")
+       (check 'decdhl-halves-render-double-width
+              (vector->list (terminal-emulator-screen terminal))
+              '("\xff34;\xff4f;\xff50;" "\xff34;\xff4f;\xff50;"
+                "      ")))
+
+     (let ([terminal (make-terminal-emulator 2 4)])
+       (terminal-emulator-feed! terminal "\x1b;#6\x1b;#8")
+       (check 'decaln-resets-line-attributes
+              (vector-ref (terminal-emulator-screen terminal) 0) "EEEE"))
+
+     (let ([terminal (make-terminal-emulator 2 6)])
+       (terminal-emulator-feed! terminal "hi\x1b;#6\x1b;[?1049h\x1b;[?1049l")
+       (check 'line-attributes-survive-alternate-screen
+              (vector-ref (terminal-emulator-screen terminal) 0)
+              "\xff48;\xff49;\x3000;"))
+
      (let ([terminal (make-terminal-emulator 2 5)])
        ;; VT100 setup modes are tracked silently; only reverse wraparound
        ;; changes behavior.
@@ -1002,14 +1047,14 @@
        ;; unknown ESC intermediate sequence; supported designators stay
        ;; silent and no final byte leaks onto the screen.
        (terminal-emulator-feed! terminal (string (integer->char #x8e)))
-       (terminal-emulator-feed! terminal "\x1b;(B\x1b;)0\x1b;#3\x1b; L\x1b;(4\x1b;%G")
+       (terminal-emulator-feed! terminal "\x1b;(B\x1b;)0\x1b;#7\x1b; L\x1b;(4\x1b;%G")
        (check 'unknown-escape-payload-not-painted
               (vector-ref (terminal-emulator-screen terminal) 0)
               "          ")
        (terminal-emulator-feed! terminal "\x1b;%@")
        (check 'silent-escape-paths-report
               (terminal-emulator-unsupported terminal)
-              '("C1 control 0x8E" "ESC \" L\"" "ESC \"#3\"" "ESC \"%@\""
+              '("C1 control 0x8E" "ESC \" L\"" "ESC \"#7\"" "ESC \"%@\""
                 "G0 charset designator \"4\"")))
 
      (let ([terminal (make-terminal-emulator 2 5)])
