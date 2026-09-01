@@ -33,11 +33,23 @@ The available attribute symbols are:
 - `reverse`
 - `hidden`
 - `strike`
-- `framed`
+- `double-underline`
+- `curly-underline`, `dotted-underline`, `dashed-underline`
+- `overline`
+- `framed`, `encircled`
+- `superscript`, `subscript`
+
+Each attribute has a cancellation for overlay faces that must remove
+what the underlying style set: `normal-intensity` (clears bold and dim),
+`no-italic`, `no-underline`, `no-blink`, `no-reverse`, `no-hidden`,
+`no-strike`, `no-frame`, and `no-overline`.
 
 Terminal support varies. In particular, some terminals render `bold` as a
 brighter color, ignore `blink`, or do not expose italic and strike-through.
-`framed` (a box around the cells) is the rarest: most terminals ignore it.
+The underline variants and `underline-color` need a terminal with styled
+underlines (kitty, foot, WezTerm, recent VTE); elsewhere they degrade to
+a plain underline or to nothing. `framed` and `encircled` (boxes around
+the cells) are the rarest: most terminals ignore them.
 
 ### Colors
 
@@ -53,6 +65,11 @@ An integer from 0 through 255 selects the terminal's 256-color palette:
 ```scheme
 (set-style! 'delimiter '((foreground 245)))
 ```
+
+The symbol `default` restores the terminal's own foreground or
+background. `(underline-color color)` takes the same color forms and
+sets the underline's color separately from the text, with
+`(underline-color default)` restoring it.
 
 An RGB color contains three integers from 0 through 255:
 

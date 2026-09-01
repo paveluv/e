@@ -28,7 +28,9 @@
 ;; (line-numbers #f)              ; #t: show line numbers in every untoggled buffer
 ;; (wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
 ;; (matching-paren-style 'underline) ; matched brackets: underline, box,
-;;                                ; bold, or colored
+;;                                ; bold, or colored -- or design your
+;;                                ; own marking with the style DSL:
+;; (set-style! 'matching-paren '(curly-underline (underline-color 208)))
 ;; (search-fold-case #t)          ; C-s smart case: all-lowercase needles
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)
