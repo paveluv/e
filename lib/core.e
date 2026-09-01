@@ -55,7 +55,7 @@
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab! probe-terminal!
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
-    add-shutdown-hook! add-pre-redraw-hook!
+    add-shutdown-hook! add-pre-redraw-hook! set-startup-page!
     prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
     prompt-edge-motion prompt-reindent
     completion-highlight
@@ -6880,6 +6880,15 @@
     (display "A tiny Emacs-like terminal editor. Set LINES/COLUMNS if needed.\n")
     (display "Extension modules are loaded from the lib directory at startup.\n"))
 
+  (define startup-page #f)
+
+  (define (set-startup-page! proc)
+    ;; A module (or config.e) may present a welcome page when e starts
+    ;; without a file argument; #f restores the plain scratch buffer.
+    (unless (or (not proc) (procedure? proc))
+      (error 'set-startup-page! "expected a procedure or #f" proc))
+    (set! startup-page proc))
+
   (define (main)
     ;; The loader script is pure bootstrap; the extension modules are
     ;; loaded here, before the file argument needs their modes.
@@ -6887,7 +6896,12 @@
       (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
       (load-modules!)           ; the log-view module lists *log* from startup
       (load-config!)
-      (when (pair? args) (visit-file! (car args))))
+      (if (pair? args)
+          (visit-file! (car args))
+          (when startup-page
+            (guard (ex [else (void)]) (startup-page))
+            ;; the greeting outlives the page's own load chatter
+            (set! message (startup-greeting)))))
     (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
       (display "e: an interactive terminal is required\n" (current-error-port))
       (exit 1))
