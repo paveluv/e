@@ -60,6 +60,9 @@ field order and the socket-option numbers differ between glibc and
 the BSDs (macOS included), and both layouts are supported. The libssl
 soname is probed across current and previous OpenSSL majors on Linux
 and the BSD base systems (`.so.3`, `.so.1.1`, `.so.30`, `.so.111`,
-plain, `.dylib`). Certificate verification uses the library's default
-root store; on a FreeBSD without one populated (`certctl rehash`, or
-the `ca_root_nss` port), connections fail verification loudly.
+plain). On macOS the unversioned `/usr/lib` stubs abort any process
+that loads them, so only the versioned Homebrew/MacPorts dylibs are
+probed -- `brew install openssl@3` provides one. Certificate
+verification uses the library's default root store; on a FreeBSD
+without one populated (`certctl rehash`, or the `ca_root_nss` port),
+connections fail verification loudly.

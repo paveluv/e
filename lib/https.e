@@ -64,25 +64,40 @@
 
   (define bsd-sockets? (memq os '(freebsd macos openbsd netbsd)))
 
+  ;; The sonames to probe, per platform.  On macOS the unversioned
+  ;; /usr/lib stubs ABORT THE PROCESS when loaded (Apple removed the
+  ;; ABI): never probe a bare .dylib there -- only the versioned
+  ;; libraries Homebrew and MacPorts install, by their absolute homes
+  ;; first since dlopen's default search may not cover them.
+  (define (versioned-dylibs stem)
+    (append
+      (map (lambda (root) (format "~a/lib/lib~a.3.dylib" root stem))
+           '("/opt/homebrew/opt/openssl@3" "/opt/homebrew"
+             "/usr/local/opt/openssl@3" "/usr/local" "/opt/local"))
+      (list (format "lib~a.3.dylib" stem)
+            (format "lib~a.1.1.dylib" stem))))
+
+  (define (tls-names stem)
+    (if (eq? os 'macos)
+        (versioned-dylibs stem)
+        (list (format "lib~a.so.3" stem) (format "lib~a.so.1.1" stem)
+              (format "lib~a.so.30" stem) (format "lib~a.so.111" stem)
+              (format "lib~a.so" stem))))
+
   (define tls-loaded
     (let ([state 'no])
       (lambda ()
         (when (eq? state 'no)
           ;; libssl usually pulls libcrypto in; loading it first is
-          ;; belt and braces and may fail silently.  The soname lists
-          ;; cover current and previous OpenSSL majors on Linux and the
-          ;; BSD base systems.
-          (try-load-shared '("libcrypto.so.3" "libcrypto.so.1.1"
-                             "libcrypto.so.30" "libcrypto.so.111"
-                             "libcrypto.so" "libcrypto.dylib"))
+          ;; belt and braces and may fail silently.
+          (try-load-shared (tls-names "crypto"))
           (set! state
-            (if (try-load-shared '("libssl.so.3" "libssl.so.1.1"
-                                   "libssl.so.30" "libssl.so.111"
-                                   "libssl.so" "libssl.dylib"))
-                'yes
-                'missing)))
+            (if (try-load-shared (tls-names "ssl")) 'yes 'missing)))
         (when (eq? state 'missing)
-          (error 'https "no TLS library found (libssl)")))))
+          (error 'https
+                 (if (eq? os 'macos)
+                     "no TLS library found: install OpenSSL (brew install openssl@3)"
+                     "no TLS library found (libssl)"))))))
 
   (define-syntax define-foreign
     ;; A lazily created binding: the shared object loads on first call.
@@ -115,8 +130,10 @@
     (let ([done #f])
       (lambda ()
         (unless done
-          (try-load-shared '("libc.so.6" "libc.so.7" "libc.so"
-                             "libSystem.B.dylib"))
+          (try-load-shared
+            (if (eq? os 'macos)
+                '("libSystem.B.dylib")
+                '("libc.so.6" "libc.so.7" "libc.so")))
           (set! done #t)))))
 
   ;;; Foreign memory helpers ----------------------------------------------
@@ -203,7 +220,16 @@
       (foreign-set! 'long time 0 seconds)
       (c-setsockopt fd sol-socket so-rcvtimeo time 16)
       (c-setsockopt fd sol-socket so-sndtimeo time 16)
-      (foreign-free time)))
+      (foreign-free time))
+    ;; and a write to a peer-closed connection must error, not raise
+    ;; SIGPIPE: SO_NOSIGPIPE where it exists (macOS #x1022, FreeBSD
+    ;; #x800); Linux writes report EPIPE to blocked signals anyway
+    (let ([option (case os [(macos) #x1022] [(freebsd) #x800] [else #f])])
+      (when option
+        (let ([on (foreign-zeroed 4)])
+          (foreign-set! 'int on 0 1)
+          (c-setsockopt fd sol-socket option on 4)
+          (foreign-free on)))))
 
   (define (connect-socket host port)
     ;; -> a connected stream socket fd, trying each resolved address.
