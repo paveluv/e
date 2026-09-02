@@ -96,6 +96,7 @@ terminal process, including terminals whose buffers are not currently shown.
 | Sequence | Action |
 |----------|--------|
 | `C-] C-]` | Send a literal `C-]` to the child |
+| `C-] C-y` | Yank the kill ring into the terminal as a paste |
 | `C-] M-x` | Open M-x; capture resumes when its command finishes |
 | `C-] C-x 2` | Run the complete global split-window binding |
 | `C-] C-x o` | Focus the next e window |

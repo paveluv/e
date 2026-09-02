@@ -1,7 +1,8 @@
 ;; terminal.e -- PTY-backed terminal emulator app.
 
 (library (terminal)
-  (export init! terminal!! terminal-send! terminal-close! terminal-scrollback
+  (export init! terminal!! terminal-send! terminal-yank! terminal-close!
+          terminal-scrollback
           terminal-shell terminal-forward-clipboard-to-kill-ring
           make-terminal-emulator terminal-emulator?
           terminal-emulator-feed! terminal-emulator-resize!
@@ -3327,6 +3328,32 @@
         (put-bytevector output bytes)
         (flush-output-port output))))
 
+  (define (send-paste! state text)
+    ;; Pasted text is data. Control characters other than plain
+    ;; whitespace could act as typed escape sequences or forge the
+    ;; bracketed-paste closer, so strip them, as modern terminals do.
+    (let ([clean (list->string
+                   (filter
+                     (lambda (character)
+                       (or (memv (char->integer character) '(9 10 13))
+                           (printable-character? character)))
+                     (string->list text)))])
+      (write-bytes!
+        state
+        (string->utf8
+          (if (terminal-state-bracketed state)
+              (string-append "\x1b;[200~" clean "\x1b;[201~")
+              clean)))))
+
+  (define (terminal-yank!)
+    ;; Yank into the terminal: the kill ring goes to the child as a
+    ;; paste.  From capture, C-] C-y reaches this binding.
+    (let ([state (terminal-of (current-buffer))])
+      (unless state
+        (error 'terminal-yank! "current buffer is not a terminal"))
+      (terminal-follow! state)
+      (send-paste! state (current-kill-ring))))
+
   (define (terminal-send! text)
     (let ([state (terminal-of (current-buffer))])
       (unless state (error 'terminal-send! "current buffer is not a terminal"))
@@ -3553,20 +3580,7 @@
        #t]
       [(string=? event "PASTE")
        (terminal-follow! state)
-       ;; Pasted text is data. Control characters other than plain
-       ;; whitespace could act as typed escape sequences or forge the
-       ;; bracketed-paste closer, so strip them, as modern terminals do.
-       (let ([text (list->string
-                     (filter
-                       (lambda (character)
-                         (or (memv (char->integer character) '(9 10 13))
-                             (printable-character? character)))
-                       (string->list (read-paste))))])
-         (write-bytes!
-           state
-           (string->utf8
-             (if (terminal-state-bracketed state)
-                 (string-append "\x1b;[200~" text "\x1b;[201~") text))))
+       (send-paste! state (read-paste))
        #t]
       [(string=? event "S-PAGEUP")
        (terminal-scroll! state -1 1)
@@ -3699,6 +3713,7 @@
     (add-color-scheme-hook! terminal-color-scheme!)
     (add-hyperlinker! terminal-row-hyperlinks)
     (bind-key! "C-c t" terminal!!)
+    (bind-default-key! 'terminal "C-y" terminal-yank!)
     (add-buffer-kill-hook! terminal-close!)
     (add-shutdown-hook! terminal-close-all!)
     (add-buffer-status-hint!
@@ -3723,7 +3738,7 @@
       '(((terminal!!)
          (("procedure" . "(terminal!! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Open a PTY-backed terminal app running `terminal-shell`, or interpret `command` with that shell when supplied. It captures keyboard, paste, and mouse input. C-] suspends capture for one complete global e command; C-] C-] sends the character literally.")
+         "Open a PTY-backed terminal app running `terminal-shell`, or interpret `command` with that shell when supplied. It captures keyboard, paste, and mouse input. C-] suspends capture for one complete global e command -- C-] C-y yanks the kill ring into the terminal as a paste; C-] C-] sends the character literally.")
         ((terminal-send!)
          (("procedure" . "(terminal-send! text)")) "void"
          ("(terminal)") terminal "Terminal" #f

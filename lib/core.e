@@ -31,7 +31,7 @@
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo!
-    copy-to-kill-buffer!
+    copy-to-kill-buffer! current-kill-ring
     forward-kill-ring-to-system-clipboard
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
     redraw-command! open-line! page-up! page-down!
@@ -994,6 +994,11 @@
             [(< point-row (- (vlen) 1))
              (kill! "\n")
              (delete-forward!)])))
+
+  (define (current-kill-ring)
+    ;; The kill ring's text, for consumers outside the buffer -- the
+    ;; terminal's yank, a future clipboard bridge.
+    kill-ring)
 
   (define (yank!)
     ;; Kill-ring entries can span lines after consecutive C-k commands.  Insert
