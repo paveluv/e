@@ -4526,6 +4526,9 @@
     (ansi "\x1b;[?2026h")
     (terminal-size!)
     (update-echo-geometry!)
+    ;; window geometry is otherwise set while painting, one frame
+    ;; stale from here -- refresh views against the current layout
+    (window-layout)
     (refresh-visible-views!)
     (update-completions-size!)
     ;; A terminal too small for the splits collapses back to one window.
