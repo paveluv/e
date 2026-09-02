@@ -26,7 +26,7 @@
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
-    resize-window! widen-window!! wrap! wrap-lines column-native-scroll scroll-margin
+    resize-window! widen-window!! wrap! wrap-lines scroll-margin
     scrollbar scrollbar-position line-numbers line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
@@ -53,7 +53,7 @@
     add-status-hint! add-buffer-status-hint!
     host-color-scheme add-color-scheme-hook!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
-    load-config! indent-on-tab! probe-terminal!
+    load-config! indent-on-tab!
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
     add-shutdown-hook! add-pre-redraw-hook! set-startup-page!
     prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
@@ -3733,33 +3733,6 @@
     (ansi "\x1b;[2J")
     (invalidate-screen-cache!))
 
-  ;; Side-by-side columns can scroll natively too -- on terminals
-  ;; with VT420 left/right margins (DECLRMM/DECSLRM: xterm, iTerm2,
-  ;; WezTerm, foot, ...), the scroll then moves just the column's
-  ;; rectangle.  Off by default: a terminal without the feature would
-  ;; scroll the neighbors along.  (column-native-scroll #t) in
-  ;; config.e turns it on.
-  (define column-native-scroll (make-parameter #f))
-
-  (define (shift-column-cache! xoff delta start height)
-    ;; shift-screen-cache!, but only the keys of the column at xoff.
-    (define (seg-at i)
-      (let ([e (vector-ref screen-cache i)])
-        (and (pair? e) (assv xoff e))))
-    (define (seg-set! i hit)
-      (let* ([e (vector-ref screen-cache i)]
-             [old (and (pair? e) (assv xoff e))]
-             [rest (if old (remq old e) (or e '()))])
-        (vector-set! screen-cache i
-                     (if hit (cons (cons xoff (cdr hit)) rest) rest))))
-    (let ([end (+ start height)])
-      (if (> delta 0)
-          (do ([i start (+ i 1)]) ((= i end))
-            (seg-set! i (and (< (+ i delta) end) (seg-at (+ i delta)))))
-          (do ([i (- end 1) (- i 1)]) ((< i start))
-            (seg-set! i (and (>= (+ i delta) start)
-                             (seg-at (+ i delta))))))))
-
   (define (shift-screen-cache! delta start height)
     ;; Mirror a native delta-row terminal scroll in cache rows
     ;; [start, start+height); rows the scroll uncovered become #f.
@@ -3809,26 +3782,19 @@
       ;; Worth it only while most rows survive the shift: a page-sized
       ;; scroll visibly flings the window's content before overwriting
       ;; nearly all of it anyway, where an in-place repaint sits still.
-      (when (and vdelta (not (= vdelta 0)) (<= (* 2 (abs vdelta)) height))
-        (cond
-          [(= (window-width w) cols)
-           (ansi "\x1b;[?25l"
-                 "\x1b;[" (number->string (+ start 1)) ";"
-                 (number->string (+ start height)) "r"
-                 (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
-                 "\x1b;[r")
-           (shift-screen-cache! vdelta start height)]
-          [(column-native-scroll)
-           ;; margins on, the column's rectangle, scroll, margins off
-           (ansi "\x1b;[?25l\x1b;[?69h"
-                 (format "\x1b;[~a;~as"
-                         (+ (window-xoff w) 1)
-                         (+ (window-xoff w) (window-width w)))
-                 "\x1b;[" (number->string (+ start 1)) ";"
-                 (number->string (+ start height)) "r"
-                 (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
-                 "\x1b;[r\x1b;[s\x1b;[?69l")
-           (shift-column-cache! (window-xoff w) vdelta start height)]))))
+      ;; Only a full-width window scrolls natively: a side-by-side
+      ;; column would need VT420 left/right margins, which too few
+      ;; terminals support -- it repaints in place instead, flicker
+      ;; suppressed by the synchronized update (mode 2026) around the
+      ;; frame.
+      (when (and vdelta (not (= vdelta 0)) (<= (* 2 (abs vdelta)) height)
+                 (= (window-width w) cols))
+        (ansi "\x1b;[?25l"
+              "\x1b;[" (number->string (+ start 1)) ";"
+              (number->string (+ start height)) "r"
+              (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
+              "\x1b;[r")
+        (shift-screen-cache! vdelta start height))))
 
   (define (paint-dividers! layout)
     ;; Paint vertical boundaries from the same recursive geometry used for
@@ -6772,90 +6738,6 @@
                (refresh-buffer-modes!)
                (invalidate-screen-cache!)
                #t)))))
-
-  (define (probe-terminal!)
-    ;; Cooperative feature detection, for M-x: asks the terminal about
-    ;; VT420 left/right margins (DECRQM chased by DA1, which every
-    ;; terminal answers), falls back to a visual test you judge when
-    ;; the protocol is silent on the question, applies the verdict to
-    ;; column-native-scroll for the session, and offers to record it
-    ;; in config.e.  The probe owns the keyboard for the moment: run
-    ;; it, don't type into it.
-    (define (gather deadline)
-      ;; everything the terminal sends until DA1's final c (or time out)
-      (let loop ([acc '()])
-        (cond
-          [(char-ready? stdin)
-           (let ([c (read-char stdin)])
-             (cond [(eof-object? c) (list->string (reverse acc))]
-                   [(char=? c #\c) (list->string (reverse (cons c acc)))]
-                   [else (loop (cons c acc))]))]
-          [(> (real-time) deadline) (list->string (reverse acc))]
-          [else (sleep (make-time 'time-duration 10000000 0)) (loop acc)])))
-    (define (visual-test!)
-      ;; two half-and-half rows at the top; scroll the left half up by
-      ;; one inside margins -- a supporting terminal shows C's beside
-      ;; B's on the first row
-      (let ([half (max 4 (div cols 2))])
-        (define (paint-test!)
-          (ansi "\x1b;[?25l"
-                "\x1b;[1;1H" (make-string half #\A)
-                (make-string (- cols half) #\B)
-                "\x1b;[2;1H" (make-string half #\C)
-                (make-string (- cols half) #\D)
-                "\x1b;[?69h" (format "\x1b;[1;~as" half)
-                "\x1b;[1;2r" "\x1b;[1S"
-                "\x1b;[r\x1b;[s\x1b;[?69l")
-          (flush-output-port (terminal-output-port)))
-        (let ([k (query-key! "Top row all C's then B's? y)es or n)o"
-                   "yn" paint-test!)])
-          (invalidate-screen-cache!)
-          (and k (memv (char->integer k) '(121 89))))))
-    (parameterize ([message-source #f])
-      (set-message! "Probing the terminal..."))
-    (redraw!)
-    (ansi "\x1b;[?69$p" "\x1b;[c")
-    (flush-output-port (terminal-output-port))
-    (let* ([reply (gather (+ (real-time) 300))]
-           [says (lambda (s)
-                   (string-search reply s 0 (string-length reply)))]
-           [verdict (cond
-                      [(or (says "[?69;1$y") (says "[?69;2$y")) 'yes]
-                      [(or (says "[?69;0$y") (says "[?69;4$y")) 'no]
-                      [(says "c") 'ask]         ; DA1 came, DECRQM didn't
-                      [else 'silent])])
-      (case verdict
-        [(silent)
-         (parameterize ([message-source 'probe-terminal!])
-           (set-message! "No reply -- not an interactive terminal?"))]
-        [else
-         (let ([margins? (case verdict
-                           [(yes) #t]
-                           [(no) #f]
-                           [else (visual-test!)])])
-           (column-native-scroll margins?)
-           (parameterize ([message-source 'probe-terminal!])
-             (set-message!
-               (format "Left/right margins ~a: column-native-scroll ~a"
-                       (if margins? "supported" "not supported")
-                       (if margins? "on" "off"))))
-           (let* ([k (query-key!
-                       (format "Record (column-native-scroll ~a) in config.e? y)es or n)o"
-                               (if margins? "#t" "#f"))
-                       "yn")]
-                  [n (and k (char->integer k))])
-             (when (memv n '(121 89))
-               ;; 'append creates config.e when none exists yet, so
-               ;; recording works before any template copy
-               (call-with-output-file (config-file)
-                 (lambda (p)
-                   (put-string p
-                     (format "(column-native-scroll ~a)   ; recorded by probe-terminal!\n"
-                             (if margins? "#t" "#f"))))
-                 'append)
-               (parameterize ([message-source 'probe-terminal!])
-                 (set-message! "Recorded in config.e")))))]))
-    (void))
 
   (define (reload-on-save! path)
     ;; The post-save hook.  A reload that fails (a module saved mid-edit,

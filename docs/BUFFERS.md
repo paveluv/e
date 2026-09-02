@@ -234,9 +234,9 @@ An app may force a scrollbar or a side through `set-app-presentation!`.
 `*buffers*` forces it on but follows `scrollbar-position`.
 
 Windows with sticky rows or scrollbars use cached repainting rather than native
-terminal scrolling so fixed chrome cannot be shifted or lost. Side-by-side
-windows can otherwise opt into terminal-native column scrolling with
-`(column-native-scroll #t)` after checking support with `(probe-terminal!)`.
+terminal scrolling so fixed chrome cannot be shifted or lost, and so do
+side-by-side windows -- flicker is suppressed by synchronized updates
+instead.
 
 ## Scrolling, wrapping, and windows
 
