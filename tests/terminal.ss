@@ -1144,4 +1144,28 @@
               (vector->list (terminal-emulator-screen terminal))
               '("3         " "4         " "5         ")))
 
+     ;; The inactive alternate-screen stash keeps its own dimensions;
+     ;; a resize between alternate sessions must not corrupt it.
+     (let ([terminal (make-terminal-emulator 24 80)])
+       (terminal-emulator-feed! terminal "\x1b;[?1049h")
+       (terminal-emulator-resize! terminal 12 76)
+       (terminal-emulator-feed! terminal "\x1b;[?1049l")
+       (terminal-emulator-resize! terminal 15 83)
+       (terminal-emulator-feed! terminal "\x1b;[?1049h")
+       (terminal-emulator-resize! terminal 23 103)
+       (check 'resize-between-alternate-sessions
+              (vector-length (terminal-emulator-screen terminal)) 23))
+
+     (let ([terminal (make-terminal-emulator 24 80)])
+       (terminal-emulator-feed! terminal "\x1b;[?47habc")
+       (terminal-emulator-feed! terminal "\x1b;[?47l")
+       (terminal-emulator-resize! terminal 30 80)
+       (terminal-emulator-feed! terminal "\x1b;[?47h")
+       (check 'stashed-alternate-grows-with-resize
+              (list (vector-length (terminal-emulator-screen terminal))
+                    (substring
+                      (vector-ref (terminal-emulator-screen terminal) 0)
+                      0 3))
+              '(30 "abc")))
+
      (format #t "~a terminal checks passed\n" checks)))

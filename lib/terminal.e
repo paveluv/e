@@ -995,6 +995,34 @@
       (terminal-state-line-attributes-set! state alternate-attributes)
       (restore-screen-state! state alternate-state)))
 
+  (define (resize-stashed-alternate! state rows cols)
+    ;; The inactive alternate-screen stash was saved at whatever size
+    ;; the terminal had then; resize it by its own dimensions -- the
+    ;; live screen's may differ, and a resize between sessions used to
+    ;; leave it stale entirely.
+    (let ([alt (terminal-state-alternate-screen state)])
+      (when alt
+        (let* ([alt-rows (vector-length alt)]
+               [alt-cols (if (> alt-rows 0)
+                             (vector-length (vector-ref alt 0))
+                             cols)])
+          (terminal-state-alternate-screen-set!
+            state (resized-screen alt alt-rows alt-cols rows cols))
+          (when (terminal-state-alternate-styles state)
+            (terminal-state-alternate-styles-set!
+              state (resized-styles (terminal-state-alternate-styles state)
+                                    alt-rows alt-cols rows cols
+                                    (terminal-state-style state))))
+          (when (terminal-state-alternate-wrapped state)
+            (terminal-state-alternate-wrapped-set!
+              state (resized-flags (terminal-state-alternate-wrapped state)
+                                   rows #f)))
+          (when (terminal-state-alternate-line-attributes state)
+            (terminal-state-alternate-line-attributes-set!
+              state (resized-flags
+                      (terminal-state-alternate-line-attributes state)
+                      rows 'single)))))))
+
   (define (resize-screen! state rows cols)
     (let ([changed? (or (not (= rows (terminal-state-rows state)))
                         (not (= cols (terminal-state-cols state))))])
@@ -1002,6 +1030,7 @@
         (if (not (terminal-state-main-screen state))
           (let ([old-cols (terminal-state-cols state)])
             (reflow-primary-screen! state rows cols)
+            (resize-stashed-alternate! state rows cols)
             (terminal-state-tab-stops-set!
               state
               (resized-tab-stops (terminal-state-tab-stops state)
@@ -1016,24 +1045,7 @@
                                              old-rows old-cols rows cols
                                              (terminal-state-style state))])
             (reflow-saved-primary! state rows cols)
-            (when (terminal-state-alternate-screen state)
-              (terminal-state-alternate-screen-set!
-                state (resized-screen (terminal-state-alternate-screen state)
-                                      old-rows old-cols rows cols)))
-            (when (terminal-state-alternate-wrapped state)
-              (terminal-state-alternate-wrapped-set!
-                state (resized-flags
-                        (terminal-state-alternate-wrapped state) rows #f)))
-            (when (terminal-state-alternate-line-attributes state)
-              (terminal-state-alternate-line-attributes-set!
-                state (resized-flags
-                        (terminal-state-alternate-line-attributes state)
-                        rows 'single)))
-            (when (terminal-state-alternate-styles state)
-              (terminal-state-alternate-styles-set!
-                state (resized-styles (terminal-state-alternate-styles state)
-                                      old-rows old-cols rows cols
-                                      (terminal-state-style state))))
+            (resize-stashed-alternate! state rows cols)
             (terminal-state-screen-set! state new)
             (terminal-state-wrapped-set!
               state (resized-flags (terminal-state-wrapped state) rows #f))
