@@ -5,7 +5,7 @@
 ;; corpus -- R6RS from TSPL4, the Chez extensions from the Chez Scheme
 ;; User's Guide.  The whole pipeline lives here: fetch-describe-data!
 ;; downloads the corpus into data/describe next to lib (the
-;; byte transfer is delegated to curl, since Chez speaks no TLS; page
+;; byte transfer rides the (https) module's TLS connector; page
 ;; lists, orchestration, and parsing are all this module), extracts it
 ;; into data/describe/describe.sdata, and loads it.  Run it once:
 ;;
@@ -33,7 +33,8 @@
           doc-lookup doc-entries
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
-  (import (chezscheme) (core) (only (md-view) markdown-view-install!))
+  (import (chezscheme) (core) (only (md-view) markdown-view-install!)
+          (only (https) https-download))
 
   (define-record-type (doc-entry make-doc-entry doc-entry?)
     (fields (immutable names doc-names)           ; symbols defined
@@ -412,10 +413,7 @@
     (unless (file-directory? path) (mkdir path)))
 
   (define (fetch-url! url path)
-    ;; curl carries the bytes -- Chez speaks no TLS; everything else
-    ;; about the pipeline is Scheme.
-    (unless (zero? (system (format "curl -fsS '~a' -o '~a'" url path)))
-      (error 'fetch-describe-data! "download failed" url)))
+    (https-download url path))
 
   (define (fetch-book! ref book base pages progress)
     (for-each (lambda (page)
