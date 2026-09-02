@@ -55,5 +55,11 @@ interactive should call from a worker.
 
 ## Portability
 
-The libssl soname is probed (`libssl.so.3`, `.1.1`, plain); the
-`struct addrinfo` field layout currently assumes Linux/glibc.
+The platform comes from Chez's `machine-type`: the `struct addrinfo`
+field order and the socket-option numbers differ between glibc and
+the BSDs (macOS included), and both layouts are supported. The libssl
+soname is probed across current and previous OpenSSL majors on Linux
+and the BSD base systems (`.so.3`, `.so.1.1`, `.so.30`, `.so.111`,
+plain, `.dylib`). Certificate verification uses the library's default
+root store; on a FreeBSD without one populated (`certctl rehash`, or
+the `ca_root_nss` port), connections fail verification loudly.

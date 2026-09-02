@@ -48,17 +48,37 @@
          (or (guard (ex [else #f]) (load-shared-object (car names)) #t)
              (try-load-shared (cdr names)))))
 
+  (define os
+    ;; The machine-type suffix names the platform: ...le is Linux,
+    ;; ...fb FreeBSD, ...osx macOS, ...ob and ...nb the other BSDs.
+    (let ([name (symbol->string (machine-type))])
+      (define (suffix? s)
+        (let ([n (string-length name)] [m (string-length s)])
+          (and (>= n m) (string=? (substring name (- n m) n) s))))
+      (cond [(suffix? "le") 'linux]
+            [(suffix? "fb") 'freebsd]
+            [(suffix? "osx") 'macos]
+            [(suffix? "ob") 'openbsd]
+            [(suffix? "nb") 'netbsd]
+            [else 'linux])))
+
+  (define bsd-sockets? (memq os '(freebsd macos openbsd netbsd)))
+
   (define tls-loaded
     (let ([state 'no])
       (lambda ()
         (when (eq? state 'no)
           ;; libssl usually pulls libcrypto in; loading it first is
-          ;; belt and braces and may fail silently.
+          ;; belt and braces and may fail silently.  The soname lists
+          ;; cover current and previous OpenSSL majors on Linux and the
+          ;; BSD base systems.
           (try-load-shared '("libcrypto.so.3" "libcrypto.so.1.1"
-                             "libcrypto.so"))
+                             "libcrypto.so.30" "libcrypto.so.111"
+                             "libcrypto.so" "libcrypto.dylib"))
           (set! state
             (if (try-load-shared '("libssl.so.3" "libssl.so.1.1"
-                                   "libssl.so"))
+                                   "libssl.so.30" "libssl.so.111"
+                                   "libssl.so" "libssl.dylib"))
                 'yes
                 'missing)))
         (when (eq? state 'missing)
@@ -95,7 +115,8 @@
     (let ([done #f])
       (lambda ()
         (unless done
-          (try-load-shared '("libc.so.6" "libc.so"))
+          (try-load-shared '("libc.so.6" "libc.so.7" "libc.so"
+                             "libSystem.B.dylib"))
           (set! done #t)))))
 
   ;;; Foreign memory helpers ----------------------------------------------
@@ -147,13 +168,16 @@
   (define-foreign-blocking c-read libc-loaded "read" (int uptr long) long)
   (define-foreign-blocking c-write libc-loaded "write" (int uptr long) long)
 
-  ;; struct addrinfo, glibc layout (64-bit): flags, family, socktype,
-  ;; protocol at 0/4/8/12; addrlen at 16; addr, canonname, next at
-  ;; 24/32/40.  BSDs order addr and canonname differently; this module
-  ;; currently assumes Linux.
+  ;; struct addrinfo (64-bit): flags, family, socktype, protocol at
+  ;; 0/4/8/12 and addrlen at 16 everywhere; then glibc orders addr,
+  ;; canonname at 24/32 while the BSDs and macOS order canonname, addr
+  ;; -- reading the wrong slot hands connect a canonname pointer.
+  ;; next sits at 40 on both.
+  (define addrinfo-addr-offset (if bsd-sockets? 32 24))
   (define (addrinfo-family info) (foreign-ref 'int info 4))
   (define (addrinfo-addrlen info) (foreign-ref 'unsigned-32 info 16))
-  (define (addrinfo-addr info) (foreign-ref 'void* info 24))
+  (define (addrinfo-addr info)
+    (foreign-ref 'void* info addrinfo-addr-offset))
   (define (addrinfo-next info)
     (let ([next (foreign-ref 'void* info 40)])
       (and (not (zero? next)) next)))
@@ -167,12 +191,18 @@
           (error 'https-timeout "must be a positive integer" seconds))
         seconds)))
 
+  ;; Linux numbers the socket level and timeout options 1/20/21; the
+  ;; BSDs and macOS use #xffff/#x1006/#x1005.
+  (define sol-socket (if bsd-sockets? #xffff 1))
+  (define so-rcvtimeo (if bsd-sockets? #x1006 20))
+  (define so-sndtimeo (if bsd-sockets? #x1005 21))
+
   (define (set-socket-timeouts! fd seconds)
     ;; SO_RCVTIMEO/SO_SNDTIMEO with a struct timeval (two longs).
     (let ([time (foreign-zeroed 16)])
       (foreign-set! 'long time 0 seconds)
-      (c-setsockopt fd 1 20 time 16)   ; SOL_SOCKET SO_RCVTIMEO
-      (c-setsockopt fd 1 21 time 16)   ; SOL_SOCKET SO_SNDTIMEO
+      (c-setsockopt fd sol-socket so-rcvtimeo time 16)
+      (c-setsockopt fd sol-socket so-sndtimeo time 16)
       (foreign-free time)))
 
   (define (connect-socket host port)
