@@ -53,6 +53,17 @@ running. Bytes cross the FFI through foreign buffers for the same
 reason. Requests still block the calling thread; anything
 interactive should call from a worker.
 
+## The curl backend
+
+`https-backend` selects the machinery: `'native` (the default) is the
+FFI TLS connector; `'curl` hands whole requests to a curl subprocess
+presenting the same response interface -- curl then does the TLS and
+certificate verification. Set `(https-backend 'curl)` in config.e to
+prefer it. The native backend also falls back to curl on its own when
+no TLS library can be found, so a system without libssl but with curl
+still works out of the box. Under curl the body always streams to
+process end: curl has already decoded the transfer framing.
+
 ## Portability
 
 The platform comes from Chez's `machine-type`: the `struct addrinfo`

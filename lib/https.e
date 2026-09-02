@@ -36,7 +36,7 @@
   (export https-get https-download https-request
           https-response-status https-response-headers https-response-port
           https-response-text https-close!
-          https-connector https-timeout
+          https-connector https-timeout https-backend
           make-channel channel-read! channel-write! channel-close!
           tcp-connect tls-connect)
   (import (chezscheme))
@@ -403,6 +403,9 @@
             (ssl-free ssl)
             (ssl-ctx-free ctx))))))
 
+  (define (tls-available?)
+    (guard (ex [else #f]) (tls-loaded) #t))
+
   (define https-connector
     ;; The secure-transport provider: replace it to switch the TLS
     ;; implementation (a pure-Scheme TLS, an openssl pipe, a test
@@ -657,6 +660,88 @@
                         [else (scan (+ i 1))]))])
       (if semi (substring line 0 semi) line)))
 
+  (define https-backend
+    ;; Which machinery performs requests: 'native is the FFI TLS
+    ;; connector; 'curl delegates whole requests to a curl subprocess.
+    ;; Native additionally falls back to curl by itself when no TLS
+    ;; library can be found.
+    (make-parameter 'native
+      (lambda (backend)
+        (unless (memq backend '(native curl))
+          (error 'https-backend "expected native or curl" backend))
+        backend)))
+
+  (define curl-available
+    (let ([known 'no])
+      (lambda ()
+        (when (eq? known 'no)
+          (set! known
+            (zero? (system "command -v curl >/dev/null 2>&1"))))
+        known)))
+
+  (define (shell-quoted text)
+    (string-append
+      "'"
+      (apply string-append
+             (map (lambda (c) (if (char=? c #\') "'\\''" (string c)))
+                  (string->list text)))
+      "'"))
+
+  (define (curl-request method url headers body-bytes)
+    ;; The whole request through a curl subprocess: -i puts the status
+    ;; line and headers on stdout ahead of the body, which curl has
+    ;; already de-framed -- so the body reads to process end,
+    ;; whatever the transfer encoding was.
+    (let-values ([(to from errors pid)
+                  (open-process-ports
+                    (apply string-append
+                           "exec curl -sS -i --max-time "
+                           (number->string (https-timeout))
+                           " -X " (symbol->string method)
+                           (append
+                             (map (lambda (header)
+                                    (string-append
+                                      " -H "
+                                      (shell-quoted
+                                        (format "~a: ~a" (car header)
+                                                (cdr header)))))
+                                  headers)
+                             (if body-bytes
+                                 '(" --data-binary @-")
+                                 '())
+                             (list " " (shell-quoted url))))
+                    'block)])
+      (when body-bytes (put-bytevector to body-bytes))
+      (close-port to)
+      (let ([channel
+             (make-channel
+               (lambda (bv start count)
+                 (let ([got (get-bytevector-n! from bv start count)])
+                   (if (eof-object? got) 0 got)))
+               (lambda (bv) (error 'https "the curl channel is read-only"))
+               (lambda ()
+                 (close-port from)
+                 (close-port errors)))])
+        (guard (ex [else
+                    (let ([complaint
+                           (guard (e2 [else ""])
+                             (let ([bytes (get-bytevector-all errors)])
+                               (if (eof-object? bytes)
+                                   ""
+                                   (utf8->string bytes))))])
+                      ((channel-close! channel))
+                      (if (string=? complaint "")
+                          (raise ex)
+                          (error 'https
+                                 (format "curl: ~a" (trim complaint)))))])
+          (let-values ([(head leftover) (read-until-blank-line channel)])
+            (let-values ([(status headers) (parse-response-head head)])
+              (make-https-response
+                status headers
+                ;; no framing headers: curl already decoded the body
+                (body-port channel leftover '())
+                channel)))))))
+
   (define (https-request method url . options)
     ;; options: an optional header alist, then an optional body
     ;; (string or bytevector).  -> an https-response whose port streams
@@ -667,33 +752,40 @@
                         (cadr options))]
              [body-bytes (cond [(not body) #f]
                                [(string? body) (string->utf8 body)]
-                               [else body])]
-             [channel (if secure?
-                          ((https-connector) host port)
-                          (tcp-connect host port))])
-        (guard (ex [else ((channel-close! channel)) (raise ex)])
-          ((channel-write! channel)
-           (string->utf8
-             (apply string-append
-                    (format "~a ~a HTTP/1.1\r\n" method path)
-                    (format "Host: ~a\r\n" host)
-                    "Connection: close\r\n"
-                    (append
-                      (map (lambda (header)
-                             (format "~a: ~a\r\n" (car header) (cdr header)))
-                           headers)
-                      (if body-bytes
-                          (list (format "Content-Length: ~a\r\n"
-                                        (bytevector-length body-bytes)))
-                          '())
-                      '("\r\n")))))
-          (when body-bytes ((channel-write! channel) body-bytes))
-          (let-values ([(head leftover) (read-until-blank-line channel)])
-            (let-values ([(status headers) (parse-response-head head)])
-              (make-https-response
-                status headers
-                (body-port channel leftover headers)
-                channel)))))))
+                               [else body])])
+        (if (or (eq? (https-backend) 'curl)
+                (and secure? (not (tls-available?)) (curl-available)))
+            (curl-request method url headers body-bytes)
+            (native-request method secure? host port path
+                            headers body-bytes)))))
+
+  (define (native-request method secure? host port path headers body-bytes)
+    (let ([channel (if secure?
+                       ((https-connector) host port)
+                       (tcp-connect host port))])
+      (guard (ex [else ((channel-close! channel)) (raise ex)])
+        ((channel-write! channel)
+         (string->utf8
+           (apply string-append
+                  (format "~a ~a HTTP/1.1\r\n" method path)
+                  (format "Host: ~a\r\n" host)
+                  "Connection: close\r\n"
+                  (append
+                    (map (lambda (header)
+                           (format "~a: ~a\r\n" (car header) (cdr header)))
+                         headers)
+                    (if body-bytes
+                        (list (format "Content-Length: ~a\r\n"
+                                      (bytevector-length body-bytes)))
+                        '())
+                    '("\r\n")))))
+        (when body-bytes ((channel-write! channel) body-bytes))
+        (let-values ([(head leftover) (read-until-blank-line channel)])
+          (let-values ([(status headers) (parse-response-head head)])
+            (make-https-response
+              status headers
+              (body-port channel leftover headers)
+              channel))))))
 
   (define (https-response-text response)
     ;; Drain the body as UTF-8 and close the connection.

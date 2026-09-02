@@ -104,6 +104,24 @@
               "hello world")
        (delete-file path))
 
+     ;; -- the same framing through the curl backend --------------------
+
+     (parameterize ([https-backend 'curl])
+       (check 'curl-content-length (https-get (local "/plain"))
+              "hello world")
+       (check 'curl-dechunks (https-get (local "/chunked"))
+              "chunk one and chunk2")
+       (check 'curl-redirect-followed (https-get (local "/redirect"))
+              "hello world")
+       (check 'curl-error-status-raises
+              (guard (ex [else 'raised]) (https-get (local "/missing")))
+              'raised)
+       (let ([response (https-request 'GET (local "/plain"))])
+         (check 'curl-response-status
+                (https-response-status response) 200)
+         (check 'curl-response-streams (https-response-text response)
+                "hello world")))
+
      (system (format "kill ~a 2>/dev/null" server-pid))
 
      ;; -- the TLS connector, against live hosts ------------------------
@@ -129,4 +147,13 @@
                     (https-get "https://expired.badssl.com/")
                     'accepted)
                   'rejected)
+           (parameterize ([https-backend 'curl])
+             (check 'curl-tls-fetches
+                    (> (string-length (https-get "https://example.com/")) 0)
+                    #t)
+             (check 'curl-tls-rejects-wrong-host
+                    (guard (ex [else 'rejected])
+                      (https-get "https://wrong.host.badssl.com/")
+                      'accepted)
+                    'rejected))
            (format #t "~a https checks passed\n" checks)))))

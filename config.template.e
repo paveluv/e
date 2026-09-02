@@ -31,6 +31,8 @@
 ;;                                ; box, or colored -- or design your
 ;;                                ; own marking with the style DSL:
 ;; (set-style! 'matching-paren '(curly-underline (underline-color 208)))
+;; (https-backend 'curl)          ; web requests through curl instead of
+;;                                ; the built-in FFI TLS (default 'native)
 ;; (markdown-browser "firefox")   ; command opening a markdown view's
 ;;                                ; web links (default "xdg-open")
 ;; (markdown-view-max-width 120)  ; reading-width cap of markdown views
