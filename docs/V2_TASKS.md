@@ -144,7 +144,15 @@ re-export facade until its importers migrate:
       alongside: the shared pure string helpers (tail, prefix?,
       suffix?, join) now have one home below the seams, and styles.e/
       keymap.e dropped their local copies
-- [ ] `paint.e` (screen model, cache, painting)
+- [~] `paint.e` begun: the row painter moved -- display-editor-line
+      (styled runs, marks, links, selection, wrap/truncation edges),
+      emit-runs, ansi/goto/fit, soft-wrap break computation, and
+      hyperlink detection, all pure given their inputs and headlessly
+      tested for the first time (tests/paint.ss); strings.e gained the
+      KMP `search`.  Remaining for the head.e era: frame composition
+      -- layout, scrolling, the screen cache, paint-window!,
+      paint-echo-area!, redraw! -- which reads window records
+      directly and moves when they do
 - [ ] `echo.e` (notification area, prompts)
 - [ ] `head.e` (window tree, per-user state, routing)
 - [ ] `edit.e` absorbs the command layer; core.e deleted

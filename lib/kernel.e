@@ -143,7 +143,8 @@
   ;; the v2 seam modules arrive prefixed in the editor's top level,
   ;; exactly as code imports them -- M-x says (state:edit! ...) too
   (define seam-modules
-    '(text state actors policy sandbox log styles keymap tty strings))
+    '(text state actors policy sandbox log styles keymap tty strings
+       paint))
 
   (define (init-module! name)
     ;; Import the module's library into the editor's top level
