@@ -109,9 +109,28 @@ state.
 - [ ] port the claude module onto a minted session -- deliberately
       last: it stays on the `claude` branch until v2 is finished
 
-## Stage 5 -- the wire (optional, later)
+## Stage 5 -- the wire (after core.e is gone)
 
-- [ ] serialize the protocol; remote heads and out-of-process agents
+Decided 2026-09-03: the wire follows the core dissolution, and
+precedes the claude port (agents become connections).  Every
+dissolution slice is made with it in mind: seam data stays plain
+(spans/deltas will need a canonical list form), the head layer is
+the client side, everything below it is the server side.
+
+- [ ] serialize the seam data (spans, deltas) and write the protocol
+      spec: request/response with ids plus the event stream; a
+      connection is an actor with a minted policy session
+- [ ] server sockets in sys (unix first; TCP+TLS later -- only the
+      client side of libssl exists today)
+- [ ] `wire.e`: connection -> actor session; dispatch to state:/
+      actors:/policy:; per-connection event coalescing; resync by
+      snapshot + revision on reconnect
+- [ ] `remote-state.e`: the state: signatures over the wire, so a
+      head links against a remote store unchanged; optimistic local
+      apply with basis/rebase reconciliation on the edit path
+- [ ] `e --server` / `e --client`; then decide what runs where (PTY
+      apps are the hybrid: process with the server, capture and
+      painting with the head)
 
 ## Core dissolution (crosses stages)
 
@@ -166,7 +185,10 @@ re-export facade until its importers migrate:
       era: presentation (present-echo!, paint-echo-area!, geometry
       driver) and the prompts, which read keys and own the modal loop
 - [~] `head.e` begun: the window tree moved -- the window and
-      layout-split records, the seat state (windows, layout root,
+      layout-split records -- and, once buffer facts had gone to the
+      store, the seat's buffer record too (a client-side cache of a
+      store buffer plus per-seat selection, spots, and presentation
+      toggles: exactly what a remote head will hold), the seat state (windows, layout root,
       selected window, divider output) behind identifier-syntax
       facades, and the pure tiling geometry (leaves, replace, parent,
       minima, weighted splits, layout-node!).  Remaining: routing
