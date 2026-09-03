@@ -13,7 +13,8 @@
     current-buffer buffer-list point mark
     buffer? buffer-name buffer-file buffer-text buffer-clean? buffer-modified
     buffer-read-only buffer-mode-name buffer-line-numbers
-    buffer-line buffer-line-count buffer-line-styles buffer-state-id
+    buffer-line buffer-lines buffer-line-count buffer-line-styles
+    buffer-state-id
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
@@ -165,14 +166,16 @@
             ;; scrolling horizontally
             (mutable wrap)))
 
-  ;; Every core buffer is mirrored into the (state) store, where other
-  ;; actors -- agents, future heads -- see and edit it.  The core is
-  ;; the store's first privileged client: its own edits mirror through
-  ;; the transactional API (whole-line and line-splice granularity),
-  ;; wholesale replacements mirror as resets, and foreign edits flow
-  ;; back before each frame (sync-foreign-edits!).  On any mirror
-  ;; trouble the core wins: the buffer resets the store copy from its
-  ;; own lines.
+  ;; The (state) store is the master copy of every buffer's text; the
+  ;; core is its first privileged client.  A core buffer's lines field
+  ;; is a cache of the store's immutable text vector, adopted after
+  ;; every operation -- the core never mutates a line vector in place.
+  ;; Core edits enter the store transactionally (whole-line and
+  ;; line-splice granularity), wholesale replacements are resets, and
+  ;; foreign actors' edits flow back before each frame
+  ;; (sync-foreign-edits!).  If the store refuses (a foreign edit
+  ;; overlapped mid-command) or breaks, the core keeps editing:
+  ;; content wins locally and the store is reset to match.
 
   (define ui-actor '(head main))
 
@@ -183,25 +186,47 @@
                          (vector->list (buffer-lines b))))
       (buffer-state-rev-set! b 0)))
 
-  (define (mirror-reset! b)
-    (when (buffer-state-id b)
-      (guard (ex [else (void)])
-        (buffer-state-rev-set!
-          b (state:reset! ui-actor (buffer-state-id b)
-                          (buffer-lines b))))))
+  (define (adopt-state! b)
+    ;; make the cache the store's current text -- the vectors are
+    ;; immutable, so adoption is reference sharing, never a copy
+    (let-values ([(text revision) (state:snapshot (buffer-state-id b))])
+      (buffer-lines-raw-set! b text)
+      (buffer-state-rev-set! b revision)
+      (bump-buffer-revision! b)))
 
-  (define (mirror-edit! b span replacement)
-    ;; one transactional mirror step; any refusal resynchronizes
-    ;; wholesale, core content winning
-    (when (buffer-state-id b)
-      (guard (ex [else (mirror-reset! b)])
-        (let-values ([(status info)
-                      (state:edit! ui-actor (buffer-state-id b)
-                                   (buffer-state-rev b)
-                                   span replacement)])
-          (if (eq? status 'applied)
-              (buffer-state-rev-set! b info)
-              (mirror-reset! b))))))
+  (define (adopt-local! b text)
+    ;; the store is unreachable: keep editing on the local cache alone
+    (buffer-lines-raw-set! b text)
+    (bump-buffer-revision! b))
+
+  (define (state-reset! b new-lines)
+    ;; wholesale replacement: a new store baseline, adopted back
+    (if (buffer-state-id b)
+        (guard (ex [else (adopt-local! b new-lines)])
+          (state:reset! ui-actor (buffer-state-id b) new-lines)
+          (adopt-state! b))
+        (adopt-local! b new-lines)))
+
+  (define (state-edit! b span replacement)
+    ;; The ui's text edits go through the store first and the cache
+    ;; adopts the result.  A stale refusal means a foreign edit
+    ;; overlapped mid-command: core content wins -- the edit applies
+    ;; to the cache's coordinates and resets the store (the conflict
+    ;; is in the audit log; see the tech debt ledger).
+    (define (local-text)
+      (let-values ([(new-text delta)
+                    (text:apply-edit (buffer-lines b) span replacement)])
+        new-text))
+    (if (buffer-state-id b)
+        (guard (ex [else (adopt-local! b (local-text))])
+          (let-values ([(status info)
+                        (state:edit! ui-actor (buffer-state-id b)
+                                     (buffer-state-rev b)
+                                     span replacement)])
+            (if (eq? status 'applied)
+                (adopt-state! b)
+                (state-reset! b (local-text)))))
+        (adopt-local! b (local-text))))
 
   (define (mirror-rename! b)
     (when (buffer-state-id b)
@@ -219,9 +244,7 @@
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
 
   (define (buffer-lines-set! b new-lines)
-    (buffer-lines-raw-set! b new-lines)
-    (bump-buffer-revision! b)
-    (mirror-reset! b))
+    (state-reset! b new-lines))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
   (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)))
@@ -534,23 +557,20 @@
   (define (line-at n) (vector-ref lines n))
   (define (current-line) (line-at point-row))
   (define (set-line! n s)
-    (let ([b (window-buffer current-window)]
-          [old (vector-ref lines n)])
-      (vector-set! lines n s)
-      (bump-buffer-revision! b)
-      (mirror-edit! b (text:make-span n 0 n (string-length old))
-                    (list s))))
+    ;; the store is the master: the edit goes there, the cache adopts
+    (let ([b (window-buffer current-window)])
+      (state-edit! b (text:make-span n 0 n
+                                     (string-length (vector-ref lines n)))
+                   (list s))))
 
   (define (splice-lines! from to inserted)
-    ;; Replace whole lines [from, to) of the current buffer, mirrored
-    ;; as one transactional edit rather than a wholesale reset -- so
-    ;; other actors' marks and bases survive ordinary typing.
+    ;; Replace whole lines [from, to) of the current buffer as one
+    ;; transactional store edit -- so other actors' marks and bases
+    ;; survive ordinary typing.
     (let* ([b (window-buffer current-window)]
            [old lines]
            [count (vector-length old)])
-      (buffer-lines-raw-set! b (vector-splice old from to inserted))
-      (bump-buffer-revision! b)
-      (mirror-edit!
+      (state-edit!
         b
         (cond
           [(< to count) (text:make-span from 0 to 0)]
@@ -569,7 +589,8 @@
           [else inserted]))))
 
   (define (editor-snapshot)
-    (list (vector-copy lines) point-row point-col trailing-newline? modified?))
+    ;; the cache vectors are immutable now: snapshots share, never copy
+    (list lines point-row point-col trailing-newline? modified?))
 
   (define (restore-snapshot! snapshot)
     ;; The snapshot was just popped off a history stack, so nothing else
@@ -4631,9 +4652,8 @@
               (guard (ex [else (void)])
                 (let-values ([(text revision) (state:snapshot id)])
                   (unless (= revision (buffer-state-rev b))
-                    ;; adopt a copy: the core mutates lines in place,
-                    ;; and the store's vector is immutable history
-                    (buffer-lines-raw-set! b (vector-copy text))
+                    ;; adoption is sharing: nothing mutates in place
+                    (buffer-lines-raw-set! b text)
                     (bump-buffer-revision! b)
                     (buffer-state-rev-set! b revision)
                     (when (buffer-file b) (buffer-modified-set! b #t))

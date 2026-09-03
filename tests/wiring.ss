@@ -106,6 +106,13 @@
      (check 'point-published-as-mark
             (call-with-input-file probe read) #t)
 
+     ;; mastery: the core's line cache IS the store's immutable text
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let-values ([(text rev) (state:snapshot (buffer-state-id (current-buffer)))]) (eq? text (buffer-lines (current-buffer)))) p)) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (check 'cache-is-the-store-text
+            (call-with-input-file probe read) #t)
+
      (delete-file probe)
      (close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))
