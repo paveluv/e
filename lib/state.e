@@ -23,7 +23,7 @@
   (export create! delete! reset! rename!
           buffer-list exists? buffer-name find-named
           snapshot revision line-count line extract
-          edit! undo!
+          edit! undo! history
           set-mark! mark drop-mark! marks
           subscribe! unsubscribe!)
   (import (rnrs)
@@ -40,7 +40,7 @@
     (fields (mutable label)
             (mutable text)       ; immutable line vector, per (text)
             (mutable revision)
-            (mutable deltas)     ; ((revision . delta) ...) newest first
+            (mutable deltas)     ; (#(revision actor delta) ...) newest first
             (mutable marks)      ; (((actor . name) . position) ...)
             (mutable undo)))     ; (#(revision actor delta live?) ...)
 
@@ -212,9 +212,10 @@
         [else
          (let take ([entries (buffer-deltas b)] [acc '()])
            (cond [(null? entries) acc]
-                 [(<= (caar entries) basis) acc]
+                 [(<= (vector-ref (car entries) 0) basis) acc]
                  [else (take (cdr entries)
-                             (cons (cdar entries) acc))]))])))
+                             (cons (vector-ref (car entries) 2)
+                                   acc))]))])))
 
   (define (rebase-through span deltas)
     ;; the span carried across each delta in order, or #f when any
@@ -234,7 +235,8 @@
         (buffer-text-set! b new-text)
         (buffer-revision-set! b new-revision)
         (buffer-deltas-set!
-          b (bounded (cons (cons new-revision delta) (buffer-deltas b))))
+          b (bounded (cons (vector new-revision actor delta)
+                           (buffer-deltas b))))
         (buffer-marks-set!
           b (map (lambda (entry)
                    (cons (car entry)
@@ -319,6 +321,27 @@
          (notify! `(edit ,id ,(cadr outcome) ,actor ,(caddr outcome)))
          (values 'applied (cadr outcome))]
         [else (values (car outcome) (cadr outcome))])))
+
+  (define (history id . count)
+    ;; Attribution: the newest applied edits, as plain data --
+    ;; ((revision actor start end new-end) ...) newest first, bounded
+    ;; by the delta log.  Resets clear it: a reset is a new baseline.
+    (let ([n (if (pair? count) (car count) 20)])
+      (locked
+        (lambda ()
+          (let take ([entries (buffer-deltas (buffer-of 'history id))]
+                     [n n])
+            (if (or (zero? n) (null? entries))
+                '()
+                (let* ([entry (car entries)]
+                       [d (vector-ref entry 2)]
+                       [s (text:delta-span d)])
+                  (cons (list (vector-ref entry 0)
+                              (vector-ref entry 1)
+                              (text:span-start s)
+                              (text:span-end s)
+                              (text:delta-new-end d))
+                        (take (cdr entries) (- n 1))))))))))
 
   ;;; Marks -------------------------------------------------------------------
 

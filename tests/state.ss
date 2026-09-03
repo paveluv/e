@@ -119,6 +119,21 @@
      (let-values ([(status info) (state:undo! bot u)])
        (check 'undo-blocked-by-overlap status 'blocked))
 
+     ;; -- attribution --------------------------------------------------------
+
+     (define h (state:create! alice "blame" '("one" "two")))
+     (state:edit! alice h 0 (span 0 0 0 3) '("ONE"))
+     (state:edit! bot h 1 (span 1 0 1 0) '("> "))
+     (check 'history-attributes-newest-first
+            (map (lambda (entry) (list (car entry) (cadr entry)))
+                 (state:history h))
+            (list (list 2 bot) (list 1 alice)))
+     (check 'history-carries-positions
+            (cddr (car (state:history h)))
+            '((1 . 0) (1 . 0) (1 . 2)))
+     (state:reset! alice h '("fresh"))
+     (check 'reset-clears-history (state:history h) '())
+
      ;; -- subscriptions ------------------------------------------------------
 
      (define events (box '()))
