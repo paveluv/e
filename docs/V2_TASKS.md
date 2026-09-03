@@ -14,8 +14,9 @@ state.
       creation, line edits, splices, resets, deletion, renames;
       foreign edits synced back per frame (tests/wiring.ss)
 - [x] the human's point published as the ui actor's 'point mark
-- [ ] flip mastery: core reads text through state snapshots and drops
-      its own line cache (today: core is master, state mirrors)
+- [x] flip mastery: the store is the master text; the core's lines
+      field is an adopted cache of the store's immutable vector,
+      never mutated in place (the eq? proof is in tests/wiring.ss)
 - [ ] rebase window points through foreign deltas instead of clamping
 - [ ] publish the v0.1 region (mark..point) as a state span
 
@@ -79,6 +80,7 @@ priority; items graduate into stage tasks when picked up.
 | 45 | View buffers mirror wholesale on every refresh | `lib/core.e` `view-replace!` -> `buffer-lines-set!` -> `state:reset!` runs per app refresh; a busy terminal pays O(rows) store copies for content nothing subscribes to. Fix: an opt-out flag on app buffers (skip `mirror-create!`), or make `state:reset!` diff against the current text and no-op when equal. Measure with the terminal fixture in tests/interactive.ss. |
 | 40 | `state.e` undo history is unbounded | `lib/state.e` `apply-locked!` conses onto `buffer-undo` forever; the delta log is bounded (`delta-log-limit` 256) but undo is not. Fix: bound it the same way (`bounded`), dropping dead (`live? = #f`) entries first. |
 | 35 | `splice-lines!` span math is only integration-tested | `lib/core.e` `splice-lines!` translates whole-line splices into spans with three cases (interior, end-of-buffer, whole-buffer). tests/wiring.ss covers them live; add unit checks in tests/state.ss driving the same spans and comparing against `vector-splice` results. |
+| 35 | Store outage silently forks the text | `lib/core.e` `state-edit!`/`state-reset!` guard clauses fall back to `adopt-local!` when the store errors: the editor keeps working but the store copy silently diverges until the next successful reset. Fix: log the outage once under `state`, and re-reset on recovery. |
 | 30 | Reloading `state.e` leaves two library instances | `reload-module!` (`lib/core.e`) re-evaluates state, but core keeps the instance it compiled against; both share the store via `(kernel)` `persistent-cell`, so behavior stays coherent while stale code lingers. Fix: have reload-module! refuse seam modules the core links against, or restart-advice message. |
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
 | 20 | Only the selected window's cursor is published | `lib/core.e` `publish-point!` publishes one 'point mark for `current-window`. Fix: publish per window (mark name `(point . window-index)`) and the v0.1 region (buffer mark .. point) as a span mark. |
