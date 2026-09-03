@@ -1,0 +1,262 @@
+# e v2: a multi-actor design
+
+Status: draft for iteration. v0.1 is the stable prototype this
+redesign departs from.
+
+## Why
+
+e v0.1 is an Emacs-like editor built on assumptions inherited from
+last-century Unix editors: one human, one keyboard, one screen, one
+cursor, one synchronous command loop that owns everything. The Claude
+assistant experiment stress-tested every one of those assumptions and
+each gave way only through workarounds: worker threads repainting
+through duplicated display ports, approval hand-offs smuggled through
+condition variables, a capability sandbox bolted beside the real API,
+edits raced between keystrokes.
+
+v2 is designed for multiple actors from the ground up: one or more
+humans, each with their own UI head, and any number of AI agents
+working through the API -- concurrently, in one editing session. The
+Emacs interaction vocabulary (buffers, windows, keys, M-x) survives
+where it earns its place; the single-user implementation underneath
+it does not.
+
+## The layers
+
+```
+  human ─ keyboard/mouse ─→ UI head ──┐
+  human ─ keyboard/mouse ─→ UI head ──┤        ┌─→ apps
+                                      ├─→ buffer state
+  agent ───────── API/protocol ───────┤        └─→ kernel
+  agent ───────── API/protocol ───────┘
+```
+
+### Kernel
+
+Owns exactly three things:
+
+- **registries** -- the generic ownership machinery (v0.1's module
+  registration and retraction, kept);
+- **module lifecycle** -- load, hot reload, init/retract;
+- **the scheduling substrate** -- actor mailboxes and the event
+  queues everything above runs on.
+
+The kernel knows nothing of keyboards, screens, or buffers. The
+third item is the new one, and it is the deepest fix: v0.1's main
+loop -- one thread blocked in a keyboard read, owning all mutation --
+forced every concurrent feature into a private workaround (the
+terminal reader's display port, the assistant's approval
+condition-variable, "workers run between keystrokes"). The kernel
+provides the one true answer to "who runs when", and the layers
+above stop improvising.
+
+### Buffer state
+
+A multi-actor-safe module owning the state of all buffers, behind a
+message-shaped API. It knows nothing of UI or keyboards. Kernel +
+buffer state run headless: that pair is the whole system an agent
+needs, and later the server that remote UIs connect to.
+
+The v0.1 lesson forcing real redesign here: buffers today are not
+self-contained. Point and mark live in windows, the kill ring is a
+global, "current buffer" is a UI notion, undo is tangled with
+commands. Extraction therefore changes the model, not just the
+module boundary:
+
+- **Marks are first-class; cursors are marks.** A mark is a named,
+  actor-owned position anchored to content, rebased automatically
+  when other actors edit. "Point" is nothing but an actor's cursor
+  mark; multiple cursors exist by construction, one per actor (or
+  more). Regions are mark pairs. There is no global point anywhere.
+
+- **Edits are transactions.** An edit is data:
+
+  ```scheme
+  (edit (actor  (agent claude 3))
+        (buffer buf-17)
+        (basis  revision-241)        ; what the actor last saw
+        (span   (mark-a . mark-b))   ; or an anchored range
+        (text   "..."))
+  ```
+
+  Buffer state applies it -- rebasing every other actor's marks --
+  or rejects it as stale when the basis revision no longer permits a
+  clean application. Compare-and-swap on revisions covers local
+  multi-actor; operational transforms and CRDTs are deliberately out
+  of scope until networked collaboration is real.
+
+- **Single-writer concurrency.** All mutation flows through one
+  serialized queue; reads come from cheap versioned snapshots.
+  No buffer mutex zoo, no torn reads, and the keystroke path stays
+  fast because applying one edit is microseconds. This choice is
+  what makes "headless server" true rather than aspirational.
+
+- **Subscriptions, not polling.** Actors subscribe to what they care
+  about: a UI to the buffers its windows show, an agent to *log* or
+  to a file's buffer. Change events carry the edit data, so a
+  subscriber can update incrementally. v0.1's repaint-everything-
+  per-keystroke is the degenerate single-subscriber case.
+
+- **Undo: shared and attributed.** Per buffer, one linear undo
+  history in which every entry names its actor. "Undo my last edit"
+  is best-effort selective undo (apply the inverse if it still
+  rebases cleanly). Fully general per-actor undo is research-grade
+  and explicitly not promised.
+
+### UI heads
+
+A UI head is one actor's screen: the window tree, keymaps, echo/
+notification area, kill ring, histories, and rendering -- everything
+v0.1 wrongly held globally that is really per-user. A head talks to
+buffer state like any other client: it subscribes to the buffers it
+shows and submits edits attributed to its human.
+
+Multiple heads may exist (two terminals into one session; later, two
+machines). Each head owns its user's view state exclusively --
+including scroll positions, which today's terminal module already
+had to invent per-window "unfollowed" tracking for.
+
+Agents do not own UI state. They may send **suggestions** to a
+specific actor's head -- `(reveal buffer span)`, `(highlight span
+face)`, `(open-view name)` -- which the head honors or ignores by
+its user's policy. That is how "the assistant walks you to the bug"
+works without an agent ever holding a window.
+
+### Apps
+
+Apps (file editing included -- it is just the default app) talk to
+buffer state for content and to UI heads for presentation requests.
+An app declares what it owns through kernel registries exactly as in
+v0.1. The difference: app operations take explicit actor and buffer
+arguments -- nothing reads an ambient "current buffer", because
+there is no such thing; there is only "actor X's cursor's buffer".
+
+### Actors
+
+An actor is an identity plus a session:
+
+```scheme
+(actor (kind human) (name pavel) (head tty-1))
+(actor (kind agent) (name claude) (instance 3))
+```
+
+Every operation entering buffer state carries its actor. Identity is
+the foundation for four features at once: permissions, attribution
+(in-session blame: who wrote this line), the audit stream (v0.1's
+`(log-view 'claude)` generalized to every actor), and per-actor
+budgets. It must live in the seam from the first commit; it cannot
+be retrofitted cheaply.
+
+**The interaction protocol.** Asking is asymmetric today: apps can
+prompt only through the one keyboard. v2 defines one generic
+mechanism: any actor (usually an app or agent) may pose a question
+to another actor -- `(ask actor question choices)` -- delivered
+through that actor's head (for humans: the echo area / a prompt) or
+mailbox (for agents), answered asynchronously, reply routed back.
+The v0.1 assistant's `C-c y` approval flow was a hand-built instance
+of this; in v2 it is the library case.
+
+## The seam is a protocol
+
+The buffer-state API is message-shaped: operations in, results and
+events out, all plain data -- no closures, no shared mutable
+structures across the boundary. One definition buys four things:
+
+1. **Network transparency later** -- serialize the same messages and
+   remote heads and agents fall out.
+2. **Audit and replay** -- the operation stream is the log; a session
+   can be replayed, and "what did agent 3 do" is a filter.
+3. **AI-native surface** -- tool calls are already this shape; the
+   v0.1 claude module's JSON loop was an accidental prototype of the
+   v2 protocol.
+4. **The security boundary** -- see below.
+
+In-process callers use a fast path (the messages are records, not
+JSON), but the discipline holds: if it cannot be expressed as a
+message, it does not cross the seam.
+
+## Permissions
+
+Scheme gives us two real mechanisms, both proven in v0.1, and one
+honest limit.
+
+**Environments are permission sets.** `(claude-safe)` demonstrated
+symbol-level security: evaluate in an environment holding only the
+granted bindings, and everything else is not forbidden but
+*unreachable* -- enforcement, not detection. v2 keeps this for the
+expression-evaluation tier.
+
+**Capabilities are closures.** Environments give tiers, not
+per-actor policy ("agent A may edit *scratch* but only read lib/").
+The object-capability pattern covers that: a session mints, per
+actor, a record of procedures curried with the actor's identity that
+check policy, attribute, and bound their results internally. Holding
+the record is the permission; revocation is dropping it. No new
+mechanism -- discipline at the minting point, with one iron rule
+learned from claude-safe: nothing crossing a permission boundary may
+expose a mutable structure the editor holds; readers return data,
+mutators go through edit transactions.
+
+**Budgets are policy too.** Fuel for evaluation, result-size caps,
+edit quotas, token spend -- per-actor, enforced at the seam, not
+inside individual tools.
+
+**The honest limit.** In-process, all of this constrains a
+misbehaving model, not hostile code: one approved full-power eval
+owns the image. The confirmation gate ("would I type this at M-x?")
+remains the in-process trust boundary. True isolation is the process
+boundary -- an untrusted agent runs in its own process speaking the
+protocol, and the server enforces policy per connection. The
+collaboration seam and the security boundary are the same feature;
+building the first delivers the second.
+
+## What stays
+
+- The interaction vocabulary: buffers, windows, key chords, M-x,
+  the echo area, describe. Fingers are an API too.
+- Hot reload, registries, and the module conventions -- they move
+  into the kernel largely intact.
+- The terminal emulator, markdown view, describe corpus, https/json
+  -- apps and infrastructure that port onto the new seams.
+- The test discipline: every extraction lands with its suite green.
+
+## Migration: the strangler path
+
+No big bang. Each stage keeps the editor working and the suites
+green; hot reload makes the extractions unusually safe to iterate.
+
+1. **Extract buffer state** behind the new API; the existing UI
+   becomes its first (privileged) client. Marks become first-class;
+   window point becomes a mark owned by the sole human actor.
+2. **Introduce actor identity** in every state operation; the audit
+   stream generalizes from `claude` to all actors; edits gain
+   attribution.
+3. **Split the main loop** into kernel scheduling: the keyboard
+   becomes one event producer among several; prompts become the
+   interaction protocol; the display-port and between-keystrokes
+   workarounds retire.
+4. **Mint capabilities** per actor; the assistant moves from the
+   bolt-on sandbox to a minted session; budgets move to policy.
+5. **Lift the seam onto a wire** (optional, later): serialize the
+   protocol, allow remote heads and out-of-process agents; this is
+   also the moment real isolation exists.
+
+Stages 1-2 are the bulk of the value and can be validated entirely
+by the existing suites plus new state-layer tests. Stage 3 is the
+most delicate (it touches everything interactive) and should land
+behind the old loop as a facade first.
+
+## Open questions
+
+- **Granularity of edit rebasing**: line-based (matches the current
+  buffer representation) vs. character-span; line-based is likely
+  enough and much simpler.
+- **Undo attribution UX**: how "undo my edit" behaves when later
+  edits overlap it; propose refusing with an explanation first.
+- **Mode/keymap ownership**: modes are buffer properties today;
+  per-head keymap overlays are wanted (two humans, two bindings).
+- **Notification storms**: an agent editing in a tight loop must
+  coalesce change events for subscribers; batching policy at the
+  state layer.
+- **Naming**: "actor", "head", "session", "seam" used here; settle
+  the vocabulary before code does it for us.
