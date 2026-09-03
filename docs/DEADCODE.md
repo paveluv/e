@@ -15,7 +15,7 @@ with a date; deletions note the commit.
   `sigwinch-registered` (core), `region-printing` (edit),
   `libc-character-locale`, `libutil-loaded?` (sys),
   `state-subscription`, `foreign-sync-hooked`, `reload-tail-hooked`,
-  `ui-actor-registered`
+  `ui-actor-registered`, `log-presenter-installed`
   (core, the v2 wiring). Skip these in future sweeps.
 
 ## Deleted

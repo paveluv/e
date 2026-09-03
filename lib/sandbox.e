@@ -81,11 +81,8 @@
                 exact->inexact open-output-string get-output-string
                 put-string disable-interrupts enable-interrupts)
           (prefix (state) state:)
-          (prefix (only (core)
-                        current-buffer buffer-name buffer-file
-                        buffer-mode-name point
-                        log-entries log-length format-log-entry)
-                  core:)
+          (prefix (only (core) current-buffer buffer-name point) core:)
+          (prefix (only (log) log-entries format-log-entry) log:)
           (prefix (only (describe)
                         doc-lookup doc-forms doc-returns
                         doc-libraries doc-description)
@@ -188,7 +185,7 @@
     ;; The newest entries of *log* -- errors and messages land there.
     ;; Default 20, at most 200.
     (let* ([n (min (if (pair? count) (car count) 20) 200)]
-           [entries (let take ([entries (core:log-entries)] [n n])
+           [entries (let take ([entries (log:log-entries)] [n n])
                       (if (or (= n 0) (null? entries))
                           '()
                           (cons (car entries)
@@ -198,7 +195,7 @@
           (apply string-append
                  (map (lambda (entry)
                         (string-append
-                          (clipped (core:format-log-entry entry) 500) "\n"))
+                          (clipped (log:format-log-entry entry) 500) "\n"))
                       (reverse entries))))))
 
   (define (describe-text name)

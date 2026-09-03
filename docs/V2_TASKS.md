@@ -104,7 +104,13 @@ re-export facade until its importers migrate:
 
 - [ ] `styles.e` (faces, the style DSL)
 - [ ] `keymap.e` (key syntax, contexts, dispatch)
-- [ ] `log.e` (the log store; log-view stays an app)
+- [x] `log.e` (the log store; log-view stays an app) -- the records
+      (persistent cell: reloads keep the log), the formatter
+      registry, log!/entries/history moved; the core keeps echo
+      presentation, installed as the log's presenter hook, plus
+      facade aliases for every old name; sandbox reads log: directly,
+      and policy's audit trail streams quietly into (log-view
+      'policy)
 - [ ] `tty.e` (input decoding, raw terminal)
 - [ ] `paint.e` (screen model, cache, painting)
 - [ ] `echo.e` (notification area, prompts)
@@ -123,7 +129,7 @@ priority; items graduate into stage tasks when picked up.
 | 45 | View buffers mirror wholesale on every refresh | `lib/core.e` `view-replace!` -> `buffer-lines-set!` -> `state:reset!` runs per app refresh; a busy terminal pays O(rows) store copies for content nothing subscribes to. Fix: an opt-out flag on app buffers (skip `mirror-create!`), or make `state:reset!` diff against the current text and no-op when equal. Measure with the terminal fixture in tests/interactive.ss. |
 | 35 | `splice-lines!` span math is only integration-tested | `lib/core.e` `splice-lines!` translates whole-line splices into spans with three cases (interior, end-of-buffer, whole-buffer). tests/wiring.ss covers them live; add unit checks in tests/state.ss driving the same spans and comparing against `vector-splice` results. |
 | 35 | Store outage silently forks the text | `lib/core.e` `state-edit!`/`state-reset!` guard clauses fall back to `adopt-local!` when the store errors: the editor keeps working but the store copy silently diverges until the next successful reset. Fix: log the outage once under `state`, and re-reset on recovery. |
-| 30 | Reloading `state.e` leaves two library instances | `reload-module!` (`lib/core.e`) re-evaluates state, but core keeps the instance it compiled against; both share the store via `(kernel)` `persistent-cell`, so behavior stays coherent while stale code lingers. Fix: have reload-module! refuse seam modules the core links against, or restart-advice message. |
+| 30 | Reloading a core-linked seam module leaves two library instances | `reload-module!` (`lib/kernel.e`) re-evaluates `state.e`/`log.e`/`text.e`/`actors.e`, but core keeps the instances it compiled against; both share stores via `(kernel)` `persistent-cell` (state store, log records, log presenter, pending asks), so behavior stays coherent while stale code lingers -- except registries, which fork: a reloaded log.e gets an empty formatter registry while core's aliases (and every module init! going through them) keep the old one. Fix: have reload-module! refuse seam modules core links against (list them next to the core/kernel refusal), or restart-advice message. Repro: reload log -- log-view (core aliases) still styles, but sandbox's log-tail (prefixed log: import, recompiled against the new instance) falls back to unformatted text for formatter-owning components. |
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
 | 20 | Only the selected window's cursor is published | `lib/core.e` `publish-point!` publishes one 'point mark for `current-window`. Fix: publish per window (mark name `(point . window-index)`) and the v0.1 region (buffer mark .. point) as a span mark. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
