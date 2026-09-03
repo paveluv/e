@@ -53,7 +53,7 @@
     add-status-hint! add-buffer-status-hint!
     host-color-scheme add-color-scheme-hook!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
-    load-config! indent-on-tab!
+    load-config! indent-on-tab! persistent-cell
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
     add-shutdown-hook! add-pre-redraw-hook! set-startup-page!
     prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
@@ -5381,7 +5381,6 @@
         (set! mark-active? #t))))
 
   ;; The window whose status bar is being dragged to resize it, or #f.
-  (define drag-status #f)    ; retained for clearing older mouse state
   ;; 1-based cell coordinates within the app's text viewport while a mouse
   ;; event is dispatched, or #f for keyboard events.
   (define app-event-position (make-parameter #f))
@@ -5662,7 +5661,6 @@
     ;; than the lowest) arms a resize drag instead.
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
-    (set! drag-status #f)
     (set! drag-divider #f)
     (set! drag-scrollbar #f)
     (let ([prev last-press]
@@ -5907,7 +5905,6 @@
                  (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
                    (cond [(char=? c #\m)                         ; release
                           (mouse-release! x y b)
-                          (set! drag-status #f)
                           (set! drag-divider #f)
                           (set! drag-scrollbar #f)
                           "MOUSE-HANDLED"]
@@ -6593,6 +6590,18 @@
                     (raise ex)])
           (init-module! name)
           (set! loaded-modules (append loaded-modules (list name)))))))
+
+  (define persistent-cells (make-hashtable equal-hash equal?))
+
+  (define (persistent-cell key make-initial)
+    ;; A box that survives module reloads: the first request under a
+    ;; key creates it; a reloaded module re-initializing gets the same
+    ;; box back, its state intact.  The v2 kernel mechanism, previewed
+    ;; here because the core is the module that never reloads.
+    (or (hashtable-ref persistent-cells key #f)
+        (let ([cell (box (make-initial))])
+          (hashtable-set! persistent-cells key cell)
+          cell)))
 
   (define (load-modules!)
     ;; Load every module in the lib directory (the loader script has
