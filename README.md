@@ -35,14 +35,31 @@ Highlights:
 
 ## Start
 
-e is intended to be installed from source in your home directory.
-There are no prebuilt binaries or packages. Stable Git tags will be created
-once it matures.
+### Prerequisites
+
+The only dependency is [Chez Scheme](https://cisco.github.io/ChezScheme/)
+(a threaded build, which is what every package below ships):
+
+```sh
+# Linux (Debian/Ubuntu)
+$ sudo apt install chezscheme
+
+# FreeBSD
+$ pkg install chez-scheme
+
+# macOS
+$ brew install chezscheme
+```
+
+### Install
+
+e is installed from source in your home directory. There are no prebuilt
+binaries or packages; stable Git tags mark the releases.
 
 Install as a personal editor:
 
 ```sh
-$ git clone https://github.com/paveluv/e ~/.e
+$ git clone --branch v0.1 https://github.com/paveluv/e ~/.e
 $ ~/.e/e file.txt
 ```
 
@@ -50,7 +67,7 @@ Or vendor it inside a project so the editor and project-specific extensions
 travel with the source:
 
 ```sh
-$ git clone https://github.com/paveluv/e ~/git/project/.e
+$ git clone --branch v0.1 https://github.com/paveluv/e ~/git/project/.e
 $ rm -rf ~/git/project/.e/.git
 $ ~/git/project/.e/e file.txt
 ```
@@ -141,6 +158,18 @@ immediately.
 
 Tabs and other control characters display as one space cell. Input is UTF-8,
 but e currently assumes every character occupies one terminal column.
+
+## Version history
+
+- **v0.1** (2026-09-01) -- the first tagged release. The core editor:
+  buffers, recursive tiling windows, incremental search and query
+  replace, meaningful undo, mouse support, styles. `M-x` with semantic
+  completion and captured output; hot-reloadable extension modules;
+  app buffers; a VT-conformant terminal emulator (`C-c t`); the
+  describe reference corpus; a read-only markdown view; the Git
+  history browser; Scheme indentation and formatting; an FFI HTTPS
+  client with certificate verification and a curl fallback. Runs on
+  Linux, FreeBSD, and macOS.
 
 ## How to contribute
 
