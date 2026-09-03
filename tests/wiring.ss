@@ -233,6 +233,20 @@
      (check 'region-dropped-on-quit
             (call-with-input-file probe read) #f)
 
+     ;; blame: a rival's edit is attributed at point from the store's
+     ;; delta log (the tint itself is visual; the geometry is checked
+     ;; in tests/state.ss)
+     (send! "\x1b;xlet ([id (buffer-state-id (current-buffer))]) (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 0 0 2) (list \"BL\"))\r")
+     (pump! 600)
+     (send! "\x1b;<")                   ; onto the rival's span
+     (pump! 300)
+     (send! "\x1b;xblame-at-point!\r")
+     (pump! 900)
+     (check 'blame-names-the-rival-at-point
+            (or (screen-has? 22 "(agent rival) wrote this at revision")
+                (screen-has? 23 "(agent rival) wrote this at revision"))
+            #t)
+
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
