@@ -278,8 +278,9 @@ it moves the whole horizontal boundary. The shorter perpendicular dividers
 resize only their own subtrees. The same `┴` caps a vertical divider where it
 meets a status line directly above the echo area; there it is only a visual
 termination, and dragging still resizes the vertical split.
-`*completions*` is a temporary full-width pop-up above the echo area, not a
-member of the split tree, so opening and closing it leaves the layout intact.
+`*completions*` borrows the prompt's target window for the prompt's
+duration and hands it back afterwards, point and viewport intact; there
+are no pop-up windows, so the split tree is the only source of windows.
 `M-Up`, `M-Down`,
 `M-Left`, and `M-Right` cast an imaginary ray from the cursor in that direction
 and focus the first window it crosses. Thus the cursor's row chooses between

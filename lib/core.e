@@ -454,9 +454,7 @@
   ;; terminal and echo-area size changes.
   (define (set-layout-root! root)
     (let* ([old windows]
-           [popup (completions-window)]
-           [new-windows (append (layout-leaves root)
-                                (if popup (list popup) '()))])
+           [new-windows (layout-leaves root)])
       ;; A removed app target becomes ephemeral. Preserve the buffer it last
       ;; displayed; the app will materialize a fresh target window on demand.
       (for-each
@@ -3285,22 +3283,10 @@
 
 
   (define (window-layout)
-    ;; Recursively tile the persistent split tree. *completions* is a
-    ;; temporary full-width overlay immediately above the echo area; it
-    ;; consumes height but never changes the tree.
+    ;; Recursively tile the persistent split tree.
     ;; -> list of (window start text-height), start 0-based.
-    (let* ([popup (completions-window)]
-           [popup-height (if popup (+ (window-size popup) 1) 0)]
-           [height (max 2 (- rows echo-height popup-height))])
-      (set! layout-dividers '())
-      (let ([plain (layout-node! layout-root 0 0 cols height)])
-        (if popup
-            (begin
-              (window-xoff-set! popup 0)
-              (window-width-set! popup cols)
-              (append plain
-                      (list (list popup height (window-size popup)))))
-            plain))))
+    (set! layout-dividers '())
+    (layout-node! layout-root 0 0 cols (max 2 (- rows echo-height))))
 
   (define (page-size)
     ;; The scrollable body height. Sticky app rows are fixed chrome and do not
@@ -4123,10 +4109,7 @@
                   "")]
              [status (format "~a~a~a~a~a "
                              head conf mode-text hint-text page-text)]
-             ;; A transient pop-up cannot be split or resized; it offers
-             ;; only its close control.
-             [window-buttons (if (eq? b completions-buffer)
-                                 " [×]" " [↕][↔][×]")])
+             [window-buttons " [↕][↔][×]"])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (window-xoff w)
                   (list 'status status current? target? stale?)
@@ -4195,8 +4178,7 @@
     ;; How tall the whole echo area may grow: everything but each
     ;; window's minimum -- min-window-lines of text (at least 2,
     ;; redraw!'s collapse threshold) plus its status line.
-    (max 1 (- rows (layout-min-height layout-root)
-              (if (completions-window) 2 0))))
+    (max 1 (- rows (layout-min-height layout-root))))
 
   (define (update-echo-geometry!)
     ;; The echo area stacks the pending transient-log lines above the
@@ -4813,19 +4795,19 @@
          (find (lambda (w) (eq? (window-buffer w) completions-buffer))
                windows)))
 
-  (define (completions-layout! labels)
-    (set! completions-rows (list->vector (format-columns labels cols)))
-    (set! completions-cols cols)
+  (define (completions-layout! labels width)
+    (set! completions-rows (list->vector (format-columns labels width)))
+    (set! completions-cols width)
     (set! completions-page 0)
     (set! completions-filled #f))
 
   (define (show-completions! labels)
-    ;; #f when the screen has no room; the caller falls back to a note.
-    ;; The pop-up opens in a dedicated window at the bottom of the
-    ;; stack -- directly above the echo area, where the prompt that
-    ;; triggered it lives -- sized to its rows
-    ;; (update-completions-size!); a list too tall is paged, and
-    ;; repeated TAB on the same candidates cycles the pages.
+    ;; The candidate list borrows the prompt's target window: it shows
+    ;; *completions* until the prompt ends, then gets its buffer back
+    ;; with point and viewport intact.  A list taller than the window
+    ;; is paged, and repeated TAB on the same candidates cycles the
+    ;; pages.  No pop-ups: the layout tree is the only source of
+    ;; windows, so every seam sees one kind of window.
     (cond
       [(and completions-restore (equal? labels completions-labels))
        (set! completions-page (mod (+ completions-page 1)
@@ -4834,40 +4816,41 @@
        #t]
       [completions-restore                       ; already up: refresh it
        (set! completions-labels labels)
-       (completions-layout! labels)
+       (completions-layout! labels (window-content-width current-window))
        #t]
-      [(>= (- rows echo-height (layout-min-height layout-root)) 2)
+      [else
        (set! completions-buffer (new-buffer "*completions*"))
-       ;; a head's own pop-up: other heads do not adopt it
+       ;; a head's own chrome: other heads do not adopt it
        (buffer-fact-set! completions-buffer 'ephemeral #t)
        (buffer-read-only-set! completions-buffer #t)
        (buffer-mode-set! completions-buffer (completions-mode))
        (set! completions-labels labels)
-       (completions-layout! labels)
-       (let ([w (make-window completions-buffer 0 0 0 0 0 #f 1 1 0 0 1 #f)])
-         (set! windows (append (layout-leaves layout-root) (list w)))
+       (completions-layout! labels (window-content-width current-window))
+       (let ([target current-window]
+             [shown (window-buffer current-window)])
+         (set-window-buffer! target completions-buffer)
          (set! completions-restore
            (lambda ()
-             (set! windows (layout-leaves layout-root)))))
-       #t]
-      [else #f]))
+             (when (and (memq target windows)
+                        (eq? (window-buffer target) completions-buffer))
+               (set-window-buffer! target (if (memq shown buffers)
+                                              shown
+                                              (car buffers)))))))
+       #t]))
 
   (define (update-completions-size!)
-    ;; Size the pop-up to its rows: the whole list when it fits, the
-    ;; largest possible page otherwise -- the other windows shrinking
-    ;; down to min-window-lines each to make room.
+    ;; Page the list to the window it borrowed: the whole list when it
+    ;; fits, the largest possible page otherwise -- the buffer holds
+    ;; the current page.
     (let ([w (completions-window)])
       (when w
-        (unless (= completions-cols cols)        ; the width changed
-          (completions-layout! completions-labels))
-        (let* ([avail (max 1 (- rows echo-height
-                                (layout-min-height layout-root) 1))]
-               [all (max 1 (vector-length completions-rows))]
-               [size (min all avail)])
+        (unless (= completions-cols (window-content-width w)) ; resized
+          (completions-layout! completions-labels (window-content-width w)))
+        (let* ([all (max 1 (vector-length completions-rows))]
+               [size (max 1 (min all (window-size w)))])
           (set! completions-pages (div (+ all size -1) size))
           (when (>= completions-page completions-pages)
             (set! completions-page 0))
-          ;; the buffer holds the current page
           (unless (equal? completions-filled (list completions-page size))
             (set! completions-filled (list completions-page size))
             (let* ([from (* completions-page size)]
@@ -4878,12 +4861,14 @@
                              (vector-ref completions-rows i)))
               (buffer-lines-set! completions-buffer out)
               (window-top-set! w 0)
-              (window-prow-set! w 0) (window-pcol-set! w 0)))
-          (window-size-set! w size)))))    ; the layout tiles the rest
+              (window-prow-set! w 0) (window-pcol-set! w 0)))))))
 
   (define (dismiss-completions!)
     (when completions-restore
       (completions-restore)
+      (when (buffer-state-id completions-buffer)
+        (guard (ex [else (void)])
+          (state:delete! ui-actor (buffer-state-id completions-buffer))))
       (set! buffers (remq completions-buffer buffers))
       (set! completions-buffer #f)
       (set! completions-restore #f)
@@ -5407,7 +5392,6 @@
           (and (= r0 (+ (cadr entry) (caddr entry)))
                (let ([from-end (- (+ (window-xoff w) (window-width w)) x0)])
                  (cond [(<= 1 from-end 3) (cons 'close w)]
-                       [(eq? w (completions-window)) #f]
                        [(<= 4 from-end 6) (cons 'right w)]
                        [(<= 7 from-end 9) (cons 'below w)]
                        [else #f])))))))
@@ -5562,9 +5546,6 @@
          (lambda (button)
            (let ([action (car button)] [w (cdr button)])
              (cond
-               [(eq? w (completions-window))
-                ;; Its only control is the close button.
-                (dismiss-completions!)]
                [else
                 (focus-window! w)
                 (case action
@@ -5587,13 +5568,6 @@
            (lambda (entry)
              (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
                (cond
-                 ;; The pop-up is chrome: its close control and scrollbar
-                 ;; work, but its text and status bar never steal focus
-                 ;; from the window a prompt is targeting.
-                 [(and (eq? w (completions-window))
-                       (not (and (window-scrollbar-column w)
-                                 (= (- x 1) (window-scrollbar-column w)))))
-                  "MOUSE-HANDLED"]
                  [(= (- y 1) (+ start height))        ; the status bar
                   (focus-window! w)
                   "MOUSE-HANDLED"]
@@ -5602,12 +5576,10 @@
                   ;; App bars navigate like their wheel controls: they do not
                   ;; take focus and do not invoke the row's click action.
                   (let ([old current-window])
-                    (unless (or (app-buffer? (window-buffer w))
-                                (eq? w (completions-window)))
+                    (unless (app-buffer? (window-buffer w))
                       (focus-window! w))
                     (set! current-window w)
-                    (when (and (or (app-buffer? (window-buffer w))
-                                   (eq? w (completions-window)))
+                    (when (and (app-buffer? (window-buffer w))
                                (memq old windows))
                       (set! current-window old)))
                   "MOUSE-HANDLED"]
