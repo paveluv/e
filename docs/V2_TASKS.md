@@ -157,7 +157,14 @@ re-export facade until its importers migrate:
       -- layout, scrolling, the screen cache, paint-window!,
       paint-echo-area!, redraw! -- which reads window records
       directly and moves when they do
-- [ ] `echo.e` (notification area, prompts)
+- [~] `echo.e` begun: the notification area's model moved -- the
+      live message/ghost/styler, the transient-log queue, prompt
+      indent bookkeeping, and the wrap-geometry math (spans, log-row
+      folding), width always passed in.  The core reads and writes it
+      through identifier-syntax facades, so its ~54 (set! message
+      ...) sites landed there unchanged.  Remaining for the head.e
+      era: presentation (present-echo!, paint-echo-area!, geometry
+      driver) and the prompts, which read keys and own the modal loop
 - [ ] `head.e` (window tree, per-user state, routing)
 - [ ] `edit.e` absorbs the command layer; core.e deleted
 
