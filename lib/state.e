@@ -30,7 +30,9 @@
           (only (chezscheme)
                 box unbox set-box! make-mutex with-mutex format void)
           (prefix (text) text:)
-          (only (kernel) persistent-cell))
+          (only (kernel)
+                persistent-cell make-registry registry-add!
+                registry-items registry-remove!))
 
   ;;; The store -------------------------------------------------------------
 
@@ -47,16 +49,14 @@
   (define-record-type (store make-store store?)
     (fields lock
             buffers              ; id -> buffer
-            (mutable next-id)
-            (mutable subscribers)))  ; ((token buffer-id proc) ...)
+            (mutable next-id)))
 
   (define the-store
     (persistent-cell 'state-store
       (lambda ()
         (make-store (make-mutex)
                     (make-eqv-hashtable)
-                    1
-                    '()))))
+                    1))))
 
   (define (current-store) (unbox the-store))
 
@@ -454,8 +454,17 @@
   ;; Subscribers hear applied changes as data: (edit id revision actor
   ;; delta) and (delete id actor).  Delivery is synchronous and
   ;; outside the store lock -- a subscriber may read state, but slow
-  ;; subscribers slow the writer; the v2 kernel's mailboxes will add
-  ;; the coalescing batching the design settles on.
+  ;; subscribers slow the writer; agent sessions will add mailbox
+  ;; delivery when they arrive.
+  ;;
+  ;; Subscriptions are kernel-registry entries, so they are owned like
+  ;; any registration: a module's subscription retracts when the
+  ;; module reloads, before its init! subscribes afresh.  The token is
+  ;; the explicit revocation handle for everything else.  Entries are
+  ;; (token buffer-id proc); the store mutex still serializes
+  ;; subscribe!/unsubscribe! against notify!'s read.
+
+  (define subscriptions (make-registry))
 
   (define subscription-counter
     (persistent-cell 'state-subscription-counter (lambda () 0)))
@@ -466,20 +475,16 @@
       (error 'subscribe! "expected a procedure" proc))
     (locked
       (lambda ()
-        (let ([s (current-store)]
-              [token (+ (unbox subscription-counter) 1)])
+        (let ([token (+ (unbox subscription-counter) 1)])
           (set-box! subscription-counter token)
-          (store-subscribers-set!
-            s (cons (list token id proc) (store-subscribers s)))
+          (registry-add! subscriptions (list token id proc))
           token))))
 
   (define (unsubscribe! token)
     (locked
       (lambda ()
-        (let ([s (current-store)])
-          (store-subscribers-set!
-            s (remp (lambda (entry) (equal? (car entry) token))
-                    (store-subscribers s))))))
+        (registry-remove! subscriptions
+                          (lambda (entry) (equal? (car entry) token)))))
     (void))
 
   (define (notify! event)
@@ -489,7 +494,7 @@
                (filter (lambda (entry)
                          (or (not (cadr entry))
                              (equal? (cadr entry) (cadr event))))
-                       (store-subscribers (current-store)))))])
+                       (registry-items subscriptions))))])
       (for-each (lambda (entry)
                   (guard (ex [else (void)]) ((caddr entry) event)))
                 interested))))
