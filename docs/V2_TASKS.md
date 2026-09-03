@@ -71,8 +71,25 @@ state.
 
 ## Stage 4 -- capabilities
 
-- [ ] `policy.e`: per-actor capability minting and budgets
-- [ ] `sandbox.e`: claude-safe generalized to any constrained actor
+- [x] `sandbox.e`: claude-safe generalized to any constrained actor
+      -- the read-only tier as a curated export list, granted whole
+      via (environment '(sandbox)) or narrowed with (only (sandbox)
+      names...).  v2 hardening over v0.1: editor readers are keyed by
+      buffer NAME over the state store and return only plain data (no
+      buffer records cross the boundary), and every lock-taking
+      reader runs with interrupts off so an engine's fuel expiry can
+      never strand the store's mutex
+- [x] `policy.e`: per-actor capability minting and budgets --
+      policies are data (grants, fuel, edit quota, buffer allowlist,
+      result cap); mint! curries a session with the actor's identity;
+      session-eval! (engine-fueled, output-captured), session-edit!/
+      session-undo! (attributed through state:, quota- and
+      allowlist-checked), session-ask! (escalation to the owner via
+      actors:); revoke! plus revocation-by-reload (sessions
+      deliberately do not ride a persistent cell -- reloading
+      policy.e revokes everything outstanding); the audit trail is
+      state and does persist (policy:audit-log).  Both are seam
+      modules: policy:/sandbox: at M-x and in module inits
 - [ ] port the claude module onto a minted session -- deliberately
       last: it stays on the `claude` branch until v2 is finished
 
