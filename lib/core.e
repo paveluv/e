@@ -94,7 +94,8 @@
   ;; shadow an import, so those imports are excluded.  The system-specific
   ;; layer -- libc, termios, signals -- comes from (sys).
   (import (except (chezscheme) buffer-mode) (sys) (diff)
-          (prefix (state) state:) (prefix (text) text:))
+          (prefix (state) state:) (prefix (text) text:)
+          (prefix (kernel) kernel:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -2607,18 +2608,18 @@
   ;; Entries registered outside any module (M-x, say) have owner #f and
   ;; survive reloads.  Lookups prefer newer entries.
 
-  (define registering-module (make-parameter #f))
-  (define registries '())
-
-  (define (make-registry)
-    (let ([r (box '())])            ; entries (owner . item), newest first
-      (set! registries (cons r registries))
-      r))
-
-  (define (registry-add! r item)
-    (set-box! r (cons (cons (registering-module) item) (unbox r))))
-
-  (define (registry-items r) (map cdr (unbox r)))
+  ;; The machinery itself lives in the kernel now; these are the
+  ;; facade aliases the core's own call sites keep using until they
+  ;; migrate to kernel: prefixes.
+  (define registering-module kernel:registering-module)
+  (define make-registry kernel:make-registry)
+  (define registry-add! kernel:registry-add!)
+  (define registry-items kernel:registry-items)
+  (define registry-entries kernel:registry-entries)
+  (define registry-find kernel:registry-find)
+  (define retract-module! kernel:retract-module!)
+  (define registration-snapshot kernel:registration-snapshot)
+  (define restore-registrations! kernel:restore-registrations!)
 
   ;; Describe keeps the presentation and record format in its own module;
   ;; the core only owns these opaque batches so normal module retraction also
@@ -2630,29 +2631,6 @@
 
   (define (published-descriptions)
     (apply append (reverse (registry-items description-registry))))
-
-  (define (registry-entries r) (unbox r))
-
-  (define (registry-find r match?)
-    (let loop ([entries (unbox r)])
-      (cond [(null? entries) #f]
-            [(match? (cdar entries)) (cdar entries)]
-            [else (loop (cdr entries))])))
-
-  (define (retract-module! owner)
-    (for-each (lambda (r)
-                (set-box! r (remp (lambda (e) (eq? (car e) owner))
-                                  (unbox r))))
-              registries))
-
-  (define (registration-snapshot)
-    ;; Registry lists are persistent: registration and retraction replace a
-    ;; box's list rather than mutating it, so retaining each old head is a
-    ;; complete, cheap rollback point.
-    (map (lambda (r) (cons r (unbox r))) registries))
-
-  (define (restore-registrations! snapshot)
-    (for-each (lambda (entry) (set-box! (car entry) (cdr entry))) snapshot))
 
   ;; Modules may hook the save: pre-save hooks run before anything is
   ;; checked or written (formatting, say), post-save hooks after a

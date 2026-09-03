@@ -36,7 +36,8 @@ state.
 
 ## Stage 3 -- kernel scheduling
 
-- [ ] registries move from core to kernel.e
+- [x] registries move from core to kernel.e (core keeps facade
+      aliases until its call sites migrate to kernel: prefixes)
 - [ ] module lifecycle (load/reload/retract) moves to kernel.e
 - [ ] mailboxes and the event queue; the keyboard becomes one
       producer among several
