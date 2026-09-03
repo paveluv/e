@@ -83,6 +83,5 @@ customized with `prompt-styler`, `completion-styler`, `completion-highlight`,
 and `prompt-reindent`.
 
 Use `show-prompt-message!` when a non-`prompt!` interaction should retain the
-same styled label and wrapped layout. The transient `C-x w` widen-window mode
-uses this path.
+same styled label and wrapped layout.
 

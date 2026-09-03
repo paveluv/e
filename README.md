@@ -22,8 +22,7 @@ Highlights:
   presentation from internal structures and can optionally
   interact with the user (`*log*`, `*git-log*`, `*buffers*`, `*terminal*`).
 - Windows form a recursive tiling layout that is easy to reshape: split in
-  either direction (`C-x 2`, `C-x 3`), drag edges with a mouse, or widen
-  any edge from the keyboard (`C-x w`).
+  either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
 - `C-c t` turns the current buffer into a PTY-backed terminal able to run
   shells, full-screen programs, or another editor such as
   [legmacs](https://github.com/nooga/legmacs).
@@ -91,7 +90,6 @@ On FreeBSD, where Chez installs a differently named script interpreter, run
 | `C-x 2`, `C-x 3` | Split the current window below or right |
 | `C-x 0`, `C-x 1` | Delete this window or every other window |
 | `M-Arrows` | Move between windows along the cursor's screen ray |
-| `C-x w` | Widen window edges; use Meta+Arrow to choose another window |
 | `C-s` | Incremental search |
 | `M-%` | Query replace |
 | `C-_`, `C-M-_` | Undo, redo |
