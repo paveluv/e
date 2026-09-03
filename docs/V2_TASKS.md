@@ -44,7 +44,11 @@ state.
 - [x] core undo refuses to time-travel over foreign edits (snapshots
       carry the store revision; history-shift! checks state:history)
 - [x] the store's undo history is bounded like the delta log
-- [ ] coalesced (optional) auditing of ui edits
+- [x] coalesced auditing of ui edits: consecutive ui edits to a
+      buffer batch into one quiet audit entry ("ui: N edits in BUF
+      (revisions A-B)"), flushed before a foreign actor's operation
+      on that buffer so (log-view 'state) reads in true order, on a
+      3-second idle, and at shutdown -- stage 2 complete
 
 ## Stage 3 -- kernel scheduling
 

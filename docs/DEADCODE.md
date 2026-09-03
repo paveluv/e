@@ -16,7 +16,7 @@ with a date; deletions note the commit.
   `libc-character-locale`, `libutil-loaded?` (sys),
   `state-subscription`, `foreign-sync-hooked`, `reload-tail-hooked`,
   `ui-actor-registered`, `log-presenter-installed`,
-  `styles-hook-installed`
+  `styles-hook-installed`, `ui-audit-flushed-at-exit`
   (core, the v2 wiring). Skip these in future sweeps.
 
 ## Deleted
