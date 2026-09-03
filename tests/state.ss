@@ -127,6 +127,30 @@
             (span-ends (state:mark alice r 'region))
             '((0 . 2) (0 . 2)))
 
+     ;; -- blame: attribution with geometry -----------------------------------
+
+     (define bl (state:create! alice "blamed" '("aaa bbb")))
+     (state:edit! alice bl (state:revision bl) (span 0 0 0 3) '("AAA"))
+     (state:edit! bot bl (state:revision bl) (span 0 4 0 7) '("Z"))
+
+     ;; newest first, spans in current coordinates
+     (check 'blame-attributes
+            (map (lambda (entry)
+                   (cons (cadr entry) (span-ends (car entry))))
+                 (state:blame bl))
+            (list (cons bot '((0 . 4) (0 . 5)))
+                  (cons alice '((0 . 0) (0 . 3)))))
+
+     ;; an insertion up front shifts every older span
+     (state:edit! bot bl (state:revision bl) (span 0 0 0 0) '("> "))
+     (check 'blame-rebases-older-spans
+            (span-ends (car (list-ref (state:blame bl) 2)))
+            '((0 . 2) (0 . 5)))
+
+     ;; a reset is a new baseline: blame starts over
+     (state:reset! alice bl '("fresh"))
+     (check 'blame-cleared-by-reset (state:blame bl) '())
+
      ;; -- attributed undo ---------------------------------------------------
 
      (define u (state:create! alice "undoable" '("aaa" "bbb" "ccc")))

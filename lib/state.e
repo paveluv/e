@@ -23,7 +23,7 @@
   (export create! delete! reset! rename!
           buffer-list exists? buffer-name find-named
           snapshot revision line-count line extract
-          edit! undo! history
+          edit! undo! history blame
           set-mark! mark drop-mark! marks
           subscribe! unsubscribe!)
   (import (rnrs)
@@ -345,6 +345,40 @@
                               (text:span-end s)
                               (text:delta-new-end d))
                         (take (cdr entries) (- n 1))))))))))
+
+  (define (blame id . count)
+    ;; Attribution with geometry: the newest applied edits with their
+    ;; written spans rebased into the CURRENT text, as plain data --
+    ;; ((span actor revision) ...) newest first.  A span a later edit
+    ;; swallowed degrades to endpoint rebasing, like span marks:
+    ;; attribution survives races, it never goes stale.  Reach: the
+    ;; delta log (delta-log-limit edits); a reset clears it.  Blame is
+    ;; recent-memory attribution -- deep history stays git's job.
+    (let ([n (if (pair? count) (car count) 20)])
+      (locked
+        (lambda ()
+          (let walk ([entries (buffer-deltas (buffer-of 'blame id))]
+                     [later '()]      ; newer deltas, oldest first
+                     [n n]
+                     [acc '()])
+            (if (or (zero? n) (null? entries))
+                (reverse acc)
+                (let* ([entry (car entries)]
+                       [d (vector-ref entry 2)]
+                       [written
+                        (let ([s (text:span-start (text:delta-span d))]
+                              [e (text:delta-new-end d)])
+                          (text:make-span (car s) (cdr s)
+                                          (car e) (cdr e)))]
+                       [current (fold-left rebase-mark-value
+                                           written later)])
+                  (walk (cdr entries)
+                        (cons d later)
+                        (- n 1)
+                        (cons (list current
+                                    (vector-ref entry 1)
+                                    (vector-ref entry 0))
+                              acc)))))))))
 
   ;;; Marks -------------------------------------------------------------------
 

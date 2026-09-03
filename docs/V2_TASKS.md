@@ -33,7 +33,14 @@ state.
       positions), cleared by resets
 - [x] the audit stream: foreign operations logged under the `state`
       component -- `(log-view 'state)` is the record
-- [ ] in-UI blame: show an edit's actor at point
+- [x] in-UI blame: `state:blame` (the attributed delta log with spans
+      rebased to the current text) plus the new `blame.e` extension
+      module -- another actor's fresh edit is tinted in that actor's
+      color (a stable hash into six muted faces, fading after
+      `blame-tint-seconds`), and `(blame-at-point!)` names who
+      recently wrote the text at point.  Zero core growth: overlays
+      ride the store subscription (marshaled to the main thread) and
+      paint through `add-highlighter!`
 - [x] core undo refuses to time-travel over foreign edits (snapshots
       carry the store revision; history-shift! checks state:history)
 - [x] the store's undo history is bounded like the delta log
@@ -135,5 +142,6 @@ priority; items graduate into stage tasks when picked up.
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
 | 20 | Only the selected window's cursor and region are published | `lib/core.e` `publish-point!`/`publish-region!` publish one 'point mark and one 'region span for `current-window`. Fix: publish per window (mark names `(point . window-index)`, `(region . window-index)`), dropping a window's marks when it closes. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
+| 15 | State subscriptions are not registry-owned | `lib/state.e` `subscribe!` returns a token; nothing ties it to the subscribing module, so a module reload leaks the old closure (still called per edit). `lib/blame.e` works around it by parking its token in a `kernel:persistent-cell` and unsubscribing the predecessor in `init!` -- every subscribing module would need the same dance. Fix: own subscriptions like registrations (a kernel registry of (token . proc), retracted by `retract-module!`), or an unsubscribe hook on retract. |
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |
