@@ -4595,15 +4595,34 @@
     (when (and (memq (car event) '(edit reset))
                (not (equal? (list-ref event 3) ui-actor)))
       (with-mutex foreign-lock
-        (set! foreign-pending (cons (cadr event) foreign-pending)))))
+        (set! foreign-pending (cons event foreign-pending)))))
 
   (define state-subscription (state:subscribe! #f note-foreign-event))
 
   (define (sync-foreign-edits!)
-    (let ([ids (with-mutex foreign-lock
-                 (let ([pending foreign-pending])
-                   (set! foreign-pending '())
-                   pending))])
+    (let ([events (with-mutex foreign-lock
+                    (let ([pending foreign-pending])
+                      (set! foreign-pending '())
+                      (reverse pending)))])
+      ;; the audit stream: every foreign operation is on the record --
+      ;; (log-view 'state) shows what other actors did
+      (for-each
+        (lambda (event)
+          (guard (ex [else (void)])
+            (let ([id (cadr event)] [actor (list-ref event 3)])
+              (log! 'state
+                    (format "~a ~a ~s~a"
+                            actor
+                            (if (eq? (car event) 'reset)
+                                "reset" "edited")
+                            (state:buffer-name id)
+                            (if (eq? (car event) 'edit)
+                                (format " at ~a"
+                                        (text:span-start
+                                          (text:delta-span
+                                            (list-ref event 4))))
+                                ""))))))
+        events)
       (for-each
         (lambda (id)
           (let ([b (find (lambda (b) (eqv? (buffer-state-id b) id))
@@ -4620,9 +4639,31 @@
                     (when (buffer-file b) (buffer-modified-set! b #t))
                     (clamp-buffer-positions! b)
                     (invalidate-screen-cache!)))))))
-        ids)))
+        (let dedupe ([ids (map cadr events)] [seen '()])
+          (cond [(null? ids) (reverse seen)]
+                [(memv (car ids) seen) (dedupe (cdr ids) seen)]
+                [else (dedupe (cdr ids) (cons (car ids) seen))])))))
 
-  (define foreign-sync-hooked (add-pre-redraw-hook! sync-foreign-edits!))
+  ;; Stage 1's tail: the human's cursor is a first-class mark other
+  ;; actors can see.  Published once per frame, for the selected
+  ;; window's buffer, under the ui actor's 'point.
+  (define published-point #f)   ; (state-id row . col) last published
+
+  (define (publish-point!)
+    (guard (ex [else (void)])
+      (let* ([b (window-buffer current-window)]
+             [id (buffer-state-id b)]
+             [now (and id (cons id (cons (window-prow current-window)
+                                         (window-pcol current-window))))])
+        (when (and now (not (equal? now published-point)))
+          (set! published-point now)
+          (state:set-mark! ui-actor id 'point (cdr now))))))
+
+  (define (state-frame-sync!)
+    (sync-foreign-edits!)
+    (publish-point!))
+
+  (define foreign-sync-hooked (add-pre-redraw-hook! state-frame-sync!))
 
   (define (redraw-frame!)
     ;; The frame goes out inside a synchronized update (mode 2026):

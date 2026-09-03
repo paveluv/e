@@ -93,6 +93,19 @@
      (pump! 400)
      (check 'typing-after-sync-mirrors (mirror-agrees? 'after) #t)
 
+     ;; the foreign edit is on the audit stream
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (cadr entry) (quote state))) (log-entries)) p)) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (check 'foreign-edit-audited (call-with-input-file probe read) #t)
+
+     ;; the human's cursor is a mark other actors can read
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (equal? (state:mark (quote (head main)) (buffer-state-id (current-buffer)) (quote point)) (point)) p)) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (check 'point-published-as-mark
+            (call-with-input-file probe read) #t)
+
      (delete-file probe)
      (close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))
