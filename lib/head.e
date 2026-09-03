@@ -56,7 +56,9 @@
           windows set-windows! root set-root! current set-current!
           dividers set-dividers!
           read-key-event run-on-main! wake-main! in-main-pump
-          take-deferred! start-input-reader! set-pump-handlers!)
+          take-deferred! start-input-reader! set-pump-handlers!
+          tile! layout window-at window-button-at divider-at
+          transfer-split! drag set-drag! double-click?)
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme)
                 make-parameter make-mutex with-mutex fork-thread void)
@@ -349,4 +351,120 @@
                     [else
                      (set! deferred (cons (cdr message) deferred))])
               (pump)]
-             [else (pump)])))])))
+             [else (pump)])))]))
+  ;;; Tiling and hit-testing -------------------------------------------------------
+
+  ;; The last tiling is remembered: mouse hit-testing asks where the
+  ;; user clicked on the screen the user saw.  Entries are
+  ;; (window start text-height), start 0-based, status row at
+  ;; start + text-height; divider descriptors are
+  ;; (orientation split x y span).
+
+  (define the-layout '())
+
+  (define (layout) the-layout)
+
+  (define (tile! width height)
+    ;; Tile the tree into width x height (the screen minus the echo
+    ;; area).  -> the entries, also remembered along with the dividers.
+    (set! the-dividers '())
+    (set! the-layout (layout-node! the-root 0 0 width height))
+    the-layout)
+
+  (define (window-at x0 r0 receiver)
+    ;; Call receiver with the layout entry containing 0-based screen
+    ;; position (x0, r0) (text rows or the status line); #f in the
+    ;; echo area or on a divider.
+    (let loop ([entries the-layout])
+      (cond [(null? entries) #f]
+            [(and (<= (cadr (car entries)) r0
+                      (+ (cadr (car entries)) (caddr (car entries))))
+                  (<= (window-xoff (caar entries)) x0
+                      (+ (window-xoff (caar entries))
+                         (window-width (caar entries))
+                         -1)))
+             (receiver (car entries))]
+            [else (loop (cdr entries))])))
+
+  (define (window-button-at x0 r0)
+    ;; The three bracketed status-line controls occupy the last nine
+    ;; columns: (close . w), (right . w), (below . w), or #f.
+    (window-at x0 r0
+      (lambda (entry)
+        (let ([w (car entry)])
+          (and (= r0 (+ (cadr entry) (caddr entry)))
+               (let ([from-end (- (+ (window-xoff w) (window-width w)) x0)])
+                 (cond [(<= 1 from-end 3) (cons 'close w)]
+                       [(<= 4 from-end 6) (cons 'right w)]
+                       [(<= 7 from-end 9) (cons 'below w)]
+                       [else #f])))))))
+
+  (define (divider-at x0 r0)
+    ;; The divider descriptor under (x0, r0), or #f.  A crossing
+    ;; visually belongs to the spanning horizontal split.
+    (define (hit? orientation d)
+      (and (eq? (car d) orientation)
+           (if (eq? orientation 'right)
+               (and (= x0 (caddr d))
+                    (<= (cadddr d) r0)
+                    (< r0 (+ (cadddr d) (list-ref d 4))))
+               (and (= r0 (cadddr d))
+                    (<= (caddr d) x0)
+                    (< x0 (+ (caddr d) (list-ref d 4)))))))
+    (or (find (lambda (d) (hit? 'below d)) the-dividers)
+        (find (lambda (d) (hit? 'right d)) the-dividers)))
+
+  (define (transfer-split! split delta)
+    ;; Normalize stale ratio weights to the currently realized cell
+    ;; extents, then move the boundary by delta cells -- so a mouse
+    ;; drag (or a keyboard step) is exact even after a resize.
+    (unless (= delta 0)
+      (let* ([orientation (layout-split-orientation split)]
+             [first (layout-split-first split)]
+             [second (layout-split-second split)])
+        (define (extent node)
+          (let ([entries
+                 (map (lambda (w) (assq w the-layout)) (layout-leaves node))])
+            (if (eq? orientation 'right)
+                (- (apply max
+                          (map (lambda (entry)
+                                 (+ (window-xoff (car entry))
+                                    (window-width (car entry))))
+                               entries))
+                   (apply min
+                          (map (lambda (entry) (window-xoff (car entry)))
+                               entries)))
+                (- (apply max
+                          (map (lambda (entry)
+                                 (+ (cadr entry) (caddr entry) 1))
+                               entries))
+                   (apply min (map cadr entries))))))
+        (let* ([one (extent first)] [two (extent second)]
+               [m1 (if (eq? orientation 'right)
+                       (layout-min-width first)
+                       (layout-min-height first))]
+               [m2 (if (eq? orientation 'right)
+                       (layout-min-width second)
+                       (layout-min-height second))]
+               [delta (min delta (- two m2))]
+               [delta (max delta (- m1 one))])
+          (layout-split-first-weight-set! split (+ one delta))
+          (layout-split-second-weight-set! split (- two delta))))))
+
+  ;;; Gestures -----------------------------------------------------------------------
+
+  (define the-drag #f)        ; the divider descriptor being dragged, or #f
+  (define the-last-press #f)  ; (x y ms) of the previous button press
+
+  (define (drag) the-drag)
+  (define (set-drag! d) (set! the-drag d))
+
+  (define (double-click? x y now)
+    ;; Record a press at (x, y) at time now (ms); #t when it repeats
+    ;; the previous press's cell within half a second.
+    (let ([prev the-last-press])
+      (set! the-last-press (list x y now))
+      (and prev
+           (= (car prev) x) (= (cadr prev) y)
+           (< (- now (caddr prev)) 450))))
+)

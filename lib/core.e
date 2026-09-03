@@ -3283,10 +3283,10 @@
 
 
   (define (window-layout)
-    ;; Recursively tile the persistent split tree.
-    ;; -> list of (window start text-height), start 0-based.
-    (set! layout-dividers '())
-    (layout-node! layout-root 0 0 cols (max 2 (- rows echo-height))))
+    ;; Tile the persistent split tree into the screen minus the echo
+    ;; area; -> ((window start text-height) ...), start 0-based.  The
+    ;; head remembers the tiling for mouse hit-testing.
+    (head:tile! cols (max 2 (- rows echo-height))))
 
   (define (page-size)
     ;; The scrollable body height. Sticky app rows are fixed chrome and do not
@@ -5357,8 +5357,7 @@
 
   (define (set-mouse! on)
     (set! mouse-on? on)
-    (ansi (if on "\x1b;[?1002;1006h" "\x1b;[?1002;1006l"))
-    (flush-output-port (terminal-output-port)))
+    (tty:mouse-reporting! on))
 
   (define (mouse! on)
     ;; Turn mouse tracking on or off (off restores native selection).
@@ -5366,35 +5365,14 @@
     (set! message (format "Mouse ~a" (if on "on" "off")))
     (void))
 
-  (define (window-at x0 r0 receiver)
-    ;; Call receiver with the layout entry containing 0-based screen
-    ;; position (x0, r0) (text rows or the status line); #f in the
-    ;; echo area or on a divider.
-    (let loop ([entries (window-layout)])
-      (cond [(null? entries) #f]
-            [(and (<= (cadr (car entries)) r0
-                      (+ (cadr (car entries)) (caddr (car entries))))
-                  (<= (window-xoff (caar entries)) x0
-                      (+ (window-xoff (caar entries))
-                         (window-width (caar entries))
-                         -1)))
-             (receiver (car entries))]
-            [else (loop (cdr entries))])))
-
-  (define last-press #f)   ; (x y ms) of the previous button press
-
-  (define (window-button-at x0 r0)
-    ;; The three bracketed controls occupy the last nine status columns;
-    ;; a pop-up window shows only its close control in the last three.
-    (window-at x0 r0
-      (lambda (entry)
-        (let ([w (car entry)])
-          (and (= r0 (+ (cadr entry) (caddr entry)))
-               (let ([from-end (- (+ (window-xoff w) (window-width w)) x0)])
-                 (cond [(<= 1 from-end 3) (cons 'close w)]
-                       [(<= 4 from-end 6) (cons 'right w)]
-                       [(<= 7 from-end 9) (cons 'below w)]
-                       [else #f])))))))
+  ;; Hit-testing over the remembered tiling, and the gesture state,
+  ;; live in (head); the actions they trigger stay here.
+  (define window-at head:window-at)
+  (define window-button-at head:window-button-at)
+  (define divider-at head:divider-at)
+  (define transfer-split! head:transfer-split!)
+  (define-syntax drag-divider
+    (identifier-syntax [id (head:drag)] [(set! id v) (head:set-drag! v)]))
 
   (define (word-char? c)
     (not (or (char-whitespace? c)
@@ -5429,62 +5407,6 @@
   ;; lie beyond the buffer and lets apps distinguish empty viewport space from
   ;; their last rendered line.
   (define app-event-buffer-position (make-parameter #f))
-  (define drag-divider #f)   ; recursive divider descriptor
-  (define (divider-at x0 r0)
-    ;; Divider metadata comes directly from window-layout. A descriptor is
-    ;; (orientation split x y span).
-    (define (hit? orientation d)
-      (and (eq? (car d) orientation)
-           (if (eq? orientation 'right)
-               (and (= x0 (caddr d))
-                    (<= (cadddr d) r0)
-                    (< r0 (+ (cadddr d) (list-ref d 4))))
-               (and (= r0 (cadddr d))
-                    (<= (caddr d) x0)
-                    (< x0 (+ (caddr d) (list-ref d 4)))))))
-    (window-layout)
-    ;; A `┴` crossing visually belongs to the spanning horizontal split.
-    (or (find (lambda (d) (hit? 'below d)) layout-dividers)
-        (find (lambda (d) (hit? 'right d)) layout-dividers)))
-
-  (define (transfer-split! split delta)
-    ;; Normalize stale ratio weights to the currently realized cell extents,
-    ;; then move the boundary. Thus one keyboard step is one cell even after a
-    ;; terminal resize, and mouse dragging uses the same exact arithmetic.
-    (unless (= delta 0)
-      (let* ([layout (window-layout)]
-             [orientation (layout-split-orientation split)]
-             [first (layout-split-first split)]
-             [second (layout-split-second split)])
-        (define (extent node)
-          (let ([entries
-                 (map (lambda (w) (assq w layout)) (layout-leaves node))])
-            (if (eq? orientation 'right)
-                (- (apply max
-                          (map (lambda (entry)
-                                 (+ (window-xoff (car entry))
-                                    (window-width (car entry))))
-                               entries))
-                   (apply min
-                          (map (lambda (entry) (window-xoff (car entry)))
-                               entries)))
-                (- (apply max
-                          (map (lambda (entry)
-                                 (+ (cadr entry) (caddr entry) 1))
-                               entries))
-                   (apply min (map cadr entries))))))
-        (let* ([one (extent first)] [two (extent second)]
-               [m1 (if (eq? orientation 'right)
-                       (layout-min-width first)
-                       (layout-min-height first))]
-               [m2 (if (eq? orientation 'right)
-                       (layout-min-width second)
-                       (layout-min-height second))]
-               [delta (min delta (- two m2))]
-               [delta (max delta (- m1 one))])
-          (layout-split-first-weight-set! split (+ one delta))
-          (layout-split-second-weight-set! split (- two delta))))))
-
   (define (window-position w start height x y)
     ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
     ;; band, wrap-aware: wrapped lines occupy successive screen rows,
@@ -5530,17 +5452,12 @@
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
     (set! drag-divider #f)
-    (let ([prev last-press]
-          [now (real-time)])
+    (let ([double? (head:double-click? x y (real-time))])
       (define (arm-text-selection!)
         (set! mark-row point-row)
         (set! mark-col point-col)
         (set! mark-active? #f)
-        (when (and prev
-                   (= (car prev) x) (= (cadr prev) y)
-                   (< (- now (caddr prev)) 450))
-          (select-word!)))
-      (set! last-press (list x y now))
+        (when double? (select-word!)))
       (cond
         [(window-button-at (- x 1) (- y 1)) =>
          (lambda (button)

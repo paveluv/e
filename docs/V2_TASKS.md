@@ -200,7 +200,11 @@ is then exactly the tree, no side channel).
       thread, and the read-key-event pump, with the core installing
       handlers for what a frame does and how mouse/paste/host reports
       are consumed (a remote head runs the same loop with a socket
-      reader posting in place of the tty), the seat state (windows, layout root,
+      reader posting in place of the tty), and the mouse's geometry --
+      the remembered tiling (tile!), window/status-button/divider
+      hit-testing, divider-drag weight arithmetic, and double-click
+      timing; mouse reporting negotiation moved to tty.e; the actions
+      (focus, selection, scrolling, app dispatch) stay with the commands, the seat state (windows, layout root,
       selected window, divider output) behind identifier-syntax
       facades, and the pure tiling geometry (leaves, replace, parent,
       minima, weighted splits, layout-node!).  Remaining: routing

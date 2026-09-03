@@ -18,10 +18,22 @@
 ;; leak into a buffer as typed text.
 
 (library (tty)
-  (export read-event character-event key-event-character)
+  (export read-event character-event key-event-character
+          mouse-reporting!)
   (import (rnrs)
           (only (chezscheme) format char-ready?)
+          (only (sys) terminal-output-port)
           (prefix (strings) strings:))
+
+  ;;; Input-side negotiation ------------------------------------------------------
+
+  (define (mouse-reporting! on?)
+    ;; SGR mouse tracking with button-event reports (1002;1006): on
+    ;; asks the terminal to send the (mouse ...) events read-event
+    ;; decodes; off restores the terminal's native selection.
+    (let ([port (terminal-output-port)])
+      (display (if on? "\x1b;[?1002;1006h" "\x1b;[?1002;1006l") port)
+      (flush-output-port port)))
 
   ;;; Key naming ---------------------------------------------------------------
 
