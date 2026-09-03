@@ -194,7 +194,12 @@
               '((1 . 0) (1 . 3)))
        (check 'cursor-span-after-insertion-shifts
               (span->list (text:rebase-span (span 1 4 1 4) insertion))
-              '((1 . 6) (1 . 6))))
+              '((1 . 6) (1 . 6)))
+       ;; one point stays one point: concurrent insertions at the
+       ;; same spot queue up instead of swallowing each other
+       (check 'cursor-span-at-insertion-point-follows
+              (span->list (text:rebase-span (span 1 3 1 3) insertion))
+              '((1 . 5) (1 . 5))))
 
      ;; an empty span strictly inside a replaced region is stale
      (check 'cursor-span-inside-replacement-is-stale

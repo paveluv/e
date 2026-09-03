@@ -231,6 +231,10 @@
               (and (span-empty? changed)
                    (strictly-inside? (span-start changed) s)))
           #f
-          (span-of-positions
-            (rebase-position (span-start s) d)
-            (rebase-position (span-end s) d 'stay))))))
+          (if (span-empty? s)
+              ;; one point: both endpoints move together
+              (let ([p (rebase-position (span-start s) d)])
+                (span-of-positions p p))
+              (span-of-positions
+                (rebase-position (span-start s) d)
+                (rebase-position (span-end s) d 'stay)))))))
