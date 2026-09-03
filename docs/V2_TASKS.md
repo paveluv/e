@@ -173,6 +173,17 @@ re-export facade until its importers migrate:
       (apps, capture, set-layout-root!), wrap policy, per-buffer state
       swapping (define-state), the main loop -- plus the presentation
       halves of paint.e and echo.e that come loose with them
+- [x] buffer facts move to the state layer: `state:set-property!`/
+      `property`/`properties` -- plain-data, per-buffer, shared by
+      every head (visited file, trailing newline, modified, mode NAME,
+      read-only, disk stamp/base, stale), with (property id key actor)
+      events, audited on the state stream (except the modified
+      shadow), repainting status lines on foreign changes.  The core's
+      buffer record shrank to the lines cache plus per-seat
+      presentation; its fact accessors read and write the store, and
+      the mode record never crosses the seam (name-keyed, resolved by
+      find-mode on read).  This is the multi-head keystone: e --server
+      with several heads reads one truth
 - [ ] `edit.e` absorbs the command layer; core.e deleted
 
 ## Tech debt ledger
@@ -184,6 +195,7 @@ priority; items graduate into stage tasks when picked up.
 | P | Debt | Notes |
 |---|---|---|
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
+| 20 | A re-created store twin loses its properties | `lib/core.e` `reconverge-forked!`: when a buffer's twin was deleted by another actor, recovery re-creates it from the cache text -- but the buffer facts (file, mode, disk base) lived on the deleted twin and are gone; the editor then shows fallback facts (no file, auto mode) until a save or revisit restores them. Same edge as a failed `mirror-create!`. Fix: have the head re-seed managed facts after re-creation from a small per-buffer shadow kept at fact-write time, or let `state:delete!` hand its final properties to subscribers in the delete event. Repro: rival deletes the twin, type a key (fork + reconverge), C-x C-s -- the buffer forgot its path. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |

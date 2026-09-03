@@ -268,6 +268,41 @@
             (guard (ex [else 'rejected]) (state:line m 0))
             'rejected)
 
+     ;; -- properties: buffer-level facts shared by every head ------------------
+
+     (define pb (state:create! alice "propped" '("x")))
+     (state:set-property! alice pb 'file "/tmp/a.txt")
+     (state:set-property! bot pb 'read-only #t)
+
+     (check 'property-read (state:property pb 'file) "/tmp/a.txt")
+     (check 'property-cross-actor (state:property pb 'read-only) #t)
+     (check 'property-absent-is-false (state:property pb 'mode) #f)
+     (check 'properties-listed
+            (list (assq 'file (state:properties pb))
+                  (assq 'read-only (state:properties pb)))
+            '((file . "/tmp/a.txt") (read-only . #t)))
+
+     ;; #f removes; facts survive a reset (they are not text)
+     (state:set-property! bot pb 'read-only #f)
+     (check 'property-removed (state:property pb 'read-only) #f)
+     (state:reset! bot pb '("fresh"))
+     (check 'property-survives-reset (state:property pb 'file) "/tmp/a.txt")
+
+     ;; subscribers hear fact changes
+     (define prop-events (box '()))
+     (define prop-token
+       (state:subscribe!
+         pb (lambda (event)
+              (when (eq? (car event) 'property)
+                (set-box! prop-events
+                          (cons event (unbox prop-events)))))))
+     (state:set-property! alice pb 'mode "scheme")
+     (check 'property-event
+            (car (unbox prop-events))
+            (list 'property pb 'mode alice))
+     (state:unsubscribe! prop-token)
+     (state:delete! alice pb)
+
      ;; -- subscriptions are registry-owned ------------------------------------
 
      (define sub-events (box '()))

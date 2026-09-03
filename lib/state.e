@@ -25,6 +25,7 @@
           snapshot revision line-count line extract
           edit! undo! history blame
           set-mark! mark drop-mark! marks
+          set-property! property properties
           subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme)
@@ -44,7 +45,8 @@
             (mutable revision)
             (mutable deltas)     ; (#(revision actor delta) ...) newest first
             (mutable marks)      ; (((actor . name) . position) ...)
-            (mutable undo)))     ; (#(revision actor delta live?) ...)
+            (mutable undo)       ; (#(revision actor delta live?) ...)
+            (mutable properties))) ; ((key . datum) ...), see set-property!
 
   (define-record-type (store make-store store?)
     (fields lock
@@ -83,7 +85,7 @@
             (store-buffers s) id
             (make-buffer buffer-name
                          (list->vector (if (null? lines) '("") lines))
-                         0 '() '() '()))
+                         0 '() '() '() '()))
           id))))
 
   (define (reset! actor id lines)
@@ -448,6 +450,46 @@
                           acc))
                     '()
                     (buffer-marks (buffer-of 'marks id))))))
+
+  ;;; Properties ----------------------------------------------------------------
+
+  ;; Buffer-level facts shared by every head -- the visited file, the
+  ;; mode's name, the disk base, read-only -- live on the store buffer
+  ;; as plain-data properties, so a second head (or a remote one)
+  ;; reads the same truth the first one wrote.  Per-seat state --
+  ;; cursors, selections, viewports -- stays with heads and their
+  ;; marks.  Values are data only; #f removes, and an absent property
+  ;; reads as #f, so booleans store naturally.  Properties survive
+  ;; resets and renames (they are not text) and die with delete!.
+  ;; Subscribers hear (property id key actor).
+
+  (define (set-property! actor id key value)
+    (unless (symbol? key)
+      (error 'set-property! "expected a symbol key" key))
+    (locked
+      (lambda ()
+        (let ([b (buffer-of 'set-property! id)])
+          (buffer-properties-set!
+            b (let ([kept (remp (lambda (entry) (eq? (car entry) key))
+                                (buffer-properties b))])
+                (if value (cons (cons key value) kept) kept))))))
+    (notify! `(property ,id ,key ,actor))
+    (void))
+
+  (define (property id key)
+    ;; the buffer's fact under key, or #f
+    (locked
+      (lambda ()
+        (cond [(assq key (buffer-properties (buffer-of 'property id)))
+               => cdr]
+              [else #f]))))
+
+  (define (properties id)
+    ;; every fact, as fresh pairs: ((key . value) ...)
+    (locked
+      (lambda ()
+        (map (lambda (entry) (cons (car entry) (cdr entry)))
+             (buffer-properties (buffer-of 'properties id))))))
 
   ;;; Subscriptions ------------------------------------------------------------
 

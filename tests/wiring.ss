@@ -274,6 +274,18 @@
      (check 'ui-burst-coalesced-on-the-audit-stream
             (call-with-input-file probe read) 'coalesced)
 
+     ;; buffer facts are shared truth: a rival setting a property is
+     ;; what the head's own accessors read back, and the head's edits
+     ;; flip the shared modified flag
+     (send! "\x1b;xstate:set-property! (quote (agent rival)) (buffer-state-id (current-buffer)) (quote file) \"/tmp/rival-owned.txt\"\r")
+     (pump! 900)
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (list (buffer-file (current-buffer)) (state:property (buffer-state-id (current-buffer)) (quote modified))) p)) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (check 'facts-are-shared-truth
+            (call-with-input-file probe read)
+            '("/tmp/rival-owned.txt" #t))
+
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"

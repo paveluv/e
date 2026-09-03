@@ -241,7 +241,7 @@ unless noted, loaded by the same loader. Layer by layer:
 | File | Owns |
 |---|---|
 | `text.e` | pure text and span algebra: lines, anchored spans, edit rebasing -- no state, fully unit-testable |
-| `state.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo |
+| `state.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo, and buffer properties -- the buffer-level facts every head shares (visited file, mode name, read-only, disk base), so a second or remote head reads the same truth; per-seat state (cursors, selections, viewports) stays with heads |
 | `log.e` | the structured log and audit stream (state, not UI) |
 | `policy.e` | permissions: capability minting per actor, budgets |
 | `sandbox.e` | the read-only capability environment for expression eval -- v0.1's `claude-safe`, generalized to any constrained actor |
