@@ -196,17 +196,61 @@
       (buffer-state-rev-set! b revision)
       (bump-buffer-revision! b)))
 
+  ;; Store outage: buffers whose cache forked from the store because a
+  ;; store call failed.  Each fork is logged once, edits stay local
+  ;; (never half-and-half), and every frame re-converges what it can.
+  (define forked-buffers '())
+
   (define (adopt-local! b text)
-    ;; the store is unreachable: keep editing on the local cache alone
+    ;; the store is unreachable: keep editing on the local cache
+    ;; alone -- on the record, and queued for re-convergence
     (buffer-lines-raw-set! b text)
-    (bump-buffer-revision! b))
+    (bump-buffer-revision! b)
+    (when (and (buffer-state-id b) (not (memq b forked-buffers)))
+      (set! forked-buffers (cons b forked-buffers))
+      (guard (ex [else (void)])
+        (log! 'state
+              (format "store outage: ~s forked from the store"
+                      (buffer-name b))))))
+
+  (define (reconverge-forked!)
+    ;; recovery, at frame time: re-baseline each forked buffer from
+    ;; its cache -- a deleted store twin is re-created afresh, a store
+    ;; still down keeps the buffer queued, a dead buffer drops out
+    (when (pair? forked-buffers)
+      (set! forked-buffers
+        (filter
+          (lambda (b)
+            (guard (ex [else #t])
+              (cond
+                [(not (memq b (buffer-list))) #f]
+                [(not (state:exists? (buffer-state-id b)))
+                 (mirror-create! b)
+                 (if (state:exists? (buffer-state-id b))
+                     (begin (log-reconvergence! b) #f)
+                     #t)]
+                [else
+                 (state:reset! ui-actor (buffer-state-id b)
+                               (buffer-lines b))
+                 (adopt-state! b)
+                 (log-reconvergence! b)
+                 #f])))
+          forked-buffers))))
+
+  (define (log-reconvergence! b)
+    (guard (ex [else (void)])
+      (log! 'state
+            (format "store recovered: ~s re-baselined from the editor"
+                    (buffer-name b)))))
 
   (define (state-reset! b new-lines)
-    ;; wholesale replacement: a new store baseline, adopted back
+    ;; wholesale replacement: a new store baseline, adopted back --
+    ;; which is exactly re-convergence, so a success unforks
     (if (buffer-state-id b)
         (guard (ex [else (adopt-local! b new-lines)])
           (state:reset! ui-actor (buffer-state-id b) new-lines)
-          (adopt-state! b))
+          (adopt-state! b)
+          (set! forked-buffers (remq b forked-buffers)))
         (adopt-local! b new-lines)))
 
   (define (state-edit! b span replacement)
@@ -219,7 +263,7 @@
       (let-values ([(new-text delta)
                     (text:apply-edit (buffer-lines b) span replacement)])
         new-text))
-    (if (buffer-state-id b)
+    (if (and (buffer-state-id b) (not (memq b forked-buffers)))
         (guard (ex [else (adopt-local! b (local-text))])
           (let-values ([(status info)
                         (state:edit! ui-actor (buffer-state-id b)
@@ -227,18 +271,27 @@
                                      span replacement)])
             (if (eq? status 'applied)
                 (adopt-state! b)
-                (begin
+                (let ([foreign
+                       (guard (ex [else #f])
+                         (find (lambda (entry)
+                                 (not (equal? (cadr entry) ui-actor)))
+                               (state:history (buffer-state-id b) 8)))])
                   ;; the conflict is on the record before core wins
                   (guard (ex [else (void)])
-                    (let ([foreign
-                           (find (lambda (entry)
-                                   (not (equal? (cadr entry) ui-actor)))
-                                 (state:history (buffer-state-id b) 8))])
-                      (log! 'state
-                            (format "conflict: ui overrode ~a in ~s"
-                                    (if foreign (cadr foreign) "another actor")
-                                    (buffer-name b)))))
-                  (state-reset! b (local-text))))))
+                    (log! 'state
+                          (format "conflict: ui overrode ~a in ~s"
+                                  (if foreign (cadr foreign) "another actor")
+                                  (buffer-name b))))
+                  (state-reset! b (local-text))
+                  ;; ... and the losing actor is told, after the reset
+                  ;; settles, so a re-read sees the truth:
+                  ;; (conflict buffer-id buffer-name winning-actor)
+                  (when foreign
+                    (guard (ex [else (void)])
+                      (actors:send! (cadr foreign)
+                                    (list 'conflict (buffer-state-id b)
+                                          (buffer-name b)
+                                          ui-actor))))))))
         (adopt-local! b (local-text))))
 
   (define (mirror-rename! b)
@@ -4662,6 +4715,7 @@
           (state:set-mark! ui-actor id 'point (cdr now))))))
 
   (define (state-frame-sync!)
+    (reconverge-forked!)
     (sync-foreign-edits!)
     (publish-point!)
     (present-pending-ask!))
