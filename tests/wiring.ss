@@ -49,6 +49,13 @@
        (flush-output-port (terminal-process-output process)))
      (define (screen-line n)
        (vector-ref (terminal-emulator-screen mirror) n))
+     (define (screen-has? n needle)
+       (let* ([line (screen-line n)]
+              [len (string-length needle)])
+         (let scan ([i 0])
+           (cond [(> (+ i len) (string-length line)) #f]
+                 [(string=? (substring line i (+ i len)) needle) #t]
+                 [else (scan (+ i 1))]))))
 
      ;; ask the editor whether the current buffer's lines equal its
      ;; state twin's, writing the verdict to the probe file
@@ -105,6 +112,26 @@
      (pump! 900)
      (check 'point-published-as-mark
             (call-with-input-file probe read) #t)
+
+     ;; a foreign edit above the cursor rebases it, not clamps it
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (car (point)) p)) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (let ([row-before (call-with-input-file probe read)])
+       (send! "\x1b;xstate:edit! (quote (agent tester)) (buffer-state-id (current-buffer)) (state:revision (buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"above\" \"\")\r")
+       (pump! 1200)
+       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (car (point)) p)) (quote replace)\r"
+                      probe))
+       (pump! 900)
+       (check 'cursor-rebases-across-foreign-insert
+              (call-with-input-file probe read)
+              (+ row-before 1)))
+
+     ;; undo refuses to time-travel over the agent's work
+     (send! "\x1b;xundo!\r")
+     (pump! 900)
+     (check 'undo-blocked-after-foreign-edit
+            (screen-has? 23 "blocked") #t)
 
      ;; mastery: the core's line cache IS the store's immutable text
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let-values ([(text rev) (state:snapshot (buffer-state-id (current-buffer)))]) (eq? text (buffer-lines (current-buffer)))) p)) (quote replace)\r"
