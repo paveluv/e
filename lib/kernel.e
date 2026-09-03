@@ -10,6 +10,7 @@
   (export persistent-cell
           registering-module make-registry registry-add!
           registry-items registry-entries registry-find
+          registry-remove!
           retract-module! registration-snapshot restore-registrations!
           module-source loaded-modules seam-modules
           init-module! load-module! load-modules! module-requires?
@@ -90,6 +91,12 @@
       (cond [(null? entries) #f]
             [(match? (cdar entries)) (cdar entries)]
             [else (loop (cdr entries))])))
+
+  (define (registry-remove! r match?)
+    ;; drop entries whose item satisfies match?, whoever owns them --
+    ;; for registrations with an explicit revocation handle (a state
+    ;; subscription's token, say), alongside ownership retraction
+    (set-box! r (remp (lambda (e) (match? (cdr e))) (unbox r))))
 
   (define (retract-module! owner)
     (for-each (lambda (r)

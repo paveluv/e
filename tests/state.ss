@@ -14,8 +14,11 @@
   '(begin
      (import (prefix (state) state:)
              (prefix (text) text:)
+             (prefix (kernel) kernel:)
              (only (kernel) persistent-cell)
-             (only (chezscheme) box unbox fork-thread make-time sleep))
+             (only (chezscheme)
+                   box unbox set-box! parameterize fork-thread
+                   make-time sleep))
 
      (define checks 0)
 
@@ -264,5 +267,56 @@
      (check 'delete-raises-for-the-gone
             (guard (ex [else 'rejected]) (state:line m 0))
             'rejected)
+
+     ;; -- subscriptions are registry-owned ------------------------------------
+
+     (define sub-events (box '()))
+     (define owned-buffer (state:create! alice "owned" '("x")))
+     (parameterize ([kernel:registering-module 'testmod])
+       (state:subscribe!
+         #f (lambda (event)
+              (set-box! sub-events (cons event (unbox sub-events))))))
+     (state:edit! alice owned-buffer (state:revision owned-buffer)
+                  (span 0 0 0 0) '("a"))
+     (check 'owned-subscription-hears (length (unbox sub-events)) 1)
+     (kernel:retract-module! 'testmod)
+     (state:edit! alice owned-buffer (state:revision owned-buffer)
+                  (span 0 0 0 0) '("b"))
+     (check 'retracted-subscription-is-silent
+            (length (unbox sub-events)) 1)
+     (state:delete! alice owned-buffer)
+
+     ;; -- the ui's whole-line splices, as core's splice-lines! builds them ----
+
+     ;; core.e splice-lines! turns "replace lines [from, to)" into a
+     ;; span with three cases; these drive the same spans through
+     ;; edit! and pin the resulting text
+     (define (spliced from to inserted)
+       (let* ([id (state:create! alice "spliced" '("aaa" "bbb" "ccc"))]
+              [count 3]
+              [last-len 3]
+              [sp (cond
+                    [(< to count) (span from 0 to 0)]
+                    [(> from 0) (span (- from 1) 3 (- count 1) last-len)]
+                    [else (span 0 0 (- count 1) last-len)])]
+              [replacement
+               (cond
+                 [(< to count) (append inserted '(""))]
+                 [(> from 0) (cons "" inserted)]
+                 [(null? inserted) '("")]
+                 [else inserted])])
+         (state:edit! alice id (state:revision id) sp replacement)
+         (let-values ([(text revision) (state:snapshot id)])
+           (state:delete! alice id)
+           (vector->list text))))
+
+     (check 'splice-interior (spliced 0 1 '("XX")) '("XX" "bbb" "ccc"))
+     (check 'splice-interior-delete (spliced 1 2 '()) '("aaa" "ccc"))
+     (check 'splice-interior-grow
+            (spliced 1 2 '("p" "q")) '("aaa" "p" "q" "ccc"))
+     (check 'splice-through-the-end (spliced 1 3 '("YY")) '("aaa" "YY"))
+     (check 'splice-delete-tail (spliced 2 3 '()) '("aaa" "bbb"))
+     (check 'splice-whole-buffer (spliced 0 3 '("Z")) '("Z"))
+     (check 'splice-empty-buffer (spliced 0 3 '()) '(""))
 
      (format #t "~a state checks passed\n" checks)))

@@ -27,7 +27,6 @@
           (prefix (core) core:)
           (prefix (state) state:)
           (prefix (text) text:)
-          (prefix (kernel) kernel:)
           (only (describe) register-descriptions!))
 
   (define blame-tint-seconds
@@ -177,22 +176,13 @@
 
   ;;; Wiring ------------------------------------------------------------------
 
-  ;; The subscription outlives a module reload (state tokens are not
-  ;; registry-owned), so the previous instance's token rides a
-  ;; persistent cell and is unsubscribed before the fresh instance
-  ;; subscribes -- see the tech debt ledger.
-  (define subscription-cell
-    (kernel:persistent-cell 'blame-subscription (lambda () #f)))
-
   (define (init!)
-    (let ([old (unbox subscription-cell)])
-      (when old
-        (guard (ex [else (void)]) (state:unsubscribe! old))))
-    (set-box! subscription-cell
-              (state:subscribe!
-                #f
-                (lambda (event)
-                  (core:run-on-main! (lambda () (note-event! event))))))
+    ;; the subscription is registry-owned like every registration:
+    ;; reloading this module retracts it before init! subscribes afresh
+    (state:subscribe!
+      #f
+      (lambda (event)
+        (core:run-on-main! (lambda () (note-event! event)))))
     (core:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e
     (core:set-style! 'blame-1 '((background 17)))   ; deep blue
