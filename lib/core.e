@@ -116,17 +116,20 @@
 
   ;;; Buffers and windows ----------------------------------------------------
 
+  ;; The head's working record for a store buffer: the lines cache and
+  ;; per-seat presentation only.  Buffer-level facts -- the visited
+  ;; file, the mode, read-only, the disk base -- are (state)
+  ;; properties on the twin (accessors below), so every head, local or
+  ;; remote, reads the same truth.
   (define-record-type buffer
     (fields (mutable name)
             (mutable lines buffer-lines buffer-lines-raw-set!)
             (mutable revision)
-            (mutable file) (mutable trailing)
-            (mutable modified) (mutable history)
+            (mutable history)
             (mutable mark-row) (mutable mark-col)
             (mutable marked)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
-            (mutable mode) (mutable mode-auto) (mutable read-only)
             ;; #t/#f after a local toggle, or default to follow the global
             ;; line-numbers parameter
             (mutable line-numbers buffer-line-numbers-setting
@@ -134,16 +137,60 @@
             ;; #t/#f overrides wrapping for every window showing this buffer;
             ;; default leaves wrapping as a window/global presentation choice.
             (mutable wrap buffer-wrap-setting buffer-wrap-setting-set!)
-            ;; the disk state this buffer last agreed with: the mtime
-            ;; stamp raising suspicion cheaply, and the content as
-            ;; loaded or last saved -- the base for comparisons and
-            ;; three-way merges
-            ;; stale marks a detected external change, worn as a red
-            ;; !! in the status bar until a save settles it
-            (mutable stamp) (mutable base) (mutable stale)
             ;; the buffer's twin in the (state) store, and the store
             ;; revision this buffer's lines last agreed with
             (mutable state-id) (mutable state-rev)))
+
+  ;; Shared facts, read and written through the store.  The fallbacks
+  ;; only cover a buffer whose twin is missing (a store outage, a
+  ;; failed mirror creation); every created buffer initializes its
+  ;; managed facts, so an absent property reads honestly as #f.
+  ;;
+  ;;   file    the visited path, or #f
+  ;;   trailing whether the file ends in a newline
+  ;;   modified unsaved changes (any actor's)
+  ;;   mode    the buffer's mode NAME -- the registry record never
+  ;;           crosses the seam; find-mode resolves it on read, so a
+  ;;           reloaded mode module is picked up live
+  ;;   mode-auto whether the mode came from detection
+  ;;   read-only
+  ;;   stamp/base the disk state last agreed with: the mtime raising
+  ;;           suspicion cheaply, and the content as loaded or last
+  ;;           saved -- the base for comparisons and three-way merges
+  ;;   stale   a detected external change, worn as a red !! until a
+  ;;           save settles it
+
+  (define (buffer-fact b key fallback)
+    (let ([id (buffer-state-id b)])
+      (if id
+          (guard (ex [else fallback]) (state:property id key))
+          fallback)))
+
+  (define (buffer-fact-set! b key value)
+    (guard (ex [else (void)])
+      (when (buffer-state-id b)
+        (state:set-property! ui-actor (buffer-state-id b) key value))))
+
+  (define (buffer-file b) (buffer-fact b 'file #f))
+  (define (buffer-file-set! b v) (buffer-fact-set! b 'file v))
+  (define (buffer-trailing b) (buffer-fact b 'trailing #t))
+  (define (buffer-trailing-set! b v) (buffer-fact-set! b 'trailing v))
+  (define (buffer-modified b) (buffer-fact b 'modified #f))
+  (define (buffer-modified-set! b v) (buffer-fact-set! b 'modified v))
+  (define (buffer-mode b)
+    (let ([n (buffer-fact b 'mode #f)]) (and n (find-mode n))))
+  (define (buffer-mode-set! b m)
+    (buffer-fact-set! b 'mode (and m (mode-name m))))
+  (define (buffer-mode-auto b) (buffer-fact b 'mode-auto #t))
+  (define (buffer-mode-auto-set! b v) (buffer-fact-set! b 'mode-auto v))
+  (define (buffer-read-only b) (buffer-fact b 'read-only #f))
+  (define (buffer-read-only-set! b v) (buffer-fact-set! b 'read-only v))
+  (define (buffer-stamp b) (buffer-fact b 'stamp #f))
+  (define (buffer-stamp-set! b v) (buffer-fact-set! b 'stamp v))
+  (define (buffer-base b) (buffer-fact b 'base #f))
+  (define (buffer-base-set! b v) (buffer-fact-set! b 'base v))
+  (define (buffer-stale b) (buffer-fact b 'stale #f))
+  (define (buffer-stale-set! b v) (buffer-fact-set! b 'stale v))
 
   ;; The head's window tree lives in the (head) seam module now: the
   ;; records, the split geometry, and the seat state (windows, the
@@ -345,10 +392,12 @@
         (state:rename! ui-actor (buffer-state-id b) (buffer-name b)))))
 
   (define (new-buffer name)
-    (let ([b (make-buffer name (vector "") 0 #f #t #f (vector '() '())
-                          0 0 #f 0 0 0 #f #t #f 'default 'default
-                          #f #f #f #f 0)])
+    (let ([b (make-buffer name (vector "") 0 (vector '() '())
+                          0 0 #f 0 0 0 'default 'default #f 0)])
       (mirror-create! b)
+      ;; the managed facts start explicit, so absence stays honest
+      (buffer-trailing-set! b #t)
+      (buffer-mode-auto-set! b #t)
       b))
 
   (define (bump-buffer-revision! b)
@@ -4187,7 +4236,7 @@
   (define foreign-pending '())
 
   (define (note-foreign-event event)
-    (when (and (memq (car event) '(edit reset))
+    (when (and (memq (car event) '(edit reset property))
                (not (equal? (list-ref event 3) ui-actor)))
       (with-mutex foreign-lock
         (set! foreign-pending (cons event foreign-pending)))
@@ -4257,19 +4306,39 @@
         (lambda (event)
           (guard (ex [else (void)])
             (let ([id (cadr event)] [actor (list-ref event 3)])
-              (flush-ui-audit! id)
-              (log! 'state
-                    (format "~a ~a ~s~a"
-                            actor
-                            (if (eq? (car event) 'reset)
-                                "reset" "edited")
-                            (state:buffer-name id)
-                            (if (eq? (car event) 'edit)
-                                (format " at ~a"
-                                        (text:span-start
-                                          (text:delta-span
-                                            (list-ref event 4))))
-                                ""))))))
+              ;; the modified flag flips on every edit: audit the
+              ;; edits, not their bookkeeping shadow
+              (unless (and (eq? (car event) 'property)
+                           (eq? (caddr event) 'modified))
+                (flush-ui-audit! id)
+                (log! 'state
+                      (if (eq? (car event) 'property)
+                          (format "~a set ~a of ~s"
+                                  actor (caddr event)
+                                  (state:buffer-name id))
+                          (format "~a ~a ~s~a"
+                                  actor
+                                  (if (eq? (car event) 'reset)
+                                      "reset" "edited")
+                                  (state:buffer-name id)
+                                  (if (eq? (car event) 'edit)
+                                      (format " at ~a"
+                                              (text:span-start
+                                                (text:delta-span
+                                                  (list-ref event 4))))
+                                      ""))))))))
+        events)
+      ;; a foreign fact changed (mode, file, read-only): the status
+      ;; line must repaint even though no text moved
+      (for-each
+        (lambda (event)
+          (when (eq? (car event) 'property)
+            (let ([b (find (lambda (b)
+                             (eqv? (buffer-state-id b) (cadr event)))
+                           buffers)])
+              (when b
+                (bump-buffer-revision! b)
+                (invalidate-screen-cache!)))))
         events)
       ;; carry every view's point across the foreign deltas, so a
       ;; cursor keeps its content when an agent edits above it
