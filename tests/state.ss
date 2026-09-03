@@ -97,6 +97,36 @@
      (state:drop-mark! bot m 'anchor)
      (check 'mark-dropped (state:mark bot m 'anchor) #f)
 
+     ;; -- span marks: published selections ----------------------------------
+
+     (define (span-ends s)
+       (list (text:span-start s) (text:span-end s)))
+
+     (define r (state:create! alice "selected" '("abcdef" "ghijkl")))
+     (state:set-mark! alice r 'region (span 0 1 0 4))
+
+     ;; an edit before the selection shifts it whole
+     (state:edit! bot r (state:revision r) (span 0 0 0 0) '("XX"))
+     (check 'span-mark-rebases
+            (span-ends (state:mark alice r 'region))
+            '((0 . 3) (0 . 6)))
+
+     ;; an overlapping edit degrades to endpoint rebasing, never #f
+     (state:edit! bot r (state:revision r) (span 0 4 0 5) '("YYY"))
+     (check 'span-mark-survives-overlap
+            (let ([s (state:mark alice r 'region)])
+              (and (text:span? s)
+                   (text:position<=? (text:span-start s)
+                                     (text:span-end s))))
+            #t)
+
+     ;; a reset clamps both endpoints into the new text
+     (state:set-mark! alice r 'region (span 0 2 1 4))
+     (state:reset! bot r '("ab"))
+     (check 'span-mark-clamps-on-reset
+            (span-ends (state:mark alice r 'region))
+            '((0 . 2) (0 . 2)))
+
      ;; -- attributed undo ---------------------------------------------------
 
      (define u (state:create! alice "undoable" '("aaa" "bbb" "ccc")))

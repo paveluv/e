@@ -4714,10 +4714,41 @@
           (set! published-point now)
           (state:set-mark! ui-actor id 'point (cdr now))))))
 
+  ;; The selection, published like the point: the v0.1 region
+  ;; (mark..point in the selected window) becomes a 'region span mark
+  ;; other actors can read, refreshed per frame, dropped when the mark
+  ;; deactivates or the head looks elsewhere.
+  (define published-region #f)   ; (id start end) as plain data, or #f
+
+  (define (publish-region!)
+    (guard (ex [else (void)])
+      (let* ([b (window-buffer current-window)]
+             [id (buffer-state-id b)]
+             [now (and id mark-active?
+                       (list id
+                             (cons mark-row mark-col)
+                             (cons (window-prow current-window)
+                                   (window-pcol current-window))))])
+        (unless (equal? now published-region)
+          (when (and published-region
+                     (or (not now)
+                         (not (eqv? (car published-region) (car now)))))
+            (guard (ex [else (void)])
+              (state:drop-mark! ui-actor (car published-region) 'region)))
+          (set! published-region now)
+          (when now
+            (let ([m (cadr now)] [p (caddr now)])
+              (state:set-mark!
+                ui-actor id 'region
+                (text:normalize-span
+                  (text:make-span (car m) (cdr m)
+                                  (car p) (cdr p))))))))))
+
   (define (state-frame-sync!)
     (reconverge-forked!)
     (sync-foreign-edits!)
     (publish-point!)
+    (publish-region!)
     (present-pending-ask!))
 
   ;; The head's side of the interaction protocol: another actor's

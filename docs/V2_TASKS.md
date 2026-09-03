@@ -19,7 +19,12 @@ state.
       never mutated in place (the eq? proof is in tests/wiring.ss)
 - [x] rebase window points, viewport tops, and buffer spots through
       foreign deltas; clamping remains only as the safety net
-- [ ] publish the v0.1 region (mark..point) as a state span
+- [x] publish the v0.1 region (mark..point) as a state span -- marks
+      may now hold (text) spans (rebased strictly, degrading to
+      endpoint rebasing when an edit overlaps: a selection survives a
+      race, never goes stale); the head publishes the selected
+      window's region as the ui's 'region mark per frame and drops it
+      on deactivation
 
 ## Stage 2 -- actor identity
 
@@ -125,10 +130,9 @@ priority; items graduate into stage tasks when picked up.
 
 | P | Debt | Notes |
 |---|---|---|
-| 45 | View buffers mirror wholesale on every refresh | `lib/core.e` `view-replace!` -> `buffer-lines-set!` -> `state:reset!` runs per app refresh; a busy terminal pays O(rows) store copies for content nothing subscribes to. Fix: an opt-out flag on app buffers (skip `mirror-create!`), or make `state:reset!` diff against the current text and no-op when equal. Measure with the terminal fixture in tests/interactive.ss. |
 | 35 | `splice-lines!` span math is only integration-tested | `lib/core.e` `splice-lines!` translates whole-line splices into spans with three cases (interior, end-of-buffer, whole-buffer). tests/wiring.ss covers them live; add unit checks in tests/state.ss driving the same spans and comparing against `vector-splice` results. |
 | 30 | Reloading a core-linked seam module leaves two library instances | `reload-module!` (`lib/kernel.e`) re-evaluates `state.e`/`log.e`/`text.e`/`actors.e`, but core keeps the instances it compiled against; both share stores via `(kernel)` `persistent-cell` (state store, log records, log presenter, pending asks), so behavior stays coherent while stale code lingers -- except registries, which fork: a reloaded log.e gets an empty formatter registry while core's aliases (and every module init! going through them) keep the old one. Fix: have reload-module! refuse seam modules core links against (list them next to the core/kernel refusal), or restart-advice message. Repro: reload log -- log-view (core aliases) still styles, but sandbox's log-tail (prefixed log: import, recompiled against the new instance) falls back to unformatted text for formatter-owning components. |
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
-| 20 | Only the selected window's cursor is published | `lib/core.e` `publish-point!` publishes one 'point mark for `current-window`. Fix: publish per window (mark name `(point . window-index)`) and the v0.1 region (buffer mark .. point) as a span mark. |
+| 20 | Only the selected window's cursor and region are published | `lib/core.e` `publish-point!`/`publish-region!` publish one 'point mark and one 'region span for `current-window`. Fix: publish per window (mark names `(point . window-index)`, `(region . window-index)`), dropping a window's marks when it closes. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |

@@ -215,6 +215,24 @@
      (pump! 900)            ; frame time: recovery re-creates the twin
      (check 'outage-reconverges (mirror-agrees? 'outage) #t)
 
+     ;; the selection is published: mark plus motion becomes the ui's
+     ;; 'region span mark in the store; C-g deactivates and drops it
+     (send! "\x1b;<\x0;\x6;\x6;\x6;")   ; M-<, C-@, then three C-f
+     (pump! 600)
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (state:mark (quote (head main)) (buffer-state-id (current-buffer)) (quote region))]) (write (list (text:span-start s) (text:span-end s)) p))) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (check 'region-published-as-a-span
+            (call-with-input-file probe read)
+            '((0 . 0) (0 . 3)))
+     (send! "\x7;")                     ; C-g: the mark deactivates
+     (pump! 600)
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (state:mark (quote (head main)) (buffer-state-id (current-buffer)) (quote region)) p)) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (check 'region-dropped-on-quit
+            (call-with-input-file probe read) #f)
+
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
