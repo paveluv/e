@@ -233,6 +233,20 @@
      (check 'region-dropped-on-quit
             (call-with-input-file probe read) #f)
 
+     ;; every window's cursor is published: a split adds a second
+     ;; (point . serial) mark, closing it drops the mark
+     (define (count-window-points)
+       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (length (filter (lambda (m) (and (pair? (car m)) (eq? (caar m) (quote point)))) (state:marks (quote (head main)) (buffer-state-id (current-buffer))))) p)) (quote replace)\r"
+                      probe))
+       (pump! 900)
+       (call-with-input-file probe read))
+     (send! "\x18;2")                   ; C-x 2: split
+     (pump! 600)
+     (check 'split-publishes-two-window-points (count-window-points) 2)
+     (send! "\x18;1")                   ; C-x 1: back to one window
+     (pump! 600)
+     (check 'closed-window-point-dropped (count-window-points) 1)
+
      ;; blame: a rival's edit is attributed at point from the store's
      ;; delta log (the tint itself is visual; the geometry is checked
      ;; in tests/state.ss)

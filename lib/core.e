@@ -4557,53 +4557,83 @@
   ;; Stage 1's tail: the human's cursor is a first-class mark other
   ;; actors can see.  Published once per frame, for the selected
   ;; window's buffer, under the ui actor's 'point.
-  (define published-point #f)   ; (state-id row . col) last published
+  ;; What the head looks at, published as state marks other actors can
+  ;; read, refreshed per frame by a desired-versus-published diff:
+  ;; every window's cursor as (point . serial), the selected window's
+  ;; additionally as plain 'point, and the active region as 'region
+  ;; and (region . serial).  A mark drops when its window closes,
+  ;; looks at another buffer, or the selection deactivates.  Serials
+  ;; ride a weak table, so closed windows carry theirs to the grave.
 
-  (define (publish-point!)
+  (define window-serial-counter 0)
+  (define window-serials (make-weak-eq-hashtable))
+
+  (define (window-serial w)
+    (or (hashtable-ref window-serials w #f)
+        (begin
+          (set! window-serial-counter (+ window-serial-counter 1))
+          (hashtable-set! window-serials w window-serial-counter)
+          window-serial-counter)))
+
+  ;; (((id . name) . value) ...): value is (row . col) for a point,
+  ;; ((row . col) . (row . col)) for a region -- plain data, so frames
+  ;; without changes are equal? and publish nothing
+  (define published-marks '())
+
+  (define (desired-head-marks)
+    (fold-left
+      (lambda (acc w)
+        (let ([id (buffer-state-id (window-buffer w))])
+          (if (not id)
+              acc
+              (let* ([serial (window-serial w)]
+                     [selected? (eq? w current-window)]
+                     [p (cons (window-prow w) (window-pcol w))]
+                     [acc (cons (cons (cons id (cons 'point serial)) p)
+                                acc)]
+                     [acc (if selected?
+                              (cons (cons (cons id 'point) p) acc)
+                              acc)])
+                (if (and selected? mark-active?)
+                    (let ([region (cons (cons mark-row mark-col) p)])
+                      (cons* (cons (cons id (cons 'region serial)) region)
+                             (cons (cons id 'region) region)
+                             acc))
+                    acc)))))
+      '() windows))
+
+  (define (mark-value value)
+    ;; a region value becomes a normalized span; a point stays a pair
+    (if (pair? (car value))
+        (text:normalize-span
+          (text:make-span (caar value) (cdar value)
+                          (cadr value) (cddr value)))
+        value))
+
+  (define (publish-head-marks!)
     (guard (ex [else (void)])
-      (let* ([b (window-buffer current-window)]
-             [id (buffer-state-id b)]
-             [now (and id (cons id (cons (window-prow current-window)
-                                         (window-pcol current-window))))])
-        (when (and now (not (equal? now published-point)))
-          (set! published-point now)
-          (state:set-mark! ui-actor id 'point (cdr now))))))
-
-  ;; The selection, published like the point: the v0.1 region
-  ;; (mark..point in the selected window) becomes a 'region span mark
-  ;; other actors can read, refreshed per frame, dropped when the mark
-  ;; deactivates or the head looks elsewhere.
-  (define published-region #f)   ; (id start end) as plain data, or #f
-
-  (define (publish-region!)
-    (guard (ex [else (void)])
-      (let* ([b (window-buffer current-window)]
-             [id (buffer-state-id b)]
-             [now (and id mark-active?
-                       (list id
-                             (cons mark-row mark-col)
-                             (cons (window-prow current-window)
-                                   (window-pcol current-window))))])
-        (unless (equal? now published-region)
-          (when (and published-region
-                     (or (not now)
-                         (not (eqv? (car published-region) (car now)))))
-            (guard (ex [else (void)])
-              (state:drop-mark! ui-actor (car published-region) 'region)))
-          (set! published-region now)
-          (when now
-            (let ([m (cadr now)] [p (caddr now)])
-              (state:set-mark!
-                ui-actor id 'region
-                (text:normalize-span
-                  (text:make-span (car m) (cdr m)
-                                  (car p) (cdr p))))))))))
+      (let ([desired (desired-head-marks)])
+        (unless (equal? desired published-marks)
+          (for-each
+            (lambda (entry)
+              (unless (assoc (car entry) desired)
+                (guard (ex [else (void)])
+                  (state:drop-mark! ui-actor (caar entry) (cdar entry)))))
+            published-marks)
+          (for-each
+            (lambda (entry)
+              (let ([old (assoc (car entry) published-marks)])
+                (unless (and old (equal? (cdr old) (cdr entry)))
+                  (guard (ex [else (void)])
+                    (state:set-mark! ui-actor (caar entry) (cdar entry)
+                                     (mark-value (cdr entry)))))))
+            desired)
+          (set! published-marks desired)))))
 
   (define (state-frame-sync!)
     (reconverge-forked!)
     (sync-foreign-edits!)
-    (publish-point!)
-    (publish-region!)
+    (publish-head-marks!)
     (present-pending-ask!))
 
   ;; The head's side of the interaction protocol: another actor's
