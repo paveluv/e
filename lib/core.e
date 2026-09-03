@@ -63,8 +63,8 @@
     prompt-styler completion-styler
     min-window-lines
     complete! show-completions! dismiss-completions!
-    read-key read-key-event key-event-character read-paste
-    peek-key pending-input? cursor-in-echo
+    read-key-event key-event-character read-paste run-on-main!
+    cursor-in-echo
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
     set-message! show-message! show-prompt-message!
@@ -4625,7 +4625,8 @@
     (when (and (memq (car event) '(edit reset))
                (not (equal? (list-ref event 3) ui-actor)))
       (with-mutex foreign-lock
-        (set! foreign-pending (cons event foreign-pending)))))
+        (set! foreign-pending (cons event foreign-pending)))
+      (wake-main!)))
 
   (define state-subscription (state:subscribe! #f note-foreign-event))
 
@@ -5325,21 +5326,7 @@
   ;; Key-at-a-time input, for modules building interactive commands
   ;; (single-key queries, search-like loops): the next key as a
   ;; character (#f at end of input), and whether one is already waiting.
-  (define (read-key)
-    (call-uninterrupted
-      (lambda ()
-        ;; The caller's redraw may have parked the cursor for a running
-        ;; evaluation; waiting for a key is interaction, so re-place it.
-        (place-cursor!)
-        (let ([c (read-char stdin)]) (and (char? c) c)))))
-
   (define (pending-input?) (char-ready? stdin))
-
-  (define (peek-key)
-    ;; The waiting key without consuming it (#f at end of input):
-    ;; lets a command decide whether an ESC opens its own meta chord
-    ;; or belongs to the ordinary dispatch.
-    (let ([c (peek-char stdin)]) (and (char? c) c)))
 
   (define (file-prompt-styler label)
     ;; Existence shown in the face, component-wise: the typed path's
@@ -5480,8 +5467,14 @@
                  (loop next next (cons (substring s start i) acc)))]
               [else (loop (+ i 1) start acc)]))))
 
+  (define pending-paste "")
+
   (define (read-paste)
-    ;; The text of a bracketed paste: everything up to ESC [ 2 0 1 ~.
+    ;; The text of the paste event just consumed.
+    pending-paste)
+
+  (define (read-paste-body)
+    ;; Reader-thread side: everything up to ESC [ 2 0 1 ~.
     ;; Hold only a prefix of the closer while matching it one character at
     ;; a time.  On a mismatch, emit that prefix as payload and reconsider
     ;; a mismatching ESC as the start of the real closer.
@@ -6123,9 +6116,10 @@
       [(3) (lambda () (goto-point! (cons point-row (+ point-col 3))))]
       [else (lambda () (void))]))
 
-  (define (mouse-event! handle?)
+  (define (parse-mouse-event)
     ;; The rest of an ESC [ < sequence: b ; x ; y then M (press) or
-    ;; m (release).  Wheel is button 64/65; releases are ignored.
+    ;; m (release) -- parsed into data on the reader thread; the main
+    ;; thread applies it (apply-mouse-event!).
     (let drain ([c (read-char stdin)] [ps '()])
       (if (and (char? c) (or (char<=? #\0 c #\9) (char=? c #\;)))
           (drain (read-char stdin) (cons c ps))
@@ -6137,24 +6131,30 @@
                                            (+ (* cur 10)
                                               (- (char->integer (car chars)) 48))
                                            acc)]))])
-            (and handle? (char? c) (= (length nums) 3)
-                 (let ([b (car nums)] [x (cadr nums)] [y (caddr nums)])
-                   (cond [(char=? c #\m)                         ; release
-                          (mouse-release! x y b)
-                          (set! drag-divider #f)
-                          (set! drag-scrollbar #f)
-                          "MOUSE-HANDLED"]
-                         [(= (bitwise-and b 64) 64)               ; wheel
-                          (mouse-wheel! x y b (bitwise-and b 3)
-                                        (= (bitwise-and b 8) 8)
-                                        (= (bitwise-and b 4) 4))]
-                         [(= (bitwise-and b 32) 32)               ; drag
-                          (when (< (bitwise-and b 3) 3)
-                            (mouse-drag! x y b))
-                          "MOUSE-HANDLED"]
-                         [(< (bitwise-and b 3) 3)                 ; a press
-                          (mouse-press! x y b)]
-                         [else "MOUSE-HANDLED"])))))))
+            (and (char? c) (= (length nums) 3)
+                 (list 'mouse c (car nums) (cadr nums) (caddr nums)))))))
+
+  (define (apply-mouse-event! handle? c b x y)
+    ;; Wheel is button 64/65; releases are ignored.  A context that
+    ;; must not change editor focus passes handle? #f: the report is
+    ;; consumed without being applied.
+    (and handle?
+         (cond [(char=? c #\m)                         ; release
+                (mouse-release! x y b)
+                (set! drag-divider #f)
+                (set! drag-scrollbar #f)
+                "MOUSE-HANDLED"]
+               [(= (bitwise-and b 64) 64)               ; wheel
+                (mouse-wheel! x y b (bitwise-and b 3)
+                              (= (bitwise-and b 8) 8)
+                              (= (bitwise-and b 4) 4))]
+               [(= (bitwise-and b 32) 32)               ; drag
+                (when (< (bitwise-and b 3) 3)
+                  (mouse-drag! x y b))
+                "MOUSE-HANDLED"]
+               [(< (bitwise-and b 3) 3)                 ; a press
+                (mouse-press! x y b)]
+               [else "MOUSE-HANDLED"])))
 
   ;;; Key handling ----------------------------------------------------------
 
@@ -6423,11 +6423,11 @@
     (case code [(15) 5] [(17) 6] [(18) 7] [(19) 8]
       [(20) 9] [(21) 10] [(23) 11] [(24) 12] [else #f]))
 
-  (define (read-csi-event handle-mouse?)
+  (define (read-csi-event)
     (let ([first (read-char stdin)])
       (cond
         [(and (char? first) (char=? first #\<))
-         (or (mouse-event! handle-mouse?) "MOUSE-HANDLED")]
+         (or (parse-mouse-event) "MOUSE-HANDLED")]
         [(and (char? first) (char=? first #\?))
          ;; A private report from the host, not a key. The color-scheme
          ;; report (DSR 997) is acted on; any other is swallowed so its
@@ -6438,14 +6438,14 @@
                (drain (read-char stdin) (cons b params))
                (let ([numbers (csi-numbers
                                 (list->string (reverse params)))])
-                 (when (and (char? b) (char=? b #\n)
-                            (pair? numbers) (eqv? (car numbers) 997))
-                   (note-color-scheme!
-                     (if (eqv? (and (pair? (cdr numbers))
-                                    (cadr numbers))
-                               2)
-                         'light 'dark)))
-                 #f)))]
+                 (if (and (char? b) (char=? b #\n)
+                          (pair? numbers) (eqv? (car numbers) 997))
+                     (list 'host-color-scheme
+                           (if (eqv? (and (pair? (cdr numbers))
+                                          (cadr numbers))
+                                     2)
+                               'light 'dark))
+                     #f))))]
         [else
          (let drain ([b first] [params '()])
            (if (and (char? b)
@@ -6471,7 +6471,8 @@
                    [(#\Z) "S-TAB"]
                    [(#\~)
                     (let ([code (and (pair? numbers) (car numbers))])
-                      (cond [(eqv? code 200) "PASTE"]
+                      (cond [(eqv? code 200)
+                             (cons 'paste (read-paste-body))]
                             [(memv code '(1 7)) (named "HOME")]
                             [(memv code '(4 8)) (named "END")]
                             [(eqv? code 2) (named "INSERT")]
@@ -6484,52 +6485,111 @@
                             [else #f]))]
                    [else #f]))))])))
 
+  (define (parse-input-event)
+    ;; Reader-thread side: decode the terminal once, into data --
+    ;; strings and chars for keys, (mouse ...) / (paste ...) /
+    ;; (host-color-scheme ...) for the rest.  Side effects happen at
+    ;; consumption, on the main thread (read-key-event).
+    (let again ()
+      (let ([c (read-char stdin)])
+        (cond
+          [(eof-object? c) c]
+          [(not (char=? c #\esc)) (character-event c)]
+          [(not (pending-input?)) "ESC"]
+          [else
+           (let ([a (read-char stdin)])
+             (cond
+               [(eof-object? a) "ESC"]
+               [(char=? a #\[)
+                (or (read-csi-event) (again))]
+               [(char=? a #\O)
+                (case (read-char stdin)
+                  [(#\P) "F1"] [(#\Q) "F2"]
+                  [(#\R) "F3"] [(#\S) "F4"]
+                  [(#\A) "UP"] [(#\B) "DOWN"]
+                  [(#\C) "RIGHT"] [(#\D) "LEFT"]
+                  [(#\H) "HOME"] [(#\F) "END"]
+                  [(#\E) "BEGIN"]
+                  [(#\p) "KP-0"] [(#\q) "KP-1"]
+                  [(#\r) "KP-2"] [(#\s) "KP-3"]
+                  [(#\t) "KP-4"] [(#\u) "KP-5"]
+                  [(#\v) "KP-6"] [(#\w) "KP-7"]
+                  [(#\x) "KP-8"] [(#\y) "KP-9"]
+                  [(#\n) "KP-DECIMAL"] [(#\o) "KP-DIVIDE"]
+                  [(#\j) "KP-MULTIPLY"] [(#\m) "KP-SUBTRACT"]
+                  [(#\k) "KP-ADD"] [(#\l) "KP-COMMA"]
+                  [(#\X) "KP-EQUAL"] [(#\M) "KP-ENTER"]
+                  [else (again)])]
+               [else
+                (let ([plain (character-event a)])
+                  (if (string-prefix? "C-" plain)
+                      (string-append "C-M-" (string-tail plain 2))
+                      (string-append "M-"
+                                     (if (string=? plain " ")
+                                         "SPC"
+                                         plain))))]))]))))
+
+  ;; The scheduling substrate in use: a dedicated thread owns the
+  ;; terminal input (through a private dup'd port, so its blocking
+  ;; reads never hold a console lock) and posts parsed events to the
+  ;; main mailbox.  read-key-event -- called synchronously by the main
+  ;; loop, prompts, i-search, everything -- is now the mailbox pump:
+  ;; between keys it services wake-ups (foreign edits appear without a
+  ;; keypress) and defers posted thunks to the top of the main loop.
+  (define main-mailbox (kernel:make-mailbox))
+  (define deferred-runs '())
+
+  (define (run-on-main! thunk)
+    ;; run thunk on the main thread, at the top of its loop
+    (kernel:mailbox-post! main-mailbox (cons 'run thunk)))
+
+  (define (wake-main!)
+    (kernel:mailbox-post! main-mailbox '(wake)))
+
+  (define (start-input-reader!)
+    (set! stdin (duplicate-standard-input-port))
+    (fork-thread
+      (lambda ()
+        (let loop ()
+          (let ([event (guard (ex [else (eof-object)])
+                         (parse-input-event))])
+            (kernel:mailbox-post! main-mailbox (cons 'key event))
+            (unless (eof-object? event) (loop)))))))
+
   (define read-key-event
-    ;; Decode the terminal once.  Consumers see the same names whether
-    ;; they are the main editor, I-search, a prompt, or a key describer.
-    ;; A context that must not change editor focus passes #f: mouse reports
-    ;; are consumed and returned as MOUSE without applying them.
+    ;; Consumers see the same names whether they are the main editor,
+    ;; I-search, a prompt, or a key describer.  A context that must not
+    ;; change editor focus passes #f: mouse reports are consumed
+    ;; without being applied.
     (case-lambda
       [() (read-key-event #t)]
       [(handle-mouse?)
-       (let again ()
-         (let ([c (read-char stdin)])
-           (cond
-             [(eof-object? c) c]
-             [(not (char=? c #\esc)) (character-event c)]
-             [(not (pending-input?)) "ESC"]
-             [else
-              (let ([a (read-char stdin)])
+       (let pump ()
+         (let ([message (kernel:mailbox-receive! main-mailbox)])
+           (case (car message)
+             [(key)
+              (let ([event (cdr message)])
                 (cond
-                  [(eof-object? a) "ESC"]
-                  [(char=? a #\[)
-                   (or (read-csi-event handle-mouse?) (again))]
-                  [(char=? a #\O)
-                   (case (read-char stdin)
-                     [(#\P) "F1"] [(#\Q) "F2"]
-                     [(#\R) "F3"] [(#\S) "F4"]
-                     [(#\A) "UP"] [(#\B) "DOWN"]
-                     [(#\C) "RIGHT"] [(#\D) "LEFT"]
-                     [(#\H) "HOME"] [(#\F) "END"]
-                     [(#\E) "BEGIN"]
-                     [(#\p) "KP-0"] [(#\q) "KP-1"]
-                     [(#\r) "KP-2"] [(#\s) "KP-3"]
-                     [(#\t) "KP-4"] [(#\u) "KP-5"]
-                     [(#\v) "KP-6"] [(#\w) "KP-7"]
-                     [(#\x) "KP-8"] [(#\y) "KP-9"]
-                     [(#\n) "KP-DECIMAL"] [(#\o) "KP-DIVIDE"]
-                     [(#\j) "KP-MULTIPLY"] [(#\m) "KP-SUBTRACT"]
-                     [(#\k) "KP-ADD"] [(#\l) "KP-COMMA"]
-                     [(#\X) "KP-EQUAL"] [(#\M) "KP-ENTER"]
-                     [else (again)])]
-                  [else
-                   (let ([plain (character-event a)])
-                     (if (string-prefix? "C-" plain)
-                         (string-append "C-M-" (string-tail plain 2))
-                         (string-append "M-"
-                                        (if (string=? plain " ")
-                                            "SPC"
-                                            plain))))]))])))]))
+                  [(not (pair? event)) event]
+                  [(eq? (car event) 'mouse)
+                   (or (apply apply-mouse-event! handle-mouse?
+                              (cdr event))
+                       "MOUSE-HANDLED")]
+                  [(eq? (car event) 'paste)
+                   (set! pending-paste (cdr event))
+                   "PASTE"]
+                  [(eq? (car event) 'host-color-scheme)
+                   (note-color-scheme! (cadr event))
+                   (pump)]
+                  [else (pump)]))]
+             [(wake)
+              (state-frame-sync!)
+              (redraw!)
+              (pump)]
+             [(run)
+              (set! deferred-runs (cons (cdr message) deferred-runs))
+              (pump)]
+             [else (pump)])))]))
 
   (define (set-mark-command!)
     (set! mark-row point-row) (set! mark-col point-col)
@@ -6984,10 +7044,20 @@
       (lambda () (terminal-raw!)
         (ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h\x1b;[?996n")
         (set-mouse! #t)
-        (set! screen-live? #t))
+        (set! screen-live? #t)
+        (start-input-reader!))
       (lambda ()
         (let loop ()
           (unless quit?
+            (let ([runs (reverse deferred-runs)])
+              (set! deferred-runs '())
+              (for-each (lambda (thunk)
+                          (guard (ex [else
+                                      (parameterize ([message-source
+                                                      'run-on-main!])
+                                        (set-message! (error-text ex)))])
+                            (thunk)))
+                        runs))
             (run-pre-redraw-hooks!)
             (redraw!)
             ;; A command that raises (a read-only buffer, a bug in an

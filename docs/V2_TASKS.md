@@ -42,10 +42,16 @@ state.
       core keeps load-module!/reload-module! aliases and hangs its
       after-reload work (config, buffer modes, repaint) on the
       kernel's hook
-- [ ] mailboxes and the event queue; the keyboard becomes one
-      producer among several
+- [x] mailboxes and the event queue: kernel mailboxes; a dedicated
+      reader thread owns terminal input over a private dup'd port and
+      posts parsed data events; read-key-event is the main-thread
+      mailbox pump (side effects -- mouse, paste, host reports --
+      apply at consumption); run-on-main! and wake-main! exist, and
+      foreign edits paint without a keypress
 - [ ] prompts become the ask/reply interaction protocol
 - [ ] retire the display-port and between-keystrokes workarounds
+      (run-on-main!/wake-main! now exist; the terminal reader and the
+      claude worker still repaint via display ports -- migrate them)
 - [ ] subscription delivery batches through mailboxes (the settled
       coalescing)
 
@@ -83,7 +89,6 @@ priority; items graduate into stage tasks when picked up.
 | P | Debt | Notes |
 |---|---|---|
 | 50 | Conflict override only reaches the log, not the losing actor | `lib/core.e` `state-edit!` stale branch now logs "conflict: ui overrode ACTOR in BUFFER" under `state`, naming the newest foreign editor from `state:history` -- but the losing actor itself only sees a generic reset event. Fix: a `conflict` event through `lib/state.e` `notify!`, or the stage 3 ask/reply protocol. |
-| 65 | Foreign edits wait for a keypress to appear | A worker-thread `state:edit!` is only adopted by `sync-foreign-edits!` (`lib/core.e`), a pre-redraw hook, and the main loop sits blocked in `get-char` until a key arrives. Fix direction: a self-pipe the input reader multiplexes, or stage 3 kernel mailboxes; interim: subscribers could nudge via a display-port redraw like `lib/terminal.e` reader threads do. Verify with tests/wiring.ss plus a delay. |
 | 45 | View buffers mirror wholesale on every refresh | `lib/core.e` `view-replace!` -> `buffer-lines-set!` -> `state:reset!` runs per app refresh; a busy terminal pays O(rows) store copies for content nothing subscribes to. Fix: an opt-out flag on app buffers (skip `mirror-create!`), or make `state:reset!` diff against the current text and no-op when equal. Measure with the terminal fixture in tests/interactive.ss. |
 | 35 | `splice-lines!` span math is only integration-tested | `lib/core.e` `splice-lines!` translates whole-line splices into spans with three cases (interior, end-of-buffer, whole-buffer). tests/wiring.ss covers them live; add unit checks in tests/state.ss driving the same spans and comparing against `vector-splice` results. |
 | 35 | Store outage silently forks the text | `lib/core.e` `state-edit!`/`state-reset!` guard clauses fall back to `adopt-local!` when the store errors: the editor keeps working but the store copy silently diverges until the next successful reset. Fix: log the outage once under `state`, and re-reset on recovery. |

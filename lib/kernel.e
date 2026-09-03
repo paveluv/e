@@ -13,14 +13,50 @@
           retract-module! registration-snapshot restore-registrations!
           module-source loaded-modules seam-modules
           init-module! load-module! load-modules! module-requires?
-          reload-module! add-after-reload-hook!)
+          reload-module! add-after-reload-hook!
+          make-mailbox mailbox-post! mailbox-receive!)
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! make-hashtable equal-hash
                 make-parameter format interaction-environment eval
                 library-exports library-requirements
                 library-directories directory-list load sort
-                parameterize))
+                parameterize make-mutex with-mutex make-condition
+                condition-wait condition-signal))
+
+  ;;; Mailboxes ---------------------------------------------------------------
+
+  ;; The scheduling substrate: a mailbox is a thread-safe FIFO with a
+  ;; blocking receive.  Actors -- the main loop first of all -- wait
+  ;; on their mailbox; any thread posts.
+
+  (define-record-type (mailbox %make-mailbox mailbox?)
+    (fields lock signal (mutable head) (mutable tail)))
+
+  (define (make-mailbox)
+    (%make-mailbox (make-mutex) (make-condition) '() '()))
+
+  (define (mailbox-post! mb message)
+    (with-mutex (mailbox-lock mb)
+      (mailbox-tail-set! mb (cons message (mailbox-tail mb)))
+      (condition-signal (mailbox-signal mb))))
+
+  (define (mailbox-receive! mb)
+    ;; blocks until a message arrives; strictly FIFO
+    (with-mutex (mailbox-lock mb)
+      (let wait ()
+        (cond
+          [(pair? (mailbox-head mb))
+           (let ([message (car (mailbox-head mb))])
+             (mailbox-head-set! mb (cdr (mailbox-head mb)))
+             message)]
+          [(pair? (mailbox-tail mb))
+           (mailbox-head-set! mb (reverse (mailbox-tail mb)))
+           (mailbox-tail-set! mb '())
+           (wait)]
+          [else
+           (condition-wait (mailbox-signal mb) (mailbox-lock mb))
+           (wait)]))))
 
   ;;; Registries ------------------------------------------------------------
 

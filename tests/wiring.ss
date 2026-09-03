@@ -133,7 +133,26 @@
      (check 'undo-blocked-after-foreign-edit
             (screen-has? 23 "blocked") #t)
 
+     ;; bracketed paste rides the reader thread into the buffer
+     (send! "\x5;")                    ; C-e
+     (send! "\x1b;[200~[pasted]\x1b;[201~")
+     (pump! 600)
+     (check 'bracketed-paste-inserts (mirror-agrees? 'paste) #t)
+     (check 'paste-content-on-screen
+            (or (screen-has? 0 "[pasted]") (screen-has? 1 "[pasted]")
+                (screen-has? 2 "[pasted]"))
+            #t)
+
+     ;; the wake path: a worker-thread edit appears with NO keypress
+     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 400000000 0)) (state:edit! (quote (agent background)) (buffer-state-id (current-buffer)) (state:revision (buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"WOKEN \")))\r")
+     (pump! 300)                       ; the eval returns; the loop sleeps
+     (pump! 1700)                      ; no keys: only the wake can paint
+     (check 'foreign-edit-appears-without-a-keypress
+            (substring (screen-line 0) 0 6)
+            "WOKEN ")
+
      ;; mastery: the core's line cache IS the store's immutable text
+
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let-values ([(text rev) (state:snapshot (buffer-state-id (current-buffer)))]) (eq? text (buffer-lines (current-buffer)))) p)) (quote replace)\r"
                     probe))
      (pump! 900)

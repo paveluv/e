@@ -19,6 +19,10 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-01 `read-key`, `peek-key` (core): exported raw stdin readers
+  with no callers anywhere; retired with the scheduling substrate,
+  which they could not have survived (the reader thread owns stdin).
+
 - 2026-09-01 `drag-status` (core): defined and assigned, never read
   -- its own comment admitted "retained for clearing older mouse
   state". Removed with the state.e work.
