@@ -53,7 +53,7 @@
     add-status-hint! add-buffer-status-hint!
     host-color-scheme add-color-scheme-hook!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
-    load-config! indent-on-tab! persistent-cell
+    load-config! indent-on-tab!
     add-pre-save-hook! add-post-save-hook! add-buffer-kill-hook!
     add-shutdown-hook! add-pre-redraw-hook! set-startup-page!
     prompt! confirm? prompt-ghost prompt-inspector prompt-multiline
@@ -6591,18 +6591,6 @@
           (init-module! name)
           (set! loaded-modules (append loaded-modules (list name)))))))
 
-  (define persistent-cells (make-hashtable equal-hash equal?))
-
-  (define (persistent-cell key make-initial)
-    ;; A box that survives module reloads: the first request under a
-    ;; key creates it; a reloaded module re-initializing gets the same
-    ;; box back, its state intact.  The v2 kernel mechanism, previewed
-    ;; here because the core is the module that never reloads.
-    (or (hashtable-ref persistent-cells key #f)
-        (let ([cell (box (make-initial))])
-          (hashtable-set! persistent-cells key cell)
-          cell)))
-
   (define (load-modules!)
     ;; Load every module in the lib directory (the loader script has
     ;; already pointed library-directories there): each .e file but the
@@ -6619,7 +6607,7 @@
       (sort string<?
             (filter (lambda (file)
                       (and (string-suffix? ".e" file)
-                           (not (string=? file "core.e"))))
+                           (not (member file '("core.e" "kernel.e")))))
                     (directory-list (caar (library-directories)))))))
 
   (define (module-requires? name target)
@@ -6662,8 +6650,9 @@
                   (set! loaded-modules old-loaded)
                   (restore-registrations! old-registrations)
                   (raise ex)])
-        (when (string=? name "core")
-          (error 'reload-module! "the core cannot be reloaded in place"))
+        (when (member name '("core" "kernel"))
+          (error 'reload-module!
+                 (format "the ~a cannot be reloaded in place" name)))
         (unless (file-exists? source)
           (error 'reload-module! "no module source" source))
         (load source)

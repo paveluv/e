@@ -14,7 +14,7 @@
   '(begin
      (import (prefix (state) state:)
              (prefix (text) text:)
-             (only (core) persistent-cell)
+             (only (kernel) persistent-cell)
              (only (chezscheme) box unbox fork-thread make-time sleep))
 
      (define checks 0)
