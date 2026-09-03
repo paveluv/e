@@ -5,6 +5,31 @@ expensive twice. Each entry records the symptom as first reported, the
 theories that failed, the step that actually cracked it, the root cause,
 and what generalizes. Add new entries at the top.
 
+## The Delete key was M-DELETE all along (2026-09-03)
+
+**Symptom.** None reported — that is the lesson.  The first unit test
+ever written against the input decoder (tests/tty.ss, created when the
+parser moved from core.e to tty.e) expected `ESC [ 3 ~` to decode as
+`DELETE` and got `M-DELETE`.
+
+**Root cause.** The CSI modifier heuristic accepted a lone first
+parameter of 2/3/4 as a legacy modifier spelling.  That reading is only
+valid for letter finals; for a `~` final the first parameter *is* the
+keycode, so Delete (3) decoded as meta, Insert (2) as shift.  Present on
+main since the terminal Unicode/keys commit; unnoticed because the
+affected keys are also reachable other ways (BACKSPACE deletes, paging
+works via C-v) and an unbound `M-DELETE` fails silently as "Key is
+unbound".
+
+**What generalizes.** Code that is only integration-tested is only
+tested on the paths the integration happens to walk: no interactive test
+pressed Delete, so the decoder's most common special key was wrong for
+months.  Extracting a pure seam (bytes in, data out) made the first
+direct test trivial — and it failed immediately.  When a dissolution
+slice makes something newly unit-testable, write the obvious table of
+cases even if the code "has been working": that table is where the
+latent bugs are.
+
 ## The console ports share one lock (2026-08-31)
 
 **Symptom.** Running `vi` inside an e terminal for the first time: press

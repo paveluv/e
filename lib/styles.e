@@ -15,22 +15,8 @@
           set-styles-changed-hook!)
   (import (rnrs)
           (only (chezscheme) format void)
-          (prefix (kernel) kernel:))
-
-  ;; local string utilities (core has its own copies; this library
-  ;; sits below core and duplicates the three it needs)
-  (define (string-tail s i) (substring s i (string-length s)))
-
-  (define (string-prefix? prefix s)
-    (let ([np (string-length prefix)])
-      (and (>= (string-length s) np)
-           (string=? (substring s 0 np) prefix))))
-
-  (define (string-join xs sep)
-    (if (null? xs)
-        ""
-        (fold-left (lambda (acc x) (string-append acc sep x))
-                   (car xs) (cdr xs))))
+          (prefix (kernel) kernel:)
+          (prefix (strings) strings:))
 
   ;;; The DSL -----------------------------------------------------------------
 
@@ -64,8 +50,8 @@
   (define (named-color value)
     (and (symbol? value)
          (let* ([text (symbol->string value)]
-                [bright? (string-prefix? "bright-" text)]
-                [name (if bright? (string->symbol (string-tail text 7)) value)]
+                [bright? (strings:prefix? "bright-" text)]
+                [name (if bright? (string->symbol (strings:tail text 7)) value)]
                 [hit (assq name style-colors)])
            (and hit (cons (cdr hit) bright?)))))
 
@@ -134,10 +120,10 @@
                       [else (error 'compile-style "unknown style clause"
                                    clause)]))
                   expression))])
-      (string-join (map (lambda (code)
-                          (if (string? code) code (number->string code)))
-                        (if (null? codes) '(0) codes))
-                   ";")))
+      (strings:join (map (lambda (code)
+                           (if (string? code) code (number->string code)))
+                         (if (null? codes) '(0) codes))
+                    ";")))
 
   (define (style-escape expression)
     (format "\x1b;[~am" (compile-style expression)))

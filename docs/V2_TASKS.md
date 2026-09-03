@@ -133,7 +133,17 @@ re-export facade until its importers migrate:
       facade aliases for every old name; sandbox reads log: directly,
       and policy's audit trail streams quietly into (log-view
       'policy)
-- [ ] `tty.e` (input decoding, raw terminal)
+- [x] `tty.e` (input decoding) -- the whole byte->event decoder
+      moved (key naming, CSI/SS3 sequences, SGR mouse, bracketed
+      paste, host reports), parameterized over its input port and so
+      unit-testable for the first time (tests/tty.ss, 32 checks --
+      which immediately caught the latent M-DELETE decode bug, see
+      tests/DEBUGGING_LESSONS.md); the core keeps the reader thread,
+      the mailbox pump, and mouse-event application.  Raw-mode
+      termios control already lives in (sys).  `strings.e` was born
+      alongside: the shared pure string helpers (tail, prefix?,
+      suffix?, join) now have one home below the seams, and styles.e/
+      keymap.e dropped their local copies
 - [ ] `paint.e` (screen model, cache, painting)
 - [ ] `echo.e` (notification area, prompts)
 - [ ] `head.e` (window tree, per-user state, routing)
@@ -152,4 +162,3 @@ priority; items graduate into stage tasks when picked up.
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |
-| 10 | Three copies of the small string utilities | `string-prefix?`, `string-tail`, `string-join` are duplicated in `lib/styles.e` and `lib/keymap.e` because they sit below `lib/core.e`, which owns the originals. Fix when a third-or-later extraction needs them again: give the pure string helpers a home below the seams (a `(strings)` library or a kernel section) and point core/styles/keymap at it. |
