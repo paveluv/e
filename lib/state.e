@@ -20,7 +20,8 @@
 ;; (state:snapshot ...).
 
 (library (state)
-  (export create! delete! buffer-list exists? buffer-name find-named
+  (export create! delete! reset! rename!
+          buffer-list exists? buffer-name find-named
           snapshot revision line-count line extract
           edit! undo!
           set-mark! mark drop-mark! marks
@@ -29,7 +30,7 @@
           (only (chezscheme)
                 box unbox set-box! make-mutex with-mutex format void)
           (prefix (text) text:)
-          (only (core) persistent-cell))
+          (only (kernel) persistent-cell))
 
   ;;; The store -------------------------------------------------------------
 
@@ -84,6 +85,51 @@
                          (list->vector (if (null? lines) '("") lines))
                          0 '() '() '()))
           id))))
+
+  (define (reset! actor id lines)
+    ;; Wholesale replacement: a new baseline, not an edit.  The delta
+    ;; log and the undo history clear (a stale basis against a reset
+    ;; refuses as basis-too-old), and marks clamp into the new text.
+    ;; Views that regenerate their whole content use this; edits
+    ;; should use edit!.
+    (let* ([text (cond [(vector? lines)
+                        (let ([copy (make-vector (vector-length lines))])
+                          (do ([i 0 (+ i 1)])
+                              ((= i (vector-length lines)) copy)
+                            (vector-set! copy i (vector-ref lines i))))]
+                       [(null? lines) (vector "")]
+                       [else (list->vector lines)])]
+           [text (if (zero? (vector-length text)) (vector "") text)]
+           [new-revision
+            (locked
+              (lambda ()
+                (let ([b (buffer-of 'reset! id)]
+                      [clamp (lambda (position)
+                               (let* ([line (min (car position)
+                                                 (- (vector-length text)
+                                                    1))]
+                                      [column
+                                       (min (cdr position)
+                                            (string-length
+                                              (vector-ref text line)))])
+                                 (cons line column)))])
+                  (buffer-text-set! b text)
+                  (buffer-revision-set! b (+ (buffer-revision b) 1))
+                  (buffer-deltas-set! b '())
+                  (buffer-undo-set! b '())
+                  (buffer-marks-set!
+                    b (map (lambda (entry)
+                             (cons (car entry) (clamp (cdr entry))))
+                           (buffer-marks b)))
+                  (buffer-revision b))))])
+      (notify! `(reset ,id ,new-revision ,actor))
+      new-revision))
+
+  (define (rename! actor id new-name)
+    (locked
+      (lambda ()
+        (buffer-label-set! (buffer-of 'rename! id) new-name)))
+    (void))
 
   (define (delete! actor id)
     (locked
