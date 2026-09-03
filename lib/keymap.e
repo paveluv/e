@@ -23,22 +23,8 @@
           (only (chezscheme)
                 format iota top-level-bound? top-level-value
                 hashtable-values)
-          (prefix (kernel) kernel:))
-
-  ;; local string utilities (core has its own copies; this library
-  ;; sits below core -- see the tech debt ledger)
-  (define (string-tail s i) (substring s i (string-length s)))
-
-  (define (string-prefix? prefix s)
-    (let ([np (string-length prefix)])
-      (and (>= (string-length s) np)
-           (string=? (substring s 0 np) prefix))))
-
-  (define (string-join xs sep)
-    (if (null? xs)
-        ""
-        (fold-left (lambda (acc x) (string-append acc sep x))
-                   (car xs) (cdr xs))))
+          (prefix (kernel) kernel:)
+          (prefix (strings) strings:))
 
   ;;; Key syntax --------------------------------------------------------------
 
@@ -59,8 +45,8 @@
     (or (member name special-key-names)
         (exists
           (lambda (prefix)
-            (and (string-prefix? prefix name)
-                 (member (string-tail name (string-length prefix))
+            (and (strings:prefix? prefix name)
+                 (member (strings:tail name (string-length prefix))
                          special-key-names)))
           special-key-prefixes)))
 
@@ -72,14 +58,14 @@
       [(string=? s "ESC") "ESC"]
       [(string=? s "DEL") "DELETE"]
       [(string=? s "BACKSPACE") "BACKSPACE"]
-      [(and (= (string-length s) 3) (string-prefix? "C-" s))
+      [(and (= (string-length s) 3) (strings:prefix? "C-" s))
        (format "C-~c" (char-downcase (string-ref s 2)))]
-      [(and (= (string-length s) 3) (string-prefix? "M-" s))
+      [(and (= (string-length s) 3) (strings:prefix? "M-" s))
        (format "M-~c" (string-ref s 2))]
-      [(and (> (string-length s) 3) (string-prefix? "M-" s))
-       (let ([base (key-token (string-tail s 2))])
+      [(and (> (string-length s) 3) (strings:prefix? "M-" s))
+       (let ([base (key-token (strings:tail s 2))])
          (string-append "M-" (if (string=? base " ") "SPC" base)))]
-      [(and (= (string-length s) 5) (string-prefix? "C-M-" s))
+      [(and (= (string-length s) 5) (strings:prefix? "C-M-" s))
        (format "C-M-~c" (char-downcase (string-ref s 4)))]
       [(= (string-length s) 1) s]
       [(special-key-name? s) s]
@@ -100,7 +86,7 @@
                  (cons (key-token (substring spec start i)) parts))]
           [else (loop (+ i 1) start parts)]))))
 
-  (define (sequence-text sequence) (string-join sequence " "))
+  (define (sequence-text sequence) (strings:join sequence " "))
 
   ;;; The binding table ---------------------------------------------------------
 
@@ -252,7 +238,7 @@
   (define (command-hint syms)
     ;; "M-n next-conflict!, M-m keep-mine!" for a list of command
     ;; names: each with its current key, or bare when unbound.
-    (string-join
+    (strings:join
       (map (lambda (s)
              (let ([k (command-key s)])
                (if k (format "~a ~a" k s) (format "~a" s))))
