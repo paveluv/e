@@ -307,8 +307,11 @@
 
   (define (reconverge-forked!)
     ;; recovery, at frame time: re-baseline each forked buffer from
-    ;; its cache -- a deleted store twin is re-created afresh, a store
-    ;; still down keeps the buffer queued, a dead buffer drops out
+    ;; its cache; a store still down keeps the buffer queued, a dead
+    ;; buffer drops out.  A twin that no longer exists means another
+    ;; actor deleted the buffer: the head forgets it rather than
+    ;; resurrecting what someone killed (the lifecycle sync normally
+    ;; gets there first).
     (when (pair? forked-buffers)
       (set! forked-buffers
         (filter
@@ -317,10 +320,9 @@
               (cond
                 [(not (memq b (buffer-list))) #f]
                 [(not (state:exists? (buffer-state-id b)))
-                 (mirror-create! b)
-                 (if (state:exists? (buffer-state-id b))
-                     (begin (log-reconvergence! b) #f)
-                     #t)]
+                 (buffer-state-id-set! b #f)
+                 (forget-buffer! b)
+                 #f]
                 [else
                  (state:reset! ui-actor (buffer-state-id b)
                                (buffer-lines b))
@@ -402,6 +404,24 @@
 
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
+
+  (define (buffer-of-state-id id)
+    (find (lambda (b) (eqv? (buffer-state-id b) id)) buffers))
+
+  (define (adopt-store-buffer! id)
+    ;; Another actor created a store buffer: give this head a record
+    ;; for it, so it shows in the buffer list like any other -- unless
+    ;; its creator marked it ephemeral (a head's own pop-ups).  It
+    ;; joins at the end: this seat did not ask for it.  A buffer with
+    ;; no mode yet gets detection, recorded as the shared fact.
+    (unless (or (buffer-of-state-id id)
+                (state:property id 'ephemeral))
+      (let-values ([(text revision) (state:snapshot id)])
+        (let ([b (make-buffer (state:buffer-name id) text 0
+                              (vector '() '()) 0 0 #f 0 0 0
+                              'default 'default id revision)])
+          (unless (buffer-mode b) (assign-mode! b))
+          (set! buffers (append buffers (list b)))))))
 
   (define (buffer-lines-set! b new-lines)
     (state-reset! b new-lines))
@@ -2449,6 +2469,13 @@
       (guard (ex [else (void)])
         (state:delete! ui-actor (buffer-state-id b))
         (buffer-state-id-set! b #f)))
+    (forget-buffer! b)
+    (parameterize ([message-source 'kill-buffer!])
+      (set-message! (format "Killed ~a" (buffer-name b)))))
+
+  (define (forget-buffer! b)
+    ;; drop this head's record of a buffer whose twin is gone -- kill
+    ;; hooks, the buffer list, apps, and every window showing it
     (when buffer-kill-hook-registry
       (for-each
         (lambda (hook)
@@ -2469,9 +2496,7 @@
     (for-each (lambda (w)
                 (when (eq? (window-buffer w) b)
                   (set-window-buffer! w (car buffers))))
-              windows)
-    (parameterize ([message-source 'kill-buffer!])
-      (set-message! (format "Killed ~a" (buffer-name b)))))
+              windows))
 
   (define (kill-buffer!!)
     (let* ([current (window-buffer current-window)]
@@ -4235,9 +4260,14 @@
   (define foreign-lock (make-mutex))
   (define foreign-pending '())
 
+  (define (event-actor event)
+    ;; every store event names its actor last: (delete id actor) is
+    ;; the one three-element shape
+    (if (eq? (car event) 'delete) (caddr event) (list-ref event 3)))
+
   (define (note-foreign-event event)
-    (when (and (memq (car event) '(edit reset property))
-               (not (equal? (list-ref event 3) ui-actor)))
+    (when (and (memq (car event) '(edit reset property create rename delete))
+               (not (equal? (event-actor event) ui-actor)))
       (with-mutex foreign-lock
         (set! foreign-pending (cons event foreign-pending)))
       (wake-main!)))
@@ -4305,28 +4335,59 @@
       (for-each
         (lambda (event)
           (guard (ex [else (void)])
-            (let ([id (cadr event)] [actor (list-ref event 3)])
+            (let ([id (cadr event)] [actor (event-actor event)])
               ;; the modified flag flips on every edit: audit the
               ;; edits, not their bookkeeping shadow
               (unless (and (eq? (car event) 'property)
                            (eq? (caddr event) 'modified))
                 (flush-ui-audit! id)
                 (log! 'state
-                      (if (eq? (car event) 'property)
-                          (format "~a set ~a of ~s"
-                                  actor (caddr event)
-                                  (state:buffer-name id))
-                          (format "~a ~a ~s~a"
-                                  actor
-                                  (if (eq? (car event) 'reset)
-                                      "reset" "edited")
-                                  (state:buffer-name id)
-                                  (if (eq? (car event) 'edit)
-                                      (format " at ~a"
-                                              (text:span-start
-                                                (text:delta-span
-                                                  (list-ref event 4))))
-                                      ""))))))))
+                      (case (car event)
+                        [(create)
+                         (format "~a created ~s" actor (caddr event))]
+                        [(rename)
+                         (format "~a renamed ~s to ~s" actor
+                                 (let ([b (buffer-of-state-id id)])
+                                   (if b (buffer-name b) id))
+                                 (caddr event))]
+                        [(delete)
+                         (format "~a deleted ~s" actor
+                                 (let ([b (buffer-of-state-id id)])
+                                   (if b (buffer-name b) id)))]
+                        [(property)
+                         (format "~a set ~a of ~s"
+                                 actor (caddr event)
+                                 (state:buffer-name id))]
+                        [else
+                         (format "~a ~a ~s~a"
+                                 actor
+                                 (if (eq? (car event) 'reset)
+                                     "reset" "edited")
+                                 (state:buffer-name id)
+                                 (if (eq? (car event) 'edit)
+                                     (format " at ~a"
+                                             (text:span-start
+                                               (text:delta-span
+                                                 (list-ref event 4))))
+                                     ""))]))))))
+        events)
+      ;; the buffer lifecycle across heads: another actor's buffers
+      ;; appear in this head's list, renames follow, and a deletion
+      ;; drops the record -- any window showing it moves on
+      (for-each
+        (lambda (event)
+          (guard (ex [else (void)])
+            (case (car event)
+              [(create) (adopt-store-buffer! (cadr event))]
+              [(rename)
+               (let ([b (buffer-of-state-id (cadr event))])
+                 (when b (buffer-name-set! b (caddr event))))]
+              [(delete)
+               (let ([b (buffer-of-state-id (cadr event))])
+                 (when b
+                   (buffer-state-id-set! b #f)   ; the twin is gone
+                   (forget-buffer! b)))]
+              [else (void)])))
         events)
       ;; a foreign fact changed (mode, file, read-only): the status
       ;; line must repaint even though no text moved
@@ -4468,8 +4529,10 @@
           (set! published-marks desired)))))
 
   (define (state-frame-sync!)
-    (reconverge-forked!)
+    ;; lifecycle first: a foreign deletion forgets the buffer before
+    ;; outage recovery could mistake its missing twin for a store fault
     (sync-foreign-edits!)
+    (reconverge-forked!)
     (flush-ui-audit! 'stale)
     (publish-head-marks!)
     (present-pending-ask!))
@@ -4778,6 +4841,8 @@
        #t]
       [(>= (- rows echo-height (layout-min-height layout-root)) 2)
        (set! completions-buffer (new-buffer "*completions*"))
+       ;; a head's own pop-up: other heads do not adopt it
+       (buffer-fact-set! completions-buffer 'ephemeral #t)
        (buffer-read-only-set! completions-buffer #t)
        (buffer-mode-set! completions-buffer (completions-mode))
        (set! completions-labels labels)

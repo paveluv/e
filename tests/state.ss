@@ -303,6 +303,25 @@
      (state:unsubscribe! prop-token)
      (state:delete! alice pb)
 
+     ;; -- the buffer lifecycle is an event stream too ------------------------
+
+     (define life-events (box '()))
+     (define life-token
+       (state:subscribe!
+         #f (lambda (event)
+              (when (memq (car event) '(create rename delete))
+                (set-box! life-events
+                          (cons event (unbox life-events)))))))
+     (define lb (state:create! bot "agent-notes" '("n")))
+     (state:rename! bot lb "agent-log")
+     (state:delete! bot lb)
+     (check 'lifecycle-events
+            (reverse (unbox life-events))
+            (list (list 'create lb "agent-notes" bot)
+                  (list 'rename lb "agent-log" bot)
+                  (list 'delete lb bot)))
+     (state:unsubscribe! life-token)
+
      ;; -- subscriptions are registry-owned ------------------------------------
 
      (define sub-events (box '()))

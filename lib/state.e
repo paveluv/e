@@ -71,9 +71,7 @@
 
   ;;; Lifecycle and reading --------------------------------------------------
 
-  (define (create! actor buffer-name lines)
-    ;; -> the new buffer's id.  lines: a list of strings; empty means
-    ;; one empty line, since a text always has at least one line.
+  (define (create-locked! actor buffer-name lines)
     (unless (and (list? lines) (for-all string? lines))
       (error 'create! "lines must be a list of strings" lines))
     (locked
@@ -87,6 +85,15 @@
                          (list->vector (if (null? lines) '("") lines))
                          0 '() '() '() '()))
           id))))
+
+  (define (create! actor buffer-name lines)
+    ;; -> the new buffer's id.  lines: a list of strings; empty means
+    ;; one empty line, since a text always has at least one line.
+    ;; Subscribers hear (create id name actor): a head adopts buffers
+    ;; other actors open.
+    (let ([id (create-locked! actor buffer-name lines)])
+      (notify! `(create ,id ,buffer-name ,actor))
+      id))
 
   (define (reset! actor id lines)
     ;; Wholesale replacement: a new baseline, not an edit.  The delta
@@ -129,9 +136,11 @@
       new-revision))
 
   (define (rename! actor id new-name)
+    ;; subscribers hear (rename id new-name actor)
     (locked
       (lambda ()
         (buffer-label-set! (buffer-of 'rename! id) new-name)))
+    (notify! `(rename ,id ,new-name ,actor))
     (void))
 
   (define (delete! actor id)
@@ -493,8 +502,10 @@
 
   ;;; Subscriptions ------------------------------------------------------------
 
-  ;; Subscribers hear applied changes as data: (edit id revision actor
-  ;; delta) and (delete id actor).  Delivery is synchronous and
+  ;; Subscribers hear changes as data: (edit id revision actor delta),
+  ;; (reset id revision actor), (property id key actor), and the
+  ;; buffer lifecycle -- (create id name actor), (rename id name
+  ;; actor), (delete id actor).  Delivery is synchronous and
   ;; outside the store lock -- a subscriber may read state, but slow
   ;; subscribers slow the writer; agent sessions will add mailbox
   ;; delivery when they arrive.

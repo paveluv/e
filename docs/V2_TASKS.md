@@ -184,6 +184,15 @@ re-export facade until its importers migrate:
       the mode record never crosses the seam (name-keyed, resolved by
       find-mode on read).  This is the multi-head keystone: e --server
       with several heads reads one truth
+- [x] the buffer lifecycle crosses heads: `state:create!`/`rename!`
+      now notify (create id name actor) / (rename id name actor)
+      alongside (delete id actor); a head adopts another actor's new
+      buffers into its list (mode detected and recorded as the shared
+      fact; buffers marked `ephemeral` -- a head's own pop-ups -- stay
+      private), follows renames, and on a foreign delete forgets the
+      buffer and moves its windows on -- never resurrecting what
+      someone killed (outage recovery only re-baselines twins that
+      still exist).  All audited on the state stream
 - [ ] `edit.e` absorbs the command layer; core.e deleted
 
 ## Tech debt ledger
@@ -195,7 +204,7 @@ priority; items graduate into stage tasks when picked up.
 | P | Debt | Notes |
 |---|---|---|
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
-| 20 | A re-created store twin loses its properties | `lib/core.e` `reconverge-forked!`: when a buffer's twin was deleted by another actor, recovery re-creates it from the cache text -- but the buffer facts (file, mode, disk base) lived on the deleted twin and are gone; the editor then shows fallback facts (no file, auto mode) until a save or revisit restores them. Same edge as a failed `mirror-create!`. Fix: have the head re-seed managed facts after re-creation from a small per-buffer shadow kept at fact-write time, or let `state:delete!` hand its final properties to subscribers in the delete event. Repro: rival deletes the twin, type a key (fork + reconverge), C-x C-s -- the buffer forgot its path. |
+| 10 | Store-outage recovery has no test | `lib/core.e` `adopt-local!`/`reconverge-forked!` (a store call failing with the twin still present: fork the cache, log once, re-baseline at frame time) lost its only wiring test when foreign deletion became a lifecycle event rather than an outage. Fix: a fault-injection hook -- a `state:` parameter or a test-only wrapper that makes `edit!` raise once -- driven from tests/wiring.ss to assert the fork log line and the reconvergence. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |

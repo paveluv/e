@@ -206,15 +206,6 @@
      (check 'core-won-the-conflict
             (screen-has? 0 "RIV") #f)
 
-     ;; a store outage forks the cache and is on the record; the next
-     ;; frame re-converges: the deleted twin is re-created from the
-     ;; editor's text and the mirror agrees again
-     (send! "\x1b;xstate:delete! (quote (agent rival)) (buffer-state-id (current-buffer))\r")
-     (pump! 600)
-     (send! "Q")            ; this edit finds the store gone: cache-only
-     (pump! 900)            ; frame time: recovery re-creates the twin
-     (check 'outage-reconverges (mirror-agrees? 'outage) #t)
-
      ;; the selection is published: mark plus motion becomes the ui's
      ;; 'region span mark in the store; C-g deactivates and drops it
      (send! "\x1b;<\x0;\x6;\x6;\x6;")   ; M-<, C-@, then three C-f
@@ -285,6 +276,34 @@
      (check 'facts-are-shared-truth
             (call-with-input-file probe read)
             '("/tmp/rival-owned.txt" #t))
+
+     ;; the buffer lifecycle crosses heads: a rival's new buffer appears
+     ;; in this head's list, its rename follows, and its deletion drops
+     ;; the record -- even while a window is showing it
+     (define (buffer-names)
+       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (map buffer-name (buffer-list)) p)) (quote replace)\r"
+                      probe))
+       (pump! 900)
+       (call-with-input-file probe read))
+     (send! "\x1b;xstate:create! (quote (agent rival)) \"rival-notes\" (list \"from the rival\")\r")
+     (pump! 900)
+     (check 'foreign-buffer-adopted
+            (and (member "rival-notes" (buffer-names)) #t) #t)
+     (send! "\x1b;xstate:rename! (quote (agent rival)) (state:find-named \"rival-notes\") \"rival-log\"\r")
+     (pump! 900)
+     (check 'foreign-rename-follows
+            (list (and (member "rival-log" (buffer-names)) #t)
+                  (member "rival-notes" (buffer-names)))
+            '(#t #f))
+     (send! "\x18;brival-log\r")           ; C-x b: look at it
+     (pump! 900)
+     (check 'showing-the-foreign-buffer (screen-has? 0 "from the rival") #t)
+     (send! "\x1b;xstate:delete! (quote (agent rival)) (state:find-named \"rival-log\")\r")
+     (pump! 900)
+     (check 'foreign-delete-moves-the-window-on
+            (list (member "rival-log" (buffer-names))
+                  (screen-has? 0 "from the rival"))
+            '(#f #f))
 
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
