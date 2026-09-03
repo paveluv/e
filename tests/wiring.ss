@@ -190,6 +190,31 @@
             (substring (screen-line 0) 0 30)
             (make-string 30 #\x))
 
+     ;; a conflict tells the losing actor: a rival edit lands between
+     ;; the ui's basis and its keystroke (same eval, so no frame sync
+     ;; intervenes); the typed character comes back stale, core wins by
+     ;; reset, and the rival's delivery receives the conflict message
+     (send! (format "\x1b;xactors:register! (quote (agent rival)) (lambda (m) (call-with-output-file \"~a\" (lambda (p) (write m p)) (quote replace)))\r"
+                    probe))
+     (pump! 600)
+     (send! "\x1b;xlet ([id (buffer-state-id (current-buffer))]) (dispatch-key! \"M-<\") (dispatch-key! \"C-f\") (dispatch-key! \"C-f\") (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (dispatch-key! \"z\")\r")
+     (pump! 900)
+     (check 'losing-actor-hears-the-conflict
+            (let ([m (call-with-input-file probe read)])
+              (list (car m) (cadddr m)))
+            '(conflict (head main)))
+     (check 'core-won-the-conflict
+            (screen-has? 0 "RIV") #f)
+
+     ;; a store outage forks the cache and is on the record; the next
+     ;; frame re-converges: the deleted twin is re-created from the
+     ;; editor's text and the mirror agrees again
+     (send! "\x1b;xstate:delete! (quote (agent rival)) (buffer-state-id (current-buffer))\r")
+     (pump! 600)
+     (send! "Q")            ; this edit finds the store gone: cache-only
+     (pump! 900)            ; frame time: recovery re-creates the twin
+     (check 'outage-reconverges (mirror-agrees? 'outage) #t)
+
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
