@@ -775,6 +775,9 @@
          (("parameter" . "(markdown-browser [command])")) "string"
          ("(md-view)") md-view "Markdown viewing" #f
          "Get or set the command that opens a markdown view's web links; it receives the quoted URL as its argument. The default is `xdg-open`.")
+        ((answer!!) (("procedure" . "(answer!!)")) "void"
+         ("(core)") core "Interaction" #f
+         "Answer the oldest question another actor posed through the interaction protocol (`actors:ask!`): a prompt shows the question with its choices completing on Tab, and the answer routes back to the asker. Bound to `C-c a`; pending questions wait as an echo-area indicator.")
         ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
          ("(core)") core "Buffer display" #f
          "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")

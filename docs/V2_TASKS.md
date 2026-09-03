@@ -48,7 +48,11 @@ state.
       mailbox pump (side effects -- mouse, paste, host reports --
       apply at consumption); run-on-main! and wake-main! exist, and
       foreign edits paint without a keypress
-- [ ] prompts become the ask/reply interaction protocol
+- [x] the ask/reply interaction protocol: actors.e (registration,
+      ask!/answer!/cancel!, tickets, pending); the head shows waiting
+      questions as an echo indicator and answers via C-c a -- nobody's
+      keyboard is stolen.  The head's own modal prompts (find-file,
+      M-x) stay direct: they are the head asking its own user.
 - [ ] retire the display-port and between-keystrokes workarounds
       (run-on-main!/wake-main! now exist; the terminal reader still
       repaints via its display port -- migrate it; the claude module

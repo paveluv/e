@@ -14,7 +14,8 @@ with a date; deletions note the commit.
   `core-keys-bound`, `log-formatters-init`, `reload-hooked`,
   `sigwinch-registered` (core), `region-printing` (edit),
   `libc-character-locale`, `libutil-loaded?` (sys),
-  `state-subscription`, `foreign-sync-hooked`, `reload-tail-hooked`
+  `state-subscription`, `foreign-sync-hooked`, `reload-tail-hooked`,
+  `ui-actor-registered`
   (core, the v2 wiring). Skip these in future sweeps.
 
 ## Deleted
