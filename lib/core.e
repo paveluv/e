@@ -95,7 +95,8 @@
   ;; layer -- libc, termios, signals -- comes from (sys).
   (import (except (chezscheme) buffer-mode) (sys) (diff)
           (prefix (state) state:) (prefix (text) text:)
-          (prefix (kernel) kernel:) (prefix (actors) actors:))
+          (prefix (kernel) kernel:) (prefix (actors) actors:)
+          (prefix (log) log:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -2217,17 +2218,19 @@
 
   ;;; The log -----------------------------------------------------------------
 
-  ;; The editor's syslog: structured records -- (time component text),
-  ;; time with nanosecond precision -- indexed in a growable vector,
-  ;; appended by log! and by every message that passes through the
-  ;; echo area (attributed to the message-source parameter).  The
-  ;; log-view module renders them on the fly as the *log* view (and
-  ;; filtered kin); log-entries returns the records themselves.
-  (define log-store (make-vector 64 #f))
-  (define log-count 0)
-
-  (define (log-record i) (vector-ref log-store i))
-  (define (log-length) log-count)
+  ;; The editor's syslog lives in the (log) seam module now -- the
+  ;; structured records and the formatter registry are state, not UI.
+  ;; The core keeps the echo-area presentation (installed below as the
+  ;; log's presenter) and these facade aliases until its call sites
+  ;; and the extension modules migrate to log: prefixes.
+  (define log! log:log!)
+  (define log-record log:log-record)
+  (define log-length log:log-length)
+  (define log-entries log:log-entries)
+  (define log-history log:log-history)
+  (define register-log-formatter! log:register-log-formatter!)
+  (define log-styler log:log-styler)
+  (define format-log-entry log:format-log-entry)
 
   (define message-source
     ;; Who a message came from, for the log's attribution: components
@@ -2242,33 +2245,6 @@
     ;; records every step regardless.
     (make-parameter #f))
 
-  ;; Per-component presentation of structured entries: modules register
-  ;; a formatter (datum -> string) and optionally a styler (formatted
-  ;; text -> styles vector), used identically in the echo area and the
-  ;; *log* view.  The datum itself stays queriable -- eval logs
-  ;; (query . result) and its history reads only the queries.
-  (define log-formatters '#f)  ; the registry, made after registries exist
-
-  (define (register-log-formatter! component fmt . style)
-    (registry-add! log-formatters
-                   (list component fmt (and (pair? style) (car style)))))
-
-  (define (log-formatter component)
-    (registry-find log-formatters (lambda (x) (eq? (car x) component))))
-
-  (define (log-styler component)
-    ;; The component's registered styler (formatted text -> styles
-    ;; vector), or #f -- the log-view module styles its rows with it.
-    (let ([f (log-formatter component)]) (and f (caddr f))))
-
-  (define (format-log-entry e)
-    ;; The entry's presentation text: its component's formatter, or the
-    ;; datum itself (a string as it is, anything else written).
-    (let ([f (log-formatter (cadr e))]
-          [d (caddr e)])
-      (guard (ex [else (format "~s" d)])
-        (if f ((cadr f) d) (if (string? d) d (format "~s" d))))))
-
   (define (present-log-entry! e)
     ;; Present an existing record in the echo area without logging it again.
     (present-log-entries! (list e)))
@@ -2280,8 +2256,7 @@
       (when (pair? left)
         (let* ([e (car left)]
                [text (format-log-entry e)]
-               [f (log-formatter (cadr e))]
-               [styler (and f (caddr f))]
+               [styler (log-styler (cadr e))]
                [ghost (if (and (null? (cdr left)) (pair? tail))
                           (car tail)
                           "")])
@@ -2289,50 +2264,17 @@
           (loop (cdr left)))))
     (when (pair? entries) (present-echo!)))
 
-  (define (log! component datum . show)
-    ;; Append a structured record -- visible views catch up at the next
-    ;; redraw -- and present it transiently in the echo area, styled by
-    ;; the component's styler (pass #f to log quietly).
-    (when (= log-count (vector-length log-store))
-      (let ([bigger (make-vector (* 2 (vector-length log-store)) #f)])
-        (do ([i 0 (+ i 1)]) ((= i log-count))
-          (vector-set! bigger i (vector-ref log-store i)))
-        (set! log-store bigger)))
-    (let ([e (list (current-time) component datum)])
-      (vector-set! log-store log-count e)
-      (set! log-count (+ log-count 1))
-      (when (or (null? show) (car show))
-        (if (message-progress)
-            (let* ([text (format-log-entry e)]
-                   [f (log-formatter component)]
-                   [styler (and f (caddr f))])
-              (echo-append! component text styler #t))
-            (present-log-entry! e)))
-      e))
-
-  (define (log-history component . select)
-    ;; Command history off the log: a component's datums through select
-    ;; -- car for eval's (query . result), cdr for the file commands'
-    ;; (verb . path) -- newest first, non-strings dropped, consecutive
-    ;; repeats collapsed.
-    (let ([sel (if (pair? select) (car select) (lambda (d) d))])
-      (let loop ([es (log-entries component)] [last #f])
-        (if (null? es)
-            '()
-            (let ([x (guard (ex [else #f]) (sel (caddr (car es))))])
-              (if (and (string? x) (not (equal? x last)))
-                  (cons x (loop (cdr es) x))
-                  (loop (cdr es) last)))))))
-
-  (define (log-entries . component)
-    ;; The records, newest first, each (time component text) --
-    ;; filtered when a component is given.
-    (let loop ([i 0] [acc '()])
-      (if (= i log-count)
-          (if (pair? component)
-              (filter (lambda (e) (eq? (cadr e) (car component))) acc)
-              acc)
-          (loop (+ i 1) (cons (log-record i) acc)))))
+  ;; The head's side of every log! -- present the fresh record
+  ;; transiently in the echo area, styled by its component's styler.
+  ;; Visible log views catch up at the next redraw.
+  (define log-presenter-installed
+    (log:set-presenter!
+      (lambda (e show?)
+        (when show?
+          (if (message-progress)
+              (echo-append! (cadr e) (format-log-entry e)
+                            (log-styler (cadr e)) #t)
+              (present-log-entry! e))))))
 
 
   ;; A buffer's printed form is the expression that looks it up again, so
@@ -2652,17 +2594,16 @@
                   (p path)))
               (registry-items hooks)))
 
-  ;; The formatter registry itself, and the file commands' formatters:
-  ;; their entries are (verb . path), formatted "verb path", their
-  ;; histories the paths (see log-history).
+  ;; The file commands' formatters: their entries are (verb . path),
+  ;; formatted "verb path", their histories the paths (see
+  ;; log-history).
   (define log-formatters-init
     (let ([fmt (lambda (d)
                  (if (pair? d)
                      (format "~a ~a" (car d) (cdr d))
                      (format "~a" d)))])
-      (set! log-formatters (make-registry))
-      (registry-add! log-formatters (list 'visit-file! fmt #f))
-      (registry-add! log-formatters (list 'save-file! fmt #f))))
+      (log:register-log-formatter! 'visit-file! fmt)
+      (log:register-log-formatter! 'save-file! fmt)))
 
   ;;; Modes -------------------------------------------------------------------
 

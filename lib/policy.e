@@ -44,6 +44,7 @@
                 call-with-string-output-port)
           (prefix (state) state:)
           (prefix (actors) actors:)
+          (prefix (only (log) log!) log:)
           (only (kernel) persistent-cell))
 
   ;;; Policies ----------------------------------------------------------------
@@ -80,12 +81,15 @@
   (define audit-cell (persistent-cell 'policy-audit (lambda () '())))
 
   (define (bounded-audit! entry)
+    ;; the persistent trail, and -- quietly -- the log stream, so
+    ;; (log-view 'policy) shows what every session did
     (set-box! audit-cell
               (let take ([entries (cons entry (unbox audit-cell))]
                          [n audit-limit])
                 (if (or (zero? n) (null? entries))
                     '()
-                    (cons (car entries) (take (cdr entries) (- n 1)))))))
+                    (cons (car entries) (take (cdr entries) (- n 1))))))
+    (log:log! 'policy entry #f))
 
   (define (audit-log . count)
     ;; the newest audit entries, newest first, as plain data
