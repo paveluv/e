@@ -50,8 +50,10 @@ state.
       foreign edits paint without a keypress
 - [ ] prompts become the ask/reply interaction protocol
 - [ ] retire the display-port and between-keystrokes workarounds
-      (run-on-main!/wake-main! now exist; the terminal reader and the
-      claude worker still repaint via display ports -- migrate them)
+      (run-on-main!/wake-main! now exist; the terminal reader still
+      repaints via its display port -- migrate it; the claude module
+      follows only after v2 is finished, when it is ported from its
+      branch)
 - [ ] subscription delivery batches through mailboxes (the settled
       coalescing)
 
@@ -59,8 +61,8 @@ state.
 
 - [ ] `policy.e`: per-actor capability minting and budgets
 - [ ] `sandbox.e`: claude-safe generalized to any constrained actor
-- [ ] port the claude module (lives on the `claude` branch) onto a
-      minted session
+- [ ] port the claude module onto a minted session -- deliberately
+      last: it stays on the `claude` branch until v2 is finished
 
 ## Stage 5 -- the wire (optional, later)
 
