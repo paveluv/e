@@ -261,6 +261,19 @@
                 (screen-has? 23 "(agent rival) wrote this at revision"))
             #t)
 
+     ;; ui edits are audited too, coalesced: three keystrokes become
+     ;; one entry, flushed before the rival's interleaving operation
+     ;; so the record reads in true order
+     (send! "xyz")
+     (pump! 300)
+     (send! "\x1b;xlet ([id (buffer-state-id (current-buffer))]) (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 0 0 0) (list \"r\"))\r")
+     (pump! 900)
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([texts (map (lambda (e) (log:format-log-entry e)) (log:log-entries (quote state)))]) (write (let scan ([ts texts]) (cond [(null? ts) (quote missing)] [(and (> (string-length (car ts)) 13) (string=? (substring (car ts) 0 13) \"ui: 3 edits i\")) (quote coalesced)] [else (scan (cdr ts))])) p))) (quote replace)\r"
+                    probe))
+     (pump! 900)
+     (check 'ui-burst-coalesced-on-the-audit-stream
+            (call-with-input-file probe read) 'coalesced)
+
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"

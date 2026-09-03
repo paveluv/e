@@ -272,7 +272,7 @@
                                      (buffer-state-rev b)
                                      span replacement)])
             (if (eq? status 'applied)
-                (adopt-state! b)
+                (begin (adopt-state! b) (note-ui-edit! b))
                 (let ([foreign
                        (guard (ex [else #f])
                          (find (lambda (entry)
@@ -4287,6 +4287,57 @@
 
   (define state-subscription (state:subscribe! #f note-foreign-event))
 
+  ;; The ui's own side of the audit stream, coalesced: keystrokes are
+  ;; too many to log one by one, so consecutive ui edits to a buffer
+  ;; batch into one entry -- flushed before a foreign actor's
+  ;; operation on the same buffer (so the record reads in true
+  ;; order), when a burst goes stale, and at shutdown.
+  (define ui-audit-bursts '())  ; (id . #(name first-rev last-rev n time))
+
+  (define (note-ui-edit! b)
+    (guard (ex [else (void)])
+      (let* ([id (buffer-state-id b)]
+             [rev (buffer-state-rev b)]
+             [hit (assv id ui-audit-bursts)]
+             [now (time-second (current-time 'time-monotonic))])
+        (if hit
+            (let ([v (cdr hit)])
+              (vector-set! v 2 rev)
+              (vector-set! v 3 (+ (vector-ref v 3) 1))
+              (vector-set! v 4 now))
+            (set! ui-audit-bursts
+              (cons (cons id (vector (buffer-name b) rev rev 1 now))
+                    ui-audit-bursts))))))
+
+  (define (flush-ui-audit! which)
+    ;; which: a buffer id, 'stale (idle bursts), or 'all
+    (let ([now (time-second (current-time 'time-monotonic))])
+      (let-values ([(flushed kept)
+                    (partition
+                      (lambda (entry)
+                        (case which
+                          [(all) #t]
+                          [(stale)
+                           (> (- now (vector-ref (cdr entry) 4)) 3)]
+                          [else (eqv? (car entry) which)]))
+                      ui-audit-bursts)])
+        (set! ui-audit-bursts kept)
+        (for-each
+          (lambda (entry)
+            (guard (ex [else (void)])
+              (let ([v (cdr entry)])
+                (log! 'state
+                      (format "ui: ~a edit~a in ~s (revisions ~a-~a)"
+                              (vector-ref v 3)
+                              (if (= (vector-ref v 3) 1) "" "s")
+                              (vector-ref v 0)
+                              (vector-ref v 1) (vector-ref v 2))
+                      #f))))
+          (reverse flushed)))))
+
+  (define ui-audit-flushed-at-exit
+    (add-shutdown-hook! (lambda () (flush-ui-audit! 'all))))
+
   (define (sync-foreign-edits!)
     (let ([events (with-mutex foreign-lock
                     (let ([pending foreign-pending])
@@ -4298,6 +4349,7 @@
         (lambda (event)
           (guard (ex [else (void)])
             (let ([id (cadr event)] [actor (list-ref event 3)])
+              (flush-ui-audit! id)
               (log! 'state
                     (format "~a ~a ~s~a"
                             actor
@@ -4441,6 +4493,7 @@
   (define (state-frame-sync!)
     (reconverge-forked!)
     (sync-foreign-edits!)
+    (flush-ui-audit! 'stale)
     (publish-head-marks!)
     (present-pending-ask!))
 
