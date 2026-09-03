@@ -793,9 +793,6 @@
         ((focus-window-right!) (("procedure" . "(focus-window-right!)")) "void"
          ("(core)") core "Window commands" #f
          "Cast a ray rightward from point and focus the first window it crosses.")
-        ((widen-window!!) (("procedure" . "(widen-window!!)")) "void"
-         ("(core)") core "Window commands" #f
-         "Enter transient window-widening mode. Each arrow pushes that edge of the current window outward by one cell. Meta-arrows focus another window without leaving the mode. C-g or Escape finishes; any other key finishes and is then handled normally.")
         ((add-mode-extension!)
          (("procedure" . "(add-mode-extension! mode extension)")) "void"
          ("(core)") core "Mode customization" #f

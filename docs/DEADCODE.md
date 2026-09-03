@@ -23,6 +23,18 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-03 `widen-window!!`, `divider-in-direction`, `resize-highlight`
+  (core): the transient `C-x w` keyboard resize mode and its divider
+  highlight -- a product decision under the harmony rule (a modal
+  mini-loop plus a paint special case, spanning three seams);
+  removed for later redesign, keyboard resizing to return as plain
+  commands.
+- 2026-09-03 `scrollbar-set-top!`, `scrollbar-move!`, `scrollbar-thumb-at?`,
+  `scrollbar-thumb-position`, `scrollbar-drag-to!`, `drag-scrollbar`
+  (core): scrollbar thumb dragging -- the scrollbar is a display-only
+  position indicator now (same rule: paint, mouse, and viewport were
+  coupled only to drag it).
+
 - 2026-09-01 `read-key`, `peek-key` (core): exported raw stdin readers
   with no callers anywhere; retired with the scheduling substrate,
   which they could not have survived (the reader thread owns stdin).

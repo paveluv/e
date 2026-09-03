@@ -135,7 +135,11 @@ the client side, everything below it is the server side.
 ## Core dissolution (crosses stages)
 
 Extraction order for the remaining core.e content, each leaving a
-re-export facade until its importers migrate:
+re-export facade until its importers migrate.  Harmony rule (decided
+2026-09-03): a product feature that resists a clean seam is questioned,
+not accommodated -- the user should feel the architecture.  Applied so
+far: `C-x w` widen-window mode removed (redesign later), scrollbar
+dragging removed (display-only indicator), status-line buttons kept.
 
 - [x] `styles.e` (faces, the style DSL) -- compile-style/style-escape,
       the override registry, the built-in faces, and style-code moved;

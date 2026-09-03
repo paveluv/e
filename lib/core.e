@@ -27,7 +27,7 @@
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
-    resize-window! widen-window!! wrap! wrap-lines scroll-margin
+    resize-window! wrap! wrap-lines scroll-margin
     scrollbar scrollbar-position line-numbers line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
@@ -3283,7 +3283,6 @@
                        acc)))
                '() ranges))
 
-  (define resize-highlight #f) ; the split selected by transient keyboard resize
 
   (define (window-layout)
     ;; Recursively tile the persistent split tree. *completions* is a
@@ -3673,22 +3672,19 @@
       (lambda (divider)
         (when (eq? (car divider) 'right)
           (let ([x (caddr divider)] [start (cadddr divider)]
-                [height (list-ref divider 4)]
-                [selected? (and resize-highlight
-                                (eq? (cadr divider) resize-highlight))])
+                [height (list-ref divider 4)])
             (do ([r start (+ r 1)]) ((>= r (+ start height)))
               ;; The final row always meets whatever full-width region
               ;; ends the divider -- the echo area, or a transient
               ;; pop-up such as completions -- and connects to it.
               (let ([junction? (or (stacked-divider-crosses? x r)
                                    (= r (+ start height -1)))])
-                (paint! r x (list 'divider junction? selected?)
+                (paint! r x (list 'divider junction?)
                         (lambda ()
-                          (when selected? (ansi "\x1b;[1;38;5;135m"))
                           (if junction?
-                              (ansi (if selected? "" (style-code 'chrome))
+                              (ansi (style-code 'chrome)
                                     "\x2534;\x1b;[0m")
-                              (ansi (if selected? "" (style-code 'chrome))
+                              (ansi (style-code 'chrome)
                                     "\x2502;\x1b;[0m")))))))))
       layout-dividers))
 
@@ -4130,21 +4126,10 @@
              ;; A transient pop-up cannot be split or resized; it offers
              ;; only its close control.
              [window-buttons (if (eq? b completions-buffer)
-                                 " [×]" " [↕][↔][×]")]
-             [resizing?
-              (and resize-highlight
-                   (exists
-                     (lambda (d)
-                       (and (eq? (car d) 'below)
-                            (eq? (cadr d) resize-highlight)
-                            (= (+ start height) (cadddr d))
-                            (<= (caddr d) (window-xoff w))
-                            (< (window-xoff w)
-                               (+ (caddr d) (list-ref d 4)))))
-                     layout-dividers))])
+                                 " [×]" " [↕][↔][×]")])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (window-xoff w)
-                  (list 'status status current? target? stale? resizing?)
+                  (list 'status status current? target? stale?)
                   (lambda ()
                     ;; Reversed cells take the bar's shade from the
                     ;; foreground color, so full reverse tracks the
@@ -4152,11 +4137,9 @@
                     ;; dark) and an explicit mid grey marks inactive
                     ;; on either -- dim, the old marker, vanishes in
                     ;; reverse on light schemes.
-                    (let* ([bar (cond [resizing? "\x1b;[7;38;5;135m"]
-                                      [current? "\x1b;[7m"]
+                    (let* ([bar (cond [current? "\x1b;[7m"]
                                       [else "\x1b;[7;38;5;245m"])]
-                           [fg (cond [resizing? "\x1b;[38;5;135m"]
-                                     [current? "\x1b;[39m"]
+                           [fg (cond [current? "\x1b;[39m"]
                                      [else "\x1b;[38;5;245m"])]
                            [content-width
                             (max 0 (- (window-width w)
@@ -5463,101 +5446,6 @@
   ;; their last rendered line.
   (define app-event-buffer-position (make-parameter #f))
   (define drag-divider #f)   ; recursive divider descriptor
-  (define drag-scrollbar #f) ; (window grab-offset-within-thumb)
-
-  (define (scrollbar-set-top! w height requested)
-    (let* ([b (window-buffer w)]
-           [sticky (min height (buffer-sticky-lines b))]
-           [body-height (max 1 (- height sticky))]
-           [total (buffer-line-count b)]
-           [top (min (max sticky requested)
-                     (max sticky (- total body-height)))]
-           [inside (min (quotient (- body-height 1) 2)
-                        (max 0 (- total top 1)))])
-      (goto-point! (cons (+ top inside) point-col))
-      (window-top-set! w top)
-      (window-topseg-set! w 0)
-      (set! mark-active? #f)))
-
-  (define (scrollbar-move! w start height y)
-    ;; Invert the painter's thumb-position calculation so the rendered thumb
-    ;; is centered on (and always contains) the clicked track cell.
-    (let* ([b (window-buffer w)]
-           [sticky (min height (buffer-sticky-lines b))]
-           [body-height (max 1 (- height sticky))]
-           [body-total (max 0 (- (buffer-line-count b) sticky))]
-           [thumb-size (if (<= body-total body-height)
-                           body-height
-                           (max 1 (quotient (* body-height body-height)
-                                            body-total)))]
-           [thumb-travel (max 0 (- body-height thumb-size))]
-           [scrollable (max 0 (- body-total body-height))]
-           [track-row (min (- body-height 1)
-                           (max 0 (- y 1 start sticky)))]
-           [thumb-start (min thumb-travel
-                             (max 0 (- track-row
-                                       (quotient thumb-size 2))))]
-           [top (if (or (= thumb-travel 0) (= scrollable 0))
-                    sticky
-                    (+ sticky
-                       (ceiling (/ (* thumb-start scrollable)
-                                   thumb-travel))))])
-      (scrollbar-set-top! w height top)))
-
-  (define (scrollbar-thumb-at? w start height y)
-    (let* ([b (window-buffer w)]
-           [sticky (min height (buffer-sticky-lines b))]
-           [body-height (max 1 (- height sticky))]
-           [body-total (max 0 (- (buffer-line-count b) sticky))]
-           [thumb-size (if (<= body-total body-height)
-                           body-height
-                           (max 1 (quotient (* body-height body-height)
-                                            body-total)))]
-           [travel (max 0 (- body-height thumb-size))]
-           [scrollable (max 1 (- body-total body-height))]
-           [thumb-start (if (= travel 0)
-                            0
-                            (quotient
-                              (* (max 0 (- (window-top w) sticky)) travel)
-                              scrollable))]
-           [track-row (- y 1 start sticky)])
-      (and (>= track-row thumb-start)
-           (< track-row (+ thumb-start thumb-size)))))
-
-  (define (scrollbar-thumb-position w height)
-    ;; (sticky thumb-size thumb-travel scrollable thumb-start)
-    (let* ([b (window-buffer w)]
-           [sticky (min height (buffer-sticky-lines b))]
-           [body-height (max 1 (- height sticky))]
-           [body-total (max 0 (- (buffer-line-count b) sticky))]
-           [thumb-size (if (<= body-total body-height)
-                           body-height
-                           (max 1 (quotient (* body-height body-height)
-                                            body-total)))]
-           [thumb-travel (max 0 (- body-height thumb-size))]
-           [scrollable (max 0 (- body-total body-height))]
-           [thumb-start (if (or (= thumb-travel 0) (= scrollable 0))
-                            0
-                            (quotient
-                              (* (max 0 (- (window-top w) sticky)) thumb-travel)
-                              scrollable))])
-      (list sticky thumb-size thumb-travel scrollable thumb-start)))
-
-  (define (scrollbar-drag-to! w start height y grab-offset)
-    (let* ([position (scrollbar-thumb-position w height)]
-           [sticky (car position)]
-           [thumb-travel (caddr position)]
-           [scrollable (cadddr position)]
-           [track-row (- y 1 start sticky)]
-           [thumb-start (min thumb-travel
-                             (max 0 (- track-row grab-offset)))]
-           [top (if (or (= thumb-travel 0) (= scrollable 0))
-                    sticky
-                    (+ sticky
-                       (ceiling (/ (* thumb-start scrollable)
-                                   thumb-travel))))])
-      (scrollbar-set-top! w height top)))
-
   (define (divider-at x0 r0)
     ;; Divider metadata comes directly from window-layout. A descriptor is
     ;; (orientation split x y span).
@@ -5613,81 +5501,6 @@
           (layout-split-first-weight-set! split (+ one delta))
           (layout-split-second-weight-set! split (- two delta))))))
 
-  (define (divider-in-direction direction)
-    ;; The first matching divider crossed by a ray from point.
-    (window-layout)
-    (let* ([cursor (window-screen-position current-window point-row point-col)]
-           [x (- (cdr cursor) 1)] [y (- (car cursor) 1)]
-           [vertical? (memq direction '(left right))])
-      (define (distance d)
-        (and (eq? (car d) (if vertical? 'right 'below))
-             (if vertical?
-                 (and (<= (cadddr d) y)
-                      (< y (+ (cadddr d) (list-ref d 4)))
-                      (case direction
-                        [(left) (and (< (caddr d) x) (- x (caddr d)))]
-                        [(right) (and (> (caddr d) x) (- (caddr d) x))]))
-                 (and (<= (caddr d) x)
-                      (< x (+ (caddr d) (list-ref d 4)))
-                      (case direction
-                        [(up) (and (< (cadddr d) y) (- y (cadddr d)))]
-                        [(down) (and (> (cadddr d) y) (- (cadddr d) y))])))))
-      (let loop ([left layout-dividers] [best #f] [best-distance #f])
-        (if (null? left)
-            best
-            (let ([d (distance (car left))])
-              (if (and d (or (not best-distance) (< d best-distance)))
-                  (loop (cdr left) (car left) d)
-                  (loop (cdr left) best best-distance)))))))
-
-  (define (widen-window!!)
-    ;; A transient keyboard counterpart to pushing a window's draggable
-    ;; edges outward. Meta-arrows choose another window without leaving.
-    (define label "Widen window: ")
-    (define instructions "use arrows to widen; M-arrows to switch")
-    (define (arrow-action event)
-      (cond [(string=? event "LEFT") (cons 'left -1)]
-            [(string=? event "RIGHT") (cons 'right 1)]
-            [(string=? event "UP") (cons 'up -1)]
-            [(string=? event "DOWN") (cons 'down 1)]
-            [else #f]))
-    (define (focus-action event)
-      (cond [(string=? event "M-LEFT") focus-window-left!]
-            [(string=? event "M-RIGHT") focus-window-right!]
-            [(string=? event "M-UP") focus-window-up!]
-            [(string=? event "M-DOWN") focus-window-down!]
-            [else #f]))
-    (let ([forward
-           (dynamic-wind
-             (lambda () (show-prompt-message! label instructions #f))
-             (lambda ()
-               (let loop ()
-                 (redraw!)
-                 (let* ([event (read-key-event #f)]
-                        [action (arrow-action event)]
-                        [focus (focus-action event)])
-                   (cond
-                     [action
-                      (let ([divider (divider-in-direction (car action))])
-                        (if divider
-                            (begin
-                              (set! resize-highlight (cadr divider))
-                              (transfer-split! resize-highlight (cdr action)))
-                            (begin (set! resize-highlight #f)
-                                   (visual-bell!))))
-                      (loop)]
-                     [focus
-                      (set! resize-highlight #f)
-                      (focus)
-                      (loop)]
-                     [(member event '("C-g" "ESC")) #f]
-                     [else event]))))
-             (lambda ()
-               (set! resize-highlight #f)
-               (show-message! "" #f)))])
-      (when forward (dispatch-sequence! forward #f)))
-    (void))
-
   (define (window-position w start height x y)
     ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
     ;; band, wrap-aware: wrapped lines occupy successive screen rows,
@@ -5733,7 +5546,6 @@
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
     (set! drag-divider #f)
-    (set! drag-scrollbar #f)
     (let ([prev last-press]
           [now (real-time)])
       (define (arm-text-selection!)
@@ -5794,20 +5606,6 @@
                                 (eq? w (completions-window)))
                       (focus-window! w))
                     (set! current-window w)
-                    ;; A thumb grab keeps the viewport in place. Both forms
-                    ;; of scrollbar interaction put point at its visual center.
-                    (let ([on-thumb? (scrollbar-thumb-at? w start height y)])
-                      (if on-thumb?
-                          (scrollbar-set-top! w height (window-top w))
-                          (scrollbar-move! w start height y))
-                      (let* ([position (scrollbar-thumb-position w height)]
-                             [sticky (car position)]
-                             [thumb-size (cadr position)]
-                             [thumb-start (list-ref position 4)]
-                             [track-row (- y 1 start sticky)]
-                             [grab (min (- thumb-size 1)
-                                        (max 0 (- track-row thumb-start)))])
-                        (set! drag-scrollbar (list w grab))))
                     (when (and (or (app-buffer? (window-buffer w))
                                    (eq? w (completions-window)))
                                (memq old windows))
@@ -5878,17 +5676,6 @@
            (if (eq? orientation 'right)
                (set-car! (cddr drag-divider) now)
                (set-car! (cdddr drag-divider) now))))]
-      [drag-scrollbar
-       (let* ([w (car drag-scrollbar)]
-              [grab-offset (cadr drag-scrollbar)]
-              [entry (assq w (window-layout))]
-              [old current-window])
-         (when entry
-           (set! current-window w)
-           (scrollbar-drag-to! w (cadr entry) (caddr entry) y grab-offset)
-           (when (and (app-buffer? (window-buffer w))
-                      (memq old windows))
-             (set! current-window old))))]
       [else
        (window-at (- x 1) (- y 1)
          (lambda (entry)
@@ -5972,7 +5759,6 @@
          (cond [(char=? c #\m)                         ; release
                 (mouse-release! x y b)
                 (set! drag-divider #f)
-                (set! drag-scrollbar #f)
                 "MOUSE-HANDLED"]
                [(= (bitwise-and b 64) 64)               ; wheel
                 (mouse-wheel! x y b (bitwise-and b 3)
@@ -6278,7 +6064,6 @@
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
           ("C-x 2" ,split-window!) ("C-x 3" ,split-window-right!)
           ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
-          ("C-x w" ,widen-window!!)
           ("C-h k" ,describe-key!!)
           ("C-c a" ,answer!!)))
       (for-each

@@ -91,7 +91,9 @@ window and global setting. A fifth argument selects `block`, `underline`,
 `bar`, or the normal `default` cursor; these explicit shapes are steady.
 Sticky rows, scrollbar geometry, cursor placement,
 mouse hit-testing, and scrolling are handled together by the core and apply
-to every window showing the app.
+to every window showing the app. The scrollbar is a position indicator:
+it is painted, not dragged -- the wheel, the keyboard, and clicks in the
+text scroll.
 
 The same bar is off for ordinary buffers by default; `(scrollbar #t)`
 enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
