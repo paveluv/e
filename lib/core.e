@@ -98,7 +98,7 @@
           (prefix (kernel) kernel:) (prefix (actors) actors:)
           (prefix (log) log:) (prefix (styles) styles:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
-          (prefix (echo) echo:)
+          (prefix (echo) echo:) (prefix (head) head:)
           (prefix (paint) paint:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
@@ -145,31 +145,73 @@
             ;; revision this buffer's lines last agreed with
             (mutable state-id) (mutable state-rev)))
 
-  (define-record-type window
-    (fields (mutable buffer) (mutable top)
-            ;; a soft-wrapping window may start mid-line: the first
-            ;; visible segment of the top line (0 elsewhere)
-            (mutable topseg)
-            (mutable left)
-            (mutable prow) (mutable pcol)
-            ;; the top row last drawn, for native scrolling
-            (mutable shown-top)
-            ;; text height in screen lines, written by the layout: the
-            ;; goal is the user's chosen proportion, and the layout
-            ;; realizes the goals in whatever space is there --
-            ;; recomputed fresh each redraw, so temporary changes (a
-            ;; grown echo area, a pop-up split) never drift them
-            (mutable size)
-            (mutable goal)
-            ;; horizontal band geometry, written by the layout: the
-            ;; window's first screen column and its width
-            (mutable xoff)
-            (mutable width)
-            ;; column proportion within a band shared side by side
-            (mutable wgoal)
-            ;; soft-wrap long lines onto continuation rows instead of
-            ;; scrolling horizontally
-            (mutable wrap)))
+  ;; The head's window tree lives in the (head) seam module now: the
+  ;; records, the split geometry, and the seat state (windows, the
+  ;; layout root, the selected window, the layout's divider output).
+  ;; Facade aliases and identifier-syntax facades below; app-aware
+  ;; layout surgery (set-layout-root!), wrap policy, and the main loop
+  ;; stay here until the rest of the head moves.
+  (define make-window head:make-window)
+  (define window? head:window?)
+  (define window-buffer head:window-buffer)
+  (define window-buffer-set! head:window-buffer-set!)
+  (define window-top head:window-top)
+  (define window-top-set! head:window-top-set!)
+  (define window-topseg head:window-topseg)
+  (define window-topseg-set! head:window-topseg-set!)
+  (define window-left head:window-left)
+  (define window-left-set! head:window-left-set!)
+  (define window-prow head:window-prow)
+  (define window-prow-set! head:window-prow-set!)
+  (define window-pcol head:window-pcol)
+  (define window-pcol-set! head:window-pcol-set!)
+  (define window-shown-top head:window-shown-top)
+  (define window-shown-top-set! head:window-shown-top-set!)
+  (define window-size head:window-size)
+  (define window-size-set! head:window-size-set!)
+  (define window-goal head:window-goal)
+  (define window-goal-set! head:window-goal-set!)
+  (define window-xoff head:window-xoff)
+  (define window-xoff-set! head:window-xoff-set!)
+  (define window-width head:window-width)
+  (define window-width-set! head:window-width-set!)
+  (define window-wgoal head:window-wgoal)
+  (define window-wgoal-set! head:window-wgoal-set!)
+  (define window-wrap head:window-wrap)
+  (define window-wrap-set! head:window-wrap-set!)
+  (define make-layout-split head:make-layout-split)
+  (define layout-split? head:layout-split?)
+  (define layout-split-orientation head:layout-split-orientation)
+  (define layout-split-first head:layout-split-first)
+  (define layout-split-first-set! head:layout-split-first-set!)
+  (define layout-split-second head:layout-split-second)
+  (define layout-split-second-set! head:layout-split-second-set!)
+  (define layout-split-first-weight head:layout-split-first-weight)
+  (define layout-split-first-weight-set!
+    head:layout-split-first-weight-set!)
+  (define layout-split-second-weight head:layout-split-second-weight)
+  (define layout-split-second-weight-set!
+    head:layout-split-second-weight-set!)
+  (define layout-leaves head:layout-leaves)
+  (define layout-replace head:layout-replace)
+  (define layout-parent head:layout-parent)
+  (define layout-min-width head:layout-min-width)
+  (define layout-min-height head:layout-min-height)
+  (define weighted-first head:weighted-first)
+  (define layout-node! head:layout-node!)
+  (define min-window-lines head:min-window-lines)
+  (define-syntax windows
+    (identifier-syntax [id (head:windows)]
+      [(set! id v) (head:set-windows! v)]))
+  (define-syntax layout-root
+    (identifier-syntax [id (head:root)]
+      [(set! id v) (head:set-root! v)]))
+  (define-syntax current-window
+    (identifier-syntax [id (head:current)]
+      [(set! id v) (head:set-current! v)]))
+  (define-syntax layout-dividers
+    (identifier-syntax [id (head:dividers)]
+      [(set! id v) (head:set-dividers! v)]))
 
   ;; The (state) store is the master copy of every buffer's text; the
   ;; core is its first privileged client.  A core buffer's lines field
@@ -316,24 +358,16 @@
     (state-reset! b new-lines))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
-  (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)))
+  (define head-seat-initialized
+    (let ([w (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)])
+      (set! windows (list w))
+      (set! layout-root w)
+      (set! current-window w)))
 
   ;; A persistent layout is a binary tree.  Leaves are windows; an internal
   ;; node splits its rectangle into `below` (stacked) or `right`
   ;; (side-by-side) children.  Weights retain the user's proportions across
   ;; terminal and echo-area size changes.
-  (define-record-type layout-split
-    (fields orientation (mutable first) (mutable second)
-            (mutable first-weight) (mutable second-weight)))
-
-  (define layout-root (car windows))
-
-  (define (layout-leaves node)
-    (if (layout-split? node)
-        (append (layout-leaves (layout-split-first node))
-                (layout-leaves (layout-split-second node)))
-        (list node)))
-
   (define (set-layout-root! root)
     (let* ([old windows]
            [popup (completions-window)]
@@ -351,27 +385,8 @@
       (set! layout-root root)
       (set! windows new-windows)))
 
-  (define (layout-replace node old replacement)
-    (cond
-      [(eq? node old) replacement]
-      [(layout-split? node)
-       (layout-split-first-set!
-         node (layout-replace (layout-split-first node) old replacement))
-       (layout-split-second-set!
-         node (layout-replace (layout-split-second node) old replacement))
-       node]
-      [else node]))
-
   (define (replace-layout-window! old replacement)
     (set-layout-root! (layout-replace layout-root old replacement)))
-
-  (define (layout-parent node child)
-    (and (layout-split? node)
-         (if (or (eq? child (layout-split-first node))
-                 (eq? child (layout-split-second node)))
-             node
-             (or (layout-parent (layout-split-first node) child)
-                 (layout-parent (layout-split-second node) child)))))
 
   ;; Whether windows soft-wrap by default -- for config.e; a window
   ;; toggled by hand (wrap!, C-x t) keeps its own setting.
@@ -401,7 +416,6 @@
                 (min (cdr x) (window-content-width w))]
                [(eq? x 'clean) (window-content-width w)]
                [else (- (window-content-width w) 1)]))))
-  (define current-window (car windows))
 
   ;; The rest of the editor is written against simple state names: `lines`,
   ;; `point-row`, and so on.  Each name is an identifier macro reading and
@@ -2488,10 +2502,6 @@
     ;; (the search) checks this after dispatching a key through.
     quit?)
 
-  ;; Windows squeezed by the layout keep at least this many text lines.
-  (define min-window-lines
-    (make-parameter 3 (lambda (v) (max 1 v))))
-
   (define (split-current-window! orientation b)
     (let* ([vertical? (eq? orientation 'below)]
            [extent (if vertical?
@@ -3185,66 +3195,7 @@
                        acc)))
                '() ranges))
 
-  (define layout-dividers '())
   (define resize-highlight #f) ; the split selected by transient keyboard resize
-
-  (define (layout-min-width node)
-    (if (layout-split? node)
-        (if (eq? (layout-split-orientation node) 'right)
-            (+ 1 (layout-min-width (layout-split-first node))
-               (layout-min-width (layout-split-second node)))
-            (max (layout-min-width (layout-split-first node))
-                 (layout-min-width (layout-split-second node))))
-        20))
-
-  (define (layout-min-height node)
-    (if (layout-split? node)
-        (if (eq? (layout-split-orientation node) 'below)
-            (+ (layout-min-height (layout-split-first node))
-               (layout-min-height (layout-split-second node)))
-            (max (layout-min-height (layout-split-first node))
-                 (layout-min-height (layout-split-second node))))
-        (+ (min-window-lines) 1)))
-
-  (define (weighted-first total minimum-first minimum-second a b)
-    (min (- total minimum-second)
-         (max minimum-first (quotient (* total (max 1 a))
-                                      (+ (max 1 a) (max 1 b))))))
-
-  (define (layout-node! node x y width height)
-    ;; Lay out one persistent subtree. Rectangles include leaf status rows;
-    ;; side-by-side nodes reserve one visible divider column.
-    (if (not (layout-split? node))
-        (begin
-          (window-xoff-set! node x)
-          (window-width-set! node (max 1 width))
-          (window-size-set! node (max 1 (- height 1)))
-          (list (list node y (max 1 (- height 1)))))
-        (let* ([first (layout-split-first node)]
-               [second (layout-split-second node)]
-               [below? (eq? (layout-split-orientation node) 'below)]
-               [total (- (if below? height width) (if below? 0 1))]
-               [m1 (if below? (layout-min-height first)
-                       (layout-min-width first))]
-               [m2 (if below? (layout-min-height second)
-                       (layout-min-width second))]
-               [one (weighted-first total m1 m2
-                                    (layout-split-first-weight node)
-                                    (layout-split-second-weight node))]
-               [two (- total one)])
-          (if below?
-              (begin
-                (set! layout-dividers
-                  (cons (list 'below node x (+ y one -1) width)
-                        layout-dividers))
-                (append (layout-node! first x y width one)
-                        (layout-node! second x (+ y one) width two)))
-              (begin
-                (set! layout-dividers
-                  (cons (list 'right node (+ x one) y height)
-                        layout-dividers))
-                (append (layout-node! first x y one height)
-                        (layout-node! second (+ x one 1) y two height)))))))
 
   (define (window-layout)
     ;; Recursively tile the persistent split tree. *completions* is a
