@@ -6801,73 +6801,19 @@
   ;; knows which modules exist and owns their registrations (see the
   ;; module registries above).
 
-  (define loaded-modules '())   ; module names, in load order
+  ;; The lifecycle lives in the kernel now; the exported names stay
+  ;; usable through these facade aliases, and the core hangs its
+  ;; after-reload work on the kernel's hook.
+  (define load-module! kernel:load-module!)
+  (define reload-module! kernel:reload-module!)
 
-  (define (module-source name)
-    (format "~a/~a.e" (caar (library-directories)) name))
-
-  (define seam-modules '(text state))
-
-  (define (init-module! name)
-    ;; Import the module's library into the editor's top level (compiling
-    ;; it when stale) and run its init!, if any, owning its registrations.
-    ;; The v2 seam modules arrive prefixed, exactly as code imports them
-    ;; -- M-x says (state:edit! ...) too, and their short names never
-    ;; shadow the editor API.
-    (let ([lib (list (string->symbol name))])
-      (eval (if (memq (car lib) seam-modules)
-                `(import (prefix ,lib
-                                 ,(string->symbol
-                                    (string-append name ":"))))
-                `(import ,lib))
-            (interaction-environment))
-      (when (memq 'init! (library-exports lib))
-        (parameterize ([registering-module (string->symbol name)])
-          (eval `(let () (import (only ,lib init!)) (init!))
-                (interaction-environment))))))
-
-  (define (load-module! name)
-    ;; Loading is idempotent.  A failed first initialization also rolls
-    ;; back any registrations it made before raising.
-    (unless (member name loaded-modules)
-      (let ([old-registrations (registration-snapshot)])
-        (guard (ex [else
-                    (restore-registrations! old-registrations)
-                    (raise ex)])
-          (init-module! name)
-          (set! loaded-modules (append loaded-modules (list name)))))))
-
-  (define (load-modules!)
-    ;; Load every module in the lib directory (the loader script has
-    ;; already pointed library-directories there): each .e file but the
-    ;; core itself, in name order.  A broken module reports itself
-    ;; without keeping the editor (or the others) from starting.
-    (for-each
-      (lambda (file)
-        (guard (ex [else
-                    (let ([msg (format "Error in ~a: ~a"
-                                       file (error-text ex))])
-                      (display (format "e: ~a\n" msg) (current-error-port))
-                      (set! message msg))])
-          (load-module! (substring file 0 (- (string-length file) 2)))))
-      (sort string<?
-            (filter (lambda (file)
-                      (and (string-suffix? ".e" file)
-                           (not (member file '("core.e" "kernel.e")))))
-                    (directory-list (caar (library-directories)))))))
-
-  (define (module-requires? name target)
-    ;; Does library (name) build on (target), directly or through others?
-    (let ([t (string->symbol target)]
-          [seen (make-hashtable equal-hash equal?)])
-      (let walk ([lib (list (string->symbol name))])
-        (if (hashtable-ref seen lib #f)
-            #f
-            (begin
-              (hashtable-set! seen lib #t)
-              (exists (lambda (req) (or (eq? (car req) t) (walk req)))
-                      (guard (ex [else '()])
-                        (library-requirements lib))))))))
+  (define reload-tail-hooked
+    (kernel:add-after-reload-hook!
+      (lambda (name)
+        (load-config!)              ; the settings reapply on top
+        (refresh-buffer-modes!)
+        (invalidate-screen-cache!)
+        (set! message (format "Reloaded ~a" name)))))
 
   (define (refresh-buffer-modes!)
     ;; Re-resolve every buffer's mode by name, so buffers pick up a
@@ -6879,43 +6825,6 @@
                       (when m
                         (buffer-mode-set! b (find-mode (mode-name m)))))))
               buffers))
-
-  (define (reload-module! name*)
-    ;; Reload a module in place: redefine its library from the (edited)
-    ;; source, likewise every loaded module built on it, then retract all
-    ;; module registrations and run every init! afresh -- the effect is
-    ;; exactly a clean startup, with the editor's state (buffers, windows,
-    ;; this session's top level) untouched.  Closures already captured
-    ;; keep running the old code; a module's own state starts over.  The
-    ;; core itself cannot be reloaded: everything is compiled against it.
-    (let* ([name (if (symbol? name*) (symbol->string name*) name*)]
-           [source (module-source name)]
-           [old-loaded loaded-modules]
-           [old-registrations (registration-snapshot)])
-      (guard (ex [else
-                  (set! loaded-modules old-loaded)
-                  (restore-registrations! old-registrations)
-                  (raise ex)])
-        (when (member name '("core" "kernel"))
-          (error 'reload-module!
-                 (format "the ~a cannot be reloaded in place" name)))
-        (unless (file-exists? source)
-          (error 'reload-module! "no module source" source))
-        (load source)
-        (unless (member name loaded-modules)
-          (set! loaded-modules (append loaded-modules (list name))))
-        (for-each (lambda (m)
-                    (when (and (not (string=? m name))
-                               (module-requires? m name))
-                      (load (module-source m))))
-                  loaded-modules)
-        (for-each (lambda (m) (retract-module! (string->symbol m)))
-                  loaded-modules)
-        (for-each init-module! loaded-modules)
-        (load-config!)              ; the settings reapply on top
-        (refresh-buffer-modes!)
-        (invalidate-screen-cache!)
-        (set! message (format "Reloaded ~a" name)))))
 
   ;; Saving a module's source reloads it on the spot (a fresh .e file
   ;; in the lib directory is loaded for the first time), and saving
@@ -7034,7 +6943,14 @@
     ;; loaded here, before the file argument needs their modes.
     (let ([args (command-line-arguments)])
       (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
-      (load-modules!)           ; the log-view module lists *log* from startup
+      ;; the log-view module lists *log* from startup
+      (for-each
+        (lambda (failure)
+          (let ([msg (format "Error in ~a: ~a"
+                             (car failure) (error-text (cdr failure)))])
+            (display (format "e: ~a\n" msg) (current-error-port))
+            (set! message msg)))
+        (reverse (kernel:load-modules!)))
       (load-config!)
       (if (pair? args)
           (visit-file! (car args))
