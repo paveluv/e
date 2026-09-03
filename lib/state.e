@@ -119,7 +119,8 @@
                   (buffer-undo-set! b '())
                   (buffer-marks-set!
                     b (map (lambda (entry)
-                             (cons (car entry) (clamp (cdr entry))))
+                             (cons (car entry)
+                                   (clamp-mark-value (cdr entry) clamp)))
                            (buffer-marks b)))
                   (buffer-revision b))))])
       (notify! `(reset ,id ,new-revision ,actor))
@@ -241,7 +242,7 @@
         (buffer-marks-set!
           b (map (lambda (entry)
                    (cons (car entry)
-                         (text:rebase-position (cdr entry) delta)))
+                         (rebase-mark-value (cdr entry) delta)))
                  (buffer-marks b)))
         (when record-undo?
           (buffer-undo-set!
@@ -347,11 +348,32 @@
 
   ;;; Marks -------------------------------------------------------------------
 
-  ;; A mark is an actor-owned named position, rebased across every
-  ;; edit with the default forward bias -- a cursor at an insertion
-  ;; point is pushed along with the text.
+  ;; A mark is an actor-owned named value: a position (row . col),
+  ;; rebased across every edit with the default forward bias -- a
+  ;; cursor at an insertion point is pushed along with the text -- or
+  ;; a (text) span, for published selections and other regions.  A
+  ;; span mark rebases strictly while the edit misses it; an
+  ;; overlapping edit degrades it to endpoint rebasing rather than
+  ;; dropping it -- a selection should survive a race, never go stale.
 
   (define (mark-key actor mark-name) (cons actor mark-name))
+
+  (define (rebase-mark-value value d)
+    (if (text:span? value)
+        (or (text:rebase-span value d)
+            (let ([start (text:rebase-position (text:span-start value) d)]
+                  [end (text:rebase-position (text:span-end value) d
+                                             'stay)])
+              (text:make-span (car start) (cdr start)
+                              (car end) (cdr end))))
+        (text:rebase-position value d)))
+
+  (define (clamp-mark-value value clamp)
+    (if (text:span? value)
+        (let ([start (clamp (text:span-start value))]
+              [end (clamp (text:span-end value))])
+          (text:make-span (car start) (cdr start) (car end) (cdr end)))
+        (clamp value)))
 
   (define (set-mark! actor id mark-name position)
     (locked
