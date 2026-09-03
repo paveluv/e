@@ -11,6 +11,7 @@
   (export terminal-raw! terminal-restore! terminal-isig!
           terminal-size watch-terminal-resize! call-with-streamed-output
           duplicate-standard-output-port duplicate-output-port
+          duplicate-standard-input-port
           terminal-output-port
           terminal-character-width
           canonical-file-path
@@ -348,6 +349,14 @@
     (unless c-dup
       (error 'duplicate-standard-output-port "dup is unavailable"))
     (open-fd-output-port (c-dup 1) 'block (native-transcoder)))
+
+  (define (duplicate-standard-input-port)
+    ;; A private route to the terminal's input: its own port object,
+    ;; its own lock -- a thread blocked reading it never starves
+    ;; writers on the console ports.
+    (unless c-dup
+      (error 'duplicate-standard-input-port "dup is unavailable"))
+    (open-fd-input-port (c-dup 0) 'block (native-transcoder)))
 
   (define (duplicate-output-port port)
     ;; Keep an independently closeable route to an existing descriptor.  PTY
