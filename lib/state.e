@@ -236,7 +236,8 @@
         (buffer-revision-set! b new-revision)
         (buffer-deltas-set!
           b (bounded (cons (vector new-revision actor delta)
-                           (buffer-deltas b))))
+                           (buffer-deltas b))
+                     delta-log-limit))
         (buffer-marks-set!
           b (map (lambda (entry)
                    (cons (car entry)
@@ -244,12 +245,13 @@
                  (buffer-marks b)))
         (when record-undo?
           (buffer-undo-set!
-            b (cons (vector new-revision actor delta #t)
-                    (buffer-undo b))))
+            b (bounded (cons (vector new-revision actor delta #t)
+                             (buffer-undo b))
+                       delta-log-limit)))
         (values new-revision delta))))
 
-  (define (bounded entries)
-    (let loop ([entries entries] [n delta-log-limit])
+  (define (bounded entries n)
+    (let loop ([entries entries] [n n])
       (cond [(null? entries) '()]
             [(zero? n) '()]
             [else (cons (car entries)
