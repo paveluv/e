@@ -257,6 +257,15 @@
               (lambda (p) (list (read p) (read p))))
             '((ok . "=> 3") (refused buffer)))
 
+     ;; a core-linked seam module refuses to reload in place: the core
+     ;; cannot follow, and two library instances would fork
+     (send! "\x1b;xreload-module! \"state\"\r")
+     (pump! 1200)
+     (check 'core-linked-module-refuses-reload
+            (or (screen-has? 22 "core links against state")
+                (screen-has? 23 "core links against state"))
+            #t)
+
      (delete-file probe)
      (close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))

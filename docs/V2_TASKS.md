@@ -114,7 +114,11 @@ state.
 Extraction order for the remaining core.e content, each leaving a
 re-export facade until its importers migrate:
 
-- [ ] `styles.e` (faces, the style DSL)
+- [x] `styles.e` (faces, the style DSL) -- compile-style/style-escape,
+      the override registry, the built-in faces, and style-code moved;
+      the core keeps facade aliases and installs the repaint trigger
+      as the styles-changed hook (painted rows are cached by content,
+      not face definitions)
 - [ ] `keymap.e` (key syntax, contexts, dispatch)
 - [x] `log.e` (the log store; log-view stays an app) -- the records
       (persistent cell: reloads keep the log), the formatter
@@ -138,7 +142,6 @@ priority; items graduate into stage tasks when picked up.
 | P | Debt | Notes |
 |---|---|---|
 | 35 | `splice-lines!` span math is only integration-tested | `lib/core.e` `splice-lines!` translates whole-line splices into spans with three cases (interior, end-of-buffer, whole-buffer). tests/wiring.ss covers them live; add unit checks in tests/state.ss driving the same spans and comparing against `vector-splice` results. |
-| 30 | Reloading a core-linked seam module leaves two library instances | `reload-module!` (`lib/kernel.e`) re-evaluates `state.e`/`log.e`/`text.e`/`actors.e`, but core keeps the instances it compiled against; both share stores via `(kernel)` `persistent-cell` (state store, log records, log presenter, pending asks), so behavior stays coherent while stale code lingers -- except registries, which fork: a reloaded log.e gets an empty formatter registry while core's aliases (and every module init! going through them) keep the old one. Fix: have reload-module! refuse seam modules core links against (list them next to the core/kernel refusal), or restart-advice message. Repro: reload log -- log-view (core aliases) still styles, but sandbox's log-tail (prefixed log: import, recompiled against the new instance) falls back to unformatted text for formatter-owning components. |
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
 | 20 | Only the selected window's cursor and region are published | `lib/core.e` `publish-point!`/`publish-region!` publish one 'point mark and one 'region span for `current-window`. Fix: publish per window (mark names `(point . window-index)`, `(region . window-index)`), dropping a window's marks when it closes. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
