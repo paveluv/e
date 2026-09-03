@@ -119,7 +119,13 @@ re-export facade until its importers migrate:
       the core keeps facade aliases and installs the repaint trigger
       as the styles-changed hook (painted rows are cached by content,
       not face definitions)
-- [ ] `keymap.e` (key syntax, contexts, dispatch)
+- [x] `keymap.e` (key syntax, contexts, resolution) -- the key-spec
+      parser, the one binding registry (user beats default, newest
+      wins, owners retract with their module), lookup/prefix
+      resolution, and the command-keys reverse index moved; the core
+      keeps dispatch (dispatch-sequence!, run-key-action!,
+      mode-key-context, describe-key's presentation) plus facade
+      aliases
 - [x] `log.e` (the log store; log-view stays an app) -- the records
       (persistent cell: reloads keep the log), the formatter
       registry, log!/entries/history moved; the core keeps echo
@@ -148,3 +154,4 @@ priority; items graduate into stage tasks when picked up.
 | 15 | State subscriptions are not registry-owned | `lib/state.e` `subscribe!` returns a token; nothing ties it to the subscribing module, so a module reload leaks the old closure (still called per edit). `lib/blame.e` works around it by parking its token in a `kernel:persistent-cell` and unsubscribing the predecessor in `init!` -- every subscribing module would need the same dance. Fix: own subscriptions like registrations (a kernel registry of (token . proc), retracted by `retract-module!`), or an unsubscribe hook on retract. |
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |
+| 10 | Three copies of the small string utilities | `string-prefix?`, `string-tail`, `string-join` are duplicated in `lib/styles.e` and `lib/keymap.e` because they sit below `lib/core.e`, which owns the originals. Fix when a third-or-later extraction needs them again: give the pure string helpers a home below the seams (a `(strings)` library or a kernel section) and point core/styles/keymap at it. |
