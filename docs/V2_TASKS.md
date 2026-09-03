@@ -165,7 +165,14 @@ re-export facade until its importers migrate:
       ...) sites landed there unchanged.  Remaining for the head.e
       era: presentation (present-echo!, paint-echo-area!, geometry
       driver) and the prompts, which read keys and own the modal loop
-- [ ] `head.e` (window tree, per-user state, routing)
+- [~] `head.e` begun: the window tree moved -- the window and
+      layout-split records, the seat state (windows, layout root,
+      selected window, divider output) behind identifier-syntax
+      facades, and the pure tiling geometry (leaves, replace, parent,
+      minima, weighted splits, layout-node!).  Remaining: routing
+      (apps, capture, set-layout-root!), wrap policy, per-buffer state
+      swapping (define-state), the main loop -- plus the presentation
+      halves of paint.e and echo.e that come loose with them
 - [ ] `edit.e` absorbs the command layer; core.e deleted
 
 ## Tech debt ledger
