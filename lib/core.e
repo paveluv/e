@@ -13,7 +13,7 @@
     current-buffer buffer-list point mark
     buffer? buffer-name buffer-file buffer-text buffer-clean? buffer-modified
     buffer-read-only buffer-mode-name buffer-line-numbers
-    buffer-line buffer-line-count buffer-line-styles
+    buffer-line buffer-line-count buffer-line-styles buffer-state-id
     new-buffer buffer-named editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
@@ -92,7 +92,8 @@
   ;; buffer-mode accessor vs the port option, ...); a library body may not
   ;; shadow an import, so those imports are excluded.  The system-specific
   ;; layer -- libc, termios, signals -- comes from (sys).
-  (import (except (chezscheme) buffer-mode) (sys) (diff))
+  (import (except (chezscheme) buffer-mode) (sys) (diff)
+          (prefix (state) state:) (prefix (text) text:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -133,7 +134,10 @@
             ;; three-way merges
             ;; stale marks a detected external change, worn as a red
             ;; !! in the status bar until a save settles it
-            (mutable stamp) (mutable base) (mutable stale)))
+            (mutable stamp) (mutable base) (mutable stale)
+            ;; the buffer's twin in the (state) store, and the store
+            ;; revision this buffer's lines last agreed with
+            (mutable state-id) (mutable state-rev)))
 
   (define-record-type window
     (fields (mutable buffer) (mutable top)
@@ -161,16 +165,63 @@
             ;; scrolling horizontally
             (mutable wrap)))
 
+  ;; Every core buffer is mirrored into the (state) store, where other
+  ;; actors -- agents, future heads -- see and edit it.  The core is
+  ;; the store's first privileged client: its own edits mirror through
+  ;; the transactional API (whole-line and line-splice granularity),
+  ;; wholesale replacements mirror as resets, and foreign edits flow
+  ;; back before each frame (sync-foreign-edits!).  On any mirror
+  ;; trouble the core wins: the buffer resets the store copy from its
+  ;; own lines.
+
+  (define ui-actor '(head main))
+
+  (define (mirror-create! b)
+    (guard (ex [else (void)])
+      (buffer-state-id-set!
+        b (state:create! ui-actor (buffer-name b)
+                         (vector->list (buffer-lines b))))
+      (buffer-state-rev-set! b 0)))
+
+  (define (mirror-reset! b)
+    (when (buffer-state-id b)
+      (guard (ex [else (void)])
+        (buffer-state-rev-set!
+          b (state:reset! ui-actor (buffer-state-id b)
+                          (buffer-lines b))))))
+
+  (define (mirror-edit! b span replacement)
+    ;; one transactional mirror step; any refusal resynchronizes
+    ;; wholesale, core content winning
+    (when (buffer-state-id b)
+      (guard (ex [else (mirror-reset! b)])
+        (let-values ([(status info)
+                      (state:edit! ui-actor (buffer-state-id b)
+                                   (buffer-state-rev b)
+                                   span replacement)])
+          (if (eq? status 'applied)
+              (buffer-state-rev-set! b info)
+              (mirror-reset! b))))))
+
+  (define (mirror-rename! b)
+    (when (buffer-state-id b)
+      (guard (ex [else (void)])
+        (state:rename! ui-actor (buffer-state-id b) (buffer-name b)))))
+
   (define (new-buffer name)
-    (make-buffer name (vector "") 0 #f #t #f (vector '() '())
-                 0 0 #f 0 0 0 #f #t #f 'default 'default #f #f #f))
+    (let ([b (make-buffer name (vector "") 0 #f #t #f (vector '() '())
+                          0 0 #f 0 0 0 #f #t #f 'default 'default
+                          #f #f #f #f 0)])
+      (mirror-create! b)
+      b))
 
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
 
   (define (buffer-lines-set! b new-lines)
     (buffer-lines-raw-set! b new-lines)
-    (bump-buffer-revision! b))
+    (bump-buffer-revision! b)
+    (mirror-reset! b))
 
   (define buffers (list (new-buffer "*scratch*")))        ; most recent first
   (define windows (list (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)))
@@ -483,8 +534,39 @@
   (define (line-at n) (vector-ref lines n))
   (define (current-line) (line-at point-row))
   (define (set-line! n s)
-    (vector-set! lines n s)
-    (bump-buffer-revision! (window-buffer current-window)))
+    (let ([b (window-buffer current-window)]
+          [old (vector-ref lines n)])
+      (vector-set! lines n s)
+      (bump-buffer-revision! b)
+      (mirror-edit! b (text:make-span n 0 n (string-length old))
+                    (list s))))
+
+  (define (splice-lines! from to inserted)
+    ;; Replace whole lines [from, to) of the current buffer, mirrored
+    ;; as one transactional edit rather than a wholesale reset -- so
+    ;; other actors' marks and bases survive ordinary typing.
+    (let* ([b (window-buffer current-window)]
+           [old lines]
+           [count (vector-length old)])
+      (buffer-lines-raw-set! b (vector-splice old from to inserted))
+      (bump-buffer-revision! b)
+      (mirror-edit!
+        b
+        (cond
+          [(< to count) (text:make-span from 0 to 0)]
+          [(> from 0)
+           (text:make-span (- from 1)
+                           (string-length (vector-ref old (- from 1)))
+                           (- count 1)
+                           (string-length (vector-ref old (- count 1))))]
+          [else
+           (text:make-span 0 0 (- count 1)
+                           (string-length (vector-ref old (- count 1))))])
+        (cond
+          [(< to count) (append inserted '(""))]
+          [(> from 0) (cons "" inserted)]
+          [(null? inserted) '("")]
+          [else inserted]))))
 
   (define (editor-snapshot)
     (list (vector-copy lines) point-row point-col trailing-newline? modified?))
@@ -880,7 +962,7 @@
                       (list (string-append (substring old 0 col) (car parts)))
                       (reverse (cdr (reverse (cdr parts))))
                       (list (string-append last (string-tail old col))))])
-              (set! lines (vector-splice lines row (+ row 1) replacement))
+              (splice-lines! row (+ row 1) replacement)
               (set! point-row (+ row (- (length parts) 1)))
               (set! point-col (string-length last))))
         (changed!))))
@@ -889,8 +971,8 @@
     (record-edit! "newline")
     (let ([s (current-line)])
       (set-line! point-row (substring s 0 point-col))
-      (set! lines (vector-splice lines (+ point-row 1) (+ point-row 1)
-                                 (list (string-tail s point-col))))
+      (splice-lines! (+ point-row 1) (+ point-row 1)
+                     (list (string-tail s point-col)))
       (set! point-row (+ point-row 1)) (set! point-col 0)
       (changed!)))
 
@@ -906,7 +988,7 @@
            (record-edit! "delete newline")
            (set-line! point-row
              (string-append (current-line) (line-at (+ point-row 1))))
-           (set! lines (vector-splice lines (+ point-row 1) (+ point-row 2) '()))
+           (splice-lines! (+ point-row 1) (+ point-row 2) '())
            (changed!)]))
 
   (define (backspace!)
@@ -1028,7 +1110,7 @@
         (set-line! sr (string-delete (line-at sr) sc ec))
         (let ([joined (string-append (substring (line-at sr) 0 sc)
                                      (string-tail (line-at er) ec))])
-          (set! lines (vector-splice lines sr (+ er 1) (list joined))))))
+          (splice-lines! sr (+ er 1) (list joined)))))
 
   (define (replace-region-text! start end text)
     ;; Replace one ordered buffer range in a single structural operation.
@@ -1181,6 +1263,7 @@
     (unless (and (buffer? b) (string? name) (> (string-length name) 0))
       (error 'set-buffer-name! "expected a buffer and nonempty name" b name))
     (buffer-name-set! b (unique-name name b))
+    (mirror-rename! b)
     b)
 
   (define (file-buffer path)
@@ -1276,7 +1359,9 @@
                 (loop (+ i 1)))))
           'replace)
         (set! file-name path) (set! modified? #f)
-        (buffer-name-set! b (unique-name (base-name path) b))
+        (begin
+          (buffer-name-set! b (unique-name (base-name path) b))
+          (mirror-rename! b))
         ;; re-detect the mode only when the name changed: a plain
         ;; re-save must not clobber a mode chosen by hand; adoption
         ;; also lifts read-only -- the buffer visits an ordinary
@@ -2056,20 +2141,26 @@
         ;; view replacement is comparatively rare (terminal emulation is the
         ;; demanding case), so prefer a guaranteed coherent frame.
         (invalidate-screen-cache!)
-        (let ([last (- (vector-length new) 1)])
-          (buffer-spot-row-set! b (min (buffer-spot-row b) last))
-          (buffer-spot-col-set!
-            b (min (buffer-spot-col b)
-                   (string-length (vector-ref new (buffer-spot-row b)))))
-          (for-each
-            (lambda (w)
-              (when (eq? (window-buffer w) b)
-                (window-prow-set! w (min (window-prow w) last))
-                (window-pcol-set!
-                  w (min (window-pcol w)
-                         (string-length (vector-ref new (window-prow w)))))
-                (window-top-set! w (min (window-top w) last))))
-            windows)))))
+        (clamp-buffer-positions! b))))
+
+  (define (clamp-buffer-positions! b)
+    ;; keep the buffer's spot and every window's point inside the
+    ;; (possibly shorter) current lines
+    (let* ([v (buffer-lines b)]
+           [last (- (vector-length v) 1)])
+      (buffer-spot-row-set! b (min (buffer-spot-row b) last))
+      (buffer-spot-col-set!
+        b (min (buffer-spot-col b)
+               (string-length (vector-ref v (buffer-spot-row b)))))
+      (for-each
+        (lambda (w)
+          (when (eq? (window-buffer w) b)
+            (window-prow-set! w (min (window-prow w) last))
+            (window-pcol-set!
+              w (min (window-pcol w)
+                     (string-length (vector-ref v (window-prow w)))))
+            (window-top-set! w (min (window-top w) last))))
+        windows)))
 
   ;;; The log -----------------------------------------------------------------
 
@@ -2224,6 +2315,10 @@
                     (set! message (format "New buffer ~a" s))]))))
 
   (define (kill-buffer! b)
+    (when (buffer-state-id b)
+      (guard (ex [else (void)])
+        (state:delete! ui-actor (buffer-state-id b))
+        (buffer-state-id-set! b #f)))
     (when buffer-kill-hook-registry
       (for-each
         (lambda (hook)
@@ -4489,6 +4584,46 @@
           (ansi "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
           (loop (+ row 1))))))
 
+  ;; Foreign actors edit the (state) store directly; their changes
+  ;; flow back into the core's line caches before each frame.  The
+  ;; subscription callback runs on whichever thread edited, so it only
+  ;; records the buffer id; the main loop does the adoption.
+  (define foreign-lock (make-mutex))
+  (define foreign-pending '())
+
+  (define (note-foreign-event event)
+    (when (and (memq (car event) '(edit reset))
+               (not (equal? (list-ref event 3) ui-actor)))
+      (with-mutex foreign-lock
+        (set! foreign-pending (cons (cadr event) foreign-pending)))))
+
+  (define state-subscription (state:subscribe! #f note-foreign-event))
+
+  (define (sync-foreign-edits!)
+    (let ([ids (with-mutex foreign-lock
+                 (let ([pending foreign-pending])
+                   (set! foreign-pending '())
+                   pending))])
+      (for-each
+        (lambda (id)
+          (let ([b (find (lambda (b) (eqv? (buffer-state-id b) id))
+                         buffers)])
+            (when b
+              (guard (ex [else (void)])
+                (let-values ([(text revision) (state:snapshot id)])
+                  (unless (= revision (buffer-state-rev b))
+                    ;; adopt a copy: the core mutates lines in place,
+                    ;; and the store's vector is immutable history
+                    (buffer-lines-raw-set! b (vector-copy text))
+                    (bump-buffer-revision! b)
+                    (buffer-state-rev-set! b revision)
+                    (when (buffer-file b) (buffer-modified-set! b #t))
+                    (clamp-buffer-positions! b)
+                    (invalidate-screen-cache!)))))))
+        ids)))
+
+  (define foreign-sync-hooked (add-pre-redraw-hook! sync-foreign-edits!))
+
   (define (redraw-frame!)
     ;; The frame goes out inside a synchronized update (mode 2026):
     ;; a supporting terminal holds rendering until the closing pair,
@@ -6570,11 +6705,21 @@
   (define (module-source name)
     (format "~a/~a.e" (caar (library-directories)) name))
 
+  (define seam-modules '(text state))
+
   (define (init-module! name)
     ;; Import the module's library into the editor's top level (compiling
     ;; it when stale) and run its init!, if any, owning its registrations.
+    ;; The v2 seam modules arrive prefixed, exactly as code imports them
+    ;; -- M-x says (state:edit! ...) too, and their short names never
+    ;; shadow the editor API.
     (let ([lib (list (string->symbol name))])
-      (eval `(import ,lib) (interaction-environment))
+      (eval (if (memq (car lib) seam-modules)
+                `(import (prefix ,lib
+                                 ,(string->symbol
+                                    (string-append name ":"))))
+                `(import ,lib))
+            (interaction-environment))
       (when (memq 'init! (library-exports lib))
         (parameterize ([registering-module (string->symbol name)])
           (eval `(let () (import (only ,lib init!)) (init!))
