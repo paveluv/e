@@ -225,7 +225,18 @@
                                      span replacement)])
             (if (eq? status 'applied)
                 (adopt-state! b)
-                (state-reset! b (local-text)))))
+                (begin
+                  ;; the conflict is on the record before core wins
+                  (guard (ex [else (void)])
+                    (let ([foreign
+                           (find (lambda (entry)
+                                   (not (equal? (cadr entry) ui-actor)))
+                                 (state:history (buffer-state-id b) 8))])
+                      (log! 'state
+                            (format "conflict: ui overrode ~a in ~s"
+                                    (if foreign (cadr foreign) "another actor")
+                                    (buffer-name b)))))
+                  (state-reset! b (local-text))))))
         (adopt-local! b (local-text))))
 
   (define (mirror-rename! b)
@@ -590,7 +601,8 @@
 
   (define (editor-snapshot)
     ;; the cache vectors are immutable now: snapshots share, never copy
-    (list lines point-row point-col trailing-newline? modified?))
+    (list lines point-row point-col trailing-newline? modified?
+          (buffer-state-rev (window-buffer current-window))))
 
   (define (restore-snapshot! snapshot)
     ;; The snapshot was just popped off a history stack, so nothing else
@@ -826,20 +838,39 @@
           (string-append (substring s 0 keep) " ... "
                          (string-tail s (- (string-length s) keep))))))
 
+  (define (foreign-edits-since? b rev)
+    ;; did another actor edit this buffer's store copy after rev?
+    (and (buffer-state-id b)
+         (guard (ex [else #f])
+           (exists (lambda (entry)
+                     (and (> (car entry) rev)
+                          (not (equal? (cadr entry) ui-actor))))
+                   (state:history (buffer-state-id b) 256)))))
+
   (define (history-shift! from to verb)
     ;; The report -- what was undone or redone -- is also returned, so
-    ;; M-x (undo!) shows it as its result.
+    ;; M-x (undo!) shows it as its result.  Restoring a snapshot from
+    ;; before another actor's edit would silently erase their work, so
+    ;; that refuses instead, like state:undo! reports 'blocked.
     (set! message
-      (if (null? (vector-ref history from))
-          (format "No further ~a information" (string-downcase verb))
-          (let ([entry (car (vector-ref history from))])
-            (vector-set! history from (cdr (vector-ref history from)))
-            (vector-set! history to
-              (cons (cons (car entry) (editor-snapshot))
-                    (vector-ref history to)))
-            (restore-snapshot! (cdr entry))
-            (elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
-                   cols))))
+      (cond
+        [(null? (vector-ref history from))
+         (format "No further ~a information" (string-downcase verb))]
+        [(foreign-edits-since?
+           (window-buffer current-window)
+           (let ([snapshot (cdr (car (vector-ref history from)))])
+             (if (> (length snapshot) 5) (list-ref snapshot 5) 0)))
+         (format "~a blocked: another actor edited this buffer since"
+                 verb)]
+        [else
+         (let ([entry (car (vector-ref history from))])
+           (vector-set! history from (cdr (vector-ref history from)))
+           (vector-set! history to
+             (cons (cons (car entry) (editor-snapshot))
+                   (vector-ref history to)))
+           (restore-snapshot! (cdr entry))
+           (elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
+                  cols))]))
     message)
 
   (define (undo!) (history-shift! 0 1 "Undo"))
@@ -4643,6 +4674,37 @@
                                           (text:delta-span
                                             (list-ref event 4))))
                                 ""))))))
+        events)
+      ;; carry every view's point across the foreign deltas, so a
+      ;; cursor keeps its content when an agent edits above it
+      (for-each
+        (lambda (event)
+          (when (eq? (car event) 'edit)
+            (let ([b (find (lambda (b)
+                             (eqv? (buffer-state-id b) (cadr event)))
+                           buffers)])
+              (when b
+                (guard (ex [else (void)])
+                  (let ([d (list-ref event 4)])
+                    (for-each
+                      (lambda (w)
+                        (when (eq? (window-buffer w) b)
+                          (let ([p (text:rebase-position
+                                     (cons (window-prow w)
+                                           (window-pcol w))
+                                     d)])
+                            (window-prow-set! w (car p))
+                            (window-pcol-set! w (cdr p)))
+                          (window-top-set!
+                            w (car (text:rebase-position
+                                     (cons (window-top w) 0) d)))))
+                      windows)
+                    (let ([p (text:rebase-position
+                               (cons (buffer-spot-row b)
+                                     (buffer-spot-col b))
+                               d)])
+                      (buffer-spot-row-set! b (car p))
+                      (buffer-spot-col-set! b (cdr p)))))))))
         events)
       (for-each
         (lambda (id)
