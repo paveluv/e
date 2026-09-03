@@ -116,30 +116,44 @@
 
   ;;; Buffers and windows ----------------------------------------------------
 
-  ;; The head's working record for a store buffer: the lines cache and
-  ;; per-seat presentation only.  Buffer-level facts -- the visited
-  ;; file, the mode, read-only, the disk base -- are (state)
-  ;; properties on the twin (accessors below), so every head, local or
-  ;; remote, reads the same truth.
-  (define-record-type buffer
-    (fields (mutable name)
-            (mutable lines buffer-lines buffer-lines-raw-set!)
-            (mutable revision)
-            (mutable history)
-            (mutable mark-row) (mutable mark-col)
-            (mutable marked)
-            ;; where point was when the buffer was last displayed
-            (mutable spot-row) (mutable spot-col) (mutable spot-top)
-            ;; #t/#f after a local toggle, or default to follow the global
-            ;; line-numbers parameter
-            (mutable line-numbers buffer-line-numbers-setting
-                     buffer-line-numbers-setting-set!)
-            ;; #t/#f overrides wrapping for every window showing this buffer;
-            ;; default leaves wrapping as a window/global presentation choice.
-            (mutable wrap buffer-wrap-setting buffer-wrap-setting-set!)
-            ;; the buffer's twin in the (state) store, and the store
-            ;; revision this buffer's lines last agreed with
-            (mutable state-id) (mutable state-rev)))
+  ;; The seat's buffer record lives in (head) now -- the client-side
+  ;; cache of a store buffer plus per-seat presentation -- reached
+  ;; through these facade aliases; buffer-lines-set! below stays here:
+  ;; it is the store transaction, not the raw field write.
+  (define make-buffer head:make-buffer)
+  (define buffer? head:buffer?)
+  (define buffer-name head:buffer-name)
+  (define buffer-name-set! head:buffer-name-set!)
+  (define buffer-lines head:buffer-lines)
+  (define buffer-lines-raw-set! head:buffer-lines-raw-set!)
+  (define buffer-revision head:buffer-revision)
+  (define buffer-revision-set! head:buffer-revision-set!)
+  (define buffer-history head:buffer-history)
+  (define buffer-history-set! head:buffer-history-set!)
+  (define buffer-mark-row head:buffer-mark-row)
+  (define buffer-mark-row-set! head:buffer-mark-row-set!)
+  (define buffer-mark-col head:buffer-mark-col)
+  (define buffer-mark-col-set! head:buffer-mark-col-set!)
+  (define buffer-marked head:buffer-marked)
+  (define buffer-marked-set! head:buffer-marked-set!)
+  (define buffer-spot-row head:buffer-spot-row)
+  (define buffer-spot-row-set! head:buffer-spot-row-set!)
+  (define buffer-spot-col head:buffer-spot-col)
+  (define buffer-spot-col-set! head:buffer-spot-col-set!)
+  (define buffer-spot-top head:buffer-spot-top)
+  (define buffer-spot-top-set! head:buffer-spot-top-set!)
+  (define buffer-line-numbers-setting head:buffer-line-numbers-setting)
+  (define buffer-line-numbers-setting-set!
+    head:buffer-line-numbers-setting-set!)
+  (define buffer-wrap-setting head:buffer-wrap-setting)
+  (define buffer-wrap-setting-set! head:buffer-wrap-setting-set!)
+  (define buffer-state-id head:buffer-state-id)
+  (define buffer-state-id-set! head:buffer-state-id-set!)
+  (define buffer-state-rev head:buffer-state-rev)
+  (define buffer-state-rev-set! head:buffer-state-rev-set!)
+  (define-syntax buffers
+    (identifier-syntax [id (head:buffers)]
+      [(set! id v) (head:set-buffers! v)]))
 
   ;; Shared facts, read and written through the store.  The fallbacks
   ;; only cover a buffer whose twin is missing (a store outage, a
@@ -426,7 +440,8 @@
   (define (buffer-lines-set! b new-lines)
     (state-reset! b new-lines))
 
-  (define buffers (list (new-buffer "*scratch*")))        ; most recent first
+  (define buffers-initialized                              ; most recent first
+    (set! buffers (list (new-buffer "*scratch*"))))
   (define head-seat-initialized
     (let ([w (make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)])
       (set! windows (list w))
@@ -2440,7 +2455,7 @@
     (or (buffer-named name) (error 'buffer "no buffer named" name)))
 
   (define buffer-printing
-    (record-writer (record-type-descriptor buffer)
+    (record-writer (record-type-descriptor head:buffer)
       (lambda (r p wr)
         (display "(buffer " p)
         (wr (buffer-name r) p)
