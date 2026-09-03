@@ -96,7 +96,8 @@
   (import (except (chezscheme) buffer-mode) (sys) (diff)
           (prefix (state) state:) (prefix (text) text:)
           (prefix (kernel) kernel:) (prefix (actors) actors:)
-          (prefix (log) log:) (prefix (styles) styles:))
+          (prefix (log) log:) (prefix (styles) styles:)
+          (prefix (keymap) keymap:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -6084,193 +6085,25 @@
 
   ;;; Key handling ----------------------------------------------------------
 
-  ;; Every keyboard binding, including defaults, lives in this one
-  ;; registry.  An item is (context sequence action kind spelling), where
-  ;; kind is user or default.  The registry supplies its owner: config,
-  ;; an extension module, or #f for the core and live M-x customizations.
-  ;; User entries always beat defaults; within a layer the newest wins.
-  (define key-bindings (make-registry))
-
-  (define special-key-names
-    (append
-      '("UP" "DOWN" "LEFT" "RIGHT" "HOME" "END" "BEGIN" "INSERT"
-        "DELETE" "PAGEUP" "PAGEDOWN" "TAB" "RET" "ESC" "BACKSPACE"
-        "PASTE" "MOUSE" "MOUSE-CLICK")
-      (map (lambda (number) (format "F~a" (+ number 1))) (iota 63))
-      '("KP-0" "KP-1" "KP-2" "KP-3" "KP-4" "KP-5" "KP-6"
-        "KP-7" "KP-8" "KP-9" "KP-DECIMAL" "KP-DIVIDE" "KP-MULTIPLY"
-        "KP-SUBTRACT" "KP-ADD" "KP-COMMA" "KP-EQUAL" "KP-ENTER")))
-
-  (define special-key-prefixes
-    '("C-M-S-" "C-M-" "C-S-" "M-S-" "C-" "M-" "S-"))
-
-  (define (special-key-name? name)
-    (or (member name special-key-names)
-        (exists
-          (lambda (prefix)
-            (and (string-prefix? prefix name)
-                 (member (string-tail name (string-length prefix))
-                         special-key-names)))
-          special-key-prefixes)))
-
-  (define (key-token s)
-    (cond
-      [(string=? s "SPC") " "]
-      [(string=? s "TAB") "TAB"]
-      [(string=? s "RET") "RET"]
-      [(string=? s "ESC") "ESC"]
-      [(string=? s "DEL") "DELETE"]
-      [(string=? s "BACKSPACE") "BACKSPACE"]
-      [(and (= (string-length s) 3) (string-prefix? "C-" s))
-       (format "C-~c" (char-downcase (string-ref s 2)))]
-      [(and (= (string-length s) 3) (string-prefix? "M-" s))
-       (format "M-~c" (string-ref s 2))]
-      [(and (> (string-length s) 3) (string-prefix? "M-" s))
-       (let ([base (key-token (string-tail s 2))])
-         (string-append "M-" (if (string=? base " ") "SPC" base)))]
-      [(and (= (string-length s) 5) (string-prefix? "C-M-" s))
-       (format "C-M-~c" (char-downcase (string-ref s 4)))]
-      [(= (string-length s) 1) s]
-      [(special-key-name? s) s]
-      [else (error 'bind-key! "unrecognized key" s)]))
-
-  (define (key-spec spec)
-    (unless (and (string? spec) (> (string-length spec) 0))
-      (error 'bind-key! "key specification must be a nonempty string" spec))
-    (let ([n (string-length spec)])
-      (let loop ([i 0] [start 0] [parts '()])
-        (cond
-          [(= i n)
-           (reverse (cons (key-token (substring spec start i)) parts))]
-          [(char=? (string-ref spec i) #\space)
-           (when (= i start) (error 'bind-key! "empty key in sequence" spec))
-           (loop (+ i 1) (+ i 1)
-                 (cons (key-token (substring spec start i)) parts))]
-          [else (loop (+ i 1) start parts)]))))
-
-  (define (binding-item context sequence action kind spec)
-    (list context sequence action kind spec))
-  (define binding-context car)
-  (define binding-sequence cadr)
-  (define binding-action caddr)
-  (define binding-kind cadddr)
-  (define (binding-spec b) (car (cddddr b)))
-
-  (define (same-sequence? a b)
-    (and (= (length a) (length b))
-         (for-all string=? a b)))
-
-  (define (sequence-prefix? prefix whole)
-    (and (<= (length prefix) (length whole))
-         (let loop ([a prefix] [b whole])
-           (or (null? a)
-               (and (string=? (car a) (car b))
-                    (loop (cdr a) (cdr b)))))))
-
-  (define (matching-bindings context sequence exact?)
-    (filter
-      (lambda (owned)
-        (let ([b (cdr owned)])
-          (and (eq? (binding-context b) context)
-               ((if exact? same-sequence? sequence-prefix?)
-                sequence (binding-sequence b)))))
-      (registry-entries key-bindings)))
-
-  (define (choose-binding entries)
-    (or (find (lambda (owned) (eq? (binding-kind (cdr owned)) 'user))
-              entries)
-        (find (lambda (owned) (eq? (binding-kind (cdr owned)) 'default))
-              entries)))
-
-  (define (resolved-binding context sequence)
-    (choose-binding (matching-bindings context sequence #t)))
-
-  (define (effective-bindings context)
-    ;; One chosen entry per sequence.  Registry order handles newest-first;
-    ;; a user entry replaces a previously seen default regardless of age.
-    (let ([chosen (make-hashtable equal-hash equal?)])
-      (for-each
-        (lambda (owned)
-          (let ([b (cdr owned)])
-            (when (eq? (binding-context b) context)
-              (let* ([sequence (binding-sequence b)]
-                     [old (hashtable-ref chosen sequence #f)])
-                (when (or (not old)
-                          (and (eq? (binding-kind (cdr old)) 'default)
-                               (eq? (binding-kind b) 'user)))
-                  (hashtable-set! chosen sequence owned))))))
-        (registry-entries key-bindings))
-      (vector->list (hashtable-values chosen))))
-
-  (define key-binding
-    (case-lambda
-      [(spec) (key-binding 'global spec)]
-      [(context spec)
-       (let ([hit (resolved-binding context (key-spec spec))])
-         (and hit (binding-action (cdr hit))))]))
-
-  (define (key-event-binding context . events)
-    ;; Runtime events are already canonical tokens.  Do not feed them
-    ;; back through the human key-spec parser: its spaces are separators,
-    ;; while a typed space is itself the literal " " event.
-    (let ([hit (resolved-binding context events)])
-      (and hit (binding-action (cdr hit)))))
-
-  (define (add-key-binding! context spec action kind)
-    (unless (symbol? context) (error 'bind-key! "context must be a symbol" context))
-    (unless (or (procedure? action) (symbol? action) (not action))
-      (error 'bind-key! "action must be a procedure, symbol, or #f" action))
-    (registry-add! key-bindings
-      (binding-item context (key-spec spec) action kind spec)))
-
-  (define bind-key!
-    (case-lambda
-      [(spec action) (add-key-binding! 'global spec action 'user)]
-      [(context spec action) (add-key-binding! context spec action 'user)]))
-
-  (define bind-default-key!
-    (case-lambda
-      [(spec action) (add-key-binding! 'global spec action 'default)]
-      [(context spec action) (add-key-binding! context spec action 'default)]))
-
-  (define unbind-key!
-    (case-lambda
-      [(spec) (add-key-binding! 'global spec #f 'user)]
-      [(context spec) (add-key-binding! context spec #f 'user)]))
-
-  (define (command-keys sym)
-    ;; Every global key spec currently resolved to the top-level command
-    ;; named sym. Bindings are read live, so overrides and module reloads are
-    ;; reflected immediately.
-    (guard (ex [else '()])
-      (if (top-level-bound? sym)
-          (let ([proc (top-level-value sym)])
-            (map (lambda (owned) (binding-spec (cdr owned)))
-                 (filter
-                   (lambda (owned)
-                     (let ([b (cdr owned)])
-                       (and (eq? (binding-context b) 'global)
-                            (eq? (binding-action b) proc)
-                            (eq? owned
-                                 (resolved-binding 'global
-                                   (binding-sequence b))))))
-                   (registry-entries key-bindings))))
-          '())))
-
-  (define (command-key sym)
-    ;; The most recently registered key currently bound to sym, or #f.
-    (let ([keys (command-keys sym)])
-      (and (pair? keys) (car keys))))
-
-  (define (command-hint syms)
-    ;; "M-n next-conflict!, M-m keep-mine!" for a list of command
-    ;; names: each with its current key, or bare when unbound.
-    (string-join
-      (map (lambda (s)
-             (let ([k (command-key s)])
-               (if k (format "~a ~a" k s) (format "~a" s))))
-           syms)
-      ", "))
+  ;; Key syntax and the binding tables live in the (keymap) seam
+  ;; module now; dispatch stays here, and these facade aliases stay
+  ;; until call sites and extension modules migrate to keymap:
+  ;; prefixes.
+  (define key-spec keymap:key-spec)
+  (define sequence-text keymap:sequence-text)
+  (define bind-key! keymap:bind-key!)
+  (define bind-default-key! keymap:bind-default-key!)
+  (define unbind-key! keymap:unbind-key!)
+  (define key-binding keymap:key-binding)
+  (define key-event-binding keymap:key-event-binding)
+  (define binding-prefix? keymap:binding-prefix?)
+  (define command-keys keymap:command-keys)
+  (define command-key keymap:command-key)
+  (define command-hint keymap:command-hint)
+  (define resolved-binding keymap:resolved-binding)
+  (define binding-context keymap:binding-context)
+  (define binding-action keymap:binding-action)
+  (define binding-kind keymap:binding-kind)
 
   (define (settle-echo!)
     (set! message "")
@@ -6569,28 +6402,10 @@
     (set! point-row (- (vlen) 1))
     (set! point-col (string-length (current-line))))
 
-  (define (binding-prefix? context sequence)
-    (let ([exact (resolved-binding context sequence)])
-      (exists
-        (lambda (owned)
-          (let* ([candidate (cdr owned)]
-                 [longer (binding-sequence candidate)])
-            (and (> (length longer) (length sequence))
-                 (sequence-prefix? sequence longer)
-                 (binding-action candidate)
-                 ;; An exact user binding deliberately reclaims a key
-                 ;; that used to be only a default prefix.
-                 (or (not exact)
-                     (eq? (binding-kind (cdr exact)) 'default)
-                     (eq? (binding-kind candidate) 'user)))))
-        (effective-bindings context))))
-
   (define (run-key-action! action)
     (cond [(procedure? action) (action)]
           [(not action) (set! message "Key is unbound")]
           [else (error 'dispatch-key! "context action used globally" action)]))
-
-  (define (sequence-text sequence) (string-join sequence " "))
 
   (define (mode-key-context)
     ;; A buffer mode may carry its own key bindings under a context
@@ -6709,16 +6524,12 @@
       (set-message! "Describe key: "))
     (redraw!)
     (let* ([sequence (read-described-sequence)]
-           [all (filter
-                  (lambda (owned)
-                    (same-sequence? sequence
-                                    (binding-sequence (cdr owned))))
-                  (registry-entries key-bindings))]
+           [all (keymap:sequence-bindings sequence)]
            [entries (filter
                       (lambda (owned)
-                        (eq? (binding-context (cdr owned)) 'global))
+                        (eq? (keymap:binding-context (cdr owned)) 'global))
                       all)]
-           [resolved (choose-binding entries)]
+           [resolved (keymap:choose-binding entries)]
            [b (fresh-buffer "*help*")])
       (buffer-append! b
         (sequence-text sequence)
