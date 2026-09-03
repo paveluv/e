@@ -135,7 +135,7 @@
 
   ;; the v2 seam modules arrive prefixed in the editor's top level,
   ;; exactly as code imports them -- M-x says (state:edit! ...) too
-  (define seam-modules '(text state actors policy sandbox log))
+  (define seam-modules '(text state actors policy sandbox log styles))
 
   (define (init-module! name)
     ;; Import the module's library into the editor's top level
@@ -226,6 +226,15 @@
         (when (member name '("core" "kernel"))
           (error 'reload-module!
                  (format "the ~a cannot be reloaded in place" name)))
+        ;; The core cannot reload, so a module it links against would
+        ;; fork on reload: the core keeps the instance it compiled
+        ;; against while everything else moves to the new one --
+        ;; coherent stores through persistent cells, forked
+        ;; registries.  Refuse rather than leave two instances.
+        (when (module-requires? "core" name)
+          (error 'reload-module!
+                 (format "core links against ~a: restart e to pick up changes"
+                         name)))
         (unless (file-exists? source)
           (error 'reload-module! "no module source" source))
         (load source)
