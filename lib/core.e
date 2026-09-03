@@ -98,6 +98,7 @@
           (prefix (kernel) kernel:) (prefix (actors) actors:)
           (prefix (log) log:) (prefix (styles) styles:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
+          (prefix (echo) echo:)
           (prefix (paint) paint:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
@@ -460,7 +461,34 @@
               salutation)))
 
   (define editor-name "e")
-  (define message (startup-greeting))
+  ;; The echo area's model lives in the (echo) seam module now: the
+  ;; names below are identifier-syntax facades, so half a hundred
+  ;; (set! message ...) sites land there unchanged.  Painting, the
+  ;; prompts, and the geometry driver stay here until head.e.
+  (define-syntax message
+    (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
+  (define-syntax message-ghost
+    (identifier-syntax [id (echo:ghost)] [(set! id v) (echo:set-ghost! v)]))
+  (define-syntax message-styles
+    (identifier-syntax [id (echo:styles)] [(set! id v) (echo:set-styles! v)]))
+  (define-syntax echo-pending
+    (identifier-syntax [id (echo:pending)] [(set! id v) (echo:set-pending! v)]))
+  (define-syntax echo-cursor
+    (identifier-syntax [id (echo:cursor)] [(set! id v) (echo:set-cursor! v)]))
+  (define-syntax echo-indent
+    (identifier-syntax [id (echo:indent)] [(set! id v) (echo:set-indent! v)]))
+  (define-syntax echo-input-end
+    (identifier-syntax [id (echo:input-end)] [(set! id v) (echo:set-input-end! v)]))
+  (define-syntax echo-height
+    (identifier-syntax [id (echo:height)] [(set! id v) (echo:set-height! v)]))
+  (define-syntax echo-scroll
+    (identifier-syntax [id (echo:scroll)] [(set! id v) (echo:set-scroll! v)]))
+  (define-syntax echo-spans
+    (identifier-syntax [id (echo:spans)] [(set! id v) (echo:set-spans! v)]))
+  (define-syntax echo-live-height
+    (identifier-syntax [id (echo:live-height)] [(set! id v) (echo:set-live-height! v)]))
+  (define echo-greeting-shown (echo:set-text! (startup-greeting)))
+
   (define kill-ring "")
   (define last-command #f)
   (define suppress-history (make-parameter #f))
@@ -470,17 +498,6 @@
   ;; backslash and continuation lines indented to the prompt text, up to
   ;; eight lines, after which it scrolls.  The windows above share what
   ;; remains of the screen.
-  (define echo-cursor #f)   ; content index to park the cursor at, or #f
-  (define echo-indent #f)   ; prompt continuation indent; #f = no prompt
-  (define echo-input-end #f) ; content index past the prompt's input,
-                             ; before any completion note
-  (define echo-height 1)
-  (define echo-scroll 0)
-  (define echo-spans '((0 . 0)))
-  ;; transient-log lines: (component text styler ghost)
-  (define echo-pending '())
-  (define echo-live-height 1)    ; rows of the live line inside echo-height
-  (define message-ghost "") ; grey suggestion drawn after the message text
   (define rows 24)
   (define cols 80)
   (define stdin (current-input-port))
@@ -3649,32 +3666,10 @@
           (cons (cons xoff key)
                 (if hit (remq hit entry) (or entry '())))))))
 
-  (define (echo-indent-now)
-    ;; The continuation indent, capped at half the width so a prompt
-    ;; whose label alone overflows the screen still wraps usefully.
-    (min (or echo-indent 0) (quotient cols 2)))
+  (define (echo-indent-now) (echo:indent-now cols))
 
   (define (compute-echo-spans content len)
-    ;; Content index ranges of the echo area's visual lines: the first
-    ;; line spans the full width, explicit newlines force a new visual line,
-    ;; continuations start at the indent, and every soft-wrapped line gives
-    ;; its last column to the wrap mark.
-    (let ([indent (echo-indent-now)])
-      (let loop ([start 0] [first? #t] [acc '()])
-        (let* ([avail (if first? cols (- cols indent))]
-               [limit (min len (+ start avail))]
-               [hard (let find ([i start])
-                       (cond [(>= i (min limit (string-length content))) #f]
-                             [(char=? (string-ref content i) #\newline) i]
-                             [else (find (+ i 1))]))])
-          (cond [hard
-                 (loop (+ hard 1) #f (cons (cons start hard) acc))]
-                [(<= (- len start) avail)
-                 (reverse (cons (cons start len) acc))]
-                [else
-                 (let ([take (- avail 1)])
-                   (loop (+ start take) #f
-                         (cons (cons start (+ start take)) acc)))])))))
+    (echo:compute-spans content len cols))
 
   (define (echo-position k)
     ;; Visual (line . column) of content index k, per echo-spans.
@@ -3736,7 +3731,6 @@
              (eq? (app-of (current-buffer)) capture-bypass-app)
              (string-length message))))
 
-  (define message-styles #f)  ; (text . styler) for the current message:
                               ; applied while the text still matches
 
   (define (show-message! s styles-pair)
@@ -3776,19 +3770,9 @@
   (define (echo-queue! component text styler replace? . rest)
     ;; Update transient echo state without painting it; batch publishers use
     ;; this before one final present-echo!.
-    (let* ([ghost (if (pair? rest) (car rest) "")]
-           [entry (list component text styler ghost)]
-           [rev (reverse echo-pending)]
-           [rev (if (and replace? (pair? rev) (eq? (caar rev) component))
-                    (cdr rev)
-                    rev)])
-      (set! echo-pending (reverse (cons entry rev))))
-    (unless (echo-cursor-now)
-      (set! message "")
-      (set! message-ghost "")
-      (set! message-styles #f)
-      (set! echo-indent #f)
-      (set! echo-input-end #f)))
+    (echo:queue! component text styler replace?
+                 (if (pair? rest) (car rest) "")
+                 (and (echo-cursor-now) #t)))
 
   (define (present-echo!)
     ;; Present the echo area now, mid-command included (once the
@@ -3803,37 +3787,10 @@
             (redraw!)))
       (flush-output-port (terminal-output-port))))
 
-  (define (echo-log-prefix e)
-    (let ([p (format "~a: " (car e))])
-      (if (> (string-length p) cols) (substring p 0 cols) p)))
-
+  (define (echo-log-prefix e) (echo:log-prefix e cols))
   (define (echo-log-spans prefix-len content)
-    ;; Content index ranges of a transient-log entry's visual rows: a
-    ;; long line wraps rather than being cut -- there is no way to
-    ;; scroll past the echo area's edge.  The first row follows the
-    ;; prefix, continuations indent to it (capped at half the width),
-    ;; and every wrapped row gives its last column to the wrap mark.
-    (let ([indent (min prefix-len (quotient cols 2))])
-      (let ([len (string-length content)])
-        (let loop ([start 0] [first? #t] [acc '()])
-          (let* ([avail (max 1 (- cols (if first? prefix-len indent)))]
-                 [limit (min len (+ start avail))]
-                 [hard (let find ([i start])
-                         (cond [(>= i limit) #f]
-                               [(char=? (string-ref content i) #\newline) i]
-                               [else (find (+ i 1))]))])
-            (cond [hard
-                   (loop (+ hard 1) #f (cons (cons start hard) acc))]
-                  [(<= (- len start) avail)
-                   (reverse (cons (cons start len) acc))]
-                  [else
-                   (let ([take (max 1 (- avail 1))])
-                     (loop (+ start take) #f
-                           (cons (cons start (+ start take)) acc)))]))))))
-
-  (define (echo-log-rows e)
-    (length (echo-log-spans (string-length (echo-log-prefix e))
-                            (string-append (cadr e) (cadddr e)))))
+    (echo:log-spans prefix-len content cols))
+  (define (echo-log-rows e) (echo:log-rows e cols))
 
   (define (display-echo-log-row prefix text styler ghost k span wrapped?)
     ;; One visual row of a transient-log entry: the grey prefix on the
@@ -5952,11 +5909,9 @@
   (define binding-action keymap:binding-action)
   (define binding-kind keymap:binding-kind)
 
-  (define (settle-echo!)
-    (set! message "")
-    (set! echo-pending '()))
+  (define (settle-echo!) (echo:settle!))
 
-  ;; The host's color scheme, learned  ;; The host's color scheme, learned from its DSR 997 reports (mode 2031
+  ;; The host's color scheme, learned from its DSR 997 reports (mode 2031
   ;; subscribes to them at startup): #f until the host says, then 'dark or
   ;; 'light. Hooks run on the main thread whenever a report arrives, so
   ;; the terminal module can forward the change to subscribed children.
