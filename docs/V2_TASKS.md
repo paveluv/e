@@ -38,7 +38,10 @@ state.
 
 - [x] registries move from core to kernel.e (core keeps facade
       aliases until its call sites migrate to kernel: prefixes)
-- [ ] module lifecycle (load/reload/retract) moves to kernel.e
+- [x] module lifecycle (load/reload/retract) moves to kernel.e;
+      core keeps load-module!/reload-module! aliases and hangs its
+      after-reload work (config, buffer modes, repaint) on the
+      kernel's hook
 - [ ] mailboxes and the event queue; the keyboard becomes one
       producer among several
 - [ ] prompts become the ask/reply interaction protocol
