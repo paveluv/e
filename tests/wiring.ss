@@ -172,6 +172,24 @@
      (check 'answer-routes-to-the-asker
             (call-with-input-file probe read) "yes")
 
+     ;; the scheduling substrate: a marshaled thunk runs with NO
+     ;; keypress -- the idle main loop's pump executes it inline
+     (send! (format "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 300000000 0)) (run-on-main! (lambda () (call-with-output-file \"~a\" (lambda (p) (write (quote ran) p)) (quote replace))))))\r"
+                    probe))
+     (pump! 300)                       ; the eval returns; the loop sleeps
+     (pump! 1500)                      ; no keys: the pump must run it
+     (check 'posted-thunk-runs-without-a-keypress
+            (call-with-input-file probe read) 'ran)
+
+     ;; wake coalescing: a racing burst of foreign edits must land on
+     ;; the screen in full -- a wake arriving mid-paint is not lost
+     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 300000000 0)) (let ([id (buffer-state-id (current-buffer))]) (let loop ([i 0]) (when (< i 30) (state:edit! (quote (agent burst)) id (state:revision id) (text:make-span 0 0 0 0) (list \"x\")) (loop (+ i 1))))))\r")
+     (pump! 300)
+     (pump! 1700)                      ; no keys: only wakes can paint
+     (check 'racing-burst-lands-without-a-lost-wake
+            (substring (screen-line 0) 0 30)
+            (make-string 30 #\x))
+
      (delete-file probe)
      (close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))
