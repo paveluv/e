@@ -53,13 +53,21 @@ state.
       questions as an echo indicator and answers via C-c a -- nobody's
       keyboard is stolen.  The head's own modal prompts (find-file,
       M-x) stay direct: they are the head asking its own user.
-- [ ] retire the display-port and between-keystrokes workarounds
-      (run-on-main!/wake-main! now exist; the terminal reader still
-      repaints via its display port -- migrate it; the claude module
-      follows only after v2 is finished, when it is ported from its
-      branch)
-- [ ] subscription delivery batches through mailboxes (the settled
-      coalescing)
+- [x] retire the display-port workaround: the terminal's duplicated
+      display port is gone -- the reader thread wakes the main loop
+      (repaints), and reader/feed-side editor work (log entries, the
+      OSC 52 kill-ring store, reader-failure messages) marshals via
+      run-on-main!, which the idle main pump now executes inline
+      (nested pumps -- prompts, i-search -- still defer, so foreign
+      thunks never run inside a modal read); the claude module follows
+      only after v2 is finished, when it is ported from its branch
+- [x] delivery coalescing: wake-main! dedupes -- a burst of foreign
+      edits collapses into one frame per pump instead of one repaint
+      per event, with the claim taken before painting so a mid-paint
+      wake queues the next frame rather than being lost (racing-burst
+      check in tests/wiring.ss).  Agents' own subscriptions choose
+      their delivery mailboxes at registration when agent sessions
+      arrive (stage 4)
 
 ## Stage 4 -- capabilities
 
@@ -102,3 +110,4 @@ priority; items graduate into stage tasks when picked up.
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
 | 20 | Only the selected window's cursor is published | `lib/core.e` `publish-point!` publishes one 'point mark for `current-window`. Fix: publish per window (mark name `(point . window-index)`) and the v0.1 region (buffer mark .. point) as a span mark. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
+| 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |

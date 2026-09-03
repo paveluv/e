@@ -15,7 +15,7 @@
           (only (describe) register-descriptions!))
 
   (define-record-type terminal-state
-    (fields buffer process display lock
+    (fields buffer process lock
             (mutable rows) (mutable cols) (mutable screen) (mutable wrapped)
             (mutable row) (mutable col)
             (mutable saved-row) (mutable saved-col) (mutable saved-state)
@@ -171,16 +171,11 @@
   (define style-lock (make-mutex))
 
   (define (call-with-display-output state thunk)
-    ;; Chez's script-mode console input and output ports share one lock,
-    ;; and the main thread holds it across its blocking keyboard read. A
-    ;; PTY reader thread that paints the echo area through the console
-    ;; port therefore stalls -- holding the terminal lock -- until the
-    ;; next keystroke. Route reader-thread diagnostics through the
-    ;; terminal's duplicated display port, as display-redraw! does.
-    (if (terminal-state-display state)
-        (parameterize ([terminal-output-port (terminal-state-display state)])
-          (thunk))
-        (thunk)))
+    ;; Reader- and feed-thread work that touches editor state (the
+    ;; log, the kill ring, the echo area) marshals to the main loop,
+    ;; which runs it and paints.  Never blocks: safe under the
+    ;; terminal lock.
+    (run-on-main! thunk))
 
   ;; The host's color scheme as last reported (see mode 2031 in core's
   ;; startup handshake): #f until known. Children that subscribed with
@@ -278,12 +273,12 @@
           (vector-set! palette index (list level level level))))
       palette))
 
-  (define (blank-terminal-state buffer process display rows cols live?)
+  (define (blank-terminal-state buffer process rows cols live?)
     ;; The single place a terminal-state record is built, so the long
     ;; positional field list exists exactly once. Grouped as declared;
     ;; live terminals start dirty and alive, headless emulators idle.
     (make-terminal-state
-      buffer process display (make-mutex)
+      buffer process (make-mutex)
       rows cols (make-screen rows cols) (make-vector rows #f) ; screen
       0 0                                        ; row col
       0 0 #f                                     ; saved cursor and state
@@ -319,7 +314,7 @@
                  (integer? cols) (exact? cols) (> cols 0))
       (error 'make-terminal-emulator
              "rows and columns must be positive exact integers" rows cols))
-    (blank-terminal-state #f #f #f rows cols #f))
+    (blank-terminal-state #f #f rows cols #f))
 
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
@@ -3243,8 +3238,10 @@
 
   (define (reader-loop state)
     (define (display-redraw!)
-      (parameterize ([terminal-output-port (terminal-state-display state)])
-        (redraw!)))
+      ;; Output must become visible while the main thread is blocked
+      ;; reading the editor's keyboard: wake it.  Wakes coalesce, so a
+      ;; chatty child costs one frame per pump, not one per chunk.
+      (wake-main!))
     (define (show-bell!)
       (let ([generation
              (with-mutex (terminal-state-lock state)
@@ -3279,9 +3276,7 @@
       ;; platform-specific wait must never make the editor appear frozen.
       (guard (ex [else (void)]) (display-redraw!))
       (guard (ex [else (void)])
-        (reap-terminal-process! (terminal-state-process state)))
-      (guard (ex [else (void)])
-        (close-port (terminal-state-display state))))
+        (reap-terminal-process! (terminal-state-process state))))
     (guard (ex [else
                 ;; Linux reports PTY-master closure as EIO rather than EOF.
                 ;; Other reader failures indicate an emulator or redraw bug
@@ -3317,8 +3312,6 @@
                              (terminal-state-bell-set! state #f)
                              bell?))])
                     (when bell? (show-bell!)))
-                  ;; Output must become visible while the main thread is
-                  ;; blocked reading the editor's keyboard.
                   (display-redraw!)
                   (loop))))))))
 
@@ -3652,7 +3645,6 @@
              [prior (current-buffer)]
              [buffer #f]
              [state #f]
-             [display #f]
              [process #f])
         (guard
           (ex [else
@@ -3662,15 +3654,12 @@
                (when process
                  (guard (ignored [else (void)])
                    (close-terminal-process! process)))
-               (when display
-                 (guard (ignored [else (void)]) (close-port display)))
                (when buffer
                  (guard (ignored [else (void)]) (set-app-capture! buffer #f))
                  (guard (ignored [else (void)]) (detach-app! buffer))
                  (when (eq? (current-buffer) buffer) (show-buffer! prior))
                  (guard (ignored [else (void)]) (kill-buffer! buffer)))
                (raise ex)])
-          (set! display (duplicate-output-port (terminal-output-port)))
           (set! buffer
             (register-app!
               name
@@ -3695,7 +3684,7 @@
               (spawn-terminal-process (terminal-shell) command
                                       directory rows cols))
             (set! state
-              (blank-terminal-state buffer process display rows cols #t))
+              (blank-terminal-state buffer process rows cols #t))
             (set-app-status-position!
               buffer
               (lambda (ignored)
