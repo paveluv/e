@@ -598,7 +598,6 @@
   ;; remains of the screen.
   (define rows 24)
   (define cols 80)
-  (define stdin (current-input-port))
   ;;; Terminal size ---------------------------------------------------------
 
   ;; The system-specific work (termios, ioctl, SIGWINCH) lives in (sys);
@@ -6031,99 +6030,28 @@
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook scheme)))
               color-scheme-hooks))
 
-  ;; The scheduling substrate in use:  ;; The scheduling substrate in use: a dedicated thread owns the
-  ;; terminal input (through a private dup'd port, so its blocking
-  ;; reads never hold a console lock) and posts parsed events to the
-  ;; main mailbox.  read-key-event -- called synchronously by the main
-  ;; loop, prompts, i-search, everything -- is now the mailbox pump:
-  ;; between keys it services wake-ups (foreign edits appear without a
-  ;; keypress) and defers posted thunks to the top of the main loop.
-  (define main-mailbox (kernel:make-mailbox))
-  (define deferred-runs '())
-
-  (define (run-on-main! thunk)
-    ;; run thunk on the main thread: immediately when the main loop is
-    ;; the one pumping the mailbox, otherwise at the top of its loop
-    (kernel:mailbox-post! main-mailbox (cons 'run thunk)))
-
-  ;; A burst of foreign edits (an agent's tight loop, a chatty PTY)
-  ;; must not queue one repaint per event: a wake is posted only when
-  ;; none is outstanding, so a burst collapses into one frame.  The
-  ;; claim happens before the frame is painted, never after -- a wake
-  ;; arriving mid-paint queues the next frame instead of being lost.
-  (define wake-flag-lock (make-mutex))
-  (define wake-queued #f)
-
-  (define (wake-main!)
-    (when (with-mutex wake-flag-lock
-            (and (not wake-queued) (begin (set! wake-queued #t) #t)))
-      (kernel:mailbox-post! main-mailbox '(wake))))
-
-  (define (claim-wake!)
-    (with-mutex wake-flag-lock (set! wake-queued #f)))
-
-  ;; #t while the main loop itself pumps the mailbox: posted thunks
-  ;; may run right away.  Nested pumps (prompts, i-search, key
-  ;; describers) leave it #f and defer them, so a foreign thunk never
-  ;; runs in the middle of a modal read.
-  (define in-main-pump (make-parameter #f))
+  ;; The seat's loop -- the mailbox, the wake dedupe, posted thunks,
+  ;; the reader thread, and the read-key-event pump -- lives in (head)
+  ;; now.  The core installs what a frame does and how side effects
+  ;; are consumed, and keeps these facade aliases.
+  (define read-key-event head:read-key-event)
+  (define run-on-main! head:run-on-main!)
+  (define wake-main! head:wake-main!)
+  (define in-main-pump head:in-main-pump)
+  (define start-input-reader! head:start-input-reader!)
 
   (define (run-posted-thunk! thunk)
     (guard (ex [else (parameterize ([message-source 'run-on-main!])
                        (set-message! (error-text ex)))])
       (thunk)))
 
-  (define (start-input-reader!)
-    (set! stdin (duplicate-standard-input-port))
-    (fork-thread
-      (lambda ()
-        (let loop ()
-          (let ([event (guard (ex [else (eof-object)])
-                         (tty:read-event stdin))])
-            (kernel:mailbox-post! main-mailbox (cons 'key event))
-            (unless (eof-object? event) (loop)))))))
-
-  (define read-key-event
-    ;; Consumers see the same names whether they are the main editor,
-    ;; I-search, a prompt, or a key describer.  A context that must not
-    ;; change editor focus passes #f: mouse reports are consumed
-    ;; without being applied.
-    (case-lambda
-      [() (read-key-event #t)]
-      [(handle-mouse?)
-       (let pump ()
-         (let ([message (kernel:mailbox-receive! main-mailbox)])
-           (case (car message)
-             [(key)
-              (let ([event (cdr message)])
-                (cond
-                  [(not (pair? event)) event]
-                  [(eq? (car event) 'mouse)
-                   (or (apply apply-mouse-event! handle-mouse?
-                              (cdr event))
-                       "MOUSE-HANDLED")]
-                  [(eq? (car event) 'paste)
-                   (set! pending-paste (cdr event))
-                   "PASTE"]
-                  [(eq? (car event) 'host-color-scheme)
-                   (note-color-scheme! (cadr event))
-                   (pump)]
-                  [else (pump)]))]
-             [(wake)
-              (claim-wake!)
-              (state-frame-sync!)
-              (redraw!)
-              (pump)]
-             [(run)
-              (cond [(in-main-pump)
-                     (run-posted-thunk! (cdr message))
-                     (state-frame-sync!)
-                     (redraw!)]
-                    [else
-                     (set! deferred-runs
-                       (cons (cdr message) deferred-runs))])
-              (pump)]
-             [else (pump)])))]))
+  (define pump-handlers-installed
+    (head:set-pump-handlers!
+      (lambda () (state-frame-sync!) (redraw!))
+      run-posted-thunk!
+      (lambda (handle? c b x y) (apply-mouse-event! handle? c b x y))
+      (lambda (text) (set! pending-paste text))
+      (lambda (scheme) (note-color-scheme! scheme))))
 
   (define (set-mark-command!)
     (set! mark-row point-row) (set! mark-col point-col)
@@ -6562,9 +6490,7 @@
       (lambda ()
         (let loop ()
           (unless quit?
-            (let ([runs (reverse deferred-runs)])
-              (set! deferred-runs '())
-              (for-each run-posted-thunk! runs))
+            (for-each run-posted-thunk! (head:take-deferred!))
             (run-pre-redraw-hooks!)
             (redraw!)
             ;; A command that raises (a read-only buffer, a bug in an

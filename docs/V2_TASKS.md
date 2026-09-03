@@ -188,7 +188,12 @@ re-export facade until its importers migrate:
       layout-split records -- and, once buffer facts had gone to the
       store, the seat's buffer record too (a client-side cache of a
       store buffer plus per-seat selection, spots, and presentation
-      toggles: exactly what a remote head will hold), the seat state (windows, layout root,
+      toggles: exactly what a remote head will hold), and the seat's
+      loop -- the mailbox, wake dedupe, posted thunks, the tty reader
+      thread, and the read-key-event pump, with the core installing
+      handlers for what a frame does and how mouse/paste/host reports
+      are consumed (a remote head runs the same loop with a socket
+      reader posting in place of the tty), the seat state (windows, layout root,
       selected window, divider output) behind identifier-syntax
       facades, and the pure tiling geometry (leaves, replace, parent,
       minima, weighted splits, layout-node!).  Remaining: routing

@@ -1,16 +1,16 @@
-;; head.e -- the head's window tree: the library (head), v2 core
-;; dissolution (docs/DESIGN2.md), first slice.  Pure infrastructure
-;; with no init!.
+;; head.e -- the head: the library (head), v2 core dissolution
+;; (docs/DESIGN2.md).  Pure infrastructure with no init!.
 ;;
-;; A head is one user's seat: its windows, their layout, and which
-;; one is selected.  This slice owns the records and the geometry --
-;; the window record, the persistent split tree (leaves are windows;
-;; an internal node splits its rectangle into stacked or side-by-side
-;; children, weights retaining the user's proportions across
-;; resizes), and the tiling that realizes goals into rectangles.
-;; Routing (apps, capture), wrap policy, and the main loop stay with
-;; the core until the rest of the head moves; the core reaches this
-;; state through identifier-syntax facades.
+;; A head is one user's seat -- in the wire's terms, the client side:
+;; its buffers as it sees them, its windows and their layout, which
+;; one is selected, and the loop that feeds it events.  This module
+;; owns the records and the geometry (the seat's buffer record, the
+;; window record, the persistent split tree and its tiling) and the
+;; scheduling pump (the mailbox, wakes, posted thunks, the input
+;; reader).  Routing (apps, capture), wrap policy, painting, and the
+;; command loop's body stay with the core until they move; the core
+;; reaches this state through identifier-syntax facades and installs
+;; the pump's handlers.
 
 (library (head)
   (export buffer make-buffer buffer?
@@ -54,9 +54,15 @@
           layout-node!
           min-window-lines
           windows set-windows! root set-root! current set-current!
-          dividers set-dividers!)
+          dividers set-dividers!
+          read-key-event run-on-main! wake-main! in-main-pump
+          take-deferred! start-input-reader! set-pump-handlers!)
   (import (rnrs) (rnrs r5rs)
-          (only (chezscheme) make-parameter))
+          (only (chezscheme)
+                make-parameter make-mutex with-mutex fork-thread void)
+          (only (sys) duplicate-standard-input-port)
+          (prefix (kernel) kernel:)
+          (prefix (tty) tty:))
 
   ;;; The records ----------------------------------------------------------------
 
@@ -229,4 +235,118 @@
                         the-dividers))
                 (append (layout-node! first x y one height)
                         (layout-node! second (+ x one 1) y two
-                                      height))))))))
+                                      height)))))))
+
+  ;;; The seat's loop -------------------------------------------------------------
+
+  ;; The scheduling substrate: a dedicated thread owns the terminal
+  ;; input (through a private dup'd port, so its blocking reads never
+  ;; hold a console lock) and posts parsed events to the seat's
+  ;; mailbox; any thread may post a wake or a thunk.  read-key-event --
+  ;; called synchronously by the main loop, prompts, i-search,
+  ;; everything -- is the mailbox pump: between keys it services
+  ;; wake-ups and posted thunks.  How those are serviced is the
+  ;; owner's business, installed once as handlers.  A remote head runs
+  ;; the same loop with a socket reader posting in place of the tty.
+
+  (define mailbox (kernel:make-mailbox))
+  (define deferred '())          ; thunks posted during a nested pump
+
+  (define (run-on-main! thunk)
+    ;; run thunk on the main thread: immediately when the main loop is
+    ;; the one pumping the mailbox, otherwise at the top of its loop
+    (kernel:mailbox-post! mailbox (cons 'run thunk)))
+
+  ;; A burst of foreign edits (an agent's tight loop, a chatty PTY)
+  ;; must not queue one repaint per event: a wake is posted only when
+  ;; none is outstanding, so a burst collapses into one frame.  The
+  ;; claim happens before the frame is painted, never after -- a wake
+  ;; arriving mid-paint queues the next frame instead of being lost.
+  (define wake-lock (make-mutex))
+  (define wake-queued #f)
+
+  (define (wake-main!)
+    (when (with-mutex wake-lock
+            (and (not wake-queued) (begin (set! wake-queued #t) #t)))
+      (kernel:mailbox-post! mailbox '(wake))))
+
+  (define (claim-wake!)
+    (with-mutex wake-lock (set! wake-queued #f)))
+
+  ;; #t while the main loop itself pumps the mailbox: posted thunks
+  ;; may run right away.  Nested pumps (prompts, i-search, key
+  ;; describers) leave it #f and defer them, so a foreign thunk never
+  ;; runs in the middle of a modal read.
+  (define in-main-pump (make-parameter #f))
+
+  (define (take-deferred!)
+    ;; the thunks a nested pump set aside, oldest first
+    (let ([runs (reverse deferred)])
+      (set! deferred '())
+      runs))
+
+  ;; The owner's handlers: on-wake services a frame (sync foreign
+  ;; state, repaint); on-run runs a posted thunk with error reporting;
+  ;; on-mouse applies a report -- (on-mouse handle? c b x y) -> an
+  ;; event string or #f; on-paste stashes pasted text; on-host takes a
+  ;; host color-scheme report.
+  (define on-wake void)
+  (define on-run (lambda (thunk) (thunk)))
+  (define on-mouse (lambda (handle? c b x y) #f))
+  (define on-paste (lambda (text) (void)))
+  (define on-host (lambda (scheme) (void)))
+
+  (define (set-pump-handlers! wake run mouse paste host)
+    (set! on-wake wake)
+    (set! on-run run)
+    (set! on-mouse mouse)
+    (set! on-paste paste)
+    (set! on-host host))
+
+  (define (start-input-reader!)
+    (let ([stdin (duplicate-standard-input-port)])
+      (fork-thread
+        (lambda ()
+          (let loop ()
+            (let ([event (guard (ex [else (eof-object)])
+                           (tty:read-event stdin))])
+              (kernel:mailbox-post! mailbox (cons 'key event))
+              (unless (eof-object? event) (loop))))))))
+
+  (define read-key-event
+    ;; Consumers see the same names whether they are the main editor,
+    ;; I-search, a prompt, or a key describer.  A context that must not
+    ;; change editor focus passes #f: mouse reports are consumed
+    ;; without being applied.
+    (case-lambda
+      [() (read-key-event #t)]
+      [(handle-mouse?)
+       (let pump ()
+         (let ([message (kernel:mailbox-receive! mailbox)])
+           (case (car message)
+             [(key)
+              (let ([event (cdr message)])
+                (cond
+                  [(not (pair? event)) event]
+                  [(eq? (car event) 'mouse)
+                   (or (apply on-mouse handle-mouse? (cdr event))
+                       "MOUSE-HANDLED")]
+                  [(eq? (car event) 'paste)
+                   (on-paste (cdr event))
+                   "PASTE"]
+                  [(eq? (car event) 'host-color-scheme)
+                   (on-host (cadr event))
+                   (pump)]
+                  [else (pump)]))]
+             [(wake)
+              (claim-wake!)
+              (on-wake)
+              (pump)]
+             [(run)
+              (cond [(in-main-pump)
+                     (on-run (cdr message))
+                     (on-wake)]
+                    [else
+                     (set! deferred (cons (cdr message) deferred))])
+              (pump)]
+             [else (pump)])))])))

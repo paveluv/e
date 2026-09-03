@@ -17,7 +17,8 @@ with a date; deletions note the commit.
   `state-subscription`, `foreign-sync-hooked`, `reload-tail-hooked`,
   `ui-actor-registered`, `log-presenter-installed`,
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
-  `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`
+  `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
+  `pump-handlers-installed`
   (core, the v2 wiring). Skip these in future sweeps.
 
 ## Deleted
