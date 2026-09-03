@@ -17,7 +17,8 @@ state.
 - [x] flip mastery: the store is the master text; the core's lines
       field is an adopted cache of the store's immutable vector,
       never mutated in place (the eq? proof is in tests/wiring.ss)
-- [ ] rebase window points through foreign deltas instead of clamping
+- [x] rebase window points, viewport tops, and buffer spots through
+      foreign deltas; clamping remains only as the safety net
 - [ ] publish the v0.1 region (mark..point) as a state span
 
 ## Stage 2 -- actor identity
@@ -28,6 +29,9 @@ state.
 - [x] the audit stream: foreign operations logged under the `state`
       component -- `(log-view 'state)` is the record
 - [ ] in-UI blame: show an edit's actor at point
+- [x] core undo refuses to time-travel over foreign edits (snapshots
+      carry the store revision; history-shift! checks state:history)
+- [x] the store's undo history is bounded like the delta log
 - [ ] coalesced (optional) auditing of ui edits
 
 ## Stage 3 -- kernel scheduling
@@ -74,11 +78,9 @@ priority; items graduate into stage tasks when picked up.
 
 | P | Debt | Notes |
 |---|---|---|
-| 70 | Mirror conflicts silently drop the foreign edit | `lib/core.e` `state-edit!` (the stale branch): when the ui edit's rebase reports overlap with a foreign edit, the fallback forces core content via `state:reset!`; the foreign actor's change vanishes with only a `(log-view 'state)` line. Fix: surface the conflict -- notify the losing actor through their subscription (add a `conflict` event to `lib/state.e` `notify!`) or refuse the ui edit and message the user. Repro: fixture in tests/wiring.ss style -- agent `state:edit!` on line N between a user keystroke's read and mirror. |
+| 50 | Conflict override only reaches the log, not the losing actor | `lib/core.e` `state-edit!` stale branch now logs "conflict: ui overrode ACTOR in BUFFER" under `state`, naming the newest foreign editor from `state:history` -- but the losing actor itself only sees a generic reset event. Fix: a `conflict` event through `lib/state.e` `notify!`, or the stage 3 ask/reply protocol. |
 | 65 | Foreign edits wait for a keypress to appear | A worker-thread `state:edit!` is only adopted by `sync-foreign-edits!` (`lib/core.e`), a pre-redraw hook, and the main loop sits blocked in `get-char` until a key arrives. Fix direction: a self-pipe the input reader multiplexes, or stage 3 kernel mailboxes; interim: subscribers could nudge via a display-port redraw like `lib/terminal.e` reader threads do. Verify with tests/wiring.ss plus a delay. |
-| 60 | Core undo time-travels over foreign edits | `lib/core.e` `restore-snapshot!` wholesale-restores pre-undo lines through `buffer-lines-set!` -> `state:reset!`, clobbering any agent edit since the snapshot. Fix: before restoring, compare `buffer-state-rev` against the store revision at snapshot time (store it in `editor-snapshot`); on mismatch refuse with a message, like `state:undo!` returns 'blocked. |
 | 45 | View buffers mirror wholesale on every refresh | `lib/core.e` `view-replace!` -> `buffer-lines-set!` -> `state:reset!` runs per app refresh; a busy terminal pays O(rows) store copies for content nothing subscribes to. Fix: an opt-out flag on app buffers (skip `mirror-create!`), or make `state:reset!` diff against the current text and no-op when equal. Measure with the terminal fixture in tests/interactive.ss. |
-| 40 | `state.e` undo history is unbounded | `lib/state.e` `apply-locked!` conses onto `buffer-undo` forever; the delta log is bounded (`delta-log-limit` 256) but undo is not. Fix: bound it the same way (`bounded`), dropping dead (`live? = #f`) entries first. |
 | 35 | `splice-lines!` span math is only integration-tested | `lib/core.e` `splice-lines!` translates whole-line splices into spans with three cases (interior, end-of-buffer, whole-buffer). tests/wiring.ss covers them live; add unit checks in tests/state.ss driving the same spans and comparing against `vector-splice` results. |
 | 35 | Store outage silently forks the text | `lib/core.e` `state-edit!`/`state-reset!` guard clauses fall back to `adopt-local!` when the store errors: the editor keeps working but the store copy silently diverges until the next successful reset. Fix: log the outage once under `state`, and re-reset on recovery. |
 | 30 | Reloading `state.e` leaves two library instances | `reload-module!` (`lib/core.e`) re-evaluates state, but core keeps the instance it compiled against; both share the store via `(kernel)` `persistent-cell`, so behavior stays coherent while stale code lingers. Fix: have reload-module! refuse seam modules the core links against, or restart-advice message. |
