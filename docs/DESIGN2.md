@@ -171,9 +171,23 @@ structures across the boundary. One definition buys four things:
    v2 protocol.
 4. **The security boundary** -- see below.
 
-In-process callers use a fast path (the messages are records, not
-JSON), but the discipline holds: if it cannot be expressed as a
-message, it does not cross the seam.
+To be precise about what this does and does not change: modules keep
+importing libraries and calling procedures directly -- hot reload,
+registries, and M-x work as in v0.1, and in-process nothing is
+dispatched through a bus. "Message-shaped" constrains the signature,
+not the transport: across a seam, arguments and results are plain
+data -- records, strings, spans, actor ids -- never closures, never
+shared mutable structures. The procedure call is the message; the
+litmus test is "could this call and its result be serialized without
+loss?". Only the actor-facing seams carry the discipline (buffer
+state's API, the interaction protocol, UI suggestions, the audit
+stream); within a layer, ordinary Scheme -- closures in registries,
+per-line styling calls during redraw -- remains ordinary. Nor do
+messages imply asynchrony: mutation is serialized through the
+single-writer entry point, but when the caller is the UI thread
+applying a keystroke, enqueue-and-drain collapses to a synchronous
+call. Mailboxes earn their keep across threads and, later, across
+the wire.
 
 ## Permissions
 
