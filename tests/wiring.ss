@@ -159,6 +159,19 @@
      (check 'cache-is-the-store-text
             (call-with-input-file probe read) #t)
 
+     ;; the interaction protocol: an agent asks, the head answers ------
+     (send! (format "\x1b;xactors:ask! (quote (agent tester)) (quote (head main)) \"Proceed with the plan?\" (list \"yes\" \"no\") (lambda (answer) (call-with-output-file \"~a\" (lambda (p) (write answer p)) (quote replace)))\r"
+                    probe))
+     (pump! 1200)
+     (check 'ask-indicator-shows
+            (screen-has? 23 "asks: Proceed with the plan?") #t)
+     (send! "\x3;a")                   ; C-c a opens the answer prompt
+     (pump! 600)
+     (send! "yes\r")
+     (pump! 900)
+     (check 'answer-routes-to-the-asker
+            (call-with-input-file probe read) "yes")
+
      (delete-file probe)
      (close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))

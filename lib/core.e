@@ -95,7 +95,7 @@
   ;; layer -- libc, termios, signals -- comes from (sys).
   (import (except (chezscheme) buffer-mode) (sys) (diff)
           (prefix (state) state:) (prefix (text) text:)
-          (prefix (kernel) kernel:))
+          (prefix (kernel) kernel:) (prefix (actors) actors:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -4722,7 +4722,53 @@
 
   (define (state-frame-sync!)
     (sync-foreign-edits!)
-    (publish-point!))
+    (publish-point!)
+    (present-pending-ask!))
+
+  ;; The head's side of the interaction protocol: another actor's
+  ;; question waits in the echo area as an unlogged indicator until
+  ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
+  (define ui-actor-registered
+    (actors:register! ui-actor (lambda (message) (wake-main!))))
+
+  (define (present-pending-ask!)
+    (let ([asks (actors:pending ui-actor)])
+      (when (and (pair? asks)
+                 (not (prompt-active?))
+                 (string=? message ""))
+        (let ([ask (car asks)])
+          (set! message
+            (elide (format "~a asks: ~a -- C-c a answers~a"
+                           (cadr ask) (caddr ask)
+                           (if (> (length asks) 1)
+                               (format " (~a waiting)" (length asks))
+                               ""))
+                   cols))))))
+
+  (define (answer!!)
+    ;; Answer the oldest question another actor posed (see
+    ;; docs/DESIGN2.md, the interaction protocol).
+    (let ([asks (actors:pending ui-actor)])
+      (if (null? asks)
+          (set! message "Nothing to answer")
+          (let* ([ask (car asks)]
+                 [choices (cadddr ask)]
+                 [reply
+                  (prompt! (format "~a [~a] "
+                                   (caddr ask)
+                                   (if (null? choices)
+                                       "..."
+                                       (string-join choices "/")))
+                           (and (pair? choices)
+                                (lambda (s)
+                                  (filter
+                                    (lambda (choice)
+                                      (string-prefix? s choice))
+                                    choices))))])
+            (when (and reply (> (string-length reply) 0))
+              (if (actors:answer! (car ask) reply)
+                  (set! message "Answered")
+                  (set! message "That question was withdrawn")))))))
 
   (define foreign-sync-hooked (add-pre-redraw-hook! state-frame-sync!))
 
@@ -6839,7 +6885,8 @@
           ("C-x 2" ,split-window!) ("C-x 3" ,split-window-right!)
           ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
           ("C-x w" ,widen-window!!)
-          ("C-h k" ,describe-key!!)))
+          ("C-h k" ,describe-key!!)
+          ("C-c a" ,answer!!)))
       (for-each
         (lambda (entry)
           (bind-default-key! 'prompt (car entry) (cadr entry)))
