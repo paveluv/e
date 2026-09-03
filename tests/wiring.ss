@@ -305,6 +305,26 @@
                   (screen-has? 0 "from the rival"))
             '(#f #f))
 
+     ;; completions borrow the prompt's target window -- no pop-ups:
+     ;; TAB on an ambiguous M-x prefix shows *completions* where the
+     ;; buffer was; the prompt's end hands the window back intact
+     (send! "\x1b;xblame\t")            ; first TAB extends to "blame-"
+     (pump! 400)
+     (send! "\t")                       ; second TAB lists the candidates
+     (pump! 900)
+     ;; the status line sits on row 21 or 22 depending on the echo height
+     (define (status-has? needle)
+       (or (screen-has? 21 needle) (screen-has? 22 needle)))
+     (check 'completions-borrow-the-target-window
+            (list (status-has? "*completions*")
+                  (screen-has? 0 "blame-at-point!"))
+            '(#t #t))
+     (send! "\x7;")                     ; C-g: the prompt ends
+     (pump! 600)
+     (check 'target-window-handed-back
+            (list (status-has? "*completions*") (status-has? "*scratch*"))
+            '(#f #t))
+
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"

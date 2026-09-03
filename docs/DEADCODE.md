@@ -23,6 +23,13 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-03 the completions pop-up window (core): a window outside the
+  layout tree, special-cased in the layout, set-layout-root!, the
+  echo cap, the status line, and four mouse sites.  Completions now
+  borrow the prompt's target window; the tree is the only source of
+  windows (harmony rule).  Also fixed on the way: dismissed
+  *completions* buffers leaked their store twins, one per prompt.
+
 - 2026-09-03 `widen-window!!`, `divider-in-direction`, `resize-highlight`
   (core): the transient `C-x w` keyboard resize mode and its divider
   highlight -- a product decision under the harmony rule (a modal

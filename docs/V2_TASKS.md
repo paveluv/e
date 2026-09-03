@@ -139,7 +139,10 @@ re-export facade until its importers migrate.  Harmony rule (decided
 2026-09-03): a product feature that resists a clean seam is questioned,
 not accommodated -- the user should feel the architecture.  Applied so
 far: `C-x w` widen-window mode removed (redesign later), scrollbar
-dragging removed (display-only indicator), status-line buttons kept.
+dragging removed (display-only indicator), status-line buttons kept,
+pop-up windows removed -- completions borrow the prompt's target window,
+so the layout tree is the only source of windows (a remote head's layout
+is then exactly the tree, no side channel).
 
 - [x] `styles.e` (faces, the style DSL) -- compile-style/style-escape,
       the override registry, the built-in faces, and style-code moved;
@@ -224,6 +227,9 @@ dragging removed (display-only indicator), status-line buttons kept.
       buffer and moves its windows on -- never resurrecting what
       someone killed (outage recovery only re-baselines twins that
       still exist).  All audited on the state stream
+- [ ] keyboard window resizing returns as plain M-x commands ("resize
+      this window to N x M", enlarge/shrink by delta) and layouts become
+      saveable/restorable data -- the tree is already data in head.e
 - [ ] `edit.e` absorbs the command layer; core.e deleted
 
 ## Tech debt ledger
