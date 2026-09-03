@@ -224,6 +224,83 @@ protocol, and the server enforces policy per connection. The
 collaboration seam and the security boundary are the same feature;
 building the first delivers the second.
 
+## Module layout
+
+`lib/` stays flat: library `(name)` in `name.e`, hot-reloadable
+unless noted, loaded by the same loader. Layer by layer:
+
+**Kernel** (the only layer that is not hot-reloadable):
+
+| File | Owns |
+|---|---|
+| `kernel.e` | registries, module load/reload, init!/retract, boot |
+| `actors.e` | actor identity and sessions, mailboxes, the ask/reply interaction protocol |
+
+**State**:
+
+| File | Owns |
+|---|---|
+| `text.e` | pure text and span algebra: lines, anchored spans, edit rebasing -- no state, fully unit-testable |
+| `state.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo |
+| `log.e` | the structured log and audit stream (state, not UI) |
+| `policy.e` | permissions: capability minting per actor, budgets |
+| `sandbox.e` | the read-only capability environment for expression eval -- v0.1's `claude-safe`, generalized to any constrained actor |
+
+`state.e` keeps its store in a kernel-registered cell, so hot
+reloading the state module preserves every buffer -- the same trick
+that lets v0.1 reload modules under a running editor.
+
+**UI** (one set of modules, many head instances):
+
+| File | Owns |
+|---|---|
+| `tty.e` | the terminal backend: raw mode, key/mouse/paste decoding, byte output |
+| `styles.e` | faces and the style DSL |
+| `paint.e` | the screen model: damage, cache, painting, synchronized updates |
+| `keymap.e` | key syntax, binding contexts, per-head and per-mode dispatch |
+| `echo.e` | the notification area and prompts: the human frontend of ask/reply |
+| `head.e` | a UI head: window tree and layout, per-user state (kill ring, histories, scroll), input routing |
+
+**Platform** (infrastructure, layerless):
+
+| File | Owns |
+|---|---|
+| `sys.e` | FFI: processes, PTYs, termios, fd plumbing (input decoding moves out, to `tty.e`) |
+| `json.e` | JSON (unchanged) |
+| `https.e` | HTTP(S) with the channel/connector seams (unchanged) |
+
+**Apps** -- ported onto the seams, filenames as in v0.1: `edit.e`
+(file editing is just the default app), `eval.e`, `search.e`,
+`paren.e`, `describe.e`, `terminal.e`, `md-mode.e`, `md-view.e`,
+`log-view.e`, `git.e`, `git-view.e`, `diff.e`, `scheme-mode.e`,
+`c-mode.e`, `scheme-format.e`, `pretty-scheme.e`.
+
+**Agents**:
+
+| File | Owns |
+|---|---|
+| `claude.e` | the assistant: a session minted by `policy.e`, evaluating through `sandbox.e` |
+
+## Import convention
+
+Every cross-module import is prefixed with the module's own name, so
+a call site names its layer without looking at the import list:
+
+```scheme
+(import (prefix (state) state:)
+        (prefix (actors) actors:)
+        (prefix (text) text:))
+
+(state:apply-edit!
+  (text:edit actor buffer basis span replacement))
+```
+
+`(rnrs)` and `(chezscheme)` stay unprefixed. Two consequences,
+adopted as rules: exported names drop their module stem
+(`state:apply-edit!`, never `state:state-apply-edit!`), and a
+module's public vocabulary is designed to read well behind its
+prefix -- the prefix is part of the name.
+
 ## What stays
 
 - The interaction vocabulary: buffers, windows, key chords, M-x,
@@ -260,17 +337,22 @@ by the existing suites plus new state-layer tests. Stage 3 is the
 most delicate (it touches everything interactive) and should land
 behind the old loop as a facade first.
 
-## Open questions
+## Settled questions
 
-- **Granularity of edit rebasing**: line-based (matches the current
-  buffer representation) vs. character-span; line-based is likely
-  enough and much simpler.
-- **Undo attribution UX**: how "undo my edit" behaves when later
-  edits overlap it; propose refusing with an explanation first.
-- **Mode/keymap ownership**: modes are buffer properties today;
-  per-head keymap overlays are wanted (two humans, two bindings).
-- **Notification storms**: an agent editing in a tight loop must
-  coalesce change events for subscribers; batching policy at the
-  state layer.
-- **Naming**: "actor", "head", "session", "seam" used here; settle
-  the vocabulary before code does it for us.
+- **Edit rebasing is line-based** -- spans anchor to line and column,
+  rebasing shifts whole lines; it matches the buffer representation
+  and covers local multi-actor. Character-precise rebasing within a
+  concurrently edited line rejects as stale instead of guessing.
+- **Undo across actors refuses politely**: "undo my edit" applies the
+  inverse only when it still rebases cleanly; otherwise it explains
+  which later edits overlap rather than guessing.
+- **Keymaps layer per head**: a head's own bindings overlay the
+  buffer-mode maps, which overlay the defaults -- two humans, two
+  keymaps, one buffer.
+- **The state layer coalesces notifications**: subscription delivery
+  batches change events, so an agent editing in a tight loop costs
+  its subscribers one update per batch, not per edit.
+- **Vocabulary is settled**: *actor* (an identity acting on the
+  session), *head* (one actor's UI), *session* (the running system
+  plus its actors), *seam* (a data-disciplined boundary) -- and the
+  module names above.
