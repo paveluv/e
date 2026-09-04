@@ -57,7 +57,9 @@
           windows set-windows! root set-root! current set-current!
           dividers set-dividers!
           read-key-event run-on-main! wake-main! in-main-pump
-          take-deferred! start-input-reader! set-pump-handlers!
+          run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
+          quit! quitting? last-command set-last-command!
+          host-color-scheme add-color-scheme-hook!
           tile! layout window-at window-button-at divider-at
           transfer-split! drag set-drag! double-click?
           ui-actor buffer-fact buffer-fact-set!
@@ -74,7 +76,7 @@
           sync-foreign-edits! flush-ui-audit! publish-head-marks!
           set-repaint-hook! set-adopt-hook!
           add-buffer-kill-hook! add-pre-redraw-hook!
-          run-pre-redraw-hooks! add-shutdown-hook! run-shutdown-hooks!
+          before-frame! add-shutdown-hook! run-shutdown-hooks!
           registered-apps app-of app-buffer? detach-app! register-app!
           set-app-cursor-visible! set-app-manages-viewport!
           set-app-status-position! app-cursor-visible-in?
@@ -310,9 +312,12 @@
   ;; mailbox; any thread may post a wake or a thunk.  read-key-event --
   ;; called synchronously by the main loop, prompts, i-search,
   ;; everything -- is the mailbox pump: between keys it services
-  ;; wake-ups and posted thunks.  How those are serviced is the
-  ;; owner's business, installed once as handlers.  A remote head runs
-  ;; the same loop with a socket reader posting in place of the tty.
+  ;; wake-ups and posted thunks.  The seat services its own side
+  ;; effects -- a paste's text, a host's color report, a posted thunk's
+  ;; error, the store's news before a frame; two hooks reach up: the
+  ;; frame (the painter's) and the mouse (the commands').  A remote
+  ;; head runs the same loop with a socket reader posting in place of
+  ;; the tty.
 
   (define mailbox (kernel:make-mailbox))
   (define deferred '())          ; thunks posted during a nested pump
@@ -344,29 +349,61 @@
   ;; runs in the middle of a modal read.
   (define in-main-pump (make-parameter #f))
 
-  (define (take-deferred!)
+  (define (run-posted! thunk)
+    ;; a posted thunk's error is news, not a crash
+    (guard (ex [else (log:log! 'run-on-main! (kernel:condition-text ex))])
+      (thunk)))
+
+  (define (run-deferred!)
     ;; the thunks a nested pump set aside, oldest first
     (let ([runs (reverse deferred)])
       (set! deferred '())
-      runs))
+      (for-each run-posted! runs)))
 
-  ;; The owner's handlers: on-wake services a frame (sync foreign
-  ;; state, repaint); on-run runs a posted thunk with error reporting;
-  ;; on-mouse applies a report -- (on-mouse handle? c b x y) -> an
-  ;; event string or #f; on-paste stashes pasted text; on-host takes a
-  ;; host color-scheme report.
-  (define on-wake void)
-  (define on-run (lambda (thunk) (thunk)))
-  (define on-mouse (lambda (handle? c b x y) #f))
-  (define on-paste (lambda (text) (void)))
-  (define on-host (lambda (scheme) (void)))
+  ;; The two hooks: the frame hook paints a frame (the painter's,
+  ;; above); the mouse handler applies a report -- (handler handle? c b
+  ;; x y) -> an event string or #f (the commands', above).
+  (define frame-hook void)
+  (define mouse-handler (lambda (handle? c b x y) #f))
 
-  (define (set-pump-handlers! wake run mouse paste host)
-    (set! on-wake wake)
-    (set! on-run run)
-    (set! on-mouse mouse)
-    (set! on-paste paste)
-    (set! on-host host))
+  (define (set-frame-hook! proc) (set! frame-hook proc))
+  (define (set-mouse-handler! proc) (set! mouse-handler proc))
+
+  (define (frame!)
+    ;; a frame on a wake: the store's news first, then the paint
+    (before-frame!)
+    (frame-hook))
+
+  ;; The host's color scheme, learned from its DSR 997 reports (mode
+  ;; 2031 subscribes to them at startup): #f until the host says, then
+  ;; 'dark or 'light.  Hooks run on the main thread whenever a report
+  ;; arrives, so the terminal module can forward the change to
+  ;; subscribed children.
+  (define host-color-scheme-value #f)
+
+  (define (host-color-scheme) host-color-scheme-value)
+
+  (define color-scheme-hooks '())
+
+  (define (add-color-scheme-hook! hook)
+    (unless (procedure? hook)
+      (error 'add-color-scheme-hook! "expected a procedure" hook))
+    (set! color-scheme-hooks (cons hook color-scheme-hooks)))
+
+  (define (note-color-scheme! scheme)
+    (set! host-color-scheme-value scheme)
+    (for-each (lambda (hook) (guard (ex [else (void)]) (hook scheme)))
+              color-scheme-hooks))
+
+  ;; The seat's lifetime, and the command the dispatcher ran last (kill
+  ;; chaining and typed runs ask).
+  (define quit-requested #f)
+  (define (quit!) (set! quit-requested #t))
+  (define (quitting?) quit-requested)
+
+  (define the-last-command #f)
+  (define (last-command) the-last-command)
+  (define (set-last-command! c) (set! the-last-command c))
 
   (define (start-input-reader!)
     (let ([stdin (duplicate-standard-input-port)])
@@ -394,23 +431,23 @@
                 (cond
                   [(not (pair? event)) event]
                   [(eq? (car event) 'mouse)
-                   (or (apply on-mouse handle-mouse? (cdr event))
+                   (or (apply mouse-handler handle-mouse? (cdr event))
                        "MOUSE-HANDLED")]
                   [(eq? (car event) 'paste)
-                   (on-paste (cdr event))
+                   (set! pending-paste (cdr event))
                    "PASTE"]
                   [(eq? (car event) 'host-color-scheme)
-                   (on-host (cadr event))
+                   (note-color-scheme! (cadr event))
                    (pump)]
                   [else (pump)]))]
              [(wake)
               (claim-wake!)
-              (on-wake)
+              (frame!)
               (pump)]
              [(run)
               (cond [(in-main-pump)
-                     (on-run (cdr message))
-                     (on-wake)]
+                     (run-posted! (cdr message))
+                     (frame!)]
                     [else
                      (set! deferred (cons (cdr message) deferred))])
               (pump)]
@@ -1080,7 +1117,15 @@
       (error 'add-pre-redraw-hook! "expected a procedure" proc))
     (kernel:registry-add! pre-redraw-hook-registry proc))
 
-  (define (run-pre-redraw-hooks!)
+  (define (before-frame!)
+    ;; What every frame is preceded by: the store's news -- lifecycle
+    ;; first, so a foreign deletion forgets the buffer before outage
+    ;; recovery could mistake its missing twin for a store fault --
+    ;; then the layers above, through the pre-redraw hooks.
+    (sync-foreign-edits!)
+    (reconverge-forked!)
+    (flush-ui-audit! 'stale)
+    (publish-head-marks!)
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
               (kernel:registry-items pre-redraw-hook-registry)))
 

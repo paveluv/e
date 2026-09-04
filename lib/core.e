@@ -53,7 +53,6 @@
 
     register-indenter! register-formatter!
 
-    host-color-scheme add-color-scheme-hook!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab!
     add-pre-save-hook! add-post-save-hook!
@@ -62,7 +61,7 @@
 
 
     (rename (handle-key! dispatch-key!))
-    selected-window select-window! quitting?
+    selected-window select-window!
     set-message!
     mouse!
     present-log-entry! present-log-entries!
@@ -224,9 +223,10 @@
 
   (define-syntax kill-ring
     (identifier-syntax [id (head:kill-ring)] [(set! id v) (head:set-kill-ring! v)]))
-  (define last-command #f)
+  (define-syntax last-command
+    (identifier-syntax [id (head:last-command)] [(set! id v) (head:set-last-command! v)]))
   (define suppress-history (make-parameter #f))
-  (define quit? #f)
+
   ;; The echo area is normally one line; during a prompt it grows with
   ;; the input, wrapping at the right edge Emacs-style with a trailing
   ;; backslash and continuation lines indented to the prompt text, up to
@@ -1317,11 +1317,6 @@
     ;; Make w current when it is still on screen; -> whether it was.
     (and (memq w windows) (begin (focus-window! w) #t)))
 
-  (define (quitting?)
-    ;; Has a quit been requested?  A module driving its own key loop
-    ;; (the search) checks this after dispatching a key through.
-    quit?)
-
   (define (split-current-window! orientation b)
     (let* ([vertical? (eq? orientation 'below)]
            [extent (if vertical?
@@ -1828,14 +1823,6 @@
     (head:add-shutdown-hook! (lambda () (head:flush-ui-audit! 'all))))
 
 
-  (define (state-frame-sync!)
-    ;; lifecycle first: a foreign deletion forgets the buffer before
-    ;; outage recovery could mistake its missing twin for a store fault
-    (head:sync-foreign-edits!)
-    (head:reconverge-forked!)
-    (head:flush-ui-audit! 'stale)
-    (head:publish-head-marks!)
-    (present-pending-ask!))
 
   ;; The head's side of the interaction protocol: another actor's
   ;; question waits in the echo area as an unlogged indicator until
@@ -1882,7 +1869,7 @@
                   (set! message "Answered")
                   (set! message "That question was withdrawn")))))))
 
-  (define foreign-sync-hooked (head:add-pre-redraw-hook! state-frame-sync!))
+  (define ask-presented (head:add-pre-redraw-hook! present-pending-ask!))
 
   ;;; File commands -----------------------------------------------------------
 
@@ -1969,12 +1956,12 @@
 
   (define (quit!!)
     (if (for-all buffer-clean? buffers)
-        (set! quit? #t)
+        (head:quit!)
         (let ([answer (prompt:key!
                         "Modified buffers exist; quit anyway? y)es, n)o, v)iew"
                         "ynv")])
           (case (and answer (char-downcase answer))
-            [(#\y) (set! quit? #t)]
+            [(#\y) (head:quit!)]
             [(#\v)
              (let ([b (head:buffer-named "*buffers*")])
                (if b
@@ -2339,43 +2326,13 @@
 
   (define (settle-echo!) (echo:settle!))
 
-  ;; The host's color scheme, learned from its DSR 997 reports (mode 2031
-  ;; subscribes to them at startup): #f until the host says, then 'dark or
-  ;; 'light. Hooks run on the main thread whenever a report arrives, so
-  ;; the terminal module can forward the change to subscribed children.
-  (define host-color-scheme-value #f)
-
-  (define (host-color-scheme) host-color-scheme-value)
-
-  (define color-scheme-hooks '())
-
-  (define (add-color-scheme-hook! hook)
-    (unless (procedure? hook)
-      (error 'add-color-scheme-hook! "expected a procedure" hook))
-    (set! color-scheme-hooks (cons hook color-scheme-hooks)))
-
-  (define (note-color-scheme! scheme)
-    (set! host-color-scheme-value scheme)
-    (for-each (lambda (hook) (guard (ex [else (void)]) (hook scheme)))
-              color-scheme-hooks))
 
   ;; The seat's loop -- the mailbox, the wake dedupe, posted thunks,
-  ;; the reader thread, and the head:read-key-event pump -- lives in (head)
-  ;; now.  The core installs what a frame does and how side effects
-  ;; are consumed, and keeps these facade aliases.
-
-  (define (run-posted-thunk! thunk)
-    (guard (ex [else (parameterize ([message-source 'run-on-main!])
-                       (set-message! (kernel:condition-text ex)))])
-      (thunk)))
-
-  (define pump-handlers-installed
-    (head:set-pump-handlers!
-      (lambda () (state-frame-sync!) (paint:redraw!))
-      run-posted-thunk!
-      (lambda (handle? c b x y) (apply-mouse-event! handle? c b x y))
-      (lambda (text) (head:set-pending-paste! text))
-      (lambda (scheme) (note-color-scheme! scheme))))
+  ;; the reader thread, and the head:read-key-event pump -- lives in
+  ;; (head); two hooks reach back up: a frame is the painter's, a mouse
+  ;; report is the commands'.
+  (define frame-hooked (head:set-frame-hook! (lambda () (paint:redraw!))))
+  (define mouse-hooked (head:set-mouse-handler! apply-mouse-event!))
 
   (define (set-mark-command!)
     (set! mark-row point-row) (set! mark-col point-col)
@@ -2437,7 +2394,7 @@
              (paint:redraw!)
              (let ([next (head:read-key-event)])
                (if (eof-object? next)
-                   (set! quit? #t)
+                   (head:quit!)
                    (loop (append sequence (list next)))))]
             [hit
              ;; A prefix is only a waiting indicator. Once its complete binding
@@ -2465,7 +2422,7 @@
                        [(char? input) (tty:character-event input)]
                        [else input])])
       (cond
-        [(eof-object? event) (set! quit? #t)]
+        [(eof-object? event) (head:quit!)]
         [(string=? event "MOUSE-HANDLED")
          (settle-echo!)
          (void)]
@@ -2758,10 +2715,10 @@
         (head:start-input-reader!))
       (lambda ()
         (let loop ()
-          (unless quit?
-            (for-each run-posted-thunk! (head:take-deferred!))
+          (unless (head:quitting?)
+            (head:run-deferred!)
             (paint:window-layout)
-            (head:run-pre-redraw-hooks!)
+            (head:before-frame!)
             (paint:redraw!)
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
