@@ -27,7 +27,7 @@
           paint-dividers! paint-window!
           screen-rows set-screen-rows! screen-cols set-screen-cols!
           mark-size-dirty! screen-live? set-screen-live! reset-cursor-style!
-          visual-bell-active? set-visual-bell-active! set-redraw-hook!
+          redraw! redraw-lock visual-bell!
           window-layout page-size set-buffer-viewports!
           reset-buffer-viewports! view-invalidate! point-visible?
           rows-before scroll-margin view-overflows? scroll-window!
@@ -44,7 +44,8 @@
           (only (chezscheme)
                 box void format make-parameter make-weak-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! remq getenv
-                make-mutex with-mutex unbox set-box!)
+                make-mutex with-mutex unbox set-box! parameterize
+                fork-thread sleep make-time)
           (only (sys) terminal-output-port terminal-character-width
                 terminal-size watch-terminal-resize!)
           (prefix (styles) styles:)
@@ -761,9 +762,9 @@
 
   ;; The screen's size, whether the terminal is ours, the viewport
   ;; logic that keeps point visible, the echo area's painting, the
-  ;; cursor, the title, and the visual bell.  redraw-frame! -- the
-  ;; frame's orchestration -- stays above, with the head's owner: it
-  ;; also drives prompts and layout surgery.
+  ;; cursor, the title, the visual bell -- and the frame itself:
+  ;; redraw! composes one under the redraw lock (size, echo geometry,
+  ;; layout, view refresh, viewports, painting, cursor).
 
   (define rows 24)
   (define cols 80)
@@ -779,14 +780,7 @@
     (unless (string=? cursor-style-shown "\x1b;[0 q")
       (ansi "\x1b;[0 q")))
   (define the-visual-bell-active? #f)
-  (define (set-visual-bell-active! on?) (set! the-visual-bell-active? on?))
-  (define (visual-bell-active?) the-visual-bell-active?)
   (define (current-lines) (head:buffer-lines (head:window-buffer (head:current))))
-
-  ;; a full frame, when a change to the echo area's height moves every
-  ;; window: the frame's orchestration lives with the owner
-  (define redraw-hook void)
-  (define (set-redraw-hook! proc) (set! redraw-hook proc))
 
   ;;; Terminal size ---------------------------------------------------------
 
@@ -1105,7 +1099,7 @@
         (update-echo-geometry!)
         (if (= h (echo:height))
             (paint-echo-area!)
-            (redraw-hook)))
+            (redraw!)))
       (flush-output-port (terminal-output-port))))
 
   (define (echo-log-prefix e) (echo:log-prefix e cols))
@@ -1364,4 +1358,96 @@
           (ansi style)))
       (ansi (if visible? "\x1b;[?25h" "\x1b;[?25l"))
       (flush-output-port (terminal-output-port))))
+
+  ;;; The frame -----------------------------------------------------------------------
+
+  ;; A frame is one indivisible transaction on the terminal -- the
+  ;; cache and the output happen under the redraw lock, since PTY
+  ;; readers and the bell's timer request frames while the main thread
+  ;; waits for input.  Anyone else who writes to the terminal (the
+  ;; clipboard's OSC 52) takes the lock too.
+  (define redraw-lock (make-mutex))
+
+  (define (redraw-frame!)
+    ;; The frame goes out inside a synchronized update (mode 2026):
+    ;; a supporting terminal holds rendering until the closing pair,
+    ;; so a scroll and the repaint over it appear as one; others
+    ;; ignore the mode.
+    (ansi "\x1b;[?2026h")
+    (terminal-size!)
+    (update-echo-geometry!)
+    ;; window geometry is otherwise set while painting, one frame
+    ;; stale from here -- refresh views against the current layout
+    (window-layout)
+    (head:refresh-visible-views!)
+    ;; a terminal too small for the splits collapses back to one window
+    (head:fit-layout! cols (- rows (echo:height)))
+    (let* ([layout (window-layout)]
+           [view (list rows cols
+                       (map (lambda (entry)
+                              (list (cadr entry) (caddr entry)
+                                    (head:window-xoff (car entry))
+                                    (head:window-width (car entry))))
+                            layout)
+                       ;; A scrollbar changes one window row from a single
+                       ;; full-width cached segment into two overlapping
+                       ;; segments (the bar and the content).  Row cache
+                       ;; entries are keyed by their starting column, so a
+                       ;; later full-width paint cannot selectively evict a
+                       ;; covered content segment.  Treat presentation
+                       ;; topology as part of the view and discard those
+                       ;; incompatible segment keys when buffers are switched.
+                       (map (lambda (w)
+                              (list (window-wrapped? w)
+                                    (head:window-scrollbar? w)
+                                    (head:window-line-number-width w)
+                                    (head:buffer-sticky-lines (head:window-buffer w))))
+                            (head:windows)))])
+      (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
+                layout)
+      (begin-frame! view rows)
+      (paint-dividers! layout)
+      (let ([ranges (highlight-ranges)])
+        (for-each (lambda (entry)
+                    (paint-window! (car entry) (cadr entry) (caddr entry) ranges))
+                  layout))
+      (paint-echo-area!)
+      (paint-visual-bell!))
+    (place-cursor!)
+    (ansi "\x1b;[?2026l")
+    (flush-output-port (terminal-output-port)))
+
+  (define (redraw!)
+    ;; a whole frame, title included, as one transaction
+    (with-mutex redraw-lock
+      (update-terminal-title!)
+      (redraw-frame!)))
+
+  (define visual-bell-generation 0)
+
+  (define (visual-bell!)
+    ;; Arm an overlay but let the caller's ordinary frame paint it. A PTY
+    ;; reader invokes this between decoding output and its scheduled redraw;
+    ;; starting a nested frame here would stop it at BEL before the diagnostic
+    ;; bytes which commonly follow.
+    (when the-screen-live?
+      (let ([display (terminal-output-port)]
+            [generation
+             (with-mutex redraw-lock
+               (set! visual-bell-generation (+ visual-bell-generation 1))
+               (set! the-visual-bell-active? #t)
+               visual-bell-generation)])
+        (fork-thread
+          (lambda ()
+            (sleep (make-time 'time-duration 50000000 0))
+            (when the-screen-live?
+              (parameterize ([terminal-output-port display])
+                (with-mutex redraw-lock
+                  ;; A newer bell owns the deadline and must not be cleared by
+                  ;; an older animation's expiry.
+                  (when (= generation visual-bell-generation)
+                    (set! the-visual-bell-active? #f)
+                    (invalidate-screen-cache!)
+                    (update-terminal-title!)
+                    (redraw-frame!))))))))))
 )

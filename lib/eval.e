@@ -475,7 +475,7 @@
         (paint:show-prompt-message! "M-x " s mx-echo-styles)
         (let-values ([(outcome output-records)
                       (parameterize ([paint:cursor-in-echo #t])
-                        (redraw!)
+                        (paint:redraw!)
                         (evaluation-outcome s s))])
           ;; One structured record per exchange: history reads the query,
           ;; while the view and echo show the formatted pair.

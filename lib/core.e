@@ -69,12 +69,11 @@
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
     set-message!
-    current-message prompt-active? redraw! mouse!
+    current-message prompt-active? mouse!
     present-log-entry! present-log-entries!
 
 
     message-source message-progress
-    visual-bell!
 
 
 
@@ -156,11 +155,6 @@
   ;; content wins locally and the store is reset to match.
 
 
-  ;; the painter's own reasons to want a frame (an echo area that
-  ;; changed height, the visual bell) reach redraw! through this hook
-  (define paint-redraw-hooked
-    (paint:set-redraw-hook! (lambda () (redraw!))))
-
   (define buffers-initialized                              ; most recent first
     (set! buffers (list (head:new-buffer "*scratch*"))))
   (define head-seat-initialized
@@ -169,21 +163,6 @@
       (set! layout-root w)
       (set! current-window w)))
 
-  ;; A persistent layout is a binary tree.  Leaves are windows; an internal
-  ;; node splits its rectangle into `below` (stacked) or `right`
-  ;; (side-by-side) children.  Weights retain the user's proportions across
-  ;; terminal and echo-area size changes.
-  (define (set-layout-root! root)
-    (set! layout-root root)
-    (set! windows (head:layout-leaves root)))
-
-  (define (replace-layout-window! old replacement)
-    (set-layout-root! (head:layout-replace layout-root old replacement)))
-
-  ;; The rest of the editor is written against simple state names: `lines`,
-  ;; `point-row`, and so on.  Each name is an identifier macro reading and
-  ;; writing through current-window, so every command transparently follows
-  ;; buffer and window switches.
   (define-syntax define-state
     (syntax-rules ()
       [(_ name place get put)
@@ -388,34 +367,6 @@
   ;; in a buffer whose file changed on disk, say.
   (define-condition-type &refused &error make-refusal refusal?)
 
-  (define visual-bell-generation 0)
-
-  (define (visual-bell!)
-    ;; Arm an overlay but let the caller's ordinary frame paint it. A PTY
-    ;; reader invokes this between decoding output and its scheduled redraw;
-    ;; starting a nested frame here would stop it at BEL before the diagnostic
-    ;; bytes which commonly follow.
-    (when (paint:screen-live?)
-      (let ([display (terminal-output-port)]
-            [generation
-             (with-mutex redraw-lock
-               (set! visual-bell-generation (+ visual-bell-generation 1))
-               (paint:set-visual-bell-active! #t)
-               visual-bell-generation)])
-        (fork-thread
-          (lambda ()
-            (sleep (make-time 'time-duration 50000000 0))
-            (when (paint:screen-live?)
-              (parameterize ([terminal-output-port display])
-                (with-mutex redraw-lock
-                  ;; A newer bell owns the deadline and must not be cleared by
-                  ;; an older animation's expiry.
-                  (when (= generation visual-bell-generation)
-                    (paint:set-visual-bell-active! #f)
-                    (paint:invalidate-screen-cache!)
-                    (paint:update-terminal-title!)
-                    (redraw-frame!))))))))))
-
   (define (query-key! question allowed . rest)
     ;; A focused single-key question. Decode complete terminal events so an
     ;; arrow's leading ESC cannot cancel the question and leave its remaining
@@ -466,7 +417,7 @@
               (set! echo-indent 0)
               (set! echo-input-end (string-length shown))
               (set! echo-cursor (string-length shown))
-              (redraw!)
+              (paint:redraw!)
               (repaint-extra!))
             (lambda ()
               (let wait ()
@@ -481,11 +432,11 @@
                                 0 (string-length allowed))
                               choice
                               (begin
-                                (visual-bell!)
+                                (paint:visual-bell!)
                                 (repaint-extra!)
                                 (wait))))]
                     [else
-                     (visual-bell!)
+                     (paint:visual-bell!)
                      (repaint-extra!)
                      (wait)]))))
             (lambda ()
@@ -812,7 +763,7 @@
     ;; e is several SSH or multiplexer layers away from the desktop. The
     ;; payload is base64, so buffer contents cannot terminate the sequence.
     (when (and (forward-kill-ring-to-system-clipboard) (paint:screen-live?))
-      (with-mutex redraw-lock
+      (with-mutex paint:redraw-lock
         (paint:ansi "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (terminal-output-port)))))
 
@@ -1510,7 +1461,7 @@
                                        (head:window-wrap current-window))]
                   [node (head:make-layout-split orientation current-window w
                                                 first second)])
-             (replace-layout-window! current-window node)
+             (head:replace-layout-window! current-window node)
              w))))
 
   (define (split-window!)
@@ -1557,11 +1508,11 @@
                [sibling (if (eq? current-window (head:layout-split-first parent))
                             (head:layout-split-second parent)
                             (head:layout-split-first parent))])
-          (replace-layout-window! parent sibling)
+          (head:replace-layout-window! parent sibling)
           (focus-window! next))))
 
   (define (delete-other-windows!)
-    (set-layout-root! current-window))
+    (head:set-layout-root! current-window))
 
   (define (display-buffer! b)
     ;; Show b without leaving the current window: in the window already
@@ -1930,7 +1881,7 @@
   ;; The row painter lives in the (paint) seam module now: given a
   ;; line, its styles, marks, links, and selection, it emits minimal
   ;; styled runs.  Frame composition (layout, scrolling, the screen
-  ;; cache, redraw!) stays here until head.e.  Facade aliases until
+  ;; cache, paint:redraw!) stays here until head.e.  Facade aliases until
   ;; call sites migrate to paint: prefixes.
 
   (define (page-window! direction fraction)
@@ -2006,8 +1957,6 @@
                              (max 0 (min (cdr position)
                                       (string-length (vector-ref v row)))))))
 
-  (define redraw-lock (make-mutex))
-
   (define ui-audit-flushed-at-exit
     (head:add-shutdown-hook! (lambda () (head:flush-ui-audit! 'all))))
 
@@ -2068,70 +2017,6 @@
 
   (define foreign-sync-hooked (head:add-pre-redraw-hook! state-frame-sync!))
 
-  (define (redraw-frame!)
-    ;; The frame goes out inside a synchronized update (mode 2026):
-    ;; a supporting terminal holds rendering until the closing pair,
-    ;; so a scroll and the repaint over it appear as one; others
-    ;; ignore the mode.
-    (paint:ansi "\x1b;[?2026h")
-    (paint:terminal-size!)
-    (paint:update-echo-geometry!)
-    ;; window geometry is otherwise set while painting, one frame
-    ;; stale from here -- refresh views against the current layout
-    (paint:window-layout)
-    (head:refresh-visible-views!)
-    (update-completions-size!)
-    ;; A terminal too small for the splits collapses back to one window.
-    (when (and (pair? (cdr (head:layout-leaves layout-root)))
-               (or (< cols (head:layout-min-width layout-root))
-                   (< (- rows echo-height) (head:layout-min-height layout-root))))
-      (set-layout-root!
-        (if (memq current-window (head:layout-leaves layout-root))
-            current-window
-            (car (head:layout-leaves layout-root)))))
-    (let* ([layout (paint:window-layout)]
-           [view (list rows cols
-                       (map (lambda (entry)
-                              (list (cadr entry) (caddr entry)
-                                    (head:window-xoff (car entry))
-                                    (head:window-width (car entry))))
-                            layout)
-                       ;; A head:scrollbar changes one window row from a single
-                       ;; full-width cached segment into two overlapping
-                       ;; segments (the bar and the content).  Row cache
-                       ;; entries are keyed by their starting column, so a
-                       ;; later full-width paint cannot selectively evict a
-                       ;; covered content segment.  Treat presentation
-                       ;; topology as part of the view and discard those
-                       ;; incompatible segment keys when buffers are switched.
-                       (map (lambda (w)
-                              (list (paint:window-wrapped? w)
-                                    (head:window-scrollbar? w)
-                                    (head:window-line-number-width w)
-                                    (head:buffer-sticky-lines (head:window-buffer w))))
-                            windows))])
-      (for-each (lambda (entry) (paint:scroll-window! (car entry) (caddr entry)))
-                layout)
-      (paint:begin-frame! view rows)
-      (paint:paint-dividers! layout)
-      (let ([ranges (paint:highlight-ranges)])
-        (for-each (lambda (entry)
-                    (paint:paint-window! (car entry) (cadr entry) (caddr entry) ranges))
-                  layout))
-      (paint:paint-echo-area!)
-      (paint:paint-visual-bell!))
-    (paint:place-cursor!)
-    (paint:ansi "\x1b;[?2026l")
-    (flush-output-port (terminal-output-port)))
-
-  (define (redraw!)
-    ;; PTY readers may request a frame while the main thread waits for input.
-    ;; Keep the cache and terminal output as one indivisible transaction.
-    (with-mutex redraw-lock
-      (paint:update-terminal-title!)
-      (redraw-frame!)))
-
-
   ;;; Prompts and commands --------------------------------------------------
 
   (define (completion-label c)
@@ -2163,7 +2048,6 @@
 
   ;; The *completions* buffer: shown in the prompt's target window until
   ;; the prompt ends (show-completions!), a head's own chrome.
-  (define completions-buffer #f)
   (define completions-restore #f)
 
   ;; Prompts may parameterize this to make candidates stand out in the
@@ -2194,6 +2078,17 @@
                      (when (highlight? (substring s i j))
                        (vector-fill-range! styles i j 'editor))
                      (loop j))]))))))
+
+  ;; The *completions* buffer is a view like any other: registered once
+  ;; as an app whose refresh pages the list to the window it borrowed,
+  ;; ephemeral (a head's own chrome, not adopted by other heads), and
+  ;; styled by the completions mode.
+  (define completions-buffer
+    (let ([b (head:register-app! "*completions*"
+                                 (lambda () (update-completions-size!)))])
+      (head:buffer-fact-set! b 'ephemeral #t)
+      (modes:choose! b "completions")
+      b))
 
   (define completions-labels #f)   ; the labels shown: repeat detection
   (define completions-rows '#())   ; the full column layout
@@ -2241,11 +2136,6 @@
        (completions-layout! labels (head:window-content-width current-window))
        #t]
       [else
-       (set! completions-buffer (head:new-buffer "*completions*"))
-       ;; a head's own chrome: other heads do not adopt it
-       (head:buffer-fact-set! completions-buffer 'ephemeral #t)
-       (head:buffer-read-only-set! completions-buffer #t)
-       (modes:choose! completions-buffer "completions")
        (set! completions-labels labels)
        (completions-layout! labels (head:window-content-width current-window))
        (let ([target current-window]
@@ -2286,13 +2176,10 @@
               (head:window-prow-set! w 0) (head:window-pcol-set! w 0)))))))
 
   (define (dismiss-completions!)
+    ;; the borrowed window gets its buffer back; the view stays, as
+    ;; views do
     (when completions-restore
       (completions-restore)
-      (when (head:buffer-state-id completions-buffer)
-        (guard (ex [else (void)])
-          (state:delete! head:ui-actor (head:buffer-state-id completions-buffer))))
-      (set! buffers (remq completions-buffer buffers))
-      (set! completions-buffer #f)
       (set! completions-restore #f)
       (set! completions-labels #f)))
 
@@ -2473,7 +2360,7 @@
           (if (string=? note "") (or ((prompt-ghost) s) "") ""))
         (set! echo-indent (string-length label))
         (set! echo-cursor (+ (string-length label) pos))
-        (redraw!)
+        (paint:redraw!)
         ;; Mouse reports are live here: clicks focus windows and work the
         ;; window controls without canceling the prompt.
         (let* ([event (head:read-key-event #t)]
@@ -3115,7 +3002,7 @@
 
   (define pump-handlers-installed
     (head:set-pump-handlers!
-      (lambda () (state-frame-sync!) (redraw!))
+      (lambda () (state-frame-sync!) (paint:redraw!))
       run-posted-thunk!
       (lambda (handle? c b x y) (apply-mouse-event! handle? c b x y))
       (lambda (text) (set! pending-paste text))
@@ -3178,7 +3065,7 @@
             [prefix?
              (set! message (string-append (keymap:sequence-text sequence) "-"))
              (set! echo-pending '())
-             (redraw!)
+             (paint:redraw!)
              (let ([next (head:read-key-event)])
                (if (eof-object? next)
                    (set! quit? #t)
@@ -3247,14 +3134,14 @@
       (if (keymap:binding-prefix? 'global sequence)
           (begin
             (set! message (format "Describe key: ~a-" (keymap:sequence-text sequence)))
-            (redraw!)
+            (paint:redraw!)
             (loop (append sequence (list (head:read-key-event #f)))))
           sequence)))
 
   (define (describe-key!!)
     (parameterize ([message-source #f])
       (set-message! "Describe key: "))
-    (redraw!)
+    (paint:redraw!)
     (let* ([sequence (read-described-sequence)]
            [all (keymap:sequence-bindings sequence)]
            [entries (filter
@@ -3518,7 +3405,7 @@
             (for-each run-posted-thunk! (head:take-deferred!))
             (paint:window-layout)
             (head:run-pre-redraw-hooks!)
-            (redraw!)
+            (paint:redraw!)
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
             ;; editor.
