@@ -282,9 +282,14 @@
                   (assq 'read-only (state:properties pb)))
             '((file . "/tmp/a.txt") (read-only . #t)))
 
-     ;; #f removes; facts survive a reset (they are not text)
+     ;; #f is a value (a fact explicitly off); drop-property! forgets;
+     ;; facts survive a reset (they are not text)
      (state:set-property! bot pb 'read-only #f)
-     (check 'property-removed (state:property pb 'read-only) #f)
+     (check 'property-off-is-listed
+            (assq 'read-only (state:properties pb)) '(read-only . #f))
+     (state:drop-property! bot pb 'read-only)
+     (check 'property-dropped
+            (assq 'read-only (state:properties pb)) #f)
      (state:reset! bot pb '("fresh"))
      (check 'property-survives-reset (state:property pb 'file) "/tmp/a.txt")
 

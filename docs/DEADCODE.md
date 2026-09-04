@@ -23,6 +23,15 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-03 `known-apps`, `known-app-of`, `ensure-app-registry!`, the
+  lazy hook registries (core): the second app bookkeeping list existed
+  to carry presentation across a module's re-registration -- those
+  facts are store properties now and persist by themselves; the
+  registries were lazy only because the kernel once came after the
+  core.  The app record's sticky-lines/scrollbar/wrap/cursor-style/
+  manages-viewport fields and the seat record's wrap field went with
+  them: one wrap fact per buffer, shared by every head.
+
 - 2026-09-03 app target windows (core): `set-app-target!`,
   `target-window`, `target-buffer`, `show-buffer-in-target!`,
   `display-app!`, `display-app-here!`, `create-ephemeral-target-window!`,

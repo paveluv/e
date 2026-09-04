@@ -25,7 +25,7 @@
           snapshot revision line-count line extract
           edit! undo! history blame
           set-mark! mark drop-mark! marks
-          set-property! property properties
+          set-property! drop-property! property properties
           subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme)
@@ -467,10 +467,11 @@
   ;; as plain-data properties, so a second head (or a remote one)
   ;; reads the same truth the first one wrote.  Per-seat state --
   ;; cursors, selections, viewports -- stays with heads and their
-  ;; marks.  Values are data only; #f removes, and an absent property
-  ;; reads as #f, so booleans store naturally.  Properties survive
-  ;; resets and renames (they are not text) and die with delete!.
-  ;; Subscribers hear (property id key actor).
+  ;; marks.  Values are data only -- #f included: a fact may be
+  ;; explicitly off -- and an absent property reads as #f;
+  ;; drop-property! forgets one.  Properties survive resets and
+  ;; renames (they are not text) and die with delete!.  Subscribers
+  ;; hear (property id key actor).
 
   (define (set-property! actor id key value)
     (unless (symbol? key)
@@ -479,9 +480,19 @@
       (lambda ()
         (let ([b (buffer-of 'set-property! id)])
           (buffer-properties-set!
-            b (let ([kept (remp (lambda (entry) (eq? (car entry) key))
-                                (buffer-properties b))])
-                (if value (cons (cons key value) kept) kept))))))
+            b (cons (cons key value)
+                    (remp (lambda (entry) (eq? (car entry) key))
+                          (buffer-properties b)))))))
+    (notify! `(property ,id ,key ,actor))
+    (void))
+
+  (define (drop-property! actor id key)
+    (locked
+      (lambda ()
+        (let ([b (buffer-of 'drop-property! id)])
+          (buffer-properties-set!
+            b (remp (lambda (entry) (eq? (car entry) key))
+                    (buffer-properties b))))))
     (notify! `(property ,id ,key ,actor))
     (void))
 

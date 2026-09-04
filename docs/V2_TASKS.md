@@ -224,7 +224,12 @@ stopped knowing about capture.
       presentation; its fact accessors read and write the store, and
       the mode record never crosses the seam (name-keyed, resolved by
       find-mode on read).  This is the multi-head keystone: e --server
-      with several heads reads one truth
+      with several heads reads one truth.  Later joined by the app
+      presentation facts (sticky rows, scrollbar, wrap, cursor style,
+      viewport ownership) and the `app` marker itself -- the app
+      record keeps only its procedures (refresh, handler, cursor
+      visibility, status position); the two wrap knobs (app-level and
+      buffer-level) collapsed into the one `wrap` property
 - [x] the buffer lifecycle crosses heads: `state:create!`/`rename!`
       now notify (create id name actor) / (rename id name actor)
       alongside (delete id actor); a head adopts another actor's new
