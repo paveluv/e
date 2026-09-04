@@ -20,6 +20,7 @@
           markdown-render markdown-view-install! markdown-browser
           markdown-view-max-width)
   (import (chezscheme) (core)
+          (prefix (prompt) prompt:)
           (prefix (echo) echo:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
@@ -942,7 +943,7 @@
   (define hint-shown #f)
 
   (define (link-hint)
-    (unless (or (prompt-active?) (equal? hint-point (point)))
+    (unless (or (prompt:active?) (equal? hint-point (point)))
       (set! hint-point (point))
       (let ([link (and (equal? (modes:name-of (current-buffer))
                                "markdown-view")

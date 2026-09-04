@@ -11,6 +11,7 @@
 (library (c-mode)
   (export init!)
   (import (chezscheme) (core)
+          (prefix (styles) styles:)
           (prefix (modes) modes:)
           (prefix (strings) strings:))
 
@@ -58,13 +59,13 @@
                   (if (and (< j n) (char-alphabetic? (string-ref s j)))
                       (word (+ j 1))
                       j))])
-        (vector-fill-range! styles i k 'literal)
+        (styles:fill-range! styles i k 'literal)
         (if (and (string=? (substring s w k) "include")
                  (let ([lt (strings:search s "<" k n)])
                    (and lt (strings:search s ">" lt n))))
             (let* ([lt (strings:search s "<" k n)]
                    [gt (strings:search s ">" lt n)])
-              (vector-fill-range! styles lt (+ gt 1) 'string)
+              (styles:fill-range! styles lt (+ gt 1) 'string)
               (+ gt 1))
             k)))
     (let loop ([i 0] [in-c in-comment])
@@ -75,25 +76,25 @@
               [in-c
                (let ([end (strings:search s "*/" i n)])
                  (if end
-                     (begin (vector-fill-range! styles i (+ end 2) 'comment)
+                     (begin (styles:fill-range! styles i (+ end 2) 'comment)
                             (loop (+ end 2) #f))
-                     (begin (vector-fill-range! styles i n 'comment)
+                     (begin (styles:fill-range! styles i n 'comment)
                             (values styles #t))))]
               [(and (char=? c #\/) (< (+ i 1) n)
                     (char=? (string-ref s (+ i 1)) #\/))
-               (vector-fill-range! styles i n 'comment)
+               (styles:fill-range! styles i n 'comment)
                (values styles #f)]
               [(and (char=? c #\/) (< (+ i 1) n)
                     (char=? (string-ref s (+ i 1)) #\*))
-               (vector-fill-range! styles i (+ i 2) 'comment)
+               (styles:fill-range! styles i (+ i 2) 'comment)
                (loop (+ i 2) #t)]
               [(char=? c #\")
                (let ([end (quoted-loop i #\")])
-                 (vector-fill-range! styles i end 'string)
+                 (styles:fill-range! styles i end 'string)
                  (loop end #f))]
               [(char=? c #\')
                (let ([end (quoted-loop i #\')])
-                 (vector-fill-range! styles i end 'string)
+                 (styles:fill-range! styles i end 'string)
                  (loop end #f))]
               [(and (char=? c #\#)
                     (let blank ([j 0])
@@ -112,14 +113,14 @@
                           (or (ident-char? (string-ref s j))
                               (char=? (string-ref s j) #\.)))
                      (num (+ j 1))
-                     (begin (vector-fill-range! styles i j 'number)
+                     (begin (styles:fill-range! styles i j 'number)
                             (loop j #f))))]
               [(or (char-alphabetic? c) (char=? c #\_))
                (let word ([j (+ i 1)])
                  (if (and (< j n) (ident-char? (string-ref s j)))
                      (word (+ j 1))
                      (let ([token (substring s i j)])
-                       (vector-fill-range! styles i j
+                       (styles:fill-range! styles i j
                          (cond [(hashtable-ref c-keywords token #f) 'keyword]
                                [(member token '("NULL" "true" "false"))
                                 'literal]

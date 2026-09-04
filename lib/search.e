@@ -13,6 +13,8 @@
 (library (search)
   (export init! search!! search-fold-case)
   (import (chezscheme) (core)
+          (prefix (styles) styles:)
+          (prefix (prompt) prompt:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (tty) tty:)
@@ -116,7 +118,7 @@
 
   (define (indicate! s)
     ;; The search's status line, its label greyed like any prompt's.
-    ;; The search is no prompt! -- it reads keys, not a line -- so the
+    ;; The search is no prompt -- it reads keys, not a line -- so the
     ;; label grey comes through the message's own styler rather than
     ;; the prompt machinery.
     (if (string=? s "")
@@ -127,7 +129,7 @@
                            [v (make-vector n 'plain)]
                            [colon (strings:search text ": " 0 n)])
                       (when colon
-                        (vector-fill-range! v 0 (+ colon 2) 'chrome))
+                        (styles:fill-range! v 0 (+ colon 2) 'chrome))
                       v))))))
 
   (define (run-search!)
@@ -243,7 +245,7 @@
   (define (search!!)
     ;; The search owns C-g while it runs; the match highlighting goes
     ;; away however it exits.
-    (call-uninterrupted
+    (prompt:interaction
       (lambda ()
         (dynamic-wind
           void

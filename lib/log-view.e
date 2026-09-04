@@ -11,6 +11,7 @@
 (library (log-view)
   (export init! log-view show-log!)
   (import (chezscheme) (core)
+          (prefix (styles) styles:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (head) head:)
@@ -42,7 +43,7 @@
                 (when (< i n)
                   (vector-set! styles i (vector-ref inner (- i from)))
                   (loop (+ i 1))))
-              (vector-fill-range! styles from n 'plain))))
+              (styles:fill-range! styles from n 'plain))))
       styles))
 
   (define (make-log-view name pred)

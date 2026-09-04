@@ -21,6 +21,7 @@
           next-conflict! keep-mine! keep-disk!
           list-buffers!)
   (import (chezscheme) (core)
+          (prefix (prompt) prompt:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
@@ -210,11 +211,11 @@
     ;; one undo step; point follows, ending after the last replacement
     ;; (or at the start of the last skipped or stopped-at match).  The
     ;; report -- how many replaced and skipped -- is echoed.
-    (let* ([from (if (pair? args) (car args) (prompt! "Replace: "))]
+    (let* ([from (if (pair? args) (car args) (prompt:read! "Replace: "))]
            [to (and from
                     (if (and (pair? args) (pair? (cdr args)))
                         (cadr args)
-                        (prompt! (format "Replace ~s with: " from))))])
+                        (prompt:read! (format "Replace ~s with: " from))))])
       (if (or (not from) (not to) (string=? from ""))
           (void)                      ; cancelled at a prompt
           (let ([b (current-buffer)]
