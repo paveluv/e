@@ -384,6 +384,14 @@ stopped knowing about capture.
       now, not the reverse.  The bare `load-module!`/`reload-module!`
       aliases are gone: the loader imports kernel prefixed into the M-x
       environment alongside core (bare, the command names) and main
+- [x] names, 2026-09-04: exported names drop their module's stem
+      (`style:set!` not `styles:set-style!`; `log:add!`, `log:entries`,
+      `log:format-entry`, `policy:make`, `policy:reader`, ...), and the
+      seam modules are singular -- `style`, `file`, `mode`, `string`,
+      `actor`, `doc` (files, libraries, prefixes, tests renamed).  Four
+      painters nobody outside paint called and `head:publish-head-marks!`
+      left their export lists instead of being renamed.  config.e
+      recolors faces with `style:set!` now
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e

@@ -9,12 +9,17 @@ imports the command layer (`edit`, bare -- the names M-x sees), `main` and
 `kernel` (prefixed), and runs `(main:run)`.
 
 There is no core any more (docs/DESIGN2.md, docs/V2_TASKS.md): the editor is
-layered seam modules -- `kernel`, `state`, `files`, `head`, `paint`, `prompt`,
-`modes`, `keymap`, ... -- each imported with its own prefix, `main.e` running
+layered seam modules -- `kernel`, `state`, `file`, `head`, `paint`, `prompt`,
+`mode`, `keymap`, ... -- each imported with its own prefix, `main.e` running
 the loop on top, and `edit.e`, the command layer, as the default app. `sys.e`
 owns libc, termios, ioctl, signals, PTYs, and other foreign procedures.
 Feature modules compose the command API and the seams and, when necessary,
 narrowly scoped system facilities.
+
+Seam modules are named in the singular (`style`, `file`, `mode`, `string`,
+`actor`, `doc`), and their exported names drop the module's stem: the prefix
+says it once -- `style:set!`, not `styles:set-style!`; `log:add!`,
+`mode:register!`, `file:read`, `doc:register!`.
 
 R6RS enforces the boundary. A library's internals are invisible to modules and
 its exports are immutable. Extension code cannot accidentally reassign editor
@@ -33,17 +38,17 @@ An extension exports `init!`, which performs its registrations:
   (define (my-styles line) ...)
 
   (define (init!)
-    (register-mode! "my" '(".my") '() my-styles)))
+    (mode:register! "my" '(".my") '() my-styles)))
 ```
 
-At startup core discovers `lib/*.e`, loads each library, and calls its `init!`.
-Dependencies are ordinary R6RS imports, so Chez determines compilation order.
-A failing module reports an error but does not prevent unrelated modules or the
-editor from starting.
+At startup the kernel discovers `lib/*.e`, loads each library, and calls its
+`init!`.  Dependencies are ordinary R6RS imports, so Chez determines
+compilation order.  A failing module reports an error but does not prevent
+unrelated modules or the editor from starting.
 
-Bundled and third-party modules should use `bind-default-key!`. `bind-key!` is
-for deliberate user or session overrides, ensuring a module reload cannot
-displace configuration choices.
+Bundled and third-party modules should use `keymap:bind-default-key!`.
+`keymap:bind-key!` is for deliberate user or session overrides, ensuring a
+module reload cannot displace configuration choices.
 
 ## Hot reload
 
@@ -52,11 +57,12 @@ Modules that import it recompile and reinitialize in dependency order. Editing
 outside e can be picked up explicitly:
 
 ```scheme
-(reload-module! "paren")
+(kernel:reload-module! "paren")
 ```
 
-`modules-reload-on-save` controls automatic source reload. The core itself is
-not hot-reloadable.
+`main:modules-reload-on-save` controls automatic source reload. The kernel and
+`main` (the loop) are not hot-reloadable; everything else is, the command layer
+included.
 
 Registrations are tagged with their owning module. Reload first retracts the
 old modes, keys, hooks, app callbacks, descriptions, and other registrations,
@@ -91,7 +97,7 @@ Modes are registered by name, filename extensions, optional shebang
 interpreters, and a line styler:
 
 ```scheme
-(register-mode! "scheme"
+(mode:register! "scheme"
   '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
   '("scheme" "petite" "chez" "guile" "racket")
   scheme-styles)
@@ -102,18 +108,18 @@ cover Scheme, C, and Markdown. Additional personal extensions should be added
 without replacing the mode:
 
 ```scheme
-(add-mode-extension! "scheme" ".foo")
+(mode:add-extension! "scheme" ".foo")
 ```
 
-Stateful syntax analysis uses `memoize-buffer-analysis`. The analyzer receives
-a snapshot vector of lines and returns per-row results, recomputed once per
+Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives a
+snapshot vector of lines and returns per-row results, recomputed once per
 buffer revision.
 
 ## Highlighting and formatting
 
-`add-highlighter!` registers redraw-time ranges shaped as `(row start end)` or
-`(row start end face)`. Search, bracket matching, selections, and app cursors
-use this mechanism.
+`paint:add-highlighter!` registers redraw-time ranges shaped as `(row start
+end)` or `(row start end face)`. Search, bracket matching, selections, and app
+cursors use this mechanism.
 
 Language layout remains modular through `register-indenter!` and
 `register-formatter!`. See [Formatting](FORMATTING.md).
@@ -130,8 +136,8 @@ See [App buffers](APPS.md) for registration and event propagation, and
 
 ## Describe and log integration
 
-Modules can publish structured documentation with `register-descriptions!`
-and component-specific log presentation with `register-log-formatter!`. Both
+Modules can publish structured documentation with `doc:register!` and
+component-specific log presentation with `log:register-formatter!`. Both
 registries participate in transactional reload. See [Describe](DESCRIBE.md)
 and [Logging](LOG.md).
 

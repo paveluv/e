@@ -23,6 +23,10 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-04 exports `paint:paint-window!`, `paint-dividers!`,
+  `paint-echo-area!`, `paint-visual-bell!`, `head:publish-head-marks!`:
+  the frame calls them inside their own modules; nothing outside did.
+
 - 2026-09-03 `lib/core.e` itself: its last 2,419 lines became the
   command layer in edit.e; the define-for-effect registrations became
   init! statements (`core-keys-bound`, `log-formatters-init`,
