@@ -5,7 +5,7 @@ saved file. It is presentation, not source transformation.
 
 ## Structural clusters
 
-`pretty-scheme-clusters!` assigns Unicode delimiter pairs by construct:
+`pretty-scheme:clusters!` assigns Unicode delimiter pairs by construct:
 
 ```scheme
 ｢define (twice x)
@@ -29,10 +29,10 @@ Editing and saving it hot-reloads the module and restyles visible buffers.
 
 ## Depth variants
 
-`pretty-scheme-depth!` assigns delimiter pairs by nesting depth, cycling after
+`pretty-scheme:depth!` assigns delimiter pairs by nesting depth, cycling after
 the palette is exhausted.
 
-`pretty-scheme-rainbow!` keeps ordinary delimiter characters but colors each
+`pretty-scheme:rainbow!` keeps ordinary delimiter characters but colors each
 depth through a seven-color sequence. Closing delimiters match their opener.
 
 Invoking the active variant again returns the buffer to normal Scheme display.

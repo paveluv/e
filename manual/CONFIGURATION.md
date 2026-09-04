@@ -25,10 +25,10 @@ so evaluating it repeatedly is safe.
 Saving `config.e` inside e reloads it immediately. It can also be applied with:
 
 ```scheme
-(load-config!)
+(main:load-config!)
 ```
 
-`config-reload-on-save` controls automatic reload. A configuration error is
+`main:config-reload-on-save` controls automatic reload. A configuration error is
 reported in the echo area and structured log without terminating the editor.
 
 Configuration-owned registrations are transactional where applicable. For
@@ -38,16 +38,16 @@ the file removes it on the next reload rather than leaving stale state behind.
 ## Common examples
 
 ```scheme
-(bind-key! "C-c s" save!!)
-(unbind-key! "C-v")
-(add-mode-extension! "scheme" ".foo")
+(keymap:bind-key! "C-c s" save!!)
+(keymap:unbind-key! "C-v")
+(mode:add-extension! "scheme" ".foo")
 (indent-on-tab! "scheme" #f)
 (wrap-lines #f)
 (scrollbar #t)
 (scrollbar-position 'right)
 (line-numbers #f)
-(scheme-format-width 100)
-(set-style! 'editor '((foreground 135) bold))
+(scheme-format:width 100)
+(style:set! 'editor '((foreground 135) bold))
 ```
 
 See [Key binding configuration](KEY_BINDING.md), [Styles](STYLES.md),

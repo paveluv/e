@@ -9,13 +9,13 @@ immediately available to later evaluations.
 
 ## Commands
 
-### `eval!!` — interactive M-x evaluation
+### `eval:run!!` — interactive M-x evaluation
 
-`M-x` is bound to `eval!!`. It prompts for a Scheme expression and evaluates
+`M-x` is bound to `eval:run!!`. It prompts for a Scheme expression and evaluates
 it:
 
 ```scheme
-M-x (buffer-name (current-buffer))
+M-x (head:buffer-name (current-buffer))
 M-x (define answer 42)
 M-x answer
 ```
@@ -66,16 +66,16 @@ echo-area rows; long individual lines still soft-wrap at the terminal edge.
 After completion, the transient echo record retains the command's explicit
 line breaks, matching its multiline representation in `*log*`.
 
-### `eval!` — evaluate buffer or region text
+### `eval:run!` — evaluate buffer or region text
 
-`C-x C-e` is bound to `eval!`.
+`C-x C-e` is bound to `eval:run!`.
 
 ```scheme
-(eval!)
-(eval! where)
+(eval:run!)
+(eval:run! where)
 ```
 
-With no argument, `eval!` evaluates the whole current buffer. It does not use
+With no argument, `eval:run!` evaluates the whole current buffer. It does not use
 the active selection implicitly. An explicit `where` accepts the same target
 forms as the editing helpers:
 
@@ -93,11 +93,11 @@ from earlier datums remain in place.
 Examples:
 
 ```scheme
-(eval!)
-(eval! (buffer "scratch.scm"))
-(eval! "helpers.scm")
-(eval! (region (current-buffer) '(10 . 0) '(18 . 0)))
-(eval! (lambda (b) (string=? (buffer-mode-name b) "scheme")))
+(eval:run!)
+(eval:run! (buffer "scratch.scm"))
+(eval:run! "helpers.scm")
+(eval:run! (region (current-buffer) '(10 . 0) '(18 . 0)))
+(eval:run! (lambda (b) (string=? (mode:name-of b) "scheme")))
 ```
 
 ## Results and the kill buffer
@@ -124,7 +124,7 @@ zero-value results, errors, and interruptions do not replace the kill buffer.
 Disable automatic copying in `config.e`:
 
 ```scheme
-(eval-copy-result #f)
+(eval:copy-result #f)
 ```
 
 The default is `#t`.
@@ -168,7 +168,7 @@ buffer. `C-g` interrupts running evaluation and records `interrupted`.
 
 An evaluation is wrapped in `call-as-one-edit!`. Any editor buffer changes
 made by the evaluated code form one undo step per affected buffer, labeled by
-the M-x expression or the corresponding `eval!` invocation. This grouping
+the M-x expression or the corresponding `eval:run!` invocation. This grouping
 does not roll back Scheme definitions or external effects when later code
 fails; it controls editor undo history only.
 
@@ -182,10 +182,10 @@ the M-x expression history.
 Open the live log view through the buffer list or with:
 
 ```scheme
-(show-log!)
-(log-view 'eval)
-(log-view 'stdout)
-(log-view 'stderr)
+(log-view:show!)
+(log-view:buffer 'eval)
+(log-view:buffer 'stdout)
+(log-view:buffer 'stderr)
 ```
 
 The result is posted after both output streams close, so it remains the final
@@ -196,8 +196,8 @@ entry for that evaluation.
 Both commands publish structured describe entries. Use any of:
 
 ```scheme
-(describe eval!)
-(describe eval!!)
+(describe eval:run!)
+(describe eval:run!!)
 ```
 
 or press `C-h f` and complete the command name. The live describe page shows
@@ -206,13 +206,13 @@ the commands' current key bindings, including user rebinding from `config.e`.
 ## Configuration summary
 
 ```scheme
-;; Copy non-void eval!/M-x results to the C-y kill buffer (default: #t).
-(eval-copy-result #t)
+;; Copy non-void eval:run!/M-x results to the C-y kill buffer (default: #t).
+(eval:copy-result #t)
 
 ;; Optional key rebinding examples.
-(bind-key! "C-c e" eval!)
-(bind-key! "M-X" eval!!)
+(keymap:bind-key! "C-c e" eval:run!)
+(keymap:bind-key! "M-X" eval:run!!)
 ```
 
-`eval-copy-result` is a parameter and may also be changed temporarily with
+`eval:copy-result` is a parameter and may also be changed temporarily with
 `parameterize` around programmatic evaluation.

@@ -8,17 +8,17 @@ libssl installed; the describe corpus download rides on it.
 ## Scheme API
 
 ```scheme
-(https-get url)                    ; => body text; follows redirects,
+(https:get url)                    ; => body text; follows redirects,
                                    ;    errors on non-2xx
-(https-download url path)          ; fetch into a file
-(https-request method url [headers [body]])
+(https:download url path)          ; fetch into a file
+(https:request method url [headers [body]])
                                    ; => response; body streams
-(https-response-status r)          ; => 200 ...
-(https-response-headers r)         ; => (("content-type" . "...") ...)
-(https-response-port r)            ; => binary input port over the body
-(https-response-text r)            ; drain as UTF-8 and close
-(https-close! r)                   ; abandon a response early
-(https-timeout [seconds])          ; stalled-peer cutoff (default 60)
+(https:response-status r)          ; => 200 ...
+(https:response-headers r)         ; => (("content-type" . "...") ...)
+(https:response-port r)            ; => binary input port over the body
+(https:response-text r)            ; drain as UTF-8 and close
+(https:close! r)                   ; abandon a response early
+(https:timeout [seconds])          ; stalled-peer cutoff (default 60)
 ```
 
 Header names arrive lowercased. The response port decodes the
@@ -29,12 +29,12 @@ connection. `http://` URLs work too, over a plain socket.
 ## The transport abstraction
 
 The HTTP client is written against a *channel* -- a record of read, write,
-and close procedures (`channel-read!`, `channel-write!`, `channel-close!`)
+and close procedures (`https:channel-read!`, `https:channel-write!`, `https:channel-close!`)
 over an established byte stream
--- and obtains secure channels from the `https-connector` parameter:
+-- and obtains secure channels from the `https:connector` parameter:
 
 ```scheme
-(https-connector)                  ; (lambda (host port) channel)
+(https:connector)                  ; (lambda (host port) channel)
 ```
 
 The default connector speaks TLS 1.x via libssl with certificate
@@ -43,7 +43,7 @@ verification against the system root store, hostname checking
 loudly. Swapping the parameter swaps the whole transport without
 touching the HTTP layer: a pure-Scheme TLS, an `openssl s_client`
 pipe, or a test double are all just procedures returning a
-`make-channel`.
+`https:make-channel`.
 
 ## Threading
 
@@ -56,10 +56,10 @@ interactive should call from a worker.
 
 ## The curl backend
 
-`https-backend` selects the machinery: `'native` (the default) is the
+`https:backend` selects the machinery: `'native` (the default) is the
 FFI TLS connector; `'curl` hands whole requests to a curl subprocess
 presenting the same response interface -- curl then does the TLS and
-certificate verification. Set `(https-backend 'curl)` in config.e to
+certificate verification. Set `(https:backend 'curl)` in config.e to
 prefer it. The native backend also falls back to curl on its own when
 no TLS library can be found, so a system without libssl but with curl
 still works out of the box. Under curl the body always streams to

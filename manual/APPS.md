@@ -11,12 +11,12 @@ visible on every redraw.
 ## Registering an app
 
 ```scheme
-(register-app! name refresh! handle-event!)
+(head:register-app! name refresh! handle-event!)
 ```
 
 `name` is the buffer name and must not already belong to an ordinary buffer.
 `refresh!` takes no arguments and updates the registered buffer with
-`view-replace!` or `view-append!`. `handle-event!` receives one canonical
+`head:view-replace!` or `head:view-append!`. `handle-event!` receives one canonical
 event string, such as `"UP"`, `"RET"`, `"MOUSE-CLICK"`, or `"WHEEL-UP"`.
 For keyboard events it returns true when the app consumed the event; false
 lets the normal global key dispatcher handle it. For `"MOUSE-CLICK"`, returning
@@ -54,8 +54,8 @@ should mean on its own terms:
 
 ```scheme
 (keymap:set-context-escape! 'terminal "C-]")
-(bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
-(bind-default-key! 'terminal "C-] C-y" terminal-yank!)
+(keymap:bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
+(keymap:bind-default-key! 'terminal "C-] C-y" terminal:yank!)
 ```
 
 A sequence starting with the escape that the context does not bind resolves,
@@ -68,8 +68,8 @@ must decline the escape key itself for the context bindings to see it.)
 The handler is optional. Thus these are equivalent:
 
 ```scheme
-(register-view! "*example*" refresh!)
-(register-app! "*example*" refresh!)
+(head:register-view! "*example*" refresh!)
+(head:register-app! "*example*" refresh!)
 ```
 
 Apps act on the selected window -- their own, when it is selected.  Use
@@ -79,7 +79,7 @@ leaving the current window.
 Table-like apps can request shared presentation chrome:
 
 ```scheme
-(set-app-presentation! app-buffer 1 #t 'default 'default)
+(head:set-app-presentation! app-buffer 1 #t 'default 'default)
 ```
 
 The second argument is the number of sticky leading rows. The third is either
@@ -139,7 +139,7 @@ The active row uses the `active` face. It can be customized like any other
 face:
 
 ```scheme
-(set-style! 'active '((background 24) (foreground white)))
+(style:set! 'active '((background 24) (foreground white)))
 ```
 
 Rows are always alphabetical, so visiting a buffer does not move it. The table

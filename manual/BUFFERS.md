@@ -36,8 +36,7 @@ Every window has a status line. Its leading state marker is:
 | `[]` | dynamic app or view buffer |
 
 The status line also shows the buffer name, one-based line and column, detected
-mode, remaining merge-conflict count, and applicable command hints. When an app
-has focus, `>` marks the window it will act on.
+mode, remaining merge-conflict count, and applicable command hints.
 
 ## Switching, creating, and killing
 
@@ -149,9 +148,8 @@ line.
 
 ## The `*buffers*` app
 
-`C-x C-b` replaces the current window with the app and makes that same window
-its target, while remembering the buffer it replaced. Move to a row and press
-Enter to replace `*buffers*` with that buffer, making the command an alternative
+`C-x C-b` shows the app in the current window. Move to a row and press Enter
+to replace `*buffers*` with that buffer, making the command an alternative
 interactive form of `C-x b`.
 
 `*buffers*` is a live, read-only table with these columns:
@@ -212,7 +210,7 @@ Configure scrollbars in `config.e`:
 (scrollbar-position 'right)    ; default; the alternative is 'left
 ```
 
-An app may force a scrollbar or a side through `set-app-presentation!`.
+An app may force a scrollbar or a side through `head:set-app-presentation!`.
 `*buffers*` forces it on but follows `scrollbar-position`.
 
 Every frame is a cached repaint -- rows are painted only when their content
@@ -275,17 +273,17 @@ planned; the earlier transient `C-x w` mode was removed for redesign.)
 ## Buffer API
 
 The public Scheme API exposes read-only inspection through `current-buffer`,
-`buffer-list`, `buffer?`, `buffer-name`, `buffer-file`, `buffer-text`,
-`buffer-clean?`, `buffer-modified`, `buffer-read-only`, `buffer-mode-name`,
-`buffer-line`, `buffer-line-count`, and `buffer-line-styles`.
+`buffer-list`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `buffer-text`,
+`buffer-clean?`, `head:buffer-modified`, `head:buffer-read-only`, `mode:name-of`,
+`buffer-line`, `buffer-line-count`, and `mode:line-styles`.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
-`new-buffer`, `fresh-buffer`, `show-buffer!`, `display-buffer!`,
+`head:new-buffer`, `fresh-buffer`, `show-buffer!`, `display-buffer!`,
 `pop-up-or-reuse!`, `kill-buffer!`,
-`buffer-append!`, `set-buffer-mode!`, and `set-buffer-read-only!` provide
+`buffer-append!`, `mode:choose!`, and `set-buffer-read-only!` provide
 controlled mutation and display. `call-with-buffer` temporarily makes another
 buffer current, and `call-as-one-edit!` groups mutations into coherent undo
 entries. `focus-window-up!`, `focus-window-down!`, `focus-window-left!`, and
 `focus-window-right!` expose directional focus to Scheme. App authors should
-use `view-replace!` and `view-append!` for generated content. Run
-`M-x (describe!!)` for live signatures and registered command documentation.
+use `head:view-replace!` and `head:view-append!` for generated content. Run
+`M-x (describe:show!!)` for live signatures and registered command documentation.

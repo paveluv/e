@@ -144,8 +144,8 @@ immediately.
   unbinding, and inspection.
 - [Styles](manual/STYLES.md): the style DSL, faces, colors, terminal behavior, and
   configuration lifecycle.
-- [App buffers](manual/APPS.md): dynamic views, interaction, capture, mouse
-  events, and target windows.
+- [App buffers](manual/APPS.md): dynamic views, interaction, the escape
+  prefix, mouse events, and the `*buffers*` switcher.
 - [Git](manual/GIT.md): structured repository queries and the history browser.
 - [Pretty Scheme](manual/PRETTY_SCHEME.md): structural delimiter glyphs, depth
   and rainbow variants, and semantic symbol styling.

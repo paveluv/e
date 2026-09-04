@@ -25,7 +25,7 @@ prompt to `I-search (exact):`.
 `M-c` toggles case folding for the current search. To make every search exact:
 
 ```scheme
-(search-fold-case #f)
+(search:fold-case #f)
 ```
 
 This setting affects incremental search only. Other matching operations,
@@ -50,7 +50,7 @@ For noninteractive replacement, `replace-all!` accepts an optional target:
 ```scheme
 (replace-all! "old" "new")
 (replace-all! "old" "new" (buffer "notes.md"))
-(replace-all! "old" "new" buffer-file)
+(replace-all! "old" "new" head:buffer-file)
 ```
 
 Targets may be buffers, buffer names, regions, predicates over buffers, or

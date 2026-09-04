@@ -2,7 +2,7 @@
 
 ## Interactive commands
 
-`C-h f` runs `describe!!`, prompting for a documented Scheme name with
+`C-h f` runs `describe:show!!`, prompting for a documented Scheme name with
 completion. `M-.` describes the symbol at point in a Scheme buffer. `C-h k`
 describes a key, its resolved command, origin, shadowed bindings, and contextual
 meanings.
@@ -24,7 +24,7 @@ The optional corpus combines R6RS documentation from TSPL4 with Chez Scheme
 extensions from the Chez Scheme User's Guide. Fetch it once from inside e:
 
 ```scheme
-(fetch-describe-data!)
+(describe:fetch-data!)
 ```
 
 The command downloads and extracts roughly 1,400 entries into
@@ -36,7 +36,7 @@ available.
 
 ## Structured queries
 
-`doc-lookup` returns entries for a name. `doc-entries` returns the complete
+`describe:lookup` returns entries for a name. `describe:entries` returns the complete
 collection, optionally filtered by a predicate. The entry accessors
 (`doc:names`, `doc:forms`, `doc:returns`, `doc:libraries`, `doc:source`,
 `doc:chapter`, `doc:url`, `doc:description`) expose each field, allowing the
@@ -44,12 +44,12 @@ manual to be queried by ordinary Scheme code.
 
 ```scheme
 (describe 'eq-hashtable-ref)
-(doc-lookup 'lambda)
+(describe:lookup 'lambda)
 ```
 
 ## Publishing module documentation
 
-Modules add entries with `register-descriptions!`. Each entry has this shape:
+Modules add entries with `doc:register!`. Each entry has this shape:
 
 ```scheme
 (names forms returns libraries source chapter url description)
