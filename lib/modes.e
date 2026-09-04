@@ -213,12 +213,6 @@
                         (set-mode-of! b (find-mode (mode-name m)))))))
               (head:buffers)))
 
-  ;; Saving a module's source reloads it on the spot (a fresh .e file
-  ;; in the lib directory is loaded for the first time), and saving
-  ;; config.e applies it, so editing the editor from inside itself
-  ;; takes effect on save.  Both on by default; (modules-reload-on-save
-  ;; #f) or (config-reload-on-save #f) -- in config.e for an
-  ;; installation, at M-x for a session -- turns either off.
 
 
   ;;; The head's adopt hook -------------------------------------------------------

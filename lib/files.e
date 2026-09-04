@@ -23,13 +23,17 @@
           lines ends-in-newline? text
           merge conflict-count
           directory-part base-name expand abbreviate absolute
-          canonical visit-path complete data-directory)
+          canonical visit-path complete data-directory
+          add-pre-save-hook! add-post-save-hook!
+          run-pre-save-hooks! run-post-save-hooks!)
   ;; read, expand, and merge are Chez names too; importers always see
   ;; these under the files: prefix
   (import (except (chezscheme) read expand merge)
           (only (sys) canonical-file-path)
           (only (diff) merge3 merge-report-lines)
-          (prefix (strings) strings:))
+          (prefix (strings) strings:)
+          (prefix (log) log:)
+          (prefix (kernel) kernel:))
 
   ;;; Paths ---------------------------------------------------------------------
 
@@ -234,4 +238,28 @@
           (loop (+ i 1)
                 (if (strings:prefix? "<<<<<<<" (vector-ref v i)) (+ n 1) n)))))
 
+
+  ;;; Save hooks --------------------------------------------------------------------
+
+  ;; Modules may hook a save: pre-save hooks run before anything is
+  ;; checked or written (formatting, say), post-save hooks after a
+  ;; successful write (the module reload lives there).  Each receives
+  ;; the path being written; a raising hook reports to the log and the
+  ;; save goes on.
+  (define pre-save-hooks (kernel:make-registry))
+  (define post-save-hooks (kernel:make-registry))
+
+  (define (add-pre-save-hook! proc) (kernel:registry-add! pre-save-hooks proc))
+  (define (add-post-save-hook! proc) (kernel:registry-add! post-save-hooks proc))
+
+  (define (run-hooks! hooks path)
+    (for-each (lambda (p)
+                (guard (ex [else (log:log! 'save-file!
+                                   (format "Save hook failed: ~a"
+                                           (kernel:condition-text ex)))])
+                  (p path)))
+              (kernel:registry-items hooks)))
+
+  (define (run-pre-save-hooks! path) (run-hooks! pre-save-hooks path))
+  (define (run-post-save-hooks! path) (run-hooks! post-save-hooks path))
 ) ;; library (files)

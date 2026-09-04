@@ -14,6 +14,7 @@
 (library (scheme-mode)
   (export init! scheme-format-on-save)
   (import (chezscheme) (core)
+          (prefix (files) files:)
           (prefix (styles) styles:)
           (prefix (modes) modes:) (scheme-format)
           (only (describe) register-descriptions!))
@@ -206,4 +207,4 @@
          (("parameter" . "(scheme-format-width [columns])")) "integer"
          ("(scheme-format)") scheme-format "Scheme formatting" #f
          "Get or set the target width used when `scheme-format-intrusive` is enabled. The default is 100 columns and the minimum is 20.")))
-    (add-pre-save-hook! format-on-save!)))
+    (files:add-pre-save-hook! format-on-save!)))
