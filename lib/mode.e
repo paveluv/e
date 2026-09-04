@@ -46,7 +46,7 @@
   ;; file-name endings it claims, the interpreter names recognized in
   ;; a #! first line (for files without a matching extension), and a
   ;; styles function mapping a line to a vector of per-column style
-  ;; symbols understood by style:style-code, or #f for an unstyled
+  ;; symbols understood by style:code, or #f for an unstyled
   ;; line.  Brackets styled 'delimiter take part in bracket matching;
   ;; in a buffer without a mode every bracket counts.
 
@@ -60,7 +60,7 @@
             render
             ;; optional buffer-aware styling: (row-styles buffer row
             ;; line) -> a styles vector, or #f for the plain styles
-            ;; function.  Uncached by the core -- the mode memoizes.
+            ;; function.  Uncached here -- the mode memoizes.
             row-styles)
     (protocol (lambda (new)
                 (case-lambda
@@ -125,7 +125,7 @@
 
   (define (set-buffer-mode! b name)
     ;; Give b the registered mode called name (#f for none), regardless of
-    ;; its file name -- how transcript (head:buffers) get their highlighting.
+    ;; its file name -- how transcript buffers get their highlighting.
     (set-mode-of! b (and name (find-mode name)))
     (head:buffer-mode-auto-set! b #f))
 
@@ -145,12 +145,6 @@
 
   (define (set-mode-of! b m)
     (head:buffer-fact-set! b 'mode (and m (mode-name m))))
-  ;; The head's window tree lives in the (head) seam module now: the
-  ;; records, the split geometry, and the seat state (windows, the
-  ;; layout root, the selected window, the layout's divider output).
-  ;; Facade aliases and identifier-syntax facades below; app-aware
-  ;; layout surgery (set-layout-root!), wrap policy, and the main loop
-  ;; stay here until the rest of the head moves.
 
   (define (no-styles s) #f)
 
@@ -158,7 +152,7 @@
   ;; strings (never mutate them), so string identity keys the cache and
   ;; can never go stale; weak keys keep it bounded by the live lines.
   ;; Each entry remembers its mode, in case an identical string is shared
-  ;; between (head:buffers) of different modes.
+  ;; between buffers of different modes.
 
   (define style-cache (make-weak-eq-hashtable))
 
@@ -195,7 +189,7 @@
                  (vector-ref product row)))))))
 
   (define (refresh-buffer-modes!)
-    ;; Re-resolve every buffer's mode by name, so (head:buffers) pick up a
+    ;; Re-resolve every buffer's mode by name, so buffers pick up a
     ;; reloaded mode's new styles (or lose a mode that is gone).
     (for-each (lambda (b)
                 (if (head:buffer-mode-auto b)
