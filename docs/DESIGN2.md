@@ -260,8 +260,9 @@ that lets v0.1 reload modules under a running editor.
 | `modes.e` | the mode registry: records, detection by extension and #! interpreter, the memoized line and whole-buffer stylers -- the mode NAME is a store property, the record is this head's |
 | `paint.e` | the screen model: damage, cache, painting, synchronized updates |
 | `keymap.e` | key syntax, binding contexts, per-head and per-mode dispatch |
-| `echo.e` | the notification area and prompts: the human frontend of ask/reply |
-| `head.e` | a UI head: window tree and layout, per-user state (kill ring, histories, scroll), input routing |
+| `echo.e` | the notification area's model: message, ghost, transient log queue, prompt geometry |
+| `prompt.e` | the prompt: the modal line editor in the echo area (history, completion with the *completions* view, M-x's multiline variants), single-key questions, the commands a prompt may run (allow!), the interaction guard (C-g as a key, the cursor) -- the human frontend of ask/reply |
+| `head.e` | a UI head: window tree and layout (with the fit-to-screen collapse), per-user state (kill ring, paste text, scroll), the store client, the scheduling pump, C-g interruption, input routing |
 
 **Platform** (infrastructure, layerless):
 

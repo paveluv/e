@@ -321,6 +321,23 @@ stopped knowing about capture.
       buffer bookkeeping around a load, save, merge, or reread.  Over the
       wire the disk is the server's.  describe.e's private read-file went
       too; core no longer imports (diff)
+- [x] `prompt.e`: the prompt left core -- prompt! (now prompt:read!), the
+      *completions* view and its paging, complete!, the single-key
+      question (prompt:key!) and confirm?, the five prompt parameters
+      (ghost, inspector, multiline, edge-motion, reindent) and
+      completion-highlight, prompt:active?, and the interaction guard
+      (prompt:interaction: C-g is a key, the cursor is the prompt's).
+      The hard-coded list of window commands a prompt may run became a
+      registry, prompt:allow!, filled by core where the commands are
+      defined (kill-buffer!! with its prompt-safe stand-in).  Its
+      prerequisites moved first: the kill ring, the paste text, and C-g
+      interruption (call-uninterrupted/call-with-interrupt/interrupted?)
+      to head.e -- the seat's; strings:insert/delete; tty:paste-lines;
+      styles:fill-range! (the styles-vector fill six modules used
+      through core); current-message retired for echo:text.  Found on
+      the way: the *completions* view, registered at load, was wiped by
+      core's startup replacing the seat's buffer list -- *scratch* joins
+      the list now instead
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e
@@ -340,4 +357,6 @@ priority; items graduate into stage tasks when picked up.
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |
+| 20 | prompt.e writes the echo area through identifier-syntax facades | `lib/prompt.e` defines `message`, `message-ghost`, `message-styles`, `echo-cursor`, `echo-indent`, `echo-input-end`, `echo-scroll`, `echo-spans` as identifier macros over `echo:` accessors so the prompt's code moved verbatim. Fix: rewrite the sites to direct `echo:set-text!`/`echo:cursor` calls (a scripted pass; `(set! message X)` across line breaks is the awkward case) and drop the macros -- the same unwind core's remaining facades get when their code moves. |
+| 25 | prompt.e has no headless suite | The prompt's loop reads keys from the head's pump (`head:read-key-event`), so only tests/interactive.ss (a real PTY) exercises prompt:read!, completions, and prompt:key!. Fix: a `head:post-key!` (or a test-only event source parameter) so tests/prompt.ss can script keys headlessly and check the returned input, history, completion notes, and the borrowed-window restore. |
 | 5 | scheme-format refuses the shebang test suites and garbles its read errors | `tools/scheme-format` fails on every `tests/*.ss` (the `#!/usr/bin/env scheme-script` first line does not read as data) and reports it as the raw template `~? at char ~a of ~s`: the tool prints a condition's message without its irritants. Fix: skip a leading shebang line, and print read errors through `kernel:condition-text`. Until then the format-before-commit rule covers lib/*.e only. |

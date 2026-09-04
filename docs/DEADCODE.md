@@ -26,6 +26,15 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-03 `prompt-window-commands` (core): the hard-coded list of
+  commands a prompt may run, now the `prompt:allow!` registry;
+  `current-message` (core, one caller, which reads `echo:text`);
+  `split-pasted-lines`/`read-paste`/`pending-paste`, `string-insert`/
+  `string-delete`, `vector-fill-range!`, `call-with-interrupt`,
+  `set-isig!`, `&interrupted` moved out of core rather than dying
+  (tty:paste-lines, head:read-paste, strings:insert/delete,
+  styles:fill-range!, head:call-with-interrupt).
+
 - 2026-09-03 `paint:set-redraw-hook!`, `paint-redraw-hooked` (core),
   `paint:visual-bell-active?`/`set-visual-bell-active!`: the frame and
   the bell live in paint.e, so nothing outside needs to ask for a frame
