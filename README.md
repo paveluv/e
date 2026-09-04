@@ -122,34 +122,34 @@ immediately.
 
 ## Documentation
 
-- [Buffers and windows](docs/BUFFERS.md): files, splits, scrolling, line
+- [Buffers and windows](manual/BUFFERS.md): files, splits, scrolling, line
   numbers, scrollbars, mouse behavior, `*buffers*`, and the buffer API.
-- [Evaluation](docs/EVAL.md): M-x, `eval!`, multiline commands, output capture,
+- [Evaluation](manual/EVAL.md): M-x, `eval!`, multiline commands, output capture,
   interruption, history, and result copying.
-- [Terminal buffers](docs/TERMINAL.md): capture, escape, emulation, scrollback,
+- [Terminal buffers](manual/TERMINAL.md): capture, escape, emulation, scrollback,
   titles, process lifetime, and the terminal API.
-- [Search and replacement](docs/SEARCH.md): incremental search, smart case,
+- [Search and replacement](manual/SEARCH.md): incremental search, smart case,
   query replace, and structured replacement targets.
-- [Indentation and formatting](docs/FORMATTING.md): Scheme layout, conservative
+- [Indentation and formatting](manual/FORMATTING.md): Scheme layout, conservative
   and intrusive formatting, save hooks, and the CLI formatter.
-- [Interactive prompts](docs/PROMPTS.md): editing, multiline input, completion,
+- [Interactive prompts](manual/PROMPTS.md): editing, multiline input, completion,
   styling, suggestions, and prompt APIs.
-- [Echo area and log](docs/LOG.md): structured messages, progress, histories,
+- [Echo area and log](manual/LOG.md): structured messages, progress, histories,
   formatters, and dynamic log views.
-- [Describe](docs/DESCRIBE.md): live reference pages, key discovery, corpus
+- [Describe](manual/DESCRIBE.md): live reference pages, key discovery, corpus
   installation, structured queries, and module-published documentation.
-- [Configuration](docs/CONFIGURATION.md): reload semantics, precedence, and
+- [Configuration](manual/CONFIGURATION.md): reload semantics, precedence, and
   common settings.
-- [Key bindings](docs/KEY_BINDING.md): key syntax, contextual maps, overrides,
+- [Key bindings](manual/KEY_BINDING.md): key syntax, contextual maps, overrides,
   unbinding, and inspection.
-- [Styles](docs/STYLES.md): the style DSL, faces, colors, terminal behavior, and
+- [Styles](manual/STYLES.md): the style DSL, faces, colors, terminal behavior, and
   configuration lifecycle.
-- [App buffers](docs/APPS.md): dynamic views, interaction, capture, mouse
+- [App buffers](manual/APPS.md): dynamic views, interaction, capture, mouse
   events, and target windows.
-- [Git](docs/GIT.md): structured repository queries and the history browser.
-- [Pretty Scheme](docs/PRETTY_SCHEME.md): structural delimiter glyphs, depth
+- [Git](manual/GIT.md): structured repository queries and the history browser.
+- [Pretty Scheme](manual/PRETTY_SCHEME.md): structural delimiter glyphs, depth
   and rainbow variants, and semantic symbol styling.
-- [Modules and architecture](docs/MODULES.md): library boundaries, hot reload,
+- [Modules and architecture](manual/MODULES.md): library boundaries, hot reload,
   registrations, modes, highlighters, and extension conventions.
 
 Development notes live in `dev/`, apart from the manual: the v2 design

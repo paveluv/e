@@ -64,7 +64,7 @@
 ;;                                ; or background colors may be named, 0..255,
 ;;                                ; or (rgb 0 0 0). Numbers and raw SGR strings
 ;;                                ; remain accepted for compatibility.
-;;                                ; Full reference: docs/STYLES.md
+;;                                ; Full reference: manual/STYLES.md
 ;;                                ; chrome is the editor's grey furniture
 ;;                                ; (prompt labels, log prefixes, ghost text)
 ;; (bind-key! "M-l" show-log!)    ; pop the *log* view with one chord
