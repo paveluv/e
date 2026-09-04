@@ -25,7 +25,8 @@ Returning to a buffer restores the position remembered by that window.
 App cursors are deliberately shared buffer state. Multiple windows showing the
 same app therefore mirror its active row; see [App buffers](APPS.md).
 
-Every window has a status line. Its leading state marker is:
+Every window has a status line. It begins with the window's number and a bar,
+`0|`, then the state marker:
 
 | Marker | Meaning |
 |---|---|
@@ -37,6 +38,12 @@ Every window has a status line. Its leading state marker is:
 
 The status line also shows the buffer name, one-based line and column, detected
 mode, remaining merge-conflict count, and applicable command hints.
+
+Windows are numbered from 0. A new window takes the smallest number no window
+holds, so a closed window's number goes to the next window created and the
+numbers on screen stay small. `(window 1)` names the window numbered 1 in M-x
+and in module code, the way `(buffer "name")` names a buffer, and windows print
+in that form.
 
 ## Switching, creating, and killing
 
@@ -278,6 +285,7 @@ The public Scheme API exposes read-only inspection through `current-buffer`,
 `buffer-line`, `buffer-line-count`, and `mode:line-styles`.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
+`(window n)` looks up the window numbered n, and windows print as `(window n)`.
 `head:new-buffer`, `fresh-buffer`, `show-buffer!`, `display-buffer!`,
 `pop-up-or-reuse!`, `kill-buffer!`,
 `buffer-append!`, `mode:choose!`, and `set-buffer-read-only!` provide
