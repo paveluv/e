@@ -183,9 +183,14 @@ stopped knowing about capture.
       wrap-lines knob stays bare for config.e), and the screen cache with
       begin-frame!/invalidate; the mode registry reaches it through one
       hook (#(name render row-styler line-styler)).  Native scrolling was
-      removed rather than moved.  Remaining with the core: the frame
-      driver -- scroll-window!/page-window!, the echo area's painting,
-      redraw-frame!, place-cursor!, terminal size -- and the prompts.
+      removed rather than moved.  Then the frame driver: terminal size,
+      the window layout, the viewport logic that keeps point visible
+      (scroll-window!, page-size, view invalidation), the echo area's
+      painting and geometry, the visual bell, the terminal title, and
+      place-cursor! -- screen size and liveness behind accessors, with
+      one redraw hook the core installs.  Remaining with the core:
+      redraw-frame!/redraw! (the frame's orchestration, which leaves
+      with the main loop), page-window!, and the prompts.
       History: the row painter moved first -- display-editor-line
       (styled runs, marks, links, selection, wrap/truncation edges),
       emit-runs, ansi/goto/fit, soft-wrap break computation, and
@@ -272,6 +277,16 @@ stopped knowing about capture.
       now as bare user-facing conveniences: load-module! and
       reload-module! (kernel:).  The 19 identifier-syntax facades for
       mutable seat state stay until the code using them moves
+- [x] `strings.e` is the one home of the small pure helpers: core's
+      string-tail/prefix?/suffix?/join/search/split-lines/common-prefix
+      copies are gone (lines and common-prefix joined the module, with
+      tests/strings.ss), nine extension modules import strings:
+      directly, and the two standalone leaves (scheme-format, https)
+      dropped their private copies -- diff.e keeps its six-argument
+      common-prefix, a different function.  `kernel:condition-text`
+      replaced the three condition formatters (core's error-text,
+      head's and policy's condition-text): the kernel already catches
+      conditions at the module boundary, so it also says what they read as
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e
@@ -286,8 +301,9 @@ priority; items graduate into stage tasks when picked up.
 | P | Debt | Notes |
 |---|---|---|
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
-| 10 | Store-outage recovery has no test | `lib/core.e` `adopt-local!`/`reconverge-forked!` (a store call failing with the twin still present: fork the cache, log once, re-baseline at frame time) lost its only wiring test when foreign deletion became a lifecycle event rather than an outage. Fix: a fault-injection hook -- a `state:` parameter or a test-only wrapper that makes `edit!` raise once -- driven from tests/wiring.ss to assert the fork log line and the reconvergence. |
+| 10 | Store-outage recovery has no test | `lib/head.e` `adopt-local!`/`reconverge-forked!` (a store call failing with the twin still present: fork the cache, log once, re-baseline at frame time) lost its only wiring test when foreign deletion became a lifecycle event rather than an outage. Fix: a fault-injection hook -- a `state:` parameter or a test-only wrapper that makes `edit!` raise once -- driven from tests/wiring.ss to assert the fork log line and the reconvergence. |
 | 10 | describe entries of moved names still say `(core)` | The facade sweep (2026-09-03) renamed moved API to its seam prefixes in `lib/describe.e`'s entry keys and forms (e.g. `keymap:bind-default-key!`), but each entry's libraries field still reads `("(core)")`. Fix: set the field to the owning seam for every prefixed key -- a small script over the register-descriptions! data; the describe page then names the right library. |
 | 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |
+| 5 | scheme-format refuses the shebang test suites and garbles its read errors | `tools/scheme-format` fails on every `tests/*.ss` (the `#!/usr/bin/env scheme-script` first line does not read as data) and reports it as the raw template `~? at char ~a of ~s`: the tool prints a condition's message without its irritants. Fix: skip a leading shebang line, and print read errors through `kernel:condition-text`. Until then the format-before-commit rule covers lib/*.e only. |

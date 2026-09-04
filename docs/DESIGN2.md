@@ -233,7 +233,7 @@ unless noted, loaded by the same loader. Layer by layer:
 
 | File | Owns |
 |---|---|
-| `kernel.e` | registries, module load/reload, init!/retract, boot |
+| `kernel.e` | persistent cells, registries, module load/reload, init!/retract, boot, mailboxes, the text of a caught condition (`condition-text`) |
 | `actors.e` | actor identity and sessions, mailboxes, the ask/reply interaction protocol |
 
 **State**:
@@ -266,6 +266,7 @@ that lets v0.1 reload modules under a running editor.
 | File | Owns |
 |---|---|
 | `sys.e` | FFI: processes, PTYs, termios, fd plumbing (input decoding moves out, to `tty.e`) |
+| `strings.e` | the pure string helpers every layer shares (tail, prefix?/suffix?, join, KMP search, lines, common-prefix) -- the one copy; no module keeps its own |
 | `json.e` | JSON (unchanged) |
 | `https.e` | HTTP(S) with the channel/connector seams (unchanged) |
 

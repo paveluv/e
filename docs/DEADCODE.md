@@ -20,11 +20,21 @@ with a date; deletions note the commit.
   `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
   `pump-handlers-installed`, `head-client-hooked`,
   `conflict-status-hinted`, `completions-status-hinted`,
-  `paint-mode-hooked`
+  `paint-mode-hooked`, `paint-redraw-hooked`
   (core, the v2 wiring; `state-subscription` now lives in head.e).
   Skip these in future sweeps.
 
 ## Deleted
+
+- 2026-09-03 the string helpers' copies (core, scheme-format, https):
+  `string-tail`, `string-prefix?`, `string-suffix?`, `string-join`,
+  `string-search`, `split-lines`, `common-prefix` in core and the
+  private `string-prefix?`/`string-tail` of scheme-format.e and
+  https.e -- strings.e is their one home (`strings:lines` and
+  `strings:common-prefix` joined it).  The condition formatter had
+  three copies too -- core's `error-text`, head's and policy's
+  `condition-text` -- now `kernel:condition-text`.  diff.e's
+  six-argument `common-prefix` is a different function and stays.
 
 - 2026-09-03 native scrolling (core): `native-scroll!`, `shift-screen-cache!`,
   and the window record's `shown-top` field -- a bytes-on-the-wire
