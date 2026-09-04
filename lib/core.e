@@ -151,57 +151,32 @@
     (identifier-syntax [id (head:buffers)]
       [(set! id v) (head:set-buffers! v)]))
 
-  ;; Shared facts, read and written through the store.  The fallbacks
-  ;; only cover a buffer whose twin is missing (a store outage, a
-  ;; failed mirror creation); every created buffer initializes its
-  ;; managed facts, so an absent property reads honestly as #f.
-  ;;
-  ;;   file    the visited path, or #f
-  ;;   trailing whether the file ends in a newline
-  ;;   modified unsaved changes (any actor's)
-  ;;   mode    the buffer's mode NAME -- the registry record never
-  ;;           crosses the seam; find-mode resolves it on read, so a
-  ;;           reloaded mode module is picked up live
-  ;;   mode-auto whether the mode came from detection
-  ;;   read-only
-  ;;   stamp/base the disk state last agreed with: the mtime raising
-  ;;           suspicion cheaply, and the content as loaded or last
-  ;;           saved -- the base for comparisons and three-way merges
-  ;;   stale   a detected external change, worn as a red !! until a
-  ;;           save settles it
-
-  (define (buffer-fact b key fallback)
-    (let ([id (buffer-state-id b)])
-      (if id
-          (guard (ex [else fallback]) (state:property id key))
-          fallback)))
-
-  (define (buffer-fact-set! b key value)
-    (guard (ex [else (void)])
-      (when (buffer-state-id b)
-        (state:set-property! ui-actor (buffer-state-id b) key value))))
-
-  (define (buffer-file b) (buffer-fact b 'file #f))
-  (define (buffer-file-set! b v) (buffer-fact-set! b 'file v))
-  (define (buffer-trailing b) (buffer-fact b 'trailing #t))
-  (define (buffer-trailing-set! b v) (buffer-fact-set! b 'trailing v))
-  (define (buffer-modified b) (buffer-fact b 'modified #f))
-  (define (buffer-modified-set! b v) (buffer-fact-set! b 'modified v))
+  ;; Buffer facts and the store client -- the bridge between this
+  ;; seat's records and the (state) store -- live in (head) now.  The
+  ;; mode accessors stay here: the mode name is the shared fact, the
+  ;; mode record is this head's registry object.
+  (define buffer-fact head:buffer-fact)
+  (define buffer-fact-set! head:buffer-fact-set!)
+  (define buffer-file head:buffer-file)
+  (define buffer-file-set! head:buffer-file-set!)
+  (define buffer-trailing head:buffer-trailing)
+  (define buffer-trailing-set! head:buffer-trailing-set!)
+  (define buffer-modified head:buffer-modified)
+  (define buffer-modified-set! head:buffer-modified-set!)
+  (define buffer-mode-auto head:buffer-mode-auto)
+  (define buffer-mode-auto-set! head:buffer-mode-auto-set!)
+  (define buffer-read-only head:buffer-read-only)
+  (define buffer-read-only-set! head:buffer-read-only-set!)
+  (define buffer-stamp head:buffer-stamp)
+  (define buffer-stamp-set! head:buffer-stamp-set!)
+  (define buffer-base head:buffer-base)
+  (define buffer-base-set! head:buffer-base-set!)
+  (define buffer-stale head:buffer-stale)
+  (define buffer-stale-set! head:buffer-stale-set!)
   (define (buffer-mode b)
     (let ([n (buffer-fact b 'mode #f)]) (and n (find-mode n))))
   (define (buffer-mode-set! b m)
     (buffer-fact-set! b 'mode (and m (mode-name m))))
-  (define (buffer-mode-auto b) (buffer-fact b 'mode-auto #t))
-  (define (buffer-mode-auto-set! b v) (buffer-fact-set! b 'mode-auto v))
-  (define (buffer-read-only b) (buffer-fact b 'read-only #f))
-  (define (buffer-read-only-set! b v) (buffer-fact-set! b 'read-only v))
-  (define (buffer-stamp b) (buffer-fact b 'stamp #f))
-  (define (buffer-stamp-set! b v) (buffer-fact-set! b 'stamp v))
-  (define (buffer-base b) (buffer-fact b 'base #f))
-  (define (buffer-base-set! b v) (buffer-fact-set! b 'base v))
-  (define (buffer-stale b) (buffer-fact b 'stale #f))
-  (define (buffer-stale-set! b v) (buffer-fact-set! b 'stale v))
-
   ;; The head's window tree lives in the (head) seam module now: the
   ;; records, the split geometry, and the seat state (windows, the
   ;; layout root, the selected window, the layout's divider output).
@@ -281,162 +256,28 @@
   ;; overlapped mid-command) or breaks, the core keeps editing:
   ;; content wins locally and the store is reset to match.
 
-  (define ui-actor '(head main))
+  (define ui-actor head:ui-actor)
+  (define mirror-create! head:mirror-create!)
+  (define adopt-state! head:adopt-state!)
+  (define adopt-local! head:adopt-local!)
+  (define reconverge-forked! head:reconverge-forked!)
+  (define state-reset! head:state-reset!)
+  (define state-edit! head:state-edit!)
+  (define mirror-rename! head:mirror-rename!)
+  (define new-buffer head:new-buffer)
+  (define bump-buffer-revision! head:bump-buffer-revision!)
+  (define buffer-of-state-id head:buffer-of-state-id)
+  (define adopt-store-buffer! head:adopt-store-buffer!)
+  (define buffer-lines-set! head:buffer-lines-set!)
 
-  (define (mirror-create! b)
-    (guard (ex [else (void)])
-      (buffer-state-id-set!
-        b (state:create! ui-actor (buffer-name b)
-                         (vector->list (buffer-lines b))))
-      (buffer-state-rev-set! b 0)))
-
-  (define (adopt-state! b)
-    ;; make the cache the store's current text -- the vectors are
-    ;; immutable, so adoption is reference sharing, never a copy
-    (let-values ([(text revision) (state:snapshot (buffer-state-id b))])
-      (buffer-lines-raw-set! b text)
-      (buffer-state-rev-set! b revision)
-      (bump-buffer-revision! b)))
-
-  ;; Store outage: buffers whose cache forked from the store because a
-  ;; store call failed.  Each fork is logged once, edits stay local
-  ;; (never half-and-half), and every frame re-converges what it can.
-  (define forked-buffers '())
-
-  (define (adopt-local! b text)
-    ;; the store is unreachable: keep editing on the local cache
-    ;; alone -- on the record, and queued for re-convergence
-    (buffer-lines-raw-set! b text)
-    (bump-buffer-revision! b)
-    (when (and (buffer-state-id b) (not (memq b forked-buffers)))
-      (set! forked-buffers (cons b forked-buffers))
-      (guard (ex [else (void)])
-        (log! 'state
-              (format "store outage: ~s forked from the store"
-                      (buffer-name b))))))
-
-  (define (reconverge-forked!)
-    ;; recovery, at frame time: re-baseline each forked buffer from
-    ;; its cache; a store still down keeps the buffer queued, a dead
-    ;; buffer drops out.  A twin that no longer exists means another
-    ;; actor deleted the buffer: the head forgets it rather than
-    ;; resurrecting what someone killed (the lifecycle sync normally
-    ;; gets there first).
-    (when (pair? forked-buffers)
-      (set! forked-buffers
-        (filter
-          (lambda (b)
-            (guard (ex [else #t])
-              (cond
-                [(not (memq b (buffer-list))) #f]
-                [(not (state:exists? (buffer-state-id b)))
-                 (buffer-state-id-set! b #f)
-                 (forget-buffer! b)
-                 #f]
-                [else
-                 (state:reset! ui-actor (buffer-state-id b)
-                               (buffer-lines b))
-                 (adopt-state! b)
-                 (log-reconvergence! b)
-                 #f])))
-          forked-buffers))))
-
-  (define (log-reconvergence! b)
-    (guard (ex [else (void)])
-      (log! 'state
-            (format "store recovered: ~s re-baselined from the editor"
-                    (buffer-name b)))))
-
-  (define (state-reset! b new-lines)
-    ;; wholesale replacement: a new store baseline, adopted back --
-    ;; which is exactly re-convergence, so a success unforks
-    (if (buffer-state-id b)
-        (guard (ex [else (adopt-local! b new-lines)])
-          (state:reset! ui-actor (buffer-state-id b) new-lines)
-          (adopt-state! b)
-          (set! forked-buffers (remq b forked-buffers)))
-        (adopt-local! b new-lines)))
-
-  (define (state-edit! b span replacement)
-    ;; The ui's text edits go through the store first and the cache
-    ;; adopts the result.  A stale refusal means a foreign edit
-    ;; overlapped mid-command: core content wins -- the edit applies
-    ;; to the cache's coordinates and resets the store (the conflict
-    ;; is in the audit log; see the tech debt ledger).
-    (define (local-text)
-      (let-values ([(new-text delta)
-                    (text:apply-edit (buffer-lines b) span replacement)])
-        new-text))
-    (if (and (buffer-state-id b) (not (memq b forked-buffers)))
-        (guard (ex [else (adopt-local! b (local-text))])
-          (let-values ([(status info)
-                        (state:edit! ui-actor (buffer-state-id b)
-                                     (buffer-state-rev b)
-                                     span replacement)])
-            (if (eq? status 'applied)
-                (begin (adopt-state! b) (note-ui-edit! b))
-                (let ([foreign
-                       (guard (ex [else #f])
-                         (find (lambda (entry)
-                                 (not (equal? (cadr entry) ui-actor)))
-                               (state:history (buffer-state-id b) 8)))])
-                  ;; the conflict is on the record before core wins
-                  (guard (ex [else (void)])
-                    (log! 'state
-                          (format "conflict: ui overrode ~a in ~s"
-                                  (if foreign (cadr foreign) "another actor")
-                                  (buffer-name b))))
-                  (state-reset! b (local-text))
-                  ;; ... and the losing actor is told, after the reset
-                  ;; settles, so a re-read sees the truth:
-                  ;; (conflict buffer-id buffer-name winning-actor)
-                  (when foreign
-                    (guard (ex [else (void)])
-                      (actors:send! (cadr foreign)
-                                    (list 'conflict (buffer-state-id b)
-                                          (buffer-name b)
-                                          ui-actor))))))))
-        (adopt-local! b (local-text))))
-
-  (define (mirror-rename! b)
-    (when (buffer-state-id b)
-      (guard (ex [else (void)])
-        (state:rename! ui-actor (buffer-state-id b) (buffer-name b)))))
-
-  (define (new-buffer name)
-    (let ([b (make-buffer name (vector "") 0 (vector '() '())
-                          0 0 #f 0 0 0 'default #f 0)])
-      (mirror-create! b)
-      ;; the managed facts start explicit, so absence stays honest
-      (buffer-trailing-set! b #t)
-      (buffer-mode-auto-set! b #t)
-      (buffer-fact-set! b 'wrap 'default)
-      b))
-
-  (define (bump-buffer-revision! b)
-    (buffer-revision-set! b (+ (buffer-revision b) 1)))
-
-  (define (buffer-of-state-id id)
-    (find (lambda (b) (eqv? (buffer-state-id b) id)) buffers))
-
-  (define (adopt-store-buffer! id)
-    ;; Another actor created a store buffer: give this head a record
-    ;; for it, so it shows in the buffer list like any other -- unless
-    ;; its creator marked it ephemeral (a head's own pop-ups).  It
-    ;; joins at the end: this seat did not ask for it.  A buffer with
-    ;; no mode yet gets detection, recorded as the shared fact.
-    (unless (or (buffer-of-state-id id)
-                (state:property id 'ephemeral))
-      (let-values ([(text revision) (state:snapshot id)])
-        (let ([b (make-buffer (state:buffer-name id) text 0
-                              (vector '() '()) 0 0 #f 0 0 0
-                              'default id revision)])
-          (unless (buffer-mode b) (assign-mode! b))
-          (unless (buffer-fact b 'wrap #f) (buffer-fact-set! b 'wrap 'default))
-          (set! buffers (append buffers (list b)))))))
-
-  (define (buffer-lines-set! b new-lines)
-    (state-reset! b new-lines))
+  ;; what the store client needs from the head's owner: how to forget
+  ;; a buffer whose twin is gone, how to invalidate the painted screen,
+  ;; and how to give an adopted buffer a mode
+  (define head-client-hooked
+    (head:set-client-hooks!
+      (lambda (b) (forget-buffer! b))
+      (lambda () (invalidate-screen-cache!))
+      (lambda (b) (assign-mode! b))))
 
   (define buffers-initialized                              ; most recent first
     (set! buffers (list (new-buffer "*scratch*"))))
@@ -2210,24 +2051,7 @@
         (invalidate-screen-cache!)
         (clamp-buffer-positions! b))))
 
-  (define (clamp-buffer-positions! b)
-    ;; keep the buffer's spot and every window's point inside the
-    ;; (possibly shorter) current lines
-    (let* ([v (buffer-lines b)]
-           [last (- (vector-length v) 1)])
-      (buffer-spot-row-set! b (min (buffer-spot-row b) last))
-      (buffer-spot-col-set!
-        b (min (buffer-spot-col b)
-               (string-length (vector-ref v (buffer-spot-row b)))))
-      (for-each
-        (lambda (w)
-          (when (eq? (window-buffer w) b)
-            (window-prow-set! w (min (window-prow w) last))
-            (window-pcol-set!
-              w (min (window-pcol w)
-                     (string-length (vector-ref v (window-prow w)))))
-            (window-top-set! w (min (window-top w) last))))
-        windows)))
+  (define clamp-buffer-positions! head:clamp-buffer-positions!)
 
   ;;; The log -----------------------------------------------------------------
 
@@ -4057,280 +3881,13 @@
           (ansi "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
           (loop (+ row 1))))))
 
-  ;; Foreign actors edit the (state) store directly; their changes
-  ;; flow back into the core's line caches before each frame.  The
-  ;; subscription callback runs on whichever thread edited, so it only
-  ;; records the buffer id; the main loop does the adoption.
-  (define foreign-lock (make-mutex))
-  (define foreign-pending '())
-
-  (define (event-actor event)
-    ;; every store event names its actor last: (delete id actor) is
-    ;; the one three-element shape
-    (if (eq? (car event) 'delete) (caddr event) (list-ref event 3)))
-
-  (define (note-foreign-event event)
-    (when (and (memq (car event) '(edit reset property create rename delete))
-               (not (equal? (event-actor event) ui-actor)))
-      (with-mutex foreign-lock
-        (set! foreign-pending (cons event foreign-pending)))
-      (wake-main!)))
-
-  (define state-subscription (state:subscribe! #f note-foreign-event))
-
-  ;; The ui's own side of the audit stream, coalesced: keystrokes are
-  ;; too many to log one by one, so consecutive ui edits to a buffer
-  ;; batch into one entry -- flushed before a foreign actor's
-  ;; operation on the same buffer (so the record reads in true
-  ;; order), when a burst goes stale, and at shutdown.
-  (define ui-audit-bursts '())  ; (id . #(name first-rev last-rev n time))
-
-  (define (note-ui-edit! b)
-    (guard (ex [else (void)])
-      (let* ([id (buffer-state-id b)]
-             [rev (buffer-state-rev b)]
-             [hit (assv id ui-audit-bursts)]
-             [now (time-second (current-time 'time-monotonic))])
-        (if hit
-            (let ([v (cdr hit)])
-              (vector-set! v 2 rev)
-              (vector-set! v 3 (+ (vector-ref v 3) 1))
-              (vector-set! v 4 now))
-            (set! ui-audit-bursts
-              (cons (cons id (vector (buffer-name b) rev rev 1 now))
-                    ui-audit-bursts))))))
-
-  (define (flush-ui-audit! which)
-    ;; which: a buffer id, 'stale (idle bursts), or 'all
-    (let ([now (time-second (current-time 'time-monotonic))])
-      (let-values ([(flushed kept)
-                    (partition
-                      (lambda (entry)
-                        (case which
-                          [(all) #t]
-                          [(stale)
-                           (> (- now (vector-ref (cdr entry) 4)) 3)]
-                          [else (eqv? (car entry) which)]))
-                      ui-audit-bursts)])
-        (set! ui-audit-bursts kept)
-        (for-each
-          (lambda (entry)
-            (guard (ex [else (void)])
-              (let ([v (cdr entry)])
-                (log! 'state
-                      (format "ui: ~a edit~a in ~s (revisions ~a-~a)"
-                              (vector-ref v 3)
-                              (if (= (vector-ref v 3) 1) "" "s")
-                              (vector-ref v 0)
-                              (vector-ref v 1) (vector-ref v 2))
-                      #f))))
-          (reverse flushed)))))
+  (define flush-ui-audit! head:flush-ui-audit!)
 
   (define ui-audit-flushed-at-exit
     (add-shutdown-hook! (lambda () (flush-ui-audit! 'all))))
 
-  (define (sync-foreign-edits!)
-    (let ([events (with-mutex foreign-lock
-                    (let ([pending foreign-pending])
-                      (set! foreign-pending '())
-                      (reverse pending)))])
-      ;; the audit stream: every foreign operation is on the record --
-      ;; (log-view 'state) shows what other actors did
-      (for-each
-        (lambda (event)
-          (guard (ex [else (void)])
-            (let ([id (cadr event)] [actor (event-actor event)])
-              ;; the modified flag flips on every edit: audit the
-              ;; edits, not their bookkeeping shadow
-              (unless (and (eq? (car event) 'property)
-                           (eq? (caddr event) 'modified))
-                (flush-ui-audit! id)
-                (log! 'state
-                      (case (car event)
-                        [(create)
-                         (format "~a created ~s" actor (caddr event))]
-                        [(rename)
-                         (format "~a renamed ~s to ~s" actor
-                                 (let ([b (buffer-of-state-id id)])
-                                   (if b (buffer-name b) id))
-                                 (caddr event))]
-                        [(delete)
-                         (format "~a deleted ~s" actor
-                                 (let ([b (buffer-of-state-id id)])
-                                   (if b (buffer-name b) id)))]
-                        [(property)
-                         (format "~a set ~a of ~s"
-                                 actor (caddr event)
-                                 (state:buffer-name id))]
-                        [else
-                         (format "~a ~a ~s~a"
-                                 actor
-                                 (if (eq? (car event) 'reset)
-                                     "reset" "edited")
-                                 (state:buffer-name id)
-                                 (if (eq? (car event) 'edit)
-                                     (format " at ~a"
-                                             (text:span-start
-                                               (text:delta-span
-                                                 (list-ref event 4))))
-                                     ""))]))))))
-        events)
-      ;; the buffer lifecycle across heads: another actor's buffers
-      ;; appear in this head's list, renames follow, and a deletion
-      ;; drops the record -- any window showing it moves on
-      (for-each
-        (lambda (event)
-          (guard (ex [else (void)])
-            (case (car event)
-              [(create) (adopt-store-buffer! (cadr event))]
-              [(rename)
-               (let ([b (buffer-of-state-id (cadr event))])
-                 (when b (buffer-name-set! b (caddr event))))]
-              [(delete)
-               (let ([b (buffer-of-state-id (cadr event))])
-                 (when b
-                   (buffer-state-id-set! b #f)   ; the twin is gone
-                   (forget-buffer! b)))]
-              [else (void)])))
-        events)
-      ;; a foreign fact changed (mode, file, read-only): the status
-      ;; line must repaint even though no text moved
-      (for-each
-        (lambda (event)
-          (when (eq? (car event) 'property)
-            (let ([b (find (lambda (b)
-                             (eqv? (buffer-state-id b) (cadr event)))
-                           buffers)])
-              (when b
-                (bump-buffer-revision! b)
-                (invalidate-screen-cache!)))))
-        events)
-      ;; carry every view's point across the foreign deltas, so a
-      ;; cursor keeps its content when an agent edits above it
-      (for-each
-        (lambda (event)
-          (when (eq? (car event) 'edit)
-            (let ([b (find (lambda (b)
-                             (eqv? (buffer-state-id b) (cadr event)))
-                           buffers)])
-              (when b
-                (guard (ex [else (void)])
-                  (let ([d (list-ref event 4)])
-                    (for-each
-                      (lambda (w)
-                        (when (eq? (window-buffer w) b)
-                          (let ([p (text:rebase-position
-                                     (cons (window-prow w)
-                                           (window-pcol w))
-                                     d)])
-                            (window-prow-set! w (car p))
-                            (window-pcol-set! w (cdr p)))
-                          (window-top-set!
-                            w (car (text:rebase-position
-                                     (cons (window-top w) 0) d)))))
-                      windows)
-                    (let ([p (text:rebase-position
-                               (cons (buffer-spot-row b)
-                                     (buffer-spot-col b))
-                               d)])
-                      (buffer-spot-row-set! b (car p))
-                      (buffer-spot-col-set! b (cdr p)))))))))
-        events)
-      (for-each
-        (lambda (id)
-          (let ([b (find (lambda (b) (eqv? (buffer-state-id b) id))
-                         buffers)])
-            (when b
-              (guard (ex [else (void)])
-                (let-values ([(text revision) (state:snapshot id)])
-                  (unless (= revision (buffer-state-rev b))
-                    ;; adoption is sharing: nothing mutates in place
-                    (buffer-lines-raw-set! b text)
-                    (bump-buffer-revision! b)
-                    (buffer-state-rev-set! b revision)
-                    (when (buffer-file b) (buffer-modified-set! b #t))
-                    (clamp-buffer-positions! b)
-                    (invalidate-screen-cache!)))))))
-        (let dedupe ([ids (map cadr events)] [seen '()])
-          (cond [(null? ids) (reverse seen)]
-                [(memv (car ids) seen) (dedupe (cdr ids) seen)]
-                [else (dedupe (cdr ids) (cons (car ids) seen))])))))
-
-  ;; Stage 1's tail: the human's cursor is a first-class mark other
-  ;; actors can see.  Published once per frame, for the selected
-  ;; window's buffer, under the ui actor's 'point.
-  ;; What the head looks at, published as state marks other actors can
-  ;; read, refreshed per frame by a desired-versus-published diff:
-  ;; every window's cursor as (point . serial), the selected window's
-  ;; additionally as plain 'point, and the active region as 'region
-  ;; and (region . serial).  A mark drops when its window closes,
-  ;; looks at another buffer, or the selection deactivates.  Serials
-  ;; ride a weak table, so closed windows carry theirs to the grave.
-
-  (define window-serial-counter 0)
-  (define window-serials (make-weak-eq-hashtable))
-
-  (define (window-serial w)
-    (or (hashtable-ref window-serials w #f)
-        (begin
-          (set! window-serial-counter (+ window-serial-counter 1))
-          (hashtable-set! window-serials w window-serial-counter)
-          window-serial-counter)))
-
-  ;; (((id . name) . value) ...): value is (row . col) for a point,
-  ;; ((row . col) . (row . col)) for a region -- plain data, so frames
-  ;; without changes are equal? and publish nothing
-  (define published-marks '())
-
-  (define (desired-head-marks)
-    (fold-left
-      (lambda (acc w)
-        (let ([id (buffer-state-id (window-buffer w))])
-          (if (not id)
-              acc
-              (let* ([serial (window-serial w)]
-                     [selected? (eq? w current-window)]
-                     [p (cons (window-prow w) (window-pcol w))]
-                     [acc (cons (cons (cons id (cons 'point serial)) p)
-                                acc)]
-                     [acc (if selected?
-                              (cons (cons (cons id 'point) p) acc)
-                              acc)])
-                (if (and selected? mark-active?)
-                    (let ([region (cons (cons mark-row mark-col) p)])
-                      (cons* (cons (cons id (cons 'region serial)) region)
-                             (cons (cons id 'region) region)
-                             acc))
-                    acc)))))
-      '() windows))
-
-  (define (mark-value value)
-    ;; a region value becomes a normalized span; a point stays a pair
-    (if (pair? (car value))
-        (text:normalize-span
-          (text:make-span (caar value) (cdar value)
-                          (cadr value) (cddr value)))
-        value))
-
-  (define (publish-head-marks!)
-    (guard (ex [else (void)])
-      (let ([desired (desired-head-marks)])
-        (unless (equal? desired published-marks)
-          (for-each
-            (lambda (entry)
-              (unless (assoc (car entry) desired)
-                (guard (ex [else (void)])
-                  (state:drop-mark! ui-actor (caar entry) (cdar entry)))))
-            published-marks)
-          (for-each
-            (lambda (entry)
-              (let ([old (assoc (car entry) published-marks)])
-                (unless (and old (equal? (cdr old) (cdr entry)))
-                  (guard (ex [else (void)])
-                    (state:set-mark! ui-actor (caar entry) (cdar entry)
-                                     (mark-value (cdr entry)))))))
-            desired)
-          (set! published-marks desired)))))
+  (define sync-foreign-edits! head:sync-foreign-edits!)
+  (define publish-head-marks! head:publish-head-marks!)
 
   (define (state-frame-sync!)
     ;; lifecycle first: a foreign deletion forgets the buffer before

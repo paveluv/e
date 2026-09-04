@@ -207,7 +207,15 @@ stopped knowing about capture.
       the remembered tiling (tile!), window/status-button/divider
       hit-testing, divider-drag weight arithmetic, and double-click
       timing; mouse reporting negotiation moved to tty.e; the actions
-      (focus, selection, scrolling, app dispatch) stay with the commands, the seat state (windows, layout root,
+      (focus, selection, scrolling, app dispatch) stay with the commands,
+      and the store client -- the bridge between the seat's records and
+      the (state) store: buffer facts, mirror creation and adoption,
+      transactional edits with conflict handling, resets, outage
+      recovery, the foreign-event sync with its audit and lifecycle
+      handling, and head-mark publication -- with three owner hooks
+      (forget a buffer, invalidate the screen, assign a mode).  Over
+      the wire, a remote seat is exactly this client with a socket
+      under the state: calls, the seat state (windows, layout root,
       selected window, divider output) behind identifier-syntax
       facades, and the pure tiling geometry (leaves, replace, parent,
       minima, weighted splits, layout-node!).  Remaining: routing

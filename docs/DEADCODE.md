@@ -18,8 +18,9 @@ with a date; deletions note the commit.
   `ui-actor-registered`, `log-presenter-installed`,
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
   `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
-  `pump-handlers-installed`
-  (core, the v2 wiring). Skip these in future sweeps.
+  `pump-handlers-installed`, `head-client-hooked`
+  (core, the v2 wiring; `state-subscription` now lives in head.e).
+  Skip these in future sweeps.
 
 ## Deleted
 
