@@ -670,11 +670,11 @@
       (and (> (string-length text) 0)
            (pair? (doc-lookup (string->symbol text)))))
     (let ([name (parameterize ([completion-highlight editor-name?]
-                               [echo-highlight
-                                (prompt-styler
+                               [paint:echo-highlight
+                                (paint:prompt-styler
                                   label
-                                  (completion-styler described-name?
-                                                     editor-name?))])
+                                  (paint:completion-styler described-name?
+                                                           editor-name?))])
                   (prompt! label complete-described-name))])
       (when (and name (> (string-length name) 0))
         (describe! (string->symbol name))))

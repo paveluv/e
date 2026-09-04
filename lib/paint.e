@@ -24,15 +24,33 @@
           highlight-ranges add-hyperlinker! buffer-line-hyperlinks
           ranges-on-row region-span
           begin-frame! invalidate-screen-cache! erase-screen! paint!
-          paint-dividers! paint-window! set-mode-hook!)
+          paint-dividers! paint-window! set-mode-hook!
+          screen-rows set-screen-rows! screen-cols set-screen-cols!
+          mark-size-dirty! screen-live? set-screen-live! reset-cursor-style!
+          visual-bell-active? set-visual-bell-active! set-redraw-hook!
+          window-layout page-size set-buffer-viewports!
+          reset-buffer-viewports! view-invalidate! point-visible?
+          rows-before scroll-margin view-overflows? scroll-window!
+          echo-indent-now compute-echo-spans echo-position
+          cursor-in-echo echo-highlight prompt-styler
+          completion-styler echo-cursor-now show-message!
+          show-prompt-message! echo-append! echo-queue!
+          present-echo! echo-log-prefix echo-log-spans
+          echo-log-rows display-echo-log-row paint-echo-area!
+          echo-cap update-echo-geometry! paint-visual-bell!
+          update-terminal-title! window-screen-position
+          place-cursor! terminal-size!)
   (import (rnrs) (rnrs mutable-strings) (rnrs r5rs)
           (only (chezscheme)
                 box void format make-parameter make-weak-eq-hashtable
-                eq-hashtable-ref eq-hashtable-set! remq)
-          (only (sys) terminal-output-port terminal-character-width)
+                eq-hashtable-ref eq-hashtable-set! remq getenv
+                make-mutex with-mutex unbox set-box!)
+          (only (sys) terminal-output-port terminal-character-width
+                terminal-size watch-terminal-resize!)
           (prefix (styles) styles:)
           (prefix (strings) strings:)
           (prefix (head) head:)
+          (prefix (echo) echo:)
           (prefix (kernel) kernel:))
 
   ;;; Output primitives ---------------------------------------------------------
@@ -728,4 +746,612 @@
                         (substring text content-width n)
                         "\x1b;[0m"))))))))
 
+
+  ;;; The frame driver ----------------------------------------------------------------
+
+  ;; The screen's size, whether the terminal is ours, the viewport
+  ;; logic that keeps point visible, the echo area's painting, the
+  ;; cursor, the title, and the visual bell.  redraw-frame! -- the
+  ;; frame's orchestration -- stays above, with the head's owner: it
+  ;; also drives prompts and layout surgery.
+
+  (define rows 24)
+  (define cols 80)
+  (define (screen-rows) rows)
+  (define (set-screen-rows! n) (set! rows n))
+  (define (screen-cols) cols)
+  (define (set-screen-cols! n) (set! cols n))
+  (define (mark-size-dirty!) (set! size-dirty? #t))
+  (define (set-screen-live! on?) (set! the-screen-live? on?))
+  (define (screen-live?) the-screen-live?)
+  (define (reset-cursor-style!)
+    ;; on the way out: the terminal's default cursor, unless it already shows
+    (unless (string=? cursor-style-shown "\x1b;[0 q")
+      (ansi "\x1b;[0 q")))
+  (define the-visual-bell-active? #f)
+  (define (set-visual-bell-active! on?) (set! the-visual-bell-active? on?))
+  (define (visual-bell-active?) the-visual-bell-active?)
+  (define (current-lines) (head:buffer-lines (head:window-buffer (head:current))))
+
+  ;; a full frame, when a change to the echo area's height moves every
+  ;; window: the frame's orchestration lives with the owner
+  (define redraw-hook void)
+  (define (set-redraw-hook! proc) (set! redraw-hook proc))
+
+  ;;; Terminal size ---------------------------------------------------------
+
+  ;; The system-specific work (termios, ioctl, SIGWINCH) lives in (sys);
+  ;; here only the editor's idea of its size.  Without a terminal, sizes
+  ;; fall back to LINES/COLUMNS.
+
+  (define size-dirty? #t)
+
+  ;; C-l also forces a size refresh in case resize events are unavailable.
+  (define sigwinch-registered
+    (watch-terminal-resize! (lambda () (set! size-dirty? #t))))
+
+  (define (env-number name fallback)
+    (let* ([s (getenv name)]
+           [n (and s (string->number s))])
+      (if (and n (exact? n) (integer? n) (> n 0)) n fallback)))
+
+  (define (terminal-size!)
+    (when size-dirty?
+      (set! size-dirty? #f)
+      (set! rows (max 4 (env-number "LINES" 24)))
+      (set! cols (max 20 (env-number "COLUMNS" 80)))
+      (let ([size (terminal-size)])
+        (when size
+          (set! rows (max 4 (car size)))
+          (set! cols (max 20 (cdr size)))))))
+  (define (window-layout)
+    ;; Tile the persistent split tree into the screen minus the echo
+    ;; area; -> ((window start text-height) ...), start 0-based.  The
+    ;; head remembers the tiling for mouse hit-testing.
+    (head:tile! cols (max 2 (- rows (echo:height)))))
+
+  (define (page-size)
+    ;; The scrollable body height. Sticky app rows are fixed chrome and do not
+    ;; form part of a page.
+    (let ([height (caddr (assq (head:current) (window-layout)))])
+      (max 1 (- height
+                (min height
+                     (head:buffer-sticky-lines (head:window-buffer (head:current))))))))
+
+  ;; Soft wrap breaks at word boundaries: each line has a break table
+  ;; -- the start position of every visual segment -- computed
+  ;; greedily (the last space that fits; a word longer than the width
+  ;; breaks mid-word) and memoized per line string and width, like the
+  ;; style cache: edits replace line strings, so identity keys it.
+  (define (set-buffer-viewports! b position top excluded-windows)
+    (let* ([v (head:buffer-lines b)]
+           [row (max 0 (min (car position) (- (vector-length v) 1)))]
+           [col (max 0 (min (cdr position)
+                            (string-length (vector-ref v row))))]
+           [top (max 0 (min top (- (vector-length v) 1)))])
+      (head:buffer-spot-row-set! b row)
+      (head:buffer-spot-col-set! b col)
+      (head:buffer-spot-top-set! b top)
+      (for-each
+        (lambda (w)
+          (when (and (eq? (head:window-buffer w) b)
+                     (not (memq w excluded-windows)))
+            (head:window-top-set! w top)
+            (head:window-topseg-set! w 0)
+            (head:window-left-set! w 0)
+            (head:window-prow-set! w row)
+            (head:window-pcol-set! w col)))
+        (head:windows))
+      b))
+
+  (define (reset-buffer-viewports! b position)
+    (set-buffer-viewports! b position 0 '()))
+
+  (define (view-invalidate! b)
+    ;; Dynamic row renderers can change their presentation while the view's
+    ;; structural placeholder (current-lines) remain equal. Mark the display stale
+    ;; explicitly so the next frame asks the renderer for every visible row.
+    (unless (head:app-buffer? b)
+      (error 'view-invalidate! "not an app or view buffer" b))
+    (invalidate-screen-cache!)
+    b)
+
+  (define (point-visible?)
+    (let* ([entry (assq (head:current) (window-layout))]
+           [p (window-screen-position (head:current) (head:window-prow (head:current)) (head:window-pcol (head:current)))])
+      (and entry (< (cadr entry) (car p))
+           (<= (car p) (+ (cadr entry) (caddr entry))))))
+
+  (define (rows-before w prow pcol)
+    ;; Screen rows between w's top -- its first visible segment -- and
+    ;; point, wrap-aware.
+    (let* ([v (head:buffer-lines (head:window-buffer w))]
+           [sticky (head:buffer-sticky-lines (head:window-buffer w))])
+      (let loop ([i (max sticky (head:window-top w))]
+                 [n (- (head:window-topseg w))])
+        (if (>= i prow)
+            (+ n (if (window-wrapped? w)
+                     (segment-of (line-breaks w (vector-ref v prow)) pcol)
+                     0))
+            (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
+
+  ;; The minimal visual distance kept between the cursor and the
+  ;; window's top and bottom edges: scrolling starts that early, and
+  ;; the cursor enters the zone only where the view cannot scroll any
+  ;; further (the ends of the buffer).  Configurable in config.e.
+  (define scroll-margin
+    (make-parameter 8 (lambda (v) (max 0 v))))
+
+  (define (view-overflows? w v height)
+    ;; Is there more content than the window holds, counting from its
+    ;; top segment?
+    (let loop ([i (max (head:buffer-sticky-lines (head:window-buffer w))
+                       (head:window-top w))]
+               [n (- (head:window-topseg w))])
+      (cond [(> n height) #t]
+            [(>= i (vector-length v)) #f]
+            [else (loop (+ i 1)
+                        (+ n (line-segments w (vector-ref v i))))])))
+
+  (define (scroll-window! w height)
+    ;; Clamp w's point to its buffer (edits in another window may have moved
+    ;; the ground under it) and scroll so point stays visible -- at
+    ;; least scroll-margin rows from the edges, where the buffer's
+    ;; ends allow.
+    (let* ([v (head:buffer-lines (head:window-buffer w))]
+           [sticky (head:buffer-sticky-lines (head:window-buffer w))]
+           [height (max 1 (- height sticky))]
+           [prow (max 0 (min (head:window-prow w) (- (vector-length v) 1)))]
+           [pcol (max 0 (min (head:window-pcol w)
+                             (string-length (vector-ref v prow))))]
+           [m (min (scroll-margin) (div (max 0 (- height 1)) 2))])
+      (head:window-prow-set! w prow)
+      (head:window-pcol-set! w pcol)
+      (unless (or (not (head:app-cursor-visible-in? w))
+                  (head:app-manages-window-viewport? w))
+        (if (window-wrapped? w)
+          (let ([pseg (segment-of (line-breaks w (vector-ref v prow))
+                                  pcol)])
+            ;; a stale top (edits, toggles) clamps into the buffer
+            (head:window-top-set! w
+              (max sticky
+                   (min (head:window-top w) (- (vector-length v) 1))))
+            (head:window-topseg-set!
+              w (min (head:window-topseg w)
+                     (- (line-segments w (vector-ref v (head:window-top w)))
+                        1)))
+            ;; point above the view: its own segment row becomes the
+            ;; top, so moving up scrolls by one visual row, not by the
+            ;; whole wrapped line
+            (when (and (>= prow sticky)
+                       (or (< prow (head:window-top w))
+                         (and (= prow (head:window-top w))
+                           (< pseg (head:window-topseg w)))))
+              (head:window-top-set! w prow)
+              (head:window-topseg-set! w pseg))
+            ;; the margin above: retreat while the top of the buffer
+            ;; still allows
+            (let retreat ()
+              (when (and (< (rows-before w prow pcol) m)
+                         (or (> (head:window-top w) sticky)
+                             (> (head:window-topseg w) 0)))
+                (if (> (head:window-topseg w) 0)
+                    (head:window-topseg-set! w (- (head:window-topseg w) 1))
+                    (begin
+                      (head:window-top-set! w (- (head:window-top w) 1))
+                      (head:window-topseg-set!
+                        w (- (line-segments
+                               w (vector-ref v (head:window-top w)))
+                             1))))
+                (retreat)))
+            ;; and below: advance one visual row at a time, only while
+            ;; content actually overflows the window.  Each step reduces
+            ;; distance by exactly one; carrying it avoids rescanning from
+            ;; top to point at every step on a large jump.
+            (let advance ([distance (rows-before w prow pcol)])
+              (when (and (>= distance (- height m))
+                         (or (< (head:window-top w) prow)
+                             (< (head:window-topseg w) pseg))
+                         (view-overflows? w v height))
+                (if (< (+ (head:window-topseg w) 1)
+                       (line-segments w (vector-ref v (head:window-top w))))
+                    (head:window-topseg-set! w (+ (head:window-topseg w) 1))
+                    (begin (head:window-top-set! w (+ (head:window-top w) 1))
+                           (head:window-topseg-set! w 0)))
+                (advance (- distance 1)))))
+          (begin
+            (head:window-topseg-set! w 0)
+            (when (< prow (+ (head:window-top w) m))
+              (head:window-top-set! w (max sticky (- prow m))))
+            (when (>= prow (+ (head:window-top w) height (- m)))
+              (head:window-top-set! w
+                (min (- prow (- height 1 m))
+                     (max sticky (- (vector-length v) height)))))
+            (when (< pcol (head:window-left w)) (head:window-left-set! w pcol))
+            (when (>= pcol (+ (head:window-left w) (head:window-content-width w)))
+              (head:window-left-set! w
+                (- pcol (head:window-content-width w) -1))))))))
+
+  ;; The cache holds, per screen row, the key describing what that row
+  ;; currently shows; a row is repainted only when its key changes.  Any
+  ;; change of view (size, search highlight, window arrangement) discards
+  ;; the whole cache.
+  (define the-screen-live? #f) ; the terminal is ours only between main's
+                           ; alternate-screen enter and exit
+  (define cursor-style-shown "\x1b;[0 q")   ; DECSCUSR last emitted
+
+  (define (echo-indent-now) (echo:indent-now cols))
+
+  (define (compute-echo-spans content len)
+    (echo:compute-spans content len cols))
+
+  (define (echo-position k)
+    ;; Visual (line . column) of content index k, per echo-spans.
+    (let loop ([spans (echo:spans)] [line 0])
+      (let ([span (car spans)])
+        (if (or (null? (cdr spans)) (< k (cdr span))
+                (and (= k (cdr span)) (< k (string-length (echo:text)))
+                     (char=? (string-ref (echo:text) k) #\newline)))
+            (cons line (+ (if (= line 0) 0 (echo-indent-now))
+                          (- k (car span))))
+            (loop (cdr spans) (+ line 1))))))
+
+  ;; Parameterized on (by eval, around an evaluation), the cursor parks
+  ;; at the end of the echo area's content -- and is drawn as a blinking
+  ;; underline, so a running evaluation is visible at a glance.
+  (define cursor-in-echo (make-parameter #f))
+
+  ;; Prompts may parameterize this to style the echo content -- M-x
+  ;; gives the expression Scheme highlighting.  A procedure from the
+  ;; content string to a styles vector (as modes produce), or #f to
+  ;; style nothing; a raising styler paints plain.
+  (define echo-highlight (make-parameter #f))
+
+  (define (prompt-styler label input-styler)
+    ;; Lift a styler for the editable input into one for the complete echo
+    ;; content. The prompt label and any note stay grey; only the input is
+    ;; delegated. Shared by file, symbol, and expression prompts.
+    (let ([llen (string-length label)])
+      (lambda (content)
+        (and (strings:prefix? label content)
+             (let* ([styles (make-vector (string-length content) 'comment)]
+                    [end (min (or (echo:input-end) (string-length content))
+                              (string-length content))]
+                    [input (substring content (min llen end) end)]
+                    [inner (input-styler input)])
+               (and inner
+                    (begin
+                      (let loop ([i llen])
+                        (when (< i end)
+                          (vector-set! styles i (vector-ref inner (- i llen)))
+                          (loop (+ i 1))))
+                      styles)))))))
+
+  (define (completion-styler match? highlight?)
+    ;; Style one completion input by its semantic state: an incomplete or
+    ;; unknown value is italic, an exact match is plain, and a distinguished
+    ;; match (an editor symbol, for example) uses the editor face.
+    (lambda (input)
+      (make-vector (string-length input)
+                   (cond [(highlight? input) 'editor]
+                         [(match? input) 'plain]
+                         [else 'italic]))))
+
+  (define (echo-cursor-now)
+    (or (echo:cursor)
+        (and (cursor-in-echo)
+             (+ (string-length (echo:text)) (string-length (echo:ghost))))))
+
+                              ; applied while the text still matches
+
+  (define (show-message! s styles-pair)
+    ;; Put s in the echo area and paint right away (once the screen is
+    ;; the editor's).
+    (echo:set-indent! #f)
+    (echo:set-input-end! #f)
+    (echo:set-text! s)
+    (echo:set-ghost! "")
+    (echo:set-styles! styles-pair)
+    (present-echo!))
+
+  (define (show-prompt-message! label input styler)
+    ;; Preserve a completed prompt's exact layout and styling while its
+    ;; command runs.  In particular, hard-newline continuations retain the
+    ;; prompt indentation instead of becoming an unrelated plain message.
+    (let ([content (string-append label input)])
+      (echo:set-indent! (string-length label))
+      (echo:set-input-end! (string-length content))
+      (echo:set-text! content)
+      (echo:set-ghost! "")
+      (echo:set-styles! (and styler (cons content styler)))
+      (present-echo!)))
+
+  (define (echo-append! component text styler replace?)
+    ;; Append one line to the echo area's transient log: every logged
+    ;; (echo:text) stacks up there, component-prefixed, until the next key
+    ;; settles the area.  With replace? true the component's newest
+    ;; line is superseded when it is also the newest overall --
+    ;; progress redrawn in place -- never another component's.  A
+    ;; stale indicator gives way; a prompt's input line stays put
+    ;; below, and so does a running evaluation's kept query -- the
+    ;; user sees what is running.
+    (echo-queue! component text styler replace?)
+    (present-echo!))
+
+  (define (echo-queue! component text styler replace? . rest)
+    ;; Update transient echo state without painting it; batch publishers use
+    ;; this before one final present-echo!.
+    (echo:queue! component text styler replace?
+                 (if (pair? rest) (car rest) "")
+                 (and (echo-cursor-now) #t)))
+
+  (define (present-echo!)
+    ;; Present the echo area now, mid-command included (once the
+    ;; screen is the editor's).  Grown or shrunk it takes a full
+    ;; redraw -- the windows above shift, their status bars with them
+    ;; -- otherwise painting the area suffices.
+    (when the-screen-live?
+      (let ([h (echo:height)])
+        (update-echo-geometry!)
+        (if (= h (echo:height))
+            (paint-echo-area!)
+            (redraw-hook)))
+      (flush-output-port (terminal-output-port))))
+
+  (define (echo-log-prefix e) (echo:log-prefix e cols))
+  (define (echo-log-spans prefix-len content)
+    (echo:log-spans prefix-len content cols))
+  (define (echo-log-rows e) (echo:log-rows e cols))
+
+  (define (display-echo-log-row prefix text styler ghost k span wrapped?)
+    ;; One visual row of a transient-log entry: the grey prefix on the
+    ;; first, its indent on continuations, the slice under the
+    ;; component's styler, a mark closing every wrapped row.
+    (let* ([lead (if (= k 0)
+                     prefix
+                     (make-string (min (string-length prefix)
+                                       (quotient cols 2))
+                                  #\space))]
+           [start (car span)]
+           [end (cdr span)]
+           [styles (and styler (guard (ex [else #f]) (styler text)))]
+           [text-end (min end (string-length text))]
+           [ghost-start (max start (string-length text))]
+           [content (string-append text ghost)])
+      (ansi "\x1b;[0m" (styles:style-code 'chrome) lead)
+      (when (< start text-end)
+        (if styles
+            (emit-runs text styles start text-end)
+            (ansi "\x1b;[0m" (substring text start text-end))))
+      (when (< ghost-start end)
+        (ansi "\x1b;[0m" (styles:style-code 'chrome)
+          (substring content ghost-start end)))
+      (ansi "\x1b;[0m"
+        (make-string (max 0 (- cols (string-length lead) (- end start)
+                               (if wrapped? 1 0)))
+                     #\space)
+        (if wrapped? "\\" ""))))
+
+  (define (paint-echo-area!)
+    ;; Paint the pending transient-log lines, then the visible
+    ;; (wrapped) live line under them.  Recompute the geometry first:
+    ;; set-message! and echo-append! come here directly, with the
+    ;; content just changed (from redraw! it is a no-op).
+    (update-echo-geometry!)
+    (let loop ([es (echo:pending)] [row (- rows (echo:height))])
+      (when (pair? es)
+        (let* ([e (car es)]
+               [prefix (echo-log-prefix e)]
+               [text (cadr e)]
+               [ghost (cadddr e)]
+               [spans (echo-log-spans (string-length prefix)
+                                      (string-append text ghost))]
+               [limit (- rows (echo:live-height))])
+          ;; the entry's rows in turn; clipped at the area's edge when
+          ;; a single entry alone overflows the cap (the tail is in
+          ;; *log*)
+          (let rloop ([spans spans] [k 0] [row row])
+            (if (or (null? spans) (>= row limit))
+                (loop (cdr es) row)
+                (let ([span (car spans)]
+                      [wrapped? (pair? (cdr spans))])
+                  (paint! row 0 (list 'echo-log e k span wrapped?)
+                    (lambda ()
+                      (display-echo-log-row prefix text (caddr e) ghost
+                                            k span wrapped?)))
+                  (rloop (cdr spans) (+ k 1) (+ row 1))))))))
+    (when (> (echo:live-height) 0)
+      (let* ([content (string-append (echo:text) (echo:ghost))]
+             [ghost-at (string-length (echo:text))]
+             [total (length (echo:spans))]
+             [indent (echo-indent-now)])
+        (let loop ([line (echo:scroll)] [row (- rows (echo:live-height))])
+          (when (< row rows)
+            (let* ([span (list-ref (echo:spans) line)]
+                   [start (car span)]
+                   [end (min (cdr span) (string-length content))]
+                   [end (max end start)]
+                   [lead (if (= line 0) 0 indent)]
+                   [wrapped? (< line (- total 1))]
+                   [cut (min (max (- ghost-at start) 0) (- end start))]
+                   ;; a prompt's label -- content up to (echo:indent) on
+                   ;; the first visual line -- is painted grey, the
+                   ;; transient log's shade: quiet chrome, the input
+                   ;; carries the emphasis
+                   [lb (if (= line 0)
+                           (min (or (echo:indent) 0) (+ start cut))
+                           0)])
+              (paint! row 0
+                (list 'echo line (substring content start end)
+                      cut lead lb wrapped? (and (echo-highlight) #t)
+                      (and (echo:styles) #t))
+                (lambda ()
+                  (let ([styles
+                         (or (and (echo-highlight)
+                                  (guard (ex [else #f])
+                                    ((echo-highlight) content)))
+                             (and (echo:styles)
+                                  (strings:prefix? (car (echo:styles))
+                                                   content)
+                                  (guard (ex [else #f])
+                                    ((cdr (echo:styles))
+                                     (car (echo:styles))))))])
+                    (ansi (make-string lead #\space))
+                    (when (> lb 0)
+                      (ansi (styles:style-code 'chrome)
+                            (substring content 0 lb) "\x1b;[0m"))
+                    (if styles
+                        ;; styled runs for the typed part
+                        (emit-runs content styles (+ start lb)
+                                   (+ start cut))
+                        (ansi (substring content (+ start lb)
+                                         (+ start cut))))
+                    (ansi "\x1b;[0m" (styles:style-code 'chrome)
+                          (substring content (+ start cut) end)
+                          "\x1b;[0m"
+                          (make-string
+                            (max 0 (- cols lead (- end start)
+                                      (if wrapped? 1 0)))
+                            #\space)
+                          (if wrapped? "\\" ""))))))
+            (loop (+ line 1) (+ row 1)))))))
+
+  (define (echo-cap)
+    ;; How tall the whole echo area may grow: everything but each
+    ;; window's minimum -- head:min-window-lines of text (at least 2,
+    ;; redraw!'s collapse threshold) plus its status line.
+    (max 1 (- rows (head:layout-min-height (head:root)))))
+
+  (define (update-echo-geometry!)
+    ;; The echo area stacks the pending transient-log (current-lines) above the
+    ;; live line.  The live line's height follows its wrapped content
+    ;; (the grey suggestion included): prompt input wraps with
+    ;; continuations indented to the prompt text, and a plain (echo:text)
+    ;; that overflows the width wraps the same way at indent zero --
+    ;; up to eight lines, after which it scrolls, keeping the prompt
+    ;; cursor's line visible; empty behind pending (current-lines) it folds
+    ;; away.  The whole area grows until the (head:windows) above hit their
+    ;; minimum; past that the oldest pending (current-lines) are evicted -- they
+    ;; remain in *log*.
+    (let* ([content (string-append (echo:text) (echo:ghost))]
+           [len (string-length content)]
+           [cursor (echo-cursor-now)]
+           [padded (max len (if cursor (+ cursor 1) 1))])
+      (echo:set-spans! (compute-echo-spans content padded))
+      (let* ([total (length (echo:spans))]
+             [live (if (or cursor (> len 0) (null? (echo:pending)))
+                       (min total (max 1 (min 8 (- rows 3))))
+                       0)]
+             [room (max (if (= live 0) 1 0) (- (echo-cap) live))]
+             [pending-rows (lambda ()
+                             (fold-left + 0 (map echo-log-rows
+                                                 (echo:pending))))])
+        ;; a long entry wraps over several rows, so eviction counts
+        ;; rows, whole oldest entries first; a lone entry past the cap
+        ;; stays, clipped by the painter
+        (let drop ()
+          (when (and (pair? (echo:pending)) (pair? (cdr (echo:pending)))
+                     (> (pending-rows) room))
+            (echo:set-pending! (cdr (echo:pending)))
+            (drop)))
+        (echo:set-live-height! live)
+        (echo:set-height! (+ live (min room (pending-rows))))
+        (when cursor
+          (let ([line (car (echo-position cursor))])
+            (when (< line (echo:scroll)) (echo:set-scroll! line))
+            (when (>= line (+ (echo:scroll) live))
+              (echo:set-scroll! (- line (- live 1))))))
+        (echo:set-scroll!
+          (max 0 (min (echo:scroll) (- total (max live 1))))))))
+
+  (define (paint-visual-bell!)
+    (when the-visual-bell-active?
+      (let loop ([row (- rows (echo:height))])
+        (when (< row rows)
+          (goto (+ row 1) 1)
+          (ansi "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
+          (loop (+ row 1))))))
+
+
+  (define terminal-title-shown #f)
+
+  (define (safe-terminal-title s)
+    ;; OSC is terminated by BEL or ST. Do not let a buffer name inject either
+    ;; terminator (or another terminal control) into the host terminal.
+    (list->string
+      (map (lambda (c)
+             (let ([n (char->integer c)])
+               (if (or (< n 32) (= n 127)) #\space c)))
+           (string->list s))))
+
+  (define (update-terminal-title!)
+    ;; OSC 2 is understood by GNOME Terminal, xterm, and nested e terminals.
+    (let ([title (string-append "e: " (head:buffer-name (head:window-buffer (head:current))))])
+      (unless (equal? title terminal-title-shown)
+        (set! terminal-title-shown title)
+        (ansi "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
+
+  (define (window-screen-position w prow pcol)
+    ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
+    (let* ([entry (assq w (window-layout))]
+           [sticky (head:buffer-sticky-lines (head:window-buffer w))]
+           [x (+ (head:window-xoff w)
+                 (if (eq? (head:window-scrollbar? w) 'left) 1 0)
+                 (head:window-line-number-width w))]
+           [screen-row (if (< prow sticky)
+                           (+ (cadr entry) prow 1)
+                           (+ (cadr entry) sticky
+                              (rows-before w prow pcol) 1))])
+      (if (and (>= prow sticky) (window-wrapped? w))
+          (cons screen-row
+                (let ([breaks (line-breaks
+                                w (vector-ref
+                                    (head:buffer-lines (head:window-buffer w)) prow))])
+                  (+ x
+                     (- pcol (segment-start breaks (segment-of breaks pcol)))
+                     1)))
+          (cons screen-row (+ x (- pcol (head:window-left w)) 1)))))
+
+  (define (place-cursor!)
+    ;; Park the cursor in the echo area (a prompt, or a running
+    ;; evaluation -- the latter drawn as a blinking underline), else
+    ;; put it at point in the current window.  Also called on its own
+    ;; when an interaction is about to wait for a key, so its cursor
+    ;; rules take effect without a repaint.
+    (let* ([cursor (echo-cursor-now)]
+           [a (head:app-of (head:window-buffer (head:current)))]
+           [visible? (or cursor (head:app-cursor-visible-in? (head:current)))])
+      (if cursor
+          (let ([p (echo-position cursor)])
+            (goto (+ (- rows (echo:live-height)) (- (car p) (echo:scroll)) 1)
+              (min (+ (cdr p) 1) cols)))
+          (when visible?
+            (let ([p (window-screen-position (head:current)
+                                             (head:window-prow (head:current)) (head:window-pcol (head:current)))])
+              (goto (min (car p) rows) (min (cdr p) cols)))))
+      (let* ([a (head:app-of (head:window-buffer (head:current)))]
+             [app-style (head:buffer-fact (head:window-buffer (head:current))
+                                          'cursor-style #f)]
+             [style (cond
+                      [(cursor-in-echo) "\x1b;[3 q"]
+                      ;; a prompt: the cursor is in the echo area's input,
+                      ;; which is editable whatever the buffer behind it
+                      [(echo:cursor) "\x1b;[0 q"]
+                      [(and app-style (not (eq? app-style 'default)))
+                       (case app-style
+                         [(block) "\x1b;[2 q"]
+                         [(underline) "\x1b;[4 q"]
+                         [(bar) "\x1b;[6 q"]
+                         [(blinking-block) "\x1b;[1 q"]
+                         [(blinking-underline) "\x1b;[3 q"]
+                         [(blinking-bar) "\x1b;[5 q"])]
+                      ;; a bar where typing cannot land: a read-only buffer
+                      [(head:buffer-read-only (head:window-buffer (head:current)))
+                       "\x1b;[5 q"]
+                      [else "\x1b;[0 q"])])
+        (unless (string=? style cursor-style-shown)
+          (set! cursor-style-shown style)
+          (ansi style)))
+      (ansi (if visible? "\x1b;[?25h" "\x1b;[?25l"))
+      (flush-output-port (terminal-output-port))))
 )

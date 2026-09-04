@@ -120,7 +120,7 @@
     ;; the prompt machinery.
     (if (string=? s "")
         (parameterize ([message-source #f]) (set-message! s))
-        (show-message! s
+        (paint:show-message! s
           (cons s (lambda (text)
                     (let* ([n (string-length text)]
                            [v (make-vector n 'plain)]
