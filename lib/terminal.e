@@ -3272,12 +3272,20 @@
                 (guard (ex [else (void)]) (display-redraw!))))))))
     (define (finished!)
       (terminal-state-alive-set! state #f)
-      (guard (ex [else (void)])
-        (set-buffer-wrap! (terminal-state-buffer state) #f))
-      (guard (ex [else (void)]) (display-redraw!))
-      (guard (ex [else (void)]) (materialize-terminal-transcript! state))
-      (guard (ex [else (void)])
-        (head:detach-app! (terminal-state-buffer state)))
+      ;; The buffer's afterlife -- a read-only transcript, no longer an
+      ;; app -- is seat state, so the main thread makes it between
+      ;; frames: first the final screen is rendered, then it becomes the
+      ;; transcript, then the app detaches.  Doing this here raced the
+      ;; frame the reader's wake had already triggered: a refresh under
+      ;; way found its buffer detached halfway through and failed.
+      (head:run-on-main!
+        (lambda ()
+          (guard (ex [else (void)]) (refresh-terminal! state))
+          (guard (ex [else (void)])
+            (set-buffer-wrap! (terminal-state-buffer state) #f))
+          (guard (ex [else (void)]) (materialize-terminal-transcript! state))
+          (guard (ex [else (void)])
+            (head:detach-app! (terminal-state-buffer state)))))
       ;; Publish the dead state before waiting for the session leader.  A
       ;; platform-specific wait must never make the editor appear frozen.
       (guard (ex [else (void)]) (display-redraw!))
