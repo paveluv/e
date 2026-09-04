@@ -14,14 +14,14 @@
   (export init! search!! search-fold-case)
   (import (chezscheme) (except (edit) init!)
           (prefix (main) main:)
-          (prefix (styles) styles:)
+          (prefix (style) style:)
           (prefix (prompt) prompt:)
-          (prefix (strings) strings:)
+          (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (tty) tty:)
           (prefix (keymap) keymap:)
           (prefix (head) head:)
-          (prefix (docs) docs:))
+          (prefix (doc) doc:))
 
   ;; Configuration: whether the incremental search folds case the
   ;; smart way, as Emacs does -- matching ignores case only while the
@@ -75,9 +75,9 @@
                 acc
                 (let ([line (buffer-line b row)])
                   (let scan ([from 0] [acc acc])
-                    (let ([hit (strings:search line needle-now from
-                                               (string-length line)
-                                               (fold-for needle-now))])
+                    (let ([hit (string:search line needle-now from
+                                              (string-length line)
+                                              (fold-for needle-now))])
                       (if hit
                           (scan (+ hit 1)   ; overlapping matches too
                                 (cons (list row hit (+ hit len) 'match)
@@ -94,15 +94,15 @@
       (let loop ([row start-row] [col start-col] [remaining rows])
         (if (= remaining 0)
             (let* ([line (buffer-line b start-row)]
-                   [found (strings:search line needle 0
+                   [found (string:search line needle 0
                             (min (+ start-col (string-length needle) -1)
                                  (string-length line))
                             (fold-for needle))])
               (and found (cons start-row found)))
             (let* ([line (buffer-line b row)]
-                   [found (strings:search line needle col
-                                          (string-length line)
-                                          (fold-for needle))])
+                   [found (string:search line needle col
+                                         (string-length line)
+                                         (fold-for needle))])
               (if found
                   (cons row found)
                   (loop (modulo (+ row 1) rows) 0 (- remaining 1))))))))
@@ -128,9 +128,9 @@
           (cons s (lambda (text)
                     (let* ([n (string-length text)]
                            [v (make-vector n 'plain)]
-                           [colon (strings:search text ": " 0 n)])
+                           [colon (string:search text ": " 0 n)])
                       (when colon
-                        (styles:fill-range! v 0 (+ colon 2) 'chrome))
+                        (style:fill-range! v 0 (+ colon 2) 'chrome))
                       v))))))
 
   (define (run-search!)
@@ -256,7 +256,7 @@
             (set! current-match #f))))))
 
   (define (init!)
-    (docs:register!
+    (doc:register!
       '(((search!!) (("procedure" . "(search!!)")) "void"
          ("(search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))

@@ -3,13 +3,13 @@
 (library (git-view)
   (export init! git-log!! git-log-refresh!)
   (import (chezscheme) (except (edit) init!)
-          (prefix (styles) styles:)
-          (prefix (modes) modes:)
-          (prefix (strings) strings:)
+          (prefix (style) style:)
+          (prefix (mode) mode:)
+          (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (keymap) keymap:) (except (git) init!)
-          (prefix (docs) docs:))
+          (prefix (doc) doc:))
 
   (define log-buffer #f)
   (define diff-buffer #f)
@@ -164,38 +164,38 @@
     (make-vector (string-length line) style))
 
   (define (log-styles line)
-    (cond [(strings:prefix? "Git log:" line)
+    (cond [(string:prefix? "Git log:" line)
            (let ([styles (fill-style line 'bold)])
              (when (<= (+ refresh-column (string-length refresh-label))
                        (string-length line))
-               (styles:fill-range!
+               (style:fill-range!
                  styles refresh-column
                  (+ refresh-column (string-length refresh-label))
                  (if refresh-pressed? 'active 'editor)))
              styles)]
-          [(strings:prefix? "    " line)
+          [(string:prefix? "    " line)
            (let ([styles (fill-style line 'plain)])
              (when (> (string-length line) 5)
                (vector-set! styles 4 'keyword))
              styles)]
           [else
            (let ([styles (fill-style line 'plain)])
-             (styles:fill-range! styles 0 (min 10 (string-length line))
-                                 'keyword)
+             (style:fill-range! styles 0 (min 10 (string-length line))
+                                'keyword)
              (when (> (string-length line) 12)
-               (styles:fill-range! styles 12
-                                   (min 22 (string-length line)) 'comment))
+               (style:fill-range! styles 12
+                                  (min 22 (string-length line)) 'comment))
              styles)]))
 
   (define (diff-styles line)
-    (cond [(or (strings:prefix? "@@" line)
-               (strings:prefix? "+++ " line)
-               (strings:prefix? "--- " line))
+    (cond [(or (string:prefix? "@@" line)
+               (string:prefix? "+++ " line)
+               (string:prefix? "--- " line))
            (fill-style line 'keyword)]
-          [(strings:prefix? "+" line) (fill-style line 'string)]
-          [(strings:prefix? "-" line) (fill-style line 'rainbow1)]
-          [(or (strings:prefix? "diff --git " line)
-               (strings:prefix? "index " line))
+          [(string:prefix? "+" line) (fill-style line 'string)]
+          [(string:prefix? "-" line) (fill-style line 'rainbow1)]
+          [(or (string:prefix? "diff --git " line)
+               (string:prefix? "index " line))
            (fill-style line 'comment)]
           [else (fill-style line 'plain)]))
 
@@ -207,11 +207,11 @@
       (set! log-buffer
         (head:register-app! "*git-log*" refresh-log! handle-log-event!))
       (head:set-app-presentation! log-buffer 1 #t)
-      (modes:choose! log-buffer "git-log"))
+      (mode:choose! log-buffer "git-log"))
     (unless diff-buffer
       (set! diff-buffer (head:register-view! "*git-diff*" refresh-diff!))
       (head:set-app-presentation! diff-buffer 1 #t)
-      (modes:choose! diff-buffer "git-diff")))
+      (mode:choose! diff-buffer "git-diff")))
 
   (define (git-log!! . path)
     (let ([source (if (pair? path) (car path)
@@ -227,13 +227,13 @@
       (void)))
 
   (define (init!)
-    (modes:register! "git-log" '() '() log-styles)
-    (modes:register! "git-diff" '() '() diff-styles)
+    (mode:register! "git-log" '() '() log-styles)
+    (mode:register! "git-diff" '() '() diff-styles)
     ;; A reload after Git was opened reconnects its surviving app buffers;
     ;; ordinary startup remains lazy.
     (when (or (head:buffer-named "*git-log*") (head:buffer-named "*git-diff*"))
       (ensure-git-buffers!))
-    (docs:register!
+    (doc:register!
       '(((git-log!!) (("procedure" . "(git-log!! [path])")) "void"
          ("(git-view)") git-view "Git" #f
          "Open the interactive `*git-log*` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")

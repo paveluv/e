@@ -15,7 +15,7 @@
 ;; cursor follows the prompt, not a parked evaluation.  The prompt
 ;; writes the echo area's model (echo) and asks the painter for
 ;; frames; it reads keys from the head's pump.  Exported names drop
-;; the module stem: (prompt:read! "Find file: " files:complete),
+;; the module stem: (prompt:read! "Find file: " file:complete),
 ;; (prompt:confirm? "Really?"), (prompt:active?).
 
 (library (prompt)
@@ -33,10 +33,10 @@
           (prefix (paint) paint:)
           (prefix (keymap) keymap:)
           (prefix (tty) tty:)
-          (prefix (modes) modes:)
-          (prefix (files) files:)
-          (prefix (strings) strings:)
-          (prefix (styles) styles:))
+          (prefix (mode) mode:)
+          (prefix (file) file:)
+          (prefix (string) string:)
+          (prefix (style) style:))
 
   ;;; The echo area, as the prompt writes it --------------------------------------
 
@@ -103,7 +103,7 @@
                                  (char=? (string-ref text (+ i 1)) #\))
                                  (char-alphabetic?
                                    (string-ref text (+ i 2)))
-                                 (strings:search allowed
+                                 (string:search allowed
                                    (string (char-downcase ch)) 0
                                    (string-length allowed)))])
               (loop (+ i (if marker? 2 1))
@@ -142,7 +142,7 @@
                     [(string=? event "ESC") #\esc]
                     [(tty:key-event-character event)
                      => (lambda (choice)
-                          (if (strings:search allowed
+                          (if (string:search allowed
                                 (string (char-downcase choice))
                                 0 (string-length allowed))
                               choice
@@ -172,12 +172,12 @@
     ;; directories), an expression's trailing symbol; plain names unchanged.
     ;; A label that comes out empty (a view name like "[log]" ends in a
     ;; separator) falls back to the whole candidate.
-    (if (strings:suffix? "/" c)
-        (string-append (files:base-name (substring c 0 (- (string-length c) 1))) "/")
+    (if (string:suffix? "/" c)
+        (string-append (file:base-name (substring c 0 (- (string-length c) 1))) "/")
         (let loop ([i (- (string-length c) 1)])
           (cond [(< i 0) c]
                 [(memv (string-ref c i) '(#\/ #\space #\( #\) #\[ #\]))
-                 (let ([tail (strings:tail c (+ i 1))])
+                 (let ([tail (string:tail c (+ i 1))])
                    (if (string=? tail "") c tail))]
                 [else (loop (- i 1))]))))
 
@@ -211,7 +211,7 @@
   ;; predicate.
 
   (define completions-mode-registered
-    (modes:register! "completions" '() '()
+    (mode:register! "completions" '() '()
       (lambda (s)
         (let ([highlight? (completion-highlight)]
               [styles (make-vector (string-length s) 'plain)]
@@ -226,7 +226,7 @@
                                   j
                                   (end (+ j 1))))])
                      (when (highlight? (substring s i j))
-                       (styles:fill-range! styles i j 'editor))
+                       (style:fill-range! styles i j 'editor))
                      (loop j))]))))))
 
   ;; The *completions* buffer is a view like any other: registered once
@@ -238,7 +238,7 @@
     (let ([b (head:register-app! "*completions*"
                                  (lambda () (update-completions-size!)))])
       (head:buffer-fact-set! b 'ephemeral #t)
-      (modes:choose! b "completions")
+      (mode:choose! b "completions")
       b))
 
   (define completions-labels #f)   ; the labels shown: repeat detection
@@ -383,12 +383,12 @@
              (k s " [Sole completion]")
              (k (car cands) ""))]
         [else
-         (let ([lcp (strings:common-prefix cands)])
+         (let ([lcp (string:common-prefix cands)])
            (cond [(> (string-length lcp) (string-length s)) (k lcp "")]
                  [(show-completions! (map completion-label cands)) (k s "")]
                  [else (k s (format " {~a}"
-                                    (strings:join (map completion-label cands)
-                                                  " ")))]))])))
+                                    (string:join (map completion-label cands)
+                                                 " ")))]))])))
 
   (define (prompt-window-command event)
     ;; Resolve the event, and any chord it opens, through the global
@@ -538,17 +538,17 @@
              (if (cursor-on-bottom?) (history-down) (vertical-move 1))]
             [(eq? action 'delete-forward)
              (if (< pos len)
-                 (edited (strings:delete s pos (+ pos 1)) pos)
+                 (edited (string:delete s pos (+ pos 1)) pos)
                  (loop s pos ""))]
             [(eq? action 'delete-backward)
              (if (= pos 0)
                  (loop s pos "")
-                 (edited (strings:delete s (- pos 1) pos) (- pos 1)))]
+                 (edited (string:delete s (- pos 1) pos) (- pos 1)))]
             [(eq? action 'kill)
-             (head:set-kill-ring! (strings:tail s pos))
+             (head:set-kill-ring! (string:tail s pos))
              (edited (substring s 0 pos) pos)]
             [(eq? action 'yank)
-             (edited (strings:insert s pos (head:kill-ring))
+             (edited (string:insert s pos (head:kill-ring))
                      (+ pos (string-length (head:kill-ring))))]
             [(eq? action 'complete)
              (set! hist-pos -1)
@@ -582,16 +582,16 @@
              (let* ([lines (tty:paste-lines (head:read-paste))]
                     [insert (prompt-multiline)])
                (if insert
-                   (let ([result (insert s pos (strings:join lines "\n"))])
+                   (let ([result (insert s pos (string:join lines "\n"))])
                      (edited (car result) (cdr result)))
-                   (let ([text (strings:join lines " ")])
-                     (edited (strings:insert s pos text)
+                   (let ([text (string:join lines " ")])
+                     (edited (string:insert s pos text)
                              (+ pos (string-length text))))))]
             [(prompt-window-command event)
              => (lambda (run) (loop s pos (run)))]
             [(tty:key-event-character event)
              => (lambda (c)
-                  (edited (strings:insert s pos (string c)) (+ pos 1)))]
+                  (edited (string:insert s pos (string c)) (+ pos 1)))]
             [else (loop s pos "")]))))
     ;; The prompt owns C-g while it runs, and its echo-area state is
     ;; restored however it exits -- an error unwinding through it

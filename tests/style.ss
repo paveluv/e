@@ -12,65 +12,65 @@
 
 (eval
   '(begin
-     (import (edit) (prefix (only (styles) compile) styles:))
+     (import (edit) (prefix (only (style) compile) style:))
 
      (define checks 0)
 
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'styles-test label actual expected)))
+         (error 'style-test label actual expected)))
 
-     (check 'reset (styles:compile '(reset)) "0")
-     (check 'empty-is-reset (styles:compile '()) "0")
+     (check 'reset (style:compile '(reset)) "0")
+     (check 'empty-is-reset (style:compile '()) "0")
      (check 'attributes
-            (styles:compile '(bold dim italic underline blink
+            (style:compile '(bold dim italic underline blink
                              reverse hidden strike))
             "1;2;3;4;5;7;8;9")
      (check 'extended-attributes
-            (styles:compile '(double-underline overline framed encircled
+            (style:compile '(double-underline overline framed encircled
                              superscript subscript))
             "21;53;51;52;73;74")
      (check 'underline-variants
-            (styles:compile '(curly-underline dotted-underline
+            (style:compile '(curly-underline dotted-underline
                              dashed-underline))
             "4:3;4:4;4:5")
      (check 'cancellations
-            (styles:compile '(normal-intensity no-italic no-underline
+            (style:compile '(normal-intensity no-italic no-underline
                              no-blink no-reverse no-hidden no-strike
                              no-frame no-overline))
             "22;23;24;25;27;28;29;54;55")
      (check 'named-colors
-            (styles:compile '((foreground red) (background bright-blue)))
+            (style:compile '((foreground red) (background bright-blue)))
             "31;104")
      (check 'palette-and-rgb
-            (styles:compile '((fg 245) (bg (rgb 1 2 3))))
+            (style:compile '((fg 245) (bg (rgb 1 2 3))))
             "38;5;245;48;2;1;2;3")
      (check 'default-colors
-            (styles:compile '((foreground default) (background default)))
+            (style:compile '((foreground default) (background default)))
             "39;49")
      (check 'underline-colors
-            (styles:compile '((underline-color 208)))
+            (style:compile '((underline-color 208)))
             "58;5;208")
      (check 'underline-color-named
-            (styles:compile '((underline-color bright-red)))
+            (style:compile '((underline-color bright-red)))
             "58;5;9")
      (check 'underline-color-rgb
-            (styles:compile '((underline-color (rgb 4 5 6))))
+            (style:compile '((underline-color (rgb 4 5 6))))
             "58;2;4;5;6")
      (check 'underline-color-default
-            (styles:compile '((underline-color default)))
+            (style:compile '((underline-color default)))
             "59")
      (check 'order-preserved
-            (styles:compile '(bold (foreground cyan) curly-underline
+            (style:compile '(bold (foreground cyan) curly-underline
                              (underline-color 135)))
             "1;36;4:3;58;5;135")
      (check 'unknown-attribute-rejected
-            (guard (ex [else 'rejected]) (styles:compile '(sparkle)))
+            (guard (ex [else 'rejected]) (style:compile '(sparkle)))
             'rejected)
      (check 'unknown-color-rejected
             (guard (ex [else 'rejected])
-              (styles:compile '((foreground maroon))))
+              (style:compile '((foreground maroon))))
             'rejected)
 
      (format #t "~a style checks passed\n" checks)))

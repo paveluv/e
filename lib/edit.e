@@ -98,14 +98,14 @@
   ;; from (sys).
   (import (chezscheme) (sys)
           (prefix (state) state:) (prefix (text) text:)
-          (prefix (kernel) kernel:) (prefix (actors) actors:)
-          (prefix (log) log:) (prefix (styles) styles:)
+          (prefix (kernel) kernel:) (prefix (actor) actor:)
+          (prefix (log) log:) (prefix (style) style:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
-          (prefix (paint) paint:) (prefix (strings) strings:)
-          (prefix (modes) modes:) (prefix (files) files:)
+          (prefix (paint) paint:) (prefix (string) string:)
+          (prefix (mode) mode:) (prefix (file) file:)
           (prefix (prompt) prompt:) (prefix (main) main:)
-          (prefix (docs) docs:))
+          (prefix (doc) doc:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -134,7 +134,7 @@
 
   ;; Buffer facts and the store client -- the bridge between this
   ;; seat's records and the (state) store -- live in (head) now; the
-  ;; mode registry in (modes).
+  ;; mode registry in (mode).
   (define layout-split-first-weight-set!
     head:layout-split-first-weight-set!)
   (define layout-split-second-weight-set!
@@ -312,11 +312,11 @@
     ;; mere touch passes silently.
     (let ([b (head:window-buffer current-window)])
       (when (and file-name (head:buffer-base b))
-        (let ([stamp (files:stamp file-name)])
+        (let ([stamp (file:stamp file-name)])
           (unless (equal? stamp (head:buffer-stamp b))
             (let ([disk (guard (ex [else #f])
                           (and (file-exists? file-name)
-                               (files:read file-name)))])
+                               (file:read file-name)))])
               (unless (and disk (string=? disk (head:buffer-base b)))
                 (head:buffer-stale-set! b #t))
               (head:buffer-stamp-set! b stamp)))))))
@@ -382,7 +382,7 @@
              (cons (cons (car entry) (editor-snapshot))
                    (vector-ref history to)))
            (restore-snapshot! (cdr entry))
-           (strings:elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
+           (string:elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
              cols))]))
     message)
 
@@ -519,14 +519,14 @@
              [parts (split-inserted-lines s)])
         (if (null? (cdr parts))
             (begin
-              (set-line! row (strings:insert old col s))
+              (set-line! row (string:insert old col s))
               (set! point-col (+ col (string-length s))))
             (let* ([last (car (reverse parts))]
                    [replacement
                     (append
                       (list (string-append (substring old 0 col) (car parts)))
                       (reverse (cdr (reverse (cdr parts))))
-                      (list (string-append last (strings:tail old col))))])
+                      (list (string-append last (string:tail old col))))])
               (splice-lines! row (+ row 1) replacement)
               (set! point-row (+ row (- (length parts) 1)))
               (set! point-col (string-length last))))
@@ -537,7 +537,7 @@
     (let ([s (current-line)])
       (set-line! point-row (substring s 0 point-col))
       (splice-lines! (+ point-row 1) (+ point-row 1)
-                     (list (strings:tail s point-col)))
+                     (list (string:tail s point-col)))
       (set! point-row (+ point-row 1)) (set! point-col 0)
       (changed!)))
 
@@ -547,7 +547,7 @@
              (format "delete ~s"
                      (string (string-ref (current-line) point-col))))
            (set-line! point-row
-             (strings:delete (current-line) point-col (+ point-col 1)))
+             (string:delete (current-line) point-col (+ point-col 1)))
            (changed!)]
           [(< point-row (- (vlen) 1))
            (record-edit! "delete newline")
@@ -655,7 +655,7 @@
     (unless (string=? kill-ring "")
       (record-edit! (format "yank ~s" kill-ring))
       (parameterize ([suppress-history #t])
-        (let ([parts (strings:lines kill-ring)])
+        (let ([parts (string:lines kill-ring)])
           (insert-text! (car parts))
           (for-each (lambda (part) (newline!) (insert-text! part))
                     (cdr parts))))))
@@ -668,15 +668,15 @@
               (apply string-append acc)
               (loop (- row 1)
                     (cons (if (= row sr)
-                              (strings:tail (line-at sr) sc)
+                              (string:tail (line-at sr) sc)
                               (line-at row))
                           (cons "\n" acc)))))))
 
   (define (delete-region! sr sc er ec)
     (if (= sr er)
-        (set-line! sr (strings:delete (line-at sr) sc ec))
+        (set-line! sr (string:delete (line-at sr) sc ec))
         (let ([joined (string-append (substring (line-at sr) 0 sc)
-                                     (strings:tail (line-at er) ec))])
+                                     (string:tail (line-at er) ec))])
           (splice-lines! sr (+ er 1) (list joined)))))
 
   (define (replace-region-text! start end text)
@@ -725,9 +725,9 @@
     ;; directory), with a trailing slash, absolute -- a file visited
     ;; by a relative path has a relative directory-part, useless as a
     ;; prompt offer on its own -- and abbreviated for display.
-    (files:abbreviate
-      (files:absolute
-        (or (and file-name (files:directory-part file-name))
+    (file:abbreviate
+      (file:absolute
+        (or (and file-name (file:directory-part file-name))
             (string-append (current-directory) "/")))))
 
   (define (unique-name base self)
@@ -757,19 +757,19 @@
                            (set-message! (format "Cannot open ~a: ~a"
                                                  path (kernel:condition-text ex))))
                          #f])
-          (let* ([content (files:read path)]
-                 [b (head:new-buffer (unique-name (files:base-name path) #f))])
-            (head:buffer-lines-set! b (files:lines content))
-            (head:buffer-trailing-set! b (files:ends-in-newline? content))
+          (let* ([content (file:read path)]
+                 [b (head:new-buffer (unique-name (file:base-name path) #f))])
+            (head:buffer-lines-set! b (file:lines content))
+            (head:buffer-trailing-set! b (file:ends-in-newline? content))
             (head:buffer-file-set! b path)
             (head:buffer-base-set! b content)
-            (head:buffer-stamp-set! b (files:stamp path))
-            (modes:assign! b)
+            (head:buffer-stamp-set! b (file:stamp path))
+            (mode:assign! b)
             (log:add! 'visit-file! (cons "Loaded" path))
             b))
-        (let ([b (head:new-buffer (unique-name (files:base-name path) #f))])
+        (let ([b (head:new-buffer (unique-name (file:base-name path) #f))])
           (head:buffer-file-set! b path)
-          (modes:assign! b)
+          (mode:assign! b)
           (log:add! 'visit-file! (cons "New file:" path))
           b)))
 
@@ -777,7 +777,7 @@
     ;; Switch to the buffer visiting path, creating it if necessary.
     ;; Reopening a buffer whose file changed on disk meanwhile raises
     ;; a buffer-only dialog: merge, reread, cancel.  Reopening never writes.
-    (let ([path (files:visit-path path)])
+    (let ([path (file:visit-path path)])
       (cond [(find (lambda (b) (equal? (head:buffer-file b) path)) buffers)
              => (lambda (b)
                   (show-buffer! b)
@@ -787,10 +787,10 @@
                     ;; stale buffer whose cached stamp was already refreshed.
                     (let ([disk (guard (ex [else #f])
                                   (and (file-exists? path)
-                                       (files:read path)))])
+                                       (file:read path)))])
                       (cond
                         [(and disk (string=? disk (head:buffer-base b)))
-                         (head:buffer-stamp-set! b (files:stamp path))
+                         (head:buffer-stamp-set! b (file:stamp path))
                          (head:buffer-stale-set! b #f)]
                         [disk (reopen-changed-file! b path disk)]
                         [else
@@ -811,13 +811,13 @@
                          (make-message-condition
                            (format "Cannot verify ~a before saving: ~a"
                                    path (kernel:condition-text ex)))))])
-           (files:read path))))
+           (file:read path))))
   (define (save-file! path*)
     ;; Saving is guarded by content, not clocks: the disk is read and
     ;; compared with the buffer's base (what it loaded or last saved).
     ;; A mismatch means somebody changed the file meanwhile -- the
     ;; save stops and asks: overwrite, merge three-way, or cancel.
-    (define path (files:visit-path path*))
+    (define path (file:visit-path path*))
     (define adopted? (not (equal? path file-name)))  ; saving under a new name
     (define b (head:window-buffer current-window))
     (define disk (read-disk-for-save path))
@@ -826,18 +826,18 @@
                          (set-message!
                            (format "Save failed: ~a" (kernel:condition-text ex))))
                        #f])
-        (files:write! path lines trailing-newline?)
+        (file:write! path lines trailing-newline?)
         (set! file-name path) (set! modified? #f)
         (begin
-          (head:buffer-name-set! b (unique-name (files:base-name path) b))
+          (head:buffer-name-set! b (unique-name (file:base-name path) b))
           (head:mirror-rename! b))
         ;; re-detect the mode only when the name changed: a plain
         ;; re-save must not clobber a mode chosen by hand; adoption
         ;; also lifts read-only -- the buffer visits an ordinary
         ;; file now, whatever protected its previous life
-        (when adopted? (modes:assign! b) (head:buffer-read-only-set! b #f))
+        (when adopted? (mode:assign! b) (head:buffer-read-only-set! b #f))
         (head:buffer-base-set! b (buffer-text b))
-        (head:buffer-stamp-set! b (files:stamp path))
+        (head:buffer-stamp-set! b (file:stamp path))
         (head:buffer-stale-set! b #f)
         ;; a conflicted merge reports its details once resolved --
         ;; saved with no markers left; the resolution preceded the
@@ -848,9 +848,9 @@
             (log:add! 'save-file!
               (format "Merge resolved -- details in ~a" (cdr pending)))))
         (log:add! 'save-file! (cons "Wrote" path))
-        (files:run-post-save-hooks! path)
+        (file:run-post-save-hooks! path)
         #t))
-    (files:run-pre-save-hooks! path)
+    (file:run-pre-save-hooks! path)
     (cond
       [(and disk (not adopted?) (not modified?)
             (head:buffer-base b) (string=? disk (head:buffer-base b)))
@@ -864,7 +864,7 @@
        ;; saving under a new name onto an existing file
        (let ask ()
          (let* ([k (prompt:key! (format "~a exists; overwrite? y)es or n)o"
-                                        (files:base-name path))
+                                        (file:base-name path))
                                 "yn")]
                 [n (and k (char->integer k))])
            (cond [(memv n '(121 89)) (write!)]
@@ -890,9 +890,9 @@
     ;; either way -- the external change is incorporated, so the next
     ;; save writes cleanly.  One undo entry.
     (let-values ([(merged merged-trailing conflicts report-lines)
-                  (files:merge path (head:buffer-base b) (buffer-text b) disk)])
+                  (file:merge path (head:buffer-base b) (buffer-text b) disk)])
       (head:buffer-base-set! b disk)
-      (head:buffer-stamp-set! b (files:stamp path))
+      (head:buffer-stamp-set! b (file:stamp path))
       (record-edit! "merge from disk")
       (head:buffer-lines-set! b merged)
       (head:buffer-trailing-set! b merged-trailing)
@@ -902,12 +902,12 @@
   (define (reread-from-disk! b path disk)
     ;; Discard the buffer's copy and adopt the disk verbatim.  Rereading is a
     ;; new baseline, not an edit: it clears modification and undo state.
-    (let* ([lines (files:lines disk)]
+    (let* ([lines (file:lines disk)]
            [last (- (vector-length lines) 1)])
       (head:buffer-lines-set! b lines)
-      (head:buffer-trailing-set! b (files:ends-in-newline? disk))
+      (head:buffer-trailing-set! b (file:ends-in-newline? disk))
       (head:buffer-base-set! b disk)
-      (head:buffer-stamp-set! b (files:stamp path))
+      (head:buffer-stamp-set! b (file:stamp path))
       (head:buffer-stale-set! b #f)
       (head:buffer-modified-set! b #f)
       (head:buffer-history-set! b (vector '() '()))
@@ -931,7 +931,7 @@
     (let ask ()
       (let* ([k (prompt:key!
                   (format "~a changed on disk: m)erge, r)eread, c)ancel"
-                          (files:base-name path))
+                          (file:base-name path))
                   "mrc")]
              [n (and k (char->integer k))])
         (cond
@@ -968,7 +968,7 @@
 
   (define (buffer-conflict-count b)
     ;; How many merge conflict markers are left in b.
-    (files:conflict-count (head:buffer-lines b)))
+    (file:conflict-count (head:buffer-lines b)))
 
   (define (buffer-has-conflicts? b)
     (> (buffer-conflict-count b) 0))
@@ -978,7 +978,7 @@
     (let ask ()
       (let* ([k (prompt:key!
                   (format "~a changed on disk: o)verwrite, m)erge, c)ancel"
-                          (files:base-name path))
+                          (file:base-name path))
                   "omc")]
              [n (and k (char->integer k))])
         (cond
@@ -1012,7 +1012,7 @@
 
   (define (buffer-text b)
     ;; b's text as its file would hold it
-    (files:text (head:buffer-lines b) (head:buffer-trailing b)))
+    (file:text (head:buffer-lines b) (head:buffer-trailing b)))
 
   (define (buffer-clean? b)
     ;; Nothing is lost by discarding b: it was never modified, it is
@@ -1024,7 +1024,7 @@
           (if path
               (and (file-exists? path)
                    (guard (ex [else #f])
-                     (string=? (buffer-text b) (files:read path))))
+                     (string=? (buffer-text b) (file:read path))))
               (let ([v (head:buffer-lines b)])
                 (and (= (vector-length v) 1)
                      (string=? (vector-ref v 0) "")))))))
@@ -1164,7 +1164,7 @@
         (display ")" p))))
 
   (define (complete-buffer-name s)
-    (sort string<? (filter (lambda (n) (strings:prefix? s n))
+    (sort string<? (filter (lambda (n) (string:prefix? s n))
                            (map head:buffer-name buffers))))
 
   (define (switch-buffer!!)
@@ -1392,7 +1392,7 @@
   ;;; Buffer settings ---------------------------------------------------------
 
   ;; The mode registry -- records, detection, the memoized stylers --
-  ;; lives in (modes) now; these two settings are commands' business.
+  ;; lives in (mode) now; these two settings are commands' business.
 
   (define (set-buffer-read-only! b flag)
     (head:buffer-read-only-set! b flag))
@@ -1434,7 +1434,7 @@
     (kernel:registry-add! formatters (list name proc)))
 
   (define (mode-entry registry)
-    (let ([m (modes:name-of (head:window-buffer current-window))])
+    (let ([m (mode:name-of (head:window-buffer current-window))])
       (and m (kernel:registry-find registry (lambda (x) (string=? (car x) m))))))
 
   (define (leading-blanks s)
@@ -1471,7 +1471,7 @@
     (define v (head:buffer-lines b))
     (define n (vector-length v))
     (define (retabbed s col)
-      (let ([rest (strings:tail s (leading-blanks s))])
+      (let ([rest (string:tail s (leading-blanks s))])
         (if (string=? rest "")
             (if pad? (make-string col #\space) s)
             (string-append (make-string col #\space) rest))))
@@ -1734,7 +1734,7 @@
   (define (answer!!)
     ;; Answer the oldest question another actor posed (see
     ;; docs/DESIGN2.md, the interaction protocol).
-    (let ([asks (actors:pending head:ui-actor)])
+    (let ([asks (actor:pending head:ui-actor)])
       (if (null? asks)
           (set! message "Nothing to answer")
           (let* ([ask (car asks)]
@@ -1744,15 +1744,15 @@
                                   (caddr ask)
                                   (if (null? choices)
                                       "..."
-                                      (strings:join choices "/")))
+                                      (string:join choices "/")))
                                 (and (pair? choices)
                                   (lambda (s)
                                     (filter
                                       (lambda (choice)
-                                        (strings:prefix? s choice))
+                                        (string:prefix? s choice))
                                       choices))))])
             (when (and reply (> (string-length reply) 0))
-              (if (actors:answer! (car ask) reply)
+              (if (actor:answer! (car ask) reply)
                   (set! message "Answered")
                   (set! message "That question was withdrawn")))))))
 
@@ -1778,7 +1778,7 @@
     ;; mere common prefix (no such file yet) is telling at a glance,
     ;; without another TAB to ask.
     (define (exists? p)
-      (guard (ex [else #f]) (file-exists? (files:expand p))))
+      (guard (ex [else #f]) (file-exists? (file:expand p))))
     (paint:prompt-styler label
       (lambda (path)
         (let* ([v (make-vector (string-length path) 'plain)]
@@ -1791,7 +1791,7 @@
                                             [(char=? (string-ref path i) #\/)
                                              (+ i 1)]
                                             [else (prev (- i 1))])))]))])
-          (styles:fill-range! v split (string-length path) 'italic)
+          (style:fill-range! v split (string-length path) 'italic)
           v))))
 
   (define (save!!)
@@ -1799,7 +1799,7 @@
         (save-file! file-name)
         (let ([s (parameterize ([paint:echo-highlight
                                  (file-prompt-styler "Write file: ")])
-                   (prompt:read! "Write file: " files:complete
+                   (prompt:read! "Write file: " file:complete
                                  (default-directory)))])
           (when (and s (> (string-length s) 0)) (save-file! s))))
     (void))
@@ -1809,9 +1809,9 @@
     ;; edit -- and save the buffer there: the buffer visits the new
     ;; file from then on, its name and mode following.
     (let ([s (parameterize ([paint:echo-highlight (file-prompt-styler "Save as: ")])
-               (prompt:read! "Save as: " files:complete
+               (prompt:read! "Save as: " file:complete
                              (if file-name
-                               (files:abbreviate (files:absolute file-name))
+                               (file:abbreviate (file:absolute file-name))
                                (default-directory))
                              (box (log:history 'save-file! cdr))))])
       (when (and s (> (string-length s) 0)) (save-file! s)))
@@ -1823,7 +1823,7 @@
     ;; log.
     (let ([s (parameterize ([paint:echo-highlight
                              (file-prompt-styler "Find file: ")])
-               (prompt:read! "Find file: " files:complete (default-directory)
+               (prompt:read! "Find file: " file:complete (default-directory)
                              (box (log:history 'visit-file! cdr))))])
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
@@ -2071,7 +2071,7 @@
                   (arm-text-selection!)
                   ;; A mode may act on the click -- following a link,
                   ;; say -- through a MOUSE-CLICK binding in its keymap.
-                  (let ([context (modes:key-context (current-buffer))])
+                  (let ([context (mode:key-context (current-buffer))])
                     (when context
                       (let ([action (keymap:key-event-binding context
                                                               "MOUSE-CLICK")])
@@ -2382,7 +2382,7 @@
                    [limit (if (= row (car end))
                               (min (+ (cdr end) shift) (string-length s))
                               (string-length s))]
-                   [hit (strings:search s needle at limit)])
+                   [hit (string:search s needle at limit)])
               (if hit
                   (let ([w (handle! row hit)])
                     (set! count (+ count 1))
@@ -2410,13 +2410,13 @@
       ;; Accumulate pieces and join once instead of copying the growing line
       ;; for every non-overlapping match.
       (let loop ([at 0] [pieces '()] [count 0])
-        (let ([hit (strings:search s from at (string-length s))])
+        (let ([hit (string:search s from at (string-length s))])
           (if hit
               (loop (+ hit m)
                     (cons to (cons (substring s at hit) pieces))
                     (+ count 1))
               (values (apply string-append
-                             (reverse (cons (strings:tail s at) pieces)))
+                             (reverse (cons (string:tail s at) pieces)))
                       count)))))
     (define (rewritten-region r)
       ;; Preserve the single-line-needle contract by rewriting each selected
@@ -2427,7 +2427,7 @@
              [last (min (car end) (- (buffer-line-count b) 1))])
         (let loop ([row (max 0 (car start))] [lines '()] [count 0])
           (if (> row last)
-              (values (strings:join (reverse lines) "\n") count)
+              (values (string:join (reverse lines) "\n") count)
               (let* ([s (buffer-line b row)]
                      [n (string-length s)]
                      [from-col (if (= row (car start)) (min (cdr start) n) 0)]
@@ -2459,7 +2459,7 @@
            [start (region-start r)]
            [end (region-end r)]
            [last (min (car end) (- (buffer-line-count b) 1))])
-      (strings:join
+      (string:join
         (let loop ([row (max 0 (car start))] [acc '()])
           (if (> row last)
               (reverse acc)
@@ -2482,7 +2482,7 @@
     (let loop ([row row] [col col])
       (and (< row (buffer-line-count b))
            (let* ([s (buffer-line b row)]
-                  [hit (strings:search s needle col (string-length s))])
+                  [hit (string:search s needle col (string-length s))])
              (if hit
                  (cons row hit)
                  (loop (+ row 1) 0))))))
@@ -2561,7 +2561,7 @@
 
   (define (conflict-marker? b row prefix)
     (and (>= row 0) (< row (buffer-line-count b))
-         (strings:prefix? prefix (buffer-line b row))))
+         (string:prefix? prefix (buffer-line b row))))
 
   (define (conflict-at row)
     ;; The (start mid end) marker rows of the conflict containing row,
@@ -2651,8 +2651,8 @@
 
   (define (abbreviate-home path)
     (let ([home (getenv "HOME")])
-      (if (and home (strings:prefix? (string-append home "/") path))
-          (string-append "~" (strings:tail path (string-length home)))
+      (if (and home (string:prefix? (string-append home "/") path))
+          (string-append "~" (string:tail path (string-length home)))
           path)))
 
   (define buffers-view #f)
@@ -2662,7 +2662,7 @@
     ;; Separate the headings from the data; in data rows the third status cell
     ;; is M, where a star makes the complete modified-buffer row italic.
     (make-vector (string-length line)
-                 (cond [(strings:prefix? "CRM  Buffer" line) 'bold]
+                 (cond [(string:prefix? "CRM  Buffer" line) 'bold]
                        [(and (> (string-length line) 2)
                              (char=? (string-ref line 2) #\*))
                         'italic]
@@ -2686,7 +2686,7 @@
                                 (if (eq? b buffers-view)
                                     view-lines
                                     (buffer-line-count b)))
-                              (or (modes:name-of b) "")
+                              (or (mode:name-of b) "")
                               (let ([f (head:buffer-file b)])
                                 (if f (abbreviate-home f) ""))))
                       listed)]
@@ -2809,7 +2809,7 @@
                                handle-buffers-event!))
           ;; Always show its position bar, using the globally selected side.
           (head:set-app-presentation! buffers-view 1 #t)
-          (modes:choose! buffers-view "buffers")
+          (mode:choose! buffers-view "buffers")
           (refresh-buffers-view!)
           buffers-view)))
 
@@ -2860,7 +2860,7 @@
                (and (> n 0)
                     (list (cons (format "  ~a conflict~a" n (if (= n 1) "" "s"))
                                 'red)))))))
-    (styles:set-changed-hook!
+    (style:set-changed-hook!
       (lambda () (paint:invalidate-screen-cache!)))
     (head:add-shutdown-hook! (lambda () (head:flush-ui-audit! 'all)))
     ;; the global commands a prompt may run without losing its input:
@@ -2929,8 +2929,8 @@
       (main:set-quit-command! quit!!)
       (main:set-after-key! clamp-point!))
 
-    (modes:register! "buffers" '() '() buffers-styles)
-    (docs:register!
+    (mode:register! "buffers" '() '() buffers-styles)
+    (doc:register!
       '(((replace-all!)
          (("procedure" . "(replace-all! from to [where])"))
          "integer" ("(edit)") edit "Editing commands" #f

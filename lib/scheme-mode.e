@@ -14,10 +14,10 @@
 (library (scheme-mode)
   (export init! scheme-format-on-save)
   (import (chezscheme) (except (edit) init!)
-          (prefix (files) files:)
-          (prefix (styles) styles:)
-          (prefix (modes) modes:) (scheme-format)
-          (prefix (docs) docs:))
+          (prefix (file) file:)
+          (prefix (style) style:)
+          (prefix (mode) mode:) (scheme-format)
+          (prefix (doc) doc:))
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
@@ -83,20 +83,20 @@
       ;; escapes honored -- a backslash may escape the newline itself,
       ;; carrying the string on; unterminated it spans the line
       (let body ([j i] [escaped? #f])
-        (cond [(= j n) (styles:fill-range! styles i n 'string) 'string]
+        (cond [(= j n) (style:fill-range! styles i n 'string) 'string]
               [(and (char=? (string-ref s j) #\") (not escaped?))
-               (styles:fill-range! styles i (+ j 1) 'string)
+               (style:fill-range! styles i (+ j 1) 'string)
                (scan (+ j 1))]
               [else (body (+ j 1) (and (char=? (string-ref s j) #\\)
                                        (not escaped?)))])))
     (define (comment-body i depth)
       ;; inside #| |# from i, nesting honored
       (let body ([j i] [depth depth])
-        (cond [(>= j n) (styles:fill-range! styles i n 'comment) depth]
+        (cond [(>= j n) (style:fill-range! styles i n 'comment) depth]
               [(and (char=? (string-ref s j) #\|) (< (+ j 1) n)
                     (char=? (string-ref s (+ j 1)) #\#))
                (if (= depth 1)
-                   (begin (styles:fill-range! styles i (+ j 2) 'comment)
+                   (begin (style:fill-range! styles i (+ j 2) 'comment)
                           (scan (+ j 2)))
                    (body (+ j 2) (- depth 1)))]
               [(and (char=? (string-ref s j) #\#) (< (+ j 1) n)
@@ -116,14 +116,14 @@
                (let lit-loop ([j (min n (+ i 3))])
                  (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
                      (lit-loop (+ j 1))
-                     (begin (styles:fill-range! styles i j 'literal)
+                     (begin (style:fill-range! styles i j 'literal)
                             (scan j))))]
               [(and (char=? c #\#) (< (+ i 1) n)
                     (char=? (string-ref s (+ i 1)) #\|))
-               (styles:fill-range! styles i (+ i 2) 'comment)
+               (style:fill-range! styles i (+ i 2) 'comment)
                (comment-body (+ i 2) 1)]
               [(char=? c #\;)
-               (styles:fill-range! styles i n 'comment)
+               (style:fill-range! styles i n 'comment)
                #f]
               [(char=? c #\")
                (vector-set! styles i 'string)
@@ -138,7 +138,7 @@
                  (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
                      (token-loop (+ j 1))
                      (begin
-                       (styles:fill-range! styles i j
+                       (style:fill-range! styles i j
                          (scheme-token-style (substring s i j)))
                        (scan j))))]))))
     (values styles
@@ -164,7 +164,7 @@
               (vector-set! out i styles)
               (loop (+ i 1) next))))))
 
-  (define scheme-row (modes:memoize-analysis analyze))
+  (define scheme-row (mode:memoize-analysis analyze))
 
   (define (scheme-row-styles b row line)
     (scheme-row b row))
@@ -188,17 +188,17 @@
 
   (define (format-on-save! path)
     (when (and (scheme-format-on-save)
-               (equal? (modes:name-of (current-buffer)) "scheme"))
+               (equal? (mode:name-of (current-buffer)) "scheme"))
       (format-buffer!)))
 
   (define (init!)
-    (modes:register! "scheme"
-                     '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
-                     '("scheme" "petite" "chez" "guile" "racket")
-                     scheme-styles #f scheme-row-styles)
+    (mode:register! "scheme"
+                    '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
+                    '("scheme" "petite" "chez" "guile" "racket")
+                    scheme-styles #f scheme-row-styles)
     (register-indenter! "scheme" scheme-indent)
     (register-formatter! "scheme" scheme-format)
-    (docs:register!
+    (doc:register!
       '(((scheme-format-intrusive)
          (("parameter" . "(scheme-format-intrusive [enabled?])")) "boolean"
          ("(scheme-format)") scheme-format "Scheme formatting" #f
@@ -207,4 +207,4 @@
          (("parameter" . "(scheme-format-width [columns])")) "integer"
          ("(scheme-format)") scheme-format "Scheme formatting" #f
          "Get or set the target width used when `scheme-format-intrusive` is enabled. The default is 100 columns and the minimum is 20.")))
-    (files:add-pre-save-hook! format-on-save!)))
+    (file:add-pre-save-hook! format-on-save!)))

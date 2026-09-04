@@ -1,9 +1,9 @@
-;; actors.e -- actor identity and the interaction protocol: the
-;; library (actors), v2 stage 3 (docs/DESIGN2.md).
+;; actor.e -- actor identity and the interaction protocol: the
+;; library (actor), v2 stage 3 (docs/DESIGN2.md).
 ;;
 ;; An actor is an identity (plain data: (head main), (agent claude 3))
 ;; plus a registered delivery procedure.  Any actor may pose a
-;; question to another -- (actors:ask! from to question choices
+;; question to another -- (actor:ask! from to question choices
 ;; reply!) -- delivered through the target's registration: a human's
 ;; head shows it in the echo area and answers at leisure; an agent's
 ;; delivery posts to its mailbox.  Answers route back through the
@@ -13,7 +13,7 @@
 ;; delivery procedures retract with it; the pending-ask table rides a
 ;; persistent cell, so open questions survive reloads.
 
-(library (actors)
+(library (actor)
   (export register! unregister? deliver send!
           ask! answer! cancel! pending)
   (import (rnrs)

@@ -11,15 +11,15 @@
 (library (paren)
   (export init! matching-paren-style)
   (import (chezscheme) (except (edit) init!)
-          (prefix (modes) modes:)
+          (prefix (mode) mode:)
           (prefix (paint) paint:)
-          (prefix (styles) styles:)
-          (prefix (docs) docs:))
+          (prefix (style) style:)
+          (prefix (doc) doc:))
 
   ;; The named looks for the matched pair, in the style DSL. Box draws a
   ;; line above and below the bracket -- the closest widely rendered
   ;; approximation of a frame; a terminal that really draws SGR 51 can
-  ;; have it with (styles:set! 'matching-paren '(framed)). Colored uses
+  ;; have it with (style:set! 'matching-paren '(framed)). Colored uses
   ;; the accent violet that also marks choices and resizes.
   (define matching-paren-style-table
     '((underline (underline))
@@ -37,7 +37,7 @@
           (unless hit
             (error 'matching-paren-style
                    "must be underline, box, bold, or colored" name))
-          (styles:set! 'matching-paren (cadr hit))
+          (style:set! 'matching-paren (cadr hit))
           name))))
 
   (define (scan-paren b styles-of start-row start-col dir)
@@ -72,7 +72,7 @@
     ;; The bracket at point and its partner, as (row start end) ranges;
     ;; empty when neither applies.
     (let* ([b (current-buffer)]
-           [styles-of (modes:line-styles b)]
+           [styles-of (mode:line-styles b)]
            [pt (point)]
            [row (car pt)]
            [line (buffer-line b row)]
@@ -93,7 +93,7 @@
 
   (define (init!)
     (paint:add-highlighter! paren-highlights)
-    (docs:register!
+    (doc:register!
       '(((matching-paren-style)
          (("parameter" . "(matching-paren-style [name])")) "symbol"
          ("(paren)") paren "Editing" #f

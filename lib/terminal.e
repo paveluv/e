@@ -12,15 +12,15 @@
           terminal-emulator-mouse-input terminal-emulator-replies
           terminal-emulator-unsupported terminal-color-scheme!)
   (import (chezscheme) (except (edit) init!)
-          (prefix (modes) modes:)
+          (prefix (mode) mode:)
           (prefix (kernel) kernel:)
-          (prefix (strings) strings:)
+          (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (log) log:)
-          (prefix (styles) styles:) (sys)
+          (prefix (style) style:) (sys)
           (prefix (keymap) keymap:)
-          (prefix (docs) docs:))
+          (prefix (doc) doc:))
 
   (define-record-type terminal-state
     (fields buffer process lock
@@ -1377,7 +1377,7 @@
     (let* ([plain (if (and (> (string-length text) 0)
                            (memv (string-ref text 0) '(#\? #\> #\!)))
                       (substring text 1 (string-length text)) text)]
-           [parts (strings:lines
+           [parts (string:lines
                     (list->string
                       (map (lambda (c) (if (char=? c #\;) #\newline c))
                            (string->list plain))))])
@@ -1457,14 +1457,14 @@
     (if (not (terminal-state-controls-eight-bit state))
         (values text (string->utf8 text))
         (cond
-          [(strings:prefix? "\x1b;[" text)
+          [(string:prefix? "\x1b;[" text)
            (let* ([tail (substring text 2 (string-length text))]
                   [bytes (string->utf8 tail)]
                   [wire (make-bytevector (+ (bytevector-length bytes) 1))])
              (bytevector-u8-set! wire 0 #x9b)
              (bytevector-copy! bytes 0 wire 1 (bytevector-length bytes))
              (values (string-append (string (integer->char #x9b)) tail) wire))]
-          [(and (strings:prefix? "\x1b;P" text)
+          [(and (string:prefix? "\x1b;P" text)
                 (>= (string-length text) 4)
                 (string=? (substring text (- (string-length text) 2)
                                      (string-length text))
@@ -1507,7 +1507,7 @@
 
   (define (parse-osc-color text)
     (cond
-      [(strings:prefix? "rgb:" text)
+      [(string:prefix? "rgb:" text)
        (let ([parts (split-parameter
                       (substring text 4 (string-length text)) #\/)])
          (and (= (length parts) 3)
@@ -1585,11 +1585,11 @@
   (define (dispatch-hyperlink! state text)
     ;; OSC 8 ; params ; URI ST. Only id is semantic to the emulator; unknown
     ;; parameters remain safely ignored as tmux does. An empty URI closes it.
-    (let ([separator (strings:search text ";" 2 (string-length text))])
+    (let ([separator (string:search text ";" 2 (string-length text))])
       (when separator
         (let* ([parameters (substring text 2 separator)]
                [uri (substring text (+ separator 1) (string-length text))]
-               [id (find (lambda (field) (strings:prefix? "id=" field))
+               [id (find (lambda (field) (string:prefix? "id=" field))
                          (split-parameter parameters #\:))])
           (terminal-state-link-set!
             state
@@ -1600,8 +1600,8 @@
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
 
   (define (base64-value character)
-    (strings:search clipboard-base64-alphabet (string character)
-                    0 (string-length clipboard-base64-alphabet)))
+    (string:search clipboard-base64-alphabet (string character)
+                   0 (string-length clipboard-base64-alphabet)))
 
   (define (decode-base64 text)
     (let ([length (string-length text)])
@@ -1645,7 +1645,7 @@
     ;; OSC 52 ; selection ; base64-data ST. Queries are deliberately ignored:
     ;; importing clipboard contents is useful, exposing the kill ring to an
     ;; untrusted child is not.
-    (let ([separator (strings:search text ";" 3 (string-length text))])
+    (let ([separator (string:search text ";" 3 (string-length text))])
       (when separator
         (let ([payload (substring text (+ separator 1) (string-length text))])
           (unless (string=? payload "?")
@@ -1670,9 +1670,9 @@
       (cond
         [(and (pair? fields) (string=? (car fields) "4"))
          (dispatch-palette! state (cdr fields))]
-        [(strings:prefix? "8;" text)
+        [(string:prefix? "8;" text)
          (dispatch-hyperlink! state text)]
-        [(strings:prefix? "52;" text)
+        [(string:prefix? "52;" text)
          (dispatch-clipboard! state text)]
         [(and (= (length fields) 2) (string=? (car fields) "10"))
          (set-default-color! state #t (cadr fields))]
@@ -1760,7 +1760,7 @@
   (define (dispatch-dcs! state)
     (let ([text (control-text state)])
       (cond
-        [(strings:prefix? "$q" text)
+        [(string:prefix? "$q" text)
          (let* ([request (substring text 2 (string-length text))]
                 [value
                  (cond
@@ -1781,7 +1781,7 @@
              state
              (format "\x1b;P~a$r~a\x1b;\\"
                      (if value 1 0) (or value request))))]
-        [(strings:prefix? "+q" text)
+        [(string:prefix? "+q" text)
          (for-each
            (lambda (name) (reply-terminal-capability! state name))
            (split-parameter
@@ -1866,11 +1866,11 @@
               (let ([name (string->symbol
                             (format "terminal-sgr-~a" style-serial))])
                 (set! style-serial (+ style-serial 1))
-                ;; styles:set! accepts SGR parameters, not a complete escape
+                ;; style:set! accepts SGR parameters, not a complete escape
                 ;; sequence. Passing CSI here produced CSI CSI ... m m; the
                 ;; second trailing `m` was painted as text by the host
                 ;; terminal, most visibly during top's frequent SGR changes.
-                (styles:set! name (format "0;~a" sequence))
+                (style:set! name (format "0;~a" sequence))
                 (hashtable-set! style-cache sequence name)
                 (hashtable-set! style-sequences name sequence)
                 name)))))
@@ -1894,7 +1894,7 @@
                             operations)
                       (append operations '((7))))])
             (sgr-style
-              (strings:join (map number->string (apply append updated)) ";"))))))
+              (string:join (map number->string (apply append updated)) ";"))))))
 
   (define (palette-index operation foreground?)
     (let ([code (car operation)])
@@ -1960,7 +1960,7 @@
                 resolved)])
       (if (null? resolved) 'plain
           (sgr-style
-            (strings:join (map number->string (apply append resolved)) ";")))))
+            (string:join (map number->string (apply append resolved)) ";")))))
 
   (define (effective-style-row state row)
     (vector-map
@@ -2035,7 +2035,7 @@
     ;; makes selective resets exact and keeps emitted sequences bounded.
     (let* ([codes (canonical-sgr (terminal-state-sgr state)
                                  (sgr-parameter-list text))]
-           [sequence (strings:join (map number->string codes) ";")])
+           [sequence (string:join (map number->string codes) ";")])
       (terminal-state-sgr-set! state sequence)
       (terminal-state-style-set! state (sgr-style sequence))))
 
@@ -2327,7 +2327,7 @@
               parameters))
           (case final
             [(#\h #\l)
-             (when (not (strings:prefix? "?" text))
+             (when (not (string:prefix? "?" text))
                (for-each
                  (lambda (mode)
                    (case mode
@@ -2499,7 +2499,7 @@
                    (terminal-state-col-set! state (left-bound state)))
                  (save-cursor! state))]
             [(#\u)
-             (if (strings:prefix? "<" text)
+             (if (string:prefix? "<" text)
                  ;; A kitty keyboard-protocol pop. Nothing is ever pushed
                  ;; here, and the protocol defines popping an empty stack
                  ;; as a no-op, so exiting programs that pop defensively
@@ -2508,14 +2508,14 @@
                  (restore-cursor! state))]
             [(#\m)
              (cond
-               [(strings:prefix? ">" text)
+               [(string:prefix? ">" text)
                 ;; XTMODKEYS. The key encodings never change, matching the
                 ;; disabled level reported to XTQMODKEYS, so accepting the
                 ;; setting silently keeps vim's startup and exit quiet.
                 (unless (= (param parameters 0 0) 4)
                   (report-unsupported!
                     state (control-signature "CSI" text final)))]
-               [(strings:prefix? "?" text)
+               [(string:prefix? "?" text)
                 ;; XTQMODKEYS: modifyOtherKeys is permanently off.
                 (if (= (param parameters 0 0) 4)
                     (terminal-reply! state "\x1b;[>4;0m")
@@ -2533,14 +2533,14 @@
                (terminal-state-last-character-set! state #f))]
             [(#\p)
              (cond
-               [(strings:prefix? "!" text)
+               [(string:prefix? "!" text)
                 (soft-reset-terminal-state! state)]
                [(and (> (string-length text) 0)
                      (char=? (string-ref text (- (string-length text) 1))
                              #\$))
                 ;; DECRQM: even an unrecognized mode deserves a reply, or
                 ;; the requester waits on a timeout.
-                (let* ([private? (strings:prefix? "?" text)]
+                (let* ([private? (string:prefix? "?" text)]
                        [body (substring text (if private? 1 0)
                                         (- (string-length text) 1))]
                        [mode (or (string->number body) 0)])
@@ -2571,7 +2571,7 @@
              (cond
                [(= (param parameters 0 0) 5)
                 (terminal-reply!
-                  state (if (strings:prefix? "?" text)
+                  state (if (string:prefix? "?" text)
                             "\x1b;[?0n" "\x1b;[0n"))]
                [(= (param parameters 0 0) 6)
                 ;; DECOM makes the cursor report relative to both margins.
@@ -2584,9 +2584,9 @@
                   (terminal-reply!
                     state
                     (format "\x1b;[~a~a;~aR"
-                            (if (strings:prefix? "?" text) "?" "")
+                            (if (string:prefix? "?" text) "?" "")
                             (+ reported-row 1) (+ reported-col 1))))]
-               [(and (strings:prefix? "?" text)
+               [(and (string:prefix? "?" text)
                      (= (param parameters 0 0) 996))
                 ;; Color-scheme query: answerable only once the host has
                 ;; reported a scheme; silence matches a host without the
@@ -2637,7 +2637,7 @@
                   state (control-signature "CSI" text final))])]
             [(#\q)
              (cond
-               [(strings:prefix? ">" text)
+               [(string:prefix? ">" text)
                 ;; XTVERSION: report the terminal's name so probing
                 ;; programs learn what they are talking to.
                 (if (= (param parameters 0 0) 0)
@@ -3387,7 +3387,7 @@
       ("C-" . 5) ("M-" . 3) ("S-" . 2)))
 
   (define (modified-key event)
-    (find (lambda (entry) (strings:prefix? (car entry) event)) key-modifiers))
+    (find (lambda (entry) (string:prefix? (car entry) event)) key-modifiers))
 
   (define (function-key-number event)
     (and (> (string-length event) 1)
@@ -3483,15 +3483,15 @@
       [(function-key-number event) => function-key-bytes]
       [(named-key-bytes state event) => values]
       [(keypad-bytes state event) => values]
-      [(strings:prefix? "C-M-" event)
+      [(string:prefix? "C-M-" event)
        (let ([base (substring event 4 (string-length event))])
          (and (= (string-length base) 1)
               (meta-bytes state (control-byte (string-ref base 0)))))]
-      [(strings:prefix? "M-" event)
+      [(string:prefix? "M-" event)
        (let ([bytes (event-bytes
                       state (substring event 2 (string-length event)))])
          (and bytes (meta-bytes state bytes)))]
-      [(and (strings:prefix? "C-" event) (= (string-length event) 3))
+      [(and (string:prefix? "C-" event) (= (string-length event) 3))
        (control-byte (string-ref event 2))]
       [else
        (cond [(string=? event "RET")
@@ -3681,7 +3681,7 @@
                    (terminal-state-cursor-visible state)
                    (not (memq window
                               (terminal-state-unfollowed-windows state))))))
-          (modes:choose! buffer "terminal")
+          (mode:choose! buffer "terminal")
           (show-buffer! buffer)
           (let* ([size (or (head:buffer-window-size buffer) '(24 . 80))]
                  [rows (max 1 (car size))]
@@ -3702,8 +3702,8 @@
             (void))))))
 
   (define (init!)
-    (modes:register! "terminal" '() '() (lambda (line) #f)
-                     terminal-row-render terminal-row-styles)
+    (mode:register! "terminal" '() '() (lambda (line) #f)
+                    terminal-row-render terminal-row-styles)
     (set! known-color-scheme (head:host-color-scheme))
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (paint:add-hyperlinker! terminal-row-hyperlinks)
@@ -3734,7 +3734,7 @@
                                '("▶" . #f)
                                (cons tail 'italic))))
                    '((" " . #f) ("■" . #f)))))))
-    (docs:register!
+    (doc:register!
       '(((terminal!!)
          (("procedure" . "(terminal!! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f

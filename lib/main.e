@@ -19,7 +19,7 @@
           load-config! modules-reload-on-save config-reload-on-save
           set-file-opener! set-quit-command! set-after-key!)
   (import (chezscheme) (sys)
-          (prefix (files) files:)
+          (prefix (file) file:)
           (prefix (kernel) kernel:)
           (prefix (head) head:)
           (prefix (paint) paint:)
@@ -27,10 +27,10 @@
           (prefix (prompt) prompt:)
           (prefix (keymap) keymap:)
           (prefix (tty) tty:)
-          (prefix (modes) modes:)
-          (prefix (actors) actors:)
+          (prefix (mode) mode:)
+          (prefix (actor) actor:)
           (prefix (log) log:)
-          (prefix (strings) strings:))
+          (prefix (string) string:))
 
   ;;; Key dispatch ---------------------------------------------------------------------
 
@@ -56,7 +56,7 @@
     ;; context does not bind resolves, minus the prefix, in the global
     ;; map -- how a captured app's user runs one complete global
     ;; command.
-    (let* ([mode-context (modes:key-context (head:window-buffer (head:current)))]
+    (let* ([mode-context (mode:key-context (head:window-buffer (head:current)))]
            [escape (and mode-context (keymap:context-escape mode-context))])
       (let loop ([sequence (list first)])
         (let* ([in-context (and mode-context
@@ -123,17 +123,17 @@
   ;; question waits in the echo area as an unlogged indicator until
   ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
   (define (present-pending-ask!)
-    (let ([asks (actors:pending head:ui-actor)])
+    (let ([asks (actor:pending head:ui-actor)])
       (when (and (pair? asks)
                  (not (prompt:active?))
                  (string=? (echo:text) ""))
         (let ([ask (car asks)])
           (echo:set-text!
-            (strings:elide (format "~a asks: ~a -- C-c a answers~a"
-                             (cadr ask) (caddr ask)
-                             (if (> (length asks) 1)
-                               (format " (~a waiting)" (length asks))
-                               ""))
+            (string:elide (format "~a asks: ~a -- C-c a answers~a"
+                            (cadr ask) (caddr ask)
+                            (if (> (length asks) 1)
+                              (format " (~a waiting)" (length asks))
+                              ""))
               (paint:screen-cols)))))))
 
 
@@ -147,7 +147,7 @@
     (paint:invalidate-screen-cache!)
     (let ([result (kernel:load-config!)])
       (cond [(eq? result #t)
-             (modes:refresh!)
+             (mode:refresh!)
              (paint:invalidate-screen-cache!)
              #t]
             [(eq? result 'absent) #f]
@@ -160,7 +160,7 @@
     (kernel:add-after-reload-hook!
       (lambda (name)
         (load-config!)              ; the settings reapply on top
-        (modes:refresh!)
+        (mode:refresh!)
         (paint:invalidate-screen-cache!)
         (echo:set-text! (format "Reloaded ~a" name)))))
 
@@ -177,13 +177,13 @@
     ;; The module name a saved path denotes: a .e file directly in the
     ;; editor's lib directory; #f for anything else -- the core included,
     ;; which cannot be reloaded.
-    (let ([full (files:canonical path)]
-          [lib (string-append (files:canonical (caar (library-directories)))
+    (let ([full (file:canonical path)]
+          [lib (string-append (file:canonical (caar (library-directories)))
                               "/")])
-      (and (strings:prefix? lib full)
-           (strings:suffix? ".e" full)
-           (let ([base (strings:tail full (string-length lib))])
-             (and (not (strings:search base "/" 0 (string-length base)))
+      (and (string:prefix? lib full)
+           (string:suffix? ".e" full)
+           (let ([base (string:tail full (string-length lib))])
+             (and (not (string:search base "/" 0 (string-length base)))
                   (not (member base '("core.e" "main.e")))
                   (substring base 0 (- (string-length base) 2)))))))
 
@@ -201,12 +201,12 @@
            (kernel:reload-module! name)
            (log:add! 'reload-module! (format "Reloaded ~a" name)))]
         [(and (config-reload-on-save)
-              (string=? (files:canonical path) (files:canonical (kernel:config-file))))
+              (string=? (file:canonical path) (file:canonical (kernel:config-file))))
          (when (load-config!)
            (log:add! 'config "Applied config.e"))])))
 
   ;; the reload is a post-save hook like any module's
-  (define reload-hooked (files:add-post-save-hook! reload-on-save!))
+  (define reload-hooked (file:add-post-save-hook! reload-on-save!))
 
   ;;; Startup, the loop, shutdown --------------------------------------------------------
 

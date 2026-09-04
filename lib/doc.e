@@ -1,4 +1,4 @@
-;; docs.e -- the documentation corpus's entry: the library (docs), v2
+;; doc.e -- the documentation corpus's entry: the library (doc), v2
 ;; core dissolution (docs/DESIGN2.md).
 ;;
 ;; One record for every documented name -- from the reference corpus
@@ -7,10 +7,10 @@
 ;; a module's reload retracts its entries with its other
 ;; registrations.  Below every module that documents itself, the
 ;; command layer included: describing needs no import from the
-;; described.  Exported names drop the module stem: (docs:register!
-;; entries), (docs:entries), (docs:forms e).
+;; described.  Exported names drop the module stem: (doc:register!
+;; entries), (doc:entries), (doc:forms e).
 
-(library (docs)
+(library (doc)
   (export (rename (make-doc-entry make) (doc-entry? entry?)
                   (doc-names names) (doc-forms forms) (doc-returns returns)
                   (doc-libraries libraries) (doc-source source)
@@ -31,7 +31,7 @@
 
   (define (entry-datum->doc-entry entry)
     (unless (and (list? entry) (= (length entry) 8))
-      (error 'docs:register!
+      (error 'doc:register!
              "expected (names forms returns libraries source chapter url description)"
              entry))
     (apply make-doc-entry entry))
@@ -52,4 +52,4 @@
     ;; every registered entry, oldest batch first
     (apply append (reverse (kernel:registry-items descriptions))))
 
-) ;; library (docs)
+) ;; library (doc)

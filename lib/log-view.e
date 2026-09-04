@@ -11,12 +11,12 @@
 (library (log-view)
   (export init! log-view show-log!)
   (import (chezscheme) (except (edit) init!)
-          (prefix (styles) styles:)
-          (prefix (modes) modes:)
-          (prefix (strings) strings:)
+          (prefix (style) style:)
+          (prefix (mode) mode:)
+          (prefix (string) string:)
           (prefix (head) head:)
           (prefix (log) log:)
-          (prefix (docs) docs:))
+          (prefix (doc) doc:))
 
   (define (log-line-prefix e)
     ;; The view's row prefix; the stored time keeps nanoseconds, the
@@ -30,20 +30,20 @@
     ;; text styled by the component's registered styler.
     (let* ([n (string-length s)]
            [styles (make-vector n 'comment)]
-           [sep (and (> n 9) (strings:search s ": " 9 n))])
+           [sep (and (> n 9) (string:search s ": " 9 n))])
       (when sep
         (let* ([component (string->symbol (substring s 9 sep))]
                [styler (log:styler component)]
                [from (+ sep 2)]
                [inner (and styler
                            (guard (ex [else #f])
-                             (styler (strings:tail s from))))])
+                             (styler (string:tail s from))))])
           (if inner
               (let loop ([i from])
                 (when (< i n)
                   (vector-set! styles i (vector-ref inner (- i from)))
                   (loop (+ i 1))))
-              (styles:fill-range! styles from n 'plain))))
+              (style:fill-range! styles from n 'plain))))
       styles))
 
   (define (make-log-view name pred)
@@ -61,12 +61,12 @@
                 (set! lines
                   (append (let ([prefix (log-line-prefix e)])
                             (map (lambda (l) (string-append prefix l))
-                                 (strings:lines (log:format-entry e))))
+                                 (string:lines (log:format-entry e))))
                           lines)))))
           (set! rendered (log:length))
           (head:view-append! b lines))))
     (set! b (head:register-view! name refresh!))
-    (modes:choose! b "log")
+    (mode:choose! b "log")
     (refresh!)
     b)
 
@@ -88,9 +88,9 @@
     (void))
 
   (define (init!)
-    (docs:register!
+    (doc:register!
       '(((show-log!) (("procedure" . "(show-log!)")) "void"
          ("(log-view)") log-view "Log commands" #f
          "Display the live `*log*` view, containing timestamped editor messages and command results.")))
-    (modes:register! "log" '() '() style-log-line)
+    (mode:register! "log" '() '() style-log-line)
     (log-view)))                ; the *log* view, listed from startup

@@ -48,10 +48,10 @@
                 fork-thread sleep make-time)
           (only (sys) terminal-output-port terminal-character-width
                 terminal-size watch-terminal-resize!)
-          (prefix (styles) styles:)
-          (prefix (strings) strings:)
+          (prefix (style) style:)
+          (prefix (string) string:)
           (prefix (head) head:)
-          (prefix (modes) modes:)
+          (prefix (mode) mode:)
           (prefix (echo) echo:)
           (prefix (kernel) kernel:))
 
@@ -176,21 +176,21 @@
                                (equal? (link-at j) link))
                           (run (+ j 1))
                           j))])
-          (ansi "\x1b;[0m" (styles:code style))
-          (when sel (ansi (styles:code 'selection)))
+          (ansi "\x1b;[0m" (style:code style))
+          (when sel (ansi (style:code 'selection)))
           (case bg
-            [(match-point) (ansi (styles:code 'match-point))]
-            [(active) (ansi (styles:code 'active))]
-            [(active-shadow) (ansi (styles:code 'active-shadow))]
-            [(match) (ansi (styles:code 'match))]
+            [(match-point) (ansi (style:code 'match-point))]
+            [(active) (ansi (style:code 'active))]
+            [(active-shadow) (ansi (style:code 'active-shadow))]
+            [(match) (ansi (style:code 'match))]
             [else (void)])
-          (when mk (ansi (styles:code mk)))
+          (when mk (ansi (style:code mk)))
           (when link (open-link link))
           (ansi (segment col end))
           (when link (close-link))
           (loop end))))
     (when edge
-      (ansi "\x1b;[0m" (styles:code 'chrome)
+      (ansi "\x1b;[0m" (style:code 'chrome)
             (if (eq? edge 'wrap) "\\" "$")))
     (ansi "\x1b;[0m"))
 
@@ -208,7 +208,7 @@
                     (if (and (< j end) (eq? (at j) st))
                         (run (+ j 1))
                         j))])
-          (ansi "\x1b;[0m" (styles:code st) (substring content i j))
+          (ansi "\x1b;[0m" (style:code st) (substring content i j))
           (emit j)))))
 
   ;;; Soft wrap -------------------------------------------------------------------
@@ -239,8 +239,8 @@
     ;; can inspect the destination and modes can add non-URL labels later.
     (let ([length (string-length text)])
       (let loop ([from 0] [links '()])
-        (let ([http (strings:search text "http://" from length)]
-              [https (strings:search text "https://" from length)])
+        (let ([http (string:search text "http://" from length)]
+              [https (string:search text "https://" from length)])
           (let ([start (cond [(and http https) (min http https)]
                              [http http]
                              [else https])])
@@ -280,7 +280,7 @@
   ;; geometry -- and a view unlike the cached one discards every key.
   ;; A buffer's mode-driven presentation -- name, display transform,
   ;; row styler, memoized line styler -- comes from the mode registry
-  ;; (modes), gathered once per window paint.
+  ;; (mode), gathered once per window paint.
 
   (define screen-cache '#())
   (define cached-view #f)
@@ -288,11 +288,11 @@
 
   (define (mode-info b)
     ;; #(name render row-styler line-styler) for b's mode, plain without one
-    (let ([m (modes:of b)])
-      (vector (and m (modes:name m))
-              (and m (modes:render m))
-              (and m (modes:row-styles m))
-              (modes:line-styles b))))
+    (let ([m (mode:of b)])
+      (vector (and m (mode:name m))
+              (and m (mode:render m))
+              (and m (mode:row-styles m))
+              (mode:line-styles b))))
 
   ;; a store change under this seat's buffers invalidates painted rows
   (define repaint-hooked
@@ -517,9 +517,9 @@
                 (paint! r x (list 'divider junction?)
                         (lambda ()
                           (if junction?
-                              (ansi (styles:code 'chrome)
+                              (ansi (style:code 'chrome)
                                 "\x2534;\x1b;[0m")
-                              (ansi (styles:code 'chrome)
+                              (ansi (style:code 'chrome)
                                 "\x2502;\x1b;[0m")))))))))
       (head:dividers)))
 
@@ -564,7 +564,7 @@
                     (if (eq? side 'right) (- (head:window-width w) 1) 0))
                   (list 'scrollbar glyph)
                   (lambda ()
-                    (ansi (styles:code 'chrome) glyph "\x1b;[0m")))))))
+                    (ansi (style:code 'chrome) glyph "\x1b;[0m")))))))
 
   (define (paint-line-number! row x width line first-segment?)
     (when (> width 0)
@@ -577,7 +577,7 @@
                      label " ")])
         (paint! row x (list 'line-number text)
                 (lambda ()
-                  (ansi (styles:code 'chrome) text "\x1b;[0m"))))))
+                  (ansi (style:code 'chrome) text "\x1b;[0m"))))))
 
   (define (paint-window! w start height ranges)
     (let* ([b (head:window-buffer w)]
@@ -1017,7 +1017,7 @@
     ;; delegated. Shared by file, symbol, and expression prompts.
     (let ([llen (string-length label)])
       (lambda (content)
-        (and (strings:prefix? label content)
+        (and (string:prefix? label content)
              (let* ([styles (make-vector (string-length content) 'comment)]
                     [end (min (or (echo:input-end) (string-length content))
                               (string-length content))]
@@ -1122,13 +1122,13 @@
            [text-end (min end (string-length text))]
            [ghost-start (max start (string-length text))]
            [content (string-append text ghost)])
-      (ansi "\x1b;[0m" (styles:code 'chrome) lead)
+      (ansi "\x1b;[0m" (style:code 'chrome) lead)
       (when (< start text-end)
         (if styles
             (emit-runs text styles start text-end)
             (ansi "\x1b;[0m" (substring text start text-end))))
       (when (< ghost-start end)
-        (ansi "\x1b;[0m" (styles:code 'chrome)
+        (ansi "\x1b;[0m" (style:code 'chrome)
           (substring content ghost-start end)))
       (ansi "\x1b;[0m"
         (make-string (max 0 (- cols (string-length lead) (- end start)
@@ -1195,14 +1195,14 @@
                                   (guard (ex [else #f])
                                     ((echo-highlight) content)))
                              (and (echo:styles)
-                                  (strings:prefix? (car (echo:styles))
-                                                   content)
+                                  (string:prefix? (car (echo:styles))
+                                                  content)
                                   (guard (ex [else #f])
                                     ((cdr (echo:styles))
                                      (car (echo:styles))))))])
                     (ansi (make-string lead #\space))
                     (when (> lb 0)
-                      (ansi (styles:code 'chrome)
+                      (ansi (style:code 'chrome)
                             (substring content 0 lb) "\x1b;[0m"))
                     (if styles
                         ;; styled runs for the typed part
@@ -1210,7 +1210,7 @@
                                    (+ start cut))
                         (ansi (substring content (+ start lb)
                                          (+ start cut))))
-                    (ansi "\x1b;[0m" (styles:code 'chrome)
+                    (ansi "\x1b;[0m" (style:code 'chrome)
                           (substring content (+ start cut) end)
                           "\x1b;[0m"
                           (make-string
