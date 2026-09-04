@@ -1,14 +1,14 @@
 ;; scheme-mode.e -- Scheme syntax highlighting for the e editor.
 ;;
 ;; An e extension module: the library (scheme-mode), loaded at startup by
-;; the core, which calls init!.  Registers a mode tied to Scheme file
+;; the kernel, which calls init!.  Registers a mode tied to Scheme file
 ;; extensions and to #! interpreter lines naming a Scheme, so only Scheme
 ;; buffers are highlighted.  Lines are lexed individually, but whether a
 ;; line starts inside a string constant or a #| |# block comment comes
 ;; from a whole-buffer scan, memoized per buffer and redone only when
 ;; some line changed (the c-mode pattern), so both span lines correctly.
 ;; The style symbols it produces are rendered by the editor's
-;; style-code, and brackets styled 'delimiter take part in bracket
+;; style:code, and brackets styled 'delimiter take part in bracket
 ;; matching (so brackets inside strings and comments don't count).
 
 (library (scheme-mode)
@@ -21,7 +21,7 @@
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
-  ;; On by default; (scheme-format-on-save #f) in config.e turns it off.
+  ;; On by default; (scheme-mode:format-on-save #f) in config.e turns it off.
   (define scheme-format-on-save (make-parameter #t))
 
   (define scheme-keywords

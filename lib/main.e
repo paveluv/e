@@ -11,8 +11,8 @@
 ;; ask the head instead of the dispatcher keeping flags for them.
 ;; Another actor's pending question is presented before each frame.
 ;;
-;; Like the kernel and the core, main is never reloaded: it is what
-;; everything else runs under.  (main:run) is the whole program.
+;; Like the kernel, main is never reloaded: it is what everything else
+;; runs under.  (main:run) is the whole program.
 
 (library (main)
   (export run set-startup-page! (rename (handle-key! dispatch-key!))
@@ -175,7 +175,7 @@
 
   (define (module-name-of-path path)
     ;; The module name a saved path denotes: a .e file directly in the
-    ;; editor's lib directory; #f for anything else -- the core included,
+    ;; editor's lib directory; #f for anything else -- main included,
     ;; which cannot be reloaded.
     (let ([full (file:canonical path)]
           [lib (string-append (file:canonical (caar (library-directories)))
@@ -184,7 +184,7 @@
            (string:suffix? ".e" full)
            (let ([base (string:tail full (string-length lib))])
              (and (not (string:search base "/" 0 (string-length base)))
-                  (not (member base '("core.e" "main.e")))
+                  (not (member base '("kernel.e" "main.e")))
                   (substring base 0 (- (string-length base) 2)))))))
 
   (define (reload-on-save! path)

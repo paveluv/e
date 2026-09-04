@@ -1,14 +1,13 @@
-;; log.e -- the structured log and audit stream: the library (log),
-;; v2 (dev/DESIGN2.md).  State, not UI: pure infrastructure with no
-;; init!.
+;; log.e -- the structured log and audit stream: the library (log).
+;; State, not UI: pure infrastructure with no init!.
 ;;
 ;; The editor's syslog: structured records -- (time component datum),
 ;; time with nanosecond precision -- indexed in a growable vector,
 ;; appended by log! and by every message that passes through the echo
 ;; area.  The records ride a persistent cell, so the log survives
 ;; module reloads; presentation is the head's business, installed
-;; through set-presenter! (the core shows entries in its echo area;
-;; the log-view module renders the *log* view from the records
+;; through set-presenter! (the command layer shows entries in the echo
+;; area; the log-view module renders the *log* view from the records
 ;; themselves).
 ;;
 ;; Per-component presentation of structured entries: modules register

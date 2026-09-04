@@ -1,8 +1,7 @@
 #!/usr/bin/env scheme-script
 
-;; Terminal input decoding: bytes in, data events out -- the first
-;; time the parser is testable without a PTY.  v2 core dissolution
-;; (dev/DESIGN2.md).  Run from the repository root.
+;; Terminal input decoding: bytes in, data events out, testable
+;; without a PTY.  Run from the repository root.
 
 (import (chezscheme))
 

@@ -1,5 +1,4 @@
-;; file.e -- the disk: the library (file), v2 core dissolution
-;; (dev/DESIGN2.md).
+;; file.e -- the disk: the library (file).
 ;;
 ;; Everything the editor does with the file system, below the seams
 ;; and free of buffers and screens: path algebra (directory and base

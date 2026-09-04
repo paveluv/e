@@ -1,8 +1,8 @@
 #!/usr/bin/env scheme-script
 
 ;; The interaction protocol: registration, delivery, ask/answer
-;; round trips, tickets, and cancellation -- v2 stage 3
-;; (dev/DESIGN2.md).  Run from the repository root.
+;; round trips, tickets, and cancellation.  Run from the repository
+;; root.
 
 (import (chezscheme))
 

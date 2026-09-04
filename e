@@ -13,18 +13,21 @@
 ;;
 ;; The editor lives in the lib directory next to this script as R6RS
 ;; libraries with the .e extension.  This script is pure bootstrap --
-;; only what must run before the (core) library can exist: locate the
+;; only what must run before the libraries can exist: locate the
 ;; installation, point Chez's library system at it (sources compile on
 ;; demand into the eo directory next to lib and recompile when stale),
 ;; and start the editor.  Everything else, the loading of the extension
-;; modules included, is the core's business (load-modules! there).
+;; modules included, is the kernel's and main's business
+;; (kernel:load-modules!, main:run).
 ;;
 ;; scheme-script compiles this whole file before running any of it, and
-;; a literal (import (core)) would be resolved during that compilation
+;; a literal (import (main)) would be resolved during that compilation
 ;; -- before the code below has said where the libraries live.  Hence
 ;; the eval at the bottom: it defers importing and starting the editor
 ;; until run time.  It evaluates in the interaction environment, the
-;; editor's top level -- the same place M-x expressions run.
+;; editor's top level -- the same place M-x expressions run, which is
+;; why it imports the command layer bare and every other library
+;; prefixed: that is the environment M-x sees.
 
 (import (chezscheme))
 

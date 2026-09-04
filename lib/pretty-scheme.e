@@ -1,12 +1,12 @@
 ;; pretty-scheme.e -- per-construct unicode parens, for the e editor.
 ;;
 ;; An e extension module: the library (pretty-scheme), loaded at
-;; startup by the core, which calls init!.  (pretty-scheme-clusters!) toggles
-;; the current buffer
-;; between scheme and pretty-scheme.  The mode draws each construct's
-;; parentheses as the unicode pair assigned to its cluster -- (define
-;; ...) wears double angles, conditionals white parens, and so on --
-;; while the buffer and the file keep plain "(" and ")" (or "[" and
+;; startup by the kernel, which calls init!.  (pretty-scheme:clusters!)
+;; toggles the current buffer between scheme and pretty-scheme.  The
+;; mode draws each construct's parentheses as the unicode pair assigned
+;; to its cluster -- (define ...) wears double angles, conditionals
+;; white parens, and so on -- while the buffer and the file keep plain
+;; "(" and ")" (or "[" and
 ;; "]": the rules ignore the difference, and the status line hints the
 ;; source character under point).  Typing ")" or "]" closes the
 ;; innermost open construct with whatever character the source opened

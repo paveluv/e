@@ -1,7 +1,7 @@
 ;; eval.e -- M-x: evaluate Scheme expressions, for the e editor.
 ;;
 ;; An e extension module: the library (eval), loaded at startup by the
-;; core, which calls init!.  M-x prompts for an expression (the opening
+;; kernel, which calls init!.  M-x prompts for an expression (the opening
 ;; parenthesis is pretyped and deletable, so a bare symbol works too;
 ;; missing closing parentheses are forgiven), evaluates it in the
 ;; editor's top level, logs the expression (component eval, which also
@@ -12,9 +12,9 @@
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
 ;; down arrows browse the history, and C-g interrupts a runaway
-;; evaluation. Parameter suggestions are read live from the describe:this
+;; evaluation. Parameter suggestions are read live from the describe
 ;; module's structured entries, with source and arity as fallbacks.
-;; C-x C-e runs eval! over the whole current buffer, or an explicit
+;; C-x C-e runs eval:run! over the whole current buffer, or an explicit
 ;; region/buffer target, in that same top level.
 
 (library (eval)
@@ -136,7 +136,7 @@
 
   (define (symbol-params sym)
     ;; The parameters of the procedure sym names, as a list of display
-    ;; tokens: from its live describe:this entry when available, else its source,
+    ;; tokens: from its live describe entry when available, else its source,
     ;; else its arity in brackets.  #f for anything else.
     (and (top-level-bound? sym)
          (let ([v (top-level-value sym)])
@@ -397,7 +397,7 @@
 
   (define (evaluation-outcome label text)
     ;; Evaluation is one undo step in every buffer it edits, and C-g can
-    ;; interrupt it whether it came from M-x or eval!.
+    ;; interrupt it whether it came from M-x or eval:run!.
     (define (run)
       (guard (ex [(head:interrupted? ex) "interrupted"]
                  [else (format "error: ~a" (kernel:condition-text ex))])

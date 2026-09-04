@@ -1,5 +1,4 @@
-;; state.e -- the buffer store: the library (state), v2 stage 1
-;; (dev/DESIGN2.md).
+;; state.e -- the buffer store: the library (state).
 ;;
 ;; Multi-actor buffer state over the pure (text) algebra.  Every
 ;; buffer carries a revision; every mutation is a transaction naming
@@ -10,11 +9,11 @@
 ;; shared, attributed history where "undo my edit" applies the
 ;; inverse only while it still rebases cleanly.
 ;;
-;; The store lives in a core persistent cell, so hot-reloading this
-;; module preserves every buffer.  Until the v2 kernel provides the
-;; single-writer mailbox, one mutex serializes all mutation -- the
-;; same discipline, cruder transport.  Text vectors are immutable by
-;; (text)'s discipline, so snapshots handed out remain valid forever.
+;; The store lives in a kernel persistent cell, so hot-reloading this
+;; module preserves every buffer.  One mutex serializes all mutation
+;; -- the design's single writer in its simplest form.  Text vectors
+;; are immutable by (text)'s discipline, so snapshots handed out
+;; remain valid forever.
 ;;
 ;; Naming reads behind the import prefix: (state:edit! ...),
 ;; (state:snapshot ...).
@@ -518,8 +517,8 @@
   ;; buffer lifecycle -- (create id name actor), (rename id name
   ;; actor), (delete id actor).  Delivery is synchronous and
   ;; outside the store lock -- a subscriber may read state, but slow
-  ;; subscribers slow the writer; agent sessions will add mailbox
-  ;; delivery when they arrive.
+  ;; subscribers slow the writer; asynchronous delivery (to an agent's
+  ;; mailbox, over the wire) is future work.
   ;;
   ;; Subscriptions are kernel-registry entries, so they are owned like
   ;; any registration: a module's subscription retracts when the

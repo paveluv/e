@@ -12,7 +12,7 @@
 ;;                     an established byte stream.  make-channel is
 ;;                     exported: any transport that can carry bytes can
 ;;                     wear it.
-;;   https-connector -- a parameter holding (lambda (host port) channel)
+;;   https:connector -- a parameter holding (lambda (host port) channel)
 ;;                     for the secure transport.  The default speaks
 ;;                     TLS via libssl over an FFI socket; a pure-Scheme
 ;;                     TLS, an `openssl s_client` pipe, or a test
@@ -741,7 +741,7 @@
   (define (https-request method url . options)
     ;; options: an optional header alist, then an optional body
     ;; (string or bytevector).  -> an https-response whose port streams
-    ;; the body; close it with https-close! (draining closes too).
+    ;; the body; close it with https:close! (draining closes too).
     (let-values ([(secure? host port path) (parse-url url)])
       (let* ([headers (if (pair? options) (car options) '())]
              [body (and (pair? options) (pair? (cdr options))
@@ -819,7 +819,7 @@
            (error 'https (format "~a fetching ~a" status url))]))))
 
   (define (https-download url path)
-    ;; Fetch url into a file, following redirects like https-get.
+    ;; Fetch url into a file, following redirects like https:get.
     (let fetch ([url url] [hops 0])
       (when (> hops 5)
         (error 'https "too many redirects" url))

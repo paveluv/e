@@ -1,6 +1,6 @@
-;; tty.e -- terminal input decoding: the library (tty), v2 core
-;; dissolution (dev/DESIGN2.md).  Pure infrastructure with no init!;
-;; raw-mode control (termios) lives in the platform layer, (sys).
+;; tty.e -- terminal input decoding: the library (tty).  Pure
+;; infrastructure with no init!; raw-mode
+;; control (termios) lives in the platform layer, (sys).
 ;;
 ;; One entry point: (tty:read-event port) decodes the next keyboard,
 ;; mouse, or host event from a terminal input port into plain data --
@@ -13,7 +13,7 @@
 ;;
 ;; The decoder is a pure function of the byte stream: side effects
 ;; happen at consumption, on whatever thread pumps the events (the
-;; core's reader thread posts them to the main mailbox).  Unknown
+;; head's reader thread posts them to the main mailbox).  Unknown
 ;; escape sequences are swallowed whole so their payloads can never
 ;; leak into a buffer as typed text.
 

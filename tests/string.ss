@@ -1,7 +1,7 @@
 #!/usr/bin/env scheme-script
 
-;; The pure string helpers below the seams -- v2 core dissolution
-;; (dev/DESIGN2.md).  Run from the repository root.
+;; The pure string helpers below the seams.  Run from the repository
+;; root.
 
 (import (chezscheme))
 
@@ -28,8 +28,8 @@
      (check 'prefix (string:prefix? "he" "hello") #t)
      (check 'prefix-longer-than-string (string:prefix? "hello!" "hello") #f)
      (check 'prefix-empty (string:prefix? "" "x") #t)
-     (check 'suffix (string:suffix? ".e" "core.e") #t)
-     (check 'suffix-not (string:suffix? ".ss" "core.e") #f)
+     (check 'suffix (string:suffix? ".e" "edit.e") #t)
+     (check 'suffix-not (string:suffix? ".ss" "edit.e") #f)
 
      ;; -- join -------------------------------------------------------------
 

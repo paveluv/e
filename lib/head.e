@@ -1,16 +1,18 @@
-;; head.e -- the head: the library (head), v2 core dissolution
-;; (dev/DESIGN2.md).  Pure infrastructure with no init!.
+;; head.e -- the head: the library (head).  Pure infrastructure with
+;; no init!.
 ;;
 ;; A head is one user's seat -- in the wire's terms, the client side:
 ;; its buffers as it sees them, its windows and their layout, which
-;; one is selected, and the loop that feeds it events.  This module
+;; one is selected, and the pump that feeds it events.  This module
 ;; owns the records and the geometry (the seat's buffer record, the
-;; window record, the persistent split tree and its tiling) and the
+;; window record, the persistent split tree and its tiling), the
 ;; scheduling pump (the mailbox, wakes, posted thunks, the input
-;; reader).  Routing (apps, capture), wrap policy, painting, and the
-;; command loop's body stay with the core until they move; the core
-;; reaches this state through identifier-syntax facades and installs
-;; the pump's handlers.
+;; reader), the store client, the app registry, and the seat's
+;; per-user state (kill ring, paste text, the last command).  Key
+;; dispatch and the loop's body live in (main), painting in (paint),
+;; the commands in (edit); the command layer still reaches the seat's
+;; state through identifier-syntax facades, and two hooks reach up
+;; from the pump: the frame and the mouse.
 
 (library (head)
   (export buffer make-buffer buffer?
@@ -143,7 +145,7 @@
             ;; goal is the user's chosen proportion, and the layout
             ;; realizes the goals in whatever space is there --
             ;; recomputed fresh each redraw, so temporary changes (a
-            ;; grown echo area, a pop-up split) never drift them
+            ;; grown echo area) never drift them
             (mutable size)
             (mutable goal)
             ;; horizontal band geometry, written by the layout: the
@@ -162,9 +164,10 @@
 
   ;;; The head's seat -------------------------------------------------------------
 
-  ;; Core-linked (never reloaded in place): plain module state.  The
-  ;; core initializes these at startup and reads/writes them through
-  ;; its facades; set-layout-root! (app-aware) stays there.
+  ;; main links against this library, so it is never reloaded in place
+  ;; and plain module state suffices.  The seat's first state (a
+  ;; *scratch* buffer in one window) is set at the end of this file;
+  ;; the command layer reads and writes these through its facades.
 
   (define the-buffers '())      ; the seat's buffers, most recent first
   (define the-windows '())      ; every live window, layout order
@@ -664,7 +667,7 @@
       (buffer-state-rev-set! b revision)
       (bump-buffer-revision! b)))
 
-  ;; Store outage: the-buffers whose cache forked from the store because a
+  ;; Store outage: buffers whose cache forked from the store because a
   ;; store call failed.  Each fork is logged once, edits stay local
   ;; (never half-and-half), and every frame re-converges what it can.
   (define forked-buffers '())
@@ -726,9 +729,9 @@
   (define (state-edit! b span replacement)
     ;; The ui's text edits go through the store first and the cache
     ;; adopts the result.  A stale refusal means a foreign edit
-    ;; overlapped mid-command: core content wins -- the edit applies
-    ;; to the cache's coordinates and resets the store (the conflict
-    ;; is in the audit log; see the tech debt ledger).
+    ;; overlapped mid-command: this seat's content wins -- the edit
+    ;; applies to the cache's coordinates and resets the store (the
+    ;; conflict is in the audit log; see the tech debt ledger).
     (define (local-text)
       (let-values ([(new-text delta)
                     (text:apply-edit (buffer-lines b) span replacement)])
@@ -746,7 +749,7 @@
                          (find (lambda (entry)
                                  (not (equal? (cadr entry) ui-actor)))
                                (state:history (buffer-state-id b) 8)))])
-                  ;; the conflict is on the record before core wins
+                  ;; the conflict is on the record before the seat wins
                   (guard (ex [else (void)])
                     (log:add! 'state
                       (format "conflict: ui overrode ~a in ~s"
@@ -788,7 +791,8 @@
   (define (adopt-store-buffer! id)
     ;; Another actor created a store buffer: give this head a record
     ;; for it, so it shows in the buffer list like any other -- unless
-    ;; its creator marked it ephemeral (a head's own pop-ups).  It
+    ;; its creator marked it ephemeral (a head's own chrome, the
+    ;; *completions* view).  It
     ;; joins at the end: this seat did not ask for it.  A buffer with
     ;; no mode yet gets detection, recorded as the shared fact.
     (unless (or (buffer-of-state-id id)
@@ -824,7 +828,7 @@
         the-windows)))
 
   ;; Foreign actors edit the (state) store directly; their changes
-  ;; flow back into the core's line caches before each frame.  The
+  ;; flow back into this seat's line caches before each frame.  The
   ;; subscription callback runs on whichever thread edited, so it only
   ;; records the buffer id; the main loop does the adoption.
   (define foreign-lock (make-mutex))
@@ -938,7 +942,7 @@
                                              (list-ref event 4))))
                                  ""))]))))))
         events)
-      ;; the buffer lifecycle across heads: another actor's the-buffers
+      ;; the buffer lifecycle across heads: another actor's buffers
       ;; appear in this head's list, renames follow, and a deletion
       ;; drops the record -- any window showing it moves on
       (for-each
@@ -1019,16 +1023,13 @@
                 [(memv (car ids) seen) (dedupe (cdr ids) seen)]
                 [else (dedupe (cdr ids) (cons (car ids) seen))])))))
 
-  ;; Stage 1's tail: the human's cursor is a first-class mark other
-  ;; actors can see.  Published once per frame, for the selected
-  ;; window's buffer, under the ui actor's 'point.
   ;; What the head looks at, published as state marks other actors can
   ;; read, refreshed per frame by a desired-versus-published diff:
   ;; every window's cursor as (point . serial), the selected window's
   ;; additionally as plain 'point, and the active region as 'region
   ;; and (region . serial).  A mark drops when its window closes,
   ;; looks at another buffer, or the selection deactivates.  Serials
-  ;; ride a weak table, so closed the-windows carry theirs to the grave.
+  ;; ride a weak table, so closed windows carry theirs to the grave.
 
   (define window-serial-counter 0)
   (define window-serials (make-weak-eq-hashtable))
@@ -1095,8 +1096,6 @@
             desired)
           (set! published-marks desired)))))
 
-
-  ;;; Apps, views, hooks, and window geometry ----------------------------------------
 
   ;;; Apps and views ------------------------------------------------------------
 
@@ -1268,7 +1267,7 @@
   (define (buffer-sticky-lines b)
     (min (or (buffer-fact b 'sticky-lines #f) 0) (line-count b)))
 
-  ;; Ordinary the-buffers use the global setting. An app can force the bar on
+  ;; Ordinary buffers use the global setting. An app can force the bar on
   ;; with #t, force a particular side, or otherwise inherit the global choice.
   (define scrollbar
     (make-parameter #f
@@ -1312,7 +1311,7 @@
               (window-line-number-width w))))
 
   (define (buffer-narrowest-width b)
-    ;; The smallest content width among the the-windows showing b, or #f
+    ;; The smallest content width among the windows showing b, or #f
     ;; -- what a rendering shared by every window must fit.
     (let ([ws (filter (lambda (w) (eq? (window-buffer w) b)) the-windows)])
       (and (pair? ws)
@@ -1323,7 +1322,7 @@
   (define (buffer-window-size b)
     ;; The text grid of the preferred window displaying b.  App-owned terminal
     ;; state uses one grid per buffer, so the focused window wins when several
-    ;; the-windows mirror it.
+    ;; windows mirror it.
     (let ([w (if (eq? (window-buffer the-current) b)
                  the-current
                  (find (lambda (candidate)
@@ -1361,7 +1360,7 @@
                       (registered-apps))))
 
   (define (view-append! b lines)
-    ;; Append lines to view b: the-windows whose point was at the very end
+    ;; Append lines to view b: windows whose point was at the very end
     ;; follow the tail; others hold their viewport still.
     (when (pair? lines)
       (let* ([v (buffer-lines b)]
@@ -1386,7 +1385,7 @@
                     tails)))))
 
   (define (view-replace! b lines)
-    ;; Replace a view's rendering without disturbing the-windows when it has not
+    ;; Replace a view's rendering without disturbing windows when it has not
     ;; changed. On a real change, keep point and the viewport where possible,
     ;; clamping them only when the new rendering is shorter.
     (let ([new (if (null? lines) (vector "") (list->vector lines))])

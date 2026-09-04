@@ -1,5 +1,4 @@
-;; doc.e -- the documentation corpus's entry: the library (doc), v2
-;; core dissolution (dev/DESIGN2.md).
+;; doc.e -- the documentation corpus's entry: the library (doc).
 ;;
 ;; One record for every documented name -- from the reference corpus
 ;; describe.e extracts (TSPL, CSUG) or from a module describing its

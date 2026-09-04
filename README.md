@@ -152,10 +152,9 @@ immediately.
 - [Modules and architecture](manual/MODULES.md): library boundaries, hot reload,
   registrations, modes, highlighters, and extension conventions.
 
-Development notes live in `dev/`, apart from the manual: the v2 design
-(`dev/DESIGN2.md`), the migration tracker with its tech-debt ledger
-(`dev/V2_TASKS.md`), the dead-code and debugging-lessons ledgers, and the
-terminal test notes.
+Development notes live in `dev/`, apart from the manual: design notes, the
+task tracker with its tech-debt ledger, the dead-code and debugging-lessons
+ledgers, and the terminal test notes.
 
 ## Limits
 
