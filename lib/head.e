@@ -25,7 +25,6 @@
           buffer-spot-col buffer-spot-col-set!
           buffer-spot-top buffer-spot-top-set!
           buffer-line-numbers-setting buffer-line-numbers-setting-set!
-          buffer-wrap-setting buffer-wrap-setting-set!
           buffer-state-id buffer-state-id-set!
           buffer-state-rev buffer-state-rev-set!
           buffers set-buffers!
@@ -71,8 +70,9 @@
   ;; The seat's working record for a store buffer: a client-side cache
   ;; of the store's immutable text (adopted, never mutated in place)
   ;; plus what only this seat cares about -- its selection, where it
-  ;; last was, its presentation toggles.  Buffer-level facts (file,
-  ;; mode, read-only, disk base) are store properties, not fields:
+  ;; last was, its line-number toggle.  Buffer-level facts (file,
+  ;; mode, read-only, disk base, wrap, an app's presentation) are
+  ;; store properties, not fields:
   ;; every head, local or across the wire, reads the same truth.
   (define-record-type buffer
     (fields (mutable name)          ; a cache of the store's label
@@ -87,9 +87,6 @@
             ;; line-numbers parameter
             (mutable line-numbers buffer-line-numbers-setting
                      buffer-line-numbers-setting-set!)
-            ;; #t/#f overrides wrapping for every window showing this buffer;
-            ;; default leaves wrapping as a window/global presentation choice.
-            (mutable wrap buffer-wrap-setting buffer-wrap-setting-set!)
             ;; the buffer's twin in the (state) store, and the store
             ;; revision this buffer's lines last agreed with
             (mutable state-id) (mutable state-rev)))
