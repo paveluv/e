@@ -11,7 +11,7 @@
 ;; switched mid-search.
 
 (library (search)
-  (export init! search!! search-fold-case)
+  (export init! (rename (search!! incremental!!)) (rename (search-fold-case fold-case)))
   (import (chezscheme) (except (edit) init!)
           (prefix (main) main:)
           (prefix (style) style:)
@@ -257,7 +257,7 @@
 
   (define (init!)
     (doc:register!
-      '(((search!!) (("procedure" . "(search!!)")) "void"
+      '(((search:incremental!!) (("procedure" . "(search:incremental!!)")) "void"
          ("(search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
     (paint:add-highlighter! search-highlights)

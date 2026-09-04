@@ -11,7 +11,7 @@
 
 (eval
   '(begin
-     (import (md-view) (prefix (scheme-mode) scheme-mode:))
+     (import (prefix (markdown) markdown:) (prefix (scheme-mode) scheme-mode:))
 
      (scheme-mode:init!)
 
@@ -23,7 +23,7 @@
          (error 'markdown-test label actual expected)))
 
      (define (render lines)
-       (let-values ([(text styles links rows) (markdown-render lines)])
+       (let-values ([(text styles links rows) (markdown:render lines)])
          (list text styles links rows)))
 
      (define (rendered-lines lines) (car (render lines)))
@@ -94,7 +94,7 @@
 
      (check 'tables-fit-a-narrow-width
             (let-values ([(text styles links rows)
-                          (markdown-render
+                          (markdown:render
                             '("|alpha beta gamma|x|" "|-|-|" "|delta|y|")
                             12)])
               text)

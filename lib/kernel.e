@@ -11,7 +11,7 @@
           registry-items registry-entries registry-find
           registry-remove!
           retract-module! registration-snapshot restore-registrations!
-          module-source loaded-modules seam-modules
+          module-source loaded-modules
           init-module! load-module! load-modules! module-requires?
           reload-module! add-after-reload-hook!
           config-file load-config!
@@ -161,22 +161,20 @@
   (define (module-source name)
     (format "~a/~a.e" (caar (library-directories)) name))
 
-  ;; the v2 seam modules arrive prefixed in the editor's top level,
-  ;; exactly as code imports them -- M-x says (state:edit! ...) too
-  (define seam-modules
-    '(text state actor policy sandbox log style keymap tty string
-       doc file mode paint echo head prompt))
-
   (define (init-module! name)
     ;; Import the module's library into the editor's top level
     ;; (compiling it when stale) and run its init!, if any, owning its
     ;; registrations.
     (let ([lib (list (string->symbol name))])
-      (eval (if (memq (car lib) seam-modules)
+      ;; every module but the command layer arrives prefixed in the
+      ;; editor's top level, exactly as code imports it -- M-x says
+      ;; (state:edit! ...) and (terminal:open!!) too; (edit) alone is
+      ;; bare, being what M-x is for
+      (eval (if (string=? name "edit")
+                `(import ,lib)
                 `(import (prefix ,lib
                                  ,(string->symbol
-                                    (string-append name ":"))))
-                `(import ,lib))
+                                    (string-append name ":")))))
             (interaction-environment))
       (when (memq 'init! (library-exports lib))
         (parameterize ([registering-module (string->symbol name)])

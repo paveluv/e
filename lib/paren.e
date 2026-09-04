@@ -9,7 +9,7 @@
 ;; without a mode every bracket counts.
 
 (library (paren)
-  (export init! matching-paren-style)
+  (export init! (rename (matching-paren-style matching-style)))
   (import (chezscheme) (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
@@ -94,7 +94,7 @@
   (define (init!)
     (paint:add-highlighter! paren-highlights)
     (doc:register!
-      '(((matching-paren-style)
-         (("parameter" . "(matching-paren-style [name])")) "symbol"
+      '(((paren:matching-style)
+         (("parameter" . "(paren:matching-style [name])")) "symbol"
          ("(paren)") paren "Editing" #f
          "Get or set how the matched bracket pair is marked: bold (the default; bold in the regular text color), underline, box (a line above and below), or colored (bold accent violet).")))))

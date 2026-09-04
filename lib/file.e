@@ -29,8 +29,8 @@
   ;; read, expand, and merge are Chez names too; importers always see
   ;; these under the file: prefix
   (import (except (chezscheme) read expand merge)
-          (only (sys) canonical-file-path)
-          (only (diff) merge3 merge-report-lines)
+          (prefix (only (sys) canonical-file-path) sys:)
+          (prefix (only (diff) merge3 merge-report-lines) diff:)
           (prefix (string) string:)
           (prefix (log) log:)
           (prefix (kernel) kernel:))
@@ -93,14 +93,14 @@
     ;; links; for a new file, chase its existing parent and retain the final
     ;; component. Textual normalization is the portable fallback.
     (let* ([full (canonical (expand path))]
-           [real (canonical-file-path full)])
+           [real (sys:canonical-file-path full)])
       (or real
           (let* ([dir (or (directory-part full) "/")]
                  [parent (if (and (> (string-length dir) 1)
                                   (string:suffix? "/" dir))
                              (substring dir 0 (- (string-length dir) 1))
                              dir)]
-                 [real-parent (canonical-file-path parent)])
+                 [real-parent (sys:canonical-file-path parent)])
             (if real-parent
                 (string-append real-parent "/" (base-name full))
                 full)))))
@@ -222,13 +222,13 @@
     ;; merge, for a *merge-...* buffer.
     (let ([base-lines (lines base)])
       (let-values ([(merged conflicts report)
-                    (merge3 base-lines (lines mine) (lines disk))])
+                    (diff:merge3 base-lines (lines mine) (lines disk))])
         (values (if (null? merged) (vector "") (list->vector merged))
                 (merge-trailing-newline (ends-in-newline? base)
                                         (ends-in-newline? mine)
                                         (ends-in-newline? disk))
                 conflicts
-                (merge-report-lines path base-lines report conflicts)))))
+                (diff:merge-report-lines path base-lines report conflicts)))))
 
   (define (conflict-count v)
     ;; how many merge conflict markers a line vector still holds

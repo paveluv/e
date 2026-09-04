@@ -15,17 +15,17 @@
 
 (eval
   '(begin
-     (import (sys) (terminal))
+     (import (prefix (sys) sys:) (prefix (terminal) terminal:))
 
      ;; The nested terminal must run a predictable shell.
      (putenv "SHELL" "/bin/sh")
 
      (define checks 0)
-     (define mirror (make-terminal-emulator 24 80))
+     (define mirror (terminal:make-emulator 24 80))
      (define process
-       (spawn-terminal-process "/bin/sh" "exec ./e" (current-directory) 24 80))
+       (sys:spawn-terminal-process "/bin/sh" "exec ./e" (current-directory) 24 80))
      (define from-editor
-       (transcoded-port (terminal-process-input process)
+       (transcoded-port (sys:terminal-process-input process)
                         (make-transcoder (utf-8-codec) 'none 'replace)))
      (define transcript '())
 
@@ -35,7 +35,7 @@
                             (get-char from-editor))])
            (unless (eof-object? character)
              (set! transcript (cons character transcript))
-             (terminal-emulator-feed! mirror (string character))
+             (terminal:emulator-feed! mirror (string character))
              (drain!)))))
 
      (define (settle! milliseconds)
@@ -46,12 +46,12 @@
            (loop (- left 1)))))
 
      (define (send! text)
-       (let ([output (terminal-process-output process)])
+       (let ([output (sys:terminal-process-output process)])
          (put-bytevector output (string->utf8 text))
          (flush-output-port output)))
 
      (define (screen-lines)
-       (vector->list (terminal-emulator-screen mirror)))
+       (vector->list (terminal:emulator-screen mirror)))
 
      (define (fail! label)
        (for-each (lambda (line) (display (format "|~a|\n" line)))
@@ -96,7 +96,7 @@
            [else (loop (cdr lines) (+ row 1))])))
 
      (define (style-at cell)
-       (vector-ref (vector-ref (terminal-emulator-styles mirror) (car cell))
+       (vector-ref (vector-ref (terminal:emulator-styles mirror) (car cell))
                    (cdr cell)))
 
      ;; -- start the editor and open a nested terminal ---------------------
@@ -221,7 +221,7 @@
        (let ([character (guard (ex [else (eof-object)])
                           (get-char from-editor))])
          (unless (eof-object? character) (loop))))
-     (reap-terminal-process! process)
+     (sys:reap-terminal-process! process)
      (check 'editor-quits #t)
 
      (format #t "~a interactive checks passed\n" checks)))

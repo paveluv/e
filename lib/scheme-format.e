@@ -23,9 +23,9 @@
 ;; one newline.
 
 (library (scheme-format)
-  (export scheme-indent-lines scheme-format-lines scheme-delimiter?
-          scheme-format-brackets scheme-tab-width
-          scheme-format-intrusive scheme-format-width)
+  (export (rename (scheme-indent-lines indent-lines)) (rename (scheme-format-lines lines)) (rename (scheme-delimiter? delimiter?))
+          (rename (scheme-format-brackets brackets)) (rename (scheme-tab-width tab-width))
+          (rename (scheme-format-intrusive intrusive)) (rename (scheme-format-width width)))
   (import (chezscheme) (prefix (string) string:))
 
   ;; Configuration: bracket convention, tab expansion, and the opt-in

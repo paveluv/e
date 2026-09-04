@@ -12,11 +12,11 @@
 ;; matching (so brackets inside strings and comments don't count).
 
 (library (scheme-mode)
-  (export init! scheme-format-on-save)
+  (export init! (rename (scheme-format-on-save format-on-save)))
   (import (chezscheme) (except (edit) init!)
           (prefix (file) file:)
           (prefix (style) style:)
-          (prefix (mode) mode:) (scheme-format)
+          (prefix (mode) mode:) (prefix (scheme-format) scheme-format:)
           (prefix (doc) doc:))
 
   ;; Configuration: format Scheme buffers just before they are written
@@ -114,7 +114,7 @@
                ;; delimiters like ; " ( ) included -- then any trailing
                ;; name characters (#\space, #\x41).
                (let lit-loop ([j (min n (+ i 3))])
-                 (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
+                 (if (and (< j n) (not (scheme-format:delimiter? (string-ref s j))))
                      (lit-loop (+ j 1))
                      (begin (style:fill-range! styles i j 'literal)
                             (scan j))))]
@@ -135,7 +135,7 @@
               [(char-whitespace? c) (scan (+ i 1))]
               [else
                (let token-loop ([j (+ i 1)])
-                 (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
+                 (if (and (< j n) (not (scheme-format:delimiter? (string-ref s j))))
                      (token-loop (+ j 1))
                      (begin
                        (style:fill-range! styles i j
@@ -181,10 +181,10 @@
         (vector-set! v i (buffer-line b i)))))
 
   (define (scheme-indent b from to)
-    (scheme-indent-lines (buffer-vector b) from to))
+    (scheme-format:indent-lines (buffer-vector b) from to))
 
   (define (scheme-format b from to)
-    (scheme-format-lines (buffer-vector b) from to))
+    (scheme-format:lines (buffer-vector b) from to))
 
   (define (format-on-save! path)
     (when (and (scheme-format-on-save)
@@ -199,12 +199,12 @@
     (register-indenter! "scheme" scheme-indent)
     (register-formatter! "scheme" scheme-format)
     (doc:register!
-      '(((scheme-format-intrusive)
-         (("parameter" . "(scheme-format-intrusive [enabled?])")) "boolean"
+      '(((scheme-format:intrusive)
+         (("parameter" . "(scheme-format:intrusive [enabled?])")) "boolean"
          ("(scheme-format)") scheme-format "Scheme formatting" #f
-         "Control intrusive Scheme formatting. It is off by default; when enabled, whole-buffer formatting collapses excess code spacing, joins fitting continuation lines, normalizes inline-comment gaps, and breaks code toward `scheme-format-width`.")
-        ((scheme-format-width)
-         (("parameter" . "(scheme-format-width [columns])")) "integer"
+         "Control intrusive Scheme formatting. It is off by default; when enabled, whole-buffer formatting collapses excess code spacing, joins fitting continuation lines, normalizes inline-comment gaps, and breaks code toward `scheme-format:width`.")
+        ((scheme-format:width)
+         (("parameter" . "(scheme-format:width [columns])")) "integer"
          ("(scheme-format)") scheme-format "Scheme formatting" #f
-         "Get or set the target width used when `scheme-format-intrusive` is enabled. The default is 100 columns and the minimum is 20.")))
+         "Get or set the target width used when `scheme-format:intrusive` is enabled. The default is 100 columns and the minimum is 20.")))
     (file:add-pre-save-hook! format-on-save!)))

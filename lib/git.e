@@ -6,20 +6,20 @@
 
 (library (git)
   (export init!
-          git-repository? git-repository-path git-open git-current-branch
-          git-status-entry? git-status-path git-status-original-path
-          git-status-index git-status-worktree git-status
-          git-branch? git-branch-name git-branch-current? git-branch-hash
-          git-branch-upstream git-branch-ahead git-branch-behind git-branches
-          git-commit? git-commit-hash git-commit-parents
-          git-commit-author-name git-commit-author-email git-commit-time
-          git-commit-subject git-commit-body git-log git-commit-files
-          git-diff-entry? git-diff-status git-diff-path
-          git-diff-original-path git-diff
-          git-patch? git-patch-commit git-patch-path git-patch-lines
-          git-patch-line? git-patch-line-kind git-patch-line-text
-          git-file-patch
-          git-error? git-error-code git-error-command git-error-stderr)
+          (rename (git-repository? repository?)) (rename (git-repository-path repository-path)) (rename (git-open open)) (rename (git-current-branch current-branch))
+          (rename (git-status-entry? status-entry?)) (rename (git-status-path status-path)) (rename (git-status-original-path status-original-path))
+          (rename (git-status-index status-index)) (rename (git-status-worktree status-worktree)) (rename (git-status status))
+          (rename (git-branch? branch?)) (rename (git-branch-name branch-name)) (rename (git-branch-current? branch-current?)) (rename (git-branch-hash branch-hash))
+          (rename (git-branch-upstream branch-upstream)) (rename (git-branch-ahead branch-ahead)) (rename (git-branch-behind branch-behind)) (rename (git-branches branches))
+          (rename (git-commit? commit?)) (rename (git-commit-hash commit-hash)) (rename (git-commit-parents commit-parents))
+          (rename (git-commit-author-name commit-author-name)) (rename (git-commit-author-email commit-author-email)) (rename (git-commit-time commit-time))
+          (rename (git-commit-subject commit-subject)) (rename (git-commit-body commit-body)) (rename (git-log log)) (rename (git-commit-files commit-files))
+          (rename (git-diff-entry? diff-entry?)) (rename (git-diff-status diff-status)) (rename (git-diff-path diff-path))
+          (rename (git-diff-original-path diff-original-path)) (rename (git-diff diff))
+          (rename (git-patch? patch?)) (rename (git-patch-commit patch-commit)) (rename (git-patch-path patch-path)) (rename (git-patch-lines patch-lines))
+          (rename (git-patch-line? patch-line?)) (rename (git-patch-line-kind patch-line-kind)) (rename (git-patch-line-text patch-line-text))
+          (rename (git-file-patch file-patch))
+          (rename (git-error? error?)) (rename (git-error-code error-code)) (rename (git-error-command error-command)) (rename (git-error-stderr error-stderr)))
   (import (chezscheme)
           (prefix (doc) doc:))
 
@@ -327,30 +327,30 @@
 
   (define (init!)
     (doc:register!
-      '(((git-open) (("procedure" . "(git-open [path])")) "git-repository"
+      '(((git:open) (("procedure" . "(git:open [path])")) "git-repository"
          ("(git)") git "Git" #f
          "Open the Git worktree containing `path`, which defaults to the current directory, and return a structured repository object.")
-        ((git-current-branch)
-         (("procedure" . "(git-current-branch repository)")) "string or #f"
+        ((git:current-branch)
+         (("procedure" . "(git:current-branch repository)")) "string or #f"
          ("(git)") git "Git" #f
          "Return the current local branch name, or #f for a detached HEAD.")
-        ((git-status) (("procedure" . "(git-status repository)"))
+        ((git:status) (("procedure" . "(git:status repository)"))
          "list of git-status-entry" ("(git)") git "Git" #f
          "Return staged, worktree, and untracked changes as structured status records. Paths containing whitespace or newlines are preserved.")
-        ((git-branches) (("procedure" . "(git-branches repository)"))
+        ((git:branches) (("procedure" . "(git:branches repository)"))
          "list of git-branch" ("(git)") git "Git" #f
          "Return local branches with current, object, upstream, ahead, and behind fields.")
-        ((git-log) (("procedure" . "(git-log repository [limit])"))
+        ((git:log) (("procedure" . "(git:log repository [limit])"))
          "list of git-commit" ("(git)") git "Git" #f
          "Return recent commits as structured records; `limit` defaults to 50.")
-        ((git-diff) (("procedure" . "(git-diff repository [staged?])"))
+        ((git:diff) (("procedure" . "(git:diff repository [staged?])"))
          "list of git-diff-entry" ("(git)") git "Git" #f
          "Return changed paths and statuses from the unstaged diff, or the index diff when `staged?` is true.")
-        ((git-commit-files)
-         (("procedure" . "(git-commit-files repository commit)"))
+        ((git:commit-files)
+         (("procedure" . "(git:commit-files repository commit)"))
          "list of git-diff-entry" ("(git)") git "Git" #f
          "Return the files changed by a commit as structured path and status records.")
-        ((git-file-patch)
-         (("procedure" . "(git-file-patch repository commit path)"))
+        ((git:file-patch)
+         (("procedure" . "(git:file-patch repository commit path)"))
          "git-patch" ("(git)") git "Git" #f
          "Return one file's patch in a commit. Its lines are classified as headers, hunks, additions, deletions, metadata, or context.")))))

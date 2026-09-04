@@ -19,7 +19,7 @@
 ;; (events marshal through head:run-on-main!), so there are no locks.
 
 (library (blame)
-  (export init! blame-at-point! blame-tint-seconds)
+  (export init! (rename (blame-at-point! at-point!)) (rename (blame-tint-seconds tint-seconds)))
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
@@ -195,11 +195,11 @@
     (style:set! 'blame-5 '((background 23)))   ; deep teal
     (style:set! 'blame-6 '((background 58)))   ; olive
     (doc:register!
-      '(((blame-at-point!)
-         (("procedure" . "(blame-at-point!)")) "void"
+      '(((blame:at-point!)
+         (("procedure" . "(blame:at-point!)")) "void"
          ("(blame)") blame "Blame" #f
          "Report in the echo area which actor most recently wrote the text at point, from the buffer's attributed edit log (state:blame). Reach is the delta log (256 edits); a buffer reset clears it -- deep history stays git's job.")
-        ((blame-tint-seconds)
-         (("parameter" . "(blame-tint-seconds [seconds])")) "number"
+        ((blame:tint-seconds)
+         (("parameter" . "(blame:tint-seconds [seconds])")) "number"
          ("(blame)") blame "Blame" #f
          "How long another actor's fresh edit stays tinted in that actor's color (default 8; 0 turns tinting off).")))))

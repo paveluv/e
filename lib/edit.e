@@ -96,7 +96,7 @@
   )
   ;; The system-specific layer -- libc, termios, signals -- comes
   ;; from (sys).
-  (import (chezscheme) (sys)
+  (import (chezscheme) (prefix (sys) sys:)
           (prefix (state) state:) (prefix (text) text:)
           (prefix (kernel) kernel:) (prefix (actor) actor:)
           (prefix (log) log:) (prefix (style) style:)
@@ -613,7 +613,7 @@
     (when (and (forward-kill-ring-to-system-clipboard) (paint:screen-live?))
       (with-mutex paint:redraw-lock
         (paint:ansi "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
-        (flush-output-port (terminal-output-port)))))
+        (flush-output-port (sys:terminal-output-port)))))
 
   (define (killing?)
     ;; was the previous command a kill?  Consecutive kills accumulate

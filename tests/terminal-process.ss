@@ -8,7 +8,7 @@
 
 (eval
   '(begin
-     (import (sys))
+     (import (prefix (sys) sys:))
 
      (define checks 0)
 
@@ -25,7 +25,7 @@
 
      (define (read-process process)
        (let ([input (transcoded-port
-                      (terminal-process-input process)
+                      (sys:terminal-process-input process)
                       (make-transcoder (utf-8-codec) 'none 'replace))])
          (let loop ([characters '()])
            (guard (ex [(i/o-read-error? ex)
@@ -37,13 +37,13 @@
                    (loop (cons character characters))))))))
 
      (let* ([process
-             (spawn-terminal-process
+             (sys:spawn-terminal-process
                "/bin/sh"
                "printf 'pid=%s tty=' $$; if test -t 0; then printf yes; else printf no; fi; printf ' size='; stty size; printf ' term=%s' \"$TERM\""
                (current-directory) 13 47)]
-            [pid (terminal-process-pid process)]
+            [pid (sys:terminal-process-pid process)]
             [output (read-process process)])
-       (reap-terminal-process! process)
+       (sys:reap-terminal-process! process)
        (check 'direct-exec-pid
               (contains? output (format "pid=~a" pid)))
        (check 'controlling-terminal (contains? output "tty=yes"))
@@ -51,28 +51,28 @@
        (check 'advertised-terminal (contains? output "term=xterm-256color")))
 
      (let* ([process
-             (spawn-terminal-process
+             (sys:spawn-terminal-process
                "/bin/sh"
                "read value; printf 'input=<%s>\\n' \"$value\"; printf 'stderr-line\\n' >&2"
                (current-directory) 5 20)]
-            [output (terminal-process-output process)])
+            [output (sys:terminal-process-output process)])
        (put-bytevector output (string->utf8 "hello terminal\n"))
        (flush-output-port output)
        (let ([text (read-process process)])
-         (reap-terminal-process! process)
+         (sys:reap-terminal-process! process)
          (check 'interactive-input (contains? text "input=<hello terminal>"))
          (check 'stderr-shares-pty (contains? text "stderr-line"))))
 
      (let* ([process
-             (spawn-terminal-process
+             (sys:spawn-terminal-process
                "/bin/sh"
                "trap 'printf resized=; stty size; exit 0' WINCH; echo ready; while :; do sleep 1; done"
                (current-directory) 5 20)]
             [input (transcoded-port
-                     (terminal-process-input process)
+                     (sys:terminal-process-input process)
                      (make-transcoder (utf-8-codec) 'none 'replace))])
        (check 'resize-child-ready (string=? (get-line input) "ready\r"))
-       (resize-terminal-process! process 9 37)
+       (sys:resize-terminal-process! process 9 37)
        (let loop ([characters '()])
          (guard (ex [(i/o-read-error? ex)
                      (let ([output (list->string (reverse characters))])
@@ -82,17 +82,17 @@
            (let ([character (get-char input)])
              (unless (eof-object? character)
                (loop (cons character characters))))))
-       (reap-terminal-process! process))
+       (sys:reap-terminal-process! process))
 
      (let* ([process
-             (spawn-terminal-process
+             (sys:spawn-terminal-process
                "/bin/sh"
                "trap '' TERM; echo ready; while :; do sleep 1; done"
                (current-directory) 5 20)]
             [start (current-time 'time-monotonic)])
        ;; Let the shell install its ignored-SIGTERM disposition.
        (sleep (make-time 'time-duration 50000000 0))
-       (close-terminal-process! process)
+       (sys:close-terminal-process! process)
        (let* ([elapsed (time-difference (current-time 'time-monotonic) start)]
               [milliseconds (+ (* (time-second elapsed) 1000)
                                (quotient (time-nanosecond elapsed) 1000000))])

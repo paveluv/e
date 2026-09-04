@@ -15,7 +15,7 @@
 ;; file on disk are untouched.
 
 (library (pretty-scheme)
-  (export init! pretty-scheme-clusters! pretty-scheme-depth! pretty-scheme-rainbow!)
+  (export init! (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!)) (rename (pretty-scheme-rainbow! rainbow!)))
   (import (chezscheme) (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
@@ -316,16 +316,16 @@
 
   (define (init!)
     (doc:register!
-      '(((pretty-scheme-clusters!)
-         (("procedure" . "(pretty-scheme-clusters!)")) "void"
+      '(((pretty-scheme:clusters!)
+         (("procedure" . "(pretty-scheme:clusters!)")) "void"
          ("(pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view that renders parentheses with glyph pairs chosen by syntactic construct.")
-        ((pretty-scheme-depth!)
-         (("procedure" . "(pretty-scheme-depth!)")) "void"
+        ((pretty-scheme:depth!)
+         (("procedure" . "(pretty-scheme:depth!)")) "void"
          ("(pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view whose parenthesis glyph pairs rotate with nesting depth.")
-        ((pretty-scheme-rainbow!)
-         (("procedure" . "(pretty-scheme-rainbow!)")) "void"
+        ((pretty-scheme:rainbow!)
+         (("procedure" . "(pretty-scheme:rainbow!)")) "void"
          ("(pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view that colors parentheses by nesting depth.")))
     (mode:register! "pretty-scheme-clusters" '() '() scheme-styles rendered)

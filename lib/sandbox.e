@@ -85,7 +85,7 @@
                         window-prow window-pcol)
                   head:)
           (prefix (only (log) entries format-entry) log:)
-          (prefix (only (describe) doc-lookup) describe:)
+          (prefix (only (describe) lookup) describe:)
           (prefix (only (doc) forms returns libraries description) doc:))
 
   ;; Rule 2 above: nothing between disable and enable may raise
@@ -202,9 +202,9 @@
     ;; The documentation corpus, flattened: R6RS, Chez Scheme, and
     ;; every e command and parameter.  The authoritative reference.
     (let ([entries (guard (ex [else '()])
-                     (describe:doc-lookup (if (symbol? name)
-                                              name
-                                              (string->symbol name))))])
+                     (describe:lookup (if (symbol? name)
+                                          name
+                                          (string->symbol name))))])
       (if (null? entries)
           (format "no documentation entry for ~a" name)
           (clipped

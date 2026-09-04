@@ -129,7 +129,7 @@
                   (display path) (newline))])))
          files)])))
 
-(eval '(import (scheme-format)) (interaction-environment))
-(run (eval 'scheme-format-lines (interaction-environment))
-     (eval 'scheme-format-intrusive (interaction-environment))
-     (eval 'scheme-format-width (interaction-environment)))
+(eval '(import (prefix (scheme-format) scheme-format:)) (interaction-environment))
+(run (eval 'scheme-format:lines (interaction-environment))
+     (eval 'scheme-format:intrusive (interaction-environment))
+     (eval 'scheme-format:width (interaction-environment)))

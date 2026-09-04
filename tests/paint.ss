@@ -14,7 +14,7 @@
   '(begin
      (import (prefix (paint) paint:)
              (prefix (style) style:)
-             (only (sys) terminal-output-port)
+             (prefix (only (sys) terminal-output-port) sys:)
              (only (chezscheme)
                    format open-output-string get-output-string
                    parameterize))
@@ -35,7 +35,7 @@
 
      (define (painted thunk)
        (let ([sink (open-output-string)])
-         (parameterize ([terminal-output-port sink])
+         (parameterize ([sys:terminal-output-port sink])
            (thunk))
          (get-output-string sink)))
 
