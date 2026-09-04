@@ -10,7 +10,7 @@
 ;; work, and bounded read-only views of the editor.  No mutators, no
 ;; file system, no processes, no eval, and no way to conjure them: an
 ;; expression that wants more simply fails to resolve, and the actor
-;; must then ask its owner (actors:ask!) for something stronger.
+;; must then ask its owner (actor:ask!) for something stronger.
 ;;
 ;; display, write, newline, and format are included because a
 ;; constrained actor's evaluator captures the current output port
@@ -86,7 +86,7 @@
                   head:)
           (prefix (only (log) entries format-entry) log:)
           (prefix (only (describe) doc-lookup) describe:)
-          (prefix (only (docs) forms returns libraries description) docs:))
+          (prefix (only (doc) forms returns libraries description) doc:))
 
   ;; Rule 2 above: nothing between disable and enable may raise
   ;; without the wind exit running, and nothing here evaluates actor
@@ -211,9 +211,9 @@
             (apply string-append
                    (map (lambda (entry)
                           (format "~a\nreturns: ~a\nlibraries: ~a\n~a\n\n"
-                                  (map cdr (docs:forms entry))
-                                  (or (docs:returns entry) "-")
-                                  (docs:libraries entry)
-                                  (docs:description entry)))
+                                  (map cdr (doc:forms entry))
+                                  (or (doc:returns entry) "-")
+                                  (doc:libraries entry)
+                                  (doc:description entry)))
                         entries))
             8000)))))

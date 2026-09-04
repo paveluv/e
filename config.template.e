@@ -47,7 +47,7 @@
 ;;                              ; terminal may ignore or prohibit the request,
 ;;                              ; so this might not work in every terminal
 ;; (indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
-;; (modes:add-extension! "scheme" ".foo") ; highlight *.foo as Scheme
+;; (mode:add-extension! "scheme" ".foo") ; highlight *.foo as Scheme
 ;; (scheme-format-brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
 ;; (scheme-tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
 ;; (scheme-format-intrusive #f)   ; #t: also fold whitespace and reflow lines

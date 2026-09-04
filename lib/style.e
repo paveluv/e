@@ -1,4 +1,4 @@
-;; styles.e -- faces and the style DSL: the library (styles), v2 core
+;; style.e -- faces and the style DSL: the library (style), v2 core
 ;; dissolution (docs/DESIGN2.md).  Pure infrastructure with no init!.
 ;;
 ;; A face is a name; a style is a declarative expression --
@@ -10,13 +10,13 @@
 ;; cached by content, not by face definitions, so a redefinition must
 ;; repaint everything).
 
-(library (styles)
+(library (style)
   (export (rename (compile-style compile)) (rename (style-escape escape)) (rename (set-style! set!)) (rename (style-code code))
           (rename (set-styles-changed-hook! set-changed-hook!)) fill-range!)
   (import (rnrs)
           (only (chezscheme) format void)
           (prefix (kernel) kernel:)
-          (prefix (strings) strings:))
+          (prefix (string) string:))
 
   ;;; The DSL -----------------------------------------------------------------
 
@@ -50,8 +50,8 @@
   (define (named-color value)
     (and (symbol? value)
          (let* ([text (symbol->string value)]
-                [bright? (strings:prefix? "bright-" text)]
-                [name (if bright? (string->symbol (strings:tail text 7)) value)]
+                [bright? (string:prefix? "bright-" text)]
+                [name (if bright? (string->symbol (string:tail text 7)) value)]
                 [hit (assq name style-colors)])
            (and hit (cons (cdr hit) bright?)))))
 
@@ -120,10 +120,10 @@
                       [else (error 'compile-style "unknown style clause"
                                    clause)]))
                   expression))])
-      (strings:join (map (lambda (code)
-                           (if (string? code) code (number->string code)))
-                         (if (null? codes) '(0) codes))
-                    ";")))
+      (string:join (map (lambda (code)
+                          (if (string? code) code (number->string code)))
+                        (if (null? codes) '(0) codes))
+                   ";")))
 
   (define (style-escape expression)
     (format "\x1b;[~am" (compile-style expression)))

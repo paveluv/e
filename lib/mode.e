@@ -1,4 +1,4 @@
-;; modes.e -- the mode registry: the library (modes), v2 core
+;; mode.e -- the mode registry: the library (mode), v2 core
 ;; dissolution (docs/DESIGN2.md).
 ;;
 ;; A buffer's mode NAME is a store property every head reads; a mode
@@ -13,10 +13,10 @@
 ;; The painter imports this module directly, and the head's adopt
 ;; hook is installed here: a foreign buffer adopted without a mode
 ;; fact gets detection.  Exported names drop the module stem:
-;; (modes:register! "scheme" '(".ss") '("scheme") styler),
-;; (modes:of b), ((modes:styles m) line).
+;; (mode:register! "scheme" '(".ss") '("scheme") styler),
+;; (mode:of b), ((mode:styles m) line).
 
-(library (modes)
+(library (mode)
   (export (rename (mode-name name)
                   (mode-extensions extensions)
                   (mode-interpreters interpreters)
@@ -37,7 +37,7 @@
                 vector-copy void)
           (prefix (kernel) kernel:)
           (prefix (head) head:)
-          (prefix (strings) strings:))
+          (prefix (string) string:))
 
   ;;; The registry ------------------------------------------------------------
 
@@ -46,7 +46,7 @@
   ;; file-name endings it claims, the interpreter names recognized in
   ;; a #! first line (for files without a matching extension), and a
   ;; styles function mapping a line to a vector of per-column style
-  ;; symbols understood by styles:style-code, or #f for an unstyled
+  ;; symbols understood by style:style-code, or #f for an unstyled
   ;; line.  Brackets styled 'delimiter take part in bracket matching;
   ;; in a buffer without a mode every bracket counts.
 
@@ -99,20 +99,20 @@
     (or (and path
              (let ([addition
                     (find (lambda (entry)
-                            (strings:suffix? (car entry) path))
+                            (string:suffix? (car entry) path))
                           (kernel:registry-items mode-extension-additions))])
                (and addition (find-mode (cdr addition)))))
         (and path
              (kernel:registry-find modes
                (lambda (m)
-                 (exists (lambda (ext) (strings:suffix? ext path))
+                 (exists (lambda (ext) (string:suffix? ext path))
                          (mode-extensions m)))))
-        (and (strings:prefix? "#!" first-line)
+        (and (string:prefix? "#!" first-line)
              (kernel:registry-find modes
                (lambda (m)
                  (exists (lambda (name)
-                           (strings:search first-line name 0
-                                           (string-length first-line)))
+                           (string:search first-line name 0
+                                          (string-length first-line)))
                          (mode-interpreters m)))))))
 
   (define (assign-mode! b)
@@ -180,7 +180,7 @@
 
   ;; Faces may be recolored from config.e. Overrides are owned registrations,
   ;; so dropping the line from config.e and reloading restores the default.
-  ;; Faces and the style DSL live in the (styles) seam module now;
+  ;; Faces and the style DSL live in the (style) seam module now;
   ;; the core keeps these facade aliases until its call sites and the
   ;; extension modules migrate to styles: prefixes, and installs the
   ;; repaint trigger for face redefinitions (painted rows are cached
@@ -221,4 +221,4 @@
   ;; recorded as the shared fact
   (define adopt-hooked (head:set-adopt-hook! assign-mode!))
 
-) ;; library (modes)
+) ;; library (mode)

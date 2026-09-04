@@ -103,7 +103,7 @@
           (prefix (tty) tty:)
           (prefix (state) state:)
           (prefix (text) text:)
-          (prefix (actors) actors:)
+          (prefix (actor) actor:)
           (prefix (log) log:))
 
   ;;; The records ----------------------------------------------------------------
@@ -758,10 +758,10 @@
                   ;; (conflict buffer-id buffer-name winning-actor)
                   (when foreign
                     (guard (ex [else (void)])
-                      (actors:send! (cadr foreign)
-                                    (list 'conflict (buffer-state-id b)
-                                          (buffer-name b)
-                                          ui-actor))))))))
+                      (actor:send! (cadr foreign)
+                                   (list 'conflict (buffer-state-id b)
+                                         (buffer-name b)
+                                         ui-actor))))))))
         (adopt-local! b (local-text))))
 
   (define (mirror-rename! b)
@@ -1495,7 +1495,7 @@
   ;; another actor's message to this head wakes its loop; the question
   ;; is presented before the next frame
   (define ui-actor-registered
-    (actors:register! ui-actor (lambda (message) (wake-main!))))
+    (actor:register! ui-actor (lambda (message) (wake-main!))))
 
   ;;; The seat's first state ---------------------------------------------------------
 

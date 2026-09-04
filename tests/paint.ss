@@ -13,7 +13,7 @@
 (eval
   '(begin
      (import (prefix (paint) paint:)
-             (prefix (styles) styles:)
+             (prefix (style) style:)
              (only (sys) terminal-output-port)
              (only (chezscheme)
                    format open-output-string get-output-string
@@ -74,7 +74,7 @@
      (check 'selection-styled
             (contains? (paint-line "hello" "hello" '(1 . 3) '() '() 0 #f
                                    #f 10 1000)
-                       (styles:code 'selection))
+                       (style:code 'selection))
             #t)
 
      ;; a wrap edge paints a backslash in the last column
@@ -106,7 +106,7 @@
      (check 'mark-face
             (contains? (paint-line "abc" "abc" #f '((0 3 mark)) '() 0 #f
                                    #f 3 1000)
-                       (styles:code 'mark))
+                       (style:code 'mark))
             #t)
 
      ;; -- emit-runs ----------------------------------------------------------------
@@ -118,7 +118,7 @@
                                              'plain)
                                      0 4)))])
        (check 'runs-coalesce (stripped out) "abcd")
-       (check 'runs-styled (contains? out (styles:code 'keyword))
+       (check 'runs-styled (contains? out (style:code 'keyword))
               #t))
 
      ;; -- soft-wrap breaks ----------------------------------------------------------

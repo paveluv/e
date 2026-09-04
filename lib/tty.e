@@ -23,7 +23,7 @@
   (import (rnrs)
           (only (chezscheme) format char-ready?)
           (only (sys) terminal-output-port)
-          (prefix (strings) strings:))
+          (prefix (string) string:))
 
   ;;; Input-side negotiation ------------------------------------------------------
 
@@ -244,8 +244,8 @@
                   [else (again)])]
                [else
                 (let ([plain (character-event a)])
-                  (if (strings:prefix? "C-" plain)
-                      (string-append "C-M-" (strings:tail plain 2))
+                  (if (string:prefix? "C-" plain)
+                      (string-append "C-M-" (string:tail plain 2))
                       (string-append "M-"
                                      (if (string=? plain " ")
                                          "SPC"

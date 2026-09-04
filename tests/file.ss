@@ -14,7 +14,7 @@
 
 (eval
   '(begin
-     (import (prefix (files) files:)
+     (import (prefix (file) file:)
              (only (chezscheme)
                    format getenv putenv current-directory directory-list
                    delete-file delete-directory mkdir chmod get-mode
@@ -26,46 +26,46 @@
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'files-test label actual expected)))
+         (error 'file-test label actual expected)))
 
      ;; -- the line algebra -----------------------------------------------
 
-     (check 'lines (vector->list (files:lines "a\nb\n")) '("a" "b"))
-     (check 'lines-no-trailing (vector->list (files:lines "a\nb")) '("a" "b"))
-     (check 'lines-empty (vector->list (files:lines "")) '(""))
-     (check 'lines-only-newline (vector->list (files:lines "\n")) '(""))
-     (check 'ends-in-newline (files:ends-in-newline? "a\n") #t)
-     (check 'ends-in-newline-not (files:ends-in-newline? "a") #f)
-     (check 'ends-in-newline-empty (files:ends-in-newline? "") #f)
-     (check 'text (files:text (vector "a" "b") #t) "a\nb\n")
-     (check 'text-no-trailing (files:text (vector "a" "b") #f) "a\nb")
+     (check 'lines (vector->list (file:lines "a\nb\n")) '("a" "b"))
+     (check 'lines-no-trailing (vector->list (file:lines "a\nb")) '("a" "b"))
+     (check 'lines-empty (vector->list (file:lines "")) '(""))
+     (check 'lines-only-newline (vector->list (file:lines "\n")) '(""))
+     (check 'ends-in-newline (file:ends-in-newline? "a\n") #t)
+     (check 'ends-in-newline-not (file:ends-in-newline? "a") #f)
+     (check 'ends-in-newline-empty (file:ends-in-newline? "") #f)
+     (check 'text (file:text (vector "a" "b") #t) "a\nb\n")
+     (check 'text-no-trailing (file:text (vector "a" "b") #f) "a\nb")
      (check 'text-round-trip
             (let ([s "one\n\nthree\n"])
-              (files:text (files:lines s) (files:ends-in-newline? s)))
+              (file:text (file:lines s) (file:ends-in-newline? s)))
             "one\n\nthree\n")
 
      ;; -- paths --------------------------------------------------------------
 
-     (check 'directory-part (files:directory-part "/a/b/c.e") "/a/b/")
-     (check 'directory-part-none (files:directory-part "c.e") #f)
-     (check 'base-name (files:base-name "/a/b/c.e") "c.e")
-     (check 'base-name-bare (files:base-name "c.e") "c.e")
-     (check 'canonical-dots (files:canonical "/a/./b/../c") "/a/c")
-     (check 'canonical-empty-segments (files:canonical "//a///b/") "/a/b")
+     (check 'directory-part (file:directory-part "/a/b/c.e") "/a/b/")
+     (check 'directory-part-none (file:directory-part "c.e") #f)
+     (check 'base-name (file:base-name "/a/b/c.e") "c.e")
+     (check 'base-name-bare (file:base-name "c.e") "c.e")
+     (check 'canonical-dots (file:canonical "/a/./b/../c") "/a/c")
+     (check 'canonical-empty-segments (file:canonical "//a///b/") "/a/b")
      (check 'canonical-relative
-            (files:canonical "x/y")
+            (file:canonical "x/y")
             (string-append (current-directory) "/x/y"))
-     (check 'absolute-keeps (files:absolute "/x") "/x")
-     (check 'absolute-keeps-tilde (files:absolute "~/x") "~/x")
+     (check 'absolute-keeps (file:absolute "/x") "/x")
+     (check 'absolute-keeps-tilde (file:absolute "~/x") "~/x")
      (check 'absolute-relative
-            (files:absolute "x") (string-append (current-directory) "/x"))
+            (file:absolute "x") (string-append (current-directory) "/x"))
 
      (let ([home (getenv "HOME")])
-       (check 'expand-tilde (files:expand "~/x") (string-append home "/x"))
-       (check 'expand-bare-tilde (files:expand "~") home)
-       (check 'expand-plain (files:expand "/x") "/x")
-       (check 'abbreviate (files:abbreviate (string-append home "/x")) "~/x")
-       (check 'abbreviate-other (files:abbreviate "/nowhere/x") "/nowhere/x"))
+       (check 'expand-tilde (file:expand "~/x") (string-append home "/x"))
+       (check 'expand-bare-tilde (file:expand "~") home)
+       (check 'expand-plain (file:expand "/x") "/x")
+       (check 'abbreviate (file:abbreviate (string-append home "/x")) "~/x")
+       (check 'abbreviate-other (file:abbreviate "/nowhere/x") "/nowhere/x"))
 
      ;; -- a scratch directory -----------------------------------------------
 
@@ -78,63 +78,63 @@
 
      (define (path name) (string-append scratch "/" name))
 
-     (files:write! (path "alpha") (vector "one" "two") #t)
-     (check 'write-read (files:read (path "alpha")) "one\ntwo\n")
-     (files:write! (path "alphabet") (vector "x") #f)
-     (check 'write-read-no-trailing (files:read (path "alphabet")) "x")
-     (files:write! (path ".hidden") (vector "") #f)
-     (check 'write-empty (files:read (path ".hidden")) "")
+     (file:write! (path "alpha") (vector "one" "two") #t)
+     (check 'write-read (file:read (path "alpha")) "one\ntwo\n")
+     (file:write! (path "alphabet") (vector "x") #f)
+     (check 'write-read-no-trailing (file:read (path "alphabet")) "x")
+     (file:write! (path ".hidden") (vector "") #f)
+     (check 'write-empty (file:read (path ".hidden")) "")
 
      (chmod (path "alphabet") #o755)
-     (files:write! (path "alphabet") (vector "y") #t)
+     (file:write! (path "alphabet") (vector "y") #t)
      (check 'write-keeps-permissions (logand (get-mode (path "alphabet")) #o777) #o755)
-     (check 'rewrite-read (files:read (path "alphabet")) "y\n")
+     (check 'rewrite-read (file:read (path "alphabet")) "y\n")
 
-     (check 'stamp-shape (pair? (files:stamp (path "alpha"))) #t)
-     (check 'stamp-absent (files:stamp (path "nope")) #f)
+     (check 'stamp-shape (pair? (file:stamp (path "alpha"))) #t)
+     (check 'stamp-absent (file:stamp (path "nope")) #f)
      (check 'read-absent-raises
-            (guard (ex [else 'raised]) (files:read (path "nope"))) 'raised)
+            (guard (ex [else 'raised]) (file:read (path "nope"))) 'raised)
 
      (check 'complete
-            (files:complete (path "al"))
+            (file:complete (path "al"))
             (list (path "alpha") (path "alphabet")))
      (check 'complete-hides-dotfiles-and-marks-directories
-            (files:complete (string-append scratch "/"))
+            (file:complete (string-append scratch "/"))
             (list (path "alpha") (path "alphabet") (path "dir/")))
      (check 'complete-dotfiles-on-request
-            (files:complete (path ".")) (list (path ".hidden")))
-     (check 'complete-nowhere (files:complete "/no/such/dir/x") '())
+            (file:complete (path ".")) (list (path ".hidden")))
+     (check 'complete-nowhere (file:complete "/no/such/dir/x") '())
 
      (check 'visit-path-existing
-            (files:visit-path (string-append scratch "/./alpha")) (path "alpha"))
+            (file:visit-path (string-append scratch "/./alpha")) (path "alpha"))
      (check 'visit-path-new-file
-            (files:visit-path (string-append scratch "/dir/../new.txt")) (path "new.txt"))
+            (file:visit-path (string-append scratch "/dir/../new.txt")) (path "new.txt"))
 
      ;; -- merging -------------------------------------------------------------
 
      (let-values ([(merged trailing conflicts report)
-                   (files:merge "f" "a\nb\nc\n" "a\nB\nc\n" "a\nb\nc\nd\n")])
+                   (file:merge "f" "a\nb\nc\n" "a\nB\nc\n" "a\nb\nc\nd\n")])
        (check 'merge-clean (vector->list merged) '("a" "B" "c" "d"))
        (check 'merge-clean-trailing trailing #t)
        (check 'merge-clean-conflicts conflicts 0)
        (check 'merge-clean-report (list? report) #t))
 
      (let-values ([(merged trailing conflicts report)
-                   (files:merge "f" "a\nb\n" "a\nX\n" "a\nY\n")])
+                   (file:merge "f" "a\nb\n" "a\nX\n" "a\nY\n")])
        (check 'merge-conflict-count conflicts 1)
-       (check 'merge-conflict-markers (files:conflict-count merged) 1)
+       (check 'merge-conflict-markers (file:conflict-count merged) 1)
        (check 'merge-conflict-keeps-common (vector-ref merged 0) "a"))
 
      (let-values ([(merged trailing conflicts report)
-                   (files:merge "f" "a\n" "a" "a\nb\n")])
+                   (file:merge "f" "a\n" "a" "a\nb\n")])
        (check 'merge-trailing-mine-differs trailing #f)
        (check 'merge-trailing-lines (vector->list merged) '("a" "b")))
 
      (let-values ([(merged trailing conflicts report)
-                   (files:merge "f" "a\n" "a\n" "a")])
+                   (file:merge "f" "a\n" "a\n" "a")])
        (check 'merge-trailing-theirs-differs trailing #f))
 
-     (check 'conflict-count-none (files:conflict-count (vector "a" "<<< not a marker")) 0)
+     (check 'conflict-count-none (file:conflict-count (vector "a" "<<< not a marker")) 0)
 
      ;; -- clean up ------------------------------------------------------------
 
@@ -143,4 +143,4 @@
      (delete-directory scratch)
      (check 'scratch-removed (file-exists? scratch) #f)
 
-     (format #t "~a files checks passed\n" checks)))
+     (format #t "~a file checks passed\n" checks)))

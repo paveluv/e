@@ -16,7 +16,7 @@
      (import (prefix (policy) policy:)
              (prefix (state) state:)
              (prefix (text) text:)
-             (prefix (actors) actors:)
+             (prefix (actor) actor:)
              (prefix (kernel) kernel:)
              (only (chezscheme) box unbox set-box! format))
 
@@ -37,7 +37,7 @@
      ;; an owner head with a mailbox, and a buffer to work on
      (define owner '(head test))
      (define owner-mail (kernel:make-mailbox))
-     (actors:register! owner
+     (actor:register! owner
                        (lambda (m) (kernel:mailbox-post! owner-mail m)))
      (define agent '(agent helper 1))
      (define notes (state:create! owner "notes" '("one" "two")))
@@ -140,7 +140,7 @@
      (check 'ask-reaches-the-owner
             (kernel:mailbox-receive! owner-mail)
             (list 'ask ticket agent "May I edit secret?" '("yes" "no")))
-     (actors:answer! ticket "no")
+     (actor:answer! ticket "no")
      (check 'answer-routes-back (unbox got) "no")
 
      ;; -- revocation ----------------------------------------------------

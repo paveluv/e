@@ -1,11 +1,11 @@
-;; strings.e -- the small pure string utilities every module shares:
-;; the library (strings), v2 core dissolution (docs/DESIGN2.md).  The
+;; string.e -- the small pure string utilities every module shares:
+;; the library (string), v2 core dissolution (docs/DESIGN2.md).  The
 ;; one home of these helpers -- no module keeps a private copy.
 ;; Exported names drop the module stem, per the v2 import convention:
-;; (strings:tail s 2), (strings:prefix? "C-" s), (strings:join parts
-;; " "), (strings:lines text).
+;; (string:tail s 2), (string:prefix? "C-" s), (string:join parts
+;; " "), (string:lines text).
 
-(library (strings)
+(library (string)
   (export tail prefix? suffix? join search lines common-prefix
           insert delete elide)
   (import (rnrs))

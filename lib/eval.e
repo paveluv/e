@@ -22,15 +22,15 @@
   (import (chezscheme) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (head) head:)
-          (prefix (modes) modes:)
+          (prefix (mode) mode:)
           (prefix (kernel) kernel:)
-          (prefix (strings) strings:)
+          (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
           (only (describe) doc-lookup )
-          (prefix (docs) docs:)
-          (prefix (docs) docs:)
+          (prefix (doc) doc:)
+          (prefix (doc) doc:)
           (only (edit) regions-of region-text)
           (only (scheme-format) scheme-indent-lines)
           (only (sys) call-with-streamed-output
@@ -50,12 +50,12 @@
                            (+ i 1)]
                           [else (loop (- i 1))]))]
            [head (substring s 0 start)]
-           [part (strings:tail s start)])
+           [part (string:tail s start)])
       (if (and (string=? part "") (not empty-ok?))
           '()
           (let ([names (sort string<?
                              (filter (lambda (name)
-                                       (and (strings:prefix? part name)
+                                       (and (string:prefix? part name)
                                             (keep? (string->symbol name))))
                                      (map symbol->string
                                           (environment-symbols
@@ -109,9 +109,9 @@
             [(symbol? p) (list (format ". ~a" p))]
             [(pair? (car p))
              (cons (format "[~a]"
-                           (strings:join (map (lambda (x) (format "~a" x))
-                                              (car p))
-                                         " "))
+                           (string:join (map (lambda (x) (format "~a" x))
+                                             (car p))
+                                        " "))
                    (loop (cdr p)))]
             [else (cons (format "~a" (car p)) (loop (cdr p)))])))
 
@@ -131,7 +131,7 @@
                                    (> (signature-arity sig)
                                       (signature-arity best))))
                       (set! best sig)))))
-              (docs:forms entry)))
+              (doc:forms entry)))
           (doc-lookup sym))
         (and best (signature-tokens best)))))
 
@@ -160,7 +160,7 @@
     ;; argument, but a rest marker (... or a dotted tail) absorbs any count.
     (cond [(or (null? tokens) (= n 0)) tokens]
           [(string=? (car tokens) "...") tokens]
-          [(strings:prefix? ". " (car tokens)) tokens]
+          [(string:prefix? ". " (car tokens)) tokens]
           [(and (pair? (cdr tokens)) (string=? (cadr tokens) "...")) tokens]
           [else (drop-params (cdr tokens) (- n 1))]))
 
@@ -216,8 +216,8 @@
                     (let ([left (drop-params tokens (cdar stack))])
                       (and (pair? left)
                            (string-append
-                             (if (strings:suffix? " " s) "" " ")
-                             (strings:join left " "))))))))))
+                             (if (string:suffix? " " s) "" " ")
+                             (string:join left " "))))))))))
 
   ;;; Evaluation ----------------------------------------------------------------
 
@@ -273,8 +273,8 @@
     ;; Scheme highlighting over the whole exchange, echo and *log*
     ;; alike -- the editor's own names in the editor style: eval runs
     ;; in the editor's environment, whatever a random file does.
-    (let ([scheme (modes:find "scheme")])
-      (and scheme (editorize! text ((modes:styles scheme) text)))))
+    (let ([scheme (mode:find "scheme")])
+      (and scheme (editorize! text ((mode:styles scheme) text)))))
 
   (define mx-echo-styles
     ;; Scheme highlighting for the M-x prompt: the label stays grey,
@@ -283,9 +283,9 @@
     (paint:prompt-styler "M-x "
       (lambda (input)
         (guard (ex [else #f])
-          (let ([scheme (modes:find "scheme")])
+          (let ([scheme (mode:find "scheme")])
             (and scheme
-                 (editorize! input ((modes:styles scheme) input))))))))
+                 (editorize! input ((mode:styles scheme) input))))))))
 
   (define (trim-right s)
     ;; s without trailing blanks, so auto-closed parentheses attach
@@ -326,22 +326,22 @@
   (define (reindent-scheme-input text pos)
     ;; Reindent every logical line and keep the cursor attached to the same
     ;; text even when an earlier edit shifts this line left or right.
-    (let* ([lines (strings:lines text)]
+    (let* ([lines (string:lines text)]
            [v (list->vector lines)]
            [stops (scheme-indent-lines v 0 (- (vector-length v) 1))]
-           [before (strings:lines (substring text 0 pos))]
+           [before (string:lines (substring text 0 pos))]
            [point-row (- (length before) 1)]
            [point-col (string-length (car (reverse before)))])
       (let loop ([rows lines] [cols stops] [row 0]
                  [built '()] [offset 0] [cursor #f])
         (if (null? rows)
-            (cons (strings:join (reverse built) "\n") cursor)
+            (cons (string:join (reverse built) "\n") cursor)
             (let* ([line (car rows)]
                    [old (leading-blanks line)]
                    [target (and (car cols) (nearest-stop (car cols) old))]
                    [laid (if target
                              (string-append (make-string target #\space)
-                                            (strings:tail line old))
+                                            (string:tail line old))
                              line)]
                    [cursor (if (= row point-row)
                                (+ offset
@@ -357,7 +357,7 @@
     ;; Preserve multiline insertion as entered; the prompt's central edit path
     ;; immediately runs reindent-scheme-input over the complete result.
     (cons (string-append (substring text 0 pos) inserted
-                         (strings:tail text pos))
+                         (string:tail text pos))
           (+ pos (string-length inserted))))
 
   (define (mx-edge-motion action text pos second?)
@@ -432,8 +432,8 @@
                                 (eq? (car outcome) (void)))))]
            [result (if failed?
                        outcome
-                       (strings:join (map (lambda (v) (format "~s" v)) outcome)
-                                     ", "))])
+                       (string:join (map (lambda (v) (format "~s" v)) outcome)
+                                    ", "))])
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
               (log:add! 'eval (cons query (if void? "#<void>" result)) #f)])
@@ -447,7 +447,7 @@
     ;; the M-x interaction environment and show its result in the echo area.
     (let* ([where (if (pair? rest) (car rest) (current-buffer))]
            [query (if (pair? rest) (format "(eval! ~s)" where) "(eval!)")]
-           [text (strings:join (map region-text (regions-of where)) "\n")])
+           [text (string:join (map region-text (regions-of where)) "\n")])
       (let-values ([(outcome output-records)
                     (evaluation-outcome query text)])
         (report-evaluation! query outcome output-records))
@@ -486,7 +486,7 @@
           (report-evaluation! s outcome output-records)))))
 
   (define (init!)
-    (docs:register!
+    (doc:register!
       '(((eval!) (("procedure" . "(eval! [where])")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")

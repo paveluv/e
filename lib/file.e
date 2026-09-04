@@ -1,4 +1,4 @@
-;; files.e -- the disk: the library (files), v2 core dissolution
+;; file.e -- the disk: the library (file), v2 core dissolution
 ;; (docs/DESIGN2.md).
 ;;
 ;; Everything the editor does with the file system, below the seams
@@ -14,11 +14,11 @@
 ;;
 ;; Over the wire the disk is the server's: a remote head asks for a
 ;; save, and this module answers where the file is.  Exported names
-;; drop the module stem: (files:read path), (files:lines text),
-;; (files:write! path lines trailing?), (files:merge path base mine
+;; drop the module stem: (file:read path), (file:lines text),
+;; (file:write! path lines trailing?), (file:merge path base mine
 ;; disk).
 
-(library (files)
+(library (file)
   (export read stamp write!
           lines ends-in-newline? text
           merge conflict-count
@@ -27,11 +27,11 @@
           add-pre-save-hook! add-post-save-hook!
           run-pre-save-hooks! run-post-save-hooks!)
   ;; read, expand, and merge are Chez names too; importers always see
-  ;; these under the files: prefix
+  ;; these under the file: prefix
   (import (except (chezscheme) read expand merge)
           (only (sys) canonical-file-path)
           (only (diff) merge3 merge-report-lines)
-          (prefix (strings) strings:)
+          (prefix (string) string:)
           (prefix (log) log:)
           (prefix (kernel) kernel:))
 
@@ -46,27 +46,27 @@
 
   (define (base-name path)
     (let ([dir (directory-part path)])
-      (if dir (strings:tail path (string-length dir)) path)))
+      (if dir (string:tail path (string-length dir)) path)))
 
   (define (expand path)
     ;; Expand a leading ~ to the home directory.
     (let ([home (getenv "HOME")])
       (cond [(not home) path]
             [(string=? path "~") home]
-            [(strings:prefix? "~/" path) (string-append home (strings:tail path 1))]
+            [(string:prefix? "~/" path) (string-append home (string:tail path 1))]
             [else path])))
 
   (define (abbreviate path)
     ;; The inverse of expand, for display: home becomes ~.
     (let ([home (getenv "HOME")])
-      (if (and home (strings:prefix? (string-append home "/") path))
-          (string-append "~" (strings:tail path (string-length home)))
+      (if (and home (string:prefix? (string-append home "/") path))
+          (string-append "~" (string:tail path (string-length home)))
           path)))
 
   (define (absolute path)
     ;; A relative path is relative to the process working directory,
     ;; which never changes.
-    (if (or (strings:prefix? "/" path) (strings:prefix? "~" path))
+    (if (or (string:prefix? "/" path) (string:prefix? "~" path))
         path
         (string-append (current-directory) "/" path)))
 
@@ -74,7 +74,7 @@
     ;; path made absolute, with ".", "..", and empty segments resolved
     ;; textually (symbolic links are not chased) -- enough to recognize
     ;; the editor's own files whichever way they are named.
-    (let* ([path (if (strings:prefix? "/" path*)
+    (let* ([path (if (string:prefix? "/" path*)
                      path*
                      (string-append (current-directory) "/" path*))]
            [n (string-length path)])
@@ -83,7 +83,7 @@
           (cond [(or (string=? seg "") (string=? seg ".")) stack]
                 [(string=? seg "..") (if (pair? stack) (cdr stack) stack)]
                 [else (cons seg stack)]))
-        (cond [(> i n) (string-append "/" (strings:join (reverse stack) "/"))]
+        (cond [(> i n) (string-append "/" (string:join (reverse stack) "/"))]
               [(or (= i n) (char=? (string-ref path i) #\/))
                (loop (+ i 1) (+ i 1) (push (substring path start i)))]
               [else (loop (+ i 1) start stack)]))))
@@ -97,7 +97,7 @@
       (or real
           (let* ([dir (or (directory-part full) "/")]
                  [parent (if (and (> (string-length dir) 1)
-                                  (strings:suffix? "/" dir))
+                                  (string:suffix? "/" dir))
                              (substring dir 0 (- (string-length dir) 1))
                              dir)]
                  [real-parent (canonical-file-path parent)])
@@ -113,7 +113,7 @@
     ;; Dotfiles are offered only once the component starts with a dot.
     (guard (ex [else '()])
       (let* ([dir (or (directory-part s) "")]
-             [part (strings:tail s (string-length dir))]
+             [part (string:tail s (string-length dir))]
              [listing (directory-list
                         (expand
                           (cond [(string=? dir "") "."]
@@ -126,9 +126,9 @@
                      full)))
              (sort string<?
                    (filter (lambda (name)
-                             (and (strings:prefix? part name)
+                             (and (string:prefix? part name)
                                   (or (not (string=? part ""))
-                                      (not (strings:prefix? "." name)))))
+                                      (not (string:prefix? "." name)))))
                            listing))))))
 
   (define (data-directory)
@@ -188,7 +188,7 @@
                           (char=? (string-ref s (- n 1)) #\newline))
                      (substring s 0 (- n 1))
                      s)])
-      (list->vector (strings:lines body))))
+      (list->vector (string:lines body))))
 
   (define (ends-in-newline? s)
     (and (> (string-length s) 0)
@@ -236,7 +236,7 @@
       (if (= i (vector-length v))
           n
           (loop (+ i 1)
-                (if (strings:prefix? "<<<<<<<" (vector-ref v i)) (+ n 1) n)))))
+                (if (string:prefix? "<<<<<<<" (vector-ref v i)) (+ n 1) n)))))
 
 
   ;;; Save hooks --------------------------------------------------------------------
@@ -262,4 +262,4 @@
 
   (define (run-pre-save-hooks! path) (run-hooks! pre-save-hooks path))
   (define (run-post-save-hooks! path) (run-hooks! post-save-hooks path))
-) ;; library (files)
+) ;; library (file)

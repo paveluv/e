@@ -43,7 +43,7 @@
                 get-output-string
                 call-with-string-output-port)
           (prefix (state) state:)
-          (prefix (actors) actors:)
+          (prefix (actor) actor:)
           (prefix (only (log) add!) log:)
           (only (kernel) persistent-cell condition-text))
 
@@ -277,5 +277,5 @@
         (begin
           ((session-audit! s)
            (list 'ask (session-actor s) (clipped question 200)))
-          (actors:ask! (session-actor s) (session-owner s)
-                       question choices reply!)))))
+          (actor:ask! (session-actor s) (session-owner s)
+                      question choices reply!)))))

@@ -27,10 +27,10 @@
           (prefix (edit) edit:)
           (prefix (paint) paint:)
           (prefix (head) head:)
-          (prefix (styles) styles:)
+          (prefix (style) style:)
           (prefix (state) state:)
           (prefix (text) text:)
-          (prefix (docs) docs:))
+          (prefix (doc) doc:))
 
   (define blame-tint-seconds
     ;; how long another actor's edit stays tinted (0 turns tinting off)
@@ -188,13 +188,13 @@
         (head:run-on-main! (lambda () (note-event! event)))))
     (paint:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e
-    (styles:set! 'blame-1 '((background 17)))   ; deep blue
-    (styles:set! 'blame-2 '((background 22)))   ; deep green
-    (styles:set! 'blame-3 '((background 52)))   ; deep red
-    (styles:set! 'blame-4 '((background 54)))   ; deep purple
-    (styles:set! 'blame-5 '((background 23)))   ; deep teal
-    (styles:set! 'blame-6 '((background 58)))   ; olive
-    (docs:register!
+    (style:set! 'blame-1 '((background 17)))   ; deep blue
+    (style:set! 'blame-2 '((background 22)))   ; deep green
+    (style:set! 'blame-3 '((background 52)))   ; deep red
+    (style:set! 'blame-4 '((background 54)))   ; deep purple
+    (style:set! 'blame-5 '((background 23)))   ; deep teal
+    (style:set! 'blame-6 '((background 58)))   ; olive
+    (doc:register!
       '(((blame-at-point!)
          (("procedure" . "(blame-at-point!)")) "void"
          ("(blame)") blame "Blame" #f

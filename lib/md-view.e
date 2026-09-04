@@ -22,23 +22,23 @@
   (import (chezscheme) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (echo) echo:)
-          (prefix (modes) modes:)
-          (prefix (strings) strings:)
+          (prefix (mode) mode:)
+          (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
-          (prefix (styles) styles:)
+          (prefix (style) style:)
           (prefix (keymap) keymap:) (only (sys) terminal-character-width))
 
   ;;; Faces -------------------------------------------------------------
 
   (define (register-md-faces!)
-    (styles:set! 'md-h1 '(bold underline))
-    (styles:set! 'md-h2 '(bold))
-    (styles:set! 'md-h3 '(bold italic))
-    (styles:set! 'md-h4 '(italic))
-    (styles:set! 'md-quote '(italic (foreground bright-black)))
-    (styles:set! 'md-link '(underline (foreground 33)))
-    (styles:set! 'md-code '(reset)))
+    (style:set! 'md-h1 '(bold underline))
+    (style:set! 'md-h2 '(bold))
+    (style:set! 'md-h3 '(bold italic))
+    (style:set! 'md-h4 '(italic))
+    (style:set! 'md-quote '(italic (foreground bright-black)))
+    (style:set! 'md-link '(underline (foreground 33)))
+    (style:set! 'md-code '(reset)))
 
   (define markdown-view-max-width
     ;; Reading width cap: a view in a wider window wraps at this many
@@ -442,7 +442,7 @@
         (let segment ([entries entries] [parts '()] [start #f] [lead prefix])
           (define (flush!)
             (when (pair? parts)
-              (emit-inline! (strings:join (reverse parts) " ")
+              (emit-inline! (string:join (reverse parts) " ")
                             base start lead prefix-style)))
           (if (null? entries)
               (flush!)
@@ -454,7 +454,7 @@
                      [start (or start row)])
                 (if (hard-break? raw)
                     (begin
-                      (emit-inline! (strings:join (reverse parts) " ")
+                      (emit-inline! (string:join (reverse parts) " ")
                                     base start lead prefix-style)
                       (segment (cdr entries) '() #f
                                (make-string (string-length prefix)
@@ -516,11 +516,11 @@
                              (let* ([vec (make-vector (string-length l)
                                                       'md-code)]
                                     [mode (and (not (string=? tag ""))
-                                               (modes:find tag))]
+                                               (mode:find tag))]
                                     [syntax
                                      (and mode
                                           (guard (ex [else #f])
-                                            ((modes:styles mode) l)))])
+                                            ((mode:styles mode) l)))])
                                ;; the language's own faces color the code
                                (when (vector? syntax)
                                  (do ([p 0 (+ p 1)])
@@ -666,7 +666,7 @@
                                                     (pad-to (car seg) w))
                                                   segments widths)]
                                       [joined
-                                       (let trim ([text (strings:join
+                                       (let trim ([text (string:join
                                                           parts "  ")])
                                          (let ([n (string-length text)])
                                            (if (and (> n 0)
@@ -715,7 +715,7 @@
                                               (cdr segs) (cdr parts)))))
                                  (emit! joined vec (reverse row-links) k)))
                              (when (and first header?)
-                               (emit! (strings:join
+                               (emit! (string:join
                                         (map (lambda (w)
                                                (make-string w #\x2500))
                                              widths)
@@ -836,7 +836,7 @@
     ;; Render markdown lines into an app view; the view owns its
     ;; lifecycle, so nothing is stashed.
     (install-render! b lines #f #f)
-    (modes:choose! b "markdown-view")
+    (mode:choose! b "markdown-view")
     b)
 
   (define (buffer-lines-list b)
@@ -847,20 +847,20 @@
     ;; Present a markdown buffer read-only and formatted; the source
     ;; comes back with markdown-edit!.
     (let ([b (if (pair? b*) (car b*) (current-buffer))])
-      (unless (equal? (modes:name-of b) "markdown")
+      (unless (equal? (mode:name-of b) "markdown")
         (error 'markdown-view! "not a markdown buffer" b))
       (let ([source (buffer-lines-list b)]
             [row (car (point))])
         (install-render! b source source (head:buffer-read-only b))
         (set-buffer-read-only! b #t)
-        (modes:choose! b "markdown-view")
+        (mode:choose! b "markdown-view")
         (goto-point! (cons (view-row-showing b row) 0)))
       (void)))
 
   (define (markdown-edit! . b*)
     ;; Restore the stashed markdown source and make it editable again.
     (let ([b (if (pair? b*) (car b*) (current-buffer))])
-      (unless (equal? (modes:name-of b) "markdown-view")
+      (unless (equal? (mode:name-of b) "markdown-view")
         (error 'markdown-edit! "not a markdown view" b))
       (let ([r (hashtable-ref renders b #f)])
         (unless (and r (vector-ref r 3))
@@ -869,7 +869,7 @@
               [rows (vector-ref r 2)])
           (head:view-replace! b (vector-ref r 3))
           (set-buffer-read-only! b (vector-ref r 4))
-          (modes:choose! b "markdown")
+          (mode:choose! b "markdown")
           (set-buffer-wrap! b 'default)
           (hashtable-delete! renders b)
           (goto-point!
@@ -898,19 +898,19 @@
             links)))
 
   (define (markdown-file? path)
-    (or (strings:suffix? ".md" path) (strings:suffix? ".markdown" path)))
+    (or (string:suffix? ".md" path) (string:suffix? ".markdown" path)))
 
   (define (open-link! url)
     ;; Followed links log under the markdown source; web links go to
     ;; the configured browser command.
     (parameterize ([message-source 'markdown])
       (cond
-        [(or (strings:prefix? "http://" url)
-             (strings:prefix? "https://" url))
+        [(or (string:prefix? "http://" url)
+             (string:prefix? "https://" url))
          (system (format "~a ~a >/dev/null 2>&1 &"
                          (markdown-browser) (shell-quoted url)))
          (set-message! (format "Opened ~a" url))]
-        [(strings:prefix? "#" url)
+        [(string:prefix? "#" url)
          (set-message! "Anchor links are not followed yet")]
         [else
          (let* ([base (head:buffer-file (current-buffer))]
@@ -920,7 +920,7 @@
            (visit-file! target)
            ;; a linked markdown document arrives already formatted
            (when (and (markdown-file? url)
-                      (equal? (modes:name-of (current-buffer))
+                      (equal? (mode:name-of (current-buffer))
                               "markdown"))
              (guard (ex [else (void)]) (markdown-view!)))
            (set-message! (format "Followed ~a" url)))])))
@@ -945,7 +945,7 @@
   (define (link-hint)
     (unless (or (prompt:active?) (equal? hint-point (point)))
       (set! hint-point (point))
-      (let ([link (and (equal? (modes:name-of (current-buffer))
+      (let ([link (and (equal? (mode:name-of (current-buffer))
                                "markdown-view")
                        (link-at-point))])
         (cond
@@ -963,8 +963,8 @@
 
   (define (init!)
     (register-md-faces!)
-    (modes:register! "markdown-view" '() '() (lambda (line) #f)
-                     #f view-row-styles)
+    (mode:register! "markdown-view" '() '() (lambda (line) #f)
+                    #f view-row-styles)
     (paint:add-hyperlinker! view-row-links)
     (paint:add-highlighter! link-hint)
     (head:add-pre-redraw-hook! refit-views!)

@@ -160,7 +160,7 @@
             (call-with-input-file probe read) #t)
 
      ;; the interaction protocol: an agent asks, the head answers ------
-     (send! (format "\x1b;xactors:ask! (quote (agent tester)) (quote (head main)) \"Proceed with the plan?\" (list \"yes\" \"no\") (lambda (answer) (call-with-output-file \"~a\" (lambda (p) (write answer p)) (quote replace)))\r"
+     (send! (format "\x1b;xactor:ask! (quote (agent tester)) (quote (head main)) \"Proceed with the plan?\" (list \"yes\" \"no\") (lambda (answer) (call-with-output-file \"~a\" (lambda (p) (write answer p)) (quote replace)))\r"
                     probe))
      (pump! 1200)
      (check 'ask-indicator-shows
@@ -194,7 +194,7 @@
      ;; the ui's basis and its keystroke (same eval, so no frame sync
      ;; intervenes); the typed character comes back stale, core wins by
      ;; reset, and the rival's delivery receives the conflict message
-     (send! (format "\x1b;xactors:register! (quote (agent rival)) (lambda (m) (call-with-output-file \"~a\" (lambda (p) (write m p)) (quote replace)))\r"
+     (send! (format "\x1b;xactor:register! (quote (agent rival)) (lambda (m) (call-with-output-file \"~a\" (lambda (p) (write m p)) (quote replace)))\r"
                     probe))
      (pump! 600)
      (send! "\x1b;xlet ([id (head:buffer-state-id (current-buffer))]) (main:dispatch-key! \"M-<\") (main:dispatch-key! \"C-f\") (main:dispatch-key! \"C-f\") (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (main:dispatch-key! \"z\")\r")

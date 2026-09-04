@@ -22,8 +22,8 @@
 ;; accessors take them apart, so M-x expressions can slice the corpus:
 ;;
 ;;   (length (doc-entries))
-;;   (doc-entries (lambda (e) (eq? (docs:source e) 'csug)))
-;;   (filter (lambda (e) (member "(rnrs io ports)" (docs:libraries e)))
+;;   (doc-entries (lambda (e) (eq? (doc:source e) 'csug)))
+;;   (filter (lambda (e) (member "(rnrs io ports)" (doc:libraries e)))
 ;;           (doc-entries))
 
 (library (describe)
@@ -31,20 +31,20 @@
           fetch-describe-data!
           doc-lookup doc-entries doc-browser-url)
   (import (chezscheme) (except (edit) init!)
-          (prefix (docs) docs:)
+          (prefix (doc) doc:)
           (prefix (kernel) kernel:)
           (prefix (prompt) prompt:)
-          (prefix (files) files:)
-          (prefix (modes) modes:)
-          (prefix (strings) strings:)
+          (prefix (file) file:)
+          (prefix (mode) mode:)
+          (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
-          (prefix (styles) styles:)
+          (prefix (style) style:)
           (prefix (keymap) keymap:) (only (md-view) markdown-view-install!)
           (only (https) https-download))
 
   (define (data-dir)
-    (string-append (files:data-directory) "/describe"))
+    (string-append (file:data-directory) "/describe"))
 
   (define (data-path)
     (string-append (data-dir) "/describe.sdata"))
@@ -343,7 +343,7 @@
 
   (define (parse-page path source page)
     ;; Every entry of one chapter page, as raw entry lists.
-    (let* ([s (files:read path)]
+    (let* ([s (file:read path)]
            [chapter (extract-title s)])
       ;; group consecutive formdefs separated only by breaks and anchors
       (let loop ([ps (formdef-positions s)] [entries '()])
@@ -396,12 +396,12 @@
     ;; The entry's documentation in the browser: its page anchor made
     ;; absolute against its book's site.  Locally registered entries may
     ;; have no URL.
-    (and (docs:url entry)
-         (string-append (case (docs:source entry)
+    (and (doc:url entry)
+         (string-append (case (doc:source entry)
                           [(tspl) tspl-base]
                           [(csug) csug-base]
                           [else ""])
-                        (docs:url entry))))
+                        (doc:url entry))))
 
   (define (ensure-directory! path)
     (unless (file-directory? path) (mkdir path)))
@@ -460,7 +460,7 @@
         (set-message!
           (format "Describe database ready: ~a entries covering ~a names"
                   (length all-entries)
-                  (fold-left + 0 (map (lambda (e) (length (docs:names e)))
+                  (fold-left + 0 (map (lambda (e) (length (doc:names e)))
                                    all-entries))))
         (void))))
 
@@ -471,10 +471,10 @@
 
   (define (entry-datum->doc-entry entry)
     ;; a corpus datum (describe.sdata) as a record -- the eight-field
-    ;; format docs:register! validates for modules
-    (apply docs:make entry))
+    ;; format doc:register! validates for modules
+    (apply doc:make entry))
 
-  (define (registered-entries) (docs:entries))
+  (define (registered-entries) (doc:entries))
 
   (define (load-data!)
     (unless all-entries
@@ -489,7 +489,7 @@
                   (for-each (lambda (name)
                               (eq-hashtable-update! by-name name
                                 (lambda (old) (cons entry old)) '()))
-                            (docs:names entry)))
+                            (doc:names entry)))
                 (reverse all-entries))))
 
   ;;; Queries -------------------------------------------------------------------
@@ -499,7 +499,7 @@
     ;; before CSUG; '() when it is not in the corpus.
     (load-data!)
     (let* ([name (if (string? name) (string->symbol name) name)]
-           [local (filter (lambda (entry) (memq name (docs:names entry)))
+           [local (filter (lambda (entry) (memq name (doc:names entry)))
                           (registered-entries))])
       (append (eq-hashtable-ref by-name name '()) local)))
 
@@ -539,25 +539,25 @@
                         ;; abbreviations): double-tick delimiters
                         (format "**~a**: `` ~a ``" (car form) (cdr form))
                         (format "**~a**: `~a`" (car form) (cdr form))))
-                  (docs:forms entry))
-             (if (docs:returns entry)
-                 (list (format "returns: ~a" (docs:returns entry)))
+                  (doc:forms entry))
+             (if (doc:returns entry)
+                 (list (format "returns: ~a" (doc:returns entry)))
                  '())
-             (if (pair? (docs:libraries entry))
+             (if (pair? (doc:libraries entry))
                  (list (format "libraries: ~a"
-                               (strings:join (docs:libraries entry) ", ")))
+                               (string:join (doc:libraries entry) ", ")))
                  '())
              (list (format "source: ~a, ~a"
-                           (case (docs:source entry)
+                           (case (doc:source entry)
                              [(tspl) "TSPL4"]
                              [(csug) "Chez Scheme User's Guide"]
-                             [else (docs:source entry)])
-                           (docs:chapter entry)))
-             (if (docs:url entry)
+                             [else (doc:source entry)])
+                           (doc:chapter entry)))
+             (if (doc:url entry)
                  (list (format "url: ~a" (doc-browser-url entry)))
                  '())))
       (list "")
-      (split-on-newlines (docs:description entry))))
+      (split-on-newlines (doc:description entry))))
 
   (define described-name #f)
   (define describe-buffer #f)
@@ -575,7 +575,7 @@
     (append
       (if (pair? (describe-page-keys page))
           (list (format "**keys**: ~a  "
-                        (strings:join (describe-page-keys page) ", "))
+                        (string:join (describe-page-keys page) ", "))
                 "")
           '())
       (let loop ([entries (describe-page-entries page)] [acc '()])
@@ -632,12 +632,12 @@
                   (lambda (names name)
                     (let ([text (symbol->string name)])
                       (if (or (eq-hashtable-ref seen name #f)
-                              (not (strings:prefix? part text)))
+                              (not (string:prefix? part text)))
                           names
                           (begin
                             (eq-hashtable-set! seen name #t)
                             (cons text names)))))
-                  names (docs:names entry)))
+                  names (doc:names entry)))
               '() (doc-entries)))))
 
   (define (describe!!)
@@ -687,9 +687,9 @@
   (define (scheme-buffer?)
     ;; Scheme under any dress: the scheme mode itself and the
     ;; pretty-scheme-* renderings, which draw the same buffer text.
-    (let ([m (modes:name-of (current-buffer))])
+    (let ([m (mode:name-of (current-buffer))])
       (and m (or (string=? m "scheme")
-                 (strings:prefix? "pretty-scheme" m)))))
+                 (string:prefix? "pretty-scheme" m)))))
 
   (define (describe-at-point!)
     ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
@@ -728,7 +728,7 @@
         (describe! (string->symbol (substring text start end))))))
 
   (define (init!)
-    (docs:register!
+    (doc:register!
       '(((describe!) (("procedure" . "(describe! name)")) "void"
          ("(describe)") describe "Documentation commands" #f
          "Display every documentation entry for `name` in a read-only Markdown `*describe*` buffer.")
@@ -739,10 +739,10 @@
         ((describe!!) (("procedure" . "(describe!!)")) "void"
          ("(describe)") describe "Documentation commands" #f
          "Prompt for a documented function name with completion, then display its live describe page.")
-        ((styles:compile) (("procedure" . "(styles:compile expression)")) "string"
+        ((style:compile) (("procedure" . "(style:compile expression)")) "string"
          ("(edit)") core "Style customization" #f
          "Compile a style expression to terminal SGR parameters. The expression is a list containing attributes (`reset`, `bold`, `dim`, `italic`, `underline`, `blink`, `reverse`, `hidden`, or `strike`) and color clauses `(foreground color)` or `(background color)`; `fg` and `bg` are aliases. A color is a basic name from `black` through `white`, a `bright-` variant, an integer from 0 through 255, or `(rgb red green blue)`.")
-        ((styles:set!) (("procedure" . "(styles:set! face style)")) "void"
+        ((style:set!) (("procedure" . "(style:set! face style)")) "void"
          ("(edit)") core "Style customization" #f
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
         ((markdown-view!) (("procedure" . "(markdown-view! [buffer])")) "void"
@@ -761,7 +761,7 @@
          "Get or set the command that opens a markdown view's web links; it receives the quoted URL as its argument. The default is `xdg-open`.")
         ((answer!!) (("procedure" . "(answer!!)")) "void"
          ("(edit)") core "Interaction" #f
-         "Answer the oldest question another actor posed through the interaction protocol (`actors:ask!`): a prompt shows the question with its choices completing on Tab, and the answer routes back to the asker. Bound to `C-c a`; pending questions wait as an echo-area indicator.")
+         "Answer the oldest question another actor posed through the interaction protocol (`actor:ask!`): a prompt shows the question with its choices completing on Tab, and the answer routes back to the asker. Bound to `C-c a`; pending questions wait as an echo-area indicator.")
         ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
          ("(edit)") core "Buffer display" #f
          "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")
@@ -777,8 +777,8 @@
         ((focus-window-right!) (("procedure" . "(focus-window-right!)")) "void"
          ("(edit)") core "Window commands" #f
          "Cast a ray rightward from point and focus the first window it crosses.")
-        ((modes:add-extension!)
-         (("procedure" . "(modes:add-extension! mode extension)")) "void"
+        ((mode:add-extension!)
+         (("procedure" . "(mode:add-extension! mode extension)")) "void"
          ("(edit)") core "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
         ((head:register-app!)

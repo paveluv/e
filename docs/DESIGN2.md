@@ -234,8 +234,8 @@ unless noted, loaded by the same loader. Layer by layer:
 | File | Owns |
 |---|---|
 | `kernel.e` | persistent cells, registries, module load/reload, init!/retract, config.e loading, mailboxes, the text of a caught condition (`condition-text`), the two refusal conditions (read-only, refused) |
-| `docs.e` | the documentation entry: one record per documented name, the eight-field validation, and the registry modules publish into at init! (`docs:register!`) -- below every module that documents itself |
-| `actors.e` | actor identity and sessions, mailboxes, the ask/reply interaction protocol |
+| `doc.e` | the documentation entry: one record per documented name, the eight-field validation, and the registry modules publish into at init! (`doc:register!`) -- below every module that documents itself |
+| `actor.e` | actor identity and sessions, mailboxes, the ask/reply interaction protocol |
 
 **State**:
 
@@ -243,7 +243,7 @@ unless noted, loaded by the same loader. Layer by layer:
 |---|---|
 | `text.e` | pure text and span algebra: lines, anchored spans, edit rebasing -- no state, fully unit-testable |
 | `state.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo, and buffer properties -- the buffer-level facts every head shares (visited file, mode name, read-only, disk base), so a second or remote head reads the same truth; per-seat state (cursors, selections, viewports) stays with heads |
-| `files.e` | the disk: path algebra, reading, stamps, permission-preserving writes, the line/trailing-newline algebra, the three-way merge over text, path completion, the pre/post-save hooks -- no buffers, no dialogs; the server's side of a save |
+| `file.e` | the disk: path algebra, reading, stamps, permission-preserving writes, the line/trailing-newline algebra, the three-way merge over text, path completion, the pre/post-save hooks -- no buffers, no dialogs; the server's side of a save |
 | `log.e` | the structured log and audit stream (state, not UI) |
 | `policy.e` | permissions: capability minting per actor, budgets |
 | `sandbox.e` | the read-only capability environment for expression eval -- v0.1's `claude-safe`, generalized to any constrained actor |
@@ -257,8 +257,8 @@ that lets v0.1 reload modules under a running editor.
 | File | Owns |
 |---|---|
 | `tty.e` | the terminal backend: raw mode, key/mouse/paste decoding, byte output |
-| `styles.e` | faces and the style DSL |
-| `modes.e` | the mode registry: records, detection by extension and #! interpreter, the memoized line and whole-buffer stylers -- the mode NAME is a store property, the record is this head's |
+| `style.e` | faces and the style DSL |
+| `mode.e` | the mode registry: records, detection by extension and #! interpreter, the memoized line and whole-buffer stylers -- the mode NAME is a store property, the record is this head's |
 | `paint.e` | the screen model: damage, cache, painting, synchronized updates |
 | `keymap.e` | key syntax, binding contexts, per-head and per-mode dispatch |
 | `echo.e` | the notification area's model: message, ghost, transient log queue, prompt geometry |
@@ -271,7 +271,7 @@ that lets v0.1 reload modules under a running editor.
 | File | Owns |
 |---|---|
 | `sys.e` | FFI: processes, PTYs, termios, fd plumbing (input decoding moves out, to `tty.e`) |
-| `strings.e` | the pure string helpers every layer shares (tail, prefix?/suffix?, join, KMP search, lines, common-prefix, insert/delete, elide) -- the one copy; no module keeps its own |
+| `string.e` | the pure string helpers every layer shares (tail, prefix?/suffix?, join, KMP search, lines, common-prefix, insert/delete, elide) -- the one copy; no module keeps its own |
 | `json.e` | JSON (unchanged) |
 | `https.e` | HTTP(S) with the channel/connector seams (unchanged) |
 
@@ -298,7 +298,7 @@ a call site names its layer without looking at the import list:
 
 ```scheme
 (import (prefix (state) state:)
-        (prefix (actors) actors:)
+        (prefix (actor) actor:)
         (prefix (text) text:))
 
 (state:apply-edit!

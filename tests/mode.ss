@@ -14,7 +14,7 @@
 
 (eval
   '(begin
-     (import (prefix (modes) modes:)
+     (import (prefix (mode) mode:)
              (prefix (head) head:)
              (only (chezscheme) format box unbox set-box!))
 
@@ -23,7 +23,7 @@
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'modes-test label actual expected)))
+         (error 'mode-test label actual expected)))
 
      ;; -- registration and lookup -------------------------------------
 
@@ -32,57 +32,57 @@
        (set-box! styler-calls (+ (unbox styler-calls) 1))
        (make-vector (string-length s) 'keyword))
 
-     (modes:register! "probe" '(".probe") '("probesh") probe-styler)
+     (mode:register! "probe" '(".probe") '("probesh") probe-styler)
 
-     (check 'find (modes:name (modes:find "probe")) "probe")
-     (check 'find-missing (modes:find "no-such-mode") #f)
-     (check 'extensions (modes:extensions (modes:find "probe")) '(".probe"))
-     (check 'no-render (modes:render (modes:find "probe")) #f)
+     (check 'find (mode:name (mode:find "probe")) "probe")
+     (check 'find-missing (mode:find "no-such-mode") #f)
+     (check 'extensions (mode:extensions (mode:find "probe")) '(".probe"))
+     (check 'no-render (mode:render (mode:find "probe")) #f)
 
      ;; -- detection -----------------------------------------------------------
 
      (define by-file (head:new-buffer "x.probe"))
      (head:buffer-file-set! by-file "/nowhere/x.probe")
-     (modes:assign! by-file)
-     (check 'detect-by-extension (modes:name-of by-file) "probe")
+     (mode:assign! by-file)
+     (check 'detect-by-extension (mode:name-of by-file) "probe")
      (check 'detected-is-auto (head:buffer-mode-auto by-file) #t)
 
      (define by-interpreter (head:new-buffer "script"))
      (head:buffer-lines-set! by-interpreter (vector "#!/usr/bin/env probesh" "x"))
-     (modes:assign! by-interpreter)
-     (check 'detect-by-interpreter (modes:name-of by-interpreter) "probe")
+     (mode:assign! by-interpreter)
+     (check 'detect-by-interpreter (mode:name-of by-interpreter) "probe")
 
      (define plain (head:new-buffer "notes.txt"))
      (head:buffer-file-set! plain "/nowhere/notes.txt")
-     (modes:assign! plain)
-     (check 'detect-nothing (modes:name-of plain) #f)
-     (check 'of-nothing (modes:of plain) #f)
+     (mode:assign! plain)
+     (check 'detect-nothing (mode:name-of plain) #f)
+     (check 'of-nothing (mode:of plain) #f)
 
      ;; -- choosing by hand ----------------------------------------------------
 
-     (modes:choose! plain "probe")
-     (check 'chosen (modes:name-of plain) "probe")
+     (mode:choose! plain "probe")
+     (check 'chosen (mode:name-of plain) "probe")
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
-     (modes:choose! plain #f)
-     (check 'unchosen (modes:of plain) #f)
+     (mode:choose! plain #f)
+     (check 'unchosen (mode:of plain) #f)
 
      ;; -- extensions added later ----------------------------------------------
 
-     (modes:add-extension! "probe" ".pr2")
+     (mode:add-extension! "probe" ".pr2")
      (define by-addition (head:new-buffer "y.pr2"))
      (head:buffer-file-set! by-addition "/nowhere/y.pr2")
-     (modes:assign! by-addition)
-     (check 'detect-by-added-extension (modes:name-of by-addition) "probe")
+     (mode:assign! by-addition)
+     (check 'detect-by-added-extension (mode:name-of by-addition) "probe")
      (check 'bad-extension-refused
-            (guard (ex [else 'refused]) (modes:add-extension! "probe" "pr3"))
+            (guard (ex [else 'refused]) (mode:add-extension! "probe" "pr3"))
             'refused)
      (check 'unknown-mode-refused
-            (guard (ex [else 'refused]) (modes:add-extension! "no-such-mode" ".x"))
+            (guard (ex [else 'refused]) (mode:add-extension! "no-such-mode" ".x"))
             'refused)
 
      ;; -- memoized line styles ------------------------------------------------
 
-     (define styles-of (modes:line-styles by-file))
+     (define styles-of (mode:line-styles by-file))
      (define line (string #\a #\b #\c))
      (set-box! styler-calls 0)
      (check 'line-styles (vector->list (styles-of line)) '(keyword keyword keyword))
@@ -91,17 +91,17 @@
      (check 'line-styles-memoized-by-identity (unbox styler-calls) 1)
      (styles-of (string #\a #\b #\c))
      (check 'line-styles-fresh-string (unbox styler-calls) 2)
-     (check 'plain-buffer-styles ((modes:line-styles plain) "abc") #f)
+     (check 'plain-buffer-styles ((mode:line-styles plain) "abc") #f)
 
-     (modes:register! "raiser" '(".raise") '() (lambda (s) (error 'raiser "boom")))
-     (modes:choose! plain "raiser")
-     (check 'raising-styler-paints-plain ((modes:line-styles plain) "abc") #f)
+     (mode:register! "raiser" '(".raise") '() (lambda (s) (error 'raiser "boom")))
+     (mode:choose! plain "raiser")
+     (check 'raising-styler-paints-plain ((mode:line-styles plain) "abc") #f)
 
      ;; -- memoized whole-buffer analysis --------------------------------------
 
      (define analyses (box 0))
      (define row-of
-       (modes:memoize-analysis
+       (mode:memoize-analysis
          (lambda (lines)
            (set-box! analyses (+ (unbox analyses) 1))
            (vector-map string-length lines))))
@@ -116,11 +116,11 @@
 
      ;; -- re-registration and refresh -----------------------------------------
 
-     (define old (modes:find "probe"))
-     (modes:register! "probe" '(".probe") '("probesh") probe-styler)
-     (check 'newest-registration-wins (eq? (modes:find "probe") old) #f)
-     (modes:refresh!)
-     (check 'refresh-resolves-to-new (eq? (modes:of by-file) (modes:find "probe")) #t)
-     (check 'refresh-keeps-name (modes:name-of by-file) "probe")
+     (define old (mode:find "probe"))
+     (mode:register! "probe" '(".probe") '("probesh") probe-styler)
+     (check 'newest-registration-wins (eq? (mode:find "probe") old) #f)
+     (mode:refresh!)
+     (check 'refresh-resolves-to-new (eq? (mode:of by-file) (mode:find "probe")) #t)
+     (check 'refresh-keeps-name (mode:name-of by-file) "probe")
 
-     (format #t "~a modes checks passed\n" checks)))
+     (format #t "~a mode checks passed\n" checks)))

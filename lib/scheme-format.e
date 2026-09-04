@@ -26,7 +26,7 @@
   (export scheme-indent-lines scheme-format-lines scheme-delimiter?
           scheme-format-brackets scheme-tab-width
           scheme-format-intrusive scheme-format-width)
-  (import (chezscheme) (prefix (strings) strings:))
+  (import (chezscheme) (prefix (string) string:))
 
   ;; Configuration: bracket convention, tab expansion, and the opt-in
   ;; width-aware layout pass.
@@ -74,7 +74,7 @@
 
   (define (special-operator? tok)
     (or (hashtable-ref specials tok #f)
-        (exists (lambda (p) (strings:prefix? p tok)) special-prefixes)))
+        (exists (lambda (p) (string:prefix? p tok)) special-prefixes)))
 
   (define binding-forms
     ;; Forms whose bindings list holds [bracketed] clauses.
@@ -330,7 +330,7 @@
   (define (reindent s col)
     ;; s with its leading whitespace replaced by col spaces.
     (string-append (make-string col #\space)
-                   (strings:tail s (indent-of s))))
+                   (string:tail s (indent-of s))))
 
   (define (trim-right s)
     (let loop ([n (string-length s)])
@@ -552,7 +552,7 @@
                      [candidate
                       (and current
                            (string-append current " "
-                             (strings:tail line (indent-of line))))]
+                             (string:tail line (indent-of line))))]
                      [join? (and current (> depth 0) (not protected?)
                                  (not next-protected?) (not (blank? line))
                                  (<= (string-length candidate) width))])
@@ -589,7 +589,7 @@
                     (break-layout-line
                       (string-append
                         (make-string (+ (indent-of s) 2) #\space)
-                        (strings:tail s (+ at 1)))
+                        (string:tail s (+ at 1)))
                       width))))))
 
   (define (lines-text lines)
