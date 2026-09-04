@@ -2,7 +2,7 @@
 
 ;; The structured log: appending, queries, per-component formatters,
 ;; histories, and the presenter hook -- v2 core dissolution
-;; (docs/DESIGN2.md).  Run from the repository root.
+;; (dev/DESIGN2.md).  Run from the repository root.
 
 (import (chezscheme))
 

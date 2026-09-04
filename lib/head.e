@@ -1,5 +1,5 @@
 ;; head.e -- the head: the library (head), v2 core dissolution
-;; (docs/DESIGN2.md).  Pure infrastructure with no init!.
+;; (dev/DESIGN2.md).  Pure infrastructure with no init!.
 ;;
 ;; A head is one user's seat -- in the wire's terms, the client side:
 ;; its buffers as it sees them, its windows and their layout, which

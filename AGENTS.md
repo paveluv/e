@@ -7,3 +7,4 @@
   `log:add!`, `mode:register!` -- never `styles:set-style!`.  Rename in
   the export list (`(rename (internal external))`) if the definition
   keeps a longer name.
+- docs/ contains the user documentation.

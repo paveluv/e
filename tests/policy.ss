@@ -3,7 +3,7 @@
 ;; Capability minting and budgets: sessions curried with an actor's
 ;; identity, fueled evaluation, edit quotas and allowlists, the
 ;; escalation path, revocation, and the audit trail.  v2 stage 4
-;; (docs/DESIGN2.md).  Run from the repository root.
+;; (dev/DESIGN2.md).  Run from the repository root.
 
 (import (chezscheme))
 

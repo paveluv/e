@@ -3,7 +3,7 @@
 ;; The disk seam: path algebra, the line/trailing-newline algebra,
 ;; reading and permission-preserving writing, stamps, completion over
 ;; a directory, and the three-way merge over text -- v2 core
-;; dissolution (docs/DESIGN2.md).  Works in a scratch directory it
+;; dissolution (dev/DESIGN2.md).  Works in a scratch directory it
 ;; creates and removes.  Run from the repository root.
 
 (import (chezscheme))

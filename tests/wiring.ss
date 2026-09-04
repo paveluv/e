@@ -3,7 +3,7 @@
 ;; The core-to-state wiring: every core buffer mirrors into the
 ;; (state) store, core edits arrive there transactionally, and a
 ;; foreign actor's store edit appears on the user's screen -- v2
-;; stage 1 (docs/DESIGN2.md).  Drives a live editor over a PTY; run
+;; stage 1 (dev/DESIGN2.md).  Drives a live editor over a PTY; run
 ;; from the repository root.
 
 (import (chezscheme))

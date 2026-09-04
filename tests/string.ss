@@ -1,7 +1,7 @@
 #!/usr/bin/env scheme-script
 
 ;; The pure string helpers below the seams -- v2 core dissolution
-;; (docs/DESIGN2.md).  Run from the repository root.
+;; (dev/DESIGN2.md).  Run from the repository root.
 
 (import (chezscheme))
 

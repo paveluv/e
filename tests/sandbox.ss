@@ -3,7 +3,7 @@
 ;; The read-only capability environment: reachability is the whole
 ;; game -- granted names work, everything else fails to resolve --
 ;; plus the bounded editor readers over the state store.  v2 stage 4
-;; (docs/DESIGN2.md).  Run from the repository root.
+;; (dev/DESIGN2.md).  Run from the repository root.
 
 (import (chezscheme))
 

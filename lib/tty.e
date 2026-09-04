@@ -1,5 +1,5 @@
 ;; tty.e -- terminal input decoding: the library (tty), v2 core
-;; dissolution (docs/DESIGN2.md).  Pure infrastructure with no init!;
+;; dissolution (dev/DESIGN2.md).  Pure infrastructure with no init!;
 ;; raw-mode control (termios) lives in the platform layer, (sys).
 ;;
 ;; One entry point: (tty:read-event port) decodes the next keyboard,

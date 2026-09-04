@@ -1,7 +1,7 @@
 #!/usr/bin/env scheme-script
 
 ;; The row painter: data in, ANSI out -- testable against a string
-;; port for the first time.  v2 core dissolution (docs/DESIGN2.md).
+;; port for the first time.  v2 core dissolution (dev/DESIGN2.md).
 ;; Run from the repository root.
 
 (import (chezscheme))
