@@ -27,6 +27,13 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-03 `read-file` (describe): a private copy of core's; both are
+  `files:read` now.  Core's own disk helpers (`read-file`, `disk-stamp`,
+  `string-lines`, `ends-in-newline?`, `merge-trailing-newline`, the path
+  functions, `complete-file-name`, `data-directory`, `canonical-path`)
+  moved to files.e rather than dying; the inner `write!` of save-file!
+  lost its permission juggling to `files:write!`.
+
 - 2026-09-03 `paint:set-mode-hook!`, `head:set-client-hooks!`,
   `paint-mode-hooked`, `head-client-hooked`, `completions-mode` (core):
   with the mode registry in modes.e, paint imports it directly and

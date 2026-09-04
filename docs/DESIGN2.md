@@ -242,6 +242,7 @@ unless noted, loaded by the same loader. Layer by layer:
 |---|---|
 | `text.e` | pure text and span algebra: lines, anchored spans, edit rebasing -- no state, fully unit-testable |
 | `state.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo, and buffer properties -- the buffer-level facts every head shares (visited file, mode name, read-only, disk base), so a second or remote head reads the same truth; per-seat state (cursors, selections, viewports) stays with heads |
+| `files.e` | the disk: path algebra, reading, stamps, permission-preserving writes, the line/trailing-newline algebra, the three-way merge over text, path completion -- no buffers, no dialogs; the server's side of a save |
 | `log.e` | the structured log and audit stream (state, not UI) |
 | `policy.e` | permissions: capability minting per actor, budgets |
 | `sandbox.e` | the read-only capability environment for expression eval -- v0.1's `claude-safe`, generalized to any constrained actor |

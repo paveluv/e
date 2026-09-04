@@ -300,6 +300,18 @@ stopped knowing about capture.
       name-keyed, so it resolved to no mode and painted unstyled --
       "completions" is a registered mode now, its styler reading the
       completion-highlight predicate at styling time
+- [x] `files.e`, the disk seam: path algebra (directory/base parts, ~
+      expansion and abbreviation, textual canonicalization, the stable
+      visit path), reading and mtime stamps, permission-preserving
+      writes, the line/trailing-newline algebra (lines, text,
+      ends-in-newline?), the three-way merge over text with its report
+      lines, conflict counting, path completion, and the data directory
+      -- with tests/files.ss (51 checks, in a scratch directory).  Free
+      of buffers and dialogs: the commands keep deciding what to do when
+      the disk disagrees (stale-save!, reopen-changed-file!) and the
+      buffer bookkeeping around a load, save, merge, or reread.  Over the
+      wire the disk is the server's.  describe.e's private read-file went
+      too; core no longer imports (diff)
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e
