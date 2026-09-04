@@ -35,7 +35,6 @@
           window-left window-left-set!
           window-prow window-prow-set!
           window-pcol window-pcol-set!
-          window-shown-top window-shown-top-set!
           window-size window-size-set!
           window-goal window-goal-set!
           window-xoff window-xoff-set!
@@ -134,8 +133,6 @@
             (mutable topseg)
             (mutable left)
             (mutable prow) (mutable pcol)
-            ;; the top row last drawn, for native scrolling
-            (mutable shown-top)
             ;; text height in screen lines, written by the layout: the
             ;; goal is the user's chosen proportion, and the layout
             ;; realizes the goals in whatever space is there --

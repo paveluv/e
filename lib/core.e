@@ -180,7 +180,7 @@
   (define buffers-initialized                              ; most recent first
     (set! buffers (list (head:new-buffer "*scratch*"))))
   (define head-seat-initialized
-    (let ([w (head:make-window (car buffers) 0 0 0 0 0 #f 0 0 0 0 1 'default)])
+    (let ([w (head:make-window (car buffers) 0 0 0 0 0 0 0 0 0 1 'default)])
       (set! windows (list w))
       (set! layout-root w)
       (set! current-window w)))
@@ -1814,7 +1814,7 @@
            (let* ([second (quotient usable 2)]
                   [first (- usable second)]
                   [w (head:make-window b top-row (head:window-topseg current-window)
-                                       left-col point-row point-col #f
+                                       left-col point-row point-col
                                        (max 1 (- second 1))
                                        (max 1 (- second 1)) 0 0 second
                                        (head:window-wrap current-window))]
@@ -2401,6 +2401,17 @@
     ;; windows too.
     (kernel:registry-add! buffer-status-hints proc))
 
+  ;; the status line shows a merge's conflicts as a hint the files code
+  ;; owns -- painting knows nothing about merges
+  (define conflict-status-hinted
+    (add-buffer-status-hint!
+      (lambda (b active?)
+        (and (assq b merge-reports)
+             (let ([n (buffer-conflict-count b)])
+               (and (> n 0)
+                    (list (cons (format "  ~a conflict~a" n (if (= n 1) "" "s"))
+                                'red))))))))
+
   (define (status-hint-values b active?)
     (let loop ([procs (append (if active? (kernel:registry-items status-hints) '())
                               (kernel:registry-items buffer-status-hints))]
@@ -2766,69 +2777,6 @@
     ;; where an identical overwrite would not.
     (paint:ansi "\x1b;[2J")
     (invalidate-screen-cache!))
-
-  (define (shift-screen-cache! delta start height)
-    ;; Mirror a native delta-row terminal scroll in cache rows
-    ;; [start, start+height); rows the scroll uncovered become #f.
-    (let ([end (+ start height)])
-      (if (> delta 0)
-          (let loop ([i start])
-            (when (< i end)
-              (vector-set! screen-cache i
-                (and (< (+ i delta) end) (vector-ref screen-cache (+ i delta))))
-              (loop (+ i 1))))
-          (let loop ([i (- end 1)])
-            (when (>= i start)
-              (vector-set! screen-cache i
-                (and (>= (+ i delta) start) (vector-ref screen-cache (+ i delta))))
-              (loop (- i 1)))))))
-
-  (define (native-scroll! w start height)
-    ;; When w's top moved since it was last drawn, and mostly the same lines
-    ;; remain visible, let the terminal shift them: restrict the scrolling
-    ;; region to this window's text rows, scroll, and mirror it in the cache.
-    ;; The rows the scroll uncovered then repaint through the usual path.
-    ;; In a wrapped window the shift counts visual rows -- the segments
-    ;; of the lines that crossed the top.  (An edit alongside the
-    ;; scroll can make either count stale; the row keys then miss and
-    ;; those rows repaint, so the shift is only ever an economy.)
-    (define (rows-between from to)
-      ;; visual rows spanned by lines [from, to); #f out of range
-      (let ([v (head:buffer-lines (head:window-buffer w))])
-        (and (<= 0 from) (<= to (vector-length v))
-             (let loop ([i from] [n 0])
-               (if (>= i to)
-                   n
-                   (loop (+ i 1)
-                         (+ n (line-segments w (vector-ref v i)))))))))
-    (let* ([shown (head:window-shown-top w)]
-           [t (head:window-top w)]
-           [ts (head:window-topseg w)]
-           [vdelta (and (pair? shown)
-                        (let ([s (car shown)] [ss (cdr shown)])
-                          (if (window-wrapped? w)
-                              (let ([d (if (>= t s)
-                                           (rows-between s t)
-                                           (let ([n (rows-between t s)])
-                                             (and n (- n))))])
-                                (and d (+ d (- ts ss))))
-                              (- t s))))])
-      ;; Worth it only while most rows survive the shift: a page-sized
-      ;; scroll visibly flings the window's content before overwriting
-      ;; nearly all of it anyway, where an in-place repaint sits still.
-      ;; Only a full-width window scrolls natively: a side-by-side
-      ;; column would need VT420 left/right margins, which too few
-      ;; terminals support -- it repaints in place instead, flicker
-      ;; suppressed by the synchronized update (mode 2026) around the
-      ;; frame.
-      (when (and vdelta (not (= vdelta 0)) (<= (* 2 (abs vdelta)) height)
-                 (= (head:window-width w) cols))
-        (paint:ansi "\x1b;[?25l"
-          "\x1b;[" (number->string (+ start 1)) ";"
-          (number->string (+ start height)) "r"
-          (format "\x1b;[~a~a" (abs vdelta) (if (> vdelta 0) "S" "T"))
-          "\x1b;[r")
-        (shift-screen-cache! vdelta start height))))
 
   (define (paint-dividers! layout)
     ;; Paint vertical boundaries from the same recursive geometry used for
@@ -3244,10 +3192,7 @@
                   (paint! row content-x '(empty)
                           (lambda () (paint:ansi (paint:fit "" content-width))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let* ([conflicts (and (assq b merge-reports)
-                             (let ([n (buffer-conflict-count b)])
-                               (and (> n 0) n)))]
-             [head-prefix
+      (let* ([head-prefix
               (format "~a~a~a  "
                       " "
                       (cond [(head:buffer-stale b) "!!"]
@@ -3269,10 +3214,6 @@
              [head (format "~a~a  L~a C~a"
                            head-prefix name
                            (+ status-row 1) (+ status-col 1))]
-             [conf (if conflicts
-                       (format "  ~a conflict~a"
-                               conflicts (if (= conflicts 1) "" "s"))
-                       "")]
              [mode-text (if mode-tag (format "  (~a)" mode-tag) "")]
              [hint-values (status-hint-values b current?)]
              [hint-text (apply string-append (map car hint-values))]
@@ -3282,15 +3223,7 @@
                   (+ extra
                      (max 0 (- (terminal-character-width character) 1))))
                 0 (string->list hint-text))]
-             [page-text
-              (if (and (eq? b completions-buffer)
-                       (> completions-pages 1))
-                  (format "  page ~a/~a"
-                          (+ completions-page 1)
-                          completions-pages)
-                  "")]
-             [status (format "~a~a~a~a~a "
-                             head conf mode-text hint-text page-text)]
+             [status (format "~a~a~a " head mode-text hint-text)]
              [window-buttons " [↕][↔][×]"])
         (let ([stale? (head:buffer-stale b)])
           (paint! (+ start height) (head:window-xoff w)
@@ -3314,11 +3247,9 @@
                                                 window-buttons)]
                            [n (string-length text)]
                            [cs (min (string-length head) content-width)]
-                           [ce (min (+ cs (string-length conf)) content-width)]
                            [ns (min (string-length head-prefix) content-width)]
                            [ne (min (+ ns (string-length name)) content-width)]
                            [hs (min (+ (string-length head)
-                                       (string-length conf)
                                        (string-length mode-text))
                                     content-width)]
                            [he (min (+ hs (string-length hint-text))
@@ -3333,11 +3264,7 @@
                       (paint:ansi (substring text normal-start ns)
                         "\x1b;[1m" (substring text ns ne)
                         "\x1b;[22m" (substring text ne cs))
-                      (unless (= cs ce)
-                        ;; the conflict count in red too
-                        (paint:ansi "\x1b;[31m" (substring text cs ce)
-                          fg))
-                      (paint:ansi (substring text ce hs))
+                      (paint:ansi (substring text cs hs))
                       (let loop ([values hint-values] [at hs])
                         (when (and (pair? values) (< at he))
                           (let* ([value (car values)]
@@ -3519,27 +3446,13 @@
                             windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                 layout)
-      (if (not (equal? view cached-view))
-          (begin (set! screen-cache (make-vector rows #f))
-                 (set! cached-view view))
-          (for-each (lambda (entry)
-                      ;; Native terminal scrolling moves the whole window
-                      ;; rectangle. Sticky rows and head:scrollbar columns must
-                      ;; remain fixed, so those presentations use ordinary
-                      ;; cached repainting instead.
-                      (unless (or (> (head:buffer-sticky-lines
-                                       (head:window-buffer (car entry))) 0)
-                                  (head:window-scrollbar? (car entry))
-                                  (> (head:window-line-number-width (car entry)) 0))
-                        (native-scroll! (car entry) (cadr entry) (caddr entry))))
-                    layout))
+      (unless (equal? view cached-view)
+        (set! screen-cache (make-vector rows #f))
+        (set! cached-view view))
       (paint-dividers! layout)
       (let ([ranges (highlight-ranges)])
         (for-each (lambda (entry)
-                    (paint-window! (car entry) (cadr entry) (caddr entry) ranges)
-                    (head:window-shown-top-set! (car entry)
-                                                (cons (head:window-top (car entry))
-                                                  (head:window-topseg (car entry)))))
+                    (paint-window! (car entry) (cadr entry) (caddr entry) ranges))
                   layout))
       (paint-echo-area!)
       (paint-visual-bell!))
@@ -3700,6 +3613,16 @@
   (define completions-cols 0)      ; the width the layout was built for
   (define completions-page 0)
   (define completions-pages 1)
+
+  ;; a paged candidate list says which page it shows -- as a status
+  ;; hint the completion code owns, not a case inside the painter
+  (define completions-status-hinted
+    (add-buffer-status-hint!
+      (lambda (b active?)
+        (and (eq? b completions-buffer) (> completions-pages 1)
+             (list (cons (format "  page ~a/~a"
+                                 (+ completions-page 1) completions-pages)
+                         #f))))))
   (define completions-filled #f)   ; (page size) the buffer holds
 
   (define (completions-window)

@@ -18,11 +18,18 @@ with a date; deletions note the commit.
   `ui-actor-registered`, `log-presenter-installed`,
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
   `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
-  `pump-handlers-installed`, `head-client-hooked`
+  `pump-handlers-installed`, `head-client-hooked`,
+  `conflict-status-hinted`, `completions-status-hinted`
   (core, the v2 wiring; `state-subscription` now lives in head.e).
   Skip these in future sweeps.
 
 ## Deleted
+
+- 2026-09-03 native scrolling (core): `native-scroll!`, `shift-screen-cache!`,
+  and the window record's `shown-top` field -- a bytes-on-the-wire
+  optimization coupling paint's cache, the window record, and terminal
+  scroll regions (harmony rule).  If measurements ever want it back it
+  belongs inside paint.e, keyed by paint's own shadow of viewport tops.
 
 - 2026-09-03 `vector-splice` (core): its last user, view-append!, moved to
   head.e, which splices through the pure `text:splice`; the stale
