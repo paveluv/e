@@ -14,6 +14,7 @@
           module-source loaded-modules seam-modules
           init-module! load-module! load-modules! module-requires?
           reload-module! add-after-reload-hook!
+          config-file load-config!
           make-mailbox mailbox-post! mailbox-receive!
           condition-text)
   (import (rnrs)
@@ -216,6 +217,32 @@
               (exists (lambda (req) (or (eq? (car req) t) (walk req)))
                       (guard (ex [else '()])
                         (library-requirements lib))))))))
+
+  ;;; The user's configuration -------------------------------------------------
+
+  (define (config-file)
+    ;; config.e next to the loader script: the lib directory's parent.
+    (string-append (caar (library-directories)) "/../config.e"))
+
+  (define (load-config!)
+    ;; The user's configuration: config.e, plain expressions evaluated
+    ;; in the editor's top level (the M-x environment).  Loaded at
+    ;; startup once the modules are up, and again after every module
+    ;; reload so its settings reapply on top of fresh registrations --
+    ;; it must tolerate being loaded any number of times.  Its own
+    ;; registrations are owned like a module's, retracted before each
+    ;; load, so nothing accumulates.  -> 'absent without a config.e, #t
+    ;; when it loaded cleanly, or the condition an error raised (the
+    ;; rest of the file unread) for the caller to report.
+    (let ([path (config-file)])
+      (if (not (file-exists? path))
+          'absent
+          (begin
+            (retract-module! 'config)
+            (guard (ex [else ex])
+              (parameterize ([registering-module 'config])
+                (load path))
+              #t)))))
 
   ;; Layers above hang their after-reload work here (the core reapplies
   ;; config, refreshes buffer modes, repaints); hooks receive the

@@ -76,7 +76,6 @@
 
 
 
-    publish-descriptions! published-descriptions
     ;; the editor itself
     main)
   ;; The system-specific layer -- libc, termios, signals -- comes
@@ -1452,17 +1451,6 @@
   ;; facade aliases the core's own call sites keep using until they
   ;; migrate to kernel: prefixes.
 
-  ;; Describe keeps the presentation and record format in its own module;
-  ;; the core only owns these opaque batches so normal module retraction also
-  ;; removes documentation when a registration disappears on reload.
-  (define description-registry (kernel:make-registry))
-
-  (define (publish-descriptions! entries)
-    (kernel:registry-add! description-registry entries))
-
-  (define (published-descriptions)
-    (apply append (reverse (kernel:registry-items description-registry))))
-
   ;; Modules may hook the save: pre-save hooks run before anything is
   ;; checked or written (formatting, say), post-save hooks after a
   ;; successful write (the module reload lives there).  Each receives
@@ -1999,8 +1987,6 @@
                        (set! message "")))
                    (set-message! "The *buffers* app is not available")))]
             [else (void)]))))
-
-  ;;; Interruptible execution -------------------------------------------------
 
   ;;; Pasting and typed runs --------------------------------------------------
 
@@ -2663,35 +2649,23 @@
                   (not (string=? base "core.e"))
                   (substring base 0 (- (string-length base) 2)))))))
 
-  (define (config-file)
-    ;; config.e next to the loader script: the lib directory's parent.
-    (string-append (caar (library-directories)) "/../config.e"))
-
   (define (load-config!)
-    ;; The user's configuration: config.e, plain expressions evaluated
-    ;; in the editor's top level (the M-x environment).  Loaded at
-    ;; startup once the modules are up, and again after every module
-    ;; reload so its settings reapply on top of fresh registrations --
-    ;; it must tolerate being loaded any number of times.  Its own
-    ;; registrations are owned like a module's, retracted before each
-    ;; load, so nothing accumulates.  -> whether it loaded cleanly; an
-    ;; error reports and leaves the rest of the file unread.
-    (let ([path (config-file)])
-      (and (file-exists? path)
-           (begin
-             (kernel:retract-module! 'config)
-             ;; a recolor must repaint rows cached under the old codes
+    ;; The kernel loads config.e (kernel:load-config!); the head repaints
+    ;; around it -- a recolor must repaint rows cached under the old
+    ;; codes -- re-resolves buffer modes, and reports an error.  ->
+    ;; whether it loaded cleanly.
+    (paint:invalidate-screen-cache!)
+    (let ([result (kernel:load-config!)])
+      (cond [(eq? result #t)
+             (modes:refresh!)
              (paint:invalidate-screen-cache!)
-             (guard (ex [else (parameterize ([message-source 'config])
-                                (set-message!
-                                  (format "Error in config.e: ~a"
-                                    (kernel:condition-text ex))))
-                              #f])
-               (parameterize ([kernel:registering-module 'config])
-                 (load path))
-               (modes:refresh!)
-               (paint:invalidate-screen-cache!)
-               #t)))))
+             #t]
+            [(eq? result 'absent) #f]
+            [else
+             (parameterize ([message-source 'config])
+               (set-message! (format "Error in config.e: ~a"
+                                     (kernel:condition-text result))))
+             #f])))
 
   (define (reload-on-save! path)
     ;; The post-save hook.  A reload that fails (a module saved mid-edit,
@@ -2709,7 +2683,7 @@
            (parameterize ([message-source 'reload-module!])
              (set-message! (format "Reloaded ~a" name))))]
         [(and (config-reload-on-save)
-              (string=? (files:canonical path) (files:canonical (config-file))))
+              (string=? (files:canonical path) (files:canonical (kernel:config-file))))
          (when (load-config!)
            (parameterize ([message-source 'config])
              (set-message! "Applied config.e")))])))

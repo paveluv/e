@@ -34,6 +34,7 @@
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core)
+          (prefix (kernel) kernel:)
           (prefix (prompt) prompt:)
           (prefix (files) files:)
           (prefix (modes) modes:)
@@ -486,13 +487,20 @@
              entry))
     (apply make-doc-entry entry))
 
+  ;; Module documentation, registered in batches: a kernel registry,
+  ;; so a module's reload retracts its entries along with its other
+  ;; registrations.
+  (define descriptions (kernel:make-registry))
+
   (define (register-descriptions! entries)
     ;; Publish module documentation in the same eight-field format used by
-    ;; describe.sdata. The core owns the opaque registration so module reload
-    ;; retracts it along with the module's other hooks.
+    ;; describe.sdata.
     (for-each entry-datum->doc-entry entries)
-    (publish-descriptions! entries)
+    (kernel:registry-add! descriptions entries)
     (void))
+
+  (define (published-descriptions)
+    (apply append (reverse (kernel:registry-items descriptions))))
 
   (define (registered-entries)
     (map entry-datum->doc-entry (published-descriptions)))
