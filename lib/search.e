@@ -240,7 +240,7 @@
                       (loop longer match #t))))]
           [else
            (dispatch! event)
-           (unless (quitting?) (loop needle match failed?))]))))
+           (unless (head:quitting?) (loop needle match failed?))]))))
 
   (define (search!!)
     ;; The search owns C-g while it runs; the match highlighting goes
