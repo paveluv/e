@@ -10,7 +10,7 @@ It's "fully customizable" because its code is just one big configuration
 (code is data :)
 
 The editor is itself a Scheme system. It's a set of R6RS libraries, all of
-which, except the core, are hot-reloadable. Editing and saving a module from
+which, except the kernel and the main loop, are hot-reloadable. Editing and saving a module from
 within e applies the changes immediately.
 
 Highlights:
