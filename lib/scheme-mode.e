@@ -14,6 +14,7 @@
 (library (scheme-mode)
   (export init! scheme-format-on-save)
   (import (chezscheme) (core)
+          (prefix (styles) styles:)
           (prefix (modes) modes:) (scheme-format)
           (only (describe) register-descriptions!))
 
@@ -81,20 +82,20 @@
       ;; escapes honored -- a backslash may escape the newline itself,
       ;; carrying the string on; unterminated it spans the line
       (let body ([j i] [escaped? #f])
-        (cond [(= j n) (vector-fill-range! styles i n 'string) 'string]
+        (cond [(= j n) (styles:fill-range! styles i n 'string) 'string]
               [(and (char=? (string-ref s j) #\") (not escaped?))
-               (vector-fill-range! styles i (+ j 1) 'string)
+               (styles:fill-range! styles i (+ j 1) 'string)
                (scan (+ j 1))]
               [else (body (+ j 1) (and (char=? (string-ref s j) #\\)
                                        (not escaped?)))])))
     (define (comment-body i depth)
       ;; inside #| |# from i, nesting honored
       (let body ([j i] [depth depth])
-        (cond [(>= j n) (vector-fill-range! styles i n 'comment) depth]
+        (cond [(>= j n) (styles:fill-range! styles i n 'comment) depth]
               [(and (char=? (string-ref s j) #\|) (< (+ j 1) n)
                     (char=? (string-ref s (+ j 1)) #\#))
                (if (= depth 1)
-                   (begin (vector-fill-range! styles i (+ j 2) 'comment)
+                   (begin (styles:fill-range! styles i (+ j 2) 'comment)
                           (scan (+ j 2)))
                    (body (+ j 2) (- depth 1)))]
               [(and (char=? (string-ref s j) #\#) (< (+ j 1) n)
@@ -114,14 +115,14 @@
                (let lit-loop ([j (min n (+ i 3))])
                  (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
                      (lit-loop (+ j 1))
-                     (begin (vector-fill-range! styles i j 'literal)
+                     (begin (styles:fill-range! styles i j 'literal)
                             (scan j))))]
               [(and (char=? c #\#) (< (+ i 1) n)
                     (char=? (string-ref s (+ i 1)) #\|))
-               (vector-fill-range! styles i (+ i 2) 'comment)
+               (styles:fill-range! styles i (+ i 2) 'comment)
                (comment-body (+ i 2) 1)]
               [(char=? c #\;)
-               (vector-fill-range! styles i n 'comment)
+               (styles:fill-range! styles i n 'comment)
                #f]
               [(char=? c #\")
                (vector-set! styles i 'string)
@@ -136,7 +137,7 @@
                  (if (and (< j n) (not (scheme-delimiter? (string-ref s j))))
                      (token-loop (+ j 1))
                      (begin
-                       (vector-fill-range! styles i j
+                       (styles:fill-range! styles i j
                          (scheme-token-style (substring s i j)))
                        (scan j))))]))))
     (values styles

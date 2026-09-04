@@ -153,7 +153,7 @@
   ;; exactly as code imports them -- M-x says (state:edit! ...) too
   (define seam-modules
     '(text state actors policy sandbox log styles keymap tty strings
-       files modes paint echo head))
+       files modes paint echo head prompt))
 
   (define (init-module! name)
     ;; Import the module's library into the editor's top level

@@ -34,6 +34,7 @@
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core)
+          (prefix (prompt) prompt:)
           (prefix (files) files:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
@@ -669,13 +670,13 @@
     (define (described-name? text)
       (and (> (string-length text) 0)
            (pair? (doc-lookup (string->symbol text)))))
-    (let ([name (parameterize ([completion-highlight editor-name?]
+    (let ([name (parameterize ([prompt:completion-highlight editor-name?]
                                [paint:echo-highlight
                                 (paint:prompt-styler
                                   label
                                   (paint:completion-styler described-name?
                                                            editor-name?))])
-                  (prompt! label complete-described-name))])
+                  (prompt:read! label complete-described-name))])
       (when (and name (> (string-length name) 0))
         (describe! (string->symbol name))))
     (void))
@@ -849,6 +850,6 @@
          (("procedure" . "(fetch-describe-data!)")) "void"
          ("(describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the local describe database, and load it.")))
-    (prompt-inspector describe-input!)
+    (prompt:inspector describe-input!)
     (keymap:bind-default-key! "C-h f" describe!!)
     (keymap:bind-default-key! "M-." describe-at-point!)))

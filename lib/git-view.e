@@ -3,6 +3,7 @@
 (library (git-view)
   (export init! git-log!! git-log-refresh!)
   (import (chezscheme) (core)
+          (prefix (styles) styles:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
@@ -167,7 +168,7 @@
            (let ([styles (fill-style line 'bold)])
              (when (<= (+ refresh-column (string-length refresh-label))
                        (string-length line))
-               (vector-fill-range!
+               (styles:fill-range!
                  styles refresh-column
                  (+ refresh-column (string-length refresh-label))
                  (if refresh-pressed? 'active 'editor)))
@@ -179,10 +180,10 @@
              styles)]
           [else
            (let ([styles (fill-style line 'plain)])
-             (vector-fill-range! styles 0 (min 10 (string-length line))
+             (styles:fill-range! styles 0 (min 10 (string-length line))
                                  'keyword)
              (when (> (string-length line) 12)
-               (vector-fill-range! styles 12
+               (styles:fill-range! styles 12
                                    (min 22 (string-length line)) 'comment))
              styles)]))
 

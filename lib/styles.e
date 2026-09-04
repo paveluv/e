@@ -12,7 +12,7 @@
 
 (library (styles)
   (export compile-style style-escape set-style! style-code
-          set-styles-changed-hook!)
+          set-styles-changed-hook! fill-range!)
   (import (rnrs)
           (only (chezscheme) format void)
           (prefix (kernel) kernel:)
@@ -191,4 +191,11 @@
   (define (style-code style)
     (or (style-override style)
         (let ([hit (assq style default-styles)])
-          (if hit (cdr hit) (cdar default-styles))))))
+          (if hit (cdr hit) (cdar default-styles)))))
+  ;;; Styles vectors --------------------------------------------------------------
+
+  (define (fill-range! v from to face)
+    ;; face into the per-column styles vector v over [from, to)
+    (let loop ([i from])
+      (when (< i to) (vector-set! v i face) (loop (+ i 1)))))
+)

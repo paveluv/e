@@ -20,6 +20,7 @@
 (library (eval)
   (export init! eval! eval!! eval-copy-result)
   (import (chezscheme) (core)
+          (prefix (prompt) prompt:)
           (prefix (head) head:)
           (prefix (modes) modes:)
           (prefix (kernel) kernel:)
@@ -456,17 +457,17 @@
     ;; own top level.  The expression is logged (component eval, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let ([s (parameterize ([prompt-ghost signature-ghost]
-                            [prompt-multiline indent-scheme-insertion]
-                            [prompt-edge-motion mx-edge-motion]
-                            [prompt-reindent reindent-scheme-input]
-                            [completion-highlight
+    (let ([s (parameterize ([prompt:ghost signature-ghost]
+                            [prompt:multiline indent-scheme-insertion]
+                            [prompt:edge-motion mx-edge-motion]
+                            [prompt:reindent reindent-scheme-input]
+                            [prompt:completion-highlight
                              (lambda (label)
                                (editor-symbol? (string->symbol label)))]
                             [paint:echo-highlight mx-echo-styles])
-               (prompt! "M-x " complete-symbol "("
-                        (box (log:log-history 'eval car))
-                        complete-editor-symbol normalize-input))])
+               (prompt:read! "M-x " complete-symbol "("
+                             (box (log:log-history 'eval car))
+                             complete-editor-symbol normalize-input))])
       (when (and s (> (string-length s) 0) (not (string=? s "(")))
         ;; Keep the prompt on screen while its expression evaluates --
         ;; forgiven parentheses included -- with the cursor parked at
