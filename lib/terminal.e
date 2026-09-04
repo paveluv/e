@@ -180,9 +180,11 @@
 
   (define (call-with-display-output state thunk)
     ;; Reader- and feed-thread work that touches editor state (the
-    ;; log, the kill ring, the echo area) marshals to the main loop,
-    ;; which runs it and paints.  Never blocks: safe under the
-    ;; terminal lock.
+    ;; log, the kill ring, the echo area, the buffer's name and
+    ;; presentation facts) marshals to the main loop, which runs it
+    ;; and paints.  Never blocks: safe under the terminal lock.  A
+    ;; thunk runs after the bytes that posted it, so it must tolerate a
+    ;; terminal that has died or a buffer that is gone meanwhile.
     (head:run-on-main! thunk))
 
   ;; The host's color scheme as last reported (see mode 2031 in main's
@@ -1708,8 +1710,13 @@
                                   (substring text 2
                                              (string-length text)))))])
            (unless (or (string=? title "") (not (terminal-state-buffer state)))
-             (set-buffer-name! (terminal-state-buffer state)
-                               (format "*~a*" title))))]
+             ;; the buffer's name is seat state: renamed on the main thread
+             (call-with-display-output
+               state
+               (lambda ()
+                 (guard (ex [else (void)])
+                   (set-buffer-name! (terminal-state-buffer state)
+                                     (format "*~a*" title)))))))]
         [else
          ;; OSC payloads can contain secrets (titles, paths, clipboard data),
          ;; so identify an unsupported command by its numeric selector only.
@@ -2109,8 +2116,18 @@
       (terminal-state-alternate-line-attributes-set! state #f)
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-buffer state)
-        (head:set-app-presentation! (terminal-state-buffer state)
-                                    0 #f #f 'blinking-block))))
+        (set-cursor-shape! state 'blinking-block))))
+
+  (define (set-cursor-shape! state shape)
+    ;; The cursor shape is a presentation fact of the buffer -- seat
+    ;; state -- so the feed thread hands it to the main thread; by then
+    ;; the terminal may have died and detached.
+    (call-with-display-output
+      state
+      (lambda ()
+        (guard (ex [else (void)])
+          (head:set-app-presentation! (terminal-state-buffer state)
+                                      0 #f #f shape)))))
 
   (define (soft-reset-terminal-state! state)
     ;; DECSTR restores operational modes and rendition without erasing text.
@@ -2645,8 +2662,8 @@
                     (report-unsupported!
                       state (control-signature "CSI" text final)))]
                [(and cursor-shape? (terminal-state-buffer state))
-                (head:set-app-presentation!
-                  (terminal-state-buffer state) 0 #f #f
+                (set-cursor-shape!
+                  state
                   (case (param parameters 0 0)
                     [(0 1) 'blinking-block]
                     [(2) 'block]
