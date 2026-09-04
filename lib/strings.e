@@ -7,7 +7,7 @@
 
 (library (strings)
   (export tail prefix? suffix? join search lines common-prefix
-          insert delete)
+          insert delete elide)
   (import (rnrs))
 
   (define (tail s i) (substring s i (string-length s)))
@@ -27,6 +27,14 @@
 
   (define (delete s from to)
     (string-append (substring s 0 from) (tail s to)))
+
+  (define (elide s width)
+    ;; s shortened to about width with an elided middle, for messages
+    (if (<= (string-length s) width)
+        s
+        (let ([keep (max 4 (div (- width 5) 2))])
+          (string-append (substring s 0 keep) " ... "
+                         (tail s (- (string-length s) keep))))))
 
   (define (lines s)
     ;; s split at every newline: "" is one empty line, a trailing

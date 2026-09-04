@@ -13,6 +13,7 @@
 (library (search)
   (export init! search!! search-fold-case)
   (import (chezscheme) (core)
+          (prefix (main) main:)
           (prefix (styles) styles:)
           (prefix (prompt) prompt:)
           (prefix (strings) strings:)
@@ -150,7 +151,7 @@
       ;; dispatch, so windows and buffers can be switched without
       ;; leaving the search; it then continues from point in the new
       ;; buffer.  The global dispatcher reads a complete chord.
-      (dispatch-key! event))
+      (main:dispatch-key! event))
     ;; A match records where it was found -- (buffer row col len) --
     ;; so the highlight and the anchors survive an excursion to
     ;; another window or buffer.
@@ -169,7 +170,7 @@
              [action (and (not (eof-object? event))
                           (keymap:key-event-binding 'isearch event))])
         (cond
-          [(eof-object? event) (dispatch-key! event)]
+          [(eof-object? event) (main:dispatch-key! event)]
           [(eq? action 'accept)
            (set! needle-now "")
            (set! current-match #f)
@@ -178,7 +179,7 @@
            (set! needle-now "")
            (set! current-match #f)
            (indicate! "")
-           (dispatch-key! event)]
+           (main:dispatch-key! event)]
           [(eq? action 'toggle-case)
            (set! fold-override (if (fold-for needle) 'exact 'fold))
            (let ([home (if (eq? (selected-window) origin-window)

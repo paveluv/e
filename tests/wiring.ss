@@ -197,7 +197,7 @@
      (send! (format "\x1b;xactors:register! (quote (agent rival)) (lambda (m) (call-with-output-file \"~a\" (lambda (p) (write m p)) (quote replace)))\r"
                     probe))
      (pump! 600)
-     (send! "\x1b;xlet ([id (head:buffer-state-id (current-buffer))]) (dispatch-key! \"M-<\") (dispatch-key! \"C-f\") (dispatch-key! \"C-f\") (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (dispatch-key! \"z\")\r")
+     (send! "\x1b;xlet ([id (head:buffer-state-id (current-buffer))]) (main:dispatch-key! \"M-<\") (main:dispatch-key! \"C-f\") (main:dispatch-key! \"C-f\") (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (main:dispatch-key! \"z\")\r")
      (pump! 900)
      (check 'losing-actor-hears-the-conflict
             (let ([m (call-with-input-file probe read)])
