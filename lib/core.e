@@ -53,9 +53,7 @@
 
     register-indenter! register-formatter!
 
-    load-module! reload-module! modules-reload-on-save config-reload-on-save
-    load-config! indent-on-tab!
-    add-pre-save-hook! add-post-save-hook!
+    indent-on-tab!
 
 
 
@@ -73,8 +71,7 @@
 
 
 
-    ;; the loop in (main) needs this of the commands
-    clamp-point!)
+  )
   ;; The system-specific layer -- libc, termios, signals -- comes
   ;; from (sys).
   (import (chezscheme) (sys)
@@ -86,7 +83,8 @@
           (prefix (paint) paint:) (prefix (strings) strings:)
           (prefix (modes) modes:)
           (prefix (files) files:)
-          (prefix (prompt) prompt:))
+          (prefix (prompt) prompt:)
+          (prefix (main) main:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -839,9 +837,9 @@
             (log:log! 'save-file!
               (format "Merge resolved -- details in ~a" (cdr pending)))))
         (log:log! 'save-file! (cons "Wrote" path))
-        (run-save-hooks! post-save-hooks path)
+        (files:run-post-save-hooks! path)
         #t))
-    (run-save-hooks! pre-save-hooks path)
+    (files:run-pre-save-hooks! path)
     (cond
       [(and disk (not adopted?) (not modified?)
             (head:buffer-base b) (string=? disk (head:buffer-base b)))
@@ -1402,26 +1400,6 @@
   ;; The machinery itself lives in the kernel now; these are the
   ;; facade aliases the core's own call sites keep using until they
   ;; migrate to kernel: prefixes.
-
-  ;; Modules may hook the save: pre-save hooks run before anything is
-  ;; checked or written (formatting, say), post-save hooks after a
-  ;; successful write (the module reload lives there).  Each receives
-  ;; the path being written; a raising hook reports and the save goes
-  ;; on.
-  (define pre-save-hooks (kernel:make-registry))
-  (define post-save-hooks (kernel:make-registry))
-
-  (define (add-pre-save-hook! proc) (kernel:registry-add! pre-save-hooks proc))
-  (define (add-post-save-hook! proc) (kernel:registry-add! post-save-hooks proc))
-
-  (define (run-save-hooks! hooks path)
-    (for-each (lambda (p)
-                (guard (ex [else (parameterize ([message-source 'save-file!])
-                                   (set-message!
-                                     (format "Save hook failed: ~a"
-                                             (kernel:condition-text ex))))])
-                  (p path)))
-              (kernel:registry-items hooks)))
 
   ;; The file commands' formatters: their entries are (verb . path),
   ;; formatted "verb path", their histories the paths (see
@@ -2425,85 +2403,17 @@
           ("M-." inspect) ("M-RET" newline) ("PASTE" paste)))
       #t))
 
-  ;;; Modules -----------------------------------------------------------------
 
-  ;; Extension modules are libraries in the lib directory, loaded through
-  ;; here -- by the loader at startup, or later by hand -- so the core
-  ;; knows which modules exist and owns their registrations (see the
-  ;; module registries above).
 
-  ;; The lifecycle lives in the kernel now; the exported names stay
-  ;; usable through these facade aliases, and the core hangs its
-  ;; after-reload work on the kernel's hook.
-  (define load-module! kernel:load-module!)
-  (define reload-module! kernel:reload-module!)
 
-  (define reload-tail-hooked
-    (kernel:add-after-reload-hook!
-      (lambda (name)
-        (load-config!)              ; the settings reapply on top
-        (modes:refresh!)
-        (paint:invalidate-screen-cache!)
-        (set! message (format "Reloaded ~a" name)))))
+  ;;; The loop's hooks ---------------------------------------------------------------
 
-  (define modules-reload-on-save (make-parameter #t))
-  (define config-reload-on-save (make-parameter #t))
-
-  (define (module-name-of-path path)
-    ;; The module name a saved path denotes: a .e file directly in the
-    ;; editor's lib directory; #f for anything else -- the core included,
-    ;; which cannot be reloaded.
-    (let ([full (files:canonical path)]
-          [lib (string-append (files:canonical (caar (library-directories)))
-                              "/")])
-      (and (strings:prefix? lib full)
-           (strings:suffix? ".e" full)
-           (let ([base (strings:tail full (string-length lib))])
-             (and (not (strings:search base "/" 0 (string-length base)))
-                  (not (member base '("core.e" "main.e")))
-                  (substring base 0 (- (string-length base) 2)))))))
-
-  (define (load-config!)
-    ;; The kernel loads config.e (kernel:load-config!); the head repaints
-    ;; around it -- a recolor must repaint rows cached under the old
-    ;; codes -- re-resolves buffer modes, and reports an error.  ->
-    ;; whether it loaded cleanly.
-    (paint:invalidate-screen-cache!)
-    (let ([result (kernel:load-config!)])
-      (cond [(eq? result #t)
-             (modes:refresh!)
-             (paint:invalidate-screen-cache!)
-             #t]
-            [(eq? result 'absent) #f]
-            [else
-             (parameterize ([message-source 'config])
-               (set-message! (format "Error in config.e: ~a"
-                                     (kernel:condition-text result))))
-             #f])))
-
-  (define (reload-on-save! path)
-    ;; The post-save hook.  A reload that fails (a module saved mid-edit,
-    ;; say) reports itself without disturbing the save -- or the editor,
-    ;; which keeps running the module's old version.  A saved config.e
-    ;; applies on the spot the same way.
-    (let ([name (and (modules-reload-on-save) (module-name-of-path path))])
-      (cond
-        [name
-         (guard (ex [else (parameterize ([message-source 'reload-module!])
-                            (set-message!
-                              (format "Reload of ~a failed: ~a"
-                                      name (kernel:condition-text ex))))])
-           (reload-module! name)
-           (parameterize ([message-source 'reload-module!])
-             (set-message! (format "Reloaded ~a" name))))]
-        [(and (config-reload-on-save)
-              (string=? (files:canonical path) (files:canonical (kernel:config-file))))
-         (when (load-config!)
-           (parameterize ([message-source 'config])
-             (set-message! "Applied config.e")))])))
-
-  ;; the core's own post-save hook: the reload lives there like any
-  ;; module's
-  (define reload-hooked (add-post-save-hook! reload-on-save!))
-
+  ;; what the loop in (main) asks of the commands: how to open the file
+  ;; argument, how to quit (the modified-buffers check), and what runs
+  ;; after every key
+  (define main-hooked
+    (begin
+      (main:set-file-opener! visit-file!)
+      (main:set-quit-command! quit!!)
+      (main:set-after-key! clamp-point!)))
 ) ;; library (core)

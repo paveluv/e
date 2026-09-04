@@ -12,15 +12,15 @@
 ;; every module reload so the settings reapply on top of fresh
 ;; registrations: write it to tolerate being loaded any number of
 ;; times.  Saving it inside the editor applies it on the spot; so
-;; does M-x (load-config!).  An error reports in the echo area and
+;; does M-x (main:load-config!).  An error reports in the echo area and
 ;; leaves the editor running.
 ;;
 ;; Everything below is commented out and shows the default: the
 ;; editor behaves exactly the same with or without it.  Uncomment a
 ;; line and change its value to disagree with a default.
 
-;; (modules-reload-on-save #t)    ; saving a module source reloads it in place
-;; (config-reload-on-save #t)     ; saving config.e applies it on the spot
+;; (main:modules-reload-on-save #t)    ; saving a module source reloads it in place
+;; (main:config-reload-on-save #t)     ; saving config.e applies it on the spot
 ;; (scheme-format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (scroll-margin 8)              ; rows kept between the cursor and the edges
 ;; (scrollbar #f)                 ; #t: show position bars in ordinary buffers

@@ -15,9 +15,11 @@
 ;; everything else runs under.  (main:run) is the whole program.
 
 (library (main)
-  (export run set-startup-page! (rename (handle-key! dispatch-key!)))
+  (export run set-startup-page! (rename (handle-key! dispatch-key!))
+          load-config! modules-reload-on-save config-reload-on-save
+          set-file-opener! set-quit-command! set-after-key!)
   (import (chezscheme) (sys)
-          (prefix (core) core:)
+          (prefix (files) files:)
           (prefix (kernel) kernel:)
           (prefix (head) head:)
           (prefix (paint) paint:)
@@ -135,12 +137,95 @@
               (paint:screen-cols)))))))
 
 
+  ;;; Configuration and reloads -----------------------------------------------------
+
+  (define (load-config!)
+    ;; The kernel loads config.e (kernel:load-config!); the head repaints
+    ;; around it -- a recolor must repaint rows cached under the old
+    ;; codes -- re-resolves buffer modes, and reports an error.  ->
+    ;; whether it loaded cleanly.
+    (paint:invalidate-screen-cache!)
+    (let ([result (kernel:load-config!)])
+      (cond [(eq? result #t)
+             (modes:refresh!)
+             (paint:invalidate-screen-cache!)
+             #t]
+            [(eq? result 'absent) #f]
+            [else
+             (log:log! 'config (format "Error in config.e: ~a"
+                                       (kernel:condition-text result)))
+             #f])))
+
+  (define reload-tail-hooked
+    (kernel:add-after-reload-hook!
+      (lambda (name)
+        (load-config!)              ; the settings reapply on top
+        (modes:refresh!)
+        (paint:invalidate-screen-cache!)
+        (echo:set-text! (format "Reloaded ~a" name)))))
+
+  ;; Saving a module's source reloads it on the spot (a fresh .e file
+  ;; in the lib directory is loaded for the first time), and saving
+  ;; config.e applies it, so editing the editor from inside itself
+  ;; takes effect on save.  Both on by default; (main:modules-reload-on-save
+  ;; #f) or (main:config-reload-on-save #f) -- in config.e for an
+  ;; installation, at M-x for a session -- turns either off.
+  (define modules-reload-on-save (make-parameter #t))
+  (define config-reload-on-save (make-parameter #t))
+
+  (define (module-name-of-path path)
+    ;; The module name a saved path denotes: a .e file directly in the
+    ;; editor's lib directory; #f for anything else -- the core included,
+    ;; which cannot be reloaded.
+    (let ([full (files:canonical path)]
+          [lib (string-append (files:canonical (caar (library-directories)))
+                              "/")])
+      (and (strings:prefix? lib full)
+           (strings:suffix? ".e" full)
+           (let ([base (strings:tail full (string-length lib))])
+             (and (not (strings:search base "/" 0 (string-length base)))
+                  (not (member base '("core.e" "main.e")))
+                  (substring base 0 (- (string-length base) 2)))))))
+
+  (define (reload-on-save! path)
+    ;; The post-save hook.  A reload that fails (a module saved mid-edit,
+    ;; say) reports itself without disturbing the save -- or the editor,
+    ;; which keeps running the module's old version.  A saved config.e
+    ;; applies on the spot the same way.
+    (let ([name (and (modules-reload-on-save) (module-name-of-path path))])
+      (cond
+        [name
+         (guard (ex [else (log:log! 'reload-module!
+                            (format "Reload of ~a failed: ~a"
+                                    name (kernel:condition-text ex)))])
+           (kernel:reload-module! name)
+           (log:log! 'reload-module! (format "Reloaded ~a" name)))]
+        [(and (config-reload-on-save)
+              (string=? (files:canonical path) (files:canonical (kernel:config-file))))
+         (when (load-config!)
+           (log:log! 'config "Applied config.e"))])))
+
+  ;; the reload is a post-save hook like any module's
+  (define reload-hooked (files:add-post-save-hook! reload-on-save!))
+
   ;;; Startup, the loop, shutdown --------------------------------------------------------
 
   ;; a frame is the painter's: the pump asks for one through this hook
   (define frame-hooked (head:set-frame-hook! (lambda () (paint:redraw!))))
 
   (define ask-presented (head:add-pre-redraw-hook! present-pending-ask!))
+
+  ;; What the loop asks of the commands, installed by them: how to open
+  ;; the file argument, how to quit (the modified-buffers check), and
+  ;; what runs after every key.  The command layer reloads; the loop
+  ;; does not, so it holds no direct reference into it.
+  (define open-file! (lambda (path) (void)))
+  (define quit-command (lambda () (head:quit!)))
+  (define after-key! void)
+
+  (define (set-file-opener! proc) (set! open-file! proc))
+  (define (set-quit-command! proc) (set! quit-command proc))
+  (define (set-after-key! proc) (set! after-key! proc))
 
   (define (startup-greeting)
     (let* ([date (current-date)]
@@ -193,9 +278,9 @@
             (display (format "e: ~a\n" msg) (current-error-port))
             (echo:set-text! msg)))
         (reverse (kernel:load-modules!)))
-      (core:load-config!)
+      (load-config!)
       (if (pair? args)
-          (core:visit-file! (car args))
+          (open-file! (car args))
           (when startup-page
             (guard (ex [else (void)]) (startup-page))
             ;; the greeting outlives the page's own load chatter
@@ -210,7 +295,7 @@
     ;; the process past the modified-buffers check: they run the
     ;; editor's quit and unwind the evaluation instead.
     (let ([safe-quit (lambda args
-                       (core:quit!!)
+                       (quit-command)
                        (raise (head:make-interrupted)))])
       (exit-handler safe-quit)
       (abort-handler safe-quit)
@@ -245,7 +330,7 @@
                        [else (log:log! 'error (kernel:condition-text ex))])
               (handle-key! (parameterize ([head:in-main-pump #t])
                              (head:read-key-event))))
-            (core:clamp-point!)
+            (after-key!)
             (loop))))
       (lambda ()
         (head:run-shutdown-hooks!)

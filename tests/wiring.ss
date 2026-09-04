@@ -337,11 +337,30 @@
 
      ;; a core-linked seam module refuses to reload in place: the core
      ;; cannot follow, and two library instances would fork
-     (send! "\x1b;xreload-module! \"state\"\r")
+     (send! "\x1b;xkernel:reload-module! \"state\"\r")
      (pump! 1200)
+     ;; the message wraps across the echo area's two rows (a trailing
+     ;; backslash, an indented continuation): read them as one
+     (define (echo-text)
+       (define (trim-right s)
+         (let loop ([n (string-length s)])
+           (if (and (> n 0) (memv (string-ref s (- n 1)) '(#\space #\\)))
+               (loop (- n 1))
+               (substring s 0 n))))
+       (define (trim-left s)
+         (let loop ([i 0])
+           (if (and (< i (string-length s)) (char=? (string-ref s i) #\space))
+               (loop (+ i 1))
+               (substring s i (string-length s)))))
+       (string-append (trim-right (screen-line 22)) (trim-left (screen-line 23))))
+     (define (echo-has? needle)
+       (let ([text (echo-text)] [len (string-length needle)])
+         (let scan ([i 0])
+           (cond [(> (+ i len) (string-length text)) #f]
+                 [(string=? (substring text i (+ i len)) needle) #t]
+                 [else (scan (+ i 1))]))))
      (check 'core-linked-module-refuses-reload
-            (or (screen-has? 22 "core links against state")
-                (screen-has? 23 "core links against state"))
+            (echo-has? "core links against state")
             #t)
 
      (delete-file probe)
