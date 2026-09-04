@@ -233,7 +233,7 @@ unless noted, loaded by the same loader. Layer by layer:
 
 | File | Owns |
 |---|---|
-| `kernel.e` | persistent cells, registries, module load/reload, init!/retract, boot, mailboxes, the text of a caught condition (`condition-text`) |
+| `kernel.e` | persistent cells, registries, module load/reload, init!/retract, config.e loading, mailboxes, the text of a caught condition (`condition-text`), the two refusal conditions (read-only, refused) |
 | `actors.e` | actor identity and sessions, mailboxes, the ask/reply interaction protocol |
 
 **State**:
@@ -262,14 +262,15 @@ that lets v0.1 reload modules under a running editor.
 | `keymap.e` | key syntax, binding contexts, per-head and per-mode dispatch |
 | `echo.e` | the notification area's model: message, ghost, transient log queue, prompt geometry |
 | `prompt.e` | the prompt: the modal line editor in the echo area (history, completion with the *completions* view, M-x's multiline variants), single-key questions, the commands a prompt may run (allow!), the interaction guard (C-g as a key, the cursor) -- the human frontend of ask/reply |
-| `head.e` | a UI head: window tree and layout (with the fit-to-screen collapse), per-user state (kill ring, paste text, scroll), the store client, the scheduling pump, C-g interruption, input routing |
+| `head.e` | a UI head: window tree and layout (with the fit-to-screen collapse), per-user state (kill ring, paste text, scroll, the last command, the keys being dispatched, the quit flag, the host's color scheme), the store client, the scheduling pump (which services its own side effects; two hooks reach up: the frame, the mouse), C-g interruption, the app event dispatch |
+| `main.e` | the editor: startup, the seat's loop, shutdown, key dispatch (mode context, global map, SELF-INSERT), the pending-ask presenter -- never reloaded; the loader runs `(main:run)` |
 
 **Platform** (infrastructure, layerless):
 
 | File | Owns |
 |---|---|
 | `sys.e` | FFI: processes, PTYs, termios, fd plumbing (input decoding moves out, to `tty.e`) |
-| `strings.e` | the pure string helpers every layer shares (tail, prefix?/suffix?, join, KMP search, lines, common-prefix) -- the one copy; no module keeps its own |
+| `strings.e` | the pure string helpers every layer shares (tail, prefix?/suffix?, join, KMP search, lines, common-prefix, insert/delete, elide) -- the one copy; no module keeps its own |
 | `json.e` | JSON (unchanged) |
 | `https.e` | HTTP(S) with the channel/connector seams (unchanged) |
 

@@ -338,6 +338,36 @@ stopped knowing about capture.
       the way: the *completions* view, registered at load, was wiped by
       core's startup replacing the seat's buffer list -- *scratch* joins
       the list now instead
+- [x] the kernel loads config.e (`kernel:load-config!`, `config-file`),
+      returning 'absent, #t, or the condition for the head to report;
+      describe.e owns its description registry
+- [x] the seat services its own pump: the paste text, host color-scheme
+      reports (`head:host-color-scheme`, `add-color-scheme-hook!`),
+      posted-thunk errors (logged), and the store's news before every
+      frame (`head:before-frame!`: sync, reconverge, audit, marks, then
+      the pre-redraw hooks) -- so of five owner handlers two hooks remain,
+      `set-frame-hook!` (the painter's) and `set-mouse-handler!` (the
+      commands').  The quit flag, the last command run, and the keys being
+      dispatched are seat state (`quit!`/`quitting?`, `last-command`,
+      `current-keys`), the ui actor registers itself, and
+      `dispatch-app-event!` is head's
+- [x] `main.e`, what the loader runs: startup (modules, config.e, the
+      file argument or a welcome page), the seat's loop, shutdown, and
+      key dispatch -- a sequence resolves through the mode's context
+      (`modes:key-context`), then the global map, and an unbound
+      character through the `SELF-INSERT` binding, which core binds to
+      its self-inserting command.  The dispatcher records the last
+      command and the current keys in head, so kill chaining
+      (`killing?` asks whether the last command was kill-line! or
+      kill-region!) and typed runs (the chain continues only after
+      self-insert-command!) stopped needing flags the dispatcher reset.
+      The two refusal conditions moved to kernel, `elide` to strings, the
+      interaction-protocol presenter (pending asks) to main.  main never
+      reloads, like core and kernel; the loader imports core bare (the
+      M-x environment's command names) and main prefixed, and runs
+      (main:run).  Meta-wheel runs its global binding through a local
+      helper; the dead `mouse-on?` flag and the never-produced "MOUSE"
+      key went
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e

@@ -5,6 +5,34 @@ expensive twice. Each entry records the symptom as first reported, the
 theories that failed, the step that actually cracked it, the root cause,
 and what generalizes. Add new entries at the top.
 
+## The M-x environment is whatever the loader imports (2026-09-03)
+
+**Symptom.** After the loop moved from core.e to main.e and the loader
+switched from `(import (core)) (main)` to `(import (prefix (main)
+main:)) (main:run)`, every suite compiled and the terminal app worked,
+yet M-x completion answered `split-w [No match]` and the wiring test's
+typed expression failed on `current-buffer`.  A first round chased the
+key dispatcher (a headless probe of the keymap registry came back empty
+-- but so did the same probe at the last good commit: the probe, not
+the registry, was wrong).
+
+**Root cause.** M-x, `describe`, and every expression a test types at
+the prompt evaluate in the interaction environment, whose bare names are
+exactly what the loader's `import` put there.  Dropping `(core)` from
+that import removed every command name from M-x, silently: completion
+simply had nothing to offer, and the compiler had no say because the
+names are looked up at run time.
+
+**What generalizes.** The loader's import line is part of the editor's
+user-facing API -- the M-x namespace.  Moving code between libraries
+changes nothing for compiled callers but changes what a user can type;
+the interactive suite (a real PTY, real M-x) is the only test that sees
+it.  Two smaller lessons from the same slice: a script that rewrites a
+file with `'replace` creates a new file and drops the executable bit
+(the harness's `exec ./e` then fails as "no such file" one layer up),
+and a headless probe that imports a library is not the running editor
+-- compare it against a known-good commit before believing it.
+
 ## The Delete key was M-DELETE all along (2026-09-03)
 
 **Symptom.** None reported — that is the lesson.  The first unit test

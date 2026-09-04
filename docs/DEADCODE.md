@@ -12,19 +12,28 @@ with a date; deletions note the commit.
   runs initialization at library load; the name is intentionally
   never referenced. Confirmed instances: `buffer-printing`,
   `core-keys-bound`, `log-formatters-init`, `reload-hooked`,
-  `sigwinch-registered` (core), `region-printing` (edit),
-  `libc-character-locale`, `libutil-loaded?` (sys),
-  `state-subscription`, `foreign-sync-hooked`, `reload-tail-hooked`,
-  `ui-actor-registered`, `log-presenter-installed`,
+  `reload-tail-hooked`, `log-presenter-installed`,
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
-  `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
-  `pump-handlers-installed`, `completions-mode-registered`,
-  `conflict-status-hinted`, `completions-status-hinted`
-  (core, the v2 wiring; `state-subscription` now lives in head.e),
-  `adopt-hooked` (modes), `repaint-hooked` (paint).
+  `head-seat-initialized`, `buffers-initialized`, `mouse-hooked`,
+  `conflict-status-hinted`, `prompt-commands-allowed` (core);
+  `region-printing` (edit); `libc-character-locale`,
+  `libutil-loaded?` (sys); `state-subscription`, `ui-actor-registered`
+  (head); `adopt-hooked` (modes); `repaint-hooked` (paint);
+  `completions-mode-registered`, `completions-status-hinted` (prompt);
+  `frame-hooked`, `ask-presented`, `echo-greeting-shown` (main).
   Skip these in future sweeps.
 
 ## Deleted
+
+- 2026-09-03 `mouse-on?`, `set-mouse!` (core): a flag written and never
+  read, and its setter; `mouse!` and startup call `tty:mouse-reporting!`
+  directly.  The `("MOUSE" ,void)` default binding and the "MOUSE" key
+  name (keymap): the pump never produced that key -- a report becomes
+  "MOUSE-HANDLED" or is consumed.  `run-posted-thunk!`,
+  `state-frame-sync!`, `settle-echo!`, the five-handler
+  `set-pump-handlers!` (core/head): the seat services its own side
+  effects; `run-key-action!`'s `'kill` flag and the `insert-chain` reset
+  in the dispatcher: commands ask `head:last-command` instead.
 
 - 2026-09-03 `prompt-window-commands` (core): the hard-coded list of
   commands a prompt may run, now the `prompt:allow!` registry;
