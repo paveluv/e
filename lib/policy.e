@@ -1,6 +1,5 @@
 ;; policy.e -- permissions: capability minting per actor, budgets:
-;; the library (policy), v2 stage 4 (dev/DESIGN2.md).  Pure
-;; infrastructure with no init!.
+;; the library (policy).  Pure infrastructure with no init!.
 ;;
 ;; Environments give tiers -- (sandbox) is the read-only expression
 ;; tier -- but per-actor policy is the object-capability pattern: a
@@ -21,7 +20,7 @@
 ;; mint afresh -- a reload can only ever narrow what actors can do.
 ;; The audit trail, by contrast, is state and survives reloads.
 ;;
-;; The honest limit (dev/DESIGN2.md): in-process, all of this
+;; The honest limit: in-process, all of this
 ;; constrains a misbehaving model, not hostile code.  One approved
 ;; full-power eval owns the image; the confirmation gate stays the
 ;; in-process trust boundary.

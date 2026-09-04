@@ -7,10 +7,10 @@
 ;;   - a transient tint: another actor's edit paints its written span
 ;;     in that actor's face (a stable hash into a small palette, so
 ;;     (agent claude 3) is always the same color) and fades after
-;;     (blame-tint-seconds).  Foreign edits already appear without a
+;;     (blame:tint-seconds).  Foreign edits already appear without a
 ;;     keypress; now they appear identified.
 ;;
-;;   - (blame-at-point!): who recently wrote the text at point,
+;;   - (blame:at-point!): who recently wrote the text at point,
 ;;     reported in the echo area.
 ;;
 ;; The module holds no truth: overlays are derived from the store's

@@ -1,5 +1,4 @@
-;; prompt.e -- the prompt: the library (prompt), v2 core dissolution
-;; (dev/DESIGN2.md).
+;; prompt.e -- the prompt: the library (prompt).
 ;;
 ;; The head's modal input in the echo area -- Emacs's minibuffer.
 ;; (prompt:read! label ...) runs a line editor with the cursor parked
@@ -193,13 +192,13 @@
                   (loop xs (cons line acc))
                   (row (+ i 1) (cdr xs) (string-append line (paint:fit (car xs) w)))))))))
 
-  ;; The *completions* buffer: shown in the prompt's target window until
-  ;; the prompt ends (show-completions!), a head's own chrome.
+  ;; The *completions* buffer: shown in the current window until the
+  ;; prompt ends (show-completions!), a head's own chrome.
 
   (define completions-restore #f)
 
   ;; Prompts may parameterize this to make candidates stand out in the
-  ;; pop-up -- M-x highlights the symbols the editor itself defines.
+  ;; list -- M-x highlights the symbols the editor itself defines.
 
   (define completion-highlight (make-parameter (lambda (label) #f)))
 
@@ -276,7 +275,7 @@
     (set! completions-filled #f))
 
   (define (show-completions! labels)
-    ;; The candidate list borrows the prompt's target window: it shows
+    ;; The candidate list borrows the current window: it shows
     ;; *completions* until the prompt ends, then gets its buffer back
     ;; with point and viewport intact.  A list taller than the window
     ;; is paged, and repeated TAB on the same candidates cycles the
@@ -372,7 +371,7 @@
 
   (define (complete! s complete k)
     ;; TAB in a prompt, as in Emacs: extend s to the longest common prefix
-    ;; of its completions; when it cannot be extended, pop up the candidate
+    ;; of its completions; when it cannot be extended, show the candidate
     ;; list.  k continues the prompt loop as (k new-s note).
     (let ([cands (complete s)])
       (cond
@@ -428,8 +427,8 @@
     ;; down arrows -- accepting an input records it there -- an
     ;; alternative completer bound to Shift-TAB, and a normalizer
     ;; applied to the accepted input before recording and returning.
-    ;; Whichever way the prompt ends, the completions pop-up is taken
-    ;; down.
+    ;; Whichever way the prompt ends, the completions list is dismissed
+    ;; and the window gets its buffer back.
     (define (optional n)
       (let loop ([r rest] [n n])
         (cond [(null? r) #f]

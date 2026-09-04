@@ -1,12 +1,12 @@
 ;; log-view.e -- buffer views over the editor's log, for the e editor.
 ;;
 ;; An e extension module: the library (log-view), loaded at startup by
-;; the core, which calls init!.  The core owns the log itself -- the
-;; records, log!, the echo-area presentation; this module renders the
-;; records as buffers: *log* (every record, created at startup so it
-;; is always in the buffer list) and filtered views like *log eval*,
-;; one timestamped, component-prefixed row per line, appended
-;; incrementally past a high-water mark.
+;; the kernel, which calls init!.  The log library owns the records
+;; (log:add!) and the echo library their echo-area presentation; this
+;; module renders the records as buffers: *log* (every record, created
+;; at startup so it is always in the buffer list) and filtered views
+;; like *log eval*, one timestamped, component-prefixed row per line,
+;; appended incrementally past a high-water mark.
 
 (library (log-view)
   (export init! (rename (log-view buffer)) (rename (show-log! show!)))
@@ -72,7 +72,7 @@
 
   (define (log-view . component)
     ;; The *log* view -- or a dynamic filtered one, *log eval* for
-    ;; (log-view 'eval) -- created (or recreated after a kill) on
+    ;; (log-view:buffer 'eval) -- created (or recreated after a kill) on
     ;; demand.
     (if (null? component)
         (or (head:buffer-named "*log*")

@@ -1,14 +1,14 @@
-;; echo.e -- the notification area's model: the library (echo), v2
-;; core dissolution (dev/DESIGN2.md).  Pure infrastructure with no
-;; init!.
+;; echo.e -- the notification area's model: the library (echo).
+;; Pure infrastructure with no init!.
 ;;
 ;; The echo area's state and geometry math live here: the live
 ;; message with its ghost and styler, the transient log queue, the
 ;; prompt indent bookkeeping, and the span computations that decide
-;; how content wraps into visual rows.  Painting -- and the prompts
-;; that grow the area -- stay with the head; the core reaches this
-;; model through identifier-syntax facades, so its `message` reads
-;; and writes land here unchanged.
+;; how content wraps into visual rows.  Painting is the painter's
+;; (paint), the modal loop that grows the area the prompt's (prompt);
+;; both, and the command layer, still reach this model through
+;; identifier-syntax facades in places, so a `message` read or write
+;; there lands here unchanged.
 ;;
 ;; Width is always passed in: this module knows how text folds, not
 ;; how wide the terminal is.
@@ -26,8 +26,8 @@
 
   ;;; The model -----------------------------------------------------------------
 
-  ;; This library is core-linked (never reloaded in place), so plain
-  ;; module state is as durable as a persistent cell.
+  ;; main links against this library, so it is never reloaded in place
+  ;; and plain module state is as durable as a persistent cell.
 
   (define the-text "")       ; the live message
   (define the-ghost "")      ; grey suggestion drawn after it

@@ -1,7 +1,7 @@
-;; paint.e -- the row painter: the library (paint), v2 core
-;; dissolution (dev/DESIGN2.md).  Pure infrastructure with no init!.
+;; paint.e -- the painter: the library (paint).  Pure infrastructure
+;; with no init!.
 ;;
-;; Two layers.  The row painter is the data-in, ANSI-out half: given
+;; Three layers.  The row painter is the data-in, ANSI-out half: given
 ;; a line, its style vector, the marks/links/selection covering it,
 ;; and the column window to show, emit the minimal styled runs to the
 ;; sys:terminal-output-port -- everything passed in, so it tests
@@ -9,10 +9,11 @@
 ;; composes a window from the head's records: soft-wrap geometry,
 ;; gutters and scrollbars, the status line, the highlighter and
 ;; hyperlinker and status-hint registries, and the screen cache that
-;; repaints only rows whose key changed.  The mode registry stays with
-;; the head; the painter learns a buffer's mode-driven presentation
-;; through one hook.  The frame driver (scrolling, the echo area,
-;; redraw!, the cursor) is still the core's.
+;; repaints only rows whose key changed; a buffer's mode-driven
+;; presentation comes from the mode registry.  On top, the frame
+;; driver: the screen's size, the viewport logic that keeps point
+;; visible, the echo area's painting, the cursor, the title, the
+;; visual bell, and redraw! -- one frame as one transaction.
 
 (library (paint)
   (export ansi goto fit
@@ -508,9 +509,8 @@
           (let ([x (caddr divider)] [start (cadddr divider)]
                 [height (list-ref divider 4)])
             (do ([r start (+ r 1)]) ((>= r (+ start height)))
-              ;; The final row always meets whatever full-width region
-              ;; ends the divider -- the echo area, or a transient
-              ;; pop-up such as completions -- and connects to it.
+              ;; The final row always meets the full-width region that
+              ;; ends the divider -- the echo area -- and connects to it.
               (let ([junction? (or (stacked-divider-crosses? x r)
                                    (= r (+ start height -1)))])
                 (paint! r x (list 'divider junction?)
@@ -852,7 +852,7 @@
 
   (define (view-invalidate! b)
     ;; Dynamic row renderers can change their presentation while the view's
-    ;; structural placeholder (current-lines) remain equal. Mark the display stale
+    ;; structural placeholder lines remain equal. Mark the display stale
     ;; explicitly so the next frame asks the renderer for every visible row.
     (unless (head:app-buffer? b)
       (error 'view-invalidate! "not an app or view buffer" b))
@@ -1071,7 +1071,7 @@
 
   (define (echo-append! component text styler replace?)
     ;; Append one line to the echo area's transient log: every logged
-    ;; (echo:text) stacks up there, component-prefixed, until the next key
+    ;; message stacks up there, component-prefixed, until the next key
     ;; settles the area.  With replace? true the component's newest
     ;; line is superseded when it is also the newest overall --
     ;; progress redrawn in place -- never another component's.  A
@@ -1226,15 +1226,15 @@
     (max 1 (- rows (head:layout-min-height (head:root)))))
 
   (define (update-echo-geometry!)
-    ;; The echo area stacks the pending transient-log (current-lines) above the
+    ;; The echo area stacks the pending transient-log lines above the
     ;; live line.  The live line's height follows its wrapped content
     ;; (the grey suggestion included): prompt input wraps with
-    ;; continuations indented to the prompt text, and a plain (echo:text)
+    ;; continuations indented to the prompt text, and a plain message
     ;; that overflows the width wraps the same way at indent zero --
     ;; up to eight lines, after which it scrolls, keeping the prompt
-    ;; cursor's line visible; empty behind pending (current-lines) it folds
+    ;; cursor's line visible; empty behind pending lines it folds
     ;; away.  The whole area grows until the windows above hit their
-    ;; minimum; past that the oldest pending (current-lines) are evicted -- they
+    ;; minimum; past that the oldest pending lines are evicted -- they
     ;; remain in *log*.
     (let* ([content (string-append (echo:text) (echo:ghost))]
            [len (string-length content)]

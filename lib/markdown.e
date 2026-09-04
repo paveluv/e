@@ -1,7 +1,7 @@
 ;; markdown.e -- a read-only Markdown viewer for the e editor.
 ;;
 ;; An e extension module: the library (markdown), loaded at startup by
-;; the core, which calls init!.  Renders Markdown as formatted text:
+;; the kernel, which calls init!.  Renders Markdown as formatted text:
 ;; emphasis markers are stripped and their text wears the face instead,
 ;; headings take level faces, soft line breaks inside a paragraph
 ;; disappear (the window's word wrap lays prose out), tables align
@@ -9,10 +9,10 @@
 ;; [text](url) shows only the text -- the target lives in the buffer's
 ;; hyperlink layer, followed with RET or a mouse click.
 ;;
-;; markdown-view! turns a markdown buffer into this presentation
-;; (read-only, source stashed); markdown-edit! restores the source.
+;; markdown:view! turns a markdown buffer into this presentation
+;; (read-only, source stashed); markdown:edit! restores the source.
 ;; Both try to keep the cursor on the matching content.  C-c v toggles
-;; in either mode.  markdown-view-install! renders into app views --
+;; in either mode.  markdown:view-install! renders into app views --
 ;; the describe browser presents itself through it.
 
 (library (markdown)
@@ -845,7 +845,7 @@
 
   (define (markdown-view! . b*)
     ;; Present a markdown buffer read-only and formatted; the source
-    ;; comes back with markdown-edit!.
+    ;; comes back with markdown:edit!.
     (let ([b (if (pair? b*) (car b*) (current-buffer))])
       (unless (equal? (mode:name-of b) "markdown")
         (error 'markdown-view! "not a markdown buffer" b))

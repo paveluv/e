@@ -1,30 +1,31 @@
 ;; describe.e -- a Scheme manual inside the editor: the library (describe).
 ;;
 ;; An e extension module: the library (describe), loaded at startup by
-;; the core.  Serves the reference documentation for the whole default
+;; the kernel.  Serves the reference documentation for the whole default
 ;; corpus -- R6RS from TSPL4, the Chez extensions from the Chez Scheme
-;; User's Guide.  The whole pipeline lives here: fetch-describe-data!
+;; User's Guide.  The whole pipeline lives here: describe:fetch-data!
 ;; downloads the corpus into data/describe next to lib (the
 ;; byte transfer rides the (https) module's TLS connector; page
 ;; lists, orchestration, and parsing are all this module), extracts it
 ;; into data/describe/describe.sdata, and loads it.  Run it once:
 ;;
-;;   M-x (fetch-describe-data!)
+;;   M-x (describe:fetch-data!)
 ;;
 ;; and from then on
 ;;
-;;   M-x (describe eq-hashtable-ref)
+;;   M-x (describe:this eq-hashtable-ref)
 ;;
 ;; pops up a *describe* buffer with the entry: its forms, what it
 ;; returns, its libraries, source, and the full prose.  The database is
-;; structured and queryable: doc-lookup returns the entries for a name,
-;; doc-entries all of them (optionally filtered), and the doc-*
-;; accessors take them apart, so M-x expressions can slice the corpus:
+;; structured and queryable: describe:lookup returns the entries for a
+;; name, describe:entries all of them (optionally filtered), and the
+;; doc: accessors take them apart, so M-x expressions can slice the
+;; corpus:
 ;;
-;;   (length (doc-entries))
-;;   (doc-entries (lambda (e) (eq? (doc:source e) 'csug)))
+;;   (length (describe:entries))
+;;   (describe:entries (lambda (e) (eq? (doc:source e) 'csug)))
 ;;   (filter (lambda (e) (member "(rnrs io ports)" (doc:libraries e)))
-;;           (doc-entries))
+;;           (describe:entries))
 
 (library (describe)
   (export init! (rename (describe this)) (rename (describe! show!)) (rename (describe!! show!!)) (rename (describe-at-point! at-point!))

@@ -11,13 +11,13 @@
 ;; several valid indentations, its stops: an application whose first
 ;; argument shares the opener's line may indent two past the opener
 ;; or align under that argument, whichever reads better.
-;; scheme-indent-lines maps rows [from, to] to their stops -- #f
+;; scheme-format:indent-lines maps rows [from, to] to their stops -- #f
 ;; (leave the line alone), a column, or an ascending list of columns
 ;; -- computed as if each line settles on the stop nearest its
-;; current indentation, top to bottom.  scheme-format-lines rewrites
+;; current indentation, top to bottom.  scheme-format:lines rewrites
 ;; the rows: indentation to the nearest stop, tabs outside strings
-;; widened to spaces (scheme-tab-width each, #f leaves them), the
-;; ( ) vs [ ] conventions (scheme-format-brackets #f leaves them),
+;; widened to spaces (scheme-format:tab-width each, #f leaves them),
+;; the ( ) vs [ ] conventions (scheme-format:brackets #f leaves them),
 ;; trailing whitespace trimmed, and -- when the range reaches the last
 ;; row -- trailing blank lines dropped, so a file ends with exactly
 ;; one newline.

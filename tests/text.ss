@@ -1,8 +1,7 @@
 #!/usr/bin/env scheme-script
 
 ;; The pure text algebra: spans, edits, deltas, inversion, and
-;; rebasing -- the v2 foundation (dev/DESIGN2.md, stage 1).  Run
-;; from the repository root.
+;; rebasing.  Run from the repository root.
 
 (import (chezscheme))
 

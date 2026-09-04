@@ -7,7 +7,7 @@
 ;; formatting through the modes' registered indenters, mouse actions,
 ;; the default key bindings, and the generic editing helpers (regions,
 ;; replace, conflict resolution).  It composes the seams below --
-;; state, head, paint, prompt, files, modes, keymap -- and is what M-x
+;; state, head, paint, prompt, file, mode, keymap -- and is what M-x
 ;; sees bare: the loader imports (edit) into the top level.
 ;;
 ;; Hot-reloadable like any module: its registrations (bindings, hooks,
@@ -122,10 +122,10 @@
 
   ;;; Buffers and windows ----------------------------------------------------
 
-  ;; The seat's buffer record lives in (head) now -- the client-side
-  ;; cache of a store buffer plus per-seat presentation -- reached
-  ;; through these facade aliases; head:buffer-lines-set! below stays here:
-  ;; it is the store transaction, not the raw field write.
+  ;; The seat's buffer record lives in (head) -- the client-side cache
+  ;; of a store buffer plus per-seat presentation; the commands reach
+  ;; the seat's lists and selection through the identifier-syntax
+  ;; facades below (a facade sweep is on the tech-debt ledger).
   (define buffer-line-numbers-setting-set!
     head:buffer-line-numbers-setting-set!)
   (define-syntax buffers
@@ -148,16 +148,16 @@
   (define-syntax current-window
     (identifier-syntax [id (head:current)]
       [(set! id v) (head:set-current! v)]))
-  ;; The (state) store is the master copy of every buffer's text; the
-  ;; core is its first privileged client.  A core buffer's lines field
-  ;; is a cache of the store's immutable text vector, adopted after
-  ;; every operation -- the core never mutates a line vector in place.
-  ;; Core edits enter the store transactionally (whole-line and
-  ;; line-splice granularity), wholesale replacements are resets, and
-  ;; foreign actors' edits flow back before each frame
-  ;; (head:sync-foreign-edits!).  If the store refuses (a foreign edit
-  ;; overlapped mid-command) or breaks, the core keeps editing:
-  ;; content wins locally and the store is reset to match.
+  ;; The (state) store is the master copy of every buffer's text; this
+  ;; seat is one of its clients.  A buffer record's lines field is a
+  ;; cache of the store's immutable text vector, adopted after every
+  ;; operation -- nothing here mutates a line vector in place.  Edits
+  ;; enter the store transactionally (whole-line and line-splice
+  ;; granularity), wholesale replacements are resets, and foreign
+  ;; actors' edits flow back before each frame (head:before-frame!).
+  ;; If the store refuses (a foreign edit overlapped mid-command) or
+  ;; breaks, the seat keeps editing: content wins locally and the store
+  ;; is reset to match.
 
 
   (define-syntax define-state
@@ -208,12 +208,6 @@
   (define-syntax kill-ring
     (identifier-syntax [id (head:kill-ring)] [(set! id v) (head:set-kill-ring! v)]))
   (define suppress-history (make-parameter #f))
-
-  ;; The echo area is normally one line; during a prompt it grows with
-  ;; the input, wrapping at the right edge Emacs-style with a trailing
-  ;; backslash and continuation lines indented to the prompt text, up to
-  ;; eight lines, after which it scrolls.  The windows above share what
-  ;; remains of the screen.
 
   ;;; Small utilities -------------------------------------------------------
 
@@ -1098,8 +1092,8 @@
   ;;; Apps and views ------------------------------------------------------------
 
   ;; The app registry, the hook registries, the view helpers, and the
-  ;; window geometry helpers live in (head) now.  This head's commands
-  ;; over them stay here.
+  ;; window geometry helpers live in (head); the commands over them are
+  ;; here.
 
   (define (line-numbers!)
     (let ([b (current-buffer)])
@@ -1110,11 +1104,10 @@
 
   ;;; The log -----------------------------------------------------------------
 
-  ;; The editor's syslog lives in the (log) seam module now -- the
-  ;; structured records and the formatter registry are state, not UI.
-  ;; The core keeps the echo-area presentation (installed below as the
-  ;; log's presenter) and these facade aliases until its call sites
-  ;; and the extension modules migrate to log: prefixes.
+  ;; The editor's syslog lives in (log) -- the structured records and
+  ;; the formatter registry are state, not UI.  How a logged message is
+  ;; shown is the head's side, here: set-message! and the echo-area
+  ;; presenter that init! installs on the log.
 
   (define message-source
     ;; Who a message came from, for the log's attribution: components
@@ -1347,8 +1340,8 @@
   (define (pop-up-or-reuse! b)
     ;; Help-like buffers never appropriate another leaf: reuse an existing
     ;; window displaying b, otherwise create a new tile below the current one.
-    ;; Focus stays where it was so the popup remains a reference alongside the
-    ;; command that requested it.
+    ;; Focus stays where it was so the buffer remains a reference alongside
+    ;; the command that requested it.
     (unless (memq b buffers) (set! buffers (append buffers (list b))))
     (or (find (lambda (w) (eq? (head:window-buffer w) b)) windows)
         (split-current-window! 'below b)))
@@ -1374,25 +1367,10 @@
                     (head:window-pcol-set! w 0)))
                 windows)))
 
-  ;;; Module registries -------------------------------------------------------
-
-  ;; Everything a module registers with the core -- key bindings, modes,
-  ;; highlighters, whatever a future hook adds -- goes through a registry
-  ;; and is tagged with the module whose init! is running.  Reloading a
-  ;; module retracts its entries wholesale before running its init!
-  ;; afresh, so registration is replace-by-module by construction: a new
-  ;; hook gets it by using make-registry, with nothing to remember.
-  ;; Entries registered outside any module (M-x, say) have owner #f and
-  ;; survive reloads.  Lookups prefer newer entries.
-
-  ;; The machinery itself lives in the kernel now; these are the
-  ;; facade aliases the core's own call sites keep using until they
-  ;; migrate to kernel: prefixes.
-
   ;;; Buffer settings ---------------------------------------------------------
 
   ;; The mode registry -- records, detection, the memoized stylers --
-  ;; lives in (mode) now; these two settings are commands' business.
+  ;; lives in (mode); these two settings are commands' business.
 
   (define (set-buffer-read-only! b flag)
     (head:buffer-read-only-set! b flag))
@@ -1646,13 +1624,11 @@
         (set! message (format "Formatted ~a lines" n))))
     (void))
 
-  ;;; Rendering -------------------------------------------------------------
+  ;;; Viewport commands -------------------------------------------------------
 
-  ;; The row painter lives in the (paint) seam module now: given a
-  ;; line, its styles, marks, links, and selection, it emits minimal
-  ;; styled runs.  Frame composition (layout, scrolling, the screen
-  ;; cache, paint:redraw!) stays here until head.e.  Facade aliases until
-  ;; call sites migrate to paint: prefixes.
+  ;; Painting and the frame are the painter's (paint); these are the
+  ;; commands over its viewport logic -- paging and point placement --
+  ;; and the head's side of the interaction protocol.
 
   (define (page-window! direction fraction)
     ;; Pagination is a viewport operation. Shift its top by the requested
@@ -1732,8 +1708,8 @@
   ;; question waits in the echo area as an unlogged indicator until
   ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
   (define (answer!!)
-    ;; Answer the oldest question another actor posed (see
-    ;; dev/DESIGN2.md, the interaction protocol).
+    ;; Answer the oldest question another actor posed (the interaction
+    ;; protocol: actor.e).
     (let ([asks (actor:pending head:ui-actor)])
       (if (null? asks)
           (set! message "Nothing to answer")
@@ -1759,7 +1735,7 @@
   ;;; File commands -----------------------------------------------------------
 
   ;; The prompt -- the modal loop, completions, single-key questions --
-  ;; lives in (prompt) now; the commands that ask stay here.
+  ;; lives in (prompt); the commands that ask are here.
 
   (define (prompt-kill-buffer!)
     ;; kill-buffer!!'s prompt-safe stand-in: no nested prompt, and a
@@ -1934,7 +1910,6 @@
                           (if (on? i) (fwd (+ i 1)) i)))
         (set! mark-active? #t))))
 
-  ;; The window whose status bar is being dragged to resize it, or #f.
   ;; 1-based cell coordinates within the app's text viewport while a mouse
   ;; event is dispatched, or #f for keyboard events.
   (define app-event-position (make-parameter #f))
@@ -2046,8 +2021,8 @@
                       (goto-point! clicked)
                       (set! mark-active? #f)
                       ;; Focusing the clicked window is the default. An app may
-                      ;; perform a target action and explicitly preserve the
-                      ;; old focus by returning keep-focus for MOUSE-CLICK.
+                      ;; act on the click and explicitly preserve the old
+                      ;; focus by returning keep-focus for MOUSE-CLICK.
                       (let ([result
                              (parameterize
                                ([app-event-buffer-position clicked]
@@ -2174,9 +2149,9 @@
       [(3) (lambda () (goto-point! (cons point-row (+ point-col 3))))]
       [else (lambda () (void))]))
 
-  ;; Input decoding lives in the (tty) seam module now: the reader
-  ;; thread calls (tty:read-event stdin); the main thread applies the
-  ;; parsed data below.
+  ;; Input decoding lives in (tty): the head's reader thread calls
+  ;; (tty:read-event stdin); the main thread applies the parsed mouse
+  ;; data below, through the handler init! installs on the pump.
 
   (define (apply-mouse-event! handle? c b x y)
     ;; Wheel is button 64/65; releases are ignored.  A context that
@@ -2199,8 +2174,7 @@
                 (mouse-press! x y b)]
                [else "MOUSE-HANDLED"])))
 
-  ;;; Key handling ----------------------------------------------------------
-
+  ;;; Small commands and key description -------------------------------------
 
   (define (set-mark-command!)
     (set! mark-row point-row) (set! mark-col point-col)
@@ -2240,7 +2214,7 @@
     (let ([owner (car owned)] [kind (keymap:binding-kind (cdr owned))])
       (cond [(eq? owner 'config) "config.e (user override)"]
             [owner (format "module ~a (~a)" owner kind)]
-            [(eq? kind 'default) "core default"]
+            [(eq? kind 'default) "built-in default"]
             [else "current session (user override)"])))
 
   (define (read-described-sequence)
@@ -2309,11 +2283,7 @@
       (unless (pop-up-or-reuse! b)
         (set-message! "The *help* buffer could not be displayed"))))
 
-  ;;; The loop's hooks ---------------------------------------------------------------
-
   ;;; Regions and the generic helpers ------------------------------------------
-
-  ;;; Regions -----------------------------------------------------------------
 
   (define-record-type (region-record make-region region?)
     (fields (immutable buffer region-buffer)
@@ -2670,7 +2640,8 @@
 
   (define (buffer-table)
     ;; The complete rendering and its source rows. Keeping this pure lets the
-    ;; view refresh on every redraw without mutation hooks throughout core.
+    ;; view refresh on every redraw without mutation hooks throughout the
+    ;; editor.
     (let* ([current (current-buffer)]
            [listed (sort (lambda (a b)
                            (string-ci<? (head:buffer-name a) (head:buffer-name b)))
@@ -2876,7 +2847,7 @@
     ;; The seat's loop and key dispatch live in (main); the mouse report
     ;; handler is the commands' and is installed here.
     (head:set-mouse-handler! apply-mouse-event!)
-    ;; Core defaults are data, just like module and config bindings.
+    ;; The layer's default bindings are data, like every module's.
     (begin
       (for-each
         (lambda (entry) (keymap:bind-default! (car entry) (cadr entry)))

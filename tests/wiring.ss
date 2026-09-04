@@ -1,10 +1,9 @@
 #!/usr/bin/env scheme-script
 
-;; The core-to-state wiring: every core buffer mirrors into the
-;; (state) store, core edits arrive there transactionally, and a
-;; foreign actor's store edit appears on the user's screen -- v2
-;; stage 1 (dev/DESIGN2.md).  Drives a live editor over a PTY; run
-;; from the repository root.
+;; The head-to-state wiring: every head buffer mirrors into the
+;; (state) store, the head's edits arrive there transactionally, and
+;; a foreign actor's store edit appears on the user's screen.  Drives
+;; a live editor over a PTY; run from the repository root.
 
 (import (chezscheme))
 
@@ -67,7 +66,7 @@
 
      (pump! 3000)
 
-     ;; -- core edits mirror --------------------------------------------------
+     ;; -- head edits mirror --------------------------------------------------
 
      (send! "hello")
      (pump! 400)
@@ -151,7 +150,7 @@
             (substring (screen-line 0) 0 6)
             "WOKEN ")
 
-     ;; mastery: the core's line cache IS the store's immutable text
+     ;; mastery: the head's line cache IS the store's immutable text
 
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let-values ([(text rev) (state:snapshot (head:buffer-state-id (current-buffer)))]) (eq? text (head:buffer-lines (current-buffer)))) p)) (quote replace)\r"
                     probe))
@@ -192,8 +191,8 @@
 
      ;; a conflict tells the losing actor: a rival edit lands between
      ;; the ui's basis and its keystroke (same eval, so no frame sync
-     ;; intervenes); the typed character comes back stale, core wins by
-     ;; reset, and the rival's delivery receives the conflict message
+     ;; intervenes); the typed character comes back stale, the head wins
+     ;; by reset, and the rival's delivery receives the conflict message
      (send! (format "\x1b;xactor:register! (quote (agent rival)) (lambda (m) (call-with-output-file \"~a\" (lambda (p) (write m p)) (quote replace)))\r"
                     probe))
      (pump! 600)
@@ -203,7 +202,7 @@
             (let ([m (call-with-input-file probe read)])
               (list (car m) (cadddr m)))
             '(conflict (head main)))
-     (check 'core-won-the-conflict
+     (check 'head-won-the-conflict
             (screen-has? 0 "RIV") #f)
 
      ;; the selection is published: mark plus motion becomes the ui's
@@ -325,7 +324,7 @@
             (list (status-has? "*completions*") (status-has? "*scratch*"))
             '(#f #t))
 
-     ;; stage 4: the policy seam is live -- mint a session at M-x,
+     ;; the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (head:buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
                     probe))

@@ -1,9 +1,8 @@
-;; kernel.e -- the v2 kernel (dev/DESIGN2.md): the substrate every
-;; other module stands on.  Persistent cells (module state that
-;; survives hot reloads), the registries and the module lifecycle,
-;; the mailboxes actors wait on, and the text of a caught condition.
-;; The kernel imports nothing above itself and, like the v0.1 core,
-;; is never reloaded in place.
+;; kernel.e -- the kernel: the substrate every other module stands
+;; on.  Persistent cells (module state that survives hot reloads), the
+;; registries and the module lifecycle, the mailboxes actors wait on,
+;; and the text of a caught condition.  The kernel imports nothing
+;; above itself and, like main, is never reloaded in place.
 
 (library (kernel)
   (export persistent-cell
@@ -253,7 +252,7 @@
                 (load path))
               #t)))))
 
-  ;; Layers above hang their after-reload work here (the core reapplies
+  ;; Layers above hang their after-reload work here (main reapplies
   ;; config, refreshes buffer modes, repaints); hooks receive the
   ;; reloaded module's name and run inside the reload's rollback guard.
   (define after-reload-hooks (make-registry))

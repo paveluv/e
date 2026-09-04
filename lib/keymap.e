@@ -1,11 +1,11 @@
 ;; keymap.e -- key syntax and the binding tables: the library
-;; (keymap), v2 core dissolution (dev/DESIGN2.md).  Pure
-;; infrastructure with no init!; dispatch stays with the head.
+;; (keymap).  Pure infrastructure with no init!;
+;; dispatch lives in (main).
 ;;
-;; Every keyboard binding, including the core's defaults, lives in
-;; one kernel registry.  An item is (context sequence action kind
-;; spelling), where kind is user or default.  The registry supplies
-;; its owner: config, an extension module, or #f for the core and
+;; Every keyboard binding, including the command layer's defaults,
+;; lives in one kernel registry.  An item is (context sequence action
+;; kind spelling), where kind is user or default.  The registry
+;; supplies its owner: config, a module (edit included), or #f for
 ;; live M-x customizations.  User entries always beat defaults;
 ;; within a layer the newest wins.  Contexts are symbols: 'global,
 ;; or a buffer mode's name for mode-local maps, or a synthetic scope

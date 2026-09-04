@@ -1,11 +1,11 @@
-;; style.e -- faces and the style DSL: the library (style), v2 core
-;; dissolution (dev/DESIGN2.md).  Pure infrastructure with no init!.
+;; style.e -- faces and the style DSL: the library (style).  Pure
+;; infrastructure with no init!.
 ;;
 ;; A face is a name; a style is a declarative expression --
 ;; ((foreground 244) italic) -- compiled once into the raw SGR
 ;; parameter string terminals consume.  The built-in faces and any
-;; overrides (set-style!, from config.e or modules) live here;
-;; painting is the head's business, and the head learns about face
+;; overrides (style:set!, from config.e or modules) live here;
+;; painting is the painter's business, and it learns about face
 ;; redefinitions through the changed hook (its painted rows are
 ;; cached by content, not by face definitions, so a redefinition must
 ;; repaint everything).
@@ -132,10 +132,10 @@
 
   (define style-overrides (kernel:make-registry))
 
-  ;; The head's repaint trigger: painted rows are cached by content
+  ;; The painter's repaint trigger: painted rows are cached by content
   ;; and marks, not by face definitions, so a redefined face must
-  ;; repaint everything.  Installed once by the core; a failure here
-  ;; never loses the override.
+  ;; repaint everything.  Installed by the command layer's init!; a
+  ;; failure here never loses the override.
   (define styles-changed-hook #f)
 
   (define (set-styles-changed-hook! proc)

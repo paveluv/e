@@ -1,6 +1,5 @@
 ;; sandbox.e -- the read-only capability environment for expression
-;; evaluation: the library (sandbox), v2 stage 4 (dev/DESIGN2.md).
-;; v0.1's claude-safe, generalized to any constrained actor; pure
+;; evaluation: the library (sandbox), for any constrained actor; pure
 ;; infrastructure with no init!.
 ;;
 ;; Safety here is enforcement, not detection: an expression evaluated
@@ -16,12 +15,11 @@
 ;; constrained actor's evaluator captures the current output port
 ;; into the result -- printing is a read-only act there.
 ;;
-;; Curation rules, learned in v0.1 and kept iron:
+;; Curation rules, kept iron:
 ;;
 ;;   1. Every editor binding here is keyed by buffer NAME and returns
 ;;      plain data -- strings, numbers, pairs, lists.  Never export
-;;      anything that hands out a mutable structure the editor holds
-;;      (v0.1 leaked buffer records; v2 does not).
+;;      anything that hands out a mutable structure the editor holds.
 ;;
 ;;   2. Evaluations are fueled by engines (policy.e), and an engine's
 ;;      expiry suspends without unwinding: a reader caught mid-lock

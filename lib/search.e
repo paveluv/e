@@ -1,11 +1,11 @@
 ;; search.e -- incremental search for the e editor.
 ;;
 ;; An e extension module: the library (search), loaded at startup by
-;; the core, which calls init!.  C-s starts the search; typing extends
+;; the kernel, which calls init!.  C-s starts the search; typing extends
 ;; the needle, C-s repeats, backspace retracts, RET or ESC accepts
 ;; where it stands, C-g cancels back to the origin.  The needle's
 ;; matches in the current buffer paint cyan and the current match
-;; yellow, through the core's styled highlighter ranges.  Other
+;; yellow, through the painter's styled highlighter ranges.  Other
 ;; control keys (C-x o, C-x b and friends) run through the ordinary
 ;; dispatch with the search carrying on, so windows and buffers can be
 ;; switched mid-search.
@@ -26,7 +26,7 @@
   ;; Configuration: whether the incremental search folds case the
   ;; smart way, as Emacs does -- matching ignores case only while the
   ;; needle is all lowercase; one typed capital makes it exact.
-  ;; (search-fold-case #f) in config.e makes C-s always exact.
+  ;; (search:fold-case #f) in config.e makes C-s always exact.
   ;; M-c inside a search toggles the current search either way.
   (define search-fold-case (make-parameter #t))
 

@@ -1,7 +1,7 @@
 ;; md-mode.e -- Markdown highlighting for the e editor.
 ;;
 ;; An e extension module: the library (md-mode), loaded at startup by the
-;; core, which calls init!.  Markdown is line-oriented, which suits
+;; kernel, which calls init!.  Markdown is line-oriented, which suits
 ;; the editor's per-line styles contract: headings, blockquotes, list
 ;; bullets, fences, and rules are recognized from the line start, then
 ;; code spans, bold, italics, and links inline.  Fenced code block

@@ -2,10 +2,11 @@
 ;;
 ;; Everything that touches the operating system through libc lives here:
 ;; terminal modes via termios, the window size via ioctl, SIGWINCH
-;; registration, and pipes for evaluated programs' process output. The core
-;; imports this library and stays free of foreign procedures and platform
-;; constants. Terminal operations degrade softly: without a terminal (or
-;; without libc) they become no-ops and terminal-size returns #f.
+;; registration, and pipes for evaluated programs' process output. The rest
+;; of the editor imports this library and stays free of foreign procedures
+;; and platform constants. Terminal operations degrade softly: without a
+;; terminal (or without libc) they become no-ops and sys:terminal-size
+;; returns #f.
 
 (library (sys)
   (export terminal-raw! terminal-restore! terminal-isig!

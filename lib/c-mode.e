@@ -1,7 +1,7 @@
 ;; c-mode.e -- C syntax highlighting for the e editor.
 ;;
 ;; An e extension module: the library (c-mode), loaded at startup by
-;; the core, which calls init!.  Registers a mode tied to C file
+;; the kernel, which calls init!.  Registers a mode tied to C file
 ;; extensions.  Lines are lexed individually, but whether a line
 ;; starts inside a /* */ block comment comes from a whole-buffer scan,
 ;; memoized per buffer and redone only when some line changed, so

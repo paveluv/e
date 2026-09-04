@@ -1,8 +1,8 @@
 #!/usr/bin/env scheme-script
 
 ;; The buffer store: transactions and rebasing, actor-owned marks,
-;; attributed undo, subscriptions, and reload persistence -- v2 stage
-;; 1 (dev/DESIGN2.md).  Run from the repository root.
+;; attributed undo, subscriptions, and reload persistence.  Run from
+;; the repository root.
 
 (import (chezscheme))
 
@@ -345,9 +345,9 @@
             (length (unbox sub-events)) 1)
      (state:delete! alice owned-buffer)
 
-     ;; -- the ui's whole-line splices, as core's splice-lines! builds them ----
+     ;; -- the ui's whole-line splices, as edit's splice-lines! builds them ----
 
-     ;; core.e splice-lines! turns "replace lines [from, to)" into a
+     ;; edit.e's splice-lines! turns "replace lines [from, to)" into a
      ;; span with three cases; these drive the same spans through
      ;; edit! and pin the resulting text
      (define (spliced from to inserted)

@@ -1,7 +1,7 @@
 ;; diff.e -- line diffs and three-way merge, for the e editor.
 ;;
 ;; A pure library (no init!): a patience diff over line vectors and
-;; the diff3 merge built on it.  The core imports it for the
+;; the diff3 merge built on it.  The file library imports it for the
 ;; stale-file guard; anything else may use it too.
 
 (library (diff)

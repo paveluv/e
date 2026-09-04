@@ -185,7 +185,7 @@
     ;; terminal lock.
     (head:run-on-main! thunk))
 
-  ;; The host's color scheme as last reported (see mode 2031 in core's
+  ;; The host's color scheme as last reported (see mode 2031 in main's
   ;; startup handshake): #f until known. Children that subscribed with
   ;; ?2031h receive a DSR 997 report on every change and on subscribing.
   (define known-color-scheme #f)
