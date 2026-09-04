@@ -133,10 +133,6 @@
   (define-syntax current-window
     (identifier-syntax [id (head:current)]
       [(set! id v) (head:set-current! v)]))
-  (define-syntax layout-dividers
-    (identifier-syntax [id (head:dividers)]
-      [(set! id v) (head:set-dividers! v)]))
-
   ;; The (state) store is the master copy of every buffer's text; the
   ;; core is its first privileged client.  A core buffer's lines field
   ;; is a cache of the store's immutable text vector, adopted after
@@ -212,10 +208,9 @@
               (if (< hour 12) "AM" "PM")
               salutation)))
 
-  ;; The echo area's model lives in the (echo) seam module now: the
-  ;; names below are identifier-syntax facades, so half a hundred
-  ;; (set! message ...) sites land there unchanged.  Painting, the
-  ;; prompts, and the geometry driver stay here until head.e.
+  ;; The echo area's model lives in (echo) and its painting in (paint);
+  ;; message and echo-pending are identifier-syntax facades for the
+  ;; sites here that still write them.
   (define-syntax rows
     (identifier-syntax [id (paint:screen-rows)]
       [(set! id v) (paint:set-screen-rows! v)]))
@@ -224,26 +219,8 @@
       [(set! id v) (paint:set-screen-cols! v)]))
   (define-syntax message
     (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
-  (define-syntax message-ghost
-    (identifier-syntax [id (echo:ghost)] [(set! id v) (echo:set-ghost! v)]))
-  (define-syntax message-styles
-    (identifier-syntax [id (echo:styles)] [(set! id v) (echo:set-styles! v)]))
   (define-syntax echo-pending
     (identifier-syntax [id (echo:pending)] [(set! id v) (echo:set-pending! v)]))
-  (define-syntax echo-cursor
-    (identifier-syntax [id (echo:cursor)] [(set! id v) (echo:set-cursor! v)]))
-  (define-syntax echo-indent
-    (identifier-syntax [id (echo:indent)] [(set! id v) (echo:set-indent! v)]))
-  (define-syntax echo-input-end
-    (identifier-syntax [id (echo:input-end)] [(set! id v) (echo:set-input-end! v)]))
-  (define-syntax echo-height
-    (identifier-syntax [id (echo:height)] [(set! id v) (echo:set-height! v)]))
-  (define-syntax echo-scroll
-    (identifier-syntax [id (echo:scroll)] [(set! id v) (echo:set-scroll! v)]))
-  (define-syntax echo-spans
-    (identifier-syntax [id (echo:spans)] [(set! id v) (echo:set-spans! v)]))
-  (define-syntax echo-live-height
-    (identifier-syntax [id (echo:live-height)] [(set! id v) (echo:set-live-height! v)]))
   (define echo-greeting-shown (echo:set-text! (startup-greeting)))
 
   (define-syntax kill-ring
