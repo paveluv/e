@@ -15,6 +15,7 @@
           init-module! load-module! load-modules! module-requires?
           reload-module! add-after-reload-hook!
           config-file load-config!
+          make-read-only-error read-only-error? make-refusal refusal?
           make-mailbox mailbox-post! mailbox-receive!
           condition-text)
   (import (rnrs)
@@ -34,6 +35,16 @@
     (if (condition? ex)
         (call-with-string-output-port (lambda (p) (display-condition ex p)))
         (format "~a" ex)))
+
+  ;;; Refusals ----------------------------------------------------------------
+
+  ;; Two distinguished conditions the loop shows as plain messages
+  ;; rather than exception reports: an edit refused by a read-only
+  ;; buffer, and a command the user declined mid-flight (an edit in a
+  ;; buffer whose file changed on disk, say).
+  (define-condition-type &read-only &error make-read-only-error
+    read-only-error?)
+  (define-condition-type &refused &error make-refusal refusal?)
 
   ;;; Mailboxes ---------------------------------------------------------------
 
@@ -201,7 +212,7 @@
       (sort string<?
             (filter (lambda (file)
                       (and (dot-e? file)
-                           (not (member file '("core.e" "kernel.e")))))
+                           (not (member file '("core.e" "kernel.e" "main.e")))))
                     (directory-list (caar (library-directories)))))))
 
   (define (module-requires? name target)
@@ -268,18 +279,21 @@
                   (set! modules old-modules)
                   (restore-registrations! old-registrations)
                   (raise ex)])
-        (when (member name '("core" "kernel"))
+        (when (member name '("core" "kernel" "main"))
           (error 'reload-module!
                  (format "the ~a cannot be reloaded in place" name)))
-        ;; The core cannot reload, so a module it links against would
+        ;; The core and main cannot reload, so a module they link against would
         ;; fork on reload: the core keeps the instance it compiled
         ;; against while everything else moves to the new one --
         ;; coherent stores through persistent cells, forked
         ;; registries.  Refuse rather than leave two instances.
-        (when (module-requires? "core" name)
-          (error 'reload-module!
-                 (format "core links against ~a: restart e to pick up changes"
-                         name)))
+        (let ([linker (cond [(module-requires? "core" name) "core"]
+                            [(module-requires? "main" name) "main"]
+                            [else #f])])
+          (when linker
+            (error 'reload-module!
+                   (format "~a links against ~a: restart e to pick up changes"
+                           linker name))))
         (unless (file-exists? source)
           (error 'reload-module! "no module source" source))
         (load source)

@@ -56,11 +56,9 @@
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab!
     add-pre-save-hook! add-post-save-hook!
-    set-startup-page!
 
 
 
-    (rename (handle-key! dispatch-key!))
     selected-window select-window!
     set-message!
     mouse!
@@ -75,8 +73,8 @@
 
 
 
-    ;; the editor itself
-    main)
+    ;; the loop in (main) needs this of the commands
+    clamp-point!)
   ;; The system-specific layer -- libc, termios, signals -- comes
   ;; from (sys).
   (import (chezscheme) (sys)
@@ -184,27 +182,6 @@
 
   ;;; Editor state ------------------------------------------------------------
 
-  (define (startup-greeting)
-    (let* ([date (current-date)]
-           [hour (date-hour date)]
-           [hour12 (let ([h (mod hour 12)]) (if (= h 0) 12 h))]
-           [weekdays '#("Sunday" "Monday" "Tuesday" "Wednesday" "Thursday"
-                        "Friday" "Saturday")]
-           [months '#("January" "February" "March" "April" "May" "June"
-                      "July" "August" "September" "October" "November"
-                      "December")]
-           [salutation (cond [(< hour 12) "Good morning!"]
-                             [(< hour 18) "Good afternoon!"]
-                             [else "Good evening!"])])
-      (format "Today is ~a, ~a ~a, ~a. It's ~2,'0d:~2,'0d ~a. ~a"
-              (vector-ref weekdays (date-week-day date))
-              (vector-ref months (- (date-month date) 1))
-              (date-day date)
-              (date-year date)
-              hour12
-              (date-minute date)
-              (if (< hour 12) "AM" "PM")
-              salutation)))
 
   ;; The echo area's model lives in (echo) and its painting in (paint);
   ;; message and echo-pending are identifier-syntax facades for the
@@ -219,12 +196,8 @@
     (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
   (define-syntax echo-pending
     (identifier-syntax [id (echo:pending)] [(set! id v) (echo:set-pending! v)]))
-  (define echo-greeting-shown (echo:set-text! (startup-greeting)))
-
   (define-syntax kill-ring
     (identifier-syntax [id (head:kill-ring)] [(set! id v) (head:set-kill-ring! v)]))
-  (define-syntax last-command
-    (identifier-syntax [id (head:last-command)] [(set! id v) (head:set-last-command! v)]))
   (define suppress-history (make-parameter #f))
 
   ;; The echo area is normally one line; during a prompt it grows with
@@ -321,15 +294,6 @@
                                  (vector-ref history 0)))
     (vector-set! history 1 '()))
 
-  ;; Refused edits raise this distinguished condition: the main loop
-  ;; shows it as a plain message rather than an exception report.
-  (define-condition-type &read-only &error make-read-only-error
-    read-only-error?)
-
-  ;; Likewise for a command the user declined mid-flight -- an edit
-  ;; in a buffer whose file changed on disk, say.
-  (define-condition-type &refused &error make-refusal refusal?)
-
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
     ;; checks once: if the file changed on disk meanwhile, mark the
@@ -354,7 +318,7 @@
     ;; #t forbids all edits, and a procedure decides per edit.
     (let ([guard (head:buffer-read-only (head:window-buffer current-window))])
       (when (if (procedure? guard) (not (guard)) guard)
-        (raise (condition (make-read-only-error)
+        (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "buffer is read-only")))))
     (unless (suppress-history)
       (check-disk-before-edit!)
@@ -377,14 +341,6 @@
     (if (edit-group)
         (thunk)
         (parameterize ([edit-group (box (cons label '()))]) (thunk))))
-
-  (define (elide s width)
-    ;; s shortened to about width with an elided middle, for messages.
-    (if (<= (string-length s) width)
-        s
-        (let ([keep (max 4 (quotient (- width 5) 2))])
-          (string-append (substring s 0 keep) " ... "
-                         (strings:tail s (- (string-length s) keep))))))
 
   (define (foreign-edits-since? b rev)
     ;; did another actor edit this buffer's store copy after rev?
@@ -417,8 +373,8 @@
              (cons (cons (car entry) (editor-snapshot))
                    (vector-ref history to)))
            (restore-snapshot! (cdr entry))
-           (elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
-                  cols))]))
+           (strings:elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
+             cols))]))
     message)
 
   (define (undo!) (history-shift! 0 1 "Undo"))
@@ -650,11 +606,13 @@
         (paint:ansi "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (terminal-output-port)))))
 
+  (define (killing?)
+    ;; was the previous command a kill?  Consecutive kills accumulate
+    ;; into a single kill-ring entry.
+    (and (memq (head:last-command) (list kill-line! kill-region!)) #t))
+
   (define (kill! text)
-    ;; Consecutive kill commands accumulate into a single kill-ring entry.
-    (set! kill-ring
-      (if (eq? last-command 'kill) (string-append kill-ring text) text))
-    (set! last-command 'kill)
+    (set! kill-ring (if (killing?) (string-append kill-ring text) text))
     (publish-system-clipboard! kill-ring))
 
   (define (copy-to-kill-buffer! text)
@@ -749,8 +707,7 @@
                 (kill! text)
                 (delete-region! sr sc er ec)
                 (set! point-row sr) (set! point-col sc)
-                (changed!)
-                (set! last-command 'kill))))))
+                (changed!))))))
 
   ;;; Files -----------------------------------------------------------------
 
@@ -841,7 +798,7 @@
          (guard (ex [else
                      (raise
                        (condition
-                         (make-refusal)
+                         (kernel:make-refusal)
                          (make-message-condition
                            (format "Cannot verify ~a before saving: ~a"
                                    path (kernel:condition-text ex)))))])
@@ -1268,9 +1225,9 @@
     ;; All user-visible focus changes pass here: the apps being left
     ;; and entered hear BLUR and FOCUS.
     (when (and (memq w windows) (not (eq? w current-window)))
-      (dispatch-app-event! "BLUR")
+      (head:dispatch-app-event! "BLUR")
       (set! current-window w)
-      (dispatch-app-event! "FOCUS"))
+      (head:dispatch-app-event! "FOCUS"))
     current-window)
 
   (define (other-window!)
@@ -1827,23 +1784,6 @@
   ;; The head's side of the interaction protocol: another actor's
   ;; question waits in the echo area as an unlogged indicator until
   ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
-  (define ui-actor-registered
-    (actors:register! head:ui-actor (lambda (message) (head:wake-main!))))
-
-  (define (present-pending-ask!)
-    (let ([asks (actors:pending head:ui-actor)])
-      (when (and (pair? asks)
-                 (not (prompt:active?))
-                 (string=? message ""))
-        (let ([ask (car asks)])
-          (set! message
-            (elide (format "~a asks: ~a -- C-c a answers~a"
-                           (cadr ask) (caddr ask)
-                           (if (> (length asks) 1)
-                               (format " (~a waiting)" (length asks))
-                               ""))
-                   cols))))))
-
   (define (answer!!)
     ;; Answer the oldest question another actor posed (see
     ;; docs/DESIGN2.md, the interaction protocol).
@@ -1868,8 +1808,6 @@
               (if (actors:answer! (car ask) reply)
                   (set! message "Answered")
                   (set! message "That question was withdrawn")))))))
-
-  (define ask-presented (head:add-pre-redraw-hook! present-pending-ask!))
 
   ;;; File commands -----------------------------------------------------------
 
@@ -1970,7 +1908,7 @@
                        (select-window! w)
                        ;; A direct app entry still receives the same
                        ;; initialization opportunity as its ordinary command.
-                       (dispatch-app-event! "FOCUS")
+                       (head:dispatch-app-event! "FOCUS")
                        (set! message "")))
                    (set-message! "The *buffers* app is not available")))]
             [else (void)]))))
@@ -1992,8 +1930,16 @@
   ;; Consecutive typed characters coalesce into one undo entry (up to
   ;; twenty, as in Emacs), so undo removes the run, not one character.
   ;; The chain is (buffer row col run-length text): where the next typed
-  ;; character must land to continue the run.  Any other key breaks it.
+  ;; character must land to continue the run.  Any other command breaks
+  ;; it: the chain only continues when the last command was this one.
   (define insert-chain #f)
+
+  (define (self-insert-command!)
+    ;; the key that reached no binding inserts itself (bound as
+    ;; SELF-INSERT; the dispatcher leaves the key in head:current-keys)
+    (self-insert! (tty:key-event-character (car (head:current-keys)))
+                  (and (eq? (head:last-command) self-insert-command!)
+                       insert-chain)))
 
   (define (self-insert! ch chain)
     (let ([b (head:window-buffer current-window)]
@@ -2020,15 +1966,9 @@
   ;; wheel scrolls the window under the pointer, wherever the focus is.
   ;; The cost is the terminal's native mouse selection -- hold Shift
   ;; for that -- so mouse! turns the whole thing on or off at run time.
-  (define mouse-on? #f)
-
-  (define (set-mouse! on)
-    (set! mouse-on? on)
-    (tty:mouse-reporting! on))
-
   (define (mouse! on)
     ;; Turn mouse tracking on or off (off restores native selection).
-    (set-mouse! on)
+    (tty:mouse-reporting! on)
     (set! message (format "Mouse ~a" (if on "on" "off")))
     (void))
 
@@ -2177,7 +2117,7 @@
                              (parameterize
                                ([app-event-buffer-position clicked]
                                 [app-event-button button])
-                               (dispatch-app-event! "MOUSE-CLICK"))])
+                               (head:dispatch-app-event! "MOUSE-CLICK"))])
                         (cond [(eq? result 'ignore-click)
                                (goto-point! old-point)
                                (when (memq old windows)
@@ -2196,7 +2136,7 @@
                   (arm-text-selection!)
                   ;; A mode may act on the click -- following a link,
                   ;; say -- through a MOUSE-CLICK binding in its keymap.
-                  (let ([context (mode-key-context)])
+                  (let ([context (modes:key-context (current-buffer))])
                     (when context
                       (let ([action (keymap:key-event-binding context
                                                               "MOUSE-CLICK")])
@@ -2234,7 +2174,7 @@
                (goto-point! (window-position w start height x y))
                (if (head:app-buffer? (head:window-buffer w))
                    (unless (parameterize ([app-event-button button])
-                             (dispatch-app-event! "MOUSE-DRAG"))
+                             (head:dispatch-app-event! "MOUSE-DRAG"))
                      (set! mark-active? #t))
                    (set! mark-active? #t))))))]))
 
@@ -2247,7 +2187,7 @@
                      (head:app-buffer? (head:window-buffer w)))
             (goto-point! (window-position w start height x y))
             (parameterize ([app-event-button button])
-              (dispatch-app-event! "MOUSE-RELEASE")))))))
+              (head:dispatch-app-event! "MOUSE-RELEASE")))))))
 
   (define (mouse-wheel! x y button dir meta? shift?)
     ;; Scroll the window under the pointer; the focused window stays focused.
@@ -2261,14 +2201,14 @@
               [w (car entry)])
           (set! current-window w)
           (if (and meta? (memv dir '(0 1)))
-              (dispatch-sequence! (if (= dir 0) "M-S-UP" "M-S-DOWN") #f)
+              (run-global-key! (if (= dir 0) "M-S-UP" "M-S-DOWN"))
               (begin
                 (unless (parameterize
                           ([app-event-position
                             (cons (max 1 (- x (head:window-xoff w)))
                                   (max 1 (- y (cadr entry))))]
                            [app-event-button button])
-                          (dispatch-app-event!
+                          (head:dispatch-app-event!
                             (string-append
                               (if shift? "S-" "")
                               (case dir
@@ -2280,6 +2220,13 @@
                   ((wheel-mover dir)))))
           (when (memq old windows) (set! current-window old))
           "MOUSE-HANDLED"))))
+
+  (define (run-global-key! key)
+    ;; the global map's command for one key, run as a command
+    (let ([hit (keymap:resolved-binding 'global (list key))])
+      (when hit
+        (let ([action (keymap:binding-action (cdr hit))])
+          (when (procedure? action) (action))))))
 
   (define (wheel-mover dir)
     ;; Wheel direction (the low bits of a 64-flagged button): up, down,
@@ -2319,19 +2266,9 @@
 
   ;;; Key handling ----------------------------------------------------------
 
-  ;; Key syntax and the binding tables live in the (keymap) seam
-  ;; module now; dispatch stays here, and these facade aliases stay
-  ;; until call sites and extension modules migrate to keymap:
-  ;; prefixes.
 
-  (define (settle-echo!) (echo:settle!))
-
-
-  ;; The seat's loop -- the mailbox, the wake dedupe, posted thunks,
-  ;; the reader thread, and the head:read-key-event pump -- lives in
-  ;; (head); two hooks reach back up: a frame is the painter's, a mouse
-  ;; report is the commands'.
-  (define frame-hooked (head:set-frame-hook! (lambda () (paint:redraw!))))
+  ;; The seat's loop and key dispatch live in (main); the mouse report
+  ;; handler is the commands' and is installed here.
   (define mouse-hooked (head:set-mouse-handler! apply-mouse-event!))
 
   (define (set-mark-command!)
@@ -2353,86 +2290,6 @@
   (define (end-of-buffer!)
     (set! point-row (- (vlen) 1))
     (set! point-col (string-length (current-line))))
-
-  (define (run-key-action! action)
-    (cond [(procedure? action) (action)]
-          [(not action) (set! message "Key is unbound")]
-          [else (error 'dispatch-key! "context action used globally" action)]))
-
-  (define (mode-key-context)
-    ;; A buffer mode may carry its own key bindings under a context
-    ;; named after the mode; they take precedence over the global map
-    ;; while a buffer of that mode is current.
-    (let ([name (modes:name-of (current-buffer))])
-      (and name (string->symbol name))))
-
-  (define (dispatch-sequence! first chain)
-    ;; Resolve a key sequence: the buffer's mode context first, then the
-    ;; global map.  A context may name an escape prefix
-    ;; (keymap:set-context-escape!): a sequence it starts and the
-    ;; context does not bind resolves, minus the prefix, in the global
-    ;; map -- how a captured app's user runs one complete global
-    ;; command.
-    (let* ([mode-context (mode-key-context)]
-           [escape (and mode-context (keymap:context-escape mode-context))])
-      (let loop ([sequence (list first)])
-        (let* ([in-context (and mode-context
-                                (keymap:resolved-binding mode-context sequence))]
-               [context-prefix? (and mode-context
-                                     (keymap:binding-prefix? mode-context sequence))]
-               [escaped (and escape (not in-context) (not context-prefix?)
-                             (pair? (cdr sequence))
-                             (string=? (car sequence) escape)
-                             (cdr sequence))]
-               [global (or escaped sequence)]
-               [hit (or in-context (keymap:resolved-binding 'global global))]
-               [prefix? (or context-prefix? (keymap:binding-prefix? 'global global))])
-          (cond
-            [prefix?
-             (set! message (string-append (keymap:sequence-text sequence) "-"))
-             (set! echo-pending '())
-             (paint:redraw!)
-             (let ([next (head:read-key-event)])
-               (if (eof-object? next)
-                   (head:quit!)
-                   (loop (append sequence (list next)))))]
-            [hit
-             ;; A prefix is only a waiting indicator. Once its complete binding
-             ;; is known, remove it before the command runs; commands that have
-             ;; something useful to report will publish their own message.
-             (when (> (length sequence) 1) (settle-echo!))
-             (run-key-action! (keymap:binding-action (cdr hit)))]
-            [(and (= (length sequence) 1)
-                  (tty:key-event-character first))
-             => (lambda (c) (self-insert! c chain))]
-            [else
-             (set! message
-               (format "~a is undefined" (keymap:sequence-text sequence)))])))))
-
-  (define (dispatch-app-event! event)
-    ;; the current app's handler: #t when it consumed the event
-    (let* ([a (head:app-of (current-buffer))]
-           [handler (and a (head:app-handle-event! a))])
-      (and handler (handler event) #t)))
-
-  (define (handle-key! input)
-    (define chain insert-chain)
-    (set! insert-chain #f)
-    (let ([event (cond [(eof-object? input) input]
-                       [(char? input) (tty:character-event input)]
-                       [else input])])
-      (cond
-        [(eof-object? event) (head:quit!)]
-        [(string=? event "MOUSE-HANDLED")
-         (settle-echo!)
-         (void)]
-        [else
-         (unless (string=? event "C-k") (set! last-command #f))
-         (settle-echo!)
-         ;; the current app's handler has first refusal; what it
-         ;; declines goes through the keymaps
-         (unless (dispatch-app-event! event)
-           (dispatch-sequence! event chain))])))
 
   (define (action-name action)
     (cond
@@ -2544,7 +2401,7 @@
           ("RIGHT" ,move-right!) ("HOME" ,beginning-of-line!)
           ("END" ,end-of-line!) ("DELETE" ,delete-forward!)
           ("PAGEUP" ,page-up!) ("PAGEDOWN" ,page-down!)
-          ("PASTE" ,paste-into-buffer!) ("MOUSE" ,void)
+          ("PASTE" ,paste-into-buffer!) ("SELF-INSERT" ,self-insert-command!)
           ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!!)
           ("C-x C-w" ,save-as!!) ("C-x C-c" ,quit!!)
           ("C-x C-f" ,find-file!!) ("C-x b" ,switch-buffer!!)
@@ -2603,7 +2460,7 @@
            (strings:suffix? ".e" full)
            (let ([base (strings:tail full (string-length lib))])
              (and (not (strings:search base "/" 0 (string-length base)))
-                  (not (string=? base "core.e"))
+                  (not (member base '("core.e" "main.e")))
                   (substring base 0 (- (string-length base) 2)))))))
 
   (define (load-config!)
@@ -2648,97 +2505,5 @@
   ;; the core's own post-save hook: the reload lives there like any
   ;; module's
   (define reload-hooked (add-post-save-hook! reload-on-save!))
-
-  ;;; Main ------------------------------------------------------------------
-
-  (define (usage)
-    (display "Usage: e [file]\n")
-    (display "A tiny Emacs-like terminal editor. Set LINES/COLUMNS if needed.\n")
-    (display "Extension modules are loaded from the lib directory at startup.\n"))
-
-  (define startup-page #f)
-
-  (define (set-startup-page! proc)
-    ;; A module (or config.e) may present a welcome page when e starts
-    ;; without a file argument; #f restores the plain scratch buffer.
-    (unless (or (not proc) (procedure? proc))
-      (error 'set-startup-page! "expected a procedure or #f" proc))
-    (set! startup-page proc))
-
-  (define (main)
-    ;; The loader script is pure bootstrap; the extension modules are
-    ;; loaded here, before the file argument needs their modes.
-    (let ([args (command-line-arguments)])
-      (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
-      ;; the log-view module lists *log* from startup
-      (for-each
-        (lambda (failure)
-          (let ([msg (format "Error in ~a: ~a"
-                             (car failure) (kernel:condition-text (cdr failure)))])
-            (display (format "e: ~a\n" msg) (current-error-port))
-            (set! message msg)))
-        (reverse (kernel:load-modules!)))
-      (load-config!)
-      (if (pair? args)
-          (visit-file! (car args))
-          (when startup-page
-            (guard (ex [else (void)]) (startup-page))
-            ;; the greeting outlives the page's own load chatter
-            (set! message (startup-greeting)))))
-    (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
-      (display "e: an interactive terminal is required\n" (current-error-port))
-      (exit 1))
-    ;; A stray SIGINT outside an evaluation must not drop into Chez's break
-    ;; prompt underneath the editor's screen.
-    (keyboard-interrupt-handler void)
-    ;; A stray (exit) or (abort) evaluated at the prompt must not kill
-    ;; the process past the modified-buffers check: they run the
-    ;; editor's quit and unwind the evaluation instead.
-    (let ([safe-quit (lambda args
-                       (quit!!)
-                       (raise (head:make-interrupted)))])
-      (exit-handler safe-quit)
-      (abort-handler safe-quit)
-      (reset-handler safe-quit))
-    (dynamic-wind
-      ;; The alternate screen, plus bracketed paste: terminals that
-      ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
-      ;; making a paste one identifiable edit; others ignore the mode.
-      ;; Mouse tracking likewise (see mouse!).
-      ;; Mode 2031 subscribes to the host's color-scheme change reports
-      ;; and DSR 996 asks for the current one; hosts without the feature
-      ;; ignore both.
-      (lambda () (terminal-raw!)
-        (paint:ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h\x1b;[?996n")
-        (set-mouse! #t)
-        (paint:set-screen-live! #t)
-        (head:start-input-reader!))
-      (lambda ()
-        (let loop ()
-          (unless (head:quitting?)
-            (head:run-deferred!)
-            (paint:window-layout)
-            (head:before-frame!)
-            (paint:redraw!)
-            ;; A command that raises (a read-only buffer, a bug in an
-            ;; extension module) reports itself instead of killing the
-            ;; editor.
-            (guard (ex [(read-only-error? ex)
-                        (set! message "Buffer is read-only")]
-                       [(refusal? ex)
-                        (set! message (condition-message ex))]
-                       [else (parameterize ([message-source 'error])
-                               (set-message! (kernel:condition-text ex)))])
-              (handle-key! (parameterize ([head:in-main-pump #t])
-                             (head:read-key-event))))
-            (clamp-point!)
-            (loop))))
-      (lambda ()
-        (head:run-shutdown-hooks!)
-        (paint:set-screen-live! #f)
-        (paint:reset-cursor-style!)
-        (paint:ansi "\x1b;[?1002;1006l\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
-        (flush-output-port (terminal-output-port))
-        (terminal-restore!))))
 
 ) ;; library (core)

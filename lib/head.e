@@ -59,6 +59,7 @@
           read-key-event run-on-main! wake-main! in-main-pump
           run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
           quit! quitting? last-command set-last-command!
+          current-keys set-current-keys! dispatch-app-event!
           host-color-scheme add-color-scheme-hook!
           tile! layout window-at window-button-at divider-at
           transfer-split! drag set-drag! double-click?
@@ -404,6 +405,12 @@
   (define the-last-command #f)
   (define (last-command) the-last-command)
   (define (set-last-command! c) (set! the-last-command c))
+
+  ;; the key sequence being dispatched -- the self-inserting command
+  ;; reads its character here
+  (define the-current-keys '())
+  (define (current-keys) the-current-keys)
+  (define (set-current-keys! keys) (set! the-current-keys keys))
 
   (define (start-input-reader!)
     (let ([stdin (duplicate-standard-input-port)])
@@ -1145,6 +1152,12 @@
 
   (define (app-buffer? b) (and (app-of b) #t))
 
+  (define (dispatch-app-event! event)
+    ;; the current buffer's app handler: #t when it consumed the event
+    (let* ([a (app-of (window-buffer the-current))]
+           [handler (and a (app-handle-event! a))])
+      (and handler (handler event) #t)))
+
   (define (detach-app! b)
     ;; Preserve the app's current buffer contents while removing its
     ;; dynamic refresh and event handler; its presentation facts stay
@@ -1476,4 +1489,11 @@
         (lambda ()
           (set-isig! old)
           (keyboard-interrupt-handler saved)))))
+
+  ;;; The seat as an actor -----------------------------------------------------------
+
+  ;; another actor's message to this head wakes its loop; the question
+  ;; is presented before the next frame
+  (define ui-actor-registered
+    (actors:register! ui-actor (lambda (message) (wake-main!))))
 )

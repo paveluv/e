@@ -30,7 +30,7 @@
                   (buffer-line-styles line-styles)
                   (memoize-buffer-analysis memoize-analysis)
                   (refresh-buffer-modes! refresh!))
-          mode?)
+          mode? key-context)
   (import (rnrs)
           (only (chezscheme)
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
@@ -128,6 +128,13 @@
     ;; its file name -- how transcript (head:buffers) get their highlighting.
     (set-mode-of! b (and name (find-mode name)))
     (head:buffer-mode-auto-set! b #f))
+
+  (define (key-context b)
+    ;; A mode may carry its own key bindings under a context named
+    ;; after it; they take precedence over the global map while a
+    ;; buffer of that mode is current.  #f without a mode.
+    (let ([name (buffer-mode-name b)])
+      (and name (string->symbol name))))
 
   (define (buffer-mode-name b)
     ;; The name of b's mode, or #f without one.
