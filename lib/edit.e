@@ -419,7 +419,7 @@
       (cons (map render all) rows)))
 
   (define (refresh-buffers-view!)
-    (view-replace! buffers-view (car (buffer-table))))
+    (head:view-replace! buffers-view (car (buffer-table))))
 
   (define (buffer-row b)
     (let loop ([left buffer-rows] [row 1])
@@ -516,11 +516,11 @@
     ;; Created at startup, or recreated after the user kills the view.
     (or (and buffers-view (memq buffers-view (buffer-list)) buffers-view)
         (begin
-          (set! buffers-view (register-app! "*buffers*"
+          (set! buffers-view (head:register-app! "*buffers*"
                                refresh-buffers-view!
                                handle-buffers-event!))
           ;; Always show its position bar, using the globally selected side.
-          (set-app-presentation! buffers-view 1 #t)
+          (head:set-app-presentation! buffers-view 1 #t)
           (set-buffer-mode! buffers-view "buffers")
           (refresh-buffers-view!)
           buffers-view)))

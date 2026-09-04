@@ -21,7 +21,8 @@
 ;; (text:rebase-position ...).
 
 (library (text)
-  (export make-span span? span-start span-end
+  (export splice
+          make-span span? span-start span-end
           normalize-span span-empty? contains? overlap?
           position<? position<=? position=?
           apply-edit extract invert
@@ -237,4 +238,18 @@
                 (span-of-positions p p))
               (span-of-positions
                 (rebase-position (span-start s) d)
-                (rebase-position (span-end s) d 'stay)))))))
+                (rebase-position (span-end s) d 'stay))))))
+  ;;; Line-vector splicing -----------------------------------------------------------
+
+  (define (splice v from to inserted)
+    ;; A fresh vector: v's elements [from, to) replaced by the list
+    ;; inserted; v itself is untouched (line vectors are immutable).
+    (let* ([tail (- (vector-length v) to)]
+           [ins (list->vector inserted)]
+           [out (make-vector (+ from (vector-length ins) tail))])
+      (do ([i 0 (+ i 1)]) ((= i from)) (vector-set! out i (vector-ref v i)))
+      (do ([i 0 (+ i 1)]) ((= i (vector-length ins)))
+        (vector-set! out (+ from i) (vector-ref ins i)))
+      (do ([i 0 (+ i 1)]) ((= i tail))
+        (vector-set! out (+ from (vector-length ins) i) (vector-ref v (+ to i))))
+      out)))

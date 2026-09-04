@@ -34,6 +34,7 @@
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core)
+          (prefix (head) head:)
           (prefix (styles) styles:)
           (prefix (keymap) keymap:) (only (md-view) markdown-view-install!)
           (only (https) https-download))
@@ -616,7 +617,7 @@
 
   (define (describe-view)
     (unless (and describe-buffer (memq describe-buffer (buffer-list)))
-      (set! describe-buffer (register-view! "*describe*" refresh-describe!)))
+      (set! describe-buffer (head:register-view! "*describe*" refresh-describe!)))
     describe-buffer)
 
   (define (describe! name)
@@ -799,20 +800,20 @@
          (("procedure" . "(add-mode-extension! mode extension)")) "void"
          ("(core)") core "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
-        ((register-app!)
-         (("procedure" . "(register-app! name refresh! [handle-event!])"))
+        ((head:register-app!)
+         (("procedure" . "(head:register-app! name refresh! [handle-event!])"))
          "buffer" ("(core)") core "App buffers" #f
          "Create or update a module-owned dynamic read-only app buffer. Its name must not collide with an ordinary buffer. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
         ((app-event-buffer-position)
          (("parameter" . "(app-event-buffer-position)")) "pair or #f"
          ("(core)") core "App buffers" #f
          "During a mouse-click app event, return the unclamped zero-based buffer position addressed by the pointer. The row may be beyond the buffer, allowing apps to distinguish empty viewport space from their last line. Return false outside such an event.")
-        ((set-app-cursor-visible!)
-         (("procedure" . "(set-app-cursor-visible! buffer visibility)")) "buffer"
+        ((head:set-app-cursor-visible!)
+         (("procedure" . "(head:set-app-cursor-visible! buffer visibility)")) "buffer"
          ("(core)") core "App buffers" #f
          "Set app cursor visibility to a boolean or a procedure receiving the window token. This supports per-window cursor hiding while an app viewport is detached from its live cursor.")
-        ((detach-app!)
-         (("procedure" . "(detach-app! buffer)")) "buffer"
+        ((head:detach-app!)
+         (("procedure" . "(head:detach-app! buffer)")) "buffer"
          ("(core)") core "App buffers" #f
          "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, its event handler, and app presentation.")
         ((set-buffer-wrap!)
@@ -823,20 +824,20 @@
          (("procedure" . "(set-buffer-name! buffer name)")) "buffer"
          ("(core)") core "Buffers" #f
          "Rename a buffer, adding the usual numeric suffix when another buffer already uses the requested name.")
-        ((set-app-presentation!)
-         (("procedure" . "(set-app-presentation! buffer sticky-lines scrollbar [wrap cursor-style])"))
+        ((head:set-app-presentation!)
+         (("procedure" . "(head:set-app-presentation! buffer sticky-lines head:scrollbar [wrap cursor-style])"))
          "buffer" ("(core)") core "App buffers" #f
          "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, a `blinking-` variant of those, or `default`.")
-        ((buffer-window-size)
-         (("procedure" . "(buffer-window-size buffer)")) "pair or #f"
+        ((head:buffer-window-size)
+         (("procedure" . "(head:buffer-window-size buffer)")) "pair or #f"
          ("(core)") core "App buffers" #f
          "Return `(rows . columns)` for the preferred window displaying `buffer`, choosing the focused window when it displays the buffer, or #f when it is not visible.")
-        ((add-buffer-kill-hook!)
-         (("procedure" . "(add-buffer-kill-hook! procedure)")) "unspecified"
+        ((head:add-buffer-kill-hook!)
+         (("procedure" . "(head:add-buffer-kill-hook! procedure)")) "unspecified"
          ("(core)") core "Buffer lifecycle" #f
          "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
-        ((add-shutdown-hook!)
-         (("procedure" . "(add-shutdown-hook! procedure)")) "unspecified"
+        ((head:add-shutdown-hook!)
+         (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
          ("(core)") core "Editor lifecycle" #f
          "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
         ((add-buffer-status-hint!)

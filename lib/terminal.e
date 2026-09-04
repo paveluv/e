@@ -2105,8 +2105,8 @@
       (terminal-state-alternate-line-attributes-set! state #f)
       (terminal-state-dirty-set! state #t)
       (when (terminal-state-buffer state)
-        (set-app-presentation! (terminal-state-buffer state)
-                               0 #f #f 'blinking-block))))
+        (head:set-app-presentation! (terminal-state-buffer state)
+                                    0 #f #f 'blinking-block))))
 
   (define (soft-reset-terminal-state! state)
     ;; DECSTR restores operational modes and rendition without erasing text.
@@ -2641,7 +2641,7 @@
                     (report-unsupported!
                       state (control-signature "CSI" text final)))]
                [(and cursor-shape? (terminal-state-buffer state))
-                (set-app-presentation!
+                (head:set-app-presentation!
                   (terminal-state-buffer state) 0 #f #f
                   (case (param parameters 0 0)
                     [(0 1) 'blinking-block]
@@ -3127,7 +3127,7 @@
                     state (empty-control-text)))))])]))
 
   (define (refresh-terminal! state)
-    (let ([size (buffer-window-size (terminal-state-buffer state))])
+    (let ([size (head:buffer-window-size (terminal-state-buffer state))])
       (when size
         (with-mutex (terminal-state-lock state)
           (resize-screen! state (max 1 (car size)) (max 1 (cdr size)))
@@ -3167,7 +3167,7 @@
                          (screen-row-indexes state))]
                    [screen-cells (map car screen-pairs)]
                    [screen-styles (map cdr screen-pairs)])
-              (view-replace!
+              (head:view-replace!
                 (terminal-state-buffer state)
                 (append (map (lambda (row) (vector-ref row 3)) rendered)
                         (map placeholder-line screen-cells)))
@@ -3233,7 +3233,7 @@
 
   (define (materialize-terminal-transcript! state)
     (when (terminal-state-rendered-cells state)
-      (view-replace!
+      (head:view-replace!
         (terminal-state-buffer state)
         (map cell-row->string
              (vector->list (terminal-state-rendered-cells state))))
@@ -3273,7 +3273,7 @@
       (guard (ex [else (void)]) (display-redraw!))
       (guard (ex [else (void)]) (materialize-terminal-transcript! state))
       (guard (ex [else (void)])
-        (detach-app! (terminal-state-buffer state)))
+        (head:detach-app! (terminal-state-buffer state)))
       ;; Publish the dead state before waiting for the session leader.  A
       ;; platform-specific wait must never make the editor appear frozen.
       (guard (ex [else (void)]) (display-redraw!))
@@ -3659,18 +3659,18 @@
                  (guard (ignored [else (void)])
                    (close-terminal-process! process)))
                (when buffer
-                 (guard (ignored [else (void)]) (detach-app! buffer))
+                 (guard (ignored [else (void)]) (head:detach-app! buffer))
                  (when (eq? (current-buffer) buffer) (show-buffer! prior))
                  (guard (ignored [else (void)]) (kill-buffer! buffer)))
                (raise ex)])
           (set! buffer
-            (register-app!
+            (head:register-app!
               name
               (lambda () (when state (refresh-terminal! state)))
               (lambda (event) (and state (handle-terminal-event! state event)))))
-          (set-app-presentation! buffer 0 #f #f 'blinking-block)
-          (set-app-manages-viewport! buffer #t)
-          (set-app-cursor-visible!
+          (head:set-app-presentation! buffer 0 #f #f 'blinking-block)
+          (head:set-app-manages-viewport! buffer #t)
+          (head:set-app-cursor-visible!
             buffer
             (lambda (window)
               (and state
@@ -3679,7 +3679,7 @@
                               (terminal-state-unfollowed-windows state))))))
           (set-buffer-mode! buffer "terminal")
           (show-buffer! buffer)
-          (let* ([size (or (buffer-window-size buffer) '(24 . 80))]
+          (let* ([size (or (head:buffer-window-size buffer) '(24 . 80))]
                  [rows (max 1 (car size))]
                  [cols (max 1 (cdr size))])
             (set! process
@@ -3687,7 +3687,7 @@
                                       directory rows cols))
             (set! state
               (blank-terminal-state buffer process rows cols #t))
-            (set-app-status-position!
+            (head:set-app-status-position!
               buffer
               (lambda (ignored)
                 (and (terminal-state-alive state)
@@ -3711,8 +3711,8 @@
     (keymap:bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
     (keymap:bind-default-key! 'terminal "C-] C-y" terminal-yank!)
     (keymap:set-context-escape! 'terminal "C-]")
-    (add-buffer-kill-hook! terminal-close!)
-    (add-shutdown-hook! terminal-close-all!)
+    (head:add-buffer-kill-hook! terminal-close!)
+    (head:add-shutdown-hook! terminal-close-all!)
     (add-buffer-status-hint!
       (lambda (buffer active?)
         (let ([state (terminal-of buffer)])
