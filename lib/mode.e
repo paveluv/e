@@ -178,14 +178,6 @@
                     styles))))
           no-styles)))
 
-  ;; Faces may be recolored from config.e. Overrides are owned registrations,
-  ;; so dropping the line from config.e and reloading restores the default.
-  ;; Faces and the style DSL live in the (style) seam module now;
-  ;; the core keeps these facade aliases until its call sites and the
-  ;; extension modules migrate to styles: prefixes, and installs the
-  ;; repaint trigger for face redefinitions (painted rows are cached
-  ;; by content, not by face definitions).
-
   (define (memoize-buffer-analysis analyze)
     ;; Turn a whole-buffer analyzer into a row provider.  Buffer content has
     ;; one revision stamp, so validation is O(1) and analysis runs at most
