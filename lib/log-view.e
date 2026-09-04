@@ -11,6 +11,7 @@
 (library (log-view)
   (export init! log-view show-log!)
   (import (chezscheme) (core)
+          (prefix (head) head:)
           (prefix (log) log:)
           (only (describe) register-descriptions!))
 
@@ -60,8 +61,8 @@
                                  (split-lines (log:format-log-entry e))))
                           lines)))))
           (set! rendered (log:log-length))
-          (view-append! b lines))))
-    (set! b (register-view! name refresh!))
+          (head:view-append! b lines))))
+    (set! b (head:register-view! name refresh!))
     (set-buffer-mode! b "log")
     (refresh!)
     b)
@@ -71,10 +72,10 @@
     ;; (log-view 'eval) -- created (or recreated after a kill) on
     ;; demand.
     (if (null? component)
-        (or (buffer-named "*log*")
+        (or (head:buffer-named "*log*")
             (make-log-view "*log*" (lambda (e) #t)))
         (let ([name (format "*log ~a*" (car component))])
-          (or (buffer-named name)
+          (or (head:buffer-named name)
               (make-log-view name
                 (lambda (e) (eq? (cadr e) (car component))))))))
 

@@ -776,7 +776,7 @@
     ;; Fit tables to the narrowest window showing the buffer -- one
     ;; rendering serves them all -- under the reading-width cap; the
     ;; fallback matches the renderer's own default.
-    (let ([width (buffer-narrowest-width b)])
+    (let ([width (head:buffer-narrowest-width b)])
       (min (markdown-view-max-width)
            (if width (max 20 width) 79))))
 
@@ -793,7 +793,7 @@
                                 stash-read-only
                                 lines
                                 width))
-        (view-replace! b (if (null? rendered) (list "") rendered)))))
+        (head:view-replace! b (if (null? rendered) (list "") rendered)))))
 
   (define (view-row-showing b source-row)
     ;; the rendered line that came from the source row
@@ -810,7 +810,7 @@
     (vector-for-each
       (lambda (b)
         (let ([r (hashtable-ref renders b #f)])
-          (when (and r (buffer-window-size b)
+          (when (and r (head:buffer-window-size b)
                      (not (= (render-width b) (vector-ref r 6))))
             (let* ([current? (eq? b (current-buffer))]
                    [source-row
@@ -862,7 +862,7 @@
           (error 'markdown-edit! "no markdown source is stashed" b))
         (let ([row (car (point))]
               [rows (vector-ref r 2)])
-          (view-replace! b (vector-ref r 3))
+          (head:view-replace! b (vector-ref r 3))
           (set-buffer-read-only! b (vector-ref r 4))
           (set-buffer-mode! b "markdown")
           (set-buffer-wrap! b 'default)
@@ -962,7 +962,7 @@
                     #f view-row-styles)
     (add-hyperlinker! view-row-links)
     (add-highlighter! link-hint)
-    (add-pre-redraw-hook! refit-views!)
+    (head:add-pre-redraw-hook! refit-views!)
     (keymap:bind-default-key! 'markdown "C-c v" markdown-view!)
     (keymap:bind-default-key! 'markdown-view "C-c v" markdown-edit!)
     (keymap:bind-default-key! 'markdown-view "RET" follow-md-link!)

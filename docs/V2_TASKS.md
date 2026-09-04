@@ -212,10 +212,16 @@ stopped knowing about capture.
       the (state) store: buffer facts, mirror creation and adoption,
       transactional edits with conflict handling, resets, outage
       recovery, the foreign-event sync with its audit and lifecycle
-      handling, and head-mark publication -- with three owner hooks
-      (forget a buffer, invalidate the screen, assign a mode).  Over
-      the wire, a remote seat is exactly this client with a socket
-      under the state: calls, the seat state (windows, layout root,
+      handling, and head-mark publication -- with two owner hooks
+      (invalidate the screen, assign a mode).  Over the wire, a remote
+      seat is exactly this client with a socket under the state: calls.
+      Then the app registry (procedures only), the hook registries and
+      their runners, the views (refresh/append/replace), forget-buffer!,
+      set-window-buffer!, buffer-named, and the window geometry helpers
+      (scrollbar side, line-number gutter, content width, sticky rows,
+      window size).  The three config knobs (scrollbar,
+      scrollbar-position, line-numbers) live in head and stay reachable
+      under their bare names from core's exports for config.e, the seat state (windows, layout root,
       selected window, divider output) behind identifier-syntax
       facades, and the pure tiling geometry (leaves, replace, parent,
       minima, weighted splits, layout-node!).  Remaining: routing

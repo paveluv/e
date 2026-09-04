@@ -74,12 +74,12 @@
 
   (define (refresh-log!)
     (when log-dirty?
-      (view-replace! log-buffer log-lines)
+      (head:view-replace! log-buffer log-lines)
       (set! log-dirty? #f)))
 
   (define (refresh-diff!)
     (when diff-dirty?
-      (view-replace!
+      (head:view-replace!
         diff-buffer
         (if selected-patch
             (cons (format "~a  ~a  ~a"
@@ -201,12 +201,12 @@
     ;; without making fresh sessions expose empty Git buffers.
     (unless log-buffer
       (set! log-buffer
-        (register-app! "*git-log*" refresh-log! handle-log-event!))
-      (set-app-presentation! log-buffer 1 #t)
+        (head:register-app! "*git-log*" refresh-log! handle-log-event!))
+      (head:set-app-presentation! log-buffer 1 #t)
       (set-buffer-mode! log-buffer "git-log"))
     (unless diff-buffer
-      (set! diff-buffer (register-view! "*git-diff*" refresh-diff!))
-      (set-app-presentation! diff-buffer 1 #t)
+      (set! diff-buffer (head:register-view! "*git-diff*" refresh-diff!))
+      (head:set-app-presentation! diff-buffer 1 #t)
       (set-buffer-mode! diff-buffer "git-diff")))
 
   (define (git-log!! . path)
@@ -227,7 +227,7 @@
     (register-mode! "git-diff" '() '() diff-styles)
     ;; A reload after Git was opened reconnects its surviving app buffers;
     ;; ordinary startup remains lazy.
-    (when (or (buffer-named "*git-log*") (buffer-named "*git-diff*"))
+    (when (or (head:buffer-named "*git-log*") (head:buffer-named "*git-diff*"))
       (ensure-git-buffers!))
     (register-descriptions!
       '(((git-log!!) (("procedure" . "(git-log!! [path])")) "void"

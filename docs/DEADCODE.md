@@ -24,6 +24,11 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-03 `vector-splice` (core): its last user, view-append!, moved to
+  head.e, which splices through the pure `text:splice`; the stale
+  "created lazily" registry comment and the store client's forget hook
+  (forgetting is head's own now) went in the same move.
+
 - 2026-09-03 `known-apps`, `known-app-of`, `ensure-app-registry!`, the
   lazy hook registries (core): the second app bookkeeping list existed
   to carry presentation across a module's re-registration -- those
