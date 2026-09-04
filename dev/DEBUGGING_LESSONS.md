@@ -26,6 +26,9 @@ happened not to be the one that blew up.
 through `head:run-on-main!`: render the final screen, then materialize
 the transcript, then detach -- in that order, between frames.  Only the
 platform wait for the session leader stays on the reader thread.  The
+feed path's other seat touches -- the OSC title rename and the
+cursor-shape fact that RIS and DECSCUSR set -- marshal the same way
+now, each tolerating a terminal that died before its turn came.  The
 interactive suite checks that no "refresh failed" message follows the
 shell's exit.
 
