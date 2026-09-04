@@ -1,4 +1,4 @@
-;; kernel.e -- the v2 kernel (docs/DESIGN2.md): the substrate every
+;; kernel.e -- the v2 kernel (dev/DESIGN2.md): the substrate every
 ;; other module stands on.  Persistent cells (module state that
 ;; survives hot reloads), the registries and the module lifecycle,
 ;; the mailboxes actors wait on, and the text of a caught condition.

@@ -1,5 +1,5 @@
 ;; state.e -- the buffer store: the library (state), v2 stage 1
-;; (docs/DESIGN2.md).
+;; (dev/DESIGN2.md).
 ;;
 ;; Multi-actor buffer state over the pure (text) algebra.  Every
 ;; buffer carries a revision; every mutation is a transaction naming

@@ -1,5 +1,5 @@
 ;; echo.e -- the notification area's model: the library (echo), v2
-;; core dissolution (docs/DESIGN2.md).  Pure infrastructure with no
+;; core dissolution (dev/DESIGN2.md).  Pure infrastructure with no
 ;; init!.
 ;;
 ;; The echo area's state and geometry math live here: the live

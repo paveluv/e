@@ -2,7 +2,7 @@
 
 ;; Terminal input decoding: bytes in, data events out -- the first
 ;; time the parser is testable without a PTY.  v2 core dissolution
-;; (docs/DESIGN2.md).  Run from the repository root.
+;; (dev/DESIGN2.md).  Run from the repository root.
 
 (import (chezscheme))
 

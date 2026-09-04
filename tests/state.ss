@@ -2,7 +2,7 @@
 
 ;; The buffer store: transactions and rebasing, actor-owned marks,
 ;; attributed undo, subscriptions, and reload persistence -- v2 stage
-;; 1 (docs/DESIGN2.md).  Run from the repository root.
+;; 1 (dev/DESIGN2.md).  Run from the repository root.
 
 (import (chezscheme))
 

@@ -249,7 +249,7 @@ exited`. It also stops capturing input, so ordinary editor chords such as
 it is no longer needed.
 
 The automated and optional `vttest` procedures are documented in the
-[terminal testing guide](../tests/TERMINAL.md). The automated suite is
+[terminal testing guide](../dev/TERMINAL_TESTING.md). The automated suite is
 entirely owned by e and never depends on `vttest` or the host terminfo
 database.
 

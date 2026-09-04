@@ -8,7 +8,7 @@ locates the adjacent libraries and compiled-object directory, configures Chez,
 imports the command layer (`edit`, bare -- the names M-x sees), `main` and
 `kernel` (prefixed), and runs `(main:run)`.
 
-There is no core any more (docs/DESIGN2.md, docs/V2_TASKS.md): the editor is
+There is no core any more (dev/DESIGN2.md, dev/V2_TASKS.md): the editor is
 layered seam modules -- `kernel`, `state`, `file`, `head`, `paint`, `prompt`,
 `mode`, `keymap`, ... -- each imported with its own prefix, `main.e` running
 the loop on top, and `edit.e`, the command layer, as the default app. `sys.e`

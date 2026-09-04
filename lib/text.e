@@ -1,5 +1,5 @@
 ;; text.e -- the pure text and span algebra: the library (text), the
-;; first v2 module (docs/DESIGN2.md, stage 1).
+;; first v2 module (dev/DESIGN2.md, stage 1).
 ;;
 ;; No state and no editor knowledge live here: a text is an immutable
 ;; vector of line strings, a position is a (line . column) pair, a
@@ -9,7 +9,7 @@
 ;; other actors' positions and spans across an edit, and inverting an
 ;; edit for undo.
 ;;
-;; The settled v2 semantics (docs/DESIGN2.md):
+;; The settled v2 semantics (dev/DESIGN2.md):
 ;; - rebasing is line-based: positions strictly after the edit shift
 ;;   by whole lines (plus a column shift on the edit's last line);
 ;; - a position inside the replaced region collapses to the edit's

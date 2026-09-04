@@ -1,5 +1,5 @@
 ;; sandbox.e -- the read-only capability environment for expression
-;; evaluation: the library (sandbox), v2 stage 4 (docs/DESIGN2.md).
+;; evaluation: the library (sandbox), v2 stage 4 (dev/DESIGN2.md).
 ;; v0.1's claude-safe, generalized to any constrained actor; pure
 ;; infrastructure with no init!.
 ;;

@@ -3,7 +3,7 @@
 ;; The mode registry: registration and lookup, detection by extension
 ;; and interpreter line, hand-chosen modes, the memoized stylers, and
 ;; re-resolution after a re-registration -- v2 core dissolution
-;; (docs/DESIGN2.md).  Headless: buffers come from (head), which
+;; (dev/DESIGN2.md).  Headless: buffers come from (head), which
 ;; mirrors them into the store.  Run from the repository root.
 
 (import (chezscheme))

@@ -1,6 +1,6 @@
 # v2 task tracker
 
-The living checklist for the docs/DESIGN2.md migration. Updated as
+The living checklist for the dev/DESIGN2.md migration. Updated as
 work lands; the design doc holds the reasoning, this file holds the
 state.
 
@@ -173,7 +173,7 @@ stopped knowing about capture.
       paste, host reports), parameterized over its input port and so
       unit-testable for the first time (tests/tty.ss, 32 checks --
       which immediately caught the latent M-DELETE decode bug, see
-      tests/DEBUGGING_LESSONS.md); the core keeps the reader thread,
+      dev/DEBUGGING_LESSONS.md); the core keeps the reader thread,
       the mailbox pump, and mouse-event application.  Raw-mode
       termios control already lives in (sys).  `strings.e` was born
       alongside: the shared pure string helpers (tail, prefix?,

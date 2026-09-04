@@ -1,5 +1,5 @@
 ;; prompt.e -- the prompt: the library (prompt), v2 core dissolution
-;; (docs/DESIGN2.md).
+;; (dev/DESIGN2.md).
 ;;
 ;; The head's modal input in the echo area -- Emacs's minibuffer.
 ;; (prompt:read! label ...) runs a line editor with the cursor parked

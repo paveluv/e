@@ -11,3 +11,7 @@
   `log:add!`, `mode:register!` -- never `styles:set-style!`.  Rename in
   the export list (`(rename (internal external))`) if the definition
   keeps a longer name.
+- `docs/` is the user's manual; development notes live in `dev/`: the
+  design (DESIGN2.md), the tracker and tech-debt ledger (V2_TASKS.md),
+  the dead-code ledger (DEADCODE.md), the debugging-lessons ledger
+  (DEBUGGING_LESSONS.md), and the terminal test notes.

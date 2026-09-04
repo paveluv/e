@@ -1,5 +1,5 @@
 ;; actor.e -- actor identity and the interaction protocol: the
-;; library (actor), v2 stage 3 (docs/DESIGN2.md).
+;; library (actor), v2 stage 3 (dev/DESIGN2.md).
 ;;
 ;; An actor is an identity (plain data: (head main), (agent claude 3))
 ;; plus a registered delivery procedure.  Any actor may pose a

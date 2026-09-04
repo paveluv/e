@@ -1,5 +1,5 @@
 ;; style.e -- faces and the style DSL: the library (style), v2 core
-;; dissolution (docs/DESIGN2.md).  Pure infrastructure with no init!.
+;; dissolution (dev/DESIGN2.md).  Pure infrastructure with no init!.
 ;;
 ;; A face is a name; a style is a declarative expression --
 ;; ((foreground 244) italic) -- compiled once into the raw SGR

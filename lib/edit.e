@@ -1733,7 +1733,7 @@
   ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
   (define (answer!!)
     ;; Answer the oldest question another actor posed (see
-    ;; docs/DESIGN2.md, the interaction protocol).
+    ;; dev/DESIGN2.md, the interaction protocol).
     (let ([asks (actor:pending head:ui-actor)])
       (if (null? asks)
           (set! message "Nothing to answer")

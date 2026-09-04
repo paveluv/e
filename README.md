@@ -152,6 +152,11 @@ immediately.
 - [Modules and architecture](docs/MODULES.md): library boundaries, hot reload,
   registrations, modes, highlighters, and extension conventions.
 
+Development notes live in `dev/`, apart from the manual: the v2 design
+(`dev/DESIGN2.md`), the migration tracker with its tech-debt ledger
+(`dev/V2_TASKS.md`), the dead-code and debugging-lessons ledgers, and the
+terminal test notes.
+
 ## Limits
 
 Tabs and other control characters display as one space cell. Input is UTF-8,

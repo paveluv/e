@@ -1,5 +1,5 @@
 ;; log.e -- the structured log and audit stream: the library (log),
-;; v2 (docs/DESIGN2.md).  State, not UI: pure infrastructure with no
+;; v2 (dev/DESIGN2.md).  State, not UI: pure infrastructure with no
 ;; init!.
 ;;
 ;; The editor's syslog: structured records -- (time component datum),

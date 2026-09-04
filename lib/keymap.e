@@ -1,5 +1,5 @@
 ;; keymap.e -- key syntax and the binding tables: the library
-;; (keymap), v2 core dissolution (docs/DESIGN2.md).  Pure
+;; (keymap), v2 core dissolution (dev/DESIGN2.md).  Pure
 ;; infrastructure with no init!; dispatch stays with the head.
 ;;
 ;; Every keyboard binding, including the core's defaults, lives in

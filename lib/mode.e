@@ -1,5 +1,5 @@
 ;; mode.e -- the mode registry: the library (mode), v2 core
-;; dissolution (docs/DESIGN2.md).
+;; dissolution (dev/DESIGN2.md).
 ;;
 ;; A buffer's mode NAME is a store property every head reads; a mode
 ;; record is this head's registry object for that name: the file-name

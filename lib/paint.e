@@ -1,5 +1,5 @@
 ;; paint.e -- the row painter: the library (paint), v2 core
-;; dissolution (docs/DESIGN2.md).  Pure infrastructure with no init!.
+;; dissolution (dev/DESIGN2.md).  Pure infrastructure with no init!.
 ;;
 ;; Two layers.  The row painter is the data-in, ANSI-out half: given
 ;; a line, its style vector, the marks/links/selection covering it,
