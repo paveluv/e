@@ -5,7 +5,7 @@
 ;; stale-file guard; anything else may use it too.
 
 (library (diff)
-  (export diff-matches merge3 merge-report-lines)
+  (export (rename (diff-matches matches)) merge3 merge-report-lines)
   (import (chezscheme))
 
   ;;; Patience diff --------------------------------------------------------------

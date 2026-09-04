@@ -27,9 +27,9 @@
 ;;           (doc-entries))
 
 (library (describe)
-  (export init! describe describe! describe!! describe-at-point!
-          fetch-describe-data!
-          doc-lookup doc-entries doc-browser-url)
+  (export init! (rename (describe this)) (rename (describe! show!)) (rename (describe!! show!!)) (rename (describe-at-point! at-point!))
+          (rename (fetch-describe-data! fetch-data!))
+          (rename (doc-lookup lookup)) (rename (doc-entries entries)) (rename (doc-browser-url browser-url)))
   (import (chezscheme) (except (edit) init!)
           (prefix (doc) doc:)
           (prefix (kernel) kernel:)
@@ -40,8 +40,8 @@
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (style) style:)
-          (prefix (keymap) keymap:) (only (md-view) markdown-view-install!)
-          (only (https) https-download))
+          (prefix (keymap) keymap:) (prefix (only (markdown) view-install!) markdown:)
+          (prefix (only (https) download) https:))
 
   (define (data-dir)
     (string-append (file:data-directory) "/describe"))
@@ -407,7 +407,7 @@
     (unless (file-directory? path) (mkdir path)))
 
   (define (fetch-url! url path)
-    (https-download url path))
+    (https:download url path))
 
   (define (fetch-book! ref book base pages progress)
     (for-each (lambda (page)
@@ -593,7 +593,7 @@
     (when (and describe-buffer described-name)
       ;; The page renders through the markdown viewer: markup becomes
       ;; faces, links stay clickable with their targets hidden.
-      (markdown-view-install! describe-buffer
+      (markdown:view-install! describe-buffer
                               (page-lines (current-page described-name)))))
 
   (define (describe-view)
@@ -729,15 +729,15 @@
 
   (define (init!)
     (doc:register!
-      '(((describe!) (("procedure" . "(describe! name)")) "void"
-         ("(describe)") describe "Documentation commands" #f
+      '(((describe:show!) (("procedure" . "(describe:show! name)")) "void"
+         ("(describe:this)") describe "Documentation commands" #f
          "Display every documentation entry for `name` in a read-only Markdown `*describe*` buffer.")
-        ((describe-at-point!)
-         (("procedure" . "(describe-at-point!)")) "void"
-         ("(describe)") describe "Documentation commands" #f
+        ((describe:at-point!)
+         (("procedure" . "(describe:at-point!)")) "void"
+         ("(describe:this)") describe "Documentation commands" #f
          "Display documentation for the symbol at point in the current Scheme buffer.")
-        ((describe!!) (("procedure" . "(describe!!)")) "void"
-         ("(describe)") describe "Documentation commands" #f
+        ((describe:show!!) (("procedure" . "(describe:show!!)")) "void"
+         ("(describe:this)") describe "Documentation commands" #f
          "Prompt for a documented function name with completion, then display its live describe page.")
         ((style:compile) (("procedure" . "(style:compile expression)")) "string"
          ("(edit)") core "Style customization" #f
@@ -745,18 +745,18 @@
         ((style:set!) (("procedure" . "(style:set! face style)")) "void"
          ("(edit)") core "Style customization" #f
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
-        ((markdown-view!) (("procedure" . "(markdown-view! [buffer])")) "void"
+        ((markdown:view!) (("procedure" . "(markdown:view! [buffer])")) "void"
          ("(md-view)") md-view "Markdown viewing" #f
-         "Present a markdown buffer formatted and read-only: markup strips into faces, paragraphs join, tables align, fenced code frames. `C-c v` toggles; `markdown-edit!` restores the source.")
-        ((markdown-edit!) (("procedure" . "(markdown-edit! [buffer])")) "void"
+         "Present a markdown buffer formatted and read-only: markup strips into faces, paragraphs join, tables align, fenced code frames. `C-c v` toggles; `markdown:edit!` restores the source.")
+        ((markdown:edit!) (("procedure" . "(markdown:edit! [buffer])")) "void"
          ("(md-view)") md-view "Markdown viewing" #f
          "Restore a markdown view's stashed source and make it editable again, keeping the cursor on the matching content.")
-        ((markdown-view-max-width)
-         (("parameter" . "(markdown-view-max-width [columns])"))
+        ((markdown:view-max-width)
+         (("parameter" . "(markdown:view-max-width [columns])"))
          "integer" ("(md-view)") md-view "Markdown viewing" #f
          "Get or set the reading-width cap of markdown views: in a window wider than this many columns, prose and tables wrap at the cap instead of the full width. The default is 80 and the minimum is 20.")
-        ((markdown-browser)
-         (("parameter" . "(markdown-browser [command])")) "string"
+        ((markdown:browser)
+         (("parameter" . "(markdown:browser [command])")) "string"
          ("(md-view)") md-view "Markdown viewing" #f
          "Get or set the command that opens a markdown view's web links; it receives the quoted URL as its argument. The default is `xdg-open`.")
         ((answer!!) (("procedure" . "(answer!!)")) "void"
@@ -825,9 +825,9 @@
          (("procedure" . "(paint:add-buffer-status-hint! procedure)")) "unspecified"
          ("(edit)") core "Buffer lifecycle" #f
          "Register a module-owned status hint procedure called as `(procedure buffer active?)` for every window. It may return a string, a `(string . style)` pair, or #f.")
-        ((fetch-describe-data!)
-         (("procedure" . "(fetch-describe-data!)")) "void"
-         ("(describe)") describe "Documentation commands" #f
+        ((describe:fetch-data!)
+         (("procedure" . "(describe:fetch-data!)")) "void"
+         ("(describe:this)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the local describe database, and load it.")))
     (prompt:inspector describe-input!)
     (keymap:bind-default-key! "C-h f" describe!!)

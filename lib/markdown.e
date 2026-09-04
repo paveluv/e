@@ -1,6 +1,6 @@
-;; md-view.e -- a read-only Markdown viewer for the e editor.
+;; markdown.e -- a read-only Markdown viewer for the e editor.
 ;;
-;; An e extension module: the library (md-view), loaded at startup by
+;; An e extension module: the library (markdown), loaded at startup by
 ;; the core, which calls init!.  Renders Markdown as formatted text:
 ;; emphasis markers are stripped and their text wears the face instead,
 ;; headings take level faces, soft line breaks inside a paragraph
@@ -15,10 +15,10 @@
 ;; in either mode.  markdown-view-install! renders into app views --
 ;; the describe browser presents itself through it.
 
-(library (md-view)
-  (export init! markdown-view! markdown-edit!
-          markdown-render markdown-view-install! markdown-browser
-          markdown-view-max-width)
+(library (markdown)
+  (export init! (rename (markdown-view! view!)) (rename (markdown-edit! edit!))
+          (rename (markdown-render render)) (rename (markdown-view-install! view-install!)) (rename (markdown-browser browser))
+          (rename (markdown-view-max-width view-max-width)))
   (import (chezscheme) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (echo) echo:)
@@ -27,7 +27,7 @@
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (style) style:)
-          (prefix (keymap) keymap:) (only (sys) terminal-character-width))
+          (prefix (keymap) keymap:) (prefix (only (sys) terminal-character-width) sys:))
 
   ;;; Faces -------------------------------------------------------------
 
@@ -61,7 +61,7 @@
   ;;; Inline rendering ---------------------------------------------------
 
   (define (display-width text)
-    (fold-left (lambda (total c) (+ total (terminal-character-width c)))
+    (fold-left (lambda (total c) (+ total (sys:terminal-character-width c)))
                0 (string->list text)))
 
   (define (render-inline text base)
@@ -279,7 +279,7 @@
               [(char=? (string-ref text i) #\space)
                (loop (+ i 1) 0 (max best word))]
               [else (loop (+ i 1)
-                          (+ word (terminal-character-width
+                          (+ word (sys:terminal-character-width
                                     (string-ref text i)))
                           best)])))
     (define (allocate-widths naturals minimums avail)
@@ -378,7 +378,7 @@
         (let scan ([i from] [used 0] [space #f])
           (if (= i n)
               (values n n)
-              (let ([w (terminal-character-width (string-ref text i))])
+              (let ([w (sys:terminal-character-width (string-ref text i))])
                 (cond
                   [(<= (+ used w) width)
                    (scan (+ i 1) (+ used w)

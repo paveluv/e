@@ -22,7 +22,7 @@
           mouse-reporting! paste-lines)
   (import (rnrs)
           (only (chezscheme) format char-ready?)
-          (only (sys) terminal-output-port)
+          (prefix (only (sys) terminal-output-port) sys:)
           (prefix (string) string:))
 
   ;;; Input-side negotiation ------------------------------------------------------
@@ -31,7 +31,7 @@
     ;; SGR mouse tracking with button-event reports (1002;1006): on
     ;; asks the terminal to send the (mouse ...) events read-event
     ;; decodes; off restores the terminal's native selection.
-    (let ([port (terminal-output-port)])
+    (let ([port (sys:terminal-output-port)])
       (display (if on? "\x1b;[?1002;1006h" "\x1b;[?1002;1006l") port)
       (flush-output-port port)))
 

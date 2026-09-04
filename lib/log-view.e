@@ -9,7 +9,7 @@
 ;; incrementally past a high-water mark.
 
 (library (log-view)
-  (export init! log-view show-log!)
+  (export init! (rename (log-view buffer)) (rename (show-log! show!)))
   (import (chezscheme) (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
@@ -89,8 +89,8 @@
 
   (define (init!)
     (doc:register!
-      '(((show-log!) (("procedure" . "(show-log!)")) "void"
-         ("(log-view)") log-view "Log commands" #f
+      '(((log-view:show!) (("procedure" . "(log-view:show!)")) "void"
+         ("(log-view:buffer)") log-view "Log commands" #f
          "Display the live `*log*` view, containing timestamped editor messages and command results.")))
     (mode:register! "log" '() '() style-log-line)
     (log-view)))                ; the *log* view, listed from startup

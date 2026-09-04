@@ -1,16 +1,16 @@
 ;; terminal.e -- PTY-backed terminal emulator app.
 
 (library (terminal)
-  (export init! terminal!! terminal-send! terminal-yank! terminal-close!
-          terminal-scrollback
-          terminal-shell terminal-forward-clipboard-to-kill-ring
-          make-terminal-emulator terminal-emulator?
-          terminal-emulator-feed! terminal-emulator-resize!
-          terminal-emulator-screen
-          terminal-emulator-styles terminal-emulator-hyperlinks
-          terminal-emulator-state terminal-emulator-input
-          terminal-emulator-mouse-input terminal-emulator-replies
-          terminal-emulator-unsupported terminal-color-scheme!)
+  (export init! (rename (terminal!! open!!)) (rename (terminal-send! send!)) (rename (terminal-yank! yank!)) (rename (terminal-close! close!))
+          (rename (terminal-scrollback scrollback))
+          (rename (terminal-shell shell)) (rename (terminal-forward-clipboard-to-kill-ring forward-clipboard-to-kill-ring))
+          (rename (make-terminal-emulator make-emulator)) (rename (terminal-emulator? emulator?))
+          (rename (terminal-emulator-feed! emulator-feed!)) (rename (terminal-emulator-resize! emulator-resize!))
+          (rename (terminal-emulator-screen emulator-screen))
+          (rename (terminal-emulator-styles emulator-styles)) (rename (terminal-emulator-hyperlinks emulator-hyperlinks))
+          (rename (terminal-emulator-state emulator-state)) (rename (terminal-emulator-input emulator-input))
+          (rename (terminal-emulator-mouse-input emulator-mouse-input)) (rename (terminal-emulator-replies emulator-replies))
+          (rename (terminal-emulator-unsupported emulator-unsupported)) (rename (terminal-color-scheme! color-scheme!)))
   (import (chezscheme) (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (kernel) kernel:)
@@ -18,7 +18,7 @@
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (log) log:)
-          (prefix (style) style:) (sys)
+          (prefix (style) style:) (prefix (sys) sys:)
           (prefix (keymap) keymap:)
           (prefix (doc) doc:))
 
@@ -1078,7 +1078,7 @@
         (terminal-state-memory-lock-set! state #f)
         (terminal-state-dirty-set! state #t)
         (when (terminal-state-process state)
-          (resize-terminal-process!
+          (sys:resize-terminal-process!
             (terminal-state-process state) rows cols)))))
 
   (define (scroll-up! state count)
@@ -1194,7 +1194,7 @@
   (define (grapheme-cell-width text)
     (let ([width (fold-left
                    (lambda (current character)
-                     (max current (terminal-character-width character)))
+                     (max current (sys:terminal-character-width character)))
                    0 (string->list text))])
       (if (or (>= (regional-indicator-count text) 2)
               (exists (lambda (character) (memv character '(#\xfe0f #\x20e3)))
@@ -1231,7 +1231,7 @@
                        #\x200d)))))
     (let* ([line (vector-ref (terminal-state-screen state)
                              (terminal-state-row state))]
-           [width (terminal-character-width character)])
+           [width (sys:terminal-character-width character)])
       (when (or (= width 0)
                 (cluster-extension? character line
                                     (terminal-state-col state)))
@@ -1486,7 +1486,7 @@
       (if (terminal-state-process state)
           ;; A live terminal's replies go to the child; recording them as
           ;; well would grow without bound over a session.
-          (let ([output (terminal-process-output
+          (let ([output (sys:terminal-process-output
                           (terminal-state-process state))])
             (put-bytevector output wire)
             (flush-output-port output))
@@ -3282,7 +3282,7 @@
       ;; platform-specific wait must never make the editor appear frozen.
       (guard (ex [else (void)]) (display-redraw!))
       (guard (ex [else (void)])
-        (reap-terminal-process! (terminal-state-process state))))
+        (sys:reap-terminal-process! (terminal-state-process state))))
     (guard (ex [else
                 ;; Linux reports PTY-master closure as EIO rather than EOF.
                 ;; Other reader failures indicate an emulator or redraw bug
@@ -3297,7 +3297,7 @@
                                   (kernel:condition-text ex)))))))
                 (finished!)])
       (let ([input (transcoded-port
-                     (terminal-process-input (terminal-state-process state))
+                     (sys:terminal-process-input (terminal-state-process state))
                      (make-transcoder (utf-8-codec) 'none 'replace))])
         (let loop ()
           (let ([character (get-char input)])
@@ -3323,7 +3323,7 @@
 
   (define (write-bytes! state bytes)
     (when (terminal-state-alive state)
-      (let ([output (terminal-process-output (terminal-state-process state))])
+      (let ([output (sys:terminal-process-output (terminal-state-process state))])
         (put-bytevector output bytes)
         (flush-output-port output))))
 
@@ -3512,14 +3512,14 @@
            [state (terminal-of buffer)])
       (when state
         (terminal-state-alive-set! state #f)
-        (close-terminal-process! (terminal-state-process state))
+        (sys:close-terminal-process! (terminal-state-process state))
         (set! terminals (remq state terminals)))))
 
   (define (terminal-close-all!)
     (for-each
       (lambda (state)
         (terminal-state-alive-set! state #f)
-        (close-terminal-process! (terminal-state-process state)))
+        (sys:close-terminal-process! (terminal-state-process state)))
       (list-copy terminals))
     (set! terminals '()))
 
@@ -3661,7 +3661,7 @@
                ;; or PTY setup error.
                (when process
                  (guard (ignored [else (void)])
-                   (close-terminal-process! process)))
+                   (sys:close-terminal-process! process)))
                (when buffer
                  (guard (ignored [else (void)]) (head:detach-app! buffer))
                  (when (eq? (current-buffer) buffer) (show-buffer! prior))
@@ -3687,8 +3687,8 @@
                  [rows (max 1 (car size))]
                  [cols (max 1 (cdr size))])
             (set! process
-              (spawn-terminal-process (terminal-shell) command
-                                      directory rows cols))
+              (sys:spawn-terminal-process (terminal-shell) command
+                                          directory rows cols))
             (set! state
               (blank-terminal-state buffer process rows cols #t))
             (head:set-app-status-position!
@@ -3735,68 +3735,68 @@
                                (cons tail 'italic))))
                    '((" " . #f) ("■" . #f)))))))
     (doc:register!
-      '(((terminal!!)
-         (("procedure" . "(terminal!! [command])")) "void"
+      '(((terminal:open!!)
+         (("procedure" . "(terminal:open!! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f
          "Open a PTY-backed terminal app running `terminal-shell`, or interpret `command` with that shell when supplied. It captures keyboard, paste, and mouse input. C-] suspends capture for one complete global e command -- C-] C-y yanks the kill ring into the terminal as a paste; C-] C-] sends the character literally.")
-        ((terminal-send!)
-         (("procedure" . "(terminal-send! text)")) "void"
+        ((terminal:send!)
+         (("procedure" . "(terminal:send! text)")) "void"
          ("(terminal)") terminal "Terminal" #f
          "Send text to the process in the current terminal buffer.")
-        ((terminal-close!)
-         (("procedure" . "(terminal-close! [buffer])")) "void"
+        ((terminal:close!)
+         (("procedure" . "(terminal:close! [buffer])")) "void"
          ("(terminal)") terminal "Terminal" #f
          "Terminate and detach the process owned by a terminal buffer.")
-        ((terminal-shell)
-         (("parameter" . "(terminal-shell [path])")) "string"
+        ((terminal:shell)
+         (("parameter" . "(terminal:shell [path])")) "string"
          ("(terminal)") terminal "Terminal" #f
          "Get or set the shell used by terminal!!. It defaults to $SHELL, then /bin/sh.")
-        ((make-terminal-emulator)
-         (("procedure" . "(make-terminal-emulator rows columns)"))
+        ((terminal:make-emulator)
+         (("procedure" . "(terminal:make-emulator rows columns)"))
          "terminal-emulator" ("(terminal)") terminal "Terminal" #f
          "Create a headless terminal emulator for tests and structured protocol processing.")
-        ((terminal-emulator-feed!)
-         (("procedure" . "(terminal-emulator-feed! emulator text)")) "void"
+        ((terminal:emulator-feed!)
+         (("procedure" . "(terminal:emulator-feed! emulator text)")) "void"
          ("(terminal)") terminal "Terminal" #f
          "Feed terminal output into a headless emulator.")
-        ((terminal-emulator-resize!)
-         (("procedure" . "(terminal-emulator-resize! emulator rows columns)"))
+        ((terminal:emulator-resize!)
+         (("procedure" . "(terminal:emulator-resize! emulator rows columns)"))
          "void" ("(terminal)") terminal "Terminal" #f
          "Resize a headless terminal emulator, reflowing primary-screen scrollback and preserving its logical cursor.")
-        ((terminal-emulator-screen)
-         (("procedure" . "(terminal-emulator-screen emulator)")) "vector"
+        ((terminal:emulator-screen)
+         (("procedure" . "(terminal:emulator-screen emulator)")) "vector"
          ("(terminal)") terminal "Terminal" #f
          "Return a copy of a headless emulator's visible cell rows.")
-        ((terminal-emulator-styles)
-         (("procedure" . "(terminal-emulator-styles emulator)")) "vector"
+        ((terminal:emulator-styles)
+         (("procedure" . "(terminal:emulator-styles emulator)")) "vector"
          ("(terminal)") terminal "Terminal" #f
          "Return copies of the style rows for a headless emulator's visible cells.")
-        ((terminal-emulator-hyperlinks)
-         (("procedure" . "(terminal-emulator-hyperlinks emulator)")) "vector"
+        ((terminal:emulator-hyperlinks)
+         (("procedure" . "(terminal:emulator-hyperlinks emulator)")) "vector"
          ("(terminal)") terminal "Terminal" #f
          "Return copies of the OSC 8 hyperlink metadata for a headless emulator's visible cells.")
-        ((terminal-emulator-state)
-         (("procedure" . "(terminal-emulator-state emulator)")) "alist"
+        ((terminal:emulator-state)
+         (("procedure" . "(terminal:emulator-state emulator)")) "alist"
          ("(terminal)") terminal "Terminal" #f
          "Return the cursor, dimensions, and active modes of a headless emulator.")
-        ((terminal-emulator-input)
-         (("procedure" . "(terminal-emulator-input emulator event)"))
+        ((terminal:emulator-input)
+         (("procedure" . "(terminal:emulator-input emulator event)"))
          "bytevector or #f" ("(terminal)") terminal "Terminal" #f
          "Encode an editor key event according to a headless emulator's active modes.")
-        ((terminal-emulator-mouse-input)
-         (("procedure" . "(terminal-emulator-mouse-input emulator code x y release?)"))
+        ((terminal:emulator-mouse-input)
+         (("procedure" . "(terminal:emulator-mouse-input emulator code x y release?)"))
          "bytevector or #f" ("(terminal)") terminal "Terminal" #f
          "Encode a mouse event according to a headless emulator's active tracking mode.")
-        ((terminal-emulator-replies)
-         (("procedure" . "(terminal-emulator-replies emulator)")) "list"
+        ((terminal:emulator-replies)
+         (("procedure" . "(terminal:emulator-replies emulator)")) "list"
          ("(terminal)") terminal "Terminal" #f
          "Return protocol replies emitted by a headless emulator.")
-        ((terminal-color-scheme!)
-         (("procedure" . "(terminal-color-scheme! scheme)")) "void"
+        ((terminal:color-scheme!)
+         (("procedure" . "(terminal:color-scheme! scheme)")) "void"
          ("(terminal)") terminal "Terminal" #f
          "Record the host's color scheme (dark, light, or #f for unknown) and report the change to terminal children subscribed with private mode 2031. Wired to the host's own reports at startup.")
-        ((terminal-emulator-unsupported)
-         (("procedure" . "(terminal-emulator-unsupported emulator)")) "list"
+        ((terminal:emulator-unsupported)
+         (("procedure" . "(terminal:emulator-unsupported emulator)")) "list"
          ("(terminal)") terminal "Terminal" #f
          "Return the unsupported-feature signatures a headless emulator has reported, sorted and deduplicated."))))
 

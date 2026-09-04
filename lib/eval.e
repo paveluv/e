@@ -12,13 +12,13 @@
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
 ;; down arrows browse the history, and C-g interrupts a runaway
-;; evaluation. Parameter suggestions are read live from the describe
+;; evaluation. Parameter suggestions are read live from the describe:this
 ;; module's structured entries, with source and arity as fallbacks.
 ;; C-x C-e runs eval! over the whole current buffer, or an explicit
 ;; region/buffer target, in that same top level.
 
 (library (eval)
-  (export init! eval! eval!! eval-copy-result)
+  (export init! (rename (eval! run!)) (rename (eval!! run!!)) (rename (eval-copy-result copy-result)))
   (import (chezscheme) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (head) head:)
@@ -28,13 +28,12 @@
           (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
-          (only (describe) doc-lookup )
+          (prefix (only (describe) lookup) describe:)
           (prefix (doc) doc:)
           (prefix (doc) doc:)
           (only (edit) regions-of region-text)
-          (only (scheme-format) scheme-indent-lines)
-          (only (sys) call-with-streamed-output
-                duplicate-standard-output-port terminal-output-port))
+          (prefix (only (scheme-format) indent-lines) scheme-format:)
+          (prefix (only (sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -132,12 +131,12 @@
                                       (signature-arity best))))
                       (set! best sig)))))
               (doc:forms entry)))
-          (doc-lookup sym))
+          (describe:lookup sym))
         (and best (signature-tokens best)))))
 
   (define (symbol-params sym)
     ;; The parameters of the procedure sym names, as a list of display
-    ;; tokens: from its live describe entry when available, else its source,
+    ;; tokens: from its live describe:this entry when available, else its source,
     ;; else its arity in brackets.  #f for anything else.
     (and (top-level-bound? sym)
          (let ([v (top-level-value sym)])
@@ -328,7 +327,7 @@
     ;; text even when an earlier edit shifts this line left or right.
     (let* ([lines (string:lines text)]
            [v (list->vector lines)]
-           [stops (scheme-indent-lines v 0 (- (vector-length v) 1))]
+           [stops (scheme-format:indent-lines v 0 (- (vector-length v) 1))]
            [before (string:lines (substring text 0 pos))]
            [point-row (- (length before) 1)]
            [point-col (string-length (car (reverse before)))])
@@ -408,16 +407,16 @@
               (lambda ()
                 (let-values ([vals (evaluate-text text)]) vals)))))))
     (let ([lock (make-mutex)]
-          [terminal (duplicate-standard-output-port)])
+          [terminal (sys:duplicate-standard-output-port)])
       (define (record! component line)
-        (parameterize ([terminal-output-port terminal])
+        (parameterize ([sys:terminal-output-port terminal])
           (with-mutex lock (log:add! component line))))
       (dynamic-wind
         void
         (lambda ()
           (values
-            (parameterize ([terminal-output-port terminal])
-              (call-with-streamed-output
+            (parameterize ([sys:terminal-output-port terminal])
+              (sys:call-with-streamed-output
                 (lambda (line) (record! 'stdout line))
                 (lambda (line) (record! 'stderr line))
                 run))
@@ -487,10 +486,10 @@
 
   (define (init!)
     (doc:register!
-      '(((eval!) (("procedure" . "(eval! [where])")) "void"
+      '(((eval:run!) (("procedure" . "(eval:run! [where])")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
-        ((eval!!) (("procedure" . "(eval!!)")) "void"
+        ((eval:run!!) (("procedure" . "(eval:run!!)")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (log:register-formatter! 'eval format-exchange style-exchange)

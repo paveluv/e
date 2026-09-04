@@ -35,7 +35,7 @@
 
 (eval
   `(begin
-     (import (sys) (terminal))
+     (import (prefix (sys) sys:) (prefix (terminal) terminal:))
 
      (define dump-file ,(if (>= (length (command-line)) 2)
                             (cadr (command-line))
@@ -43,12 +43,12 @@
                                    "usage: vttest-drive.ss DUMP-FILE MENU...")))
      (define menus ',(map string->number (cddr (command-line))))
 
-     (define vt (make-terminal-emulator 24 80))
+     (define vt (terminal:make-emulator 24 80))
      (define process
-       (spawn-terminal-process "/bin/sh" "exec vttest -u 24x80.80"
+       (sys:spawn-terminal-process "/bin/sh" "exec vttest -u 24x80.80"
                                (current-directory) 24 80))
      (define from (transcoded-port
-                    (terminal-process-input process)
+                    (sys:terminal-process-input process)
                     (make-transcoder (latin-1-codec) 'none 'replace)))
      (define out (open-output-file dump-file 'replace))
      (define raw (open-file-output-port
@@ -57,7 +57,7 @@
      (define replies-sent 0)
 
      (define (send-bytes! bytes)
-       (let ([port (terminal-process-output process)])
+       (let ([port (sys:terminal-process-output process)])
          (put-bytevector port bytes)
          (flush-output-port port)))
 
@@ -65,7 +65,7 @@
        (send-bytes! (string->utf8 text)))
 
      (define (pump-replies!)
-       (let ([replies (terminal-emulator-replies vt)])
+       (let ([replies (terminal:emulator-replies vt)])
          (let loop ([pending (list-tail replies replies-sent)])
            (unless (null? pending)
              (let* ([text (car pending)]
@@ -84,7 +84,7 @@
              (let ([c (guard (ex [else (eof-object)]) (get-char from))])
                (if (eof-object? c) any
                    (begin (put-u8 raw (bitwise-and (char->integer c) 255))
-                          (terminal-emulator-feed! vt (string c))
+                          (terminal:emulator-feed! vt (string c))
                           (loop #t))))
              any)))
 
@@ -106,7 +106,7 @@
        (put-string out (format "==== frame ~a ~a ====\n" frame label))
        (vector-for-each
          (lambda (line) (put-string out (format "|~a|\n" line)))
-         (terminal-emulator-screen vt))
+         (terminal:emulator-screen vt))
        (flush-output-port out))
 
      (define (screen-contains? part)
@@ -119,7 +119,7 @@
                    (do ([at 0 (+ at 1)]) ((> (+ at m) n))
                      (when (string=? (substring line at (+ at m)) part)
                        (return #t)))))
-               (terminal-emulator-screen vt))
+               (terminal:emulator-screen vt))
              #f))))
 
      (define (at-menu?)
@@ -149,10 +149,10 @@
      (settle!)
      (put-string out "==== unsupported ====\n")
      (for-each (lambda (item) (put-string out (format "~a\n" item)))
-               (terminal-emulator-unsupported vt))
+               (terminal:emulator-unsupported vt))
      (close-port out)
      (close-port raw)
-     (close-terminal-process! process)
+     (sys:close-terminal-process! process)
      (display (format "done: ~a frames, ~a unsupported\n"
                       frame
-                      (length (terminal-emulator-unsupported vt))))))
+                      (length (terminal:emulator-unsupported vt))))))

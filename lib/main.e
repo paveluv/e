@@ -18,7 +18,7 @@
   (export run set-startup-page! (rename (handle-key! dispatch-key!))
           load-config! modules-reload-on-save config-reload-on-save
           set-file-opener! set-quit-command! set-after-key!)
-  (import (chezscheme) (sys)
+  (import (chezscheme) (prefix (sys) sys:)
           (prefix (file) file:)
           (prefix (kernel) kernel:)
           (prefix (head) head:)
@@ -308,7 +308,7 @@
       ;; Mode 2031 subscribes to the host's color-scheme change reports
       ;; and DSR 996 asks for the current one; hosts without the feature
       ;; ignore both.
-      (lambda () (terminal-raw!)
+      (lambda () (sys:terminal-raw!)
         (paint:ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h\x1b;[?996n")
         (tty:mouse-reporting! #t)
         (paint:set-screen-live! #t)
@@ -337,7 +337,7 @@
         (paint:set-screen-live! #f)
         (paint:reset-cursor-style!)
         (paint:ansi "\x1b;[?1002;1006l\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
-        (flush-output-port (terminal-output-port))
-        (terminal-restore!))))
+        (flush-output-port (sys:terminal-output-port))
+        (sys:terminal-restore!))))
 
 ) ;; library (main)

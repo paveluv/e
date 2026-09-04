@@ -4,7 +4,7 @@
 ;; Two layers.  The row painter is the data-in, ANSI-out half: given
 ;; a line, its style vector, the marks/links/selection covering it,
 ;; and the column window to show, emit the minimal styled runs to the
-;; terminal-output-port -- everything passed in, so it tests
+;; sys:terminal-output-port -- everything passed in, so it tests
 ;; headlessly against a string port.  Above it, the window painter
 ;; composes a window from the head's records: soft-wrap geometry,
 ;; gutters and scrollbars, the status line, the highlighter and
@@ -46,8 +46,7 @@
                 eq-hashtable-ref eq-hashtable-set! remq getenv
                 make-mutex with-mutex unbox set-box! parameterize
                 fork-thread sleep make-time)
-          (only (sys) terminal-output-port terminal-character-width
-                terminal-size watch-terminal-resize!)
+          (prefix (only (sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:)
           (prefix (style) style:)
           (prefix (string) string:)
           (prefix (head) head:)
@@ -58,7 +57,7 @@
   ;;; Output primitives ---------------------------------------------------------
 
   (define (ansi . xs)
-    (for-each (lambda (x) (display x (terminal-output-port))) xs))
+    (for-each (lambda (x) (display x (sys:terminal-output-port))) xs))
 
   (define (goto r c)
     (ansi "\x1b;[" (number->string r) ";" (number->string c) "H"))
@@ -695,7 +694,7 @@
               (fold-left
                 (lambda (extra character)
                   (+ extra
-                     (max 0 (- (terminal-character-width character) 1))))
+                     (max 0 (- (sys:terminal-character-width character) 1))))
                 0 (string->list hint-text))]
              [status (format "~a~a~a " head mode-text hint-text)]
              [window-buttons " [↕][↔][×]"])
@@ -792,7 +791,7 @@
 
   ;; C-l also forces a size refresh in case resize events are unavailable.
   (define sigwinch-registered
-    (watch-terminal-resize! (lambda () (set! size-dirty? #t))))
+    (sys:watch-terminal-resize! (lambda () (set! size-dirty? #t))))
 
   (define (env-number name fallback)
     (let* ([s (getenv name)]
@@ -804,7 +803,7 @@
       (set! size-dirty? #f)
       (set! rows (max 4 (env-number "LINES" 24)))
       (set! cols (max 20 (env-number "COLUMNS" 80)))
-      (let ([size (terminal-size)])
+      (let ([size (sys:terminal-size)])
         (when size
           (set! rows (max 4 (car size)))
           (set! cols (max 20 (cdr size)))))))
@@ -1100,7 +1099,7 @@
         (if (= h (echo:height))
             (paint-echo-area!)
             (redraw!)))
-      (flush-output-port (terminal-output-port))))
+      (flush-output-port (sys:terminal-output-port))))
 
   (define (echo-log-prefix e) (echo:log-prefix e cols))
   (define (echo-log-spans prefix-len content)
@@ -1357,7 +1356,7 @@
           (set! cursor-style-shown style)
           (ansi style)))
       (ansi (if visible? "\x1b;[?25h" "\x1b;[?25l"))
-      (flush-output-port (terminal-output-port))))
+      (flush-output-port (sys:terminal-output-port))))
 
   ;;; The frame -----------------------------------------------------------------------
 
@@ -1415,7 +1414,7 @@
       (paint-visual-bell!))
     (place-cursor!)
     (ansi "\x1b;[?2026l")
-    (flush-output-port (terminal-output-port)))
+    (flush-output-port (sys:terminal-output-port)))
 
   (define (redraw!)
     ;; a whole frame, title included, as one transaction
@@ -1431,7 +1430,7 @@
     ;; starting a nested frame here would stop it at BEL before the diagnostic
     ;; bytes which commonly follow.
     (when the-screen-live?
-      (let ([display (terminal-output-port)]
+      (let ([display (sys:terminal-output-port)]
             [generation
              (with-mutex redraw-lock
                (set! visual-bell-generation (+ visual-bell-generation 1))
@@ -1441,7 +1440,7 @@
           (lambda ()
             (sleep (make-time 'time-duration 50000000 0))
             (when the-screen-live?
-              (parameterize ([terminal-output-port display])
+              (parameterize ([sys:terminal-output-port display])
                 (with-mutex redraw-lock
                   ;; A newer bell owns the deadline and must not be cleared by
                   ;; an older animation's expiry.

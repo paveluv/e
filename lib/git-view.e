@@ -1,14 +1,14 @@
 ;; git-view.e -- interactive Git history and patch views.
 
 (library (git-view)
-  (export init! git-log!! git-log-refresh!)
+  (export init! (rename (git-log!! log!!)) (rename (git-log-refresh! refresh!)))
   (import (chezscheme) (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
-          (prefix (keymap) keymap:) (except (git) init!)
+          (prefix (keymap) keymap:) (prefix (git) git:)
           (prefix (doc) doc:))
 
   (define log-buffer #f)
@@ -34,18 +34,18 @@
       [(unmerged) "U"] [else "?"]))
 
   (define (short-hash commit)
-    (substring (git-commit-hash commit) 0
-               (min 10 (string-length (git-commit-hash commit)))))
+    (substring (git:commit-hash commit) 0
+               (min 10 (string-length (git:commit-hash commit)))))
 
   (define (commit-date commit)
     (let ([date (time-utc->date
-                  (make-time 'time-utc 0 (git-commit-time commit)))])
+                  (make-time 'time-utc 0 (git:commit-time commit)))])
       (format "~4,'0d-~2,'0d-~2,'0d"
               (date-year date) (date-month date) (date-day date))))
 
   (define (change-label change)
-    (let ([path (git-diff-path change)]
-          [old (git-diff-original-path change)])
+    (let ([path (git:diff-path change)]
+          [old (git:diff-original-path change)])
       (if old (format "~a -> ~a" old path) path)))
 
   (define (load-log! repo)
@@ -56,21 +56,21 @@
           (set! lines
             (cons (format "~a  ~a  ~a  ~a"
                           (short-hash commit) (commit-date commit)
-                          (pad (git-commit-author-name commit) 20)
-                          (git-commit-subject commit))
+                          (pad (git:commit-author-name commit) 20)
+                          (git:commit-subject commit))
                   lines))
           (for-each
             (lambda (change)
               (set! rows (cons (list 'file commit change) rows))
               (set! lines
                 (cons (format "    ~a  ~a"
-                              (state-letter (git-diff-status change))
+                              (state-letter (git:diff-status change))
                               (change-label change))
                       lines)))
-            (git-commit-files repo commit)))
-        (git-log repo 20))
+            (git:commit-files repo commit)))
+        (git:log repo 20))
       (set! log-rows (reverse rows))
-      (let ([prefix (format "Git log: ~a  " (git-repository-path repo))])
+      (let ([prefix (format "Git log: ~a  " (git:repository-path repo))])
         (set! refresh-column (string-length prefix))
         (set! log-lines
           (cons (string-append prefix refresh-label) (reverse lines))))
@@ -87,11 +87,11 @@
         diff-buffer
         (if selected-patch
             (cons (format "~a  ~a  ~a"
-                          (git-patch-path selected-patch)
-                          (substring (git-patch-commit selected-patch) 0 10)
-                          (git-repository-path repository))
-                  (map git-patch-line-text
-                       (git-patch-lines selected-patch)))
+                          (git:patch-path selected-patch)
+                          (substring (git:patch-commit selected-patch) 0 10)
+                          (git:repository-path repository))
+                  (map git:patch-line-text
+                       (git:patch-lines selected-patch)))
             '("No patch selected")))
       (set! diff-dirty? #f)))
 
@@ -111,8 +111,8 @@
     (let ([row (row-at-point)])
       (when (and row (eq? (car row) 'file))
         (set! selected-patch
-          (git-file-patch repository (cadr row)
-                          (git-diff-path (caddr row))))
+          (git:file-patch repository (cadr row)
+                          (git:diff-path (caddr row))))
         (set! diff-dirty? #t)
         (refresh-diff!)
         (show-buffer! diff-buffer))))
@@ -207,17 +207,17 @@
       (set! log-buffer
         (head:register-app! "*git-log*" refresh-log! handle-log-event!))
       (head:set-app-presentation! log-buffer 1 #t)
-      (mode:choose! log-buffer "git-log"))
+      (mode:choose! log-buffer "git:log"))
     (unless diff-buffer
       (set! diff-buffer (head:register-view! "*git-diff*" refresh-diff!))
       (head:set-app-presentation! diff-buffer 1 #t)
-      (mode:choose! diff-buffer "git-diff")))
+      (mode:choose! diff-buffer "git:diff")))
 
   (define (git-log!! . path)
     (let ([source (if (pair? path) (car path)
                       (or (head:buffer-file (current-buffer)) "."))])
       (ensure-git-buffers!)
-      (set! repository (git-open source))
+      (set! repository (git:open source))
       (load-log! repository)
       (refresh-log!)
       (let ([w (display-buffer! log-buffer)])
@@ -227,18 +227,18 @@
       (void)))
 
   (define (init!)
-    (mode:register! "git-log" '() '() log-styles)
-    (mode:register! "git-diff" '() '() diff-styles)
+    (mode:register! "git:log" '() '() log-styles)
+    (mode:register! "git:diff" '() '() diff-styles)
     ;; A reload after Git was opened reconnects its surviving app buffers;
     ;; ordinary startup remains lazy.
     (when (or (head:buffer-named "*git-log*") (head:buffer-named "*git-diff*"))
       (ensure-git-buffers!))
     (doc:register!
-      '(((git-log!!) (("procedure" . "(git-log!! [path])")) "void"
+      '(((git-view:log!!) (("procedure" . "(git-view:log!! [path])")) "void"
          ("(git-view)") git-view "Git" #f
          "Open the interactive `*git-log*` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
-        ((git-log-refresh!)
-         (("procedure" . "(git-log-refresh!)")) "void"
+        ((git-view:refresh!)
+         (("procedure" . "(git-view:refresh!)")) "void"
          ("(git-view)") git-view "Git" #f
          "Reload commits and changed files in the open `*git-log*` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
     (paint:add-highlighter!

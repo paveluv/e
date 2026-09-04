@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (https))
+     (import (prefix (https) https:))
 
      (define checks 0)
 
@@ -74,31 +74,31 @@
 
      ;; -- framing ------------------------------------------------------
 
-     (check 'content-length-body (https-get (local "/plain")) "hello world")
+     (check 'content-length-body (https:get (local "/plain")) "hello world")
 
-     (check 'chunked-body (https-get (local "/chunked"))
+     (check 'chunked-body (https:get (local "/chunked"))
             "chunk one and chunk2")
 
-     (check 'read-to-close-body (https-get (local "/eof"))
+     (check 'read-to-close-body (https:get (local "/eof"))
             "streamed to eof")
 
-     (check 'redirect-followed (https-get (local "/redirect"))
+     (check 'redirect-followed (https:get (local "/redirect"))
             "hello world")
 
      (check 'error-status-raises
-            (guard (ex [else 'raised]) (https-get (local "/missing")))
+            (guard (ex [else 'raised]) (https:get (local "/missing")))
             'raised)
 
-     (let ([response (https-request 'GET (local "/plain"))])
-       (check 'response-status (https-response-status response) 200)
+     (let ([response (https:request 'GET (local "/plain"))])
+       (check 'response-status (https:response-status response) 200)
        (check 'response-header
-              (cdr (assoc "content-type" (https-response-headers response)))
+              (cdr (assoc "content-type" (https:response-headers response)))
               "text/plain")
-       (check 'response-streams (https-response-text response)
+       (check 'response-streams (https:response-text response)
               "hello world"))
 
      (let ([path (format "/tmp/e-https-download-~a" (getenv "USER"))])
-       (https-download (local "/plain") path)
+       (https:download (local "/plain") path)
        (check 'download-writes-the-body
               (call-with-input-file path get-string-all)
               "hello world")
@@ -106,20 +106,20 @@
 
      ;; -- the same framing through the curl backend --------------------
 
-     (parameterize ([https-backend 'curl])
-       (check 'curl-content-length (https-get (local "/plain"))
+     (parameterize ([https:backend 'curl])
+       (check 'curl-content-length (https:get (local "/plain"))
               "hello world")
-       (check 'curl-dechunks (https-get (local "/chunked"))
+       (check 'curl-dechunks (https:get (local "/chunked"))
               "chunk one and chunk2")
-       (check 'curl-redirect-followed (https-get (local "/redirect"))
+       (check 'curl-redirect-followed (https:get (local "/redirect"))
               "hello world")
        (check 'curl-error-status-raises
-              (guard (ex [else 'raised]) (https-get (local "/missing")))
+              (guard (ex [else 'raised]) (https:get (local "/missing")))
               'raised)
-       (let ([response (https-request 'GET (local "/plain"))])
+       (let ([response (https:request 'GET (local "/plain"))])
          (check 'curl-response-status
-                (https-response-status response) 200)
-         (check 'curl-response-streams (https-response-text response)
+                (https:response-status response) 200)
+         (check 'curl-response-streams (https:response-text response)
                 "hello world")))
 
      (system (format "kill ~a 2>/dev/null" server-pid))
@@ -127,7 +127,7 @@
      ;; -- the TLS connector, against live hosts ------------------------
 
      (define network
-       (guard (ex [else #f]) (https-get "https://example.com/")))
+       (guard (ex [else #f]) (https:get "https://example.com/")))
 
      (if (not network)
          (format #t "~a https checks passed (TLS skipped: no network)\n"
@@ -139,21 +139,21 @@
            ;; expired certificate must fail the connect loudly
            (check 'tls-rejects-wrong-host
                   (guard (ex [else 'rejected])
-                    (https-get "https://wrong.host.badssl.com/")
+                    (https:get "https://wrong.host.badssl.com/")
                     'accepted)
                   'rejected)
            (check 'tls-rejects-expired
                   (guard (ex [else 'rejected])
-                    (https-get "https://expired.badssl.com/")
+                    (https:get "https://expired.badssl.com/")
                     'accepted)
                   'rejected)
-           (parameterize ([https-backend 'curl])
+           (parameterize ([https:backend 'curl])
              (check 'curl-tls-fetches
-                    (> (string-length (https-get "https://example.com/")) 0)
+                    (> (string-length (https:get "https://example.com/")) 0)
                     #t)
              (check 'curl-tls-rejects-wrong-host
                     (guard (ex [else 'rejected])
-                      (https-get "https://wrong.host.badssl.com/")
+                      (https:get "https://wrong.host.badssl.com/")
                       'accepted)
                     'rejected))
            (format #t "~a https checks passed\n" checks)))))

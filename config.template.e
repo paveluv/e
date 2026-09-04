@@ -21,26 +21,26 @@
 
 ;; (main:modules-reload-on-save #t)    ; saving a module source reloads it in place
 ;; (main:config-reload-on-save #t)     ; saving config.e applies it on the spot
-;; (scheme-format-on-save #t)     ; Scheme buffers format as they are saved
+;; (scheme-mode:format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (scroll-margin 8)              ; rows kept between the cursor and the edges
 ;; (scrollbar #f)                 ; #t: show position bars in ordinary buffers
 ;; (scrollbar-position 'right)    ; position bars on the left or right edge
 ;; (line-numbers #f)              ; #t: show line numbers in every untoggled buffer
 ;; (wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
-;; (matching-paren-style 'bold)   ; matched brackets: bold, underline,
+;; (paren:matching-style 'bold)   ; matched brackets: bold, underline,
 ;;                                ; box, or colored -- or design your
 ;;                                ; own marking with the style DSL:
 ;; (set-style! 'matching-paren '(curly-underline (underline-color 208)))
-;; (https-backend 'curl)          ; web requests through curl instead of
+;; (https:backend 'curl)          ; web requests through curl instead of
 ;;                                ; the built-in FFI TLS (default 'native)
-;; (markdown-browser "firefox")   ; command opening a markdown view's
+;; (markdown:browser "firefox")   ; command opening a markdown view's
 ;;                                ; web links (default "xdg-open")
-;; (markdown-view-max-width 120)  ; reading-width cap of markdown views
+;; (markdown:view-max-width 120)  ; reading-width cap of markdown views
 ;;                                ; in wide windows (default 80)
-;; (search-fold-case #t)          ; C-s smart case: all-lowercase needles
+;; (search:fold-case #t)          ; C-s smart case: all-lowercase needles
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)
-;; (eval-copy-result #t)          ; copy non-void eval!/M-x results for C-y
+;; (eval:copy-result #t)          ; copy non-void eval!/M-x results for C-y
 ;; (forward-kill-ring-to-system-clipboard #f)
 ;;                              ; #t: also request an OSC 52 system-clipboard
 ;;                              ; update after kills and copies; the host
@@ -48,13 +48,13 @@
 ;;                              ; so this might not work in every terminal
 ;; (indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
 ;; (mode:add-extension! "scheme" ".foo") ; highlight *.foo as Scheme
-;; (scheme-format-brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
-;; (scheme-tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
-;; (scheme-format-intrusive #f)   ; #t: also fold whitespace and reflow lines
-;; (scheme-format-width 100)      ; target columns for intrusive formatting
-;; (terminal-scrollback 10000)    ; retained shell lines; alternate screens excluded
-;; (terminal-shell "/bin/bash")  ; defaults to $SHELL, then /bin/sh
-;; (terminal-forward-clipboard-to-kill-ring #t)
+;; (scheme-format:brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
+;; (scheme-format:tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
+;; (scheme-format:intrusive #f)   ; #t: also fold whitespace and reflow lines
+;; (scheme-format:width 100)      ; target columns for intrusive formatting
+;; (terminal:scrollback 10000)    ; retained shell lines; alternate screens excluded
+;; (terminal:shell "/bin/bash")  ; defaults to $SHELL, then /bin/sh
+;; (terminal:forward-clipboard-to-kill-ring #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's kill ring
 ;; (min-window-lines 2)           ; squeezed windows keep this many text lines
@@ -67,7 +67,7 @@
 ;;                                ; Full reference: manual/STYLES.md
 ;;                                ; chrome is the editor's grey furniture
 ;;                                ; (prompt labels, log prefixes, ghost text)
-;; (bind-key! "M-l" show-log!)    ; pop the *log* view with one chord
+;; (bind-key! "M-l" log-view:show!)    ; pop the *log* view with one chord
 ;; (bind-key! "C-c s" save!!)     ; arbitrary multi-key chords work
 ;; (unbind-key! "C-v")            ; remove a global binding
 ;; (bind-key! 'isearch "M-i" 'toggle-case) ; rebind a contextual action

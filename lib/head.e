@@ -98,7 +98,7 @@
                 format remq cons* time-second current-time
                 make-weak-eq-hashtable
                 call-with-string-output-port)
-          (only (sys) terminal-isig! duplicate-standard-input-port)
+          (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
           (prefix (kernel) kernel:)
           (prefix (tty) tty:)
           (prefix (state) state:)
@@ -413,7 +413,7 @@
   (define (set-current-keys! keys) (set! the-current-keys keys))
 
   (define (start-input-reader!)
-    (let ([stdin (duplicate-standard-input-port)])
+    (let ([stdin (sys:duplicate-standard-input-port)])
       (fork-thread
         (lambda ()
           (let loop ()
@@ -1466,7 +1466,7 @@
   (define (set-isig! on)
     (unless (eq? on isig-on?)
       (set! isig-on? on)
-      (terminal-isig! on)))
+      (sys:terminal-isig! on)))
 
   (define (call-uninterrupted thunk)
     ;; run thunk as an interaction: C-g is a key while it lasts
