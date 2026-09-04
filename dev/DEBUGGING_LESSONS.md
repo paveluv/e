@@ -27,8 +27,12 @@ interactive suite left its nested shell with `exit`.
 the context binds, starts a binding with, or names as its escape goes to
 the keymaps, and the app's handler sees only the keys its context leaves
 unbound.  The redundant plain `C-y` binding in the terminal context went
-with it (it would have hijacked the child's `C-y`).  The interactive
-suite now runs `C-] M-x` and `C-] C-]` inside the nested shell.
+with it (it would have hijacked the child's `C-y`).  The escaped state's
+presentation had gone in the same refactor -- the `▶ escaped` status hint
+the manual still described, and the editor cursor while escaped -- and
+came back as seat state (`head:escaped-buffer`) the dispatcher sets
+around the escaped sequence.  The interactive suite now runs `C-] M-x`
+and `C-] C-]` inside the nested shell and watches the status hint.
 
 **What generalizes.**
 
