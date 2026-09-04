@@ -11,12 +11,13 @@
 (library (paren)
   (export init! matching-paren-style)
   (import (chezscheme) (core)
+          (prefix (styles) styles:)
           (only (describe) register-descriptions!))
 
   ;; The named looks for the matched pair, in the style DSL. Box draws a
   ;; line above and below the bracket -- the closest widely rendered
   ;; approximation of a frame; a terminal that really draws SGR 51 can
-  ;; have it with (set-style! 'matching-paren '(framed)). Colored uses
+  ;; have it with (styles:set-style! 'matching-paren '(framed)). Colored uses
   ;; the accent violet that also marks choices and resizes.
   (define matching-paren-style-table
     '((underline (underline))
@@ -34,7 +35,7 @@
           (unless hit
             (error 'matching-paren-style
                    "must be underline, box, bold, or colored" name))
-          (set-style! 'matching-paren (cadr hit))
+          (styles:set-style! 'matching-paren (cadr hit))
           name))))
 
   (define (scan-paren b styles-of start-row start-col dir)

@@ -12,7 +12,7 @@
 
 (eval
   '(begin
-     (import (core))
+     (import (core) (only (styles) compile-style))
 
      (define checks 0)
 

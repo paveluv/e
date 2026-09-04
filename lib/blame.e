@@ -16,7 +16,7 @@
 ;; The module holds no truth: overlays are derived from the store's
 ;; subscription events, rebased through every edit like span marks,
 ;; and dropped by resets.  All bookkeeping runs on the main thread
-;; (events marshal through run-on-main!), so there are no locks.
+;; (events marshal through head:run-on-main!), so there are no locks.
 
 (library (blame)
   (export init! blame-at-point! blame-tint-seconds)
@@ -25,6 +25,8 @@
                 box unbox set-box! format make-parameter void
                 fork-thread sleep make-time current-time time-second)
           (prefix (core) core:)
+          (prefix (head) head:)
+          (prefix (styles) styles:)
           (prefix (state) state:)
           (prefix (text) text:)
           (only (describe) register-descriptions!))
@@ -99,7 +101,7 @@
           (lambda ()
             (sleep (make-time 'time-duration 100000000
                               (blame-tint-seconds)))
-            (core:wake-main!))))))
+            (head:wake-main!))))))
 
   (define (capped id entries)
     ;; keep the newest per-buffer-cap overlays of one buffer
@@ -135,7 +137,7 @@
                            acc))))])))
 
   (define (buffer-of-id id)
-    (find (lambda (b) (eqv? (core:buffer-state-id b) id))
+    (find (lambda (b) (eqv? (head:buffer-state-id b) id))
           (core:buffer-list)))
 
   (define (blame-highlights)
@@ -158,7 +160,7 @@
   (define (blame-at-point!)
     ;; who recently wrote the text at point, from the store's log
     (let* ([b (core:current-buffer)]
-           [id (core:buffer-state-id b)]
+           [id (head:buffer-state-id b)]
            [p (core:point)])
       (core:set-message!
         (cond
@@ -182,15 +184,15 @@
     (state:subscribe!
       #f
       (lambda (event)
-        (core:run-on-main! (lambda () (note-event! event)))))
+        (head:run-on-main! (lambda () (note-event! event)))))
     (core:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e
-    (core:set-style! 'blame-1 '((background 17)))   ; deep blue
-    (core:set-style! 'blame-2 '((background 22)))   ; deep green
-    (core:set-style! 'blame-3 '((background 52)))   ; deep red
-    (core:set-style! 'blame-4 '((background 54)))   ; deep purple
-    (core:set-style! 'blame-5 '((background 23)))   ; deep teal
-    (core:set-style! 'blame-6 '((background 58)))   ; olive
+    (styles:set-style! 'blame-1 '((background 17)))   ; deep blue
+    (styles:set-style! 'blame-2 '((background 22)))   ; deep green
+    (styles:set-style! 'blame-3 '((background 52)))   ; deep red
+    (styles:set-style! 'blame-4 '((background 54)))   ; deep purple
+    (styles:set-style! 'blame-5 '((background 23)))   ; deep teal
+    (styles:set-style! 'blame-6 '((background 58)))   ; olive
     (register-descriptions!
       '(((blame-at-point!)
          (("procedure" . "(blame-at-point!)")) "void"

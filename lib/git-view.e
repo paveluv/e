@@ -2,7 +2,9 @@
 
 (library (git-view)
   (export init! git-log!! git-log-refresh!)
-  (import (chezscheme) (core) (except (git) init!)
+  (import (chezscheme) (core)
+          (prefix (head) head:)
+          (prefix (keymap) keymap:) (except (git) init!)
           (only (describe) register-descriptions!))
 
   (define log-buffer #f)
@@ -209,7 +211,7 @@
 
   (define (git-log!! . path)
     (let ([source (if (pair? path) (car path)
-                      (or (buffer-file (current-buffer)) "."))])
+                      (or (head:buffer-file (current-buffer)) "."))])
       (ensure-git-buffers!)
       (set! repository (git-open source))
       (load-log! repository)
@@ -254,4 +256,4 @@
                         (list shadow)))
                   '()))
             '())))
-    (bind-default-key! "C-x g" git-log!!)))
+    (keymap:bind-default-key! "C-x g" git-log!!)))

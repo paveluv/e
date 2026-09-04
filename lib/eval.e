@@ -20,6 +20,8 @@
 (library (eval)
   (export init! eval! eval!! eval-copy-result)
   (import (chezscheme) (core)
+          (prefix (log) log:)
+          (prefix (keymap) keymap:)
           (only (describe) doc-lookup doc-forms register-descriptions!)
           (only (edit) regions-of region-text)
           (only (scheme-format) scheme-indent-lines)
@@ -401,7 +403,7 @@
           [terminal (duplicate-standard-output-port)])
       (define (record! component line)
         (parameterize ([terminal-output-port terminal])
-          (with-mutex lock (log! component line))))
+          (with-mutex lock (log:log! component line))))
       (dynamic-wind
         void
         (lambda ()
@@ -426,7 +428,7 @@
                                     ", "))])
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
-              (log! 'eval (cons query (if void? "#<void>" result)) #f)])
+              (log:log! 'eval (cons query (if void? "#<void>" result)) #f)])
         (when copied? (copy-to-kill-buffer! result))
         (present-log-entries!
           (append output-records (list result-record))
@@ -458,7 +460,7 @@
                                (editor-symbol? (string->symbol label)))]
                             [echo-highlight mx-echo-styles])
                (prompt! "M-x " complete-symbol "("
-                        (box (log-history 'eval car))
+                        (box (log:log-history 'eval car))
                         complete-editor-symbol normalize-input))])
       (when (and s (> (string-length s) 0) (not (string=? s "(")))
         ;; Keep the prompt on screen while its expression evaluates --
@@ -483,6 +485,6 @@
         ((eval!!) (("procedure" . "(eval!!)")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
-    (register-log-formatter! 'eval format-exchange style-exchange)
-    (bind-default-key! "C-x C-e" eval!)
-    (bind-default-key! "M-x" eval!!)))
+    (log:register-log-formatter! 'eval format-exchange style-exchange)
+    (keymap:bind-default-key! "C-x C-e" eval!)
+    (keymap:bind-default-key! "M-x" eval!!)))

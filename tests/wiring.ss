@@ -60,7 +60,7 @@
      ;; ask the editor whether the current buffer's lines equal its
      ;; state twin's, writing the verdict to the probe file
      (define (mirror-agrees? label)
-       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let* ([b (current-buffer)] [id (buffer-state-id b)] [n (buffer-line-count b)]) (and (= n (state:line-count id)) (let all ([i 0]) (or (= i n) (and (string=? (buffer-line b i) (state:line id i)) (all (+ i 1))))))) p)) (quote replace)\r"
+       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let* ([b (current-buffer)] [id (head:buffer-state-id b)] [n (buffer-line-count b)]) (and (= n (state:line-count id)) (let all ([i 0]) (or (= i n) (and (string=? (buffer-line b i) (state:line id i)) (all (+ i 1))))))) p)) (quote replace)\r"
                       probe))
        (pump! 900)
        (equal? (call-with-input-file probe read) #t))
@@ -87,7 +87,7 @@
 
      ;; -- a foreign actor's edit reaches the screen ---------------------------
 
-     (send! "\x1b;xstate:edit! (quote (agent tester)) (buffer-state-id (current-buffer)) (state:revision (buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"AGENT \")\r")
+     (send! "\x1b;xstate:edit! (quote (agent tester)) (head:buffer-state-id (current-buffer)) (state:revision (head:buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"AGENT \")\r")
      (pump! 1200)
      (check 'foreign-edit-lands-on-screen
             (let ([line (screen-line 0)])
@@ -101,13 +101,13 @@
      (check 'typing-after-sync-mirrors (mirror-agrees? 'after) #t)
 
      ;; the foreign edit is on the audit stream
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (cadr entry) (quote state))) (log-entries)) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (cadr entry) (quote state))) (log:log-entries)) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'foreign-edit-audited (call-with-input-file probe read) #t)
 
      ;; the human's cursor is a mark other actors can read
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (equal? (state:mark (quote (head main)) (buffer-state-id (current-buffer)) (quote point)) (point)) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (equal? (state:mark (quote (head main)) (head:buffer-state-id (current-buffer)) (quote point)) (point)) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'point-published-as-mark
@@ -118,7 +118,7 @@
                     probe))
      (pump! 900)
      (let ([row-before (call-with-input-file probe read)])
-       (send! "\x1b;xstate:edit! (quote (agent tester)) (buffer-state-id (current-buffer)) (state:revision (buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"above\" \"\")\r")
+       (send! "\x1b;xstate:edit! (quote (agent tester)) (head:buffer-state-id (current-buffer)) (state:revision (head:buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"above\" \"\")\r")
        (pump! 1200)
        (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (car (point)) p)) (quote replace)\r"
                       probe))
@@ -144,7 +144,7 @@
             #t)
 
      ;; the wake path: a worker-thread edit appears with NO keypress
-     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 400000000 0)) (state:edit! (quote (agent background)) (buffer-state-id (current-buffer)) (state:revision (buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"WOKEN \")))\r")
+     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 400000000 0)) (state:edit! (quote (agent background)) (head:buffer-state-id (current-buffer)) (state:revision (head:buffer-state-id (current-buffer))) (text:make-span 0 0 0 0) (list \"WOKEN \")))\r")
      (pump! 300)                       ; the eval returns; the loop sleeps
      (pump! 1700)                      ; no keys: only the wake can paint
      (check 'foreign-edit-appears-without-a-keypress
@@ -153,7 +153,7 @@
 
      ;; mastery: the core's line cache IS the store's immutable text
 
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let-values ([(text rev) (state:snapshot (buffer-state-id (current-buffer)))]) (eq? text (buffer-lines (current-buffer)))) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let-values ([(text rev) (state:snapshot (head:buffer-state-id (current-buffer)))]) (eq? text (head:buffer-lines (current-buffer)))) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'cache-is-the-store-text
@@ -174,7 +174,7 @@
 
      ;; the scheduling substrate: a marshaled thunk runs with NO
      ;; keypress -- the idle main loop's pump executes it inline
-     (send! (format "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 300000000 0)) (run-on-main! (lambda () (call-with-output-file \"~a\" (lambda (p) (write (quote ran) p)) (quote replace))))))\r"
+     (send! (format "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 300000000 0)) (head:run-on-main! (lambda () (call-with-output-file \"~a\" (lambda (p) (write (quote ran) p)) (quote replace))))))\r"
                     probe))
      (pump! 300)                       ; the eval returns; the loop sleeps
      (pump! 1500)                      ; no keys: the pump must run it
@@ -183,7 +183,7 @@
 
      ;; wake coalescing: a racing burst of foreign edits must land on
      ;; the screen in full -- a wake arriving mid-paint is not lost
-     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 300000000 0)) (let ([id (buffer-state-id (current-buffer))]) (let loop ([i 0]) (when (< i 30) (state:edit! (quote (agent burst)) id (state:revision id) (text:make-span 0 0 0 0) (list \"x\")) (loop (+ i 1))))))\r")
+     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 300000000 0)) (let ([id (head:buffer-state-id (current-buffer))]) (let loop ([i 0]) (when (< i 30) (state:edit! (quote (agent burst)) id (state:revision id) (text:make-span 0 0 0 0) (list \"x\")) (loop (+ i 1))))))\r")
      (pump! 300)
      (pump! 1700)                      ; no keys: only wakes can paint
      (check 'racing-burst-lands-without-a-lost-wake
@@ -197,7 +197,7 @@
      (send! (format "\x1b;xactors:register! (quote (agent rival)) (lambda (m) (call-with-output-file \"~a\" (lambda (p) (write m p)) (quote replace)))\r"
                     probe))
      (pump! 600)
-     (send! "\x1b;xlet ([id (buffer-state-id (current-buffer))]) (dispatch-key! \"M-<\") (dispatch-key! \"C-f\") (dispatch-key! \"C-f\") (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (dispatch-key! \"z\")\r")
+     (send! "\x1b;xlet ([id (head:buffer-state-id (current-buffer))]) (dispatch-key! \"M-<\") (dispatch-key! \"C-f\") (dispatch-key! \"C-f\") (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (dispatch-key! \"z\")\r")
      (pump! 900)
      (check 'losing-actor-hears-the-conflict
             (let ([m (call-with-input-file probe read)])
@@ -210,7 +210,7 @@
      ;; 'region span mark in the store; C-g deactivates and drops it
      (send! "\x1b;<\x0;\x6;\x6;\x6;")   ; M-<, C-@, then three C-f
      (pump! 600)
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (state:mark (quote (head main)) (buffer-state-id (current-buffer)) (quote region))]) (write (list (text:span-start s) (text:span-end s)) p))) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (state:mark (quote (head main)) (head:buffer-state-id (current-buffer)) (quote region))]) (write (list (text:span-start s) (text:span-end s)) p))) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'region-published-as-a-span
@@ -218,7 +218,7 @@
             '((0 . 0) (0 . 3)))
      (send! "\x7;")                     ; C-g: the mark deactivates
      (pump! 600)
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (state:mark (quote (head main)) (buffer-state-id (current-buffer)) (quote region)) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (state:mark (quote (head main)) (head:buffer-state-id (current-buffer)) (quote region)) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'region-dropped-on-quit
@@ -227,7 +227,7 @@
      ;; every window's cursor is published: a split adds a second
      ;; (point . serial) mark, closing it drops the mark
      (define (count-window-points)
-       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (length (filter (lambda (m) (and (pair? (car m)) (eq? (caar m) (quote point)))) (state:marks (quote (head main)) (buffer-state-id (current-buffer))))) p)) (quote replace)\r"
+       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (length (filter (lambda (m) (and (pair? (car m)) (eq? (caar m) (quote point)))) (state:marks (quote (head main)) (head:buffer-state-id (current-buffer))))) p)) (quote replace)\r"
                       probe))
        (pump! 900)
        (call-with-input-file probe read))
@@ -241,7 +241,7 @@
      ;; blame: a rival's edit is attributed at point from the store's
      ;; delta log (the tint itself is visual; the geometry is checked
      ;; in tests/state.ss)
-     (send! "\x1b;xlet ([id (buffer-state-id (current-buffer))]) (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 0 0 2) (list \"BL\"))\r")
+     (send! "\x1b;xlet ([id (head:buffer-state-id (current-buffer))]) (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 0 0 2) (list \"BL\"))\r")
      (pump! 600)
      (send! "\x1b;<")                   ; onto the rival's span
      (pump! 300)
@@ -257,7 +257,7 @@
      ;; so the record reads in true order
      (send! "xyz")
      (pump! 300)
-     (send! "\x1b;xlet ([id (buffer-state-id (current-buffer))]) (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 0 0 0) (list \"r\"))\r")
+     (send! "\x1b;xlet ([id (head:buffer-state-id (current-buffer))]) (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 0 0 0) (list \"r\"))\r")
      (pump! 900)
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([texts (map (lambda (e) (log:format-log-entry e)) (log:log-entries (quote state)))]) (write (let scan ([ts texts]) (cond [(null? ts) (quote missing)] [(and (> (string-length (car ts)) 13) (string=? (substring (car ts) 0 13) \"ui: 3 edits i\")) (quote coalesced)] [else (scan (cdr ts))])) p))) (quote replace)\r"
                     probe))
@@ -268,9 +268,9 @@
      ;; buffer facts are shared truth: a rival setting a property is
      ;; what the head's own accessors read back, and the head's edits
      ;; flip the shared modified flag
-     (send! "\x1b;xstate:set-property! (quote (agent rival)) (buffer-state-id (current-buffer)) (quote file) \"/tmp/rival-owned.txt\"\r")
+     (send! "\x1b;xstate:set-property! (quote (agent rival)) (head:buffer-state-id (current-buffer)) (quote file) \"/tmp/rival-owned.txt\"\r")
      (pump! 900)
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (list (buffer-file (current-buffer)) (state:property (buffer-state-id (current-buffer)) (quote modified))) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (list (head:buffer-file (current-buffer)) (state:property (head:buffer-state-id (current-buffer)) (quote modified))) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'facts-are-shared-truth
@@ -281,7 +281,7 @@
      ;; in this head's list, its rename follows, and its deletion drops
      ;; the record -- even while a window is showing it
      (define (buffer-names)
-       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (map buffer-name (buffer-list)) p)) (quote replace)\r"
+       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (map head:buffer-name (buffer-list)) p)) (quote replace)\r"
                       probe))
        (pump! 900)
        (call-with-input-file probe read))
@@ -327,7 +327,7 @@
 
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (head:buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
                     probe))
      (pump! 1200)
      (check 'minted-session-evals-and-is-fenced

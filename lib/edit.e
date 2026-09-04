@@ -21,6 +21,8 @@
           next-conflict! keep-mine! keep-disk!
           list-buffers!)
   (import (chezscheme) (core)
+          (prefix (head) head:)
+          (prefix (keymap) keymap:)
           (only (describe) register-descriptions!))
 
   ;;; Regions -----------------------------------------------------------------
@@ -62,7 +64,7 @@
                        (region (current-buffer) m (point))
                        (whole-buffer (current-buffer)))))]
           [(region? where) (list where)]
-          [(buffer? where) (list (whole-buffer where))]
+          [(head:buffer? where) (list (whole-buffer where))]
           [(string? where) (list (whole-buffer (buffer where)))]
           [(procedure? where) (regions-of (filter where (buffer-list)))]
           [(list? where) (apply append (map regions-of where))]
@@ -231,9 +233,9 @@
                           (parameterize ([message-source #f]) ; an indicator
                             (set-message! question))
                           (redraw!)     ; the match highlight, not the message
-                          (let* ([event (read-key-event #f)]
+                          (let* ([event (head:read-key-event #f)]
                                  [action (and (not (eof-object? event))
-                                              (key-event-binding
+                                              (keymap:key-event-binding
                                                 'query-replace event))])
                             (case action
                               [(replace)
@@ -248,9 +250,9 @@
                                (loop (car hit) (+ (cdr hit) m))]
                               [(stop) (goto-point! hit)]
                               [(quit-prefix)
-                               (let ([next (read-key-event #f)])
+                               (let ([next (head:read-key-event #f)])
                                  (when (and (not (eof-object? next))
-                                            (eq? (key-event-binding
+                                            (eq? (keymap:key-event-binding
                                                    'query-replace "C-x" next)
                                               'quit-editor))
                                    (quit!!))
@@ -383,21 +385,21 @@
     ;; view refresh on every redraw without mutation hooks throughout core.
     (let* ([current (current-buffer)]
            [listed (sort (lambda (a b)
-                           (string-ci<? (buffer-name a) (buffer-name b)))
+                           (string-ci<? (head:buffer-name a) (head:buffer-name b)))
                          (buffer-list))]
            [view-lines (+ (length listed) 1)]
            [rows (map (lambda (b)
                         (list (string-append
                                 (if (eq? b current) "." " ")
-                                (if (buffer-read-only b) "%" " ")
-                                (if (buffer-modified b) "*" " "))
-                              (buffer-name b)
+                                (if (head:buffer-read-only b) "%" " ")
+                                (if (head:buffer-modified b) "*" " "))
+                              (head:buffer-name b)
                               (number->string
                                 (if (eq? b buffers-view)
                                     view-lines
                                     (buffer-line-count b)))
                               (or (buffer-mode-name b) "")
-                              (let ([f (buffer-file b)])
+                              (let ([f (head:buffer-file b)])
                                 (if f (abbreviate-home f) ""))))
                       listed)]
            [all (cons (list "CRM" "Buffer" "Lines" "Mode" "File") rows)]
@@ -486,7 +488,7 @@
     ;; Global alphabetical traversal, matching the stable order in *buffers*.
     (let* ([current (current-buffer)]
            [listed (sort (lambda (a b)
-                           (string-ci<? (buffer-name a) (buffer-name b)))
+                           (string-ci<? (head:buffer-name a) (head:buffer-name b)))
                          (buffer-list))]
            [tail (memq current listed)])
       (when (and tail (pair? (cdr listed)))
@@ -586,16 +588,16 @@
                             (string-length (buffer-line buffers-view row))
                             'active-shadow)))]
           [else '()])))
-    (bind-default-key! "C-x C-b" list-buffers!)
-    (bind-default-key! "M-S-UP" previous-buffer!)
-    (bind-default-key! "M-S-DOWN" next-buffer!)
-    (bind-default-key! "M-%" replace!!)
-    (bind-default-key! "M-n" next-conflict!)
-    (bind-default-key! "M-m" keep-mine!)
-    (bind-default-key! "M-d" keep-disk!)
+    (keymap:bind-default-key! "C-x C-b" list-buffers!)
+    (keymap:bind-default-key! "M-S-UP" previous-buffer!)
+    (keymap:bind-default-key! "M-S-DOWN" next-buffer!)
+    (keymap:bind-default-key! "M-%" replace!!)
+    (keymap:bind-default-key! "M-n" next-conflict!)
+    (keymap:bind-default-key! "M-m" keep-mine!)
+    (keymap:bind-default-key! "M-d" keep-disk!)
     (for-each
       (lambda (entry)
-        (bind-default-key! 'query-replace (car entry) (cadr entry)))
+        (keymap:bind-default-key! 'query-replace (car entry) (cadr entry)))
       '(("y" replace) ("Y" replace) ("SPC" replace)
         ("n" skip) ("N" skip) ("BACKSPACE" skip)
         ("q" stop) ("RET" stop) ("C-g" stop) ("ESC" stop)
