@@ -28,8 +28,9 @@ connection. `http://` URLs work too, over a plain socket.
 
 ## The transport abstraction
 
-The HTTP client is written against a *channel* -- a record of
-`read!`/`write!`/`close!` procedures over an established byte stream
+The HTTP client is written against a *channel* -- a record of read, write,
+and close procedures (`channel-read!`, `channel-write!`, `channel-close!`)
+over an established byte stream
 -- and obtains secure channels from the `https-connector` parameter:
 
 ```scheme

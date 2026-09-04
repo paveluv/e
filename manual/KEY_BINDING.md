@@ -56,11 +56,14 @@ Named terminal keys are:
 - `UP`, `DOWN`, `LEFT`, `RIGHT`, `HOME`, and `END`
 - `PAGEUP` and `PAGEDOWN`
 
-`PASTE` is the synthetic event used by bracketed paste and can be rebound like
-a global key. `MOUSE` is emitted after the mouse report itself has been handled;
-clicks, drags, releases, and wheel events settle the transient echo area like
-keyboard input. `MOUSE` is primarily an internal event rather than a replacement
-for mouse handling.
+Three pseudo-keys are bindable like any other. `PASTE` is the event a
+bracketed paste produces. `SELF-INSERT` is what an unbound printable
+character resolves to; its binding is the self-inserting command. `MOUSE-CLICK`
+fires in a mode's context after a text click has placed point, so a mode can
+act on the click (the markdown viewer follows links with it). Mouse reports
+themselves are handled before key dispatch: clicks, drags, releases, and
+wheel events act directly and settle the transient echo area like keyboard
+input.
 
 Examples:
 
@@ -230,7 +233,7 @@ inside `init!`:
 
 ```scheme
 (define (init!)
-  (bind-default-key! "M-j" jump-to-definition!))
+  (bind-default-key! "M-j" describe-at-point!))
 ```
 
 Context defaults use the corresponding three-argument form:

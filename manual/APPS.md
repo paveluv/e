@@ -59,7 +59,7 @@ should mean on its own terms:
 ```
 
 A sequence starting with the escape that the context does not bind resolves,
-minus the prefix, in the global map: `C-] C-x C-f` runs `find-file` from
+minus the prefix, in the global map: `C-] C-x C-f` runs `find-file!!` from
 inside a captured terminal.  Multi-key bindings wait for their remaining
 keys, commands keep control through their synchronous prompts, and when the
 command returns the next key goes to the app's handler again.  (The handler
@@ -89,8 +89,8 @@ soft wrapping with `#t` or `#f`; `default` (and omission) follows the ordinary
 window and global setting. A fifth argument selects `block`, `underline`,
 `bar`, or the normal `default` cursor; these explicit shapes are steady.
 Sticky rows, scrollbar geometry, cursor placement,
-mouse hit-testing, and scrolling are handled together by the core and apply
-to every window showing the app. The scrollbar is a position indicator:
+mouse hit-testing, and scrolling are handled together by the head and the
+painter and apply to every window showing the app. The scrollbar is a position indicator:
 it is painted, not dragged -- the wheel, the keyboard, and clicks in the
 text scroll.
 
@@ -100,41 +100,15 @@ select the global side, which defaults to the right. An app's explicit side
 overrides that position. `*buffers*` always enables its bar and follows the
 global side.
 
-## Current and target windows
+## Windows
 
-While an app is active, the current window is the window displaying the app.
-The target window is the window the user was working in immediately before
-entering it. Entering by keyboard, switching buffers, or clicking an already
-visible app all establish the target through the same mechanism.
-
-The target may be another window showing the same app. This makes it easy to
-swap the app to a different window: show the app in the intended target, focus
-the other app window, then make a selection.
-
-When the target window is deleted, the target becomes *ephemeral*. The app
-remembers its buffer but has no window. Its next target action creates a fresh
-window rather than replacing the app or appropriating an unrelated window. If
-the terminal is too small to create one, the action leaves the app and target
-intact and reports the failure.
-
-The public accessors are:
-
-```scheme
-(target-window) ; opaque window token, or #f for an ephemeral app target
-(target-buffer) ; buffer currently associated with that target
-```
-
-Outside an app they return the current window and current buffer.
-
-An app normally performs its primary action with:
-
-```scheme
-(show-buffer-in-target! buffer)
-```
-
-If the target is another window, the app remains focused and that window
-changes buffers. If the target is the app's own window, the selected buffer
-replaces the app.
+There is no notion of an app's "target window": an app acts on the
+selected window, its own included.  A command that shows another buffer
+(`show-buffer!`) replaces the app in the window the user is in; one that
+wants the app to stay visible shows the buffer elsewhere
+(`display-buffer!`).  The window tree is the only source of windows, and
+the user's window commands and mouse gestures move between them as usual
+while an app is focused.
 
 ## The buffers app
 
@@ -145,19 +119,18 @@ Its heading is sticky at the top of every window. The remaining rows scroll
 under it, with the configured edge showing the visible body's position and
 extent.
 
-- Up or `C-p`: move the active row up without changing the target.
-- Down or `C-n`: move the active row down without changing the target.
-- Enter: show the active row's buffer in the target window.
-- Mouse click: select the clicked row and show it immediately without moving
-  keyboard focus from the target window.
+- Up or `C-p`: move the active row up.
+- Down or `C-n`: move the active row down.
+- Enter: show the active row's buffer here -- the list gives way to it.
+- Mouse click: select the clicked row and show its buffer immediately;
+  keyboard focus stays where it was.
 - Mouse wheel: while hovering over the app, move exactly one row per tick and
-  show it immediately without moving keyboard focus.
-- Status-bar click: focus the app window and make the previously focused window
-  its target.
+  show its buffer immediately without moving keyboard focus.
+- Status-bar click: focus the app window.
 
 Status-bar clicks always focus their window; app handlers cannot override
 them. `*buffers*` returns `keep-focus` for content clicks because the click's
-purpose is to change the target rather than enter the app.
+purpose is to switch a buffer, not to enter the app.
 
 Outside the app, `M-Shift-Up` and `M-Shift-Down` switch the current window through the
 same alphabetical buffer list.
@@ -177,11 +150,6 @@ changes appear on redraw.
 While `*buffers*` has focus, its active row uses the `active` face. When focus
 moves to another window, the row for that window's buffer continues to follow
 it dynamically using the subtler `active-shadow` face.
-
-When an app has keyboard focus, the target window's status bar begins with
-`>`. This marker is deliberately part of the status bar rather than app
-content, so it remains visible while navigating and works for every app. An
-ephemeral target has no marker until its next action creates a window.
 
 App cursors are buffer state: multiple windows showing one app mirror the same
 active row. The focused app window paints it with `active`; other windows use

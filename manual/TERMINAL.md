@@ -284,6 +284,6 @@ live in `sys.e`. The PTY session leader directly executes the configured shell,
 adding `-c command` only when a command is supplied; there is no intermediate
 `system()` process, and setup failures are written to the child terminal before
 it exits. Escape parsing, screen state, scrollback, input translation, and the
-app lifecycle live entirely in `terminal.e`; the core contains only the generic
-app sizing, wrapping override, kill hook, key decoding, and thread-safe redraw
-mechanisms used by this and other apps.
+app lifecycle live entirely in `terminal.e`; the seams provide only the generic
+app sizing, wrapping override, kill hook (`head`), key decoding (`tty`), and
+thread-safe redraw (`paint`) used by this and other apps.
