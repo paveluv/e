@@ -11,6 +11,7 @@
 (library (paren)
   (export init! matching-paren-style)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (styles) styles:)
           (only (describe) register-descriptions!))
 
@@ -90,7 +91,7 @@
             '()))))
 
   (define (init!)
-    (add-highlighter! paren-highlights)
+    (paint:add-highlighter! paren-highlights)
     (register-descriptions!
       '(((matching-paren-style)
          (("parameter" . "(matching-paren-style [name])")) "symbol"

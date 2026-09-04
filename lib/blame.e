@@ -25,6 +25,7 @@
                 box unbox set-box! format make-parameter void
                 fork-thread sleep make-time current-time time-second)
           (prefix (core) core:)
+          (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (styles) styles:)
           (prefix (state) state:)
@@ -185,7 +186,7 @@
       #f
       (lambda (event)
         (head:run-on-main! (lambda () (note-event! event)))))
-    (core:add-highlighter! blame-highlights)
+    (paint:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e
     (styles:set-style! 'blame-1 '((background 17)))   ; deep blue
     (styles:set-style! 'blame-2 '((background 22)))   ; deep green

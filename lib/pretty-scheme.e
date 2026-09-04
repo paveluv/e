@@ -17,6 +17,7 @@
 (library (pretty-scheme)
   (export init! pretty-scheme-clusters! pretty-scheme-depth! pretty-scheme-rainbow!)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (keymap) keymap:)
           (only (describe) register-descriptions!))
 
@@ -332,7 +333,7 @@
                     rainbow-styles)
     (keymap:bind-default-key! ")" (lambda () (close! #\))))
     (keymap:bind-default-key! "]" (lambda () (close! #\])))
-    (add-status-hint!
+    (paint:add-status-hint!
       (lambda ()
         (and (pretty-buffer?)
              (let* ([p (point)]

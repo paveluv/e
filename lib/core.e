@@ -10,7 +10,8 @@
 (library (core)
   (export (rename (head:scrollbar scrollbar)
                   (head:scrollbar-position scrollbar-position)
-                  (head:line-numbers line-numbers))
+                  (head:line-numbers line-numbers)
+                  (paint:wrap-lines wrap-lines))
     ;; state, read-only
     current-buffer buffer-list point mark
     buffer-text buffer-clean?
@@ -29,7 +30,7 @@
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
-    resize-window! wrap! wrap-lines scroll-margin
+    resize-window! wrap!  scroll-margin
     line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
@@ -50,10 +51,10 @@
 
     describe-key!!
     register-mode! add-mode-extension! find-mode mode-styles
-    memoize-buffer-analysis add-highlighter! add-hyperlinker!
-    buffer-line-hyperlinks
+    memoize-buffer-analysis
+
     register-indenter! register-formatter!
-    add-status-hint! add-buffer-status-hint!
+
     host-color-scheme add-color-scheme-hook!
     load-module! reload-module! modules-reload-on-save config-reload-on-save
     load-config! indent-on-tab!
@@ -172,9 +173,21 @@
   ;; what the store client needs from the head's owner: how to forget
   ;; a buffer whose twin is gone, how to invalidate the painted screen,
   ;; and how to give an adopted buffer a mode
+  ;; what the painter needs from the mode registry, per buffer: the
+  ;; mode's name, its display transform, its per-row styler, and the
+  ;; memoized line styler
+  (define paint-mode-hooked
+    (paint:set-mode-hook!
+      (lambda (b)
+        (let ([m (buffer-mode b)])
+          (vector (and m (mode-name m))
+                  (and m (mode-render m))
+                  (and m (mode-row-styles m))
+                  (buffer-line-styles b))))))
+
   (define head-client-hooked
     (head:set-client-hooks!
-      (lambda () (invalidate-screen-cache!))
+      (lambda () (paint:invalidate-screen-cache!))
       (lambda (b) (assign-mode! b))))
 
   (define buffers-initialized                              ; most recent first
@@ -195,35 +208,6 @@
 
   (define (replace-layout-window! old replacement)
     (set-layout-root! (head:layout-replace layout-root old replacement)))
-
-  ;; Whether windows soft-wrap by default -- for config.e; a window
-  ;; toggled by hand (wrap!, C-x t) keeps its own setting.
-  (define wrap-lines (make-parameter #t))
-
-  (define (buffer-wrap-setting b)
-    ;; the buffer's wrap fact -- default, #t, #f, clean, or (clean . n)
-    ;; -- a store property, shared by every window and head showing it
-    (head:buffer-fact b 'wrap 'default))
-
-  (define (window-wrapped? w)
-    (let* ([choice (buffer-wrap-setting (head:window-buffer w))]
-           [x (if (eq? choice 'default) (head:window-wrap w) choice)])
-      (if (eq? x 'default) (wrap-lines) x)))
-
-  (define (clean-wrap? w)
-    (let ([x (buffer-wrap-setting (head:window-buffer w))])
-      (or (eq? x 'clean) (and (pair? x) (eq? (car x) 'clean)))))
-
-  (define (wrap-width w)
-    ;; a wrapped row keeps its last column for the \ continuation mark;
-    ;; a clean wrap draws none and uses the full width -- or its own
-    ;; cap: (clean . n) wraps at n columns inside a wider window
-    (let ([x (buffer-wrap-setting (head:window-buffer w))])
-      (max 1 (cond
-               [(and (pair? x) (eq? (car x) 'clean))
-                (min (cdr x) (head:window-content-width w))]
-               [(eq? x 'clean) (head:window-content-width w)]
-               [else (- (head:window-content-width w) 1)]))))
 
   ;; The rest of the editor is written against simple state names: `lines`,
   ;; `point-row`, and so on.  Each name is an identifier macro reading and
@@ -282,7 +266,6 @@
               (if (< hour 12) "AM" "PM")
               salutation)))
 
-  (define editor-name "e")
   ;; The echo area's model lives in the (echo) seam module now: the
   ;; names below are identifier-syntax facades, so half a hundred
   ;; (set! message ...) sites land there unchanged.  Painting, the
@@ -510,7 +493,7 @@
             (not (string=? (buffer-text b) base))
             (list-ref snapshot 4))))
     (set! mark-active? #f)
-    (invalidate-screen-cache!))
+    (paint:invalidate-screen-cache!))
 
   ;; Undo entries are labeled with the user-level action that made them
   ;; -- "insert \"hello\"", "(replace-all! \"xx\" \"yy\")" -- and undo
@@ -587,7 +570,7 @@
                   ;; an older animation's expiry.
                   (when (= generation visual-bell-generation)
                     (set! visual-bell-active? #f)
-                    (invalidate-screen-cache!)
+                    (paint:invalidate-screen-cache!)
                     (update-terminal-title!)
                     (redraw-frame!))))))))))
 
@@ -830,44 +813,44 @@
     ;; where up and down walk a long line's segments (C-a and C-e
     ;; still treat it as one line).  The goal column is visual when
     ;; wrapped.
-    (define wrapped? (window-wrapped? current-window))
+    (define wrapped? (paint:window-wrapped? current-window))
     (define (land! breaks k)
       ;; the goal column within segment k, clamped into it
       (set! point-col
-        (min (+ (segment-start breaks k) goal-col)
-             (segment-close breaks k (string-length (current-line))))))
+        (min (+ (paint:segment-start breaks k) goal-col)
+             (paint:segment-close breaks k (string-length (current-line))))))
     (unless (equal? goal-pos (cons point-row point-col))
       (set! goal-col
         (if wrapped?
-            (let ([breaks (line-breaks current-window (current-line))])
+            (let ([breaks (paint:line-breaks current-window (current-line))])
               (- point-col
-                 (segment-start breaks (segment-of breaks point-col))))
+                 (paint:segment-start breaks (paint:segment-of breaks point-col))))
             point-col)))
     (if wrapped?
         (let step ([n delta])
           (cond
             [(zero? n) (void)]
             [(negative? n)
-             (let* ([breaks (line-breaks current-window (current-line))]
-                    [seg (segment-of breaks point-col)])
+             (let* ([breaks (paint:line-breaks current-window (current-line))]
+                    [seg (paint:segment-of breaks point-col)])
                (cond
                  [(> seg 0)                ; up, within the same line
                   (land! breaks (- seg 1))]
                  [(> point-row 0)          ; onto the line above's last row
                   (set! point-row (- point-row 1))
-                  (let ([breaks (line-breaks current-window
-                                             (current-line))])
+                  (let ([breaks (paint:line-breaks current-window
+                                                   (current-line))])
                     (land! breaks (- (vector-length breaks) 1)))]))
              (step (+ n 1))]
             [else
-             (let* ([breaks (line-breaks current-window (current-line))]
-                    [seg (segment-of breaks point-col)])
+             (let* ([breaks (paint:line-breaks current-window (current-line))]
+                    [seg (paint:segment-of breaks point-col)])
                (cond
                  [(< (+ seg 1) (vector-length breaks))
                   (land! breaks (+ seg 1))]  ; down, within the same line
                  [(< point-row (- (vlen) 1))
                   (set! point-row (+ point-row 1))
-                  (land! (line-breaks current-window (current-line)) 0)]))
+                  (land! (paint:line-breaks current-window (current-line)) 0)]))
              (step (- n 1))]))
         (begin
           (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
@@ -1462,6 +1445,17 @@
                       (+ n 1)
                       n))))))
 
+  ;; the status line shows a merge's conflicts as a hint the files code
+  ;; owns -- painting knows nothing about merges
+  (define conflict-status-hinted
+    (paint:add-buffer-status-hint!
+      (lambda (b active?)
+        (and (assq b merge-reports)
+             (let ([n (buffer-conflict-count b)])
+               (and (> n 0)
+                    (list (cons (format "  ~a conflict~a" n (if (= n 1) "" "s"))
+                                'red))))))))
+
   (define (buffer-has-conflicts? b)
     (> (buffer-conflict-count b) 0))
 
@@ -1630,7 +1624,7 @@
   (define (line-numbers!)
     (let ([b (current-buffer)])
       (head:buffer-line-numbers-setting-set! b (not (head:buffer-line-numbers b)))
-      (invalidate-screen-cache!)
+      (paint:invalidate-screen-cache!)
       (set-message!
         (format "Line numbers ~a" (if (head:buffer-line-numbers b) "on" "off")))))
 
@@ -1837,11 +1831,11 @@
     ;; Toggle (or set) soft-wrapping of long lines in the current window.
     (head:window-wrap-set! current-window
                            (if (pair? on) (car on)
-                             (not (window-wrapped? current-window))))
+                             (not (paint:window-wrapped? current-window))))
     (head:window-left-set! current-window 0)
     (set! goal-pos #f)              ; the goal column changes meaning
     (set! message (format "Wrap ~a"
-                          (if (window-wrapped? current-window) "on" "off")))
+                          (if (paint:window-wrapped? current-window) "on" "off")))
     (void))
 
   (define (resize-window! delta)
@@ -2354,7 +2348,7 @@
 
   (define styles-hook-installed
     (styles:set-styles-changed-hook!
-      (lambda () (invalidate-screen-cache!))))
+      (lambda () (paint:invalidate-screen-cache!))))
 
   ;;; Rendering -------------------------------------------------------------
 
@@ -2363,124 +2357,6 @@
   ;; styled runs.  Frame composition (layout, scrolling, the screen
   ;; cache, redraw!) stays here until head.e.  Facade aliases until
   ;; call sites migrate to paint: prefixes.
-
-  (define (region-span row line-length)
-    ;; The columns of `row` inside the active region, as (start . end), or #f.
-    (and mark-active?
-         (let-values ([(sr sc er ec) (ordered-region)])
-           (cond [(or (< row sr) (> row er)) #f]
-                 [(= sr er) (cons sc ec)]
-                 [(= row sr) (cons sc line-length)]
-                 [(= row er) (cons 0 ec)]
-                 [else (cons 0 line-length)]))))
-
-  ;; Context highlighting is provided by modules: a highlighter, registered
-  ;; with add-highlighter!, is called at every redraw and returns ranges
-  ;; of the current buffer to mark up -- a list of (row start end) or
-  ;; (row start end style) entries, drawn in the current window on top
-  ;; of the syntax styles. A scoped (buffer row start end style) or
-  ;; (window row start end style) entry may decorate inactive buffers or one
-  ;; particular window. Styles: mark (the default) underlines --
-  ;; the paren module matches brackets this way -- while match and
-  ;; match-point are the search's cyan and yellow backgrounds, and active is
-  ;; the selected row in an app. A
-  ;; broken highlighter is ignored for that redraw rather than taking
-  ;; the editor down.
-  ;; Modules may add a status hint: a thunk returning a short string
-  ;; (or #f) appended to the current window's status line -- the
-  ;; pretty-parens mode shows the source paren under point this way.
-  (define status-hints (kernel:make-registry))
-  (define buffer-status-hints (kernel:make-registry))
-
-  (define (add-status-hint! proc)
-    (kernel:registry-add! status-hints proc))
-
-  (define (add-buffer-status-hint! proc)
-    ;; Unlike a conventional status hint, this is evaluated for every painted
-    ;; window as (proc buffer active?) and can therefore describe passive
-    ;; windows too.
-    (kernel:registry-add! buffer-status-hints proc))
-
-  ;; the status line shows a merge's conflicts as a hint the files code
-  ;; owns -- painting knows nothing about merges
-  (define conflict-status-hinted
-    (add-buffer-status-hint!
-      (lambda (b active?)
-        (and (assq b merge-reports)
-             (let ([n (buffer-conflict-count b)])
-               (and (> n 0)
-                    (list (cons (format "  ~a conflict~a" n (if (= n 1) "" "s"))
-                                'red))))))))
-
-  (define (status-hint-values b active?)
-    (let loop ([procs (append (if active? (kernel:registry-items status-hints) '())
-                              (kernel:registry-items buffer-status-hints))]
-               [ordinary (and active? (length (kernel:registry-items status-hints)))]
-               [out '()])
-      (if (null? procs)
-          (reverse out)
-          (let ([value
-                 (guard (ex [else #f])
-                   (let ([v (if (and ordinary (> ordinary 0))
-                                ((car procs))
-                                ((car procs) b active?))])
-                     (cond
-                       [(string? v) (list (cons v #f))]
-                       [(and (pair? v) (string? (car v))) (list v)]
-                       [(and (list? v)
-                             (for-all (lambda (span)
-                                        (and (pair? span)
-                                             (string? (car span))))
-                                      v))
-                        v]
-                       [else #f])))])
-            (loop (cdr procs)
-                  (and ordinary (> ordinary 1) (- ordinary 1))
-                  (if value (append (reverse value) out) out))))))
-
-  (define highlighters (kernel:make-registry))
-
-  (define (add-highlighter! proc)
-    (kernel:registry-add! highlighters proc))
-
-  (define (highlight-ranges)
-    (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
-               '() (kernel:registry-items highlighters)))
-
-  ;; Hyperlinkers produce (start end URI [id]) ranges for one buffer line.
-  ;; They are deliberately separate from visual highlighters: links carry a
-  ;; payload, participate in hit testing, and are also exposed to an upstream
-  ;; terminal through OSC 8. Newer providers take precedence on overlap.
-  (define hyperlinkers (kernel:make-registry))
-
-  (define (add-hyperlinker! proc)
-    (kernel:registry-add! hyperlinkers proc))
-
-  (define (buffer-line-hyperlinks buffer row)
-    (let ([line (buffer-line buffer row)])
-      (fold-left
-        (lambda (links proc)
-          (append
-            (filter (lambda (link)
-                      (paint:valid-hyperlink? link (string-length line)))
-                    (guard (ex [else '()]) (proc buffer row line)))
-            links))
-        (paint:detect-hyperlinks line) (kernel:registry-items hyperlinkers))))
-
-  (define (ranges-on-row ranges w b row current?)
-    (fold-left (lambda (acc r)
-                 (let* ([buffer-scoped? (and (pair? r) (head:buffer? (car r)))]
-                        [window-scoped? (and (pair? r) (head:window? (car r)))]
-                        [scoped? (or buffer-scoped? window-scoped?)]
-                        [range (if scoped? (cdr r) r)])
-                   (if (and (or (and buffer-scoped? (eq? (car r) b))
-                                (and window-scoped? (eq? (car r) w))
-                                (and (not scoped?) current?))
-                            (= (car range) row))
-                       (cons (cdr range) acc)
-                       acc)))
-               '() ranges))
-
 
   (define (window-layout)
     ;; Tile the persistent split tree into the screen minus the echo
@@ -2501,42 +2377,6 @@
   ;; greedily (the last space that fits; a word longer than the width
   ;; breaks mid-word) and memoized per line string and width, like the
   ;; style cache: edits replace line strings, so identity keys it.
-  (define wrap-cache (make-weak-eq-hashtable))
-
-  (define (line-breaks w line)
-    ;; The break table for line in w: a vector of segment starts.
-    (let* ([width (wrap-width w)]
-           [hit (eq-hashtable-ref wrap-cache line '())]
-           [found (assv width hit)])
-      (if found
-          (cdr found)
-          (let ([breaks (paint:compute-breaks line width)])
-            (eq-hashtable-set! wrap-cache line
-                               (cons (cons width breaks) hit))
-            breaks))))
-
-  (define (segment-of breaks col)
-    ;; The segment holding column col.
-    (let loop ([k (- (vector-length breaks) 1)])
-      (if (or (= k 0) (>= col (vector-ref breaks k)))
-          k
-          (loop (- k 1)))))
-
-  (define (segment-start breaks k) (vector-ref breaks k))
-
-  (define (segment-close breaks k len)
-    ;; The last column the cursor may occupy within segment k.
-    (if (< (+ k 1) (vector-length breaks))
-        (- (vector-ref breaks (+ k 1)) 1)
-        len))
-
-  (define (line-segments w line)
-    ;; How many screen rows the line takes in w: 1, or its soft-wrapped
-    ;; segment count.
-    (if (window-wrapped? w)
-        (vector-length (line-breaks w line))
-        1))
-
   (define (page-window! direction fraction)
     ;; Pagination is a viewport operation. Shift its top by the requested
     ;; fraction of the body height in visual rows, clamp at either end, then
@@ -2548,23 +2388,23 @@
            [n (vector-length v)]
            [sticky (min (head:buffer-sticky-lines (current-buffer)) (- n 1))]
            [height (page-size)]
-           [wrapped? (window-wrapped? w)]
+           [wrapped? (paint:window-wrapped? w)]
            [visual-col (if wrapped?
                            (let* ([line (vector-ref v point-row)]
-                                  [breaks (line-breaks w line)])
+                                  [breaks (paint:line-breaks w line)])
                              (- point-col
-                                (segment-start breaks
-                                  (segment-of breaks point-col))))
+                                (paint:segment-start breaks
+                                  (paint:segment-of breaks point-col))))
                            point-col)])
       (define (offset-at target segment)
         (let loop ([row sticky] [offset 0])
           (if (>= row target)
               (+ offset segment)
               (loop (+ row 1)
-                    (+ offset (line-segments w (vector-ref v row)))))))
+                    (+ offset (paint:line-segments w (vector-ref v row)))))))
       (define (position-at offset)
         (let loop ([row sticky] [left offset])
-          (let ([segments (line-segments w (vector-ref v row))])
+          (let ([segments (paint:line-segments w (vector-ref v row))])
             (if (or (= row (- n 1)) (< left segments))
                 (cons row (min left (- segments 1)))
                 (loop (+ row 1) (- left segments))))))
@@ -2572,9 +2412,9 @@
         (let* ([row (car position)]
                [line (vector-ref v row)])
           (if wrapped?
-              (let ([breaks (line-breaks w line)] [seg (cdr position)])
-                (min (+ (segment-start breaks seg) visual-col)
-                     (segment-close breaks seg (string-length line))))
+              (let ([breaks (paint:line-breaks w line)] [seg (cdr position)])
+                (min (+ (paint:segment-start breaks seg) visual-col)
+                     (paint:segment-close breaks seg (string-length line))))
               (min visual-col (string-length line)))))
       (define (land! top-offset point-offset)
         (let ([top (position-at top-offset)]
@@ -2640,7 +2480,7 @@
     ;; explicitly so the next frame asks the renderer for every visible row.
     (unless (head:app-buffer? b)
       (error 'view-invalidate! "not an app or view buffer" b))
-    (invalidate-screen-cache!)
+    (paint:invalidate-screen-cache!)
     b)
 
   (define (point-visible?)
@@ -2657,10 +2497,10 @@
       (let loop ([i (max sticky (head:window-top w))]
                  [n (- (head:window-topseg w))])
         (if (>= i prow)
-            (+ n (if (window-wrapped? w)
-                     (segment-of (line-breaks w (vector-ref v prow)) pcol)
+            (+ n (if (paint:window-wrapped? w)
+                     (paint:segment-of (paint:line-breaks w (vector-ref v prow)) pcol)
                      0))
-            (loop (+ i 1) (+ n (line-segments w (vector-ref v i))))))))
+            (loop (+ i 1) (+ n (paint:line-segments w (vector-ref v i))))))))
 
   ;; The minimal visual distance kept between the cursor and the
   ;; window's top and bottom edges: scrolling starts that early, and
@@ -2678,7 +2518,7 @@
       (cond [(> n height) #t]
             [(>= i (vector-length v)) #f]
             [else (loop (+ i 1)
-                        (+ n (line-segments w (vector-ref v i))))])))
+                        (+ n (paint:line-segments w (vector-ref v i))))])))
 
   (define (scroll-window! w height)
     ;; Clamp w's point to its buffer (edits in another window may have moved
@@ -2696,16 +2536,16 @@
       (head:window-pcol-set! w pcol)
       (unless (or (not (head:app-cursor-visible-in? w))
                   (head:app-manages-window-viewport? w))
-        (if (window-wrapped? w)
-          (let ([pseg (segment-of (line-breaks w (vector-ref v prow))
-                                  pcol)])
+        (if (paint:window-wrapped? w)
+          (let ([pseg (paint:segment-of (paint:line-breaks w (vector-ref v prow))
+                                        pcol)])
             ;; a stale top (edits, toggles) clamps into the buffer
             (head:window-top-set! w
               (max sticky
                    (min (head:window-top w) (- (vector-length v) 1))))
             (head:window-topseg-set!
               w (min (head:window-topseg w)
-                     (- (line-segments w (vector-ref v (head:window-top w)))
+                     (- (paint:line-segments w (vector-ref v (head:window-top w)))
                         1)))
             ;; point above the view: its own segment row becomes the
             ;; top, so moving up scrolls by one visual row, not by the
@@ -2727,7 +2567,7 @@
                     (begin
                       (head:window-top-set! w (- (head:window-top w) 1))
                       (head:window-topseg-set!
-                        w (- (line-segments
+                        w (- (paint:line-segments
                                w (vector-ref v (head:window-top w)))
                              1))))
                 (retreat)))
@@ -2741,7 +2581,7 @@
                              (< (head:window-topseg w) pseg))
                          (view-overflows? w v height))
                 (if (< (+ (head:window-topseg w) 1)
-                       (line-segments w (vector-ref v (head:window-top w))))
+                       (paint:line-segments w (vector-ref v (head:window-top w))))
                     (head:window-topseg-set! w (+ (head:window-topseg w) 1))
                     (begin (head:window-top-set! w (+ (head:window-top w) 1))
                            (head:window-topseg-set! w 0)))
@@ -2763,66 +2603,9 @@
   ;; currently shows; a row is repainted only when its key changes.  Any
   ;; change of view (size, search highlight, window arrangement) discards
   ;; the whole cache.
-  (define screen-cache '#())
   (define screen-live? #f) ; the terminal is ours only between main's
                            ; alternate-screen enter and exit
-  (define cached-view #f)
   (define cursor-style-shown "\x1b;[0 q")   ; DECSCUSR last emitted
-
-  (define (invalidate-screen-cache!) (set! cached-view #f))
-
-  (define (erase-screen!)
-    ;; Blank the terminal and schedule the full repaint -- an actual
-    ;; erase, which also clears the terminal's own selection highlight
-    ;; where an identical overwrite would not.
-    (paint:ansi "\x1b;[2J")
-    (invalidate-screen-cache!))
-
-  (define (paint-dividers! layout)
-    ;; Paint vertical boundaries from the same recursive geometry used for
-    ;; hit testing. Stacked boundaries are the upper leaves' status bars. At
-    ;; an intersection, a spanning stacked split owns the cell and connects
-    ;; its thin horizontal stroke to the divider above with a light `┴`;
-    ;; otherwise the vertical split continues through as a thin stroke.
-    (define (stacked-divider-crosses? x row)
-      (exists (lambda (d)
-                (and (eq? (car d) 'below)
-                     (= row (cadddr d))
-                     (<= (caddr d) x)
-                     (< x (+ (caddr d) (list-ref d 4)))))
-              layout-dividers))
-    (for-each
-      (lambda (divider)
-        (when (eq? (car divider) 'right)
-          (let ([x (caddr divider)] [start (cadddr divider)]
-                [height (list-ref divider 4)])
-            (do ([r start (+ r 1)]) ((>= r (+ start height)))
-              ;; The final row always meets whatever full-width region
-              ;; ends the divider -- the echo area, or a transient
-              ;; pop-up such as completions -- and connects to it.
-              (let ([junction? (or (stacked-divider-crosses? x r)
-                                   (= r (+ start height -1)))])
-                (paint! r x (list 'divider junction?)
-                        (lambda ()
-                          (if junction?
-                              (paint:ansi (styles:style-code 'chrome)
-                                "\x2534;\x1b;[0m")
-                              (paint:ansi (styles:style-code 'chrome)
-                                "\x2502;\x1b;[0m")))))))))
-      layout-dividers))
-
-  (define (paint! row xoff key draw)
-    ;; Repaint the segment of the 0-based screen row starting at
-    ;; column xoff unless it already shows key; a row shared by
-    ;; side-by-side windows caches one key per segment.
-    (let* ([entry (vector-ref screen-cache row)]
-           [hit (and (pair? entry) (assv xoff entry))])
-      (unless (and hit (equal? (cdr hit) key))
-        (paint:ansi "\x1b;[?25l") (paint:goto (+ row 1) (+ xoff 1))
-        (draw)
-        (vector-set! screen-cache row
-          (cons (cons xoff key)
-                (if hit (remq hit entry) (or entry '())))))))
 
   (define (echo-indent-now) (echo:indent-now cols))
 
@@ -2999,10 +2782,10 @@
                 (loop (cdr es) row)
                 (let ([span (car spans)]
                       [wrapped? (pair? (cdr spans))])
-                  (paint! row 0 (list 'echo-log e k span wrapped?)
-                          (lambda ()
-                            (display-echo-log-row prefix text (caddr e) ghost
-                                                  k span wrapped?)))
+                  (paint:paint! row 0 (list 'echo-log e k span wrapped?)
+                    (lambda ()
+                      (display-echo-log-row prefix text (caddr e) ghost
+                                            k span wrapped?)))
                   (rloop (cdr spans) (+ k 1) (+ row 1))))))))
     (when (> echo-live-height 0)
       (let* ([content (string-append message message-ghost)]
@@ -3025,263 +2808,40 @@
                    [lb (if (= line 0)
                            (min (or echo-indent 0) (+ start cut))
                            0)])
-              (paint! row 0
-                      (list 'echo line (substring content start end)
-                        cut lead lb wrapped? (and (echo-highlight) #t)
-                        (and message-styles #t))
-                      (lambda ()
-                        (let ([styles
-                               (or (and (echo-highlight)
-                                     (guard (ex [else #f])
-                                       ((echo-highlight) content)))
-                                 (and message-styles
-                                      (string-prefix? (car message-styles)
-                                                      content)
-                                      (guard (ex [else #f])
-                                        ((cdr message-styles)
-                                         (car message-styles)))))])
-                          (paint:ansi (make-string lead #\space))
-                          (when (> lb 0)
-                            (paint:ansi (styles:style-code 'chrome)
-                              (substring content 0 lb) "\x1b;[0m"))
-                          (if styles
-                            ;; styled runs for the typed part
-                            (paint:emit-runs content styles (+ start lb)
-                                             (+ start cut))
-                            (paint:ansi (substring content (+ start lb)
-                                          (+ start cut))))
-                          (paint:ansi "\x1b;[0m" (styles:style-code 'chrome)
-                            (substring content (+ start cut) end)
-                            "\x1b;[0m"
-                            (make-string
-                              (max 0 (- cols lead (- end start)
-                                        (if wrapped? 1 0)))
-                              #\space)
-                            (if wrapped? "\\" ""))))))
-            (loop (+ line 1) (+ row 1)))))))
-
-  (define (paint-scrollbar! w row k height sticky top total)
-    (let ([side (head:window-scrollbar? w)])
-      (when side
-        (let* ([body-height (max 1 (- height sticky))]
-               [body-total (max 0 (- total sticky))]
-               [thumb-size (if (<= body-total body-height)
-                             body-height
-                             (max 1 (quotient (* body-height body-height)
-                                              body-total)))]
-               [travel (max 0 (- body-height thumb-size))]
-               [scrollable (max 1 (- body-total body-height))]
-               [thumb-start (if (= travel 0) 0
-                              (quotient (* (max 0 (- top sticky)) travel)
-                                        scrollable))]
-               [j (- k sticky)]
-               [thumb? (and (>= j thumb-start)
-                            (< j (+ thumb-start thumb-size)))]
-               [glyph (cond [(< k sticky) " "]
-                        [thumb?
-                         ;; Heavy box drawing stays centered and joins adjacent
-                         ;; thumb rows without seams.
-                         "\x2503;"]
-                        [else "\x2502;"])])
-          (paint! row
-                  (+ (head:window-xoff w)
-                    (if (eq? side 'right) (- (head:window-width w) 1) 0))
-                  (list 'scrollbar glyph)
-                  (lambda ()
-                    (paint:ansi (styles:style-code 'chrome) glyph "\x1b;[0m")))))))
-
-  (define (paint-line-number! row x width line first-segment?)
-    (when (> width 0)
-      (let* ([label (if (and line first-segment?)
-                        (number->string (+ line 1))
-                        "")]
-             [text (string-append
-                     (make-string (max 0 (- width 1 (string-length label)))
-                                  #\space)
-                     label " ")])
-        (paint! row x (list 'line-number text)
+              (paint:paint! row 0
+                (list 'echo line (substring content start end)
+                      cut lead lb wrapped? (and (echo-highlight) #t)
+                      (and message-styles #t))
                 (lambda ()
-                  (paint:ansi (styles:style-code 'chrome) text "\x1b;[0m"))))))
-
-  (define (paint-window! w start height ranges)
-    (let* ([b (head:window-buffer w)]
-           [v (head:buffer-lines b)]
-           [n (vector-length v)]
-           [sticky (min height (head:buffer-sticky-lines b))]
-           [top (max sticky (head:window-top w))]
-           [left (head:window-left w)]
-           [gutter-width (head:window-line-number-width w)]
-           [gutter-x (+ (head:window-xoff w)
-                        (if (eq? (head:window-scrollbar? w) 'left) 1 0))]
-           [content-x (+ gutter-x gutter-width)]
-           [content-width (head:window-content-width w)]
-           [styles-of (buffer-line-styles b)]
-           [mode-tag (let ([m (buffer-mode b)]) (and m (mode-name m)))]
-           [current? (eq? w current-window)])
-      ;; Walk buffer lines from the top -- its first visible segment --
-      ;; a soft-wrapping window painting a long line as successive
-      ;; slices (the same line at successive left offsets), others one
-      ;; row per line.
-      (let loop ([k 0] [i (if (> sticky 0) 0 top)]
-                 [seg (if (> sticky 0) 0 (head:window-topseg w))])
-        (when (< k height)
-          (let ([row (+ start k)])
-            (paint-scrollbar! w row k height sticky top n)
-            (paint-line-number! row gutter-x gutter-width
-                                (and (< i n) i) (= seg 0))
-            (if (< i n)
-                (let* ([line (vector-ref v i)]
-                       [shown (let ([r (let ([m (buffer-mode b)])
-                                         (and m (mode-render m)))])
-                                (or (and r (guard (ex [else #f])
-                                             (let ([t (r b i line)])
-                                               (and (or (and (string? t)
-                                                             (= (string-length t)
-                                                                (string-length line)))
-                                                        (and (vector? t)
-                                                             (= (vector-length t)
-                                                                (string-length line))
-                                                             (for-all string?
-                                                                      (vector->list t))))
-                                                    t))))
-                                    line))]
-                       [wrapped? (and (>= i sticky) (window-wrapped? w))]
-                       [breaks (and wrapped? (line-breaks w line))]
-                       [slice-left (if wrapped?
-                                       (segment-start breaks seg)
-                                       left)]
-                       [bound (if (and wrapped?
-                                       (< (+ seg 1)
-                                          (vector-length breaks)))
-                                  (segment-start breaks (+ seg 1))
-                                  (string-length line))]
-                       [edge (cond
-                               [(and wrapped?
-                                     (< (+ seg 1) (vector-length breaks)))
-                                (if (clean-wrap? w) #f 'wrap)]
-                               [(and (not wrapped?)
-                                     (> (string-length line)
-                                        (+ left content-width)))
-                                'trunc]    ; it continues past the edge: $
-                               [else #f])]
-                       [span (and current? (region-span i (string-length line)))]
-                       [marks (ranges-on-row ranges w b i current?)]
-                       [links (buffer-line-hyperlinks b i)])
-                  (let ([row-styles
-                         (let ([m (buffer-mode b)])
-                           (and m (mode-row-styles m)
-                                (guard (ex [else #f])
-                                  ((mode-row-styles m) b i line))))])
-                    (paint! row content-x
-                            (list i line shown span marks links slice-left
-                                  mode-tag row-styles edge)
-                            (lambda ()
-                              (paint:display-editor-line line shown span marks links
-                                                         slice-left
-                                                         (or row-styles
-                                                           (styles-of line))
-                                                         edge
-                                                         content-width
-                                                         bound))))
-                  (if (and (>= i sticky)
-                           (< (+ seg 1) (line-segments w line)))
-                      (loop (+ k 1) i (+ seg 1))
-                      (loop (+ k 1)
-                            (if (= (+ k 1) sticky) top (+ i 1)) 0)))
-                (begin
-                  (paint! row content-x '(empty)
-                          (lambda () (paint:ansi (paint:fit "" content-width))))
-                  (loop (+ k 1) (+ i 1) 0))))))
-      (let* ([head-prefix
-              (format "~a~a~a  "
-                      " "
-                      (cond [(head:buffer-stale b) "!!"]
-                            [(head:view-buffer? b) "[]"]
-                            [(head:buffer-read-only b) "%%"]
-                            [(head:buffer-modified b) "**"]
-                            [else "--"])
-                      editor-name)]
-             [name (head:buffer-name b)]
-             [app-position
-              (let* ([a (head:app-of b)]
-                     [position (and a (head:app-status-position a))])
-                (and position
-                     (guard (ex [else #f]) (position b))))]
-             [status-row (if (pair? app-position)
-                             (car app-position) (head:window-prow w))]
-             [status-col (if (pair? app-position)
-                             (cdr app-position) (head:window-pcol w))]
-             [head (format "~a~a  L~a C~a"
-                           head-prefix name
-                           (+ status-row 1) (+ status-col 1))]
-             [mode-text (if mode-tag (format "  (~a)" mode-tag) "")]
-             [hint-values (status-hint-values b current?)]
-             [hint-text (apply string-append (map car hint-values))]
-             [hint-wide-extra
-              (fold-left
-                (lambda (extra character)
-                  (+ extra
-                     (max 0 (- (terminal-character-width character) 1))))
-                0 (string->list hint-text))]
-             [status (format "~a~a~a " head mode-text hint-text)]
-             [window-buttons " [↕][↔][×]"])
-        (let ([stale? (head:buffer-stale b)])
-          (paint! (+ start height) (head:window-xoff w)
-                  (list 'status status current? stale?)
-                  (lambda ()
-                    ;; Reversed cells take the bar's shade from the
-                    ;; foreground color, so full reverse tracks the
-                    ;; terminal's scheme (dark bar on light, light on
-                    ;; dark) and an explicit mid grey marks inactive
-                    ;; on either -- dim, the old marker, vanishes in
-                    ;; reverse on light schemes.
-                    (let* ([bar (cond [current? "\x1b;[7m"]
-                                      [else "\x1b;[7;38;5;245m"])]
-                           [fg (cond [current? "\x1b;[39m"]
-                                     [else "\x1b;[38;5;245m"])]
-                           [content-width
-                            (max 0 (- (head:window-width w)
-                                      (string-length window-buttons)
-                                      hint-wide-extra))]
-                           [text (string-append (paint:fit status content-width)
-                                                window-buttons)]
-                           [n (string-length text)]
-                           [cs (min (string-length head) content-width)]
-                           [ns (min (string-length head-prefix) content-width)]
-                           [ne (min (+ ns (string-length name)) content-width)]
-                           [hs (min (+ (string-length head)
-                                       (string-length mode-text))
-                                    content-width)]
-                           [he (min (+ hs (string-length hint-text))
-                                    content-width)]
-                           [normal-start
-                            (if stale? (min 3 content-width) 0)])
-                      (paint:ansi bar)
-                      (when stale?
-                        ;; the !! flag in red, the rest as usual
-                        (paint:ansi "\x1b;[31m" (substring text 0 normal-start)
-                          fg))
-                      (paint:ansi (substring text normal-start ns)
-                        "\x1b;[1m" (substring text ns ne)
-                        "\x1b;[22m" (substring text ne cs))
-                      (paint:ansi (substring text cs hs))
-                      (let loop ([values hint-values] [at hs])
-                        (when (and (pair? values) (< at he))
-                          (let* ([value (car values)]
-                                 [end (min (+ at (string-length (car value)))
-                                           he)])
-                            (case (cdr value)
-                              [(italic) (paint:ansi "\x1b;[3m")]
-                              [(red) (paint:ansi "\x1b;[31m")])
-                            (paint:ansi (substring text at end))
-                            (case (cdr value)
-                              [(italic) (paint:ansi "\x1b;[23m")]
-                              [(red) (paint:ansi fg)])
-                            (loop (cdr values) end))))
-                      (paint:ansi (substring text he content-width)
-                        "\x1b;[1m"
-                        (substring text content-width n)
-                        "\x1b;[0m"))))))))
+                  (let ([styles
+                         (or (and (echo-highlight)
+                                  (guard (ex [else #f])
+                                    ((echo-highlight) content)))
+                             (and message-styles
+                                  (string-prefix? (car message-styles)
+                                                  content)
+                                  (guard (ex [else #f])
+                                    ((cdr message-styles)
+                                     (car message-styles)))))])
+                    (paint:ansi (make-string lead #\space))
+                    (when (> lb 0)
+                      (paint:ansi (styles:style-code 'chrome)
+                                  (substring content 0 lb) "\x1b;[0m"))
+                    (if styles
+                        ;; styled runs for the typed part
+                        (paint:emit-runs content styles (+ start lb)
+                                         (+ start cut))
+                        (paint:ansi (substring content (+ start lb)
+                                      (+ start cut))))
+                    (paint:ansi "\x1b;[0m" (styles:style-code 'chrome)
+                                (substring content (+ start cut) end)
+                                "\x1b;[0m"
+                                (make-string
+                                  (max 0 (- cols lead (- end start)
+                                           (if wrapped? 1 0)))
+                                  #\space)
+                                (if wrapped? "\\" ""))))))
+            (loop (+ line 1) (+ row 1)))))))
 
   (define (echo-cap)
     ;; How tall the whole echo area may grow: everything but each
@@ -3439,20 +2999,18 @@
                        ;; topology as part of the view and discard those
                        ;; incompatible segment keys when buffers are switched.
                        (map (lambda (w)
-                              (list (window-wrapped? w)
+                              (list (paint:window-wrapped? w)
                                     (head:window-scrollbar? w)
                                     (head:window-line-number-width w)
                                     (head:buffer-sticky-lines (head:window-buffer w))))
                             windows))])
       (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                 layout)
-      (unless (equal? view cached-view)
-        (set! screen-cache (make-vector rows #f))
-        (set! cached-view view))
-      (paint-dividers! layout)
-      (let ([ranges (highlight-ranges)])
+      (paint:begin-frame! view rows)
+      (paint:paint-dividers! layout)
+      (let ([ranges (paint:highlight-ranges)])
         (for-each (lambda (entry)
-                    (paint-window! (car entry) (cadr entry) (caddr entry) ranges))
+                    (paint:paint-window! (car entry) (cadr entry) (caddr entry) ranges))
                   layout))
       (paint-echo-area!)
       (paint-visual-bell!))
@@ -3496,13 +3054,13 @@
                            (+ (cadr entry) prow 1)
                            (+ (cadr entry) sticky
                               (rows-before w prow pcol) 1))])
-      (if (and (>= prow sticky) (window-wrapped? w))
+      (if (and (>= prow sticky) (paint:window-wrapped? w))
           (cons screen-row
-                (let ([breaks (line-breaks
+                (let ([breaks (paint:line-breaks
                                 w (vector-ref
                                     (head:buffer-lines (head:window-buffer w)) prow))])
                   (+ x
-                     (- pcol (segment-start breaks (segment-of breaks pcol)))
+                     (- pcol (paint:segment-start breaks (paint:segment-of breaks pcol)))
                      1)))
           (cons screen-row (+ x (- pcol (head:window-left w)) 1)))))
 
@@ -3617,7 +3175,7 @@
   ;; a paged candidate list says which page it shows -- as a status
   ;; hint the completion code owns, not a case inside the painter
   (define completions-status-hinted
-    (add-buffer-status-hint!
+    (paint:add-buffer-status-hint!
       (lambda (b active?)
         (and (eq? b completions-buffer) (> completions-pages 1)
              (list (cons (format "  page ~a/~a"
@@ -4253,7 +3811,7 @@
       (cond
         [(< k sticky)
          (cons (min k (- (vector-length v) 1)) col)]
-        [(window-wrapped? w)
+        [(paint:window-wrapped? w)
          (let loop ([i (max sticky (head:window-top w))]
                     [k (+ (- k sticky) (head:window-topseg w))])
            (if (>= i (vector-length v))
@@ -4263,12 +3821,12 @@
                ;; from the final rendered line.
                (cons i col)
                (let* ([line (vector-ref v i)]
-                      [breaks (line-breaks w line)]
+                      [breaks (paint:line-breaks w line)]
                       [segs (vector-length breaks)])
                  (if (< k segs)
-                     (cons i (min (+ (segment-start breaks k) col)
-                                  (segment-close breaks k
-                                                 (string-length line))))
+                     (cons i (min (+ (paint:segment-start breaks k) col)
+                                  (paint:segment-close breaks k
+                                                       (string-length line))))
                      (loop (+ i 1) (- k segs))))))]
         [else
          (cons (+ (max sticky (head:window-top w)) (- k sticky))
@@ -4541,7 +4099,7 @@
   (define (end-of-line!) (set! point-col (string-length (current-line))))
   (define (keyboard-quit!) (set! mark-active? #f) (set! message "Quit"))
   (define (redraw-command!)
-    (set! size-dirty? #t) (erase-screen!) (set! message "Screen redrawn"))
+    (set! size-dirty? #t) (paint:erase-screen!) (set! message "Screen redrawn"))
   (define (open-line!)
     (let ([row point-row] [col point-col])
       (newline!) (set! point-row row) (set! point-col col)))
@@ -4786,7 +4344,7 @@
       (lambda (name)
         (load-config!)              ; the settings reapply on top
         (refresh-buffer-modes!)
-        (invalidate-screen-cache!)
+        (paint:invalidate-screen-cache!)
         (set! message (format "Reloaded ~a" name)))))
 
   (define (refresh-buffer-modes!)
@@ -4859,7 +4417,7 @@
            (begin
              (kernel:retract-module! 'config)
              ;; a recolor must repaint rows cached under the old codes
-             (invalidate-screen-cache!)
+             (paint:invalidate-screen-cache!)
              (guard (ex [else (parameterize ([message-source 'config])
                                 (set-message!
                                   (format "Error in config.e: ~a"
@@ -4868,7 +4426,7 @@
                (parameterize ([kernel:registering-module 'config])
                  (load path))
                (refresh-buffer-modes!)
-               (invalidate-screen-cache!)
+               (paint:invalidate-screen-cache!)
                #t)))))
 
   (define (reload-on-save! path)
