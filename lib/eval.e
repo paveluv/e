@@ -20,6 +20,7 @@
 (library (eval)
   (export init! eval! eval!! eval-copy-result)
   (import (chezscheme) (core)
+          (prefix (head) head:)
           (prefix (modes) modes:)
           (prefix (kernel) kernel:)
           (prefix (strings) strings:)
@@ -396,9 +397,9 @@
     ;; Evaluation is one undo step in every buffer it edits, and C-g can
     ;; interrupt it whether it came from M-x or eval!.
     (define (run)
-      (guard (ex [(interrupted? ex) "interrupted"]
+      (guard (ex [(head:interrupted? ex) "interrupted"]
                  [else (format "error: ~a" (kernel:condition-text ex))])
-        (call-with-interrupt
+        (head:call-with-interrupt
           (lambda ()
             (call-as-one-edit! label
               (lambda ()

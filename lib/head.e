@@ -28,6 +28,8 @@
           buffer-state-id buffer-state-id-set!
           buffer-state-rev buffer-state-rev-set!
           buffers set-buffers!
+          kill-ring set-kill-ring! read-paste set-pending-paste!
+          call-uninterrupted call-with-interrupt interrupted? make-interrupted
           make-window window?
           window-buffer window-buffer-set!
           window-top window-top-set!
@@ -88,12 +90,12 @@
           app-cursor-visible?-set! app-status-position
           app-status-position-set! make-app app?)
   (import (rnrs) (rnrs r5rs)
-          (only (chezscheme)
+          (only (chezscheme) keyboard-interrupt-handler
                 make-parameter make-mutex with-mutex fork-thread void
                 format remq cons* time-second current-time
                 make-weak-eq-hashtable
                 call-with-string-output-port)
-          (only (sys) duplicate-standard-input-port)
+          (only (sys) terminal-isig! duplicate-standard-input-port)
           (prefix (kernel) kernel:)
           (prefix (tty) tty:)
           (prefix (state) state:)
@@ -173,6 +175,18 @@
   (define (set-windows! ws) (set! the-windows ws))
   (define (root) the-root)
   (define (set-root! node) (set! the-root node))
+
+  ;; The seat's kill ring: one string, the last kill; commands and
+  ;; prompts read and replace it.
+  (define the-kill-ring "")
+  (define (kill-ring) the-kill-ring)
+  (define (set-kill-ring! s) (set! the-kill-ring s))
+
+  ;; The text of the bracketed paste just consumed: the pump's paste
+  ;; handler stashes it, the PASTE key's command reads it.
+  (define pending-paste "")
+  (define (read-paste) pending-paste)
+  (define (set-pending-paste! text) (set! pending-paste text))
   (define (current) the-current)
   (define (set-current! w) (set! the-current w))
   (define (dividers) the-dividers)
@@ -1371,4 +1385,50 @@
                   (set-window-buffer! w (car the-buffers))))
               the-windows))
 
+
+  ;;; Interruptible execution -----------------------------------------------------------
+
+  ;; A runaway computation run on the user's behalf (an M-x expression, a
+  ;; shell command, ...) would freeze the editor, so for its duration the
+  ;; terminal turns C-g into SIGINT (outside it the editor runs with
+  ;; signals off), and SIGINT becomes a raised condition, answering #t to
+  ;; interrupted?, that unwinds the computation -- C-g aborts an
+  ;; evaluation just as it cancels a prompt.  Limitation: only running
+  ;; Scheme can be interrupted this way -- a blocking foreign call runs
+  ;; to completion.
+  (define-condition-type &interrupted &serious make-interrupted interrupted?)
+
+  ;; Interaction owns C-g; interruption applies to computation.  While
+  ;; the editor waits for the user -- a prompt, a key query, a search --
+  ;; isig is off and C-g arrives as an ordinary key the interaction
+  ;; handles, so a command cancels the same way however it was invoked;
+  ;; between interactions an evaluation is interruptible.
+  (define isig-on? #f)
+
+  (define (set-isig! on)
+    (unless (eq? on isig-on?)
+      (set! isig-on? on)
+      (terminal-isig! on)))
+
+  (define (call-uninterrupted thunk)
+    ;; run thunk as an interaction: C-g is a key while it lasts
+    (let ([old isig-on?])
+      (dynamic-wind
+        (lambda () (set-isig! #f))
+        thunk
+        (lambda () (set-isig! old)))))
+
+  (define (call-with-interrupt thunk)
+    ;; Run thunk interruptibly by C-g.
+    (let ([saved (keyboard-interrupt-handler)]
+          [old isig-on?])
+      (dynamic-wind
+        (lambda ()
+          (keyboard-interrupt-handler
+            (lambda () (raise (make-interrupted))))
+          (set-isig! #t))
+        thunk
+        (lambda ()
+          (set-isig! old)
+          (keyboard-interrupt-handler saved)))))
 )
