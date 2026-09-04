@@ -25,8 +25,8 @@ Returning to a buffer restores the position remembered by that window.
 App cursors are deliberately shared buffer state. Multiple windows showing the
 same app therefore mirror its active row; see [App buffers](APPS.md).
 
-Every window has a status line. It begins with the window's number and a bar,
-`0|`, then the state marker:
+Every window has a status line. It begins with the window's number and a thin
+vertical line, `0▏`, then the state marker:
 
 | Marker | Meaning |
 |---|---|

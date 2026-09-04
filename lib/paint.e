@@ -665,7 +665,10 @@
                   (paint! row content-x '(empty)
                           (lambda () (ansi (fit "" content-width))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let* ([number (format "~a|" (head:window-index w))]
+      ;; the window's number, then a hairline flush against it (U+258F,
+      ;; the left one-eighth block: single width, in every monospace
+      ;; font's block range) so the gap falls after the line, not before
+      (let* ([number (format "~a\x258F;" (head:window-index w))]
              [head-prefix
               (format "~a~a~a  "
                       number

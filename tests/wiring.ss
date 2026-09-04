@@ -381,13 +381,13 @@
      (send! "\x1b;xwindow 2\r")
      (pump! 900)
      (check 'windows-print-as-their-literal (echo-has? "=> (window 2)") #t)
-     ;; and the number leads every status line, a bar after it
+     ;; and the number leads every status line, a hairline after it
      (check 'status-lines-lead-with-the-number
             (let scan ([row 0])
               (cond [(> row 23) #f]
                     [(let ([line (screen-line row)])
                        (and (>= (string-length line) 2)
-                            (string=? (substring line 0 2) "0|")))
+                            (string=? (substring line 0 2) "0\x258F;")))
                      #t]
                     [else (scan (+ row 1))]))
             #t)
