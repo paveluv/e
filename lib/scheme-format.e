@@ -26,7 +26,7 @@
   (export scheme-indent-lines scheme-format-lines scheme-delimiter?
           scheme-format-brackets scheme-tab-width
           scheme-format-intrusive scheme-format-width)
-  (import (chezscheme))
+  (import (chezscheme) (prefix (strings) strings:))
 
   ;; Configuration: bracket convention, tab expansion, and the opt-in
   ;; width-aware layout pass.
@@ -39,13 +39,6 @@
         (unless (and (integer? width) (exact? width) (>= width 20))
           (error 'scheme-format-width "expected an integer >= 20" width))
         width)))
-
-  (define (string-prefix? prefix s)
-    (let ([np (string-length prefix)])
-      (and (<= np (string-length s))
-           (string=? prefix (substring s 0 np)))))
-
-  (define (string-tail s i) (substring s i (string-length s)))
 
   (define (string-find s needle)
     (let ([n (string-length s)] [m (string-length needle)])
@@ -81,7 +74,7 @@
 
   (define (special-operator? tok)
     (or (hashtable-ref specials tok #f)
-        (exists (lambda (p) (string-prefix? p tok)) special-prefixes)))
+        (exists (lambda (p) (strings:prefix? p tok)) special-prefixes)))
 
   (define binding-forms
     ;; Forms whose bindings list holds [bracketed] clauses.
@@ -337,7 +330,7 @@
   (define (reindent s col)
     ;; s with its leading whitespace replaced by col spaces.
     (string-append (make-string col #\space)
-                   (string-tail s (indent-of s))))
+                   (strings:tail s (indent-of s))))
 
   (define (trim-right s)
     (let loop ([n (string-length s)])
@@ -559,7 +552,7 @@
                      [candidate
                       (and current
                            (string-append current " "
-                             (string-tail line (indent-of line))))]
+                             (strings:tail line (indent-of line))))]
                      [join? (and current (> depth 0) (not protected?)
                                  (not next-protected?) (not (blank? line))
                                  (<= (string-length candidate) width))])
@@ -596,7 +589,7 @@
                     (break-layout-line
                       (string-append
                         (make-string (+ (indent-of s) 2) #\space)
-                        (string-tail s (+ at 1)))
+                        (strings:tail s (+ at 1)))
                       width))))))
 
   (define (lines-text lines)

@@ -39,7 +39,7 @@
           https-connector https-timeout https-backend
           make-channel channel-read! channel-write! channel-close!
           tcp-connect tls-connect)
-  (import (chezscheme))
+  (import (chezscheme) (prefix (strings) strings:))
 
   ;;; Foreign library loading ---------------------------------------------
 
@@ -421,8 +421,8 @@
   (define (parse-url url)
     ;; -> (values secure? host port path)
     (define (split-scheme)
-      (cond [(string-prefix? "https://" url) (values #t 8 443)]
-            [(string-prefix? "http://" url) (values #f 7 80)]
+      (cond [(strings:prefix? "https://" url) (values #t 8 443)]
+            [(strings:prefix? "http://" url) (values #f 7 80)]
             [else (error 'https "expected an http(s) URL" url)]))
     (let-values ([(secure? start default-port) (split-scheme)])
       (let* ([slash (let scan ([i start])
@@ -445,10 +445,6 @@
                                  (string-length authority)))
                     default-port)
                 path))))
-
-  (define (string-prefix? prefix s)
-    (and (>= (string-length s) (string-length prefix))
-         (string=? (substring s 0 (string-length prefix)) prefix)))
 
   (define-record-type https-response
     (fields status headers port channel)
@@ -809,7 +805,7 @@
                 (header-ref (https-response-headers response) "location"))
            => (lambda (location)
                 (https-close! response)
-                (fetch (if (string-prefix? "http" location)
+                (fetch (if (strings:prefix? "http" location)
                            location
                            (let-values ([(secure? host port path)
                                          (parse-url url)])

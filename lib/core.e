@@ -72,7 +72,7 @@
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
     set-message!
-    current-message prompt-active? redraw! error-text mouse!
+    current-message prompt-active? redraw! mouse!
     present-log-entry! present-log-entries!
 
 
@@ -87,8 +87,7 @@
 
     publish-descriptions! published-descriptions
     call-with-interrupt call-uninterrupted interrupted?
-    vector-fill-range! string-search
-    string-tail string-prefix? string-suffix? string-join split-lines
+    vector-fill-range!
     ;; the editor itself
     main)
   ;; The editor defines a few names Chez also exports (the buffer record's
@@ -101,7 +100,7 @@
           (prefix (log) log:) (prefix (styles) styles:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
-          (prefix (paint) paint:))
+          (prefix (paint) paint:) (prefix (strings) strings:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -316,89 +315,11 @@
 
   ;;; Small utilities -------------------------------------------------------
 
-  (define (string-tail s i) (substring s i (string-length s)))
-
   (define (string-insert s at addition)
-    (string-append (substring s 0 at) addition (string-tail s at)))
+    (string-append (substring s 0 at) addition (strings:tail s at)))
 
   (define (string-delete s from to)
-    (string-append (substring s 0 from) (string-tail s to)))
-
-  (define (error-text ex)
-    (if (condition? ex)
-        (with-output-to-string (lambda () (display-condition ex)))
-        (format "~a" ex)))
-
-  (define (string-suffix? suffix s)
-    (let ([n (string-length s)] [m (string-length suffix)])
-      (and (>= n m) (string=? (substring s (- n m) n) suffix))))
-
-  (define (string-prefix? prefix s)
-    (let ([n (string-length s)] [m (string-length prefix)])
-      (and (>= n m) (string=? (substring s 0 m) prefix))))
-
-  (define (string-join xs sep)
-    ;; Build small separator-prefixed pieces, then concatenate them all once;
-    ;; repeatedly extending the complete prefix would copy it quadratically.
-    (if (null? xs)
-        ""
-        (apply string-append
-               (cons (car xs)
-                     (map (lambda (x) (string-append sep x)) (cdr xs))))))
-
-  (define (common-prefix strs)
-    ;; The longest prefix shared by every string in the non-empty list.
-    (fold-left (lambda (acc s)
-                 (let loop ([i 0])
-                   (if (and (< i (string-length acc)) (< i (string-length s))
-                            (char=? (string-ref acc i) (string-ref s i)))
-                       (loop (+ i 1))
-                       (substring acc 0 i))))
-               (car strs) (cdr strs)))
-
-  (define string-search
-    ;; Index of the first occurrence of needle inside s[start, limit),
-    ;; or #f.  Exact by default; the optional fold? matches case
-    ;; insensitively (incremental search offers that -- lexers, mode
-    ;; detection, and replace! must not).
-    (case-lambda
-      [(s needle start limit) (string-search s needle start limit #f)]
-      [(s needle start limit fold?)
-       (let ([eq? (if fold? char-ci=? char=?)]
-             [len (string-length needle)])
-         (if (= len 0)
-             start
-             (let ([failure (make-vector len 0)])
-               ;; KMP prefix table: the longest proper prefix ending here.
-               (let build ([i 1] [matched 0])
-                 (when (< i len)
-                   (cond
-                     [(eq? (string-ref needle i) (string-ref needle matched))
-                      (let ([matched (+ matched 1)])
-                        (vector-set! failure i matched)
-                        (build (+ i 1) matched))]
-                     [(> matched 0)
-                      (build i (vector-ref failure (- matched 1)))]
-                     [else (build (+ i 1) 0)])))
-               (let scan ([i start] [matched 0])
-                 (cond
-                   [(>= i limit) #f]
-                   [(eq? (string-ref s i) (string-ref needle matched))
-                    (let ([matched (+ matched 1)])
-                      (if (= matched len)
-                          (+ (- i len) 1)
-                          (scan (+ i 1) matched)))]
-                   [(> matched 0)
-                    (scan i (vector-ref failure (- matched 1)))]
-                   [else (scan (+ i 1) 0)])))))]))
-
-  (define (split-lines s)
-    (let loop ([start 0] [i 0] [acc '()])
-      (cond [(= i (string-length s))
-             (reverse (cons (substring s start i) acc))]
-            [(char=? (string-ref s i) #\newline)
-             (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
-            [else (loop start (+ i 1) acc)])))
+    (string-append (substring s 0 from) (strings:tail s to)))
 
   (define (vector-fill-range! v from to x)
     (let loop ([i from])
@@ -514,7 +435,7 @@
                           (char=? (string-ref s (- n 1)) #\newline))
                      (substring s 0 (- n 1))
                      s)])
-      (list->vector (split-lines body))))
+      (list->vector (strings:lines body))))
 
   (define (ends-in-newline? s)
     (and (> (string-length s) 0)
@@ -576,7 +497,7 @@
                                  (char=? (string-ref text (+ i 1)) #\))
                                  (char-alphabetic?
                                    (string-ref text (+ i 2)))
-                                 (string-search allowed
+                                 (strings:search allowed
                                    (string (char-downcase ch)) 0
                                    (string-length allowed)))])
               (loop (+ i (if marker? 2 1))
@@ -615,7 +536,7 @@
                     [(string=? event "ESC") #\esc]
                     [(tty:key-event-character event)
                      => (lambda (choice)
-                          (if (string-search allowed
+                          (if (strings:search allowed
                                 (string (char-downcase choice))
                                 0 (string-length allowed))
                               choice
@@ -689,7 +610,7 @@
         s
         (let ([keep (max 4 (quotient (- width 5) 2))])
           (string-append (substring s 0 keep) " ... "
-                         (string-tail s (- (string-length s) keep))))))
+                         (strings:tail s (- (string-length s) keep))))))
 
   (define (foreign-edits-since? b rev)
     ;; did another actor edit this buffer's store copy after rev?
@@ -866,7 +787,7 @@
                     (append
                       (list (string-append (substring old 0 col) (car parts)))
                       (reverse (cdr (reverse (cdr parts))))
-                      (list (string-append last (string-tail old col))))])
+                      (list (string-append last (strings:tail old col))))])
               (splice-lines! row (+ row 1) replacement)
               (set! point-row (+ row (- (length parts) 1)))
               (set! point-col (string-length last))))
@@ -877,7 +798,7 @@
     (let ([s (current-line)])
       (set-line! point-row (substring s 0 point-col))
       (splice-lines! (+ point-row 1) (+ point-row 1)
-                     (list (string-tail s point-col)))
+                     (list (strings:tail s point-col)))
       (set! point-row (+ point-row 1)) (set! point-col 0)
       (changed!)))
 
@@ -993,7 +914,7 @@
     (unless (string=? kill-ring "")
       (record-edit! (format "yank ~s" kill-ring))
       (parameterize ([suppress-history #t])
-        (let ([parts (split-lines kill-ring)])
+        (let ([parts (strings:lines kill-ring)])
           (insert-text! (car parts))
           (for-each (lambda (part) (newline!) (insert-text! part))
                     (cdr parts))))))
@@ -1006,7 +927,7 @@
               (apply string-append acc)
               (loop (- row 1)
                     (cons (if (= row sr)
-                              (string-tail (line-at sr) sc)
+                              (strings:tail (line-at sr) sc)
                               (line-at row))
                           (cons "\n" acc)))))))
 
@@ -1014,7 +935,7 @@
     (if (= sr er)
         (set-line! sr (string-delete (line-at sr) sc ec))
         (let ([joined (string-append (substring (line-at sr) 0 sc)
-                                     (string-tail (line-at er) ec))])
+                                     (strings:tail (line-at er) ec))])
           (splice-lines! sr (+ er 1) (list joined)))))
 
   (define (replace-region-text! start end text)
@@ -1074,27 +995,27 @@
 
   (define (base-name path)
     (let ([dir (directory-part path)])
-      (if dir (string-tail path (string-length dir)) path)))
+      (if dir (strings:tail path (string-length dir)) path)))
 
   (define (expand-path path)
     ;; Expand a leading ~ to the home directory.
     (let ([home (getenv "HOME")])
       (cond [(not home) path]
             [(string=? path "~") home]
-            [(string-prefix? "~/" path) (string-append home (string-tail path 1))]
+            [(strings:prefix? "~/" path) (string-append home (strings:tail path 1))]
             [else path])))
 
   (define (abbreviate-path path)
     ;; The inverse of expand-path, for display: home becomes ~.
     (let ([home (getenv "HOME")])
-      (if (and home (string-prefix? (string-append home "/") path))
-          (string-append "~" (string-tail path (string-length home)))
+      (if (and home (strings:prefix? (string-append home "/") path))
+          (string-append "~" (strings:tail path (string-length home)))
           path)))
 
   (define (absolute-path path)
     ;; A relative path is relative to the process working directory,
     ;; which never changes.
-    (if (or (string-prefix? "/" path) (string-prefix? "~" path))
+    (if (or (strings:prefix? "/" path) (strings:prefix? "~" path))
         path
         (string-append (current-directory) "/" path)))
 
@@ -1107,7 +1028,7 @@
       (or real
           (let* ([dir (or (directory-part full) "/")]
                  [parent (if (and (> (string-length dir) 1)
-                                  (string-suffix? "/" dir))
+                                  (strings:suffix? "/" dir))
                              (substring dir 0 (- (string-length dir) 1))
                              dir)]
                  [real-parent (canonical-file-path parent)])
@@ -1133,7 +1054,7 @@
     ;; Dotfiles are offered only once the component starts with a dot.
     (guard (ex [else '()])
       (let* ([dir (or (directory-part s) "")]
-             [part (string-tail s (string-length dir))]
+             [part (strings:tail s (string-length dir))]
              [listing (directory-list
                         (expand-path
                           (cond [(string=? dir "") "."]
@@ -1146,9 +1067,9 @@
                      full)))
              (sort string<?
                    (filter (lambda (name)
-                             (and (string-prefix? part name)
+                             (and (strings:prefix? part name)
                                   (or (not (string=? part ""))
-                                      (not (string-prefix? "." name)))))
+                                      (not (strings:prefix? "." name)))))
                            listing))))))
 
   (define (unique-name base self)
@@ -1176,7 +1097,7 @@
     (if (file-exists? path)
         (guard (ex [else (parameterize ([message-source 'visit-file!])
                            (set-message! (format "Cannot open ~a: ~a"
-                                                 path (error-text ex))))
+                                                 path (kernel:condition-text ex))))
                          #f])
           (let* ([content (read-file path)]
                  [n (string-length content)]
@@ -1184,7 +1105,7 @@
                              (char=? (string-ref content (- n 1)) #\newline))]
                  [body (if ends? (substring content 0 (- n 1)) content)]
                  [b (head:new-buffer (unique-name (base-name path) #f))])
-            (head:buffer-lines-set! b (list->vector (split-lines body)))
+            (head:buffer-lines-set! b (list->vector (strings:lines body)))
             (head:buffer-trailing-set! b ends?)
             (head:buffer-file-set! b path)
             (head:buffer-base-set! b content)
@@ -1235,7 +1156,7 @@
                          (make-refusal)
                          (make-message-condition
                            (format "Cannot verify ~a before saving: ~a"
-                                   path (error-text ex)))))])
+                                   path (kernel:condition-text ex)))))])
            (read-file path))))
   (define (save-file! path*)
     ;; Saving is guarded by content, not clocks: the disk is read and
@@ -1253,7 +1174,7 @@
                         (guard (ex [else #f]) (get-mode path))))
       (guard (ex [else (parameterize ([message-source 'save-file!])
                          (set-message!
-                           (format "Save failed: ~a" (error-text ex))))
+                           (format "Save failed: ~a" (kernel:condition-text ex))))
                        #f])
         (call-with-output-file path
           (lambda (p)
@@ -1422,7 +1343,7 @@
         (if (= i (vector-length v))
             n
             (loop (+ i 1)
-                  (if (string-prefix? "<<<<<<<" (vector-ref v i))
+                  (if (strings:prefix? "<<<<<<<" (vector-ref v i))
                       (+ n 1)
                       n))))))
 
@@ -1677,7 +1598,7 @@
         (display ")" p))))
 
   (define (complete-buffer-name s)
-    (sort string<? (filter (lambda (n) (string-prefix? s n))
+    (sort string<? (filter (lambda (n) (strings:prefix? s n))
                            (map head:buffer-name buffers))))
 
   (define (switch-buffer!!)
@@ -1934,7 +1855,7 @@
                 (guard (ex [else (parameterize ([message-source 'save-file!])
                                    (set-message!
                                      (format "Save hook failed: ~a"
-                                             (error-text ex))))])
+                                             (kernel:condition-text ex))))])
                   (p path)))
               (kernel:registry-items hooks)))
 
@@ -2008,20 +1929,20 @@
     (or (and path
              (let ([addition
                     (find (lambda (entry)
-                            (string-suffix? (car entry) path))
+                            (strings:suffix? (car entry) path))
                           (kernel:registry-items mode-extension-additions))])
                (and addition (find-mode (cdr addition)))))
         (and path
              (kernel:registry-find modes
                (lambda (m)
-                 (exists (lambda (ext) (string-suffix? ext path))
+                 (exists (lambda (ext) (strings:suffix? ext path))
                          (mode-extensions m)))))
-        (and (string-prefix? "#!" first-line)
+        (and (strings:prefix? "#!" first-line)
              (kernel:registry-find modes
                (lambda (m)
                  (exists (lambda (name)
-                           (string-search first-line name 0
-                                          (string-length first-line)))
+                           (strings:search first-line name 0
+                                           (string-length first-line)))
                          (mode-interpreters m)))))))
 
   (define (assign-mode! b)
@@ -2119,7 +2040,7 @@
     (define v (head:buffer-lines b))
     (define n (vector-length v))
     (define (retabbed s col)
-      (let ([rest (string-tail s (leading-blanks s))])
+      (let ([rest (strings:tail s (leading-blanks s))])
         (if (string=? rest "")
             (if pad? (make-string col #\space) s)
             (string-append (make-string col #\space) rest))))
@@ -2460,12 +2381,12 @@
                                    (caddr ask)
                                    (if (null? choices)
                                        "..."
-                                       (string-join choices "/")))
+                                       (strings:join choices "/")))
                            (and (pair? choices)
                                 (lambda (s)
                                   (filter
                                     (lambda (choice)
-                                      (string-prefix? s choice))
+                                      (strings:prefix? s choice))
                                     choices))))])
             (when (and reply (> (string-length reply) 0))
               (if (actors:answer! (car ask) reply)
@@ -2546,12 +2467,12 @@
     ;; directories), an expression's trailing symbol; plain names unchanged.
     ;; A label that comes out empty (a view name like "[log]" ends in a
     ;; separator) falls back to the whole candidate.
-    (if (string-suffix? "/" c)
+    (if (strings:suffix? "/" c)
         (string-append (base-name (substring c 0 (- (string-length c) 1))) "/")
         (let loop ([i (- (string-length c) 1)])
           (cond [(< i 0) c]
                 [(memv (string-ref c i) '(#\/ #\space #\( #\) #\[ #\]))
-                 (let ([tail (string-tail c (+ i 1))])
+                 (let ([tail (strings:tail c (+ i 1))])
                    (if (string=? tail "") c tail))]
                 [else (loop (- i 1))]))))
 
@@ -2736,12 +2657,12 @@
              (k s " [Sole completion]")
              (k (car cands) ""))]
         [else
-         (let ([lcp (common-prefix cands)])
+         (let ([lcp (strings:common-prefix cands)])
            (cond [(> (string-length lcp) (string-length s)) (k lcp "")]
                  [(show-completions! (map completion-label cands)) (k s "")]
                  [else (k s (format " {~a}"
-                                    (string-join (map completion-label cands)
-                                                 " ")))]))])))
+                                    (strings:join (map completion-label cands)
+                                                  " ")))]))])))
 
   (define (prompt-window-commands)
     ;; The global commands a prompt may run without losing its input:
@@ -2759,7 +2680,7 @@
     (let ([b (current-buffer)])
       (if (and (head:buffer-file b) (not (buffer-clean? b)))
           (format "  ~a has unsaved changes" (head:buffer-name b))
-          (guard (ex [else (string-append "  " (error-text ex))])
+          (guard (ex [else (string-append "  " (kernel:condition-text ex))])
             (kill-buffer! b)
             ""))))
 
@@ -2774,7 +2695,7 @@
       (cond
         [(memq action (prompt-window-commands))
          (lambda ()
-           (guard (ex [else (string-append "  " (error-text ex))])
+           (guard (ex [else (string-append "  " (kernel:condition-text ex))])
              (action)
              ""))]
         [(eq? action kill-buffer!!) prompt-kill-buffer!]
@@ -2919,7 +2840,7 @@
                  (loop s pos "")
                  (edited (string-delete s (- pos 1) pos) (- pos 1)))]
             [(eq? action 'kill)
-             (set! kill-ring (string-tail s pos))
+             (set! kill-ring (strings:tail s pos))
              (edited (substring s 0 pos) pos)]
             [(eq? action 'yank)
              (edited (string-insert s pos kill-ring)
@@ -2956,9 +2877,9 @@
              (let* ([lines (split-pasted-lines (read-paste))]
                     [insert (prompt-multiline)])
                (if insert
-                   (let ([result (insert s pos (string-join lines "\n"))])
+                   (let ([result (insert s pos (strings:join lines "\n"))])
                      (edited (car result) (cdr result)))
-                   (let ([text (string-join lines " ")])
+                   (let ([text (strings:join lines " ")])
                      (edited (string-insert s pos text)
                              (+ pos (string-length text))))))]
             [(prompt-window-command event)
@@ -3361,7 +3282,7 @@
                                                               "MOUSE-CLICK")])
                         (when (procedure? action)
                           (guard (ex [else
-                                      (set! message (error-text ex))])
+                                      (set! message (kernel:condition-text ex))])
                             (action))))))
                   "MOUSE-HANDLED"]))))])))
 
@@ -3512,7 +3433,7 @@
 
   (define (run-posted-thunk! thunk)
     (guard (ex [else (parameterize ([message-source 'run-on-main!])
-                       (set-message! (error-text ex)))])
+                       (set-message! (kernel:condition-text ex)))])
       (thunk)))
 
   (define pump-handlers-installed
@@ -3802,7 +3723,7 @@
     ;; path made absolute, with ".", "..", and empty segments resolved
     ;; textually (symbolic links are not chased) -- enough to recognize
     ;; the editor's own files whichever way they are named.
-    (let* ([path (if (string-prefix? "/" path*)
+    (let* ([path (if (strings:prefix? "/" path*)
                      path*
                      (string-append (current-directory) "/" path*))]
            [n (string-length path)])
@@ -3811,7 +3732,7 @@
           (cond [(or (string=? seg "") (string=? seg ".")) stack]
                 [(string=? seg "..") (if (pair? stack) (cdr stack) stack)]
                 [else (cons seg stack)]))
-        (cond [(> i n) (string-append "/" (string-join (reverse stack) "/"))]
+        (cond [(> i n) (string-append "/" (strings:join (reverse stack) "/"))]
               [(or (= i n) (char=? (string-ref path i) #\/))
                (loop (+ i 1) (+ i 1) (push (substring path start i)))]
               [else (loop (+ i 1) start stack)]))))
@@ -3823,10 +3744,10 @@
     (let ([full (canonical-path path)]
           [lib (string-append (canonical-path (caar (library-directories)))
                               "/")])
-      (and (string-prefix? lib full)
-           (string-suffix? ".e" full)
-           (let ([base (string-tail full (string-length lib))])
-             (and (not (string-search base "/" 0 (string-length base)))
+      (and (strings:prefix? lib full)
+           (strings:suffix? ".e" full)
+           (let ([base (strings:tail full (string-length lib))])
+             (and (not (strings:search base "/" 0 (string-length base)))
                   (not (string=? base "core.e"))
                   (substring base 0 (- (string-length base) 2)))))))
 
@@ -3852,7 +3773,7 @@
              (guard (ex [else (parameterize ([message-source 'config])
                                 (set-message!
                                   (format "Error in config.e: ~a"
-                                    (error-text ex))))
+                                    (kernel:condition-text ex))))
                               #f])
                (parameterize ([kernel:registering-module 'config])
                  (load path))
@@ -3871,7 +3792,7 @@
          (guard (ex [else (parameterize ([message-source 'reload-module!])
                             (set-message!
                               (format "Reload of ~a failed: ~a"
-                                      name (error-text ex))))])
+                                      name (kernel:condition-text ex))))])
            (reload-module! name)
            (parameterize ([message-source 'reload-module!])
              (set-message! (format "Reloaded ~a" name))))]
@@ -3910,7 +3831,7 @@
       (for-each
         (lambda (failure)
           (let ([msg (format "Error in ~a: ~a"
-                             (car failure) (error-text (cdr failure)))])
+                             (car failure) (kernel:condition-text (cdr failure)))])
             (display (format "e: ~a\n" msg) (current-error-port))
             (set! message msg)))
         (reverse (kernel:load-modules!)))
@@ -3964,7 +3885,7 @@
                        [(refusal? ex)
                         (set! message (condition-message ex))]
                        [else (parameterize ([message-source 'error])
-                               (set-message! (error-text ex)))])
+                               (set-message! (kernel:condition-text ex)))])
               (handle-key! (parameterize ([head:in-main-pump #t])
                              (head:read-key-event))))
             (clamp-point!)

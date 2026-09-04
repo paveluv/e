@@ -21,6 +21,7 @@
           next-conflict! keep-mine! keep-disk!
           list-buffers!)
   (import (chezscheme) (core)
+          (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (keymap) keymap:)
@@ -95,7 +96,7 @@
                    [limit (if (= row (car end))
                               (min (+ (cdr end) shift) (string-length s))
                               (string-length s))]
-                   [hit (string-search s needle at limit)])
+                   [hit (strings:search s needle at limit)])
               (if hit
                   (let ([w (handle! row hit)])
                     (set! count (+ count 1))
@@ -123,13 +124,13 @@
       ;; Accumulate pieces and join once instead of copying the growing line
       ;; for every non-overlapping match.
       (let loop ([at 0] [pieces '()] [count 0])
-        (let ([hit (string-search s from at (string-length s))])
+        (let ([hit (strings:search s from at (string-length s))])
           (if hit
               (loop (+ hit m)
                     (cons to (cons (substring s at hit) pieces))
                     (+ count 1))
               (values (apply string-append
-                             (reverse (cons (string-tail s at) pieces)))
+                             (reverse (cons (strings:tail s at) pieces)))
                       count)))))
     (define (rewritten-region r)
       ;; Preserve the single-line-needle contract by rewriting each selected
@@ -140,7 +141,7 @@
              [last (min (car end) (- (buffer-line-count b) 1))])
         (let loop ([row (max 0 (car start))] [lines '()] [count 0])
           (if (> row last)
-              (values (string-join (reverse lines) "\n") count)
+              (values (strings:join (reverse lines) "\n") count)
               (let* ([s (buffer-line b row)]
                      [n (string-length s)]
                      [from-col (if (= row (car start)) (min (cdr start) n) 0)]
@@ -172,7 +173,7 @@
            [start (region-start r)]
            [end (region-end r)]
            [last (min (car end) (- (buffer-line-count b) 1))])
-      (string-join
+      (strings:join
         (let loop ([row (max 0 (car start))] [acc '()])
           (if (> row last)
               (reverse acc)
@@ -195,7 +196,7 @@
     (let loop ([row row] [col col])
       (and (< row (buffer-line-count b))
            (let* ([s (buffer-line b row)]
-                  [hit (string-search s needle col (string-length s))])
+                  [hit (strings:search s needle col (string-length s))])
              (if hit
                  (cons row hit)
                  (loop (+ row 1) 0))))))
@@ -274,7 +275,7 @@
 
   (define (conflict-marker? b row prefix)
     (and (>= row 0) (< row (buffer-line-count b))
-         (string-prefix? prefix (buffer-line b row))))
+         (strings:prefix? prefix (buffer-line b row))))
 
   (define (conflict-at row)
     ;; The (start mid end) marker rows of the conflict containing row,
@@ -364,8 +365,8 @@
 
   (define (abbreviate-home path)
     (let ([home (getenv "HOME")])
-      (if (and home (string-prefix? (string-append home "/") path))
-          (string-append "~" (string-tail path (string-length home)))
+      (if (and home (strings:prefix? (string-append home "/") path))
+          (string-append "~" (strings:tail path (string-length home)))
           path)))
 
   (define buffers-view #f)
@@ -375,7 +376,7 @@
     ;; Separate the headings from the data; in data rows the third status cell
     ;; is M, where a star makes the complete modified-buffer row italic.
     (make-vector (string-length line)
-                 (cond [(string-prefix? "CRM  Buffer" line) 'bold]
+                 (cond [(strings:prefix? "CRM  Buffer" line) 'bold]
                        [(and (> (string-length line) 2)
                              (char=? (string-ref line 2) #\*))
                         'italic]

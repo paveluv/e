@@ -20,6 +20,7 @@
           markdown-render markdown-view-install! markdown-browser
           markdown-view-max-width)
   (import (chezscheme) (core)
+          (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (styles) styles:)
@@ -438,7 +439,7 @@
         (let segment ([entries entries] [parts '()] [start #f] [lead prefix])
           (define (flush!)
             (when (pair? parts)
-              (emit-inline! (string-join (reverse parts) " ")
+              (emit-inline! (strings:join (reverse parts) " ")
                             base start lead prefix-style)))
           (if (null? entries)
               (flush!)
@@ -450,7 +451,7 @@
                      [start (or start row)])
                 (if (hard-break? raw)
                     (begin
-                      (emit-inline! (string-join (reverse parts) " ")
+                      (emit-inline! (strings:join (reverse parts) " ")
                                     base start lead prefix-style)
                       (segment (cdr entries) '() #f
                                (make-string (string-length prefix)
@@ -662,7 +663,7 @@
                                                     (pad-to (car seg) w))
                                                   segments widths)]
                                       [joined
-                                       (let trim ([text (string-join
+                                       (let trim ([text (strings:join
                                                           parts "  ")])
                                          (let ([n (string-length text)])
                                            (if (and (> n 0)
@@ -711,7 +712,7 @@
                                               (cdr segs) (cdr parts)))))
                                  (emit! joined vec (reverse row-links) k)))
                              (when (and first header?)
-                               (emit! (string-join
+                               (emit! (strings:join
                                         (map (lambda (w)
                                                (make-string w #\x2500))
                                              widths)
@@ -894,19 +895,19 @@
             links)))
 
   (define (markdown-file? path)
-    (or (string-suffix? ".md" path) (string-suffix? ".markdown" path)))
+    (or (strings:suffix? ".md" path) (strings:suffix? ".markdown" path)))
 
   (define (open-link! url)
     ;; Followed links log under the markdown source; web links go to
     ;; the configured browser command.
     (parameterize ([message-source 'markdown])
       (cond
-        [(or (string-prefix? "http://" url)
-             (string-prefix? "https://" url))
+        [(or (strings:prefix? "http://" url)
+             (strings:prefix? "https://" url))
          (system (format "~a ~a >/dev/null 2>&1 &"
                          (markdown-browser) (shell-quoted url)))
          (set-message! (format "Opened ~a" url))]
-        [(string-prefix? "#" url)
+        [(strings:prefix? "#" url)
          (set-message! "Anchor links are not followed yet")]
         [else
          (let* ([base (head:buffer-file (current-buffer))]

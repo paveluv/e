@@ -1,10 +1,9 @@
-;; kernel.e -- the v2 kernel, growing in place (docs/DESIGN2.md).
-;;
-;; For now it owns one mechanism: persistent cells -- module state
-;; that survives hot reloads.  Registries, module lifecycle, and the
-;; scheduling substrate migrate here from the core as the v2 layers
-;; take shape.  The kernel imports nothing above itself and, like the
-;; v0.1 core, is never reloaded in place.
+;; kernel.e -- the v2 kernel (docs/DESIGN2.md): the substrate every
+;; other module stands on.  Persistent cells (module state that
+;; survives hot reloads), the registries and the module lifecycle,
+;; the mailboxes actors wait on, and the text of a caught condition.
+;; The kernel imports nothing above itself and, like the v0.1 core,
+;; is never reloaded in place.
 
 (library (kernel)
   (export persistent-cell
@@ -15,7 +14,8 @@
           module-source loaded-modules seam-modules
           init-module! load-module! load-modules! module-requires?
           reload-module! add-after-reload-hook!
-          make-mailbox mailbox-post! mailbox-receive!)
+          make-mailbox mailbox-post! mailbox-receive!
+          condition-text)
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! make-hashtable equal-hash
@@ -23,7 +23,16 @@
                 library-exports library-requirements
                 library-directories directory-list load sort
                 parameterize make-mutex with-mutex make-condition
-                condition-wait condition-signal))
+                condition-wait condition-signal display-condition))
+
+  ;;; Conditions --------------------------------------------------------------
+
+  (define (condition-text ex)
+    ;; a caught condition -- or any raised object -- as the text the
+    ;; log and the echo area show for it
+    (if (condition? ex)
+        (call-with-string-output-port (lambda (p) (display-condition ex p)))
+        (format "~a" ex)))
 
   ;;; Mailboxes ---------------------------------------------------------------
 

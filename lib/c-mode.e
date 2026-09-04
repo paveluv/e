@@ -10,7 +10,8 @@
 
 (library (c-mode)
   (export init!)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core)
+          (prefix (strings) strings:))
 
   (define c-keywords
     (let ([table (make-hashtable string-hash string=?)])
@@ -58,10 +59,10 @@
                       j))])
         (vector-fill-range! styles i k 'literal)
         (if (and (string=? (substring s w k) "include")
-                 (let ([lt (string-search s "<" k n)])
-                   (and lt (string-search s ">" lt n))))
-            (let* ([lt (string-search s "<" k n)]
-                   [gt (string-search s ">" lt n)])
+                 (let ([lt (strings:search s "<" k n)])
+                   (and lt (strings:search s ">" lt n))))
+            (let* ([lt (strings:search s "<" k n)]
+                   [gt (strings:search s ">" lt n)])
               (vector-fill-range! styles lt (+ gt 1) 'string)
               (+ gt 1))
             k)))
@@ -71,7 +72,7 @@
           (let ([c (string-ref s i)])
             (cond
               [in-c
-               (let ([end (string-search s "*/" i n)])
+               (let ([end (strings:search s "*/" i n)])
                  (if end
                      (begin (vector-fill-range! styles i (+ end 2) 'comment)
                             (loop (+ end 2) #f))

@@ -3,6 +3,7 @@
 (library (git-view)
   (export init! git-log!! git-log-refresh!)
   (import (chezscheme) (core)
+          (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (keymap) keymap:) (except (git) init!)
@@ -161,7 +162,7 @@
     (make-vector (string-length line) style))
 
   (define (log-styles line)
-    (cond [(string-prefix? "Git log:" line)
+    (cond [(strings:prefix? "Git log:" line)
            (let ([styles (fill-style line 'bold)])
              (when (<= (+ refresh-column (string-length refresh-label))
                        (string-length line))
@@ -170,7 +171,7 @@
                  (+ refresh-column (string-length refresh-label))
                  (if refresh-pressed? 'active 'editor)))
              styles)]
-          [(string-prefix? "    " line)
+          [(strings:prefix? "    " line)
            (let ([styles (fill-style line 'plain)])
              (when (> (string-length line) 5)
                (vector-set! styles 4 'keyword))
@@ -185,14 +186,14 @@
              styles)]))
 
   (define (diff-styles line)
-    (cond [(or (string-prefix? "@@" line)
-               (string-prefix? "+++ " line)
-               (string-prefix? "--- " line))
+    (cond [(or (strings:prefix? "@@" line)
+               (strings:prefix? "+++ " line)
+               (strings:prefix? "--- " line))
            (fill-style line 'keyword)]
-          [(string-prefix? "+" line) (fill-style line 'string)]
-          [(string-prefix? "-" line) (fill-style line 'rainbow1)]
-          [(or (string-prefix? "diff --git " line)
-               (string-prefix? "index " line))
+          [(strings:prefix? "+" line) (fill-style line 'string)]
+          [(strings:prefix? "-" line) (fill-style line 'rainbow1)]
+          [(or (strings:prefix? "diff --git " line)
+               (strings:prefix? "index " line))
            (fill-style line 'comment)]
           [else (fill-style line 'plain)]))
 
