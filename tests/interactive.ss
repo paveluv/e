@@ -106,6 +106,24 @@
      (wait-for! 'nested-terminal-opens
                 (lambda () (find-cell "capturing input")) 10000)
 
+     ;; -- C-] gets out of the capture -------------------------------------
+     ;; The terminal's handler can encode C-] for the child, so the
+     ;; dispatcher must hand the context's escape to the keymaps before
+     ;; the handler sees it (regression: the escape became keymap data
+     ;; while the handler kept first refusal, and C-] went to the shell).
+     (send! "\x1d;\x1b;x")                ; C-] M-x
+     (wait-for! 'escape-opens-the-global-prompt
+                (lambda () (find-cell "M-x (")) 5000)
+     (send! "\x7;")                       ; C-g: back to the capture
+     (settle! 300)
+     (send! "cat -v\r")
+     (settle! 500)
+     (send! "\x1d;\x1d;\r")               ; C-] C-]: the literal character
+     (wait-for! 'literal-escape-reaches-the-child
+                (lambda () (find-cell "^]")) 5000)
+     (send! "\x4;")                       ; C-d ends cat
+     (settle! 500)
+
      ;; -- fill scrollback with palette-red lines --------------------------
      (send! "for i in $(seq 1 40); do printf '\\033[31mred line %d\\033[0m\\n' \"$i\"; done\r")
      (wait-for! 'output-reaches-live-screen

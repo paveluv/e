@@ -99,10 +99,25 @@
              (echo:set-text!
                (format "~a is undefined" (keymap:sequence-text sequence)))])))))
 
+  (define (context-claims? event)
+    ;; Whether the current buffer's mode context binds event, starts a
+    ;; binding with it, or names it as the escape.  Such a key belongs
+    ;; to the keymaps even inside a capturing app: the app's handler
+    ;; sees only the keys its context leaves unbound, so a terminal
+    ;; cannot swallow the C-] that is meant to get out of it.
+    (let ([context (mode:key-context (head:window-buffer (head:current)))])
+      (and context
+           (let ([sequence (list event)])
+             (or (keymap:resolved-binding context sequence)
+                 (keymap:binding-prefix? context sequence)
+                 (equal? event (keymap:context-escape context))))
+           #t)))
+
   (define (handle-key! input)
     ;; One key from the pump: a character or an event string, eof
     ;; when the terminal is gone.  The current buffer's app has first
-    ;; refusal; what it declines goes through the keymaps.
+    ;; refusal of every key its mode context leaves unbound; what it
+    ;; declines, and what the context claims, goes through the keymaps.
     (let ([event (cond [(eof-object? input) input]
                        [(char? input) (tty:character-event input)]
                        [else input])])
@@ -113,7 +128,8 @@
          (void)]
         [else
          (echo:settle!)
-         (if (head:dispatch-app-event! event)
+         (if (and (not (context-claims? event))
+                  (head:dispatch-app-event! event))
              (head:set-last-command! #f)
              (dispatch-sequence! event))])))
 
