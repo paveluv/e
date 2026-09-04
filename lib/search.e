@@ -162,7 +162,7 @@
       (indicate!
         (format "~aI-search~a: ~a" (if failed? "Failing " "")
                 (if (fold-for needle) "" " (exact)") needle))
-      (redraw!)
+      (paint:redraw!)
       (let* ([event (head:read-key-event)]
              [action (and (not (eof-object? event))
                           (keymap:key-event-binding 'isearch event))])

@@ -235,7 +235,7 @@
                           (goto-point! (cons (car hit) (+ (cdr hit) m)))
                           (parameterize ([message-source #f]) ; an indicator
                             (set-message! question))
-                          (redraw!)     ; the match highlight, not the message
+                          (paint:redraw!)     ; the match highlight, not the message
                           (let* ([event (head:read-key-event #f)]
                                  [action (and (not (eof-object? event))
                                               (keymap:key-event-binding

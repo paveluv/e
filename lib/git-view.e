@@ -131,7 +131,7 @@
         (lambda ()
           (when visible?
             (set! refresh-pressed? #t)
-            (redraw!)))
+            (paint:redraw!)))
         reload-log!
         (lambda ()
           (when visible?

@@ -48,6 +48,7 @@
           layout-split-first-weight layout-split-first-weight-set!
           layout-split-second-weight layout-split-second-weight-set!
           layout-leaves layout-replace layout-parent
+          set-layout-root! replace-layout-window! fit-layout!
           layout-min-width layout-min-height weighted-first
           layout-node!
           min-window-lines
@@ -207,6 +208,24 @@
              node
              (or (layout-parent (layout-split-first node) child)
                  (layout-parent (layout-split-second node) child)))))
+
+  (define (set-layout-root! root)
+    ;; the tree is the seat's windows: replacing it replaces them
+    (set! the-root root)
+    (set! the-windows (layout-leaves root)))
+
+  (define (replace-layout-window! old replacement)
+    (set-layout-root! (layout-replace the-root old replacement)))
+
+  (define (fit-layout! width height)
+    ;; A screen too small for the splits collapses the tree back to
+    ;; one window -- the current one.
+    (when (and (pair? (cdr (layout-leaves the-root)))
+               (or (< width (layout-min-width the-root))
+                   (< height (layout-min-height the-root))))
+      (set-layout-root! (if (memq the-current (layout-leaves the-root))
+                            the-current
+                            (car (layout-leaves the-root))))))
 
   (define (layout-min-width node)
     (if (layout-split? node)
