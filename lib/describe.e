@@ -34,6 +34,7 @@
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core)
+          (prefix (files) files:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
@@ -53,7 +54,7 @@
             (immutable description doc-description)))  ; markdown
 
   (define (data-dir)
-    (string-append (data-directory) "/describe"))
+    (string-append (files:data-directory) "/describe"))
 
   (define (data-path)
     (string-append (data-dir) "/describe.sdata"))
@@ -350,12 +351,9 @@
                   '())
               (html->markdown (substring body rest-start stop)))))
 
-  (define (read-file path)
-    (call-with-input-file path (lambda (p) (get-string-all p))))
-
   (define (parse-page path source page)
     ;; Every entry of one chapter page, as raw entry lists.
-    (let* ([s (read-file path)]
+    (let* ([s (files:read path)]
            [chapter (extract-title s)])
       ;; group consecutive formdefs separated only by breaks and anchors
       (let loop ([ps (formdef-positions s)] [entries '()])

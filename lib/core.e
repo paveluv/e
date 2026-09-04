@@ -21,7 +21,7 @@
     editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     ;; buffers, windows, files
-    visit-file! save-file! save!! save-as!! find-file!! data-directory
+    visit-file! save-file! save!! save-as!! find-file!!
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
     fresh-buffer
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
@@ -89,14 +89,15 @@
     main)
   ;; The system-specific layer -- libc, termios, signals -- comes
   ;; from (sys).
-  (import (chezscheme) (sys) (diff)
+  (import (chezscheme) (sys)
           (prefix (state) state:) (prefix (text) text:)
           (prefix (kernel) kernel:) (prefix (actors) actors:)
           (prefix (log) log:) (prefix (styles) styles:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
           (prefix (paint) paint:) (prefix (strings) strings:)
-          (prefix (modes) modes:))
+          (prefix (modes) modes:)
+          (prefix (files) files:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -387,34 +388,6 @@
   ;; in a buffer whose file changed on disk, say.
   (define-condition-type &refused &error make-refusal refusal?)
 
-  (define (disk-stamp path)
-    ;; The file's mtime as (seconds . nanoseconds), or #f.
-    (guard (ex [else #f])
-      (and (file-exists? path)
-           (let ([t (file-modification-time path)])
-             (cons (time-second t) (time-nanosecond t))))))
-
-  (define (string-lines s)
-    ;; s split at newlines, a trailing newline yielding no empty last
-    ;; line: the shape comparisons and merges run on.
-    (let* ([n (string-length s)]
-           [body (if (and (> n 0)
-                          (char=? (string-ref s (- n 1)) #\newline))
-                     (substring s 0 (- n 1))
-                     s)])
-      (list->vector (strings:lines body))))
-
-  (define (ends-in-newline? s)
-    (and (> (string-length s) 0)
-         (char=? (string-ref s (- (string-length s) 1)) #\newline)))
-
-  (define (merge-trailing-newline base mine theirs)
-    ;; Three-way merge for the one bit line vectors do not carry.  With a
-    ;; boolean, two sides that both differ from base necessarily agree.
-    (cond [(eq? mine base) theirs]
-          [(eq? theirs base) mine]
-          [else mine]))
-
   (define visual-bell-generation 0)
 
   (define (visual-bell!)
@@ -532,11 +505,11 @@
     ;; mere touch passes silently.
     (let ([b (head:window-buffer current-window)])
       (when (and file-name (head:buffer-base b))
-        (let ([stamp (disk-stamp file-name)])
+        (let ([stamp (files:stamp file-name)])
           (unless (equal? stamp (head:buffer-stamp b))
             (let ([disk (guard (ex [else #f])
                           (and (file-exists? file-name)
-                               (read-file file-name)))])
+                               (files:read file-name)))])
               (unless (and disk (string=? disk (head:buffer-base b)))
                 (head:buffer-stale-set! b #t))
               (head:buffer-stamp-set! b stamp)))))))
@@ -947,97 +920,15 @@
 
   ;;; Files -----------------------------------------------------------------
 
-  (define (read-file path)
-    (call-with-input-file path
-      (lambda (p)
-        (let ([s (get-string-all p)])
-          (if (eof-object? s) "" s)))))
-
-  (define (directory-part path)
-    ;; Everything up to and including the last slash, or #f without one.
-    (let loop ([i (- (string-length path) 1)])
-      (cond [(< i 0) #f]
-            [(char=? (string-ref path i) #\/) (substring path 0 (+ i 1))]
-            [else (loop (- i 1))])))
-
-  (define (base-name path)
-    (let ([dir (directory-part path)])
-      (if dir (strings:tail path (string-length dir)) path)))
-
-  (define (expand-path path)
-    ;; Expand a leading ~ to the home directory.
-    (let ([home (getenv "HOME")])
-      (cond [(not home) path]
-            [(string=? path "~") home]
-            [(strings:prefix? "~/" path) (string-append home (strings:tail path 1))]
-            [else path])))
-
-  (define (abbreviate-path path)
-    ;; The inverse of expand-path, for display: home becomes ~.
-    (let ([home (getenv "HOME")])
-      (if (and home (strings:prefix? (string-append home "/") path))
-          (string-append "~" (strings:tail path (string-length home)))
-          path)))
-
-  (define (absolute-path path)
-    ;; A relative path is relative to the process working directory,
-    ;; which never changes.
-    (if (or (strings:prefix? "/" path) (strings:prefix? "~" path))
-        path
-        (string-append (current-directory) "/" path)))
-
-  (define (canonical-visit-path path)
-    ;; One stable identity for visited files. Existing paths chase symbolic
-    ;; links; for a new file, chase its existing parent and retain the final
-    ;; component. Textual normalization is the portable fallback.
-    (let* ([full (canonical-path (expand-path path))]
-           [real (canonical-file-path full)])
-      (or real
-          (let* ([dir (or (directory-part full) "/")]
-                 [parent (if (and (> (string-length dir) 1)
-                                  (strings:suffix? "/" dir))
-                             (substring dir 0 (- (string-length dir) 1))
-                             dir)]
-                 [real-parent (canonical-file-path parent)])
-            (if real-parent
-                (string-append real-parent "/" (base-name full))
-                full)))))
-
   (define (default-directory)
     ;; The directory of the current buffer's file (or the working
     ;; directory), with a trailing slash, absolute -- a file visited
     ;; by a relative path has a relative directory-part, useless as a
     ;; prompt offer on its own -- and abbreviated for display.
-    (abbreviate-path
-      (absolute-path
-        (or (and file-name (directory-part file-name))
+    (files:abbreviate
+      (files:absolute
+        (or (and file-name (files:directory-part file-name))
             (string-append (current-directory) "/")))))
-
-  (define (complete-file-name s)
-    ;; Completion candidates for the partial path s: the entries of its
-    ;; directory whose names extend its final component, as full paths, with
-    ;; a trailing slash on directories so completion can descend into them.
-    ;; A leading ~ is kept in the candidates but expanded for the lookups.
-    ;; Dotfiles are offered only once the component starts with a dot.
-    (guard (ex [else '()])
-      (let* ([dir (or (directory-part s) "")]
-             [part (strings:tail s (string-length dir))]
-             [listing (directory-list
-                        (expand-path
-                          (cond [(string=? dir "") "."]
-                                [(string=? dir "/") "/"]
-                                [else (substring dir 0 (- (string-length dir) 1))])))])
-        (map (lambda (name)
-               (let ([full (string-append dir name)])
-                 (if (file-directory? (expand-path full))
-                     (string-append full "/")
-                     full)))
-             (sort string<?
-                   (filter (lambda (name)
-                             (and (strings:prefix? part name)
-                                  (or (not (string=? part ""))
-                                      (not (strings:prefix? "." name)))))
-                           listing))))))
 
   (define (unique-name base self)
     ;; base, or base<2>, base<3>, ... -- whichever no other buffer uses.
@@ -1066,21 +957,17 @@
                            (set-message! (format "Cannot open ~a: ~a"
                                                  path (kernel:condition-text ex))))
                          #f])
-          (let* ([content (read-file path)]
-                 [n (string-length content)]
-                 [ends? (and (> n 0)
-                             (char=? (string-ref content (- n 1)) #\newline))]
-                 [body (if ends? (substring content 0 (- n 1)) content)]
-                 [b (head:new-buffer (unique-name (base-name path) #f))])
-            (head:buffer-lines-set! b (list->vector (strings:lines body)))
-            (head:buffer-trailing-set! b ends?)
+          (let* ([content (files:read path)]
+                 [b (head:new-buffer (unique-name (files:base-name path) #f))])
+            (head:buffer-lines-set! b (files:lines content))
+            (head:buffer-trailing-set! b (files:ends-in-newline? content))
             (head:buffer-file-set! b path)
             (head:buffer-base-set! b content)
-            (head:buffer-stamp-set! b (disk-stamp path))
+            (head:buffer-stamp-set! b (files:stamp path))
             (modes:assign! b)
             (log:log! 'visit-file! (cons "Loaded" path))
             b))
-        (let ([b (head:new-buffer (unique-name (base-name path) #f))])
+        (let ([b (head:new-buffer (unique-name (files:base-name path) #f))])
           (head:buffer-file-set! b path)
           (modes:assign! b)
           (log:log! 'visit-file! (cons "New file:" path))
@@ -1090,7 +977,7 @@
     ;; Switch to the buffer visiting path, creating it if necessary.
     ;; Reopening a buffer whose file changed on disk meanwhile raises
     ;; a buffer-only dialog: merge, reread, cancel.  Reopening never writes.
-    (let ([path (canonical-visit-path path)])
+    (let ([path (files:visit-path path)])
       (cond [(find (lambda (b) (equal? (head:buffer-file b) path)) buffers)
              => (lambda (b)
                   (show-buffer! b)
@@ -1100,10 +987,10 @@
                     ;; stale buffer whose cached stamp was already refreshed.
                     (let ([disk (guard (ex [else #f])
                                   (and (file-exists? path)
-                                       (read-file path)))])
+                                       (files:read path)))])
                       (cond
                         [(and disk (string=? disk (head:buffer-base b)))
-                         (head:buffer-stamp-set! b (disk-stamp path))
+                         (head:buffer-stamp-set! b (files:stamp path))
                          (head:buffer-stale-set! b #f)]
                         [disk (reopen-changed-file! b path disk)]
                         [else
@@ -1124,45 +1011,33 @@
                          (make-message-condition
                            (format "Cannot verify ~a before saving: ~a"
                                    path (kernel:condition-text ex)))))])
-           (read-file path))))
+           (files:read path))))
   (define (save-file! path*)
     ;; Saving is guarded by content, not clocks: the disk is read and
     ;; compared with the buffer's base (what it loaded or last saved).
     ;; A mismatch means somebody changed the file meanwhile -- the
     ;; save stops and asks: overwrite, merge three-way, or cancel.
-    (define path (canonical-visit-path path*))
+    (define path (files:visit-path path*))
     (define adopted? (not (equal? path file-name)))  ; saving under a new name
     (define b (head:window-buffer current-window))
     (define disk (read-disk-for-save path))
     (define (write!)
-      ;; Rewriting recreates the file: remember its permissions (the
-      ;; exec bit on a script, say) and put them back after.
-      (define mode (and (file-exists? path)
-                        (guard (ex [else #f]) (get-mode path))))
       (guard (ex [else (parameterize ([message-source 'save-file!])
                          (set-message!
                            (format "Save failed: ~a" (kernel:condition-text ex))))
                        #f])
-        (call-with-output-file path
-          (lambda (p)
-            (let loop ([i 0])
-              (when (< i (vlen))
-                (display (line-at i) p)
-                (when (or (< i (- (vlen) 1)) trailing-newline?) (newline p))
-                (loop (+ i 1)))))
-          'replace)
+        (files:write! path lines trailing-newline?)
         (set! file-name path) (set! modified? #f)
         (begin
-          (head:buffer-name-set! b (unique-name (base-name path) b))
+          (head:buffer-name-set! b (unique-name (files:base-name path) b))
           (head:mirror-rename! b))
         ;; re-detect the mode only when the name changed: a plain
         ;; re-save must not clobber a mode chosen by hand; adoption
         ;; also lifts read-only -- the buffer visits an ordinary
         ;; file now, whatever protected its previous life
         (when adopted? (modes:assign! b) (head:buffer-read-only-set! b #f))
-        (when mode (guard (ex [else (void)]) (chmod path mode)))
         (head:buffer-base-set! b (buffer-text b))
-        (head:buffer-stamp-set! b (disk-stamp path))
+        (head:buffer-stamp-set! b (files:stamp path))
         (head:buffer-stale-set! b #f)
         ;; a conflicted merge reports its details once resolved --
         ;; saved with no markers left; the resolution preceded the
@@ -1189,7 +1064,7 @@
        ;; saving under a new name onto an existing file
        (let ask ()
          (let* ([k (query-key! (format "~a exists; overwrite? y)es or n)o"
-                                       (base-name path))
+                                       (files:base-name path))
                                "yn")]
                 [n (and k (char->integer k))])
            (cond [(memv n '(121 89)) (write!)]
@@ -1198,14 +1073,13 @@
                  [else (ask)])))]
       [else (write!)]))
 
-  (define (merge-report! b path base report conflicts)
+  (define (merge-report! b report-lines)
     ;; The merge's paper trail: a read-only *merge-<buffer>* holding
     ;; diff's unified-diff-style rendering -- built quietly, never
     ;; displayed; the echo names it.  -> the report buffer's name.
     (let* ([name (format "*merge-~a*" (head:buffer-name b))]
-           [rb (fresh-buffer name)]
-           [lines (merge-report-lines path base report conflicts)])
-      (when (pair? lines) (apply buffer-append! rb lines))
+           [rb (fresh-buffer name)])
+      (when (pair? report-lines) (apply buffer-append! rb report-lines))
       (head:buffer-read-only-set! rb #t)
       name))
 
@@ -1215,36 +1089,25 @@
     ;; buffer's name.  The buffer adopts the disk as its new base
     ;; either way -- the external change is incorporated, so the next
     ;; save writes cleanly.  One undo entry.
-    (let* ([base-text (head:buffer-base b)]
-           [base-trailing (ends-in-newline? base-text)]
-           [mine-trailing (head:buffer-trailing b)]
-           [disk-trailing (ends-in-newline? disk)]
-           [base (string-lines base-text)])
-      (let-values ([(merged conflicts report)
-                    (merge3 base
-                            (string-lines (buffer-text b))
-                            (string-lines disk))])
-        (define merged-trailing
-          (merge-trailing-newline base-trailing mine-trailing disk-trailing))
-        (head:buffer-base-set! b disk)
-        (head:buffer-stamp-set! b (disk-stamp path))
-        (record-edit! "merge from disk")
-        (head:buffer-lines-set! b (if (null? merged)
-                                    (vector "")
-                                    (list->vector merged)))
-        (head:buffer-trailing-set! b merged-trailing)
-        (changed!)
-        (values conflicts (merge-report! b path base report conflicts)))))
+    (let-values ([(merged merged-trailing conflicts report-lines)
+                  (files:merge path (head:buffer-base b) (buffer-text b) disk)])
+      (head:buffer-base-set! b disk)
+      (head:buffer-stamp-set! b (files:stamp path))
+      (record-edit! "merge from disk")
+      (head:buffer-lines-set! b merged)
+      (head:buffer-trailing-set! b merged-trailing)
+      (changed!)
+      (values conflicts (merge-report! b report-lines))))
 
   (define (reread-from-disk! b path disk)
     ;; Discard the buffer's copy and adopt the disk verbatim.  Rereading is a
     ;; new baseline, not an edit: it clears modification and undo state.
-    (let* ([lines (string-lines disk)]
+    (let* ([lines (files:lines disk)]
            [last (- (vector-length lines) 1)])
       (head:buffer-lines-set! b lines)
-      (head:buffer-trailing-set! b (ends-in-newline? disk))
+      (head:buffer-trailing-set! b (files:ends-in-newline? disk))
       (head:buffer-base-set! b disk)
-      (head:buffer-stamp-set! b (disk-stamp path))
+      (head:buffer-stamp-set! b (files:stamp path))
       (head:buffer-stale-set! b #f)
       (head:buffer-modified-set! b #f)
       (head:buffer-history-set! b (vector '() '()))
@@ -1268,7 +1131,7 @@
     (let ask ()
       (let* ([k (query-key!
                   (format "~a changed on disk: m)erge, r)eread, c)ancel"
-                          (base-name path))
+                          (files:base-name path))
                   "mrc")]
              [n (and k (char->integer k))])
         (cond
@@ -1305,14 +1168,7 @@
 
   (define (buffer-conflict-count b)
     ;; How many merge conflict markers are left in b.
-    (let ([v (head:buffer-lines b)])
-      (let loop ([i 0] [n 0])
-        (if (= i (vector-length v))
-            n
-            (loop (+ i 1)
-                  (if (strings:prefix? "<<<<<<<" (vector-ref v i))
-                      (+ n 1)
-                      n))))))
+    (files:conflict-count (head:buffer-lines b)))
 
   ;; the status line shows a merge's conflicts as a hint the files code
   ;; owns -- painting knows nothing about merges
@@ -1333,7 +1189,7 @@
     (let ask ()
       (let* ([k (query-key!
                   (format "~a changed on disk: o)verwrite, m)erge, c)ancel"
-                          (base-name path))
+                          (files:base-name path))
                   "omc")]
              [n (and k (char->integer k))])
         (cond
@@ -1366,12 +1222,8 @@
           [else (ask)]))))
 
   (define (buffer-text b)
-    (let* ([v (head:buffer-lines b)] [n (vector-length v)])
-      (let loop ([i (- n 1)] [acc (if (head:buffer-trailing b) (list "\n") '())])
-        (let ([acc (cons (vector-ref v i) acc)])
-          (if (= i 0)
-              (apply string-append acc)
-              (loop (- i 1) (cons "\n" acc)))))))
+    ;; b's text as its file would hold it
+    (files:text (head:buffer-lines b) (head:buffer-trailing b)))
 
   (define (buffer-clean? b)
     ;; Nothing is lost by discarding b: it was never modified, it is
@@ -1383,7 +1235,7 @@
           (if path
               (and (file-exists? path)
                    (guard (ex [else #f])
-                     (string=? (buffer-text b) (read-file path))))
+                     (string=? (buffer-text b) (files:read path))))
               (let ([v (head:buffer-lines b)])
                 (and (= (vector-length v) 1)
                      (string=? (vector-ref v 0) "")))))))
@@ -1439,15 +1291,6 @@
            (lambda () (head:set-window-buffer! current-window b))
            thunk
            (lambda () (head:set-window-buffer! current-window old))))]))
-
-  (define (data-directory)
-    ;; Where commands and apps keep built or fetched data, out of git:
-    ;; the data directory next to lib, created on first use.  Each
-    ;; concern takes a subdirectory -- the describe corpus lives in
-    ;; data/describe.
-    (let ([dir (string-append (caar (library-directories)) "/../data")])
-      (unless (file-directory? dir) (mkdir dir))
-      dir))
 
   (define (fresh-buffer name)
     ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
@@ -2298,7 +2141,7 @@
     ;; A label that comes out empty (a view name like "[log]" ends in a
     ;; separator) falls back to the whole candidate.
     (if (strings:suffix? "/" c)
-        (string-append (base-name (substring c 0 (- (string-length c) 1))) "/")
+        (string-append (files:base-name (substring c 0 (- (string-length c) 1))) "/")
         (let loop ([i (- (string-length c) 1)])
           (cond [(< i 0) c]
                 [(memv (string-ref c i) '(#\/ #\space #\( #\) #\[ #\]))
@@ -2751,7 +2594,7 @@
     ;; mere common prefix (no such file yet) is telling at a glance,
     ;; without another TAB to ask.
     (define (exists? p)
-      (guard (ex [else #f]) (file-exists? (expand-path p))))
+      (guard (ex [else #f]) (file-exists? (files:expand p))))
     (paint:prompt-styler label
       (lambda (path)
         (let* ([v (make-vector (string-length path) 'plain)]
@@ -2772,7 +2615,7 @@
         (save-file! file-name)
         (let ([s (parameterize ([paint:echo-highlight
                                  (file-prompt-styler "Write file: ")])
-                   (prompt! "Write file: " complete-file-name
+                   (prompt! "Write file: " files:complete
                             (default-directory)))])
           (when (and s (> (string-length s) 0)) (save-file! s))))
     (void))
@@ -2782,9 +2625,9 @@
     ;; edit -- and save the buffer there: the buffer visits the new
     ;; file from then on, its name and mode following.
     (let ([s (parameterize ([paint:echo-highlight (file-prompt-styler "Save as: ")])
-               (prompt! "Save as: " complete-file-name
+               (prompt! "Save as: " files:complete
                         (if file-name
-                            (abbreviate-path (absolute-path file-name))
+                            (files:abbreviate (files:absolute file-name))
                             (default-directory))
                         (box (log:log-history 'save-file! cdr))))])
       (when (and s (> (string-length s) 0)) (save-file! s)))
@@ -2796,7 +2639,7 @@
     ;; log.
     (let ([s (parameterize ([paint:echo-highlight
                              (file-prompt-styler "Find file: ")])
-               (prompt! "Find file: " complete-file-name (default-directory)
+               (prompt! "Find file: " files:complete (default-directory)
                         (box (log:log-history 'visit-file! cdr))))])
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
@@ -3536,30 +3379,12 @@
   (define modules-reload-on-save (make-parameter #t))
   (define config-reload-on-save (make-parameter #t))
 
-  (define (canonical-path path*)
-    ;; path made absolute, with ".", "..", and empty segments resolved
-    ;; textually (symbolic links are not chased) -- enough to recognize
-    ;; the editor's own files whichever way they are named.
-    (let* ([path (if (strings:prefix? "/" path*)
-                     path*
-                     (string-append (current-directory) "/" path*))]
-           [n (string-length path)])
-      (let loop ([i 0] [start 0] [stack '()])
-        (define (push seg)
-          (cond [(or (string=? seg "") (string=? seg ".")) stack]
-                [(string=? seg "..") (if (pair? stack) (cdr stack) stack)]
-                [else (cons seg stack)]))
-        (cond [(> i n) (string-append "/" (strings:join (reverse stack) "/"))]
-              [(or (= i n) (char=? (string-ref path i) #\/))
-               (loop (+ i 1) (+ i 1) (push (substring path start i)))]
-              [else (loop (+ i 1) start stack)]))))
-
   (define (module-name-of-path path)
     ;; The module name a saved path denotes: a .e file directly in the
     ;; editor's lib directory; #f for anything else -- the core included,
     ;; which cannot be reloaded.
-    (let ([full (canonical-path path)]
-          [lib (string-append (canonical-path (caar (library-directories)))
+    (let ([full (files:canonical path)]
+          [lib (string-append (files:canonical (caar (library-directories)))
                               "/")])
       (and (strings:prefix? lib full)
            (strings:suffix? ".e" full)
@@ -3614,7 +3439,7 @@
            (parameterize ([message-source 'reload-module!])
              (set-message! (format "Reloaded ~a" name))))]
         [(and (config-reload-on-save)
-              (string=? (canonical-path path) (canonical-path (config-file))))
+              (string=? (files:canonical path) (files:canonical (config-file))))
          (when (load-config!)
            (parameterize ([message-source 'config])
              (set-message! "Applied config.e")))])))
