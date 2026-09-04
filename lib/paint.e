@@ -665,9 +665,10 @@
                   (paint! row content-x '(empty)
                           (lambda () (ansi (fit "" content-width))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let* ([head-prefix
+      (let* ([number (format "~a|" (head:window-index w))]
+             [head-prefix
               (format "~a~a~a  "
-                      " "
+                      number
                       (cond [(head:buffer-stale b) "!!"]
                             [(head:view-buffer? b) "[]"]
                             [(head:buffer-read-only b) "%%"]
@@ -727,12 +728,15 @@
                                     content-width)]
                            [he (min (+ hs (string-length hint-text))
                                     content-width)]
+                           [number-end (min (string-length number) content-width)]
                            [normal-start
-                            (if stale? (min 3 content-width) 0)])
+                            (if stale? (min (+ number-end 2) content-width) number-end)])
                       (ansi bar)
+                      ;; the window's number and its bar, then the state
+                      ;; marker -- a stale buffer's !! in red
+                      (ansi (substring text 0 number-end))
                       (when stale?
-                        ;; the !! flag in red, the rest as usual
-                        (ansi "\x1b;[31m" (substring text 0 normal-start)
+                        (ansi "\x1b;[31m" (substring text number-end normal-start)
                           fg))
                       (ansi (substring text normal-start ns)
                         "\x1b;[1m" (substring text ns ne)

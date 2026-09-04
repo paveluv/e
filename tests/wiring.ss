@@ -362,6 +362,36 @@
             (echo-has? "main links against state")
             #t)
 
+     ;; -- window numbers --------------------------------------------------
+     ;; The first window is 0 and a split takes the smallest free number
+     (send! "\x1b;xbegin (split-window!) (split-window!) (list-sort < (map head:window-index (head:windows)))\r")
+     (pump! 900)
+     (check 'splits-take-the-smallest-free-numbers (echo-has? "(0 1 2)") #t)
+     ;; a deleted window's number is free again; the (window n) literal
+     ;; finds a window as (buffer "name") finds a buffer
+     (send! "\x1b;xbegin (select-window! (window 1)) (delete-window!) (list-sort < (map head:window-index (head:windows)))\r")
+     (pump! 900)
+     (check 'deleting-frees-the-number (echo-has? "(0 2)") #t)
+     ;; ... and goes to the next window created (after a frame: the
+     ;; layout hands the deleted window's rows to its neighbors at redraw)
+     (send! "\x1b;xbegin (split-window!) (list-sort < (map head:window-index (head:windows)))\r")
+     (pump! 900)
+     (check 'a-closed-number-is-reused (echo-has? "(0 1 2)") #t)
+     ;; windows print as the literal that finds them
+     (send! "\x1b;xwindow 2\r")
+     (pump! 900)
+     (check 'windows-print-as-their-literal (echo-has? "=> (window 2)") #t)
+     ;; and the number leads every status line, a bar after it
+     (check 'status-lines-lead-with-the-number
+            (let scan ([row 0])
+              (cond [(> row 23) #f]
+                    [(let ([line (screen-line row)])
+                       (and (>= (string-length line) 2)
+                            (string=? (substring line 0 2) "0|")))
+                     #t]
+                    [else (scan (+ row 1))]))
+            #t)
+
      (delete-file probe)
      (sys:close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))

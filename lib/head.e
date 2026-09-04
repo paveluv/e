@@ -32,7 +32,7 @@
           buffers set-buffers!
           kill-ring set-kill-ring! read-paste set-pending-paste!
           call-uninterrupted call-with-interrupt interrupted? make-interrupted
-          make-window window?
+          window make-window window? window-index window-numbered
           window-buffer window-buffer-set!
           window-top window-top-set!
           window-topseg window-topseg-set!
@@ -135,29 +135,35 @@
             ;; revision this buffer's lines last agreed with
             (mutable state-id) (mutable state-rev)))
 
-  (define-record-type window
-    (fields (mutable buffer) (mutable top)
-            ;; a soft-wrapping window may start mid-line: the first
-            ;; visible segment of the top line (0 elsewhere)
-            (mutable topseg)
-            (mutable left)
-            (mutable prow) (mutable pcol)
-            ;; text height in screen lines, written by the layout: the
-            ;; goal is the user's chosen proportion, and the layout
-            ;; realizes the goals in whatever space is there --
-            ;; recomputed fresh each redraw, so temporary changes (a
-            ;; grown echo area) never drift them
-            (mutable size)
-            (mutable goal)
-            ;; horizontal band geometry, written by the layout: the
-            ;; window's first screen column and its width
-            (mutable xoff)
-            (mutable width)
-            ;; column proportion within a band shared side by side
-            (mutable wgoal)
-            ;; soft-wrap long lines onto continuation rows instead of
-            ;; scrolling horizontally
-            (mutable wrap)))
+  (define-record-type (window %make-window window?)
+    (fields
+      ;; the window's number, shown at the left of its status line: 0
+      ;; for the first, and every new window the smallest number no
+      ;; live window holds -- a closed window's number is reused, so
+      ;; the numbers on screen stay small.  (window n) finds it.
+      index
+      (mutable buffer) (mutable top)
+      ;; a soft-wrapping window may start mid-line: the first
+      ;; visible segment of the top line (0 elsewhere)
+      (mutable topseg)
+      (mutable left)
+      (mutable prow) (mutable pcol)
+      ;; text height in screen lines, written by the layout: the
+      ;; goal is the user's chosen proportion, and the layout
+      ;; realizes the goals in whatever space is there --
+      ;; recomputed fresh each redraw, so temporary changes (a
+      ;; grown echo area) never drift them
+      (mutable size)
+      (mutable goal)
+      ;; horizontal band geometry, written by the layout: the
+      ;; window's first screen column and its width
+      (mutable xoff)
+      (mutable width)
+      ;; column proportion within a band shared side by side
+      (mutable wgoal)
+      ;; soft-wrap long lines onto continuation rows instead of
+      ;; scrolling horizontally
+      (mutable wrap)))
 
   (define-record-type layout-split
     (fields orientation (mutable first) (mutable second)
@@ -182,6 +188,22 @@
   (define (set-windows! ws) (set! the-windows ws))
   (define (root) the-root)
   (define (set-root! node) (set! the-root node))
+
+  (define (free-window-index)
+    ;; the smallest number no live window holds
+    (let ([taken (map window-index the-windows)])
+      (let loop ([n 0])
+        (if (memv n taken) (loop (+ n 1)) n))))
+
+  (define (make-window buffer top topseg left prow pcol size goal
+                       xoff width wgoal wrap)
+    ;; a window is born numbered; the layout it joins decides the rest
+    (%make-window (free-window-index) buffer top topseg left prow pcol
+                  size goal xoff width wgoal wrap))
+
+  (define (window-numbered n)
+    ;; the live window numbered n, or #f
+    (find (lambda (w) (eqv? (window-index w) n)) the-windows))
 
   ;; The seat's kill ring: one string, the last kill; commands and
   ;; prompts read and replace it.

@@ -45,6 +45,7 @@
 
     editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
+    (rename (lookup-window window))   ; windows print as (window n)
     ;; buffers, windows, files
     visit-file! save-file! save!! save-as!! find-file!!
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
@@ -1154,6 +1155,20 @@
       (lambda (r p wr)
         (display "(buffer " p)
         (wr (head:buffer-name r) p)
+        (display ")" p))))
+
+  ;; A window's printed form is likewise the expression that finds it
+  ;; again: (window 1) is the window numbered 1 at the left of its
+  ;; status line.  Numbers are reused, so the form names whatever
+  ;; window holds the number when it is evaluated.
+  (define (lookup-window n)
+    (or (head:window-numbered n) (error 'window "no window numbered" n)))
+
+  (define window-printing
+    (record-writer (record-type-descriptor head:window)
+      (lambda (r p wr)
+        (display "(window " p)
+        (wr (head:window-index r) p)
         (display ")" p))))
 
   (define (complete-buffer-name s)
