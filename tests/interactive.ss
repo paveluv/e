@@ -193,6 +193,7 @@
      ;; -- shut down cleanly ----------------------------------------------
      (send! "\x1b;[6;2~")
      (settle! 300)
+     (set! transcript '())
      (send! "exit\r")
      (wait-for! 'shell-exit-frees-buffer
                 (lambda () (not (find-cell "capturing input"))) 10000)
@@ -201,6 +202,13 @@
      ;; (regression: the reader thread detached the app mid-refresh).
      (settle! 500)
      (check 'shell-exit-refreshes-cleanly (not (find-cell "refresh failed")))
+     ;; An ordinary read-only buffer now: the app's blinking block gives
+     ;; way to the read-only bar (DECSCUSR 5), since app presentation
+     ;; facts apply only while an app owns the buffer.
+     (wait-for! 'dead-terminal-shows-the-read-only-cursor
+                (lambda ()
+                  (contains? (list->string (reverse transcript)) "\x1b;[5 q"))
+                5000)
      ;; -- window navigation inside a prompt ------------------------------
      ;; Split, start find-file, move focus right mid-prompt, accept: the
      ;; file must open in the newly focused right-hand window.

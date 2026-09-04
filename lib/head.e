@@ -84,7 +84,7 @@
           registered-apps app-of app-buffer? detach-app! register-app!
           set-app-cursor-visible! set-app-manages-viewport!
           set-app-status-position! app-cursor-visible-in?
-          app-manages-window-viewport? set-app-presentation!
+          app-manages-window-viewport? app-cursor-style set-app-presentation!
           buffer-sticky-lines scrollbar scrollbar-position line-numbers
           buffer-line-numbers window-line-number-width
           window-scrollbar? window-content-width buffer-narrowest-width
@@ -1168,8 +1168,10 @@
 
   (define (detach-app! b)
     ;; Preserve the app's current buffer contents while removing its
-    ;; dynamic refresh and event handler; its presentation facts stay
-    ;; with the buffer.  It behaves like an ordinary read-only buffer.
+    ;; dynamic refresh and event handler.  Its presentation facts stay
+    ;; with the buffer but apply only while an app owns it (see the
+    ;; readers below), so it behaves like an ordinary read-only buffer
+    ;; until a re-registration takes it back.
     (let ([a (app-of b)])
       (when a
         (kernel:registry-remove! app-registry
@@ -1237,8 +1239,20 @@
             [(boolean? visibility) visibility]
             [else #t])))
 
+  ;; App presentation facts are store properties, so they outlive the
+  ;; app record -- a reload's re-registration finds them in place -- but
+  ;; they mean something only while an app owns the buffer.  Every reader
+  ;; therefore asks app-of first: a detached buffer (a dead terminal's
+  ;; transcript) presents as an ordinary read-only buffer, its cursor
+  ;; the read-only bar and its viewport the editor's to manage.
+
   (define (app-manages-window-viewport? w)
-    (buffer-fact (window-buffer w) 'manages-viewport #f))
+    (let ([b (window-buffer w)])
+      (and (app-of b) (buffer-fact b 'manages-viewport #f))))
+
+  (define (app-cursor-style b)
+    ;; the shape an app asked for through set-app-presentation!, or #f
+    (and (app-of b) (buffer-fact b 'cursor-style #f)))
 
   (define (set-app-presentation! b sticky-lines scrollbar . options)
     ;; Configure buffer-level presentation shared by every window -- and
@@ -1274,7 +1288,9 @@
       b))
 
   (define (buffer-sticky-lines b)
-    (min (or (buffer-fact b 'sticky-lines #f) 0) (line-count b)))
+    (if (app-of b)
+        (min (or (buffer-fact b 'sticky-lines #f) 0) (line-count b))
+        0))
 
   ;; Ordinary buffers use the global setting. An app can force the bar on
   ;; with #t, force a particular side, or otherwise inherit the global choice.

@@ -1332,9 +1332,7 @@
             (let ([p (window-screen-position (head:current)
                                              (head:window-prow (head:current)) (head:window-pcol (head:current)))])
               (goto (min (car p) rows) (min (cdr p) cols)))))
-      (let* ([a (head:app-of (head:window-buffer (head:current)))]
-             [app-style (head:buffer-fact (head:window-buffer (head:current))
-                                          'cursor-style #f)]
+      (let* ([app-style (head:app-cursor-style (head:window-buffer (head:current)))]
              [style (cond
                       [(cursor-in-echo) "\x1b;[3 q"]
                       ;; a prompt: the cursor is in the echo area's input,
