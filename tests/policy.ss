@@ -14,7 +14,7 @@
 (eval
   '(begin
      (import (prefix (policy) policy:)
-             (prefix (state) state:)
+             (prefix (store) store:)
              (prefix (text) text:)
              (prefix (actor) actor:)
              (prefix (kernel) kernel:)
@@ -40,8 +40,8 @@
      (actor:register! owner
                        (lambda (m) (kernel:mailbox-post! owner-mail m)))
      (define agent '(agent helper 1))
-     (define notes (state:create! owner "notes" '("one" "two")))
-     (define secret (state:create! owner "secret" '("hidden")))
+     (define notes (store:create! owner "notes" '("one" "two")))
+     (define secret (store:create! owner "secret" '("hidden")))
 
      ;; the audit trail, injected
      (define audit '())
@@ -102,13 +102,13 @@
      (define (try-edit! session id line)
        (let-values ([(status detail)
                      (policy:session-edit!
-                       session id (state:revision id)
+                       session id (store:revision id)
                        (text:make-span 0 0 0 0) (list line))])
          (list status (number? detail))))
 
      (check 'edit-applies (try-edit! s notes "zero ") '(applied #t))
      (check 'edit-is-attributed
-            (cadr (car (state:history notes))) agent)
+            (cadr (car (store:history notes))) agent)
      (check 'undo-own-edit
             (let-values ([(status detail)
                           (policy:session-undo! s notes)])
@@ -118,18 +118,18 @@
      (check 'quota-exhausted
             (let-values ([(status detail)
                           (policy:session-edit!
-                            s notes (state:revision notes)
+                            s notes (store:revision notes)
                             (text:make-span 0 0 0 0) '("more "))])
               (list status detail))
             '(refused quota))
      (check 'allowlist-refuses-other-buffers
             (let-values ([(status detail)
                           (policy:session-edit!
-                            s secret (state:revision secret)
+                            s secret (store:revision secret)
                             (text:make-span 0 0 0 0) '("leak "))])
               (list status detail))
             '(refused buffer))
-     (check 'secret-untouched (state:line secret 0) "hidden")
+     (check 'secret-untouched (store:line secret 0) "hidden")
 
      ;; -- the escalation path: the session asks its owner --------------
 
@@ -151,7 +151,7 @@
      (check 'revoked-edit-refused
             (let-values ([(status detail)
                           (policy:session-edit!
-                            s notes (state:revision notes)
+                            s notes (store:revision notes)
                             (text:make-span 0 0 0 0) '("x"))])
               (list status detail))
             '(refused revoked))
@@ -178,6 +178,6 @@
             #t)
      (policy:revoke! quiet)
 
-     (state:delete! owner notes)
-     (state:delete! owner secret)
+     (store:delete! owner notes)
+     (store:delete! owner secret)
      (format #t "~a policy checks passed\n" checks)))

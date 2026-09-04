@@ -2,7 +2,7 @@
 
 ;; The read-only capability environment: reachability is the whole
 ;; game -- granted names work, everything else fails to resolve --
-;; plus the bounded editor readers over the state store.  Run from
+;; plus the bounded editor readers over the store.  Run from
 ;; the repository root.
 
 (import (chezscheme))
@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (prefix (state) state:)
+     (import (prefix (store) store:)
              (only (chezscheme) environment eval format))
 
      (define checks 0)
@@ -62,7 +62,7 @@
 
      ;; -- the editor readers: by name, over the store, bounded --------
 
-     (define id (state:create! '(head test) "sandbox-probe"
+     (define id (store:create! '(head test) "sandbox-probe"
                                '("alpha" "beta")))
 
      (check 'buffer-names-sees-the-store
@@ -72,7 +72,7 @@
      (check 'line (eval '(buffer-text-line "sandbox-probe" 1) tier) "beta")
      (check 'revision-is-data
             (eval '(buffer-revision "sandbox-probe") tier)
-            (state:revision id))
+            (store:revision id))
      (check 'read-buffer-numbers-lines
             (contains? (eval '(read-buffer "sandbox-probe") tier)
                        "0: alpha")
@@ -98,5 +98,5 @@
                       tier)
             #t)
 
-     (state:delete! '(head test) id)
+     (store:delete! '(head test) id)
      (format #t "~a sandbox checks passed\n" checks)))

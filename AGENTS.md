@@ -6,7 +6,7 @@
   fixtures may shell out where a fixture genuinely needs another
   runtime, but reach for Scheme first.
 - Every library but the command layer `edit` is imported with its own
-  prefix -- seams and apps alike (`state:`, `terminal:`, `git:`,
+  prefix -- seams and apps alike (`store:`, `terminal:`, `git:`,
   `sys:`) -- and that is how M-x sees them; only `edit`'s names are
   bare, and apps import it as `(except (edit) init!)`.  Modules are
   named in the singular (`style`, `file`, `mode`, `string`, `actor`,

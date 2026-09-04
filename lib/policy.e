@@ -41,7 +41,7 @@
                 open-string-input-port open-output-string
                 get-output-string
                 call-with-string-output-port)
-          (prefix (state) state:)
+          (prefix (store) store:)
           (prefix (actor) actor:)
           (prefix (only (log) add!) log:)
           (only (kernel) persistent-cell condition-text))
@@ -228,7 +228,7 @@
   (define (buffer-allowed? s id)
     (let ([allowed (policy-buffers (session-policy s))])
       (or (eq? allowed 'any)
-          (member (guard (ex [else #f]) (state:buffer-name id))
+          (member (guard (ex [else #f]) (store:buffer-name id))
                   allowed))))
 
   (define (spend-edit? s)
@@ -238,7 +238,7 @@
             [else #f])))
 
   (define (session-edit! s id basis span lines)
-    ;; state:edit! curried with the session's actor and checked
+    ;; store:edit! curried with the session's actor and checked
     ;; against its policy.  -> the store's (values status detail),
     ;; plus (values 'refused 'revoked|'buffer|'quota).  The quota is
     ;; spent only by applied edits.
@@ -250,7 +250,7 @@
        (values 'refused 'quota)]
       [else
        (let-values ([(status detail)
-                     (state:edit! (session-actor s) id basis span lines)])
+                     (store:edit! (session-actor s) id basis span lines)])
          (when (eq? status 'applied) (spend-edit? s))
          ((session-audit! s)
           (list 'edit (session-actor s) id status detail))
@@ -263,7 +263,7 @@
       [(not (buffer-allowed? s id)) (values 'refused 'buffer)]
       [else
        (let-values ([(status detail)
-                     (state:undo! (session-actor s) id)])
+                     (store:undo! (session-actor s) id)])
          ((session-audit! s)
           (list 'undo (session-actor s) id status))
          (values status detail))]))

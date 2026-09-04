@@ -1,7 +1,7 @@
 ;; blame.e -- in-UI attribution: who wrote what, painted and asked.
 ;;
 ;; Blame is recent-memory attribution over the store's delta log
-;; (state:blame): bounded by delta-log-limit, cleared by resets --
+;; (store:blame): bounded by delta-log-limit, cleared by resets --
 ;; deep history stays git's job.  Two consumers:
 ;;
 ;;   - a transient tint: another actor's edit paints its written span
@@ -28,7 +28,7 @@
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (style) style:)
-          (prefix (state) state:)
+          (prefix (store) store:)
           (prefix (text) text:)
           (prefix (doc) doc:))
 
@@ -138,7 +138,7 @@
                            acc))))])))
 
   (define (buffer-of-id id)
-    (find (lambda (b) (eqv? (head:buffer-state-id b) id))
+    (find (lambda (b) (eqv? (head:buffer-store-id b) id))
           (edit:buffer-list)))
 
   (define (blame-highlights)
@@ -161,16 +161,16 @@
   (define (blame-at-point!)
     ;; who recently wrote the text at point, from the store's log
     (let* ([b (edit:current-buffer)]
-           [id (head:buffer-state-id b)]
+           [id (head:buffer-store-id b)]
            [p (edit:point)])
       (edit:set-message!
         (cond
-          [(not id) "This buffer has no state twin"]
+          [(not id) "This buffer has no store twin"]
           [(find (lambda (entry)
                    (let ([s (car entry)])
                      (or (text:contains? s p)
                          (text:position=? p (text:span-start s)))))
-                 (state:blame id 64))
+                 (store:blame id 64))
            => (lambda (hit)
                 (format "~a wrote this at revision ~a"
                         (cadr hit) (caddr hit)))]
@@ -182,7 +182,7 @@
   (define (init!)
     ;; the subscription is registry-owned like every registration:
     ;; reloading this module retracts it before init! subscribes afresh
-    (state:subscribe!
+    (store:subscribe!
       #f
       (lambda (event)
         (head:run-on-main! (lambda () (note-event! event)))))
@@ -198,7 +198,7 @@
       '(((blame:at-point!)
          (("procedure" . "(blame:at-point!)")) "void"
          ("(blame)") blame "Blame" #f
-         "Report in the echo area which actor most recently wrote the text at point, from the buffer's attributed edit log (state:blame). Reach is the delta log (256 edits); a buffer reset clears it -- deep history stays git's job.")
+         "Report in the echo area which actor most recently wrote the text at point, from the buffer's attributed edit log (store:blame). Reach is the delta log (256 edits); a buffer reset clears it -- deep history stays git's job.")
         ((blame:tint-seconds)
          (("parameter" . "(blame:tint-seconds [seconds])")) "number"
          ("(blame)") blame "Blame" #f

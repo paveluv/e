@@ -14,7 +14,7 @@ with a date; deletions note the commit.
   `region-printing` (edit -- the command layer's other load-time
   effects moved into its init! when core dissolved); `reload-hooked`,
   `reload-tail-hooked` (main); `libc-character-locale`,
-  `libutil-loaded?` (sys); `state-subscription`, `ui-actor-registered`,
+  `libutil-loaded?` (sys); `store-subscription`, `ui-actor-registered`,
   `seat-initialized` (head); `adopt-hooked` (modes); `repaint-hooked`
   (paint);
   `completions-mode-registered`, `completions-status-hinted` (prompt);
@@ -151,7 +151,7 @@ with a date; deletions note the commit.
 
 - 2026-09-01 `drag-status` (core): defined and assigned, never read
   -- its own comment admitted "retained for clearing older mouse
-  state". Removed with the state.e work.
+  state". Removed with the store.e work.
 
 ## Suspects awaiting a look
 

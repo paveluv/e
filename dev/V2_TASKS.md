@@ -4,11 +4,11 @@ The living checklist for the dev/DESIGN2.md migration. Updated as
 work lands; the design doc holds the reasoning, this file holds the
 state.
 
-## Stage 1 -- buffer state
+## Stage 1 -- the buffer store
 
 - [x] `text.e`: the pure span/edit/rebase algebra (tests/text.ss)
-- [x] `state.e`: transactions, marks, subscriptions, attributed undo,
-      reset/rename (tests/state.ss)
+- [x] `store.e`: transactions, marks, subscriptions, attributed undo,
+      reset/rename (tests/store.ss)
 - [x] `kernel.e` born: persistent cells; excluded from reload
 - [x] core wired as the store's first privileged client: mirrored
       creation, line edits, splices, resets, deletion, renames;
@@ -19,7 +19,7 @@ state.
       never mutated in place (the eq? proof is in tests/wiring.ss)
 - [x] rebase window points, viewport tops, and buffer spots through
       foreign deltas; clamping remains only as the safety net
-- [x] publish the v0.1 region (mark..point) as a state span -- marks
+- [x] publish the v0.1 region (mark..point) as a store span -- marks
       may now hold (text) spans (rebased strictly, degrading to
       endpoint rebasing when an edit overlaps: a selection survives a
       race, never goes stale); the head publishes the selected
@@ -28,12 +28,12 @@ state.
 
 ## Stage 2 -- actor identity
 
-- [x] every state operation carries its actor
-- [x] attributed edit history: `state:history` (revision, actor,
+- [x] every store operation carries its actor
+- [x] attributed edit history: `store:history` (revision, actor,
       positions), cleared by resets
-- [x] the audit stream: foreign operations logged under the `state`
-      component -- `(log-view 'state)` is the record
-- [x] in-UI blame: `state:blame` (the attributed delta log with spans
+- [x] the audit stream: foreign operations logged under the `store`
+      component -- `(log-view:buffer 'store)` is the record
+- [x] in-UI blame: `store:blame` (the attributed delta log with spans
       rebased to the current text) plus the new `blame.e` extension
       module -- another actor's fresh edit is tinted in that actor's
       color (a stable hash into six muted faces, fading after
@@ -42,12 +42,12 @@ state.
       ride the store subscription (marshaled to the main thread) and
       paint through `add-highlighter!`
 - [x] core undo refuses to time-travel over foreign edits (snapshots
-      carry the store revision; history-shift! checks state:history)
+      carry the store revision; history-shift! checks store:history)
 - [x] the store's undo history is bounded like the delta log
 - [x] coalesced auditing of ui edits: consecutive ui edits to a
       buffer batch into one quiet audit entry ("ui: N edits in BUF
       (revisions A-B)"), flushed before a foreign actor's operation
-      on that buffer so (log-view 'state) reads in true order, on a
+      on that buffer so (log-view:buffer 'store) reads in true order, on a
       3-second idle, and at shutdown -- stage 2 complete
 
 ## Stage 3 -- kernel scheduling
@@ -91,7 +91,7 @@ state.
       -- the read-only tier as a curated export list, granted whole
       via (environment '(sandbox)) or narrowed with (only (sandbox)
       names...).  v2 hardening over v0.1: editor readers are keyed by
-      buffer NAME over the state store and return only plain data (no
+      buffer NAME over the store and return only plain data (no
       buffer records cross the boundary), and every lock-taking
       reader runs with interrupts off so an engine's fuel expiry can
       never strand the store's mutex
@@ -99,7 +99,7 @@ state.
       policies are data (grants, fuel, edit quota, buffer allowlist,
       result cap); mint! curries a session with the actor's identity;
       session-eval! (engine-fueled, output-captured), session-edit!/
-      session-undo! (attributed through state:, quota- and
+      session-undo! (attributed through store:, quota- and
       allowlist-checked), session-ask! (escalation to the owner via
       actors:); revoke! plus revocation-by-reload (sessions
       deliberately do not ride a persistent cell -- reloading
@@ -122,10 +122,10 @@ the client side, everything below it is the server side.
       connection is an actor with a minted policy session
 - [ ] server sockets in sys (unix first; TCP+TLS later -- only the
       client side of libssl exists today)
-- [ ] `wire.e`: connection -> actor session; dispatch to state:/
+- [ ] `wire.e`: connection -> actor session; dispatch to store:/
       actors:/policy:; per-connection event coalescing; resync by
       snapshot + revision on reconnect
-- [ ] `remote-state.e`: the state: signatures over the wire, so a
+- [ ] `remote-store.e`: the store: signatures over the wire, so a
       head links against a remote store unchanged; optimistic local
       apply with basis/rebase reconciliation on the edit path
 - [ ] `e --server` / `e --client`; then decide what runs where (PTY
@@ -234,12 +234,12 @@ stopped knowing about capture.
       timing; mouse reporting negotiation moved to tty.e; the actions
       (focus, selection, scrolling, app dispatch) stay with the commands,
       and the store client -- the bridge between the seat's records and
-      the (state) store: buffer facts, mirror creation and adoption,
+      the (store): buffer facts, mirror creation and adoption,
       transactional edits with conflict handling, resets, outage
       recovery, the foreign-event sync with its audit and lifecycle
       handling, and head-mark publication -- with two owner hooks
       (invalidate the screen, assign a mode).  Over the wire, a remote
-      seat is exactly this client with a socket under the state: calls.
+      seat is exactly this client with a socket under the store: calls.
       Then the app registry (procedures only), the hook registries and
       their runners, the views (refresh/append/replace), forget-buffer!,
       set-window-buffer!, buffer-named, and the window geometry helpers
@@ -253,11 +253,11 @@ stopped knowing about capture.
       (apps, capture, set-layout-root!), wrap policy, per-buffer state
       swapping (define-state), the main loop -- plus the presentation
       halves of paint.e and echo.e that come loose with them
-- [x] buffer facts move to the state layer: `state:set-property!`/
+- [x] buffer facts move to the store: `store:set-property!`/
       `property`/`properties` -- plain-data, per-buffer, shared by
       every head (visited file, trailing newline, modified, mode NAME,
       read-only, disk stamp/base, stale), with (property id key actor)
-      events, audited on the state stream (except the modified
+      events, audited on the store stream (except the modified
       shadow), repainting status lines on foreign changes.  The core's
       buffer record shrank to the lines cache plus per-seat
       presentation; its fact accessors read and write the store, and
@@ -269,7 +269,7 @@ stopped knowing about capture.
       record keeps only its procedures (refresh, handler, cursor
       visibility, status position); the two wrap knobs (app-level and
       buffer-level) collapsed into the one `wrap` property
-- [x] the buffer lifecycle crosses heads: `state:create!`/`rename!`
+- [x] the buffer lifecycle crosses heads: `store:create!`/`rename!`
       now notify (create id name actor) / (rename id name actor)
       alongside (delete id actor); a head adopts another actor's new
       buffers into its list (mode detected and recorded as the shared
@@ -277,9 +277,9 @@ stopped knowing about capture.
       private), follows renames, and on a foreign delete forgets the
       buffer and moves its windows on -- never resurrecting what
       someone killed (outage recovery only re-baselines twins that
-      still exist).  All audited on the state stream
+      still exist).  All audited on the store stream
 - [x] the facade sweep: 162 alias lines deleted from core.e; core's
-      internal references use the seam prefixes directly (state:,
+      internal references use the seam prefixes directly (store:,
       head:, log:, styles:, keymap:, tty:, paint:, kernel:), quoted
       symbols left as data; the extension modules import the seams
       they use with prefixes (edit, terminal, md-view, git-view, eval,
@@ -442,10 +442,10 @@ priority; items graduate into stage tasks when picked up.
 | P | Debt | Notes |
 |---|---|---|
 | 25 | `text:apply-edit` copies the whole line vector per edit | `lib/text.e` `apply-edit` allocates a fresh vector of all lines per edit: O(lines) per keystroke, fine to ~100k lines. Eventual fix: a rope or line-tree text in `text.e` behind the same API. |
-| 10 | Store-outage recovery has no test | `lib/head.e` `adopt-local!`/`reconverge-forked!` (a store call failing with the twin still present: fork the cache, log once, re-baseline at frame time) lost its only wiring test when foreign deletion became a lifecycle event rather than an outage. Fix: a fault-injection hook -- a `state:` parameter or a test-only wrapper that makes `edit!` raise once -- driven from tests/wiring.ss to assert the fork log line and the reconvergence. |
+| 10 | Store-outage recovery has no test | `lib/head.e` `adopt-local!`/`reconverge-forked!` (a store call failing with the twin still present: fork the cache, log once, re-baseline at frame time) lost its only wiring test when foreign deletion became a lifecycle event rather than an outage. Fix: a fault-injection hook -- a `store:` parameter or a test-only wrapper that makes `edit!` raise once -- driven from tests/wiring.ss to assert the fork log line and the reconvergence. |
 | 10 | describe entries of moved names still say `(core)` | The facade sweep (2026-09-03) renamed moved API to its seam prefixes in `lib/describe.e`'s entry keys and forms (e.g. `keymap:bind-default!`), but each entry's libraries field still reads `("(core)")`. Fix: set the field to the owning seam for every prefixed key -- a small script over the register-descriptions! data; the describe page then names the right library. |
-| 15 | Store marks and subscribers are assoc lists | `lib/state.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
-| 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
+| 15 | Store marks and subscribers are assoc lists | `lib/store.e` `buffer-marks` and `store-subscribers` scan linearly per edit/notify. Fix when profiles say so: hashtables keyed by (actor . name) and token. |
+| 15 | The delta/undo log bounds entries, not bytes | `lib/store.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/store.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |
 | 20 | prompt.e writes the echo area through identifier-syntax facades | `lib/prompt.e` defines `message`, `message-ghost`, `message-styles`, `echo-cursor`, `echo-indent`, `echo-input-end`, `echo-scroll`, `echo-spans` as identifier macros over `echo:` accessors so the prompt's code moved verbatim. Fix: rewrite the sites to direct `echo:set-text!`/`echo:cursor` calls (a scripted pass; `(set! message X)` across line breaks is the awkward case) and drop the macros -- the same unwind core's remaining facades get when their code moves. |
 | 40 | edit.e is a 3,000-line command layer | `lib/edit.e` took core's whole body: buffer and window commands, files (visit/save/merge dialogs), editing with undo, kill ring and clipboard, indentation, mouse actions, default bindings, the log presenter and set-message!, plus the generic helpers. Harmony rule: split along what a user feels -- e.g. `buffers.e` (buffer and window commands), `files-app`/visiting and saving, `editing.e` (undo, kill/yank, self-insert, indentation), the mouse actions -- each an app registering its own bindings, with the shared notification API (set-message!, message-source) finding a home above paint. Decide the cut with the user first. |

@@ -78,7 +78,7 @@
                 string-titlecase last-pair cons* vector-sort nan?
                 exact->inexact open-output-string get-output-string
                 put-string disable-interrupts enable-interrupts)
-          (prefix (state) state:)
+          (prefix (store) store:)
           (prefix (only (head) buffer-name window-buffer current
                         window-prow window-pcol)
                   head:)
@@ -102,7 +102,7 @@
   (define (named who name)
     (or (uninterruptible
           (lambda ()
-            (guard (ex [else #f]) (state:find-named name))))
+            (guard (ex [else #f]) (store:find-named name))))
         (error who "no buffer with that name ((buffer-names) lists them)"
                name)))
 
@@ -110,19 +110,19 @@
     ;; every buffer's name, as the store knows them
     (uninterruptible
       (lambda ()
-        (map state:buffer-name (state:buffer-list)))))
+        (map store:buffer-name (store:buffer-list)))))
 
   (define (buffer-lines-count name)
     (let ([id (named 'buffer-lines-count name)])
-      (uninterruptible (lambda () (state:line-count id)))))
+      (uninterruptible (lambda () (store:line-count id)))))
 
   (define (buffer-text-line name n)
     (let ([id (named 'buffer-text-line name)])
-      (uninterruptible (lambda () (state:line id n)))))
+      (uninterruptible (lambda () (store:line id n)))))
 
   (define (buffer-revision name)
     (let ([id (named 'buffer-revision name)])
-      (uninterruptible (lambda () (state:revision id)))))
+      (uninterruptible (lambda () (store:revision id)))))
 
   (define (current-buffer-name)
     ;; the buffer the head's user is looking at
@@ -146,7 +146,7 @@
       (let ([id (named 'read-buffer name)])
         (uninterruptible
           (lambda ()
-            (let*-values ([(text revision) (state:snapshot id)])
+            (let*-values ([(text revision) (store:snapshot id)])
               (let* ([total (vector-length text)]
                      [start (if (pair? range) (car range) 0)]
                      [count (if (and (pair? range) (pair? (cdr range)))
@@ -174,10 +174,10 @@
                "name / lines / revision\n"
                (map (lambda (id)
                       (format "~s / ~a / ~a\n"
-                              (state:buffer-name id)
-                              (state:line-count id)
-                              (state:revision id)))
-                    (state:buffer-list))))))
+                              (store:buffer-name id)
+                              (store:line-count id)
+                              (store:revision id)))
+                    (store:buffer-list))))))
 
   (define (log-tail . count)
     ;; The newest entries of *log* -- errors and messages land there.

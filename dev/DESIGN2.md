@@ -26,7 +26,7 @@ it does not.
 ```
   human ─ keyboard/mouse ─→ UI head ──┐
   human ─ keyboard/mouse ─→ UI head ──┤        ┌─→ apps
-                                      ├─→ buffer state
+                                      ├─→ buffer store
   agent ───────── API/protocol ───────┤        └─→ kernel
   agent ───────── API/protocol ───────┘
 ```
@@ -50,11 +50,11 @@ condition-variable, "workers run between keystrokes"). The kernel
 provides the one true answer to "who runs when", and the layers
 above stop improvising.
 
-### Buffer state
+### Buffer store
 
 A multi-actor-safe module owning the state of all buffers, behind a
 message-shaped API. It knows nothing of UI or keyboards. Kernel +
-buffer state run headless: that pair is the whole system an agent
+buffer store run headless: that pair is the whole system an agent
 needs, and later the server that remote UIs connect to.
 
 The v0.1 lesson forcing real redesign here: buffers today are not
@@ -79,7 +79,7 @@ module boundary:
         (text   "..."))
   ```
 
-  Buffer state applies it -- rebasing every other actor's marks --
+  Buffer store applies it -- rebasing every other actor's marks --
   or rejects it as stale when the basis revision no longer permits a
   clean application. Compare-and-swap on revisions covers local
   multi-actor; operational transforms and CRDTs are deliberately out
@@ -108,7 +108,7 @@ module boundary:
 A UI head is one actor's screen: the window tree, keymaps, echo/
 notification area, kill ring, histories, and rendering -- everything
 v0.1 wrongly held globally that is really per-user. A head talks to
-buffer state like any other client: it subscribes to the buffers it
+buffer store like any other client: it subscribes to the buffers it
 shows and submits edits attributed to its human.
 
 Multiple heads may exist (two terminals into one session; later, two
@@ -125,7 +125,7 @@ works without an agent ever holding a window.
 ### Apps
 
 Apps (file editing included -- it is just the default app) talk to
-buffer state for content and to UI heads for presentation requests.
+buffer store for content and to UI heads for presentation requests.
 An app declares what it owns through kernel registries exactly as in
 v0.1. The difference: app operations take explicit actor and buffer
 arguments -- nothing reads an ambient "current buffer", because
@@ -140,7 +140,7 @@ An actor is an identity plus a session:
 (actor (kind agent) (name claude) (instance 3))
 ```
 
-Every operation entering buffer state carries its actor. Identity is
+Every operation entering buffer store carries its actor. Identity is
 the foundation for four features at once: permissions, attribution
 (in-session blame: who wrote this line), the audit stream (v0.1's
 `(log-view 'claude)` generalized to every actor), and per-actor
@@ -158,7 +158,7 @@ of this; in v2 it is the library case.
 
 ## The seam is a protocol
 
-The buffer-state API is message-shaped: operations in, results and
+The buffer-store API is message-shaped: operations in, results and
 events out, all plain data -- no closures, no shared mutable
 structures across the boundary. One definition buys four things:
 
@@ -180,7 +180,7 @@ data -- records, strings, spans, actor ids -- never closures, never
 shared mutable structures. The procedure call is the message; the
 litmus test is "could this call and its result be serialized without
 loss?". Only the actor-facing seams carry the discipline (buffer
-state's API, the interaction protocol, UI suggestions, the audit
+store's API, the interaction protocol, UI suggestions, the audit
 stream); within a layer, ordinary Scheme -- closures in registries,
 per-line styling calls during redraw -- remains ordinary. Nor do
 messages imply asynchrony: mutation is serialized through the
@@ -242,14 +242,14 @@ unless noted, loaded by the same loader. Layer by layer:
 | File | Owns |
 |---|---|
 | `text.e` | pure text and span algebra: lines, anchored spans, edit rebasing -- no state, fully unit-testable |
-| `state.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo, and buffer properties -- the buffer-level facts every head shares (visited file, mode name, read-only, disk base), so a second or remote head reads the same truth; per-seat state (cursors, selections, viewports) stays with heads |
+| `store.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo, and buffer properties -- the buffer-level facts every head shares (visited file, mode name, read-only, disk base), so a second or remote head reads the same truth; per-seat state (cursors, selections, viewports) stays with heads |
 | `file.e` | the disk: path algebra, reading, stamps, permission-preserving writes, the line/trailing-newline algebra, the three-way merge over text, path completion, the pre/post-save hooks -- no buffers, no dialogs; the server's side of a save |
 | `log.e` | the structured log and audit stream (state, not UI) |
 | `policy.e` | permissions: capability minting per actor, budgets |
 | `sandbox.e` | the read-only capability environment for expression eval -- v0.1's `claude-safe`, generalized to any constrained actor |
 
-`state.e` keeps its store in a kernel-registered cell, so hot
-reloading the state module preserves every buffer -- the same trick
+`store.e` keeps its store in a kernel-registered cell, so hot
+reloading the store module preserves every buffer -- the same trick
 that lets v0.1 reload modules under a running editor.
 
 **UI** (one set of modules, many head instances):
@@ -297,11 +297,11 @@ Every cross-module import is prefixed with the module's own name, so
 a call site names its layer without looking at the import list:
 
 ```scheme
-(import (prefix (state) state:)
+(import (prefix (store) store:)
         (prefix (actor) actor:)
         (prefix (text) text:))
 
-(state:apply-edit!
+(store:apply-edit!
   (text:edit actor buffer basis span replacement))
 ```
 
@@ -321,7 +321,7 @@ the definition may keep a longer name; the export list renames it
 
 `(rnrs)` and `(chezscheme)` stay unprefixed. Two consequences,
 adopted as rules: exported names drop their module stem
-(`state:apply-edit!`, never `state:state-apply-edit!`), and a
+(`store:apply-edit!`, never `store:state-apply-edit!`), and a
 module's public vocabulary is designed to read well behind its
 prefix -- the prefix is part of the name.
 
@@ -340,10 +340,10 @@ prefix -- the prefix is part of the name.
 No big bang. Each stage keeps the editor working and the suites
 green; hot reload makes the extractions unusually safe to iterate.
 
-1. **Extract buffer state** behind the new API; the existing UI
+1. **Extract buffer store** behind the new API; the existing UI
    becomes its first (privileged) client. Marks become first-class;
    window point becomes a mark owned by the sole human actor.
-2. **Introduce actor identity** in every state operation; the audit
+2. **Introduce actor identity** in every store operation; the audit
    stream generalizes from `claude` to all actors; edits gain
    attribution.
 3. **Split the main loop** into kernel scheduling: the keyboard
@@ -357,7 +357,7 @@ green; hot reload makes the extractions unusually safe to iterate.
    also the moment real isolation exists.
 
 Stages 1-2 are the bulk of the value and can be validated entirely
-by the existing suites plus new state-layer tests. Stage 3 is the
+by the existing suites plus new store tests. Stage 3 is the
 most delicate (it touches everything interactive) and should land
 behind the old loop as a facade first.
 
@@ -373,7 +373,7 @@ behind the old loop as a facade first.
 - **Keymaps layer per head**: a head's own bindings overlay the
   buffer-mode maps, which overlay the defaults -- two humans, two
   keymaps, one buffer.
-- **The state layer coalesces notifications**: subscription delivery
+- **The store coalesces notifications**: subscription delivery
   batches change events, so an agent editing in a tight loop costs
   its subscribers one update per batch, not per edit.
 - **Vocabulary is settled**: *actor* (an identity acting on the

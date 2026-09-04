@@ -8,7 +8,7 @@ locates the adjacent libraries and compiled-object directory, configures Chez,
 imports the command layer (`edit`, bare -- the names M-x sees), `main` and
 `kernel` (prefixed), and runs `(main:run)`.
 
-The editor is layered seam modules -- `kernel`, `state`, `file`, `head`,
+The editor is layered seam modules -- `kernel`, `store`, `file`, `head`,
 `paint`, `prompt`, `mode`, `keymap`, ... -- with `main.e` running the loop on
 top, `edit.e`, the command layer, as the default app, and the other apps
 (`terminal`, `git`, `describe`, `eval`, ...) beside it. `sys.e` owns libc,
@@ -17,7 +17,7 @@ compose the command API and the seams and, when necessary, narrowly scoped
 system facilities.
 
 Every library but `edit` is imported with its own prefix, and that is also how
-M-x sees it: `state:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only `edit`'s
+M-x sees it: `store:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only `edit`'s
 names are bare. Modules are named in the singular (`style`, `file`, `mode`,
 `string`, `actor`, `doc`), and their exported names drop the module's stem: the
 prefix says it once -- `style:set!`, not `styles:set-style!`; `keymap:bind!`,
