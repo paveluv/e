@@ -3,7 +3,7 @@
 e is a live Scheme environment. Both evaluation commands run code in the
 editor's interaction environment: the same top level used by `config.e` and
 the module loader, with Chez Scheme, the command layer `(edit)`, every loaded
-module's exports, and the seam modules under their prefixes (`state:`,
+module's exports, and the seam modules under their prefixes (`store:`,
 `head:`, `keymap:`, ...) in scope. Definitions persist for the rest of the session and are
 immediately available to later evaluations.
 

@@ -27,8 +27,8 @@
           buffer-spot-col buffer-spot-col-set!
           buffer-spot-top buffer-spot-top-set!
           buffer-line-numbers-setting buffer-line-numbers-setting-set!
-          buffer-state-id buffer-state-id-set!
-          buffer-state-rev buffer-state-rev-set!
+          buffer-store-id buffer-store-id-set!
+          buffer-store-rev buffer-store-rev-set!
           buffers set-buffers!
           kill-ring set-kill-ring! read-paste set-pending-paste!
           call-uninterrupted call-with-interrupt interrupted? make-interrupted
@@ -73,9 +73,9 @@
           buffer-read-only buffer-read-only-set!
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
-          mirror-create! adopt-state! adopt-local! reconverge-forked!
-          state-reset! state-edit! mirror-rename! new-buffer
-          bump-buffer-revision! buffer-of-state-id adopt-store-buffer!
+          mirror-create! adopt-store! adopt-local! reconverge-forked!
+          store-reset! store-edit! mirror-rename! new-buffer
+          bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
           sync-foreign-edits! flush-ui-audit!
           set-repaint-hook! set-adopt-hook!
@@ -104,7 +104,7 @@
           (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
           (prefix (kernel) kernel:)
           (prefix (tty) tty:)
-          (prefix (state) state:)
+          (prefix (store) store:)
           (prefix (text) text:)
           (prefix (actor) actor:)
           (prefix (log) log:))
@@ -131,9 +131,9 @@
             ;; line-numbers parameter
             (mutable line-numbers buffer-line-numbers-setting
                      buffer-line-numbers-setting-set!)
-            ;; the buffer's twin in the (state) store, and the store
+            ;; the buffer's twin in the (store), and the store
             ;; revision this buffer's lines last agreed with
-            (mutable state-id) (mutable state-rev)))
+            (mutable store-id) (mutable store-rev)))
 
   (define-record-type (window %make-window window?)
     (fields
@@ -611,9 +611,9 @@
 
   ;;; The store client -----------------------------------------------------------
 
-  ;; The bridge between this seat's buffer records and the (state)
-  ;; store: the seat is the store's client -- over the wire, a remote
-  ;; seat is exactly this code with a socket under the state: calls.
+  ;; The bridge between this seat's buffer records and the (store):
+  ;; the seat is the store's client -- over the wire, a remote
+  ;; seat is exactly this code with a socket under the store: calls.
   ;; Records cache the store's immutable text and adopt it after every
   ;; operation; this seat's edits enter the store transactionally;
   ;; wholesale replacements are resets; foreign actors' operations
@@ -654,15 +654,15 @@
   ;;           save settles it
 
   (define (buffer-fact b key fallback)
-    (let ([id (buffer-state-id b)])
+    (let ([id (buffer-store-id b)])
       (if id
-          (guard (ex [else fallback]) (state:property id key))
+          (guard (ex [else fallback]) (store:property id key))
           fallback)))
 
   (define (buffer-fact-set! b key value)
     (guard (ex [else (void)])
-      (when (buffer-state-id b)
-        (state:set-property! ui-actor (buffer-state-id b) key value))))
+      (when (buffer-store-id b)
+        (store:set-property! ui-actor (buffer-store-id b) key value))))
 
   (define (buffer-file b) (buffer-fact b 'file #f))
   (define (buffer-file-set! b v) (buffer-fact-set! b 'file v))
@@ -685,17 +685,17 @@
 
   (define (mirror-create! b)
     (guard (ex [else (void)])
-      (buffer-state-id-set!
-        b (state:create! ui-actor (buffer-name b)
+      (buffer-store-id-set!
+        b (store:create! ui-actor (buffer-name b)
                          (vector->list (buffer-lines b))))
-      (buffer-state-rev-set! b 0)))
+      (buffer-store-rev-set! b 0)))
 
-  (define (adopt-state! b)
+  (define (adopt-store! b)
     ;; make the cache the store's current text -- the vectors are
     ;; immutable, so adoption is reference sharing, never a copy
-    (let-values ([(text revision) (state:snapshot (buffer-state-id b))])
+    (let-values ([(text revision) (store:snapshot (buffer-store-id b))])
       (buffer-lines-raw-set! b text)
-      (buffer-state-rev-set! b revision)
+      (buffer-store-rev-set! b revision)
       (bump-buffer-revision! b)))
 
   ;; Store outage: buffers whose cache forked from the store because a
@@ -708,10 +708,10 @@
     ;; alone -- on the record, and queued for re-convergence
     (buffer-lines-raw-set! b text)
     (bump-buffer-revision! b)
-    (when (and (buffer-state-id b) (not (memq b forked-buffers)))
+    (when (and (buffer-store-id b) (not (memq b forked-buffers)))
       (set! forked-buffers (cons b forked-buffers))
       (guard (ex [else (void)])
-        (log:add! 'state
+        (log:add! 'store
           (format "store outage: ~s forked from the store"
                   (buffer-name b))))))
 
@@ -729,35 +729,35 @@
             (guard (ex [else #t])
               (cond
                 [(not (memq b the-buffers)) #f]
-                [(not (state:exists? (buffer-state-id b)))
-                 (buffer-state-id-set! b #f)
+                [(not (store:exists? (buffer-store-id b)))
+                 (buffer-store-id-set! b #f)
                  (forget-buffer! b)
                  #f]
                 [else
-                 (state:reset! ui-actor (buffer-state-id b)
+                 (store:reset! ui-actor (buffer-store-id b)
                                (buffer-lines b))
-                 (adopt-state! b)
+                 (adopt-store! b)
                  (log-reconvergence! b)
                  #f])))
           forked-buffers))))
 
   (define (log-reconvergence! b)
     (guard (ex [else (void)])
-      (log:add! 'state
+      (log:add! 'store
         (format "store recovered: ~s re-baselined from the editor"
                 (buffer-name b)))))
 
-  (define (state-reset! b new-lines)
+  (define (store-reset! b new-lines)
     ;; wholesale replacement: a new store baseline, adopted back --
     ;; which is exactly re-convergence, so a success unforks
-    (if (buffer-state-id b)
+    (if (buffer-store-id b)
         (guard (ex [else (adopt-local! b new-lines)])
-          (state:reset! ui-actor (buffer-state-id b) new-lines)
-          (adopt-state! b)
+          (store:reset! ui-actor (buffer-store-id b) new-lines)
+          (adopt-store! b)
           (set! forked-buffers (remq b forked-buffers)))
         (adopt-local! b new-lines)))
 
-  (define (state-edit! b span replacement)
+  (define (store-edit! b span replacement)
     ;; The ui's text edits go through the store first and the cache
     ;; adopts the result.  A stale refusal means a foreign edit
     ;; overlapped mid-command: this seat's content wins -- the edit
@@ -767,41 +767,41 @@
       (let-values ([(new-text delta)
                     (text:apply-edit (buffer-lines b) span replacement)])
         new-text))
-    (if (and (buffer-state-id b) (not (memq b forked-buffers)))
+    (if (and (buffer-store-id b) (not (memq b forked-buffers)))
         (guard (ex [else (adopt-local! b (local-text))])
           (let-values ([(status info)
-                        (state:edit! ui-actor (buffer-state-id b)
-                                     (buffer-state-rev b)
+                        (store:edit! ui-actor (buffer-store-id b)
+                                     (buffer-store-rev b)
                                      span replacement)])
             (if (eq? status 'applied)
-                (begin (adopt-state! b) (note-ui-edit! b))
+                (begin (adopt-store! b) (note-ui-edit! b))
                 (let ([foreign
                        (guard (ex [else #f])
                          (find (lambda (entry)
                                  (not (equal? (cadr entry) ui-actor)))
-                               (state:history (buffer-state-id b) 8)))])
+                               (store:history (buffer-store-id b) 8)))])
                   ;; the conflict is on the record before the seat wins
                   (guard (ex [else (void)])
-                    (log:add! 'state
+                    (log:add! 'store
                       (format "conflict: ui overrode ~a in ~s"
                               (if foreign (cadr foreign) "another actor")
                               (buffer-name b))))
-                  (state-reset! b (local-text))
+                  (store-reset! b (local-text))
                   ;; ... and the losing actor is told, after the reset
                   ;; settles, so a re-read sees the truth:
                   ;; (conflict buffer-id buffer-name winning-actor)
                   (when foreign
                     (guard (ex [else (void)])
                       (actor:send! (cadr foreign)
-                                   (list 'conflict (buffer-state-id b)
+                                   (list 'conflict (buffer-store-id b)
                                          (buffer-name b)
                                          ui-actor))))))))
         (adopt-local! b (local-text))))
 
   (define (mirror-rename! b)
-    (when (buffer-state-id b)
+    (when (buffer-store-id b)
       (guard (ex [else (void)])
-        (state:rename! ui-actor (buffer-state-id b) (buffer-name b)))))
+        (store:rename! ui-actor (buffer-store-id b) (buffer-name b)))))
 
   (define (new-buffer name)
     (let ([b (make-buffer name (vector "") 0 (vector '() '())
@@ -816,8 +816,8 @@
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
 
-  (define (buffer-of-state-id id)
-    (find (lambda (b) (eqv? (buffer-state-id b) id)) the-buffers))
+  (define (buffer-of-store-id id)
+    (find (lambda (b) (eqv? (buffer-store-id b) id)) the-buffers))
 
   (define (adopt-store-buffer! id)
     ;; Another actor created a store buffer: give this head a record
@@ -826,10 +826,10 @@
     ;; *completions* view).  It
     ;; joins at the end: this seat did not ask for it.  A buffer with
     ;; no mode yet gets detection, recorded as the shared fact.
-    (unless (or (buffer-of-state-id id)
-                (state:property id 'ephemeral))
-      (let-values ([(text revision) (state:snapshot id)])
-        (let ([b (make-buffer (state:buffer-name id) text 0
+    (unless (or (buffer-of-store-id id)
+                (store:property id 'ephemeral))
+      (let-values ([(text revision) (store:snapshot id)])
+        (let ([b (make-buffer (store:buffer-name id) text 0
                               (vector '() '()) 0 0 #f 0 0 0
                               'default id revision)])
           (unless (buffer-fact b 'mode #f) (adopt-hook b))
@@ -837,7 +837,7 @@
           (set! the-buffers (append the-buffers (list b)))))))
 
   (define (buffer-lines-set! b new-lines)
-    (state-reset! b new-lines))
+    (store-reset! b new-lines))
 
   (define (clamp-buffer-positions! b)
     ;; keep the buffer's spot and every window's point inside the
@@ -858,7 +858,7 @@
             (window-top-set! w (min (window-top w) last))))
         the-windows)))
 
-  ;; Foreign actors edit the (state) store directly; their changes
+  ;; Foreign actors edit the (store) directly; their changes
   ;; flow back into this seat's line caches before each frame.  The
   ;; subscription callback runs on whichever thread edited, so it only
   ;; records the buffer id; the main loop does the adoption.
@@ -877,7 +877,7 @@
         (set! foreign-pending (cons event foreign-pending)))
       (wake-main!)))
 
-  (define state-subscription (state:subscribe! #f note-foreign-event))
+  (define store-subscription (store:subscribe! #f note-foreign-event))
 
   ;; The ui's own side of the audit stream, coalesced: keystrokes are
   ;; too many to log one by one, so consecutive ui edits to a buffer
@@ -888,8 +888,8 @@
 
   (define (note-ui-edit! b)
     (guard (ex [else (void)])
-      (let* ([id (buffer-state-id b)]
-             [rev (buffer-state-rev b)]
+      (let* ([id (buffer-store-id b)]
+             [rev (buffer-store-rev b)]
              [hit (assv id ui-audit-bursts)]
              [now (time-second (current-time 'time-monotonic))])
         (if hit
@@ -918,7 +918,7 @@
           (lambda (entry)
             (guard (ex [else (void)])
               (let ([v (cdr entry)])
-                (log:add! 'state
+                (log:add! 'store
                   (format "ui: ~a edit~a in ~s (revisions ~a-~a)"
                           (vector-ref v 3)
                           (if (= (vector-ref v 3) 1) "" "s")
@@ -933,7 +933,7 @@
                       (set! foreign-pending '())
                       (reverse pending)))])
       ;; the audit stream: every foreign operation is on the record --
-      ;; (log-view 'state) shows what other actors did
+      ;; (log-view:buffer 'store) shows what other actors did
       (for-each
         (lambda (event)
           (guard (ex [else (void)])
@@ -943,29 +943,29 @@
               (unless (and (eq? (car event) 'property)
                            (eq? (caddr event) 'modified))
                 (flush-ui-audit! id)
-                (log:add! 'state
+                (log:add! 'store
                   (case (car event)
                     [(create)
                      (format "~a created ~s" actor (caddr event))]
                     [(rename)
                      (format "~a renamed ~s to ~s" actor
-                             (let ([b (buffer-of-state-id id)])
+                             (let ([b (buffer-of-store-id id)])
                                (if b (buffer-name b) id))
                              (caddr event))]
                     [(delete)
                      (format "~a deleted ~s" actor
-                             (let ([b (buffer-of-state-id id)])
+                             (let ([b (buffer-of-store-id id)])
                                (if b (buffer-name b) id)))]
                     [(property)
                      (format "~a set ~a of ~s"
                              actor (caddr event)
-                             (state:buffer-name id))]
+                             (store:buffer-name id))]
                     [else
                      (format "~a ~a ~s~a"
                              actor
                              (if (eq? (car event) 'reset)
                                  "reset" "edited")
-                             (state:buffer-name id)
+                             (store:buffer-name id)
                              (if (eq? (car event) 'edit)
                                  (format " at ~a"
                                          (text:span-start
@@ -982,12 +982,12 @@
             (case (car event)
               [(create) (adopt-store-buffer! (cadr event))]
               [(rename)
-               (let ([b (buffer-of-state-id (cadr event))])
+               (let ([b (buffer-of-store-id (cadr event))])
                  (when b (buffer-name-set! b (caddr event))))]
               [(delete)
-               (let ([b (buffer-of-state-id (cadr event))])
+               (let ([b (buffer-of-store-id (cadr event))])
                  (when b
-                   (buffer-state-id-set! b #f)   ; the twin is gone
+                   (buffer-store-id-set! b #f)   ; the twin is gone
                    (forget-buffer! b)))]
               [else (void)])))
         events)
@@ -997,7 +997,7 @@
         (lambda (event)
           (when (eq? (car event) 'property)
             (let ([b (find (lambda (b)
-                             (eqv? (buffer-state-id b) (cadr event)))
+                             (eqv? (buffer-store-id b) (cadr event)))
                            the-buffers)])
               (when b
                 (bump-buffer-revision! b)
@@ -1009,7 +1009,7 @@
         (lambda (event)
           (when (eq? (car event) 'edit)
             (let ([b (find (lambda (b)
-                             (eqv? (buffer-state-id b) (cadr event)))
+                             (eqv? (buffer-store-id b) (cadr event)))
                            the-buffers)])
               (when b
                 (guard (ex [else (void)])
@@ -1036,16 +1036,16 @@
         events)
       (for-each
         (lambda (id)
-          (let ([b (find (lambda (b) (eqv? (buffer-state-id b) id))
+          (let ([b (find (lambda (b) (eqv? (buffer-store-id b) id))
                          the-buffers)])
             (when b
               (guard (ex [else (void)])
-                (let-values ([(text revision) (state:snapshot id)])
-                  (unless (= revision (buffer-state-rev b))
+                (let-values ([(text revision) (store:snapshot id)])
+                  (unless (= revision (buffer-store-rev b))
                     ;; adoption is sharing: nothing mutates in place
                     (buffer-lines-raw-set! b text)
                     (bump-buffer-revision! b)
-                    (buffer-state-rev-set! b revision)
+                    (buffer-store-rev-set! b revision)
                     (when (buffer-file b) (buffer-modified-set! b #t))
                     (clamp-buffer-positions! b)
                     (repaint-hook)))))))
@@ -1054,7 +1054,7 @@
                 [(memv (car ids) seen) (dedupe (cdr ids) seen)]
                 [else (dedupe (cdr ids) (cons (car ids) seen))])))))
 
-  ;; What the head looks at, published as state marks other actors can
+  ;; What the head looks at, published as store marks other actors can
   ;; read, refreshed per frame by a desired-versus-published diff:
   ;; every window's cursor as (point . serial), the selected window's
   ;; additionally as plain 'point, and the active region as 'region
@@ -1080,7 +1080,7 @@
   (define (desired-head-marks)
     (fold-left
       (lambda (acc w)
-        (let ([id (buffer-state-id (window-buffer w))])
+        (let ([id (buffer-store-id (window-buffer w))])
           (if (not id)
               acc
               (let* ([serial (window-serial w)]
@@ -1115,14 +1115,14 @@
             (lambda (entry)
               (unless (assoc (car entry) desired)
                 (guard (ex [else (void)])
-                  (state:drop-mark! ui-actor (caar entry) (cdar entry)))))
+                  (store:drop-mark! ui-actor (caar entry) (cdar entry)))))
             published-marks)
           (for-each
             (lambda (entry)
               (let ([old (assoc (car entry) published-marks)])
                 (unless (and old (equal? (cdr old) (cdr entry)))
                   (guard (ex [else (void)])
-                    (state:set-mark! ui-actor (caar entry) (cdar entry)
+                    (store:set-mark! ui-actor (caar entry) (cdar entry)
                                      (mark-value (cdr entry)))))))
             desired)
           (set! published-marks desired)))))

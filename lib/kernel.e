@@ -114,7 +114,7 @@
 
   (define (registry-remove! r match?)
     ;; drop entries whose item satisfies match?, whoever owns them --
-    ;; for registrations with an explicit revocation handle (a state
+    ;; for registrations with an explicit revocation handle (a store
     ;; subscription's token, say), alongside ownership retraction
     (set-box! r (remp (lambda (e) (match? (cdr e))) (unbox r))))
 
@@ -167,7 +167,7 @@
     (let ([lib (list (string->symbol name))])
       ;; every module but the command layer arrives prefixed in the
       ;; editor's top level, exactly as code imports it -- M-x says
-      ;; (state:edit! ...) and (terminal:open!!) too; (edit) alone is
+      ;; (store:edit! ...) and (terminal:open!!) too; (edit) alone is
       ;; bare, being what M-x is for
       (eval (if (string=? name "edit")
                 `(import ,lib)

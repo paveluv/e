@@ -7,7 +7,7 @@
 ;; formatting through the modes' registered indenters, mouse actions,
 ;; the default key bindings, and the generic editing helpers (regions,
 ;; replace, conflict resolution).  It composes the seams below --
-;; state, head, paint, prompt, file, mode, keymap -- and is what M-x
+;; store, head, paint, prompt, file, mode, keymap -- and is what M-x
 ;; sees bare: the loader imports (edit) into the top level.
 ;;
 ;; Hot-reloadable like any module: its registrations (bindings, hooks,
@@ -98,7 +98,7 @@
   ;; The system-specific layer -- libc, termios, signals -- comes
   ;; from (sys).
   (import (chezscheme) (prefix (sys) sys:)
-          (prefix (state) state:) (prefix (text) text:)
+          (prefix (store) store:) (prefix (text) text:)
           (prefix (kernel) kernel:) (prefix (actor) actor:)
           (prefix (log) log:) (prefix (style) style:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
@@ -134,7 +134,7 @@
       [(set! id v) (head:set-buffers! v)]))
 
   ;; Buffer facts and the store client -- the bridge between this
-  ;; seat's records and the (state) store -- live in (head) now; the
+  ;; seat's records and the (store) -- live in (head) now; the
   ;; mode registry in (mode).
   (define layout-split-first-weight-set!
     head:layout-split-first-weight-set!)
@@ -149,7 +149,7 @@
   (define-syntax current-window
     (identifier-syntax [id (head:current)]
       [(set! id v) (head:set-current! v)]))
-  ;; The (state) store is the master copy of every buffer's text; this
+  ;; The (store) is the master copy of every buffer's text; this
   ;; seat is one of its clients.  A buffer record's lines field is a
   ;; cache of the store's immutable text vector, adopted after every
   ;; operation -- nothing here mutates a line vector in place.  Edits
@@ -232,7 +232,7 @@
   (define (set-line! n s)
     ;; the store is the master: the edit goes there, the cache adopts
     (let ([b (head:window-buffer current-window)])
-      (head:state-edit! b (text:make-span n 0 n
+      (head:store-edit! b (text:make-span n 0 n
                                           (string-length (vector-ref lines n)))
                         (list s))))
 
@@ -243,7 +243,7 @@
     (let* ([b (head:window-buffer current-window)]
            [old lines]
            [count (vector-length old)])
-      (head:state-edit!
+      (head:store-edit!
         b
         (cond
           [(< to count) (text:make-span from 0 to 0)]
@@ -264,7 +264,7 @@
   (define (editor-snapshot)
     ;; the cache vectors are immutable now: snapshots share, never copy
     (list lines point-row point-col trailing-newline? modified?
-          (head:buffer-state-rev (head:window-buffer current-window))))
+          (head:buffer-store-rev (head:window-buffer current-window))))
 
   (define (restore-snapshot! snapshot)
     ;; The snapshot was just popped off a history stack, so nothing else
@@ -348,18 +348,18 @@
 
   (define (foreign-edits-since? b rev)
     ;; did another actor edit this buffer's store copy after rev?
-    (and (head:buffer-state-id b)
+    (and (head:buffer-store-id b)
          (guard (ex [else #f])
            (exists (lambda (entry)
                      (and (> (car entry) rev)
                           (not (equal? (cadr entry) head:ui-actor))))
-                   (state:history (head:buffer-state-id b) 256)))))
+                   (store:history (head:buffer-store-id b) 256)))))
 
   (define (history-shift! from to verb)
     ;; The report -- what was undone or redone -- is also returned, so
     ;; M-x (undo!) shows it as its result.  Restoring a snapshot from
     ;; before another actor's edit would silently erase their work, so
-    ;; that refuses instead, like state:undo! reports 'blocked.
+    ;; that refuses instead, like store:undo! reports 'blocked.
     (set! message
       (cond
         [(null? (vector-ref history from))
@@ -1190,10 +1190,10 @@
                     (set! message (format "New buffer ~a" s))]))))
 
   (define (kill-buffer! b)
-    (when (head:buffer-state-id b)
+    (when (head:buffer-store-id b)
       (guard (ex [else (void)])
-        (state:delete! head:ui-actor (head:buffer-state-id b))
-        (head:buffer-state-id-set! b #f)))
+        (store:delete! head:ui-actor (head:buffer-store-id b))
+        (head:buffer-store-id-set! b #f)))
     (head:forget-buffer! b)
     (parameterize ([message-source 'kill-buffer!])
       (set-message! (format "Killed ~a" (head:buffer-name b)))))

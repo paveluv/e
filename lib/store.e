@@ -1,4 +1,4 @@
-;; state.e -- the buffer store: the library (state).
+;; store.e -- the buffer store: the library (store).
 ;;
 ;; Multi-actor buffer state over the pure (text) algebra.  Every
 ;; buffer carries a revision; every mutation is a transaction naming
@@ -15,10 +15,10 @@
 ;; are immutable by (text)'s discipline, so snapshots handed out
 ;; remain valid forever.
 ;;
-;; Naming reads behind the import prefix: (state:edit! ...),
-;; (state:snapshot ...).
+;; Naming reads behind the import prefix: (store:edit! ...),
+;; (store:snapshot ...).
 
-(library (state)
+(library (store)
   (export create! delete! reset! rename!
           buffer-list exists? buffer-name find-named
           snapshot revision line-count line extract
@@ -53,7 +53,7 @@
             (mutable next-id)))
 
   (define the-store
-    (persistent-cell 'state-store
+    (persistent-cell 'store
       (lambda ()
         (make-store (make-mutex)
                     (make-eqv-hashtable)
@@ -530,7 +530,7 @@
   (define subscriptions (make-registry))
 
   (define subscription-counter
-    (persistent-cell 'state-subscription-counter (lambda () 0)))
+    (persistent-cell 'store-subscription-counter (lambda () 0)))
 
   (define (subscribe! id proc)
     ;; -> a token for unsubscribe!; id #f hears every buffer
