@@ -42,30 +42,28 @@ returns false for everything else. Thus `*buffers*` owns navigation and row
 activation while `M-x`, window commands, and other global bindings pass
 through naturally.
 
-An app that embeds a complete interactive environment can capture every event:
+The handler has first refusal on every key: a true result consumes the
+event, a false one lets it continue through the keymaps -- the buffer's
+mode context, then the global map.  An app that embeds a complete
+interactive environment simply consumes everything while it is alive; the
+terminal returns true for every key until its process exits.
+
+The way out of such an app is keymap data, not a mode of dispatch.  The
+app's mode context names an escape prefix, and binds what that prefix
+should mean on its own terms:
 
 ```scheme
-(set-app-capture! app-buffer #t)
+(keymap:set-context-escape! 'terminal "C-]")
+(bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
+(bind-default-key! 'terminal "C-] C-y" terminal-yank!)
 ```
 
-Its handler still receives events normally, but a false result is consumed
-instead of propagating. This applies uniformly to keyboard, paste, mouse
-presses, drags, releases, and wheel events.
-
-A capturing app can grant e one complete global command:
-
-```scheme
-(escape-app-capture! "C-]" send-literal-control-bracket!)
-```
-
-If the next event is `C-]`, the supplied procedure sends the literal event.
-Any other key begins ordinary global dispatch. Multi-key bindings remain in e
-until complete, and commands retain control through their synchronous prompts.
-When the command finishes, capture is recomputed from the focused buffer: it
-resumes if the capturing app is active again, or the newly focused app/buffer
-takes over. An unbound printable key follows the global self-insertion fallback
-and therefore reports read-only in a read-only app; it is never silently sent
-back to the embedded application.
+A sequence starting with the escape that the context does not bind resolves,
+minus the prefix, in the global map: `C-] C-x C-f` runs `find-file` from
+inside a captured terminal.  Multi-key bindings wait for their remaining
+keys, commands keep control through their synchronous prompts, and when the
+command returns the next key goes to the app's handler again.  (The handler
+must decline the escape key itself for the context bindings to see it.)
 
 The handler is optional. Thus these are equivalent:
 
@@ -74,8 +72,9 @@ The handler is optional. Thus these are equivalent:
 (register-app! "*example*" refresh!)
 ```
 
-Use `display-app!` to display and focus an app. Unlike `display-buffer!`, it
-records the window that was current before entry as the app's target.
+Apps act on the selected window -- their own, when it is selected.  Use
+`show-buffer!` to show an app here, or `display-buffer!` to show it without
+leaving the current window.
 
 Table-like apps can request shared presentation chrome:
 

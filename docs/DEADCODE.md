@@ -23,6 +23,19 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-03 app target windows (core): `set-app-target!`,
+  `target-window`, `target-buffer`, `show-buffer-in-target!`,
+  `display-app!`, `display-app-here!`, `create-ephemeral-target-window!`,
+  the app record's target fields, and the status-line `>` marker --
+  apps act on the selected window now (harmony rule: eight functions of
+  routing state for a per-app 'where you came from').
+- 2026-09-03 input capture (core): `set-app-capture!`,
+  `app-capture-escaped?`, `escape-app-capture!`, `clear-capture-bypass!`,
+  the three bypass globals, and the capture flag -- a live app's handler
+  consumes what it wants, and the escape is keymap data:
+  `keymap:set-context-escape!` names a context's escape prefix, and
+  dispatch resolves the rest of such a sequence globally.
+
 - 2026-09-03 the completions pop-up window (core): a window outside the
   layout tree, special-cased in the layout, set-layout-root!, the
   echo cap, the status line, and four mouse sites.  Completions now

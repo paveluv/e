@@ -801,21 +801,10 @@
          (("procedure" . "(register-app! name refresh! [handle-event!])"))
          "buffer" ("(core)") core "App buffers" #f
          "Create or update a module-owned dynamic read-only app buffer. Its name must not collide with an ordinary buffer. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
-        ((display-app!) (("procedure" . "(display-app! buffer)")) "window or #f"
-         ("(core)") core "App buffers" #f
-         "Display and focus an app buffer, recording the previously current window and buffer as its target.")
-        ((display-app-here!)
-         (("procedure" . "(display-app-here! buffer)")) "window"
-         ("(core)") core "App buffers" #f
-         "Display an app in the current window and make that same window its target, remembering the buffer it replaces.")
         ((app-event-buffer-position)
          (("parameter" . "(app-event-buffer-position)")) "pair or #f"
          ("(core)") core "App buffers" #f
          "During a mouse-click app event, return the unclamped zero-based buffer position addressed by the pointer. The row may be beyond the buffer, allowing apps to distinguish empty viewport space from their last line. Return false outside such an event.")
-        ((set-app-capture!)
-         (("procedure" . "(set-app-capture! buffer capture?)")) "buffer"
-         ("(core)") core "App buffers" #f
-         "Enable or disable catch-all input capture for an app. A partial app propagates handler events returning false to global e bindings; a capturing app consumes them.")
         ((set-app-cursor-visible!)
          (("procedure" . "(set-app-cursor-visible! buffer visibility)")) "buffer"
          ("(core)") core "App buffers" #f
@@ -823,7 +812,7 @@
         ((detach-app!)
          (("procedure" . "(detach-app! buffer)")) "buffer"
          ("(core)") core "App buffers" #f
-         "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, input capture, target-window behavior, and app presentation.")
+         "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, its event handler, and app presentation.")
         ((set-buffer-wrap!)
          (("procedure" . "(set-buffer-wrap! buffer setting)")) "buffer"
          ("(core)") core "Buffers" #f
@@ -832,10 +821,6 @@
          (("procedure" . "(set-buffer-name! buffer name)")) "buffer"
          ("(core)") core "Buffers" #f
          "Rename a buffer, adding the usual numeric suffix when another buffer already uses the requested name.")
-        ((escape-app-capture!)
-         (("procedure" . "(escape-app-capture! escape-event literal!)")) "void"
-         ("(core)") core "App buffers" #f
-         "Suspend the current app's catch-all capture for one complete global e command. Repeating `escape-event` invokes `literal!`; other keys use normal global dispatch through multi-key bindings and synchronous prompts.")
         ((set-app-presentation!)
          (("procedure" . "(set-app-presentation! buffer sticky-lines scrollbar [wrap cursor-style])"))
          "buffer" ("(core)") core "App buffers" #f
@@ -856,16 +841,6 @@
          (("procedure" . "(add-buffer-status-hint! procedure)")) "unspecified"
          ("(core)") core "Buffer lifecycle" #f
          "Register a module-owned status hint procedure called as `(procedure buffer active?)` for every window. It may return a string, a `(string . style)` pair, or #f.")
-        ((target-window) (("procedure" . "(target-window)")) "window or #f"
-         ("(core)") core "App buffers" #f
-         "Return the current app's target window, #f while its target is ephemeral, or the current window outside an app.")
-        ((target-buffer) (("procedure" . "(target-buffer)")) "buffer"
-         ("(core)") core "App buffers" #f
-         "Return the buffer associated with the current app's target, including the remembered buffer of an ephemeral target.")
-        ((show-buffer-in-target!)
-         (("procedure" . "(show-buffer-in-target! buffer)")) "buffer"
-         ("(core)") core "App buffers" #f
-         "Show a buffer in the current app's target window. A separate app window remains focused; a same-window app is replaced by the selected buffer.")
         ((fetch-describe-data!)
          (("procedure" . "(fetch-describe-data!)")) "void"
          ("(describe)") describe "Documentation commands" #f

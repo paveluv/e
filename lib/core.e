@@ -74,13 +74,11 @@
     format-log-entry
     message-source message-progress
     echo-highlight visual-bell!
-    register-app! register-view! set-app-presentation! set-app-capture!
-    app-capture-escaped? set-app-cursor-visible! set-app-manages-viewport!
+    register-app! register-view! set-app-presentation!
+    set-app-cursor-visible! set-app-manages-viewport!
     set-app-status-position! detach-app!
     app-event-position app-event-buffer-position app-event-button
-    escape-app-capture! display-app! display-app-here!
     buffer-window-size buffer-narrowest-width
-    target-window target-buffer show-buffer-in-target!
     view-append! view-replace! view-invalidate!
     register-log-formatter! log-history
     publish-descriptions! published-descriptions
@@ -453,19 +451,8 @@
   ;; (side-by-side) children.  Weights retain the user's proportions across
   ;; terminal and echo-area size changes.
   (define (set-layout-root! root)
-    (let* ([old windows]
-           [new-windows (layout-leaves root)])
-      ;; A removed app target becomes ephemeral. Preserve the buffer it last
-      ;; displayed; the app will materialize a fresh target window on demand.
-      (for-each
-        (lambda (a)
-          (let ([target (app-target-window a)])
-            (when (and target (memq target old) (not (memq target new-windows)))
-              (app-target-buffer-set! a (window-buffer target))
-              (app-target-window-set! a #f))))
-        (registered-apps))
-      (set! layout-root root)
-      (set! windows new-windows)))
+    (set! layout-root root)
+    (set! windows (layout-leaves root)))
 
   (define (replace-layout-window! old replacement)
     (set-layout-root! (layout-replace layout-root old replacement)))
@@ -1828,8 +1815,6 @@
     (window-left-set! w 0))
 
   (define (show-buffer! b)
-    (when (and (app-buffer? b) (not (eq? b (window-buffer current-window))))
-      (set-app-target! b current-window (window-buffer current-window)))
     (set! buffers (cons b (remq b buffers)))   ; most recently used first
     (set-window-buffer! current-window b))
 
@@ -1929,15 +1914,14 @@
   ;;; Apps and views ------------------------------------------------------------
 
   ;; An app is a dynamic read-only buffer with a renderer and, optionally, an
-  ;; event handler. A view is the degenerate app with no handler. Apps remember
-  ;; the window and buffer that were active before entry, so controls can act
-  ;; on that target while the app window itself remains current.
+  ;; event handler with first refusal on keys (what it declines goes through
+  ;; the keymaps). A view is the degenerate app with no handler. Apps act on
+  ;; the selected window -- their own, when it is selected.
   (define-record-type app
     (fields buffer refresh! handle-event!
-            (mutable target-window) (mutable target-buffer)
             (mutable refresh-error)
             (mutable sticky-lines) (mutable scrollbar) (mutable wrap)
-            (mutable cursor-style) (mutable capture)
+            (mutable cursor-style)
             (mutable cursor-visible?) (mutable manages-viewport)
             (mutable status-position)))
 
@@ -2011,18 +1995,11 @@
     ;; The buffer thereafter behaves like an ordinary read-only buffer.
     (let ([a (app-of b)])
       (when a
-        (when (eq? a capture-bypass-app) (clear-capture-bypass!))
         (set-box! app-registry
           (remp (lambda (entry) (eq? (app-buffer (cdr entry)) b))
                 (unbox app-registry))))
       (buffer-read-only-set! b #t)
       b))
-
-  (define (set-app-target! b w prior)
-    (let ([a (app-of b)])
-      (when a
-        (app-target-window-set! a w)
-        (app-target-buffer-set! a prior))))
 
   (define (register-app! name refresh! . handler)
     (let* ([named (buffer-named name)]
@@ -2031,13 +2008,11 @@
            [b (or named (new-buffer name))]
            [old (or (app-of b) (known-app-of b))]
            [a (make-app b refresh! (and (pair? handler) (car handler))
-                        (and old (app-target-window old))
-                        (and old (app-target-buffer old)) #f
+                        #f
                         (if old (app-sticky-lines old) 0)
                         (and old (app-scrollbar old))
                         (if old (app-wrap old) 'default)
                         (if old (app-cursor-style old) 'default)
-                        (and old (app-capture old))
                         (if old (app-cursor-visible? old) 'default)
                         (and old (app-manages-viewport old))
                         (and old (app-status-position old)))]
@@ -2056,24 +2031,6 @@
               (unbox registry)))
       (registry-add! registry a)
       b))
-
-  (define capture-bypass-app #f)
-  (define capture-escape-event #f)
-  (define capture-literal! #f)
-
-  (define (set-app-capture! b capture?)
-    (let ([a (app-of b)])
-      (unless a (error 'set-app-capture! "not an app buffer" b))
-      (unless (boolean? capture?)
-        (error 'set-app-capture! "capture must be #t or #f" capture?))
-      (app-capture-set! a capture?)
-      (when (and (not capture?) (eq? a capture-bypass-app))
-        (clear-capture-bypass!))
-      b))
-
-  (define (app-capture-escaped? b)
-    (let ([a (app-of b)])
-      (and a (eq? a capture-bypass-app))))
 
   (define (set-app-cursor-visible! b visible?)
     (let ([a (app-of b)])
@@ -2114,21 +2071,6 @@
   (define (app-manages-window-viewport? w)
     (let ([a (app-of (window-buffer w))])
       (and a (app-manages-viewport a))))
-
-  (define (escape-app-capture! escape-event literal!)
-    ;; Suspend a fully capturing app for the next complete global command.
-    ;; dispatch-sequence! owns multi-key prefixes and commands own their
-    ;; prompts synchronously, so the bypass naturally lasts through both.
-    (let ([a (app-of (current-buffer))])
-      (unless (and a (app-capture a))
-        (error 'escape-app-capture! "current app does not capture input"))
-      (unless (and (string? escape-event) (procedure? literal!))
-        (error 'escape-app-capture! "expected an event and literal procedure"))
-      (set! capture-bypass-app a)
-      (set! capture-escape-event escape-event)
-      (set! capture-literal! literal!)
-      (redraw!)
-      (void)))
 
   (define (set-app-presentation! b sticky-lines scrollbar . options)
     ;; Configure buffer-level presentation shared by every window showing the
@@ -2248,64 +2190,6 @@
 
   (define (view-buffer? b)
     (app-buffer? b))
-
-  (define (target-window)
-    (let ([a (app-of (current-buffer))])
-      (cond [(not a) current-window]
-            [(memq (app-target-window a) windows) (app-target-window a)]
-            [else #f])))
-
-  (define (target-buffer)
-    (let* ([a (app-of (current-buffer))]
-           [w (and a (app-target-window a))])
-      (cond [(not a) (current-buffer)]
-            [(and w (memq w windows)
-                  (not (eq? (window-buffer w) (app-buffer a))))
-             (window-buffer w)]
-            [(app-target-buffer a)]
-            [else (current-buffer)])))
-
-  (define (show-buffer-in-target! b)
-    (let* ([a (app-of (current-buffer))]
-           [w (or (target-window)
-                  (and a (create-ephemeral-target-window! b)))])
-      (unless (memq b buffers) (set! buffers (append buffers (list b))))
-      (set! buffers (cons b (remq b buffers)))
-      (when a (app-target-buffer-set! a b))
-      (if w
-          (begin
-            (when a (app-target-window-set! a w))
-            (set-window-buffer! w b))
-          (parameterize ([message-source 'app])
-            (set-message! "Cannot create a target window: the screen is too small")))
-      b))
-
-  (define (display-app! b)
-    (unless (app-buffer? b)
-      (error 'display-app! "not an app buffer" b))
-    (let* ([origin current-window]
-           [prior (window-buffer origin)]
-           [w (display-buffer! b)])
-      (and w
-           (begin
-             (unless (eq? prior b)
-               (set-app-target! b origin prior))
-             (set! current-window w)
-             w))))
-
-  (define (display-app-here! b)
-    ;; Display an app in the selected window and make that same window its
-    ;; target. If it is already current, preserve the buffer the app was
-    ;; targeting rather than replacing that memory with the app itself.
-    (unless (app-buffer? b)
-      (error 'display-app-here! "not an app buffer" b))
-    (let ([prior (if (eq? b (current-buffer))
-                     (target-buffer)
-                     (current-buffer))])
-      (set-app-target! b current-window prior)
-      (set! buffers (cons b (remq b buffers)))
-      (set-window-buffer! current-window b)
-      current-window))
 
   (define (refresh-visible-views!)
     (for-each (lambda (a)
@@ -2528,15 +2412,12 @@
       (if (pair? tail) (car tail) (car windows))))
 
   (define (focus-window! w)
-    ;; All user-visible focus changes pass here so entering an app by keyboard
-    ;; or mouse records the window and buffer being left as its target.
+    ;; All user-visible focus changes pass here: the apps being left
+    ;; and entered hear BLUR and FOCUS.
     (when (and (memq w windows) (not (eq? w current-window)))
-      (let ([old current-window])
-        (dispatch-app-event! "BLUR")
-        (when (app-buffer? (window-buffer w))
-          (set-app-target! (window-buffer w) old (window-buffer old)))
-        (set! current-window w)
-        (dispatch-app-event! "FOCUS")))
+      (dispatch-app-event! "BLUR")
+      (set! current-window w)
+      (dispatch-app-event! "FOCUS"))
     current-window)
 
   (define (other-window!)
@@ -2657,11 +2538,6 @@
 
   (define (delete-other-windows!)
     (set-layout-root! current-window))
-
-  (define (create-ephemeral-target-window! b)
-    ;; Materialize an app target that was removed. Unlike display-buffer!, this
-    ;; always creates a new window and never appropriates an unrelated one.
-    (split-current-window! 'below b))
 
   (define (display-buffer! b)
     ;; Show b without leaving the current window: in the window already
@@ -3747,10 +3623,7 @@
   (define (echo-cursor-now)
     (or echo-cursor
         (and (cursor-in-echo)
-             (+ (string-length message) (string-length message-ghost)))
-        (and capture-bypass-app
-             (eq? (app-of (current-buffer)) capture-bypass-app)
-             (string-length message))))
+             (+ (string-length message) (string-length message-ghost)))))
 
                               ; applied while the text still matches
 
@@ -4058,16 +3931,12 @@
                   (paint! row content-x '(empty)
                           (lambda () (ansi (fit "" content-width))))
                   (loop (+ k 1) (+ i 1) 0))))))
-      (let* ([active-app (app-of (current-buffer))]
-             [target? (and active-app
-                           (eq? (app-target-window active-app) w)
-                           (memq w windows))]
-             [conflicts (and (assq b merge-reports)
+      (let* ([conflicts (and (assq b merge-reports)
                              (let ([n (buffer-conflict-count b)])
                                (and (> n 0) n)))]
              [head-prefix
               (format "~a~a~a  "
-                      (if target? ">" " ")
+                      " "
                       (cond [(buffer-stale b) "!!"]
                             [(view-buffer? b) "[]"]
                             [(buffer-read-only b) "%%"]
@@ -4112,7 +3981,7 @@
              [window-buttons " [↕][↔][×]"])
         (let ([stale? (buffer-stale b)])
           (paint! (+ start height) (window-xoff w)
-                  (list 'status status current? target? stale?)
+                  (list 'status status current? stale?)
                   (lambda ()
                     ;; Reversed cells take the bar's shade from the
                     ;; foreground color, so full reverse tracks the
@@ -4705,7 +4574,6 @@
                       ;; a prompt: the cursor is in the echo area's input,
                       ;; which is editable whatever the buffer behind it
                       [echo-cursor "\x1b;[0 q"]
-                      [(app-capture-escaped? (current-buffer)) "\x1b;[0 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
                          [(block) "\x1b;[2 q"]
@@ -5232,11 +5100,13 @@
             [(#\v)
              (let ([b (buffer-named "*buffers*")])
                (if b
-                   (when (display-app! b)
-                     ;; A direct app entry still receives the same
-                     ;; initialization opportunity as its ordinary command.
-                     (dispatch-app-event! "FOCUS")
-                     (set! message ""))
+                   (let ([w (display-buffer! b)])
+                     (when w
+                       (select-window! w)
+                       ;; A direct app entry still receives the same
+                       ;; initialization opportunity as its ordinary command.
+                       (dispatch-app-event! "FOCUS")
+                       (set! message "")))
                    (set-message! "The *buffers* app is not available")))]
             [else (void)]))))
 
@@ -5502,9 +5372,6 @@
                   "MOUSE-HANDLED"]
                  [(app-buffer? (window-buffer w))
                   (let ([old current-window])
-                    (unless (eq? w old)
-                      (set-app-target! (window-buffer w) old
-                                       (window-buffer old)))
                     (set! current-window w)
                     (let ([old-point (point)]
                           [clicked (window-position w start height x y)])
@@ -5603,8 +5470,6 @@
           (if (and meta? (memv dir '(0 1)))
               (dispatch-sequence! (if (= dir 0) "M-S-UP" "M-S-DOWN") #f)
               (begin
-                (when (and (app-buffer? (window-buffer w)) (not (eq? w old)))
-                  (set-app-target! (window-buffer w) old (window-buffer old)))
                 (unless (parameterize
                           ([app-event-position
                             (cons (max 1 (- x (window-xoff w)))
@@ -5761,14 +5626,26 @@
       (and name (string->symbol name))))
 
   (define (dispatch-sequence! first chain)
-    (let ([mode-context (mode-key-context)])
+    ;; Resolve a key sequence: the buffer's mode context first, then the
+    ;; global map.  A context may name an escape prefix
+    ;; (keymap:set-context-escape!): a sequence it starts and the
+    ;; context does not bind resolves, minus the prefix, in the global
+    ;; map -- how a captured app's user runs one complete global
+    ;; command.
+    (let* ([mode-context (mode-key-context)]
+           [escape (and mode-context (keymap:context-escape mode-context))])
       (let loop ([sequence (list first)])
-        (let ([hit (or (and mode-context
-                            (resolved-binding mode-context sequence))
-                       (resolved-binding 'global sequence))]
-              [prefix? (or (and mode-context
-                                (binding-prefix? mode-context sequence))
-                           (binding-prefix? 'global sequence))])
+        (let* ([in-context (and mode-context
+                                (resolved-binding mode-context sequence))]
+               [context-prefix? (and mode-context
+                                     (binding-prefix? mode-context sequence))]
+               [escaped (and escape (not in-context) (not context-prefix?)
+                             (pair? (cdr sequence))
+                             (string=? (car sequence) escape)
+                             (cdr sequence))]
+               [global (or escaped sequence)]
+               [hit (or in-context (resolved-binding 'global global))]
+               [prefix? (or context-prefix? (binding-prefix? 'global global))])
           (cond
             [prefix?
              (set! message (string-append (sequence-text sequence) "-"))
@@ -5776,8 +5653,8 @@
              (redraw!)
              (let ([next (read-key-event)])
                (if (eof-object? next)
-                 (set! quit? #t)
-                 (loop (append sequence (list next)))))]
+                   (set! quit? #t)
+                   (loop (append sequence (list next)))))]
             [hit
              ;; A prefix is only a waiting indicator. Once its complete binding
              ;; is known, remove it before the command runs; commands that have
@@ -5785,22 +5662,17 @@
              (when (> (length sequence) 1) (settle-echo!))
              (run-key-action! (binding-action (cdr hit)))]
             [(and (= (length sequence) 1)
-               (key-event-character first))
+                  (key-event-character first))
              => (lambda (c) (self-insert! c chain))]
             [else
              (set! message
                (format "~a is undefined" (sequence-text sequence)))])))))
 
   (define (dispatch-app-event! event)
+    ;; the current app's handler: #t when it consumed the event
     (let* ([a (app-of (current-buffer))]
-           [handler (and a (app-handle-event! a))]
-           [result (and handler (handler event))])
-      (or result (and a (app-capture a)))))
-
-  (define (clear-capture-bypass!)
-    (set! capture-bypass-app #f)
-    (set! capture-escape-event #f)
-    (set! capture-literal! #f))
+           [handler (and a (app-handle-event! a))])
+      (and handler (handler event) #t)))
 
   (define (handle-key! input)
     (define chain insert-chain)
@@ -5816,24 +5688,10 @@
         [else
          (unless (string=? event "C-k") (set! last-command #f))
          (settle-echo!)
-         (let ([a (app-of (current-buffer))])
-           (if (and capture-bypass-app (eq? a capture-bypass-app))
-               (let ([escape capture-escape-event]
-                     [literal! capture-literal!])
-                 (if (string=? event escape)
-                     (begin (clear-capture-bypass!) (literal!))
-                     ;; Keep the escaped state visible throughout prefixes and
-                     ;; synchronous prompts. Capture resumes when the complete
-                     ;; global command returns.
-                     (dynamic-wind
-                       (lambda () (void))
-                       (lambda () (dispatch-sequence! event chain))
-                       clear-capture-bypass!)))
-               (begin
-                 ;; Focus may have changed since an app requested escape.
-                 (when capture-bypass-app (clear-capture-bypass!))
-                 (unless (dispatch-app-event! event)
-                   (dispatch-sequence! event chain)))))])))
+         ;; the current app's handler has first refusal; what it
+         ;; declines goes through the keymaps
+         (unless (dispatch-app-event! event)
+           (dispatch-sequence! event chain))])))
 
   (define (action-name action)
     (cond

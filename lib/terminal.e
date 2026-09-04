@@ -12,6 +12,7 @@
           terminal-emulator-mouse-input terminal-emulator-replies
           terminal-emulator-unsupported terminal-color-scheme!)
   (import (chezscheme) (core) (sys)
+          (prefix (keymap) keymap:)
           (only (describe) register-descriptions!))
 
   (define-record-type terminal-state
@@ -3265,8 +3266,6 @@
     (define (finished!)
       (terminal-state-alive-set! state #f)
       (guard (ex [else (void)])
-        (set-app-capture! (terminal-state-buffer state) #f))
-      (guard (ex [else (void)])
         (set-buffer-wrap! (terminal-state-buffer state) #f))
       (guard (ex [else (void)]) (display-redraw!))
       (guard (ex [else (void)]) (materialize-terminal-transcript! state))
@@ -3338,9 +3337,15 @@
               (string-append "\x1b;[200~" clean "\x1b;[201~")
               clean)))))
 
+  (define (terminal-literal-escape!)
+    ;; C-] C-]: send the escape character itself to the child
+    (let ([state (terminal-of (current-buffer))])
+      (when state (write-bytes! state (bytevector 29)))))
+
   (define (terminal-yank!)
     ;; Yank into the terminal: the kill ring goes to the child as a
-    ;; paste.  From capture, C-] C-y reaches this binding.
+    ;; paste -- C-] C-y from a live terminal (the handler consumes a
+    ;; plain C-y as a keystroke for the child).
     (let ([state (terminal-of (current-buffer))])
       (unless state
         (error 'terminal-yank! "current buffer is not a terminal"))
@@ -3563,10 +3568,6 @@
       ;; Let global chords such as C-x b, C-x k, and C-x o escape naturally
       ;; instead of silently sending them into a dead descriptor.
       [(not (terminal-state-alive state)) #f]
-      [(string=? event "C-]")
-       (escape-app-capture!
-         "C-]" (lambda () (write-bytes! state (bytevector 29))))
-       #t]
       [(member event '("FOCUS" "BLUR"))
        (cond [(event-bytes state event) =>
               (lambda (bytes) (write-bytes! state bytes))])
@@ -3655,7 +3656,6 @@
                  (guard (ignored [else (void)])
                    (close-terminal-process! process)))
                (when buffer
-                 (guard (ignored [else (void)]) (set-app-capture! buffer #f))
                  (guard (ignored [else (void)]) (detach-app! buffer))
                  (when (eq? (current-buffer) buffer) (show-buffer! prior))
                  (guard (ignored [else (void)]) (kill-buffer! buffer)))
@@ -3666,7 +3666,6 @@
               (lambda () (when state (refresh-terminal! state)))
               (lambda (event) (and state (handle-terminal-event! state event)))))
           (set-app-presentation! buffer 0 #f #f 'blinking-block)
-          (set-app-capture! buffer #t)
           (set-app-manages-viewport! buffer #t)
           (set-app-cursor-visible!
             buffer
@@ -3703,6 +3702,12 @@
     (add-hyperlinker! terminal-row-hyperlinks)
     (bind-key! "C-c t" terminal!!)
     (bind-default-key! 'terminal "C-y" terminal-yank!)
+    ;; C-] is the way out of a captured terminal: C-] C-] sends the
+    ;; character itself, C-] C-y pastes the kill ring, and any other
+    ;; C-] sequence runs one global command (the context's escape)
+    (bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
+    (bind-default-key! 'terminal "C-] C-y" terminal-yank!)
+    (keymap:set-context-escape! 'terminal "C-]")
     (add-buffer-kill-hook! terminal-close!)
     (add-shutdown-hook! terminal-close-all!)
     (add-buffer-status-hint!
@@ -3713,7 +3718,6 @@
                    (let ([tail
                           (cond
                             [(not active?) ""]
-                            [(app-capture-escaped? buffer) " escaped"]
                             [else " capturing input, C-] to escape"])])
                      (if (terminal-state-bell-visible state)
                          (list '(" " . #f)

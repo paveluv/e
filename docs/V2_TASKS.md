@@ -142,7 +142,10 @@ far: `C-x w` widen-window mode removed (redesign later), scrollbar
 dragging removed (display-only indicator), status-line buttons kept,
 pop-up windows removed -- completions borrow the prompt's target window,
 so the layout tree is the only source of windows (a remote head's layout
-is then exactly the tree, no side channel).
+is then exactly the tree, no side channel); app target windows removed
+(apps act on the selected window); input capture became keymap data (a
+context's escape prefix, `keymap:set-context-escape!`) and dispatch
+stopped knowing about capture.
 
 - [x] `styles.e` (faces, the style DSL) -- compile-style/style-escape,
       the override registry, the built-in faces, and style-code moved;
