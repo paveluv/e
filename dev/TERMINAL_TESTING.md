@@ -1,7 +1,7 @@
 # Terminal testing
 
 e claims the behavior advertised by `xterm-256color`, plus the extensions
-listed in [TERMINAL.md](../docs/TERMINAL.md). It does not claim every private feature
+listed in [TERMINAL.md](../manual/TERMINAL.md). It does not claim every private feature
 implemented by xterm.
 
 ## Test layers
