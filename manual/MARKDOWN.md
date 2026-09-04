@@ -21,7 +21,7 @@ describe browser renders its pages through the same viewer.
   target lives in the buffer's hyperlink layer. While point rests on a
   link the echo area shows a transient, unlogged `hyperlink:` hint
   with the target. RET or a mouse click follows it (and that is
-  logged): web links open through the `markdown-browser` command
+  logged): web links open through the `markdown:browser` command
   (default `xdg-open`), relative links visit the file -- a linked
   markdown document arrives already in the view. Bare URLs link as in
   any buffer.
@@ -33,7 +33,7 @@ describe browser renders its pages through the same viewer.
   its narrowest window changes -- splitting, resizing, or closing
   windows re-fits the tables.
 - In a really wide window the view keeps a readable measure: prose
-  and tables wrap at `markdown-view-max-width` columns (default 80)
+  and tables wrap at `markdown:view-max-width` columns (default 80)
   instead of the full width.
 - Fenced code blocks sit between two dotted rules, the fence's
   language tag on the top one; a registered mode of that name colors
@@ -45,27 +45,27 @@ describe browser renders its pages through the same viewer.
   wrap marks of an editing buffer.
 
 Every face (`md-h1..4`, `md-quote`, `md-link`, `md-code`) can be
-restyled with `set-style!` in config.e.
+restyled with `style:set!` in config.e.
 
 ## Scheme API
 
 ```scheme
-(markdown-view! [buffer])          ; present formatted, read-only
-(markdown-edit! [buffer])          ; restore the markdown source
-(markdown-view-install! buffer lines) ; render lines into an app view
-(markdown-render lines [width])    ; => lines styles links source-rows
+(markdown:view! [buffer])          ; present formatted, read-only
+(markdown:edit! [buffer])          ; restore the markdown source
+(markdown:view-install! buffer lines) ; render lines into an app view
+(markdown:render lines [width])    ; => lines styles links source-rows
 ```
 
-`markdown-view!` stashes the source and the buffer's read-only state;
-`markdown-edit!` restores both. `markdown-render` is the pure renderer
+`markdown:view!` stashes the source and the buffer's read-only state;
+`markdown:edit!` restores both. `markdown:render` is the pure renderer
 (the automated suite pins it; `width` bounds tables, default 79), and
-`markdown-view-install!` is how the describe browser presents its
-pages. The `markdown-browser` parameter holds the web-link command,
-and `markdown-view-max-width` the reading-width cap:
+`markdown:view-install!` is how the describe browser presents its
+pages. The `markdown:browser` parameter holds the web-link command,
+and `markdown:view-max-width` the reading-width cap:
 
 ```scheme
-(markdown-browser "firefox")
-(markdown-view-max-width 120)
+(markdown:browser "firefox")
+(markdown:view-max-width 120)
 ```
 
 ## Mode key bindings
@@ -76,8 +76,8 @@ that mode is current:
 
 ```scheme
 ;; as md-view.e's init! registers them
-(keymap:bind-default-key! 'markdown "C-c v" markdown-view!)
-(keymap:bind-default-key! 'markdown-view "C-c v" markdown-edit!)
+(keymap:bind-default-key! 'markdown "C-c v" markdown:view!)
+(keymap:bind-default-key! 'markdown-view "C-c v" markdown:edit!)
 (keymap:bind-default-key! 'markdown-view "RET" follow-link)
 (keymap:bind-default-key! 'markdown-view "MOUSE-CLICK" follow-link-quietly)
 ```

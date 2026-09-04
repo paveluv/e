@@ -30,7 +30,7 @@
 ;; (paren:matching-style 'bold)   ; matched brackets: bold, underline,
 ;;                                ; box, or colored -- or design your
 ;;                                ; own marking with the style DSL:
-;; (set-style! 'matching-paren '(curly-underline (underline-color 208)))
+;; (style:set! 'matching-paren '(curly-underline (underline-color 208)))
 ;; (https:backend 'curl)          ; web requests through curl instead of
 ;;                                ; the built-in FFI TLS (default 'native)
 ;; (markdown:browser "firefox")   ; command opening a markdown view's
@@ -40,7 +40,7 @@
 ;; (search:fold-case #t)          ; C-s smart case: all-lowercase needles
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)
-;; (eval:copy-result #t)          ; copy non-void eval!/M-x results for C-y
+;; (eval:copy-result #t)          ; copy non-void eval:run!/M-x results for C-y
 ;; (forward-kill-ring-to-system-clipboard #f)
 ;;                              ; #t: also request an OSC 52 system-clipboard
 ;;                              ; update after kills and copies; the host
@@ -58,7 +58,7 @@
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's kill ring
 ;; (min-window-lines 2)           ; squeezed windows keep this many text lines
-;; (set-style! 'chrome '((foreground 244) italic))
+;; (style:set! 'chrome '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground
 ;;                                ; or background colors may be named, 0..255,
@@ -67,8 +67,8 @@
 ;;                                ; Full reference: manual/STYLES.md
 ;;                                ; chrome is the editor's grey furniture
 ;;                                ; (prompt labels, log prefixes, ghost text)
-;; (bind-key! "M-l" log-view:show!)    ; pop the *log* view with one chord
-;; (bind-key! "C-c s" save!!)     ; arbitrary multi-key chords work
-;; (unbind-key! "C-v")            ; remove a global binding
-;; (bind-key! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
-;; (unbind-key! 'isearch "M-c")
+;; (keymap:bind-key! "M-l" log-view:show!)    ; pop the *log* view with one chord
+;; (keymap:bind-key! "C-c s" save!!)     ; arbitrary multi-key chords work
+;; (keymap:unbind-key! "C-v")            ; remove a global binding
+;; (keymap:bind-key! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
+;; (keymap:unbind-key! 'isearch "M-c")

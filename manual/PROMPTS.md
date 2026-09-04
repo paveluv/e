@@ -78,11 +78,11 @@ describe page for the Scheme symbol under or immediately before point.
 
 ## Prompt API
 
-`prompt!` accepts completion, initial input, and history. Presentation can be
-customized with `prompt-styler`, `completion-styler`, `completion-highlight`,
-`prompt-ghost`, `prompt-inspector`, `prompt-multiline`, `prompt-edge-motion`,
-and `prompt-reindent`.
+`prompt:read!` accepts completion, initial input, and history. Presentation can be
+customized with `paint:prompt-styler`, `paint:completion-styler`, `prompt:completion-highlight`,
+`prompt:ghost`, `prompt:inspector`, `prompt:multiline`, `prompt:edge-motion`,
+and `prompt:reindent`.
 
-Use `show-prompt-message!` when a non-`prompt!` interaction should retain the
+Use `paint:show-prompt-message!` when a non-`prompt:read!` interaction should retain the
 same styled label and wrapped layout.
 

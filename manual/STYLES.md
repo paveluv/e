@@ -1,7 +1,7 @@
 # Styles
 
 e renders semantic face names such as `comment`, `keyword`, and `selection`.
-Modes assign those names to text; `set-style!` controls how a terminal displays
+Modes assign those names to text; `style:set!` controls how a terminal displays
 each name. Put overrides in `config.e` so they are reapplied at startup and
 after module reloads.
 
@@ -10,10 +10,10 @@ after module reloads.
 The preferred form is a quoted list of attributes and color clauses:
 
 ```scheme
-(set-style! 'comment '((foreground bright-black) italic))
-(set-style! 'keyword '(bold (foreground cyan)))
-(set-style! 'selection '((background 24) (foreground white)))
-(set-style! 'editor '((foreground (rgb 170 110 220)) bold))
+(style:set! 'comment '((foreground bright-black) italic))
+(style:set! 'keyword '(bold (foreground cyan)))
+(style:set! 'selection '((background 24) (foreground white)))
+(style:set! 'editor '((foreground (rgb 170 110 220)) bold))
 ```
 
 Order is preserved when the expression is compiled to terminal SGR parameters.
@@ -63,7 +63,7 @@ The eight named colors are `black`, `red`, `green`, `yellow`, `blue`,
 An integer from 0 through 255 selects the terminal's 256-color palette:
 
 ```scheme
-(set-style! 'delimiter '((foreground 245)))
+(style:set! 'delimiter '((foreground 245)))
 ```
 
 The symbol `default` restores the terminal's own foreground or
@@ -74,8 +74,8 @@ sets the underline's color separately from the text, with
 An RGB color contains three integers from 0 through 255:
 
 ```scheme
-(set-style! 'string '((foreground (rgb 100 210 130))))
-(set-style! 'selection '((background (rgb 30 55 90))))
+(style:set! 'string '((foreground (rgb 100 210 130))))
+(style:set! 'selection '((background (rgb 30 55 90))))
 ```
 
 RGB requires true-color terminal support. The actual appearance of named and
@@ -83,7 +83,7 @@ palette colors is controlled by the terminal's theme.
 
 ## Faces
 
-The built-in faces available to `set-style!` are:
+The built-in faces available to `style:set!` are:
 
 | Face | Default expression | Used for |
 | --- | --- | --- |
@@ -109,28 +109,28 @@ The built-in faces available to `set-style!` are:
 | `match-point` | `((background yellow) (foreground black))` | The current incremental-search match |
 
 A mode or extension may use additional face symbols. Unknown faces fall back
-to `plain`; they can still be assigned an override with `set-style!` before or
+to `plain`; they can still be assigned an override with `style:set!` before or
 after the extension is loaded.
 
 ## Compilation and compatibility
 
-`compile-style` validates a style expression and returns its raw SGR parameter
+`style:compile` validates a style expression and returns its raw SGR parameter
 string without the escape introducer:
 
 ```scheme
-(compile-style '((foreground 244) italic))
+(style:compile '((foreground 244) italic))
 ;; => "38;5;244;3"
 ```
 
 Invalid attributes, malformed clauses, and color components outside 0…255
 raise an error. An empty expression compiles to reset (`"0"`).
 
-For compatibility, `set-style!` still accepts a number as a 256-color
+For compatibility, `style:set!` still accepts a number as a 256-color
 foreground or a raw SGR parameter string:
 
 ```scheme
-(set-style! 'comment 244)
-(set-style! 'comment "38;5;244;3")
+(style:set! 'comment 244)
+(style:set! 'comment "38;5;244;3")
 ```
 
 New configuration should use style expressions; they are validated and do not
@@ -143,8 +143,8 @@ Style overrides participate in e's owned registration system. A call from
 the configuration restores the built-in style instead of leaving a stale
 override behind.
 
-To experiment for the current session, evaluate a `set-style!` call with M-x.
-Run `(load-config!)` afterward to restore the choices in `config.e`.
+To experiment for the current session, evaluate a `style:set!` call with M-x.
+Run `(main:load-config!)` afterward to restore the choices in `config.e`.
 
-`set-style!` changes future rendering immediately; the next redraw applies it
+`style:set!` changes future rendering immediately; the next redraw applies it
 to buffers, prompts, log views, selections, and search highlights.

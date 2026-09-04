@@ -35,10 +35,10 @@ Per-mode automatic Tab indentation can be changed with:
 
 `format-region!` and `format-buffer!` perform indentation and also:
 
-- expand tabs outside strings according to `scheme-tab-width`;
+- expand tabs outside strings according to `scheme-format:tab-width`;
 - trim trailing whitespace;
 - remove trailing blank lines and leave exactly one final newline;
-- normalize structural Scheme delimiters when `scheme-format-brackets` is on.
+- normalize structural Scheme delimiters when `scheme-format:brackets` is on.
 
 Bindings of the `let` family, `do`, `parameterize`, and `with-syntax`, plus
 clauses of `cond`, `case`, `case-lambda`, `guard`, `syntax-rules`, and
@@ -50,19 +50,19 @@ preserved.
 Scheme buffers format before saving by default:
 
 ```scheme
-(scheme-format-on-save #t)
+(scheme-mode:format-on-save #t)
 ```
 
-Modules may register additional work with `add-pre-save-hook!` and
-`add-post-save-hook!`.
+Modules may register additional work with `file:add-pre-save-hook!` and
+`file:add-post-save-hook!`.
 
 ## Intrusive formatting
 
 Intrusive formatting is optional and disabled by default:
 
 ```scheme
-(scheme-format-intrusive #t)
-(scheme-format-width 100)
+(scheme-format:intrusive #t)
+(scheme-format:width 100)
 ```
 
 It collapses redundant spacing outside literals, joins continuation lines that

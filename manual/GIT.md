@@ -14,50 +14,50 @@ public records.
 ## Opening a repository
 
 ```scheme
-(define repo (git-open))
-(define repo (git-open "/src/e"))
-(git-repository-path repo)
+(define repo (git:open))
+(define repo (git:open "/src/e"))
+(git:repository-path repo)
 ```
 
-`git-open` resolves the worktree root. Other procedures require the returned
+`git:open` resolves the worktree root. Other procedures require the returned
 repository object, preventing dependence on the editor process's working
 directory.
 
 ## Status and diffs
 
 ```scheme
-(git-status repo)
-(git-diff repo)       ; unstaged changes
-(git-diff repo #t)    ; staged changes
+(git:status repo)
+(git:diff repo)       ; unstaged changes
+(git:diff repo #t)    ; staged changes
 ```
 
-Status records expose `git-status-path`, `git-status-original-path`,
-`git-status-index`, and `git-status-worktree`. States are symbols such as
+Status records expose `git:status-path`, `git:status-original-path`,
+`git:status-index`, and `git:status-worktree`. States are symbols such as
 `modified`, `added`, `deleted`, `renamed`, `copied`, `unmerged`,
 `type-changed`, or `untracked`; #f means unchanged on that side.
 
-Diff records expose `git-diff-status`, `git-diff-path`, and
-`git-diff-original-path`. Rename and copy records preserve both paths.
+Diff records expose `git:diff-status`, `git:diff-path`, and
+`git:diff-original-path`. Rename and copy records preserve both paths.
 NUL-delimited Git output keeps whitespace and newlines in paths unambiguous.
 
 ## Branches and history
 
 ```scheme
-(git-current-branch repo) ; #f at detached HEAD
-(git-branches repo)
-(git-log repo)            ; latest 50 commits
-(git-log repo 10)
+(git:current-branch repo) ; #f at detached HEAD
+(git:branches repo)
+(git:log repo)            ; latest 50 commits
+(git:log repo 10)
 ```
 
 Branch records expose name, current state, object hash, upstream, and numeric
-ahead/behind counts through the `git-branch-*` accessors. Commit records expose
+ahead/behind counts through the `git:branch-*` accessors. Commit records expose
 the hash, parent hashes, author name and email, Unix timestamp, subject, and
-body through the `git-commit-*` accessors.
+body through the `git:commit-*` accessors.
 
 ## Errors
 
-A failed Git invocation raises `git-error?`. `git-error-code`,
-`git-error-command`, and `git-error-stderr` retain the exit status, argument
+A failed Git invocation raises `git:error?`. `git:error-code`,
+`git:error-command`, and `git:error-stderr` retain the exit status, argument
 list, and diagnostic text as structured condition fields. Arguments are shell
 quoted internally; callers never construct command strings.
 
@@ -67,11 +67,11 @@ explicit.
 
 ## History browser
 
-`C-x g` or M-x `(git-log!!)` opens the `*git-log*` app for the repository
+`C-x g` or M-x `(git-view:log!!)` opens the `*git-log*` app for the repository
 containing the current file. Pass a path explicitly to browse another one:
 
 ```scheme
-(git-log!! "/src/e")
+(git-view:log!! "/src/e")
 ```
 
 The app shows the latest 20 commits followed by each commit's changed files.

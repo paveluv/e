@@ -392,6 +392,21 @@ stopped knowing about capture.
       painters nobody outside paint called and `head:publish-head-marks!`
       left their export lists instead of being renamed.  config.e
       recolors faces with `style:set!` now
+- [x] every library but edit is prefixed (2026-09-04): the apps and
+      platform libraries too -- `terminal:`, `git:`, `git-view:`,
+      `describe:`, `eval:`, `search:`, `log-view:`, `markdown:` (was
+      md-view), `paren:`, `pretty-scheme:`, `scheme-format:`,
+      `scheme-mode:`, `blame:`, `https:`, `diff:`, `sys:` -- with the
+      stem dropped from their exports (`git:branches`, `terminal:send!`)
+      and the bare-stem commands given verbs (`terminal:open!!`,
+      `eval:run!`/`run!!`, `describe:show!`/`show!!`/`this`,
+      `search:incremental!!`, `log-view:show!`/`buffer`,
+      `git-view:log!!`).  The kernel imports every module prefixed into
+      the M-x top level except `edit`, so `kernel:seam-modules` is gone;
+      apps document themselves under the prefixed names.  The manual
+      was reviewed against the export lists (a checker in the job's
+      scripts) and the removed features (target windows, scrollbar
+      dragging, native scrolling, the MOUSE key)
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e

@@ -4,11 +4,11 @@ e can host a real pseudo-terminal inside an app buffer. Start one with
 `C-c t` or:
 
 ```scheme
-(terminal!!)
+(terminal:open!!)
 ```
 
 The command opens `*terminal*` in the current window and starts
-`terminal-shell` as an interactive shell in the current file's directory (or
+`terminal:shell` as an interactive shell in the current file's directory (or
 e's current working directory for a file-less buffer). It defaults to
 `$SHELL`, falling back to `/bin/sh`. A second session is named
 `*terminal*<2>`, and so on.
@@ -16,21 +16,21 @@ e's current working directory for a file-less buffer). It defaults to
 Set the shell in `config.e` when desired:
 
 ```scheme
-(terminal-shell "/bin/bash")
+(terminal:shell "/bin/bash")
 ```
 
 Pass a shell command to run it instead:
 
 ```scheme
-(terminal!! "top")
-(terminal!! "python3")
-(terminal!! "e README.md")
-(terminal!! "legmacs README.md")
+(terminal:open!! "top")
+(terminal:open!! "python3")
+(terminal:open!! "e README.md")
+(terminal:open!! "legmacs README.md")
 ```
 
 Explicit command strings are interpreted by the configured shell with `-c`,
 so quoting, pipelines, redirection, and compound shell commands work. A bare
-`(terminal!!)` executes the configured shell directly.
+`(terminal:open!!)` executes the configured shell directly.
 
 This is a PTY, not redirected pipes. The child sees `TERM=xterm-256color`, a
 controlling terminal, and the terminal buffer's actual row and column count.
@@ -177,7 +177,7 @@ the terminal buffer that supplied the clipboard. Disable this independently
 of outbound clipboard forwarding in `config.e`:
 
 ```scheme
-(terminal-forward-clipboard-to-kill-ring #f) ; default is #t
+(terminal:forward-clipboard-to-kill-ring #f) ; default is #t
 ```
 
 OSC 52 clipboard queries are ignored: a child may offer text to its containing
@@ -204,8 +204,8 @@ The main screen retains scrollback; alternate-screen frames are never added
 to it. Configure the maximum retained line count in `config.e`:
 
 ```scheme
-(terminal-scrollback 10000) ; default
-(terminal-scrollback 0)     ; disable scrollback
+(terminal:scrollback 10000) ; default
+(terminal:scrollback 0)     ; disable scrollback
 ```
 
 The terminal buffer is read-only from the editor's perspective. Its contents
@@ -222,24 +222,24 @@ Diagnostics include the identifying CSI parameters or protocol selector but
 omit arbitrary OSC and DCS payloads, which may contain private application
 data. Unknown control strings and character controls are reported as well.
 Headless emulators record the same signatures, readable through
-`terminal-emulator-unsupported`, so a test can assert that a sequence is
+`terminal:emulator-unsupported`, so a test can assert that a sequence is
 either implemented or reported rather than silently dropped.
 
 ## Scheme API
 
 ```scheme
-(terminal!! [command])
-(terminal-send! text)
-(terminal-close! [buffer])
-(terminal-scrollback [lines])
-(terminal-shell [path])
+(terminal:open!! [command])
+(terminal:send! text)
+(terminal:close! [buffer])
+(terminal:scrollback [lines])
+(terminal:shell [path])
 ```
 
-`terminal-send!` writes UTF-8 text to the current terminal's PTY. It is useful
+`terminal:send!` writes UTF-8 text to the current terminal's PTY. It is useful
 for macros and automation; it does not append text directly to the buffer.
-`terminal-shell` gets or sets the shell executable used by future terminal
+`terminal:shell` gets or sets the shell executable used by future terminal
 buffers; changing it does not affect processes that are already running.
-`terminal-close!` sends `SIGTERM` to the whole terminal process group and gives
+`terminal:close!` sends `SIGTERM` to the whole terminal process group and gives
 it a short, bounded cleanup period before using `SIGKILL`. It closes the PTY
 and reaps its session leader without allowing a stubborn child to hold up the
 editor. Killing a terminal buffer calls it automatically. A naturally exited
@@ -258,17 +258,17 @@ for tests, protocol experiments, and tools that need structured terminal
 output:
 
 ```scheme
-(define vt (make-terminal-emulator 24 80))
-(terminal-emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
-(terminal-emulator-resize! vt 40 100)
-(terminal-emulator-screen vt)       ; copied vector of cell rows
-(terminal-emulator-styles vt)       ; copied vector of cell-style rows
-(terminal-emulator-hyperlinks vt)   ; copied vector of cell link metadata
-(terminal-emulator-state vt)        ; dimensions, cursor, and active modes
-(terminal-emulator-input vt "UP")   ; mode-aware key bytevector
-(terminal-emulator-mouse-input vt 0 20 8 #f) ; mode-aware mouse bytevector
-(terminal-emulator-replies vt)      ; DSR/DA and other protocol replies
-(terminal-emulator-unsupported vt)  ; reported unsupported-feature signatures
+(define vt (terminal:make-emulator 24 80))
+(terminal:emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
+(terminal:emulator-resize! vt 40 100)
+(terminal:emulator-screen vt)       ; copied vector of cell rows
+(terminal:emulator-styles vt)       ; copied vector of cell-style rows
+(terminal:emulator-hyperlinks vt)   ; copied vector of cell link metadata
+(terminal:emulator-state vt)        ; dimensions, cursor, and active modes
+(terminal:emulator-input vt "UP")   ; mode-aware key bytevector
+(terminal:emulator-mouse-input vt 0 20 8 #f) ; mode-aware mouse bytevector
+(terminal:emulator-replies vt)      ; DSR/DA and other protocol replies
+(terminal:emulator-unsupported vt)  ; reported unsupported-feature signatures
 ```
 
 Mouse coordinates are one-based. The numeric code uses the xterm button and
@@ -276,7 +276,7 @@ modifier bits, and the final argument distinguishes a release from a press or
 motion event. The procedure returns `#f` while mouse tracking is disabled.
 Hyperlink cells are either `#f` or `(URI id)`, where `id` may itself be `#f`.
 
-`terminal-emulator-feed!` currently accepts decoded Scheme text. The live PTY
+`terminal:emulator-feed!` currently accepts decoded Scheme text. The live PTY
 reader performs UTF-8 decoding before feeding the same state machine.
 
 The OS-specific PTY creation, resize, cleanup, and process-group operations

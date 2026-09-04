@@ -23,6 +23,10 @@ with a date; deletions note the commit.
 
 ## Deleted
 
+- 2026-09-04 `kernel:seam-modules`: the list of libraries the kernel
+  imported prefixed into the M-x top level -- every library but edit is
+  prefixed now, so the rule needs no list.
+
 - 2026-09-04 exports `paint:paint-window!`, `paint-dividers!`,
   `paint-echo-area!`, `paint-visual-bell!`, `head:publish-head-marks!`:
   the frame calls them inside their own modules; nothing outside did.

@@ -21,7 +21,7 @@ Code may mark a message as progress:
 
 ```scheme
 (parameterize ([message-progress #t])
-  (log! 'download "Receiving page 4"))
+  (log:add! 'download "Receiving page 4"))
 ```
 
 A progress entry supersedes the newest visible entry from the same component
@@ -37,7 +37,7 @@ elsewhere its viewport remains still while records arrive.
 Filtered log views are created dynamically:
 
 ```scheme
-(log-view 'eval)
+(log-view:buffer 'eval)
 ```
 
 This creates a buffer such as `*log eval*` containing only that component.
@@ -49,22 +49,22 @@ views. Eval, for example, stores `(query . result)` and presents it as
 
 ## History
 
-`log-history` derives command histories from structured component records.
+`log:history` derives command histories from structured component records.
 File prompts use it to recall visited and saved paths; `M-x` uses eval records
 for expression history. History is therefore presentation-independent and
 does not scrape rendered text.
 
 ## API
 
-- `log!` adds a structured record.
-- `log-entries` returns records for filtering or inspection.
-- `log-length` reports the record count.
-- `log-history` derives values for interactive history.
-- `register-log-formatter!` installs component presentation.
+- `log:add!` adds a structured record.
+- `log:entries` returns records for filtering or inspection.
+- `log:length` reports the record count.
+- `log:history` derives values for interactive history.
+- `log:register-formatter!` installs component presentation.
 - `present-log-entry!` and `present-log-entries!` expose the shared echo
   presentation path.
 - `set-message!` records or displays according to `message-source`.
-- `show-message!` displays an explicit transient message and styles.
+- `paint:show-message!` displays an explicit transient message and styles.
 
 Errors that indicate an editor or extension failure are reported in both the
 echo area and log instead of being swallowed.

@@ -305,13 +305,19 @@ a call site names its layer without looking at the import list:
   (text:edit actor buffer basis span replacement))
 ```
 
-Two naming rules follow from the prefix.  Seam modules are named in
-the singular -- `style`, `file`, `mode`, `string`, `actor`, `doc` --
-and an exported name never repeats the module's stem, because the
-prefix already says it once: `style:set!`, `log:add!`,
-`mode:register!`, `file:read`, `policy:make`, never `styles:set-style!`
-or `log:log-entries`.  Inside the module the definition may keep a
-longer name; the export list renames it (`(rename (set-style! set!))`).
+The prefix is universal: every library but the command layer `edit`
+arrives under its own prefix -- seams and apps alike, `terminal:`,
+`git:`, `describe:`, `sys:` -- both in code and in the M-x environment
+the kernel builds; `edit`'s names alone are bare, since they are what
+M-x is for.  Two naming rules follow.  Modules are named in the
+singular -- `style`, `file`, `mode`, `string`, `actor`, `doc` -- and
+an exported name never repeats the module's stem, because the prefix
+already says it once: `style:set!`, `log:add!`, `mode:register!`,
+`git:branches`, `terminal:send!`, never `styles:set-style!` or
+`git:git-branches`.  A command that was the bare stem gets a verb
+(`terminal:open!!`, `eval:run!`, `describe:show!`).  Inside the module
+the definition may keep a longer name; the export list renames it
+(`(rename (set-style! set!))`).
 
 `(rnrs)` and `(chezscheme)` stay unprefixed. Two consequences,
 adopted as rules: exported names drop their module stem
