@@ -188,12 +188,12 @@
         (head:run-on-main! (lambda () (note-event! event)))))
     (paint:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e
-    (styles:set-style! 'blame-1 '((background 17)))   ; deep blue
-    (styles:set-style! 'blame-2 '((background 22)))   ; deep green
-    (styles:set-style! 'blame-3 '((background 52)))   ; deep red
-    (styles:set-style! 'blame-4 '((background 54)))   ; deep purple
-    (styles:set-style! 'blame-5 '((background 23)))   ; deep teal
-    (styles:set-style! 'blame-6 '((background 58)))   ; olive
+    (styles:set! 'blame-1 '((background 17)))   ; deep blue
+    (styles:set! 'blame-2 '((background 22)))   ; deep green
+    (styles:set! 'blame-3 '((background 52)))   ; deep red
+    (styles:set! 'blame-4 '((background 54)))   ; deep purple
+    (styles:set! 'blame-5 '((background 23)))   ; deep teal
+    (styles:set! 'blame-6 '((background 58)))   ; olive
     (docs:register!
       '(((blame-at-point!)
          (("procedure" . "(blame-at-point!)")) "void"

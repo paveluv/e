@@ -222,7 +222,7 @@
             (call-with-display-output
               state
               (lambda ()
-                (log:log! 'terminal
+                (log:add! 'terminal
                   (format "~a sent unsupported ~a"
                           (head:buffer-name buffer) feature)))))))))
 
@@ -1658,7 +1658,7 @@
                     state
                     (lambda ()
                       (copy-to-kill-buffer! clipboard)
-                      (log:log! 'terminal
+                      (log:add! 'terminal
                         (format
                           "Received clipboard from ~a, stored in kill ring"
                           (head:buffer-name
@@ -1866,11 +1866,11 @@
               (let ([name (string->symbol
                             (format "terminal-sgr-~a" style-serial))])
                 (set! style-serial (+ style-serial 1))
-                ;; styles:set-style! accepts SGR parameters, not a complete escape
+                ;; styles:set! accepts SGR parameters, not a complete escape
                 ;; sequence. Passing CSI here produced CSI CSI ... m m; the
                 ;; second trailing `m` was painted as text by the host
                 ;; terminal, most visibly during top's frequent SGR changes.
-                (styles:set-style! name (format "0;~a" sequence))
+                (styles:set! name (format "0;~a" sequence))
                 (hashtable-set! style-cache sequence name)
                 (hashtable-set! style-sequences name sequence)
                 name)))))

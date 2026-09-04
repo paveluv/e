@@ -74,7 +74,7 @@
           state-reset! state-edit! mirror-rename! new-buffer
           bump-buffer-revision! buffer-of-state-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
-          sync-foreign-edits! flush-ui-audit! publish-head-marks!
+          sync-foreign-edits! flush-ui-audit!
           set-repaint-hook! set-adopt-hook!
           add-buffer-kill-hook! add-pre-redraw-hook!
           before-frame! add-shutdown-hook! run-shutdown-hooks!
@@ -352,7 +352,7 @@
 
   (define (run-posted! thunk)
     ;; a posted thunk's error is news, not a crash
-    (guard (ex [else (log:log! 'run-on-main! (kernel:condition-text ex))])
+    (guard (ex [else (log:add! 'run-on-main! (kernel:condition-text ex))])
       (thunk)))
 
   (define (run-deferred!)
@@ -677,7 +677,7 @@
     (when (and (buffer-state-id b) (not (memq b forked-buffers)))
       (set! forked-buffers (cons b forked-buffers))
       (guard (ex [else (void)])
-        (log:log! 'state
+        (log:add! 'state
           (format "store outage: ~s forked from the store"
                   (buffer-name b))))))
 
@@ -709,7 +709,7 @@
 
   (define (log-reconvergence! b)
     (guard (ex [else (void)])
-      (log:log! 'state
+      (log:add! 'state
         (format "store recovered: ~s re-baselined from the editor"
                 (buffer-name b)))))
 
@@ -748,7 +748,7 @@
                                (state:history (buffer-state-id b) 8)))])
                   ;; the conflict is on the record before core wins
                   (guard (ex [else (void)])
-                    (log:log! 'state
+                    (log:add! 'state
                       (format "conflict: ui overrode ~a in ~s"
                               (if foreign (cadr foreign) "another actor")
                               (buffer-name b))))
@@ -883,7 +883,7 @@
           (lambda (entry)
             (guard (ex [else (void)])
               (let ([v (cdr entry)])
-                (log:log! 'state
+                (log:add! 'state
                   (format "ui: ~a edit~a in ~s (revisions ~a-~a)"
                           (vector-ref v 3)
                           (if (= (vector-ref v 3) 1) "" "s")
@@ -908,7 +908,7 @@
               (unless (and (eq? (car event) 'property)
                            (eq? (caddr event) 'modified))
                 (flush-ui-audit! id)
-                (log:log! 'state
+                (log:add! 'state
                   (case (car event)
                     [(create)
                      (format "~a created ~s" actor (caddr event))]
@@ -1354,7 +1354,7 @@
                                              (kernel:condition-text ex))])
                                 (unless (equal? text (app-refresh-error a))
                                   (app-refresh-error-set! a text)
-                                  (log:log! 'app text)))])
+                                  (log:add! 'app text)))])
                     ((app-refresh! a))
                     (app-refresh-error-set! a #f))))
               (filter (lambda (a) (memq (app-buffer a) the-buffers))
@@ -1430,7 +1430,7 @@
     (for-each
       (lambda (hook)
         (guard (ex [else
-                    (log:log! 'kill-buffer!
+                    (log:add! 'kill-buffer!
                       (format "Buffer cleanup failed for ~a: ~a"
                               (buffer-name b) (kernel:condition-text ex)))])
           (hook b)))

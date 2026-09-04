@@ -32,13 +32,13 @@
   ;;; Faces -------------------------------------------------------------
 
   (define (register-md-faces!)
-    (styles:set-style! 'md-h1 '(bold underline))
-    (styles:set-style! 'md-h2 '(bold))
-    (styles:set-style! 'md-h3 '(bold italic))
-    (styles:set-style! 'md-h4 '(italic))
-    (styles:set-style! 'md-quote '(italic (foreground bright-black)))
-    (styles:set-style! 'md-link '(underline (foreground 33)))
-    (styles:set-style! 'md-code '(reset)))
+    (styles:set! 'md-h1 '(bold underline))
+    (styles:set! 'md-h2 '(bold))
+    (styles:set! 'md-h3 '(bold italic))
+    (styles:set! 'md-h4 '(italic))
+    (styles:set! 'md-quote '(italic (foreground bright-black)))
+    (styles:set! 'md-link '(underline (foreground 33)))
+    (styles:set! 'md-code '(reset)))
 
   (define markdown-view-max-width
     ;; Reading width cap: a view in a wider window wraps at this many

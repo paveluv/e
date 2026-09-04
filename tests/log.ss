@@ -24,55 +24,55 @@
 
      ;; -- appending and reading back ------------------------------------
 
-     (define base (log:log-length))
-     (define entry (log:log! 'probe "hello" #f))
+     (define base (log:length))
+     (define entry (log:add! 'probe "hello" #f))
 
      (check 'entry-shape
             (list (cadr entry) (caddr entry)) '(probe "hello"))
-     (check 'length-grew (log:log-length) (+ base 1))
-     (check 'record-by-index (log:log-record base) entry)
+     (check 'length-grew (log:length) (+ base 1))
+     (check 'record-by-index (log:record base) entry)
 
-     (log:log! 'other '(a . b) #f)
-     (log:log! 'probe "again" #f)
+     (log:add! 'other '(a . b) #f)
+     (log:add! 'probe "again" #f)
 
      (check 'entries-newest-first
-            (map caddr (log:log-entries 'probe)) '("again" "hello"))
+            (map caddr (log:entries 'probe)) '("again" "hello"))
      (check 'entries-filter
-            (map cadr (log:log-entries 'other)) '(other))
+            (map cadr (log:entries 'other)) '(other))
 
      ;; growth across the initial vector
      (do ([i 0 (+ i 1)]) ((= i 100))
-       (log:log! 'bulk (format "line ~a" i) #f))
+       (log:add! 'bulk (format "line ~a" i) #f))
      (check 'store-grows
-            (caddr (log:log-record (- (log:log-length) 1))) "line 99")
+            (caddr (log:record (- (log:length) 1))) "line 99")
 
      ;; -- formatters and stylers -----------------------------------------
 
      (check 'string-datum-verbatim
-            (log:format-log-entry entry) "hello")
+            (log:format-entry entry) "hello")
      (check 'other-datum-written
-            (log:format-log-entry (log:log! 'raw '(1 2) #f)) "(1 2)")
+            (log:format-entry (log:add! 'raw '(1 2) #f)) "(1 2)")
 
      (define (styler text) 'styles)
-     (log:register-log-formatter!
+     (log:register-formatter!
        'probe (lambda (d) (string-append "P: " d)) styler)
-     (check 'formatter-applies (log:format-log-entry entry) "P: hello")
-     (check 'styler-retrievable (log:log-styler 'probe) styler)
-     (check 'no-styler (log:log-styler 'other) #f)
+     (check 'formatter-applies (log:format-entry entry) "P: hello")
+     (check 'styler-retrievable (log:styler 'probe) styler)
+     (check 'no-styler (log:styler 'other) #f)
 
      ;; a formatter that raises never loses the record's text
-     (log:register-log-formatter! 'bad (lambda (d) (car d)))
+     (log:register-formatter! 'bad (lambda (d) (car d)))
      (check 'formatter-failure-falls-back
-            (log:format-log-entry (log:log! 'bad "not-a-pair" #f))
+            (log:format-entry (log:add! 'bad "not-a-pair" #f))
             "\"not-a-pair\"")
 
      ;; -- histories --------------------------------------------------------
 
-     (log:log! 'eval-like '("(+ 1 2)" . 3) #f)
-     (log:log! 'eval-like '("(+ 1 2)" . 3) #f)
-     (log:log! 'eval-like '("(car x)" . err) #f)
+     (log:add! 'eval-like '("(+ 1 2)" . 3) #f)
+     (log:add! 'eval-like '("(+ 1 2)" . 3) #f)
+     (log:add! 'eval-like '("(car x)" . err) #f)
      (check 'history-selects-and-collapses
-            (log:log-history 'eval-like car)
+            (log:history 'eval-like car)
             '("(car x)" "(+ 1 2)"))
 
      ;; -- the presenter hook ------------------------------------------------
@@ -82,8 +82,8 @@
        (lambda (e show?)
          (set-box! presented
                    (cons (list (cadr e) show?) (unbox presented)))))
-     (log:log! 'probe "loud")
-     (log:log! 'probe "quiet" #f)
+     (log:add! 'probe "loud")
+     (log:add! 'probe "quiet" #f)
      (check 'presenter-hears-both-with-show-flags
             (reverse (unbox presented))
             '((probe #t) (probe #f)))
@@ -91,7 +91,7 @@
      ;; a failing presenter never loses the record
      (log:set-presenter! (lambda (e show?) (error 'presenter "boom")))
      (check 'presenter-failure-keeps-the-record
-            (caddr (log:log! 'probe "kept"))
+            (caddr (log:add! 'probe "kept"))
             "kept")
      (log:set-presenter! #f)
 

@@ -49,7 +49,7 @@
 
      (define s (policy:mint!
                  agent
-                 (policy:make-policy 'all 100000000 2 '("notes") 4000)
+                 (policy:make 'all 100000000 2 '("notes") 4000)
                  owner audit!))
 
      (check 'minted (policy:session? s) #t)
@@ -82,7 +82,7 @@
      ;; a tiny fuel tank: the loop cannot hang anything
      (define winded (policy:mint!
                       '(agent winded)
-                      (policy:make-policy '(+ car cons quote let lambda if)
+                      (policy:make '(+ car cons quote let lambda if)
                                           10000 0 '() 4000)
                       owner audit!))
      (check 'fuel-runs-out
@@ -170,7 +170,7 @@
      ;; the default trail rides a persistent cell
      (define quiet (policy:mint!
                      '(agent quiet)
-                     (policy:make-policy '(+) 10000 0 '() 4000)))
+                     (policy:make '(+) 10000 0 '() 4000)))
      (policy:session-eval! quiet "(+ 1 1)")
      (check 'default-audit-records
             (let ([entries (policy:audit-log 10)])

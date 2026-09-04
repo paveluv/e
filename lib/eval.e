@@ -411,7 +411,7 @@
           [terminal (duplicate-standard-output-port)])
       (define (record! component line)
         (parameterize ([terminal-output-port terminal])
-          (with-mutex lock (log:log! component line))))
+          (with-mutex lock (log:add! component line))))
       (dynamic-wind
         void
         (lambda ()
@@ -436,7 +436,7 @@
                                      ", "))])
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
-              (log:log! 'eval (cons query (if void? "#<void>" result)) #f)])
+              (log:add! 'eval (cons query (if void? "#<void>" result)) #f)])
         (when copied? (copy-to-kill-buffer! result))
         (present-log-entries!
           (append output-records (list result-record))
@@ -468,7 +468,7 @@
                                (editor-symbol? (string->symbol label)))]
                             [paint:echo-highlight mx-echo-styles])
                (prompt:read! "M-x " complete-symbol "("
-                             (box (log:log-history 'eval car))
+                             (box (log:history 'eval car))
                              complete-editor-symbol normalize-input))])
       (when (and s (> (string-length s) 0) (not (string=? s "(")))
         ;; Keep the prompt on screen while its expression evaluates --
@@ -493,6 +493,6 @@
         ((eval!!) (("procedure" . "(eval!!)")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
-    (log:register-log-formatter! 'eval format-exchange style-exchange)
+    (log:register-formatter! 'eval format-exchange style-exchange)
     (keymap:bind-default-key! "C-x C-e" eval!)
     (keymap:bind-default-key! "M-x" eval!!)))

@@ -33,7 +33,7 @@
            [sep (and (> n 9) (strings:search s ": " 9 n))])
       (when sep
         (let* ([component (string->symbol (substring s 9 sep))]
-               [styler (log:log-styler component)]
+               [styler (log:styler component)]
                [from (+ sep 2)]
                [inner (and styler
                            (guard (ex [else #f])
@@ -53,17 +53,17 @@
     (define b #f)
     (define rendered 0)
     (define (refresh!)
-      (when (< rendered (log:log-length))
+      (when (< rendered (log:length))
         (let ([lines '()])
-          (do ([i (- (log:log-length) 1) (- i 1)]) ((< i rendered))
-            (let ([e (log:log-record i)])
+          (do ([i (- (log:length) 1) (- i 1)]) ((< i rendered))
+            (let ([e (log:record i)])
               (when (pred e)
                 (set! lines
                   (append (let ([prefix (log-line-prefix e)])
                             (map (lambda (l) (string-append prefix l))
-                                 (strings:lines (log:format-log-entry e))))
+                                 (strings:lines (log:format-entry e))))
                           lines)))))
-          (set! rendered (log:log-length))
+          (set! rendered (log:length))
           (head:view-append! b lines))))
     (set! b (head:register-view! name refresh!))
     (modes:choose! b "log")
