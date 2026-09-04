@@ -20,6 +20,7 @@
 (library (eval)
   (export init! eval! eval!! eval-copy-result)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (kernel) kernel:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
@@ -268,8 +269,8 @@
     ;; Scheme highlighting over the whole exchange, echo and *log*
     ;; alike -- the editor's own names in the editor style: eval runs
     ;; in the editor's environment, whatever a random file does.
-    (let ([scheme (find-mode "scheme")])
-      (and scheme (editorize! text ((mode-styles scheme) text)))))
+    (let ([scheme (modes:find "scheme")])
+      (and scheme (editorize! text ((modes:styles scheme) text)))))
 
   (define mx-echo-styles
     ;; Scheme highlighting for the M-x prompt: the label stays grey,
@@ -278,9 +279,9 @@
     (paint:prompt-styler "M-x "
       (lambda (input)
         (guard (ex [else #f])
-          (let ([scheme (find-mode "scheme")])
+          (let ([scheme (modes:find "scheme")])
             (and scheme
-                 (editorize! input ((mode-styles scheme) input))))))))
+                 (editorize! input ((modes:styles scheme) input))))))))
 
   (define (trim-right s)
     ;; s without trailing blanks, so auto-closed parentheses attach

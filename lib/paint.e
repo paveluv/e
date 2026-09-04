@@ -24,7 +24,7 @@
           highlight-ranges add-hyperlinker! buffer-line-hyperlinks
           ranges-on-row region-span
           begin-frame! invalidate-screen-cache! erase-screen! paint!
-          paint-dividers! paint-window! set-mode-hook!
+          paint-dividers! paint-window!
           screen-rows set-screen-rows! screen-cols set-screen-cols!
           mark-size-dirty! screen-live? set-screen-live! reset-cursor-style!
           visual-bell-active? set-visual-bell-active! set-redraw-hook!
@@ -50,6 +50,7 @@
           (prefix (styles) styles:)
           (prefix (strings) strings:)
           (prefix (head) head:)
+          (prefix (modes) modes:)
           (prefix (echo) echo:)
           (prefix (kernel) kernel:))
 
@@ -276,16 +277,25 @@
   ;; what they show, so a frame repaints only what changed.  A frame
   ;; begins by naming its view -- the terminal size and the window
   ;; geometry -- and a view unlike the cached one discards every key.
-  ;; The mode registry is the head's; the painter learns a buffer's
-  ;; mode-driven presentation through one hook, as a vector:
-  ;; #(mode-name render row-styler line-styler).
+  ;; A buffer's mode-driven presentation -- name, display transform,
+  ;; row styler, memoized line styler -- comes from the mode registry
+  ;; (modes), gathered once per window paint.
 
   (define screen-cache '#())
   (define cached-view #f)
   (define editor-name "e")
 
-  (define mode-hook (lambda (b) (vector #f #f #f (lambda (line) #f))))
-  (define (set-mode-hook! proc) (set! mode-hook proc))
+  (define (mode-info b)
+    ;; #(name render row-styler line-styler) for b's mode, plain without one
+    (let ([m (modes:of b)])
+      (vector (and m (modes:name m))
+              (and m (modes:render m))
+              (and m (modes:row-styles m))
+              (modes:line-styles b))))
+
+  ;; a store change under this seat's buffers invalidates painted rows
+  (define repaint-hooked
+    (head:set-repaint-hook! (lambda () (invalidate-screen-cache!))))
 
   (define (begin-frame! view rows)
     (unless (equal? view cached-view)
@@ -580,7 +590,7 @@
                         (if (eq? (head:window-scrollbar? w) 'left) 1 0))]
            [content-x (+ gutter-x gutter-width)]
            [content-width (head:window-content-width w)]
-           [info (mode-hook b)]
+           [info (mode-info b)]
            [styles-of (vector-ref info 3)]
            [mode-tag (vector-ref info 0)]
            [current? (eq? w (head:current))])

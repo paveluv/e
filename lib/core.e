@@ -16,8 +16,7 @@
     ;; state, read-only
     current-buffer buffer-list point mark
     buffer-text buffer-clean?
-    buffer-mode-name
-    buffer-line  buffer-line-count buffer-line-styles
+    buffer-line  buffer-line-count
 
     editor-symbol?
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
@@ -25,7 +24,7 @@
     visit-file! save-file! save!! save-as!! find-file!! data-directory
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
     fresh-buffer
-    set-buffer-mode! set-buffer-read-only! set-buffer-wrap! set-buffer-name!
+    set-buffer-read-only! set-buffer-wrap! set-buffer-name!
     call-with-buffer
     switch-buffer!! kill-buffer!!
     split-window! split-window-right!
@@ -51,8 +50,6 @@
     ;; extending the editor
 
     describe-key!!
-    register-mode! add-mode-extension! find-mode mode-styles
-    memoize-buffer-analysis
 
     register-indenter! register-formatter!
 
@@ -90,17 +87,16 @@
     vector-fill-range!
     ;; the editor itself
     main)
-  ;; The editor defines a few names Chez also exports (the buffer record's
-  ;; buffer-mode accessor vs the port option, ...); a library body may not
-  ;; shadow an import, so those imports are excluded.  The system-specific
-  ;; layer -- libc, termios, signals -- comes from (sys).
-  (import (except (chezscheme) buffer-mode) (sys) (diff)
+  ;; The system-specific layer -- libc, termios, signals -- comes
+  ;; from (sys).
+  (import (chezscheme) (sys) (diff)
           (prefix (state) state:) (prefix (text) text:)
           (prefix (kernel) kernel:) (prefix (actors) actors:)
           (prefix (log) log:) (prefix (styles) styles:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
-          (prefix (paint) paint:) (prefix (strings) strings:))
+          (prefix (paint) paint:) (prefix (strings) strings:)
+          (prefix (modes) modes:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
   ;; (and module definitions) can be told apart from builtins -- M-x
@@ -128,19 +124,8 @@
       [(set! id v) (head:set-buffers! v)]))
 
   ;; Buffer facts and the store client -- the bridge between this
-  ;; seat's records and the (state) store -- live in (head) now.  The
-  ;; mode accessors stay here: the mode name is the shared fact, the
-  ;; mode record is this head's registry object.
-  (define (buffer-mode b)
-    (let ([n (head:buffer-fact b 'mode #f)]) (and n (find-mode n))))
-  (define (buffer-mode-set! b m)
-    (head:buffer-fact-set! b 'mode (and m (mode-name m))))
-  ;; The head's window tree lives in the (head) seam module now: the
-  ;; records, the split geometry, and the seat state (windows, the
-  ;; layout root, the selected window, the layout's divider output).
-  ;; Facade aliases and identifier-syntax facades below; app-aware
-  ;; layout surgery (set-layout-root!), wrap policy, and the main loop
-  ;; stay here until the rest of the head moves.
+  ;; seat's records and the (state) store -- live in (head) now; the
+  ;; mode registry in (modes).
   (define layout-split-first-weight-set!
     head:layout-split-first-weight-set!)
   (define layout-split-second-weight-set!
@@ -170,28 +155,10 @@
   ;; content wins locally and the store is reset to match.
 
 
-  ;; what the store client needs from the head's owner: how to forget
-  ;; a buffer whose twin is gone, how to invalidate the painted screen,
-  ;; and how to give an adopted buffer a mode
-  ;; what the painter needs from the mode registry, per buffer: the
-  ;; mode's name, its display transform, its per-row styler, and the
-  ;; memoized line styler
+  ;; the painter's own reasons to want a frame (an echo area that
+  ;; changed height, the visual bell) reach redraw! through this hook
   (define paint-redraw-hooked
     (paint:set-redraw-hook! (lambda () (redraw!))))
-
-  (define paint-mode-hooked
-    (paint:set-mode-hook!
-      (lambda (b)
-        (let ([m (buffer-mode b)])
-          (vector (and m (mode-name m))
-                  (and m (mode-render m))
-                  (and m (mode-row-styles m))
-                  (buffer-line-styles b))))))
-
-  (define head-client-hooked
-    (head:set-client-hooks!
-      (lambda () (paint:invalidate-screen-cache!))
-      (lambda (b) (assign-mode! b))))
 
   (define buffers-initialized                              ; most recent first
     (set! buffers (list (head:new-buffer "*scratch*"))))
@@ -1110,12 +1077,12 @@
             (head:buffer-file-set! b path)
             (head:buffer-base-set! b content)
             (head:buffer-stamp-set! b (disk-stamp path))
-            (assign-mode! b)
+            (modes:assign! b)
             (log:log! 'visit-file! (cons "Loaded" path))
             b))
         (let ([b (head:new-buffer (unique-name (base-name path) #f))])
           (head:buffer-file-set! b path)
-          (assign-mode! b)
+          (modes:assign! b)
           (log:log! 'visit-file! (cons "New file:" path))
           b)))
 
@@ -1192,7 +1159,7 @@
         ;; re-save must not clobber a mode chosen by hand; adoption
         ;; also lifts read-only -- the buffer visits an ordinary
         ;; file now, whatever protected its previous life
-        (when adopted? (assign-mode! b) (head:buffer-read-only-set! b #f))
+        (when adopted? (modes:assign! b) (head:buffer-read-only-set! b #f))
         (when mode (guard (ex [else (void)]) (chmod path mode)))
         (head:buffer-base-set! b (buffer-text b))
         (head:buffer-stamp-set! b (disk-stamp path))
@@ -1451,22 +1418,6 @@
   (define (mark) (and mark-active? (cons mark-row mark-col)))
   (define (buffer-line-count b) (vector-length (head:buffer-lines b)))
   (define (buffer-line b n) (vector-ref (head:buffer-lines b) n))
-
-  (define (memoize-buffer-analysis analyze)
-    ;; Turn a whole-buffer analyzer into a row provider.  Buffer content has
-    ;; one revision stamp, so validation is O(1) and analysis runs at most
-    ;; once between edits, however many visible rows ask for its result.
-    (let ([cache (make-weak-eq-hashtable)])
-      (lambda (b row)
-        (let* ([revision (head:buffer-revision b)]
-               [hit (eq-hashtable-ref cache b #f)])
-          (unless (and hit (= (car hit) revision))
-            (set! hit
-              (cons revision (analyze (vector-copy (head:buffer-lines b)))))
-            (eq-hashtable-set! cache b hit))
-          (let ([product (cdr hit)])
-            (and (< row (vector-length product))
-                 (vector-ref product row)))))))
 
   (define (call-with-buffer b thunk)
     ;; Run thunk with b temporarily the current buffer: in the window
@@ -1870,94 +1821,10 @@
       (log:register-log-formatter! 'visit-file! fmt)
       (log:register-log-formatter! 'save-file! fmt)))
 
-  ;;; Modes -------------------------------------------------------------------
+  ;;; Buffer settings ---------------------------------------------------------
 
-  ;; A mode provides syntax highlighting for the buffers it matches.
-  ;; Extension modules call register-mode! with the mode's name,
-  ;; the file-name endings it claims, the interpreter names recognized in a
-  ;; #! first line (for files without a matching extension), and a styles
-  ;; function mapping a line to a vector of per-column style symbols
-  ;; understood by style-code, or #f for an unstyled line.  Brackets styled
-  ;; 'delimiter take part in bracket matching; in a buffer without a mode
-  ;; every bracket counts.
-
-  (define-record-type mode
-    (fields name extensions interpreters styles
-            ;; optional display transform: (render buffer row line) ->
-            ;; a string of the SAME length, or a same-length vector containing
-            ;; one display string per logical cell. The latter permits a cell
-            ;; to contain a grapheme and represents a wide glyph's continuation
-            ;; with "". The buffer text is untouched and columns stay 1:1.
-            render
-            ;; optional buffer-aware styling: (row-styles buffer row
-            ;; line) -> a styles vector, or #f for the plain styles
-            ;; function.  Uncached by the core -- the mode memoizes.
-            row-styles)
-    (protocol (lambda (new)
-                (case-lambda
-                  [(n e i s) (new n e i s #f #f)]
-                  [(n e i s r) (new n e i s r #f)]
-                  [(n e i s r rs) (new n e i s r rs)]))))
-
-  (define modes (kernel:make-registry))
-  (define mode-extension-additions (kernel:make-registry))
-
-  (define (register-mode! name extensions interpreters styles . extra)
-    ;; extra: an optional render transform, then an optional
-    ;; buffer-aware row-styles procedure (see the mode record).
-    (kernel:registry-add! modes
-      (make-mode name extensions interpreters styles
-                 (and (pair? extra) (car extra))
-                 (and (pair? extra) (pair? (cdr extra)) (cadr extra)))))
-
-  (define (add-mode-extension! name extension)
-    ;; Add a suffix to an existing mode without replacing its implementation.
-    ;; This is a registry so config-owned additions disappear on config reload.
-    (unless (and (string? extension) (> (string-length extension) 1)
-                 (char=? (string-ref extension 0) #\.))
-      (error 'add-mode-extension! "expected an extension beginning with ."
-             extension))
-    (unless (find-mode name)
-      (error 'add-mode-extension! "no such mode" name))
-    (kernel:registry-add! mode-extension-additions (cons extension name))
-    (for-each (lambda (b) (when (head:buffer-mode-auto b) (assign-mode! b)))
-              buffers)
-    (void))
-
-  (define (detect-mode path first-line)
-    ;; The mode for a file: by extension, then by the #! interpreter line.
-    (or (and path
-             (let ([addition
-                    (find (lambda (entry)
-                            (strings:suffix? (car entry) path))
-                          (kernel:registry-items mode-extension-additions))])
-               (and addition (find-mode (cdr addition)))))
-        (and path
-             (kernel:registry-find modes
-               (lambda (m)
-                 (exists (lambda (ext) (strings:suffix? ext path))
-                         (mode-extensions m)))))
-        (and (strings:prefix? "#!" first-line)
-             (kernel:registry-find modes
-               (lambda (m)
-                 (exists (lambda (name)
-                           (strings:search first-line name 0
-                                           (string-length first-line)))
-                         (mode-interpreters m)))))))
-
-  (define (assign-mode! b)
-    (buffer-mode-set! b
-      (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0)))
-    (head:buffer-mode-auto-set! b #t))
-
-  (define (find-mode name)
-    (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name))))
-
-  (define (set-buffer-mode! b name)
-    ;; Give b the registered mode called name (#f for none), regardless of
-    ;; its file name -- how transcript buffers get their highlighting.
-    (buffer-mode-set! b (and name (find-mode name)))
-    (head:buffer-mode-auto-set! b #f))
+  ;; The mode registry -- records, detection, the memoized stylers --
+  ;; lives in (modes) now; these two settings are commands' business.
 
   (define (set-buffer-read-only! b flag)
     (head:buffer-read-only-set! b flag))
@@ -1975,10 +1842,6 @@
     (head:buffer-fact-set! b 'wrap setting)
     b)
 
-  (define (buffer-mode-name b)
-    ;; The name of b's mode, or #f without one.
-    (let ([m (buffer-mode b)]) (and m (mode-name m))))
-
   ;;; Indentation and formatting ------------------------------------------------
 
   ;; Both are provided per mode by modules.  An indenter maps rows to
@@ -1993,8 +1856,8 @@
   ;; replacement lines, or #f when the rows cannot be formatted.  TAB
   ;; indents the current line when the mode registered its indenter
   ;; with the tab flag on (the default).
-  (define indenters (kernel:make-registry))   ; entries (mode-name proc tab?)
-  (define formatters (kernel:make-registry))  ; entries (mode-name proc)
+  (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
+  (define formatters (kernel:make-registry))  ; entries (mode proc)
 
   (define (register-indenter! name proc . tab)
     (kernel:registry-add! indenters (list name proc (or (null? tab) (car tab)))))
@@ -2003,7 +1866,7 @@
     (kernel:registry-add! formatters (list name proc)))
 
   (define (mode-entry registry)
-    (let ([m (buffer-mode-name (head:window-buffer current-window))])
+    (let ([m (modes:name-of (head:window-buffer current-window))])
       (and m (kernel:registry-find registry (lambda (x) (string=? (car x) m))))))
 
   (define (leading-blanks s)
@@ -2214,39 +2077,6 @@
       (when (format-rows! 0 (- n 1))
         (set! message (format "Formatted ~a lines" n))))
     (void))
-
-  (define (no-styles s) #f)
-
-  ;; Computed styles, memoized per line string.  Edits replace line
-  ;; strings (never mutate them), so string identity keys the cache and
-  ;; can never go stale; weak keys keep it bounded by the live lines.
-  ;; Each entry remembers its mode, in case an identical string is shared
-  ;; between buffers of different modes.
-  (define style-cache (make-weak-eq-hashtable))
-
-  (define (buffer-line-styles b)
-    ;; The line-styles function of b's mode; unstyled without one.
-    (let ([m (buffer-mode b)])
-      (if m
-          (lambda (s)
-            (let ([hit (eq-hashtable-ref style-cache s #f)])
-              (if (and hit (eq? (car hit) m))
-                  (cdr hit)
-                  ;; a raising mode styles the line plain rather than
-                  ;; taking the redraw (and the editor) down
-                  (let ([styles (guard (ex [else #f])
-                                  ((mode-styles m) s))])
-                    (eq-hashtable-set! style-cache s (cons m styles))
-                    styles))))
-          no-styles)))
-
-  ;; Faces may be recolored from config.e. Overrides are owned registrations,
-  ;; so dropping the line from config.e and reloading restores the default.
-  ;; Faces and the style DSL live in the (styles) seam module now;
-  ;; the core keeps these facade aliases until its call sites and the
-  ;; extension modules migrate to styles: prefixes, and installs the
-  ;; repaint trigger for face redefinitions (painted rows are cached
-  ;; by content, not by face definitions).
 
   (define styles-hook-installed
     (styles:set-styles-changed-hook!
@@ -2488,8 +2318,8 @@
                   (loop xs (cons line acc))
                   (row (+ i 1) (cdr xs) (string-append line (paint:fit (car xs) w)))))))))
 
-  ;; The *completions* pop-up: a temporary full-width overlay above the echo
-  ;; area. It is deliberately outside the persistent split tree.
+  ;; The *completions* buffer: shown in the prompt's target window until
+  ;; the prompt ends (show-completions!), a head's own chrome.
   (define completions-buffer #f)
   (define completions-restore #f)
 
@@ -2497,26 +2327,30 @@
   ;; pop-up -- M-x highlights the symbols the editor itself defines.
   (define completion-highlight (make-parameter (lambda (label) #f)))
 
-  (define (completions-mode)
-    ;; A mode for the pop-up highlighting the labels the current
-    ;; completion-highlight predicate selects.
-    (let ([highlight? (completion-highlight)])
-      (make-mode "completions" '() '()
-        (lambda (s)
-          (let ([styles (make-vector (string-length s) 'plain)]
-                [n (string-length s)])
-            (let loop ([i 0])
-              (cond [(>= i n) styles]
-                    [(char=? (string-ref s i) #\space) (loop (+ i 1))]
-                    [else
-                     (let ([j (let end ([j i])
-                                (if (or (>= j n)
-                                        (char=? (string-ref s j) #\space))
-                                    j
-                                    (end (+ j 1))))])
-                       (when (highlight? (substring s i j))
-                         (vector-fill-range! styles i j 'editor))
-                       (loop j))])))))))
+  ;; The completions mode, registered once: it highlights the labels
+  ;; the completion-highlight predicate in force at styling time
+  ;; selects.  Styling happens inside the prompt's redraws -- within
+  ;; the prompt's parameterization -- and every layout builds fresh
+  ;; label strings, so the line-style memo never serves a stale
+  ;; predicate.
+  (define completions-mode-registered
+    (modes:register! "completions" '() '()
+      (lambda (s)
+        (let ([highlight? (completion-highlight)]
+              [styles (make-vector (string-length s) 'plain)]
+              [n (string-length s)])
+          (let loop ([i 0])
+            (cond [(>= i n) styles]
+                  [(char=? (string-ref s i) #\space) (loop (+ i 1))]
+                  [else
+                   (let ([j (let end ([j i])
+                              (if (or (>= j n)
+                                      (char=? (string-ref s j) #\space))
+                                  j
+                                  (end (+ j 1))))])
+                     (when (highlight? (substring s i j))
+                       (vector-fill-range! styles i j 'editor))
+                     (loop j))]))))))
 
   (define completions-labels #f)   ; the labels shown: repeat detection
   (define completions-rows '#())   ; the full column layout
@@ -2568,7 +2402,7 @@
        ;; a head's own chrome: other heads do not adopt it
        (head:buffer-fact-set! completions-buffer 'ephemeral #t)
        (head:buffer-read-only-set! completions-buffer #t)
-       (buffer-mode-set! completions-buffer (completions-mode))
+       (modes:choose! completions-buffer "completions")
        (set! completions-labels labels)
        (completions-layout! labels (head:window-content-width current-window))
        (let ([target current-window]
@@ -3473,7 +3307,7 @@
     ;; A buffer mode may carry its own key bindings under a context
     ;; named after the mode; they take precedence over the global map
     ;; while a buffer of that mode is current.
-    (let ([name (buffer-mode-name (current-buffer))])
+    (let ([name (modes:name-of (current-buffer))])
       (and name (string->symbol name))))
 
   (define (dispatch-sequence! first chain)
@@ -3695,27 +3529,10 @@
     (kernel:add-after-reload-hook!
       (lambda (name)
         (load-config!)              ; the settings reapply on top
-        (refresh-buffer-modes!)
+        (modes:refresh!)
         (paint:invalidate-screen-cache!)
         (set! message (format "Reloaded ~a" name)))))
 
-  (define (refresh-buffer-modes!)
-    ;; Re-resolve every buffer's mode by name, so buffers pick up a
-    ;; reloaded mode's new styles (or lose a mode that is gone).
-    (for-each (lambda (b)
-                (if (head:buffer-mode-auto b)
-                    (assign-mode! b)
-                    (let ([m (buffer-mode b)])
-                      (when m
-                        (buffer-mode-set! b (find-mode (mode-name m)))))))
-              buffers))
-
-  ;; Saving a module's source reloads it on the spot (a fresh .e file
-  ;; in the lib directory is loaded for the first time), and saving
-  ;; config.e applies it, so editing the editor from inside itself
-  ;; takes effect on save.  Both on by default; (modules-reload-on-save
-  ;; #f) or (config-reload-on-save #f) -- in config.e for an
-  ;; installation, at M-x for a session -- turns either off.
   (define modules-reload-on-save (make-parameter #t))
   (define config-reload-on-save (make-parameter #t))
 
@@ -3777,7 +3594,7 @@
                               #f])
                (parameterize ([kernel:registering-module 'config])
                  (load path))
-               (refresh-buffer-modes!)
+               (modes:refresh!)
                (paint:invalidate-screen-cache!)
                #t)))))
 

@@ -11,6 +11,7 @@
 (library (paren)
   (export init! matching-paren-style)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (paint) paint:)
           (prefix (styles) styles:)
           (only (describe) register-descriptions!))
@@ -71,7 +72,7 @@
     ;; The bracket at point and its partner, as (row start end) ranges;
     ;; empty when neither applies.
     (let* ([b (current-buffer)]
-           [styles-of (buffer-line-styles b)]
+           [styles-of (modes:line-styles b)]
            [pt (point)]
            [row (car pt)]
            [line (buffer-line b row)]

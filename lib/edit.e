@@ -21,6 +21,7 @@
           next-conflict! keep-mine! keep-disk!
           list-buffers!)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
@@ -400,7 +401,7 @@
                                 (if (eq? b buffers-view)
                                     view-lines
                                     (buffer-line-count b)))
-                              (or (buffer-mode-name b) "")
+                              (or (modes:name-of b) "")
                               (let ([f (head:buffer-file b)])
                                 (if f (abbreviate-home f) ""))))
                       listed)]
@@ -523,7 +524,7 @@
                                handle-buffers-event!))
           ;; Always show its position bar, using the globally selected side.
           (head:set-app-presentation! buffers-view 1 #t)
-          (set-buffer-mode! buffers-view "buffers")
+          (modes:choose! buffers-view "buffers")
           (refresh-buffers-view!)
           buffers-view)))
 
@@ -540,7 +541,7 @@
       (set-message! "")))
 
   (define (init!)
-    (register-mode! "buffers" '() '() buffers-styles)
+    (modes:register! "buffers" '() '() buffers-styles)
     (register-descriptions!
       '(((replace-all!)
          (("procedure" . "(replace-all! from to [where])"))

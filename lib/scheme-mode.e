@@ -13,7 +13,8 @@
 
 (library (scheme-mode)
   (export init! scheme-format-on-save)
-  (import (chezscheme) (core) (scheme-format)
+  (import (chezscheme) (core)
+          (prefix (modes) modes:) (scheme-format)
           (only (describe) register-descriptions!))
 
   ;; Configuration: format Scheme buffers just before they are written
@@ -161,7 +162,7 @@
               (vector-set! out i styles)
               (loop (+ i 1) next))))))
 
-  (define scheme-row (memoize-buffer-analysis analyze))
+  (define scheme-row (modes:memoize-analysis analyze))
 
   (define (scheme-row-styles b row line)
     (scheme-row b row))
@@ -185,14 +186,14 @@
 
   (define (format-on-save! path)
     (when (and (scheme-format-on-save)
-               (equal? (buffer-mode-name (current-buffer)) "scheme"))
+               (equal? (modes:name-of (current-buffer)) "scheme"))
       (format-buffer!)))
 
   (define (init!)
-    (register-mode! "scheme"
-                    '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
-                    '("scheme" "petite" "chez" "guile" "racket")
-                    scheme-styles #f scheme-row-styles)
+    (modes:register! "scheme"
+                     '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
+                     '("scheme" "petite" "chez" "guile" "racket")
+                     scheme-styles #f scheme-row-styles)
     (register-indenter! "scheme" scheme-indent)
     (register-formatter! "scheme" scheme-format)
     (register-descriptions!

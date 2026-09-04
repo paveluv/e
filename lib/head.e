@@ -69,7 +69,7 @@
           bump-buffer-revision! buffer-of-state-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
           sync-foreign-edits! flush-ui-audit! publish-head-marks!
-          set-client-hooks!
+          set-repaint-hook! set-adopt-hook!
           add-buffer-kill-hook! add-pre-redraw-hook!
           run-pre-redraw-hooks! add-shutdown-hook! run-shutdown-hooks!
           registered-apps app-of app-buffer? detach-app! register-app!
@@ -511,15 +511,15 @@
   ;; overlapped mid-command) or breaks, the seat keeps editing:
   ;; content wins locally and the store is reset to match.
   ;;
-  ;; Two hooks reach the seat's owner: invalidating the painted
-  ;; screen, and giving an adopted buffer a mode.
+  ;; Two hooks reach upward, each installed by the module that owns
+  ;; the answer: the painter invalidates its screen (set-repaint-hook!),
+  ;; the mode registry gives an adopted buffer a mode (set-adopt-hook!).
 
   (define repaint-hook void)
   (define adopt-hook (lambda (b) (void)))
 
-  (define (set-client-hooks! repaint adopt)
-    (set! repaint-hook repaint)
-    (set! adopt-hook adopt))
+  (define (set-repaint-hook! proc) (set! repaint-hook proc))
+  (define (set-adopt-hook! proc) (set! adopt-hook proc))
 
   (define (line-count b) (vector-length (buffer-lines b)))
 

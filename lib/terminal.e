@@ -12,6 +12,7 @@
           terminal-emulator-mouse-input terminal-emulator-replies
           terminal-emulator-unsupported terminal-color-scheme!)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (kernel) kernel:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
@@ -3680,7 +3681,7 @@
                    (terminal-state-cursor-visible state)
                    (not (memq window
                               (terminal-state-unfollowed-windows state))))))
-          (set-buffer-mode! buffer "terminal")
+          (modes:choose! buffer "terminal")
           (show-buffer! buffer)
           (let* ([size (or (head:buffer-window-size buffer) '(24 . 80))]
                  [rows (max 1 (car size))]
@@ -3701,8 +3702,8 @@
             (void))))))
 
   (define (init!)
-    (register-mode! "terminal" '() '() (lambda (line) #f)
-                    terminal-row-render terminal-row-styles)
+    (modes:register! "terminal" '() '() (lambda (line) #f)
+                     terminal-row-render terminal-row-styles)
     (set! known-color-scheme (host-color-scheme))
     (add-color-scheme-hook! terminal-color-scheme!)
     (paint:add-hyperlinker! terminal-row-hyperlinks)

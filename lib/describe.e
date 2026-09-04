@@ -34,6 +34,7 @@
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
@@ -708,7 +709,7 @@
   (define (scheme-buffer?)
     ;; Scheme under any dress: the scheme mode itself and the
     ;; pretty-scheme-* renderings, which draw the same buffer text.
-    (let ([m (buffer-mode-name (current-buffer))])
+    (let ([m (modes:name-of (current-buffer))])
       (and m (or (string=? m "scheme")
                  (strings:prefix? "pretty-scheme" m)))))
 
@@ -798,8 +799,8 @@
         ((focus-window-right!) (("procedure" . "(focus-window-right!)")) "void"
          ("(core)") core "Window commands" #f
          "Cast a ray rightward from point and focus the first window it crosses.")
-        ((add-mode-extension!)
-         (("procedure" . "(add-mode-extension! mode extension)")) "void"
+        ((modes:add-extension!)
+         (("procedure" . "(modes:add-extension! mode extension)")) "void"
          ("(core)") core "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
         ((head:register-app!)
