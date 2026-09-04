@@ -20,6 +20,7 @@
           markdown-render markdown-view-install! markdown-browser
           markdown-view-max-width)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
@@ -513,11 +514,11 @@
                              (let* ([vec (make-vector (string-length l)
                                                       'md-code)]
                                     [mode (and (not (string=? tag ""))
-                                               (find-mode tag))]
+                                               (modes:find tag))]
                                     [syntax
                                      (and mode
                                           (guard (ex [else #f])
-                                            ((mode-styles mode) l)))])
+                                            ((modes:styles mode) l)))])
                                ;; the language's own faces color the code
                                (when (vector? syntax)
                                  (do ([p 0 (+ p 1)])
@@ -833,7 +834,7 @@
     ;; Render markdown lines into an app view; the view owns its
     ;; lifecycle, so nothing is stashed.
     (install-render! b lines #f #f)
-    (set-buffer-mode! b "markdown-view")
+    (modes:choose! b "markdown-view")
     b)
 
   (define (buffer-lines-list b)
@@ -844,20 +845,20 @@
     ;; Present a markdown buffer read-only and formatted; the source
     ;; comes back with markdown-edit!.
     (let ([b (if (pair? b*) (car b*) (current-buffer))])
-      (unless (equal? (buffer-mode-name b) "markdown")
+      (unless (equal? (modes:name-of b) "markdown")
         (error 'markdown-view! "not a markdown buffer" b))
       (let ([source (buffer-lines-list b)]
             [row (car (point))])
         (install-render! b source source (head:buffer-read-only b))
         (set-buffer-read-only! b #t)
-        (set-buffer-mode! b "markdown-view")
+        (modes:choose! b "markdown-view")
         (goto-point! (cons (view-row-showing b row) 0)))
       (void)))
 
   (define (markdown-edit! . b*)
     ;; Restore the stashed markdown source and make it editable again.
     (let ([b (if (pair? b*) (car b*) (current-buffer))])
-      (unless (equal? (buffer-mode-name b) "markdown-view")
+      (unless (equal? (modes:name-of b) "markdown-view")
         (error 'markdown-edit! "not a markdown view" b))
       (let ([r (hashtable-ref renders b #f)])
         (unless (and r (vector-ref r 3))
@@ -866,7 +867,7 @@
               [rows (vector-ref r 2)])
           (head:view-replace! b (vector-ref r 3))
           (set-buffer-read-only! b (vector-ref r 4))
-          (set-buffer-mode! b "markdown")
+          (modes:choose! b "markdown")
           (set-buffer-wrap! b 'default)
           (hashtable-delete! renders b)
           (goto-point!
@@ -917,7 +918,7 @@
            (visit-file! target)
            ;; a linked markdown document arrives already formatted
            (when (and (markdown-file? url)
-                      (equal? (buffer-mode-name (current-buffer))
+                      (equal? (modes:name-of (current-buffer))
                               "markdown"))
              (guard (ex [else (void)]) (markdown-view!)))
            (set-message! (format "Followed ~a" url)))])))
@@ -942,7 +943,7 @@
   (define (link-hint)
     (unless (or (prompt-active?) (equal? hint-point (point)))
       (set! hint-point (point))
-      (let ([link (and (equal? (buffer-mode-name (current-buffer))
+      (let ([link (and (equal? (modes:name-of (current-buffer))
                                "markdown-view")
                        (link-at-point))])
         (cond
@@ -960,8 +961,8 @@
 
   (define (init!)
     (register-md-faces!)
-    (register-mode! "markdown-view" '() '() (lambda (line) #f)
-                    #f view-row-styles)
+    (modes:register! "markdown-view" '() '() (lambda (line) #f)
+                     #f view-row-styles)
     (paint:add-hyperlinker! view-row-links)
     (paint:add-highlighter! link-hint)
     (head:add-pre-redraw-hook! refit-views!)

@@ -11,6 +11,7 @@
 (library (log-view)
   (export init! log-view show-log!)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (head) head:)
           (prefix (log) log:)
@@ -64,7 +65,7 @@
           (set! rendered (log:log-length))
           (head:view-append! b lines))))
     (set! b (head:register-view! name refresh!))
-    (set-buffer-mode! b "log")
+    (modes:choose! b "log")
     (refresh!)
     b)
 
@@ -90,5 +91,5 @@
       '(((show-log!) (("procedure" . "(show-log!)")) "void"
          ("(log-view)") log-view "Log commands" #f
          "Display the live `*log*` view, containing timestamped editor messages and command results.")))
-    (register-mode! "log" '() '() style-log-line)
+    (modes:register! "log" '() '() style-log-line)
     (log-view)))                ; the *log* view, listed from startup

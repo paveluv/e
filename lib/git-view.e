@@ -3,6 +3,7 @@
 (library (git-view)
   (export init! git-log!! git-log-refresh!)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
@@ -205,11 +206,11 @@
       (set! log-buffer
         (head:register-app! "*git-log*" refresh-log! handle-log-event!))
       (head:set-app-presentation! log-buffer 1 #t)
-      (set-buffer-mode! log-buffer "git-log"))
+      (modes:choose! log-buffer "git-log"))
     (unless diff-buffer
       (set! diff-buffer (head:register-view! "*git-diff*" refresh-diff!))
       (head:set-app-presentation! diff-buffer 1 #t)
-      (set-buffer-mode! diff-buffer "git-diff")))
+      (modes:choose! diff-buffer "git-diff")))
 
   (define (git-log!! . path)
     (let ([source (if (pair? path) (car path)
@@ -225,8 +226,8 @@
       (void)))
 
   (define (init!)
-    (register-mode! "git-log" '() '() log-styles)
-    (register-mode! "git-diff" '() '() diff-styles)
+    (modes:register! "git-log" '() '() log-styles)
+    (modes:register! "git-diff" '() '() diff-styles)
     ;; A reload after Git was opened reconnects its surviving app buffers;
     ;; ordinary startup remains lazy.
     (when (or (head:buffer-named "*git-log*") (head:buffer-named "*git-diff*"))

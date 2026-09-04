@@ -12,7 +12,8 @@
 
 (library (md-mode)
   (export init!)
-  (import (chezscheme) (core))
+  (import (chezscheme) (core)
+          (prefix (modes) modes:))
 
   (define (md-styles s)
     (define n (string-length s))
@@ -102,9 +103,9 @@
          ;; An indented code block line -- markdown's other code syntax,
          ;; self-identifying per line.  Code in Scheme documents is
          ;; Scheme: delegate to the scheme mode when one is registered.
-         (let ([scheme (find-mode "scheme")])
+         (let ([scheme (modes:find "scheme")])
            (if scheme
-               (or ((mode-styles scheme) s) styles)
+               (or ((modes:styles scheme) s) styles)
                (begin (mark! 0 n 'string) styles)))]
         [(char=? (string-ref s i0) #\#) (mark! 0 n 'keyword) styles]   ; heading
         [(char=? (string-ref s i0) #\>) (mark! 0 n 'comment) styles]   ; quote
@@ -150,15 +151,15 @@
               [else (when in (vector-set! out i 'code))
                     (loop (+ i 1) in)]))))
 
-  (define md-row (memoize-buffer-analysis analyze))
+  (define md-row (modes:memoize-analysis analyze))
 
   (define (md-row-styles b row line)
     ;; Inside a fence the line is Scheme; elsewhere #f falls back to
     ;; the cached per-line markdown styles.
     (and (eq? (md-row b row) 'code)
-         (let ([scheme (find-mode "scheme")])
-           (and scheme ((mode-styles scheme) line)))))
+         (let ([scheme (modes:find "scheme")])
+           (and scheme ((modes:styles scheme) line)))))
 
   (define (init!)
-    (register-mode! "markdown" '(".md" ".markdown") '() md-styles
-                    #f md-row-styles)))
+    (modes:register! "markdown" '(".md" ".markdown") '() md-styles
+                     #f md-row-styles)))

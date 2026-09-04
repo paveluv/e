@@ -17,6 +17,7 @@
 (library (pretty-scheme)
   (export init! pretty-scheme-clusters! pretty-scheme-depth! pretty-scheme-rainbow!)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (paint) paint:)
           (prefix (keymap) keymap:)
           (only (describe) register-descriptions!))
@@ -231,9 +232,9 @@
       (do ([i 0 (+ i 1)]) ((= i n) v)
         (vector-set! v i (buffer-line b i)))))
 
-  (define cluster-row (memoize-buffer-analysis analyze))
-  (define depth-row (memoize-buffer-analysis analyze-depth))
-  (define rainbow-row (memoize-buffer-analysis analyze-rainbow))
+  (define cluster-row (modes:memoize-analysis analyze))
+  (define depth-row (modes:memoize-analysis analyze-depth))
+  (define rainbow-row (modes:memoize-analysis analyze-rainbow))
 
   (define (rendered b row line)
     (or (cluster-row b row) line))
@@ -258,15 +259,15 @@
       styles))
 
   (define (scheme-styles s)
-    (let ([m (find-mode "scheme")])
-      (and m ((mode-styles m) s))))
+    (let ([m (modes:find "scheme")])
+      (and m ((modes:styles m) s))))
 
   ;;; Editing -------------------------------------------------------------------
 
   (define (pretty-buffer?)
     ;; The modes whose display hides the source characters -- they get
     ;; the REPL-style closing and the source hint.
-    (member (buffer-mode-name (current-buffer))
+    (member (modes:name-of (current-buffer))
             '("pretty-scheme-clusters" "pretty-scheme-depth")))
 
   (define (innermost-opener)
@@ -292,10 +293,10 @@
         (insert-text! (string typed))))
 
   (define (toggle-mode! name)
-    (set-buffer-mode! (current-buffer)
-                      (if (equal? (buffer-mode-name (current-buffer)) name)
-                          "scheme"
-                          name))
+    (modes:choose! (current-buffer)
+                   (if (equal? (modes:name-of (current-buffer)) name)
+                       "scheme"
+                       name))
     (void))
 
   (define (pretty-scheme-clusters!)
@@ -327,10 +328,10 @@
          (("procedure" . "(pretty-scheme-rainbow!)")) "void"
          ("(pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view that colors parentheses by nesting depth.")))
-    (register-mode! "pretty-scheme-clusters" '() '() scheme-styles rendered)
-    (register-mode! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
-    (register-mode! "pretty-scheme-rainbow" '() '() scheme-styles #f
-                    rainbow-styles)
+    (modes:register! "pretty-scheme-clusters" '() '() scheme-styles rendered)
+    (modes:register! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
+    (modes:register! "pretty-scheme-rainbow" '() '() scheme-styles #f
+                     rainbow-styles)
     (keymap:bind-default-key! ")" (lambda () (close! #\))))
     (keymap:bind-default-key! "]" (lambda () (close! #\])))
     (paint:add-status-hint!

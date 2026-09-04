@@ -11,6 +11,7 @@
 (library (c-mode)
   (export init!)
   (import (chezscheme) (core)
+          (prefix (modes) modes:)
           (prefix (strings) strings:))
 
   (define c-keywords
@@ -142,11 +143,11 @@
               (vector-set! out i styles)
               (loop (+ i 1) still))))))
 
-  (define c-row (memoize-buffer-analysis analyze))
+  (define c-row (modes:memoize-analysis analyze))
 
   (define (c-row-styles b row line)
     (c-row b row))
 
   (define (init!)
-    (register-mode! "c" '(".c" ".h") '("tcc")
-                    c-styles #f c-row-styles)))
+    (modes:register! "c" '(".c" ".h") '("tcc")
+                     c-styles #f c-row-styles)))
