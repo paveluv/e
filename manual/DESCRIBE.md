@@ -37,8 +37,9 @@ available.
 ## Structured queries
 
 `doc-lookup` returns entries for a name. `doc-entries` returns the complete
-collection, optionally filtered by a predicate. `doc-*` accessors expose names,
-forms, return values, libraries, source, chapter, URL, and prose, allowing the
+collection, optionally filtered by a predicate. The entry accessors
+(`doc:names`, `doc:forms`, `doc:returns`, `doc:libraries`, `doc:source`,
+`doc:chapter`, `doc:url`, `doc:description`) expose each field, allowing the
 manual to be queried by ordinary Scheme code.
 
 ```scheme

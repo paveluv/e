@@ -75,11 +75,15 @@ in per-mode contexts, consulted before the global map while a buffer of
 that mode is current:
 
 ```scheme
-(bind-key! 'markdown "C-c v" markdown-view!)
-(bind-key! 'markdown-view "C-c v" markdown-edit!)
-(bind-key! 'markdown-view "RET" follow-link)
-(bind-key! 'markdown-view "MOUSE-CLICK" follow-link-quietly)
+;; as md-view.e's init! registers them
+(keymap:bind-default-key! 'markdown "C-c v" markdown-view!)
+(keymap:bind-default-key! 'markdown-view "C-c v" markdown-edit!)
+(keymap:bind-default-key! 'markdown-view "RET" follow-link)
+(keymap:bind-default-key! 'markdown-view "MOUSE-CLICK" follow-link-quietly)
 ```
+
+(`follow-link` and `follow-link-quietly` are the viewer's own procedures;
+a user override in config.e binds its own command with `keymap:bind-key!`.)
 
 Any mode can carry such a context: the name is the mode's name as a
 symbol, and `MOUSE-CLICK` is a bindable pseudo-key that fires after a

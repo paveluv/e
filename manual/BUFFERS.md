@@ -199,16 +199,11 @@ enables a one-column vertical bar for them, and `*buffers*` always shows one. Th
 visible in the window, and its position reflects the scrollable range. Sticky
 app headers do not count as part of that range.
 
-The scrollbar supports:
-
-- a track click, which centers the thumb on the clicked cell;
-- a thumb click, which grabs it without first jumping;
-- dragging from the grabbed position, including outside the scrollbar column;
-- cursor placement in the middle of the resulting viewport.
-
-In ordinary buffers, clicking the scrollbar focuses its window. In app buffers,
-scrollbar interaction preserves the previous focus and does not invoke the
-app's row-click action. Mouse clicks and wheel events also settle the echo area.
+The scrollbar is a position indicator: it is painted, not dragged. The
+wheel, the keyboard, and clicks in the text scroll. Clicking the bar of an
+ordinary buffer focuses its window; in an app buffer it does nothing, so the
+previous focus is preserved and the app's row-click action is not invoked.
+Mouse clicks and wheel events also settle the echo area.
 
 Configure scrollbars in `config.e`:
 
@@ -220,10 +215,9 @@ Configure scrollbars in `config.e`:
 An app may force a scrollbar or a side through `set-app-presentation!`.
 `*buffers*` forces it on but follows `scrollbar-position`.
 
-Windows with sticky rows or scrollbars use cached repainting rather than native
-terminal scrolling so fixed chrome cannot be shifted or lost, and so do
-side-by-side windows -- flicker is suppressed by synchronized updates
-instead.
+Every frame is a cached repaint -- rows are painted only when their content
+changed -- framed in a synchronized update, so fixed chrome never shifts and
+scrolling does not flicker. e does not use the terminal's native scrolling.
 
 ## Scrolling, wrapping, and windows
 
@@ -265,9 +259,9 @@ it moves the whole horizontal boundary. The shorter perpendicular dividers
 resize only their own subtrees. The same `┴` caps a vertical divider where it
 meets a status line directly above the echo area; there it is only a visual
 termination, and dragging still resizes the vertical split.
-`*completions*` borrows the prompt's target window for the prompt's
-duration and hands it back afterwards, point and viewport intact; there
-are no pop-up windows, so the split tree is the only source of windows.
+`*completions*` borrows the current window for the prompt's duration and
+hands it back afterwards, point and viewport intact; there are no pop-up
+windows, so the split tree is the only source of windows.
 `M-Up`, `M-Down`,
 `M-Left`, and `M-Right` cast an imaginary ray from the cursor in that direction
 and focus the first window it crosses. Thus the cursor's row chooses between

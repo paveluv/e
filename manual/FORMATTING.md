@@ -93,6 +93,6 @@ Modes register indentation and formatting independently:
 (register-formatter! "mode-name" formatter)
 ```
 
-This keeps the core generic while allowing language modules to own their
-layout policy.
+This keeps the editing commands generic while allowing language modules to own
+their layout policy.
 
