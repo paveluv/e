@@ -2,14 +2,14 @@
 
 (library (git-view)
   (export init! git-log!! git-log-refresh!)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (styles) styles:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (keymap) keymap:) (except (git) init!)
-          (only (describe) register-descriptions!))
+          (prefix (docs) docs:))
 
   (define log-buffer #f)
   (define diff-buffer #f)
@@ -233,7 +233,7 @@
     ;; ordinary startup remains lazy.
     (when (or (head:buffer-named "*git-log*") (head:buffer-named "*git-diff*"))
       (ensure-git-buffers!))
-    (register-descriptions!
+    (docs:register!
       '(((git-log!!) (("procedure" . "(git-log!! [path])")) "void"
          ("(git-view)") git-view "Git" #f
          "Open the interactive `*git-log*` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")

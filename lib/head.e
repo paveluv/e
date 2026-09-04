@@ -1496,4 +1496,16 @@
   ;; is presented before the next frame
   (define ui-actor-registered
     (actors:register! ui-actor (lambda (message) (wake-main!))))
+
+  ;;; The seat's first state ---------------------------------------------------------
+
+  ;; the seat begins as *scratch* in one window; views the modules above
+  ;; register while loading join the list behind it
+  (define seat-initialized
+    (let ([b (new-buffer "*scratch*")])
+      (set! the-buffers (list b))
+      (let ([w (make-window b 0 0 0 0 0 0 0 0 0 1 'default)])
+        (set! the-windows (list w))
+        (set! the-root w)
+        (set! the-current w))))
 )

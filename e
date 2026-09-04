@@ -55,5 +55,5 @@
 (compile-imported-libraries #t)
 
 (eval '(begin
-         (import (core) (prefix (main) main:) (prefix (kernel) kernel:))
+         (import (edit) (prefix (main) main:) (prefix (kernel) kernel:))
          (main:run)))

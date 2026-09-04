@@ -19,7 +19,7 @@
 
 (library (eval)
   (export init! eval! eval!! eval-copy-result)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (head) head:)
           (prefix (modes) modes:)
@@ -28,7 +28,9 @@
           (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
-          (only (describe) doc-lookup doc-forms register-descriptions!)
+          (only (describe) doc-lookup )
+          (prefix (docs) docs:)
+          (prefix (docs) docs:)
           (only (edit) regions-of region-text)
           (only (scheme-format) scheme-indent-lines)
           (only (sys) call-with-streamed-output
@@ -129,7 +131,7 @@
                                    (> (signature-arity sig)
                                       (signature-arity best))))
                       (set! best sig)))))
-              (doc-forms entry)))
+              (docs:forms entry)))
           (doc-lookup sym))
         (and best (signature-tokens best)))))
 
@@ -484,7 +486,7 @@
           (report-evaluation! s outcome output-records)))))
 
   (define (init!)
-    (register-descriptions!
+    (docs:register!
       '(((eval!) (("procedure" . "(eval! [where])")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")

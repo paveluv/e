@@ -335,7 +335,7 @@
               (lambda (p) (list (read p) (read p))))
             '((ok . "=> 3") (refused buffer)))
 
-     ;; a core-linked seam module refuses to reload in place: the core
+     ;; a seam module main links against refuses to reload in place: main
      ;; cannot follow, and two library instances would fork
      (send! "\x1b;xkernel:reload-module! \"state\"\r")
      (pump! 1200)
@@ -359,8 +359,8 @@
            (cond [(> (+ i len) (string-length text)) #f]
                  [(string=? (substring text i (+ i len)) needle) #t]
                  [else (scan (+ i 1))]))))
-     (check 'core-linked-module-refuses-reload
-            (echo-has? "core links against state")
+     (check 'main-linked-module-refuses-reload
+            (echo-has? "main links against state")
             #t)
 
      (delete-file probe)

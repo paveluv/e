@@ -8,7 +8,7 @@
 
 (eval
   '(begin
-     (import (core) (prefix (paint) paint:) (prefix (head) head:))
+     (import (edit) (prefix (paint) paint:) (prefix (head) head:))
 
      (define (check label actual expected)
        (unless (equal? actual expected)

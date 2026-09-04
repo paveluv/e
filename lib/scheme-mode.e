@@ -13,11 +13,11 @@
 
 (library (scheme-mode)
   (export init! scheme-format-on-save)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (files) files:)
           (prefix (styles) styles:)
           (prefix (modes) modes:) (scheme-format)
-          (only (describe) register-descriptions!))
+          (prefix (docs) docs:))
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
@@ -198,7 +198,7 @@
                      scheme-styles #f scheme-row-styles)
     (register-indenter! "scheme" scheme-indent)
     (register-formatter! "scheme" scheme-format)
-    (register-descriptions!
+    (docs:register!
       '(((scheme-format-intrusive)
          (("parameter" . "(scheme-format-intrusive [enabled?])")) "boolean"
          ("(scheme-format)") scheme-format "Scheme formatting" #f

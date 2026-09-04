@@ -81,13 +81,12 @@
                 exact->inexact open-output-string get-output-string
                 put-string disable-interrupts enable-interrupts)
           (prefix (state) state:)
-          (prefix (only (core) current-buffer point) core:)
-          (prefix (only (head) buffer-name) head:)
+          (prefix (only (head) buffer-name window-buffer current
+                        window-prow window-pcol)
+                  head:)
           (prefix (only (log) log-entries format-log-entry) log:)
-          (prefix (only (describe)
-                        doc-lookup doc-forms doc-returns
-                        doc-libraries doc-description)
-                  describe:))
+          (prefix (only (describe) doc-lookup) describe:)
+          (prefix (only (docs) forms returns libraries description) docs:))
 
   ;; Rule 2 above: nothing between disable and enable may raise
   ;; without the wind exit running, and nothing here evaluates actor
@@ -129,11 +128,11 @@
 
   (define (current-buffer-name)
     ;; the buffer the head's user is looking at
-    (head:buffer-name (core:current-buffer)))
+    (head:buffer-name (head:window-buffer (head:current))))
 
   (define (point)
     ;; the head's cursor: (row . col)
-    (core:point))
+    (cons (head:window-prow (head:current)) (head:window-pcol (head:current))))
 
   ;;; Bounded, formatted views -----------------------------------------------
 
@@ -212,9 +211,9 @@
             (apply string-append
                    (map (lambda (entry)
                           (format "~a\nreturns: ~a\nlibraries: ~a\n~a\n\n"
-                                  (map cdr (describe:doc-forms entry))
-                                  (or (describe:doc-returns entry) "-")
-                                  (describe:doc-libraries entry)
-                                  (describe:doc-description entry)))
+                                  (map cdr (docs:forms entry))
+                                  (or (docs:returns entry) "-")
+                                  (docs:libraries entry)
+                                  (docs:description entry)))
                         entries))
             8000)))))

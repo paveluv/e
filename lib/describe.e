@@ -22,18 +22,16 @@
 ;; accessors take them apart, so M-x expressions can slice the corpus:
 ;;
 ;;   (length (doc-entries))
-;;   (doc-entries (lambda (e) (eq? (doc-source e) 'csug)))
-;;   (filter (lambda (e) (member "(rnrs io ports)" (doc-libraries e)))
+;;   (doc-entries (lambda (e) (eq? (docs:source e) 'csug)))
+;;   (filter (lambda (e) (member "(rnrs io ports)" (docs:libraries e)))
 ;;           (doc-entries))
 
 (library (describe)
   (export init! describe describe! describe!! describe-at-point!
           fetch-describe-data!
-          register-descriptions!
-          doc-lookup doc-entries
-          doc-names doc-forms doc-returns doc-libraries
-          doc-source doc-chapter doc-url doc-browser-url doc-description)
-  (import (chezscheme) (core)
+          doc-lookup doc-entries doc-browser-url)
+  (import (chezscheme) (except (edit) init!)
+          (prefix (docs) docs:)
           (prefix (kernel) kernel:)
           (prefix (prompt) prompt:)
           (prefix (files) files:)
@@ -44,16 +42,6 @@
           (prefix (styles) styles:)
           (prefix (keymap) keymap:) (only (md-view) markdown-view-install!)
           (only (https) https-download))
-
-  (define-record-type (doc-entry make-doc-entry doc-entry?)
-    (fields (immutable names doc-names)           ; symbols defined
-            (immutable forms doc-forms)           ; ((kind . template) ...)
-            (immutable returns doc-returns)       ; string or #f
-            (immutable libraries doc-libraries)   ; ("(rnrs base)" ...)
-            (immutable source doc-source)         ; tspl or csug
-            (immutable chapter doc-chapter)       ; chapter title
-            (immutable url doc-url)               ; page anchor
-            (immutable description doc-description)))  ; markdown
 
   (define (data-dir)
     (string-append (files:data-directory) "/describe"))
@@ -408,12 +396,12 @@
     ;; The entry's documentation in the browser: its page anchor made
     ;; absolute against its book's site.  Locally registered entries may
     ;; have no URL.
-    (and (doc-url entry)
-         (string-append (case (doc-source entry)
+    (and (docs:url entry)
+         (string-append (case (docs:source entry)
                           [(tspl) tspl-base]
                           [(csug) csug-base]
                           [else ""])
-                        (doc-url entry))))
+                        (docs:url entry))))
 
   (define (ensure-directory! path)
     (unless (file-directory? path) (mkdir path)))
@@ -472,7 +460,7 @@
         (set-message!
           (format "Describe database ready: ~a entries covering ~a names"
                   (length all-entries)
-                  (fold-left + 0 (map (lambda (e) (length (doc-names e)))
+                  (fold-left + 0 (map (lambda (e) (length (docs:names e)))
                                    all-entries))))
         (void))))
 
@@ -480,30 +468,13 @@
 
   (define all-entries #f)   ; list of doc-entry, or #f before loading
   (define by-name #f)       ; symbol -> (doc-entry ...), tspl first
+
   (define (entry-datum->doc-entry entry)
-    (unless (and (list? entry) (= (length entry) 8))
-      (error 'register-descriptions!
-             "expected (names forms returns libraries source chapter url description)"
-             entry))
-    (apply make-doc-entry entry))
+    ;; a corpus datum (describe.sdata) as a record -- the eight-field
+    ;; format docs:register! validates for modules
+    (apply docs:make entry))
 
-  ;; Module documentation, registered in batches: a kernel registry,
-  ;; so a module's reload retracts its entries along with its other
-  ;; registrations.
-  (define descriptions (kernel:make-registry))
-
-  (define (register-descriptions! entries)
-    ;; Publish module documentation in the same eight-field format used by
-    ;; describe.sdata.
-    (for-each entry-datum->doc-entry entries)
-    (kernel:registry-add! descriptions entries)
-    (void))
-
-  (define (published-descriptions)
-    (apply append (reverse (kernel:registry-items descriptions))))
-
-  (define (registered-entries)
-    (map entry-datum->doc-entry (published-descriptions)))
+  (define (registered-entries) (docs:entries))
 
   (define (load-data!)
     (unless all-entries
@@ -518,7 +489,7 @@
                   (for-each (lambda (name)
                               (eq-hashtable-update! by-name name
                                 (lambda (old) (cons entry old)) '()))
-                            (doc-names entry)))
+                            (docs:names entry)))
                 (reverse all-entries))))
 
   ;;; Queries -------------------------------------------------------------------
@@ -528,7 +499,7 @@
     ;; before CSUG; '() when it is not in the corpus.
     (load-data!)
     (let* ([name (if (string? name) (string->symbol name) name)]
-           [local (filter (lambda (entry) (memq name (doc-names entry)))
+           [local (filter (lambda (entry) (memq name (docs:names entry)))
                           (registered-entries))])
       (append (eq-hashtable-ref by-name name '()) local)))
 
@@ -568,25 +539,25 @@
                         ;; abbreviations): double-tick delimiters
                         (format "**~a**: `` ~a ``" (car form) (cdr form))
                         (format "**~a**: `~a`" (car form) (cdr form))))
-                  (doc-forms entry))
-             (if (doc-returns entry)
-                 (list (format "returns: ~a" (doc-returns entry)))
+                  (docs:forms entry))
+             (if (docs:returns entry)
+                 (list (format "returns: ~a" (docs:returns entry)))
                  '())
-             (if (pair? (doc-libraries entry))
+             (if (pair? (docs:libraries entry))
                  (list (format "libraries: ~a"
-                               (strings:join (doc-libraries entry) ", ")))
+                               (strings:join (docs:libraries entry) ", ")))
                  '())
              (list (format "source: ~a, ~a"
-                           (case (doc-source entry)
+                           (case (docs:source entry)
                              [(tspl) "TSPL4"]
                              [(csug) "Chez Scheme User's Guide"]
-                             [else (doc-source entry)])
-                           (doc-chapter entry)))
-             (if (doc-url entry)
+                             [else (docs:source entry)])
+                           (docs:chapter entry)))
+             (if (docs:url entry)
                  (list (format "url: ~a" (doc-browser-url entry)))
                  '())))
       (list "")
-      (split-on-newlines (doc-description entry))))
+      (split-on-newlines (docs:description entry))))
 
   (define described-name #f)
   (define describe-buffer #f)
@@ -666,7 +637,7 @@
                           (begin
                             (eq-hashtable-set! seen name #t)
                             (cons text names)))))
-                  names (doc-names entry)))
+                  names (docs:names entry)))
               '() (doc-entries)))))
 
   (define (describe!!)
@@ -757,7 +728,7 @@
         (describe! (string->symbol (substring text start end))))))
 
   (define (init!)
-    (register-descriptions!
+    (docs:register!
       '(((describe!) (("procedure" . "(describe! name)")) "void"
          ("(describe)") describe "Documentation commands" #f
          "Display every documentation entry for `name` in a read-only Markdown `*describe*` buffer.")
@@ -769,10 +740,10 @@
          ("(describe)") describe "Documentation commands" #f
          "Prompt for a documented function name with completion, then display its live describe page.")
         ((styles:compile-style) (("procedure" . "(styles:compile-style expression)")) "string"
-         ("(core)") core "Style customization" #f
+         ("(edit)") core "Style customization" #f
          "Compile a style expression to terminal SGR parameters. The expression is a list containing attributes (`reset`, `bold`, `dim`, `italic`, `underline`, `blink`, `reverse`, `hidden`, or `strike`) and color clauses `(foreground color)` or `(background color)`; `fg` and `bg` are aliases. A color is a basic name from `black` through `white`, a `bright-` variant, an integer from 0 through 255, or `(rgb red green blue)`.")
         ((styles:set-style!) (("procedure" . "(styles:set-style! face style)")) "void"
-         ("(core)") core "Style customization" #f
+         ("(edit)") core "Style customization" #f
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
         ((markdown-view!) (("procedure" . "(markdown-view! [buffer])")) "void"
          ("(md-view)") md-view "Markdown viewing" #f
@@ -789,70 +760,70 @@
          ("(md-view)") md-view "Markdown viewing" #f
          "Get or set the command that opens a markdown view's web links; it receives the quoted URL as its argument. The default is `xdg-open`.")
         ((answer!!) (("procedure" . "(answer!!)")) "void"
-         ("(core)") core "Interaction" #f
+         ("(edit)") core "Interaction" #f
          "Answer the oldest question another actor posed through the interaction protocol (`actors:ask!`): a prompt shows the question with its choices completing on Tab, and the answer routes back to the asker. Bound to `C-c a`; pending questions wait as an echo-area indicator.")
         ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
-         ("(core)") core "Buffer display" #f
+         ("(edit)") core "Buffer display" #f
          "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")
         ((focus-window-up!) (("procedure" . "(focus-window-up!)")) "void"
-         ("(core)") core "Window commands" #f
+         ("(edit)") core "Window commands" #f
          "Cast a ray upward from point and focus the first window it crosses.")
         ((focus-window-down!) (("procedure" . "(focus-window-down!)")) "void"
-         ("(core)") core "Window commands" #f
+         ("(edit)") core "Window commands" #f
          "Cast a ray downward from point and focus the first window it crosses.")
         ((focus-window-left!) (("procedure" . "(focus-window-left!)")) "void"
-         ("(core)") core "Window commands" #f
+         ("(edit)") core "Window commands" #f
          "Cast a ray leftward from point and focus the first window it crosses.")
         ((focus-window-right!) (("procedure" . "(focus-window-right!)")) "void"
-         ("(core)") core "Window commands" #f
+         ("(edit)") core "Window commands" #f
          "Cast a ray rightward from point and focus the first window it crosses.")
         ((modes:add-extension!)
          (("procedure" . "(modes:add-extension! mode extension)")) "void"
-         ("(core)") core "Mode customization" #f
+         ("(edit)") core "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
         ((head:register-app!)
          (("procedure" . "(head:register-app! name refresh! [handle-event!])"))
-         "buffer" ("(core)") core "App buffers" #f
+         "buffer" ("(edit)") core "App buffers" #f
          "Create or update a module-owned dynamic read-only app buffer. Its name must not collide with an ordinary buffer. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
         ((app-event-buffer-position)
          (("parameter" . "(app-event-buffer-position)")) "pair or #f"
-         ("(core)") core "App buffers" #f
+         ("(edit)") core "App buffers" #f
          "During a mouse-click app event, return the unclamped zero-based buffer position addressed by the pointer. The row may be beyond the buffer, allowing apps to distinguish empty viewport space from their last line. Return false outside such an event.")
         ((head:set-app-cursor-visible!)
          (("procedure" . "(head:set-app-cursor-visible! buffer visibility)")) "buffer"
-         ("(core)") core "App buffers" #f
+         ("(edit)") core "App buffers" #f
          "Set app cursor visibility to a boolean or a procedure receiving the window token. This supports per-window cursor hiding while an app viewport is detached from its live cursor.")
         ((head:detach-app!)
          (("procedure" . "(head:detach-app! buffer)")) "buffer"
-         ("(core)") core "App buffers" #f
+         ("(edit)") core "App buffers" #f
          "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, its event handler, and app presentation.")
         ((set-buffer-wrap!)
          (("procedure" . "(set-buffer-wrap! buffer setting)")) "buffer"
-         ("(core)") core "Buffers" #f
+         ("(edit)") core "Buffers" #f
          "Set a buffer-wide wrapping override to #t or #f, or use `default` to follow each window and the global wrapping preference.")
         ((set-buffer-name!)
          (("procedure" . "(set-buffer-name! buffer name)")) "buffer"
-         ("(core)") core "Buffers" #f
+         ("(edit)") core "Buffers" #f
          "Rename a buffer, adding the usual numeric suffix when another buffer already uses the requested name.")
         ((head:set-app-presentation!)
          (("procedure" . "(head:set-app-presentation! buffer sticky-lines head:scrollbar [wrap cursor-style])"))
-         "buffer" ("(core)") core "App buffers" #f
+         "buffer" ("(edit)") core "App buffers" #f
          "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, a `blinking-` variant of those, or `default`.")
         ((head:buffer-window-size)
          (("procedure" . "(head:buffer-window-size buffer)")) "pair or #f"
-         ("(core)") core "App buffers" #f
+         ("(edit)") core "App buffers" #f
          "Return `(rows . columns)` for the preferred window displaying `buffer`, choosing the focused window when it displays the buffer, or #f when it is not visible.")
         ((head:add-buffer-kill-hook!)
          (("procedure" . "(head:add-buffer-kill-hook! procedure)")) "unspecified"
-         ("(core)") core "Buffer lifecycle" #f
+         ("(edit)") core "Buffer lifecycle" #f
          "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
         ((head:add-shutdown-hook!)
          (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
-         ("(core)") core "Editor lifecycle" #f
+         ("(edit)") core "Editor lifecycle" #f
          "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
         ((paint:add-buffer-status-hint!)
          (("procedure" . "(paint:add-buffer-status-hint! procedure)")) "unspecified"
-         ("(core)") core "Buffer lifecycle" #f
+         ("(edit)") core "Buffer lifecycle" #f
          "Register a module-owned status hint procedure called as `(procedure buffer active?)` for every window. It may return a string, a `(string . style)` pair, or #f.")
         ((fetch-describe-data!)
          (("procedure" . "(fetch-describe-data!)")) "void"
