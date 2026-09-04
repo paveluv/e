@@ -10,16 +10,19 @@ imports the command layer (`edit`, bare -- the names M-x sees), `main` and
 
 There is no core any more (dev/DESIGN2.md, dev/V2_TASKS.md): the editor is
 layered seam modules -- `kernel`, `state`, `file`, `head`, `paint`, `prompt`,
-`mode`, `keymap`, ... -- each imported with its own prefix, `main.e` running
-the loop on top, and `edit.e`, the command layer, as the default app. `sys.e`
-owns libc, termios, ioctl, signals, PTYs, and other foreign procedures.
-Feature modules compose the command API and the seams and, when necessary,
-narrowly scoped system facilities.
+`mode`, `keymap`, ... -- with `main.e` running the loop on top, `edit.e`, the
+command layer, as the default app, and the other apps (`terminal`, `git`,
+`describe`, `eval`, ...) beside it. `sys.e` owns libc, termios, ioctl,
+signals, PTYs, and other foreign procedures. Feature modules compose the
+command API and the seams and, when necessary, narrowly scoped system
+facilities.
 
-Seam modules are named in the singular (`style`, `file`, `mode`, `string`,
-`actor`, `doc`), and their exported names drop the module's stem: the prefix
-says it once -- `style:set!`, not `styles:set-style!`; `log:add!`,
-`mode:register!`, `file:read`, `doc:register!`.
+Every library but `edit` is imported with its own prefix, and that is also how
+M-x sees it: `state:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only `edit`'s
+names are bare. Modules are named in the singular (`style`, `file`, `mode`,
+`string`, `actor`, `doc`), and their exported names drop the module's stem: the
+prefix says it once -- `style:set!`, not `styles:set-style!`; `keymap:bind!`,
+`log:add!`, `mode:register!`, `git:branches`, `terminal:send!`.
 
 R6RS enforces the boundary. A library's internals are invisible to modules and
 its exports are immutable. Extension code cannot accidentally reassign editor
