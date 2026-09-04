@@ -42,11 +42,13 @@ returns false for everything else. Thus `*buffers*` owns navigation and row
 activation while `M-x`, window commands, and other global bindings pass
 through naturally.
 
-The handler has first refusal on every key: a true result consumes the
-event, a false one lets it continue through the keymaps -- the buffer's
-mode context, then the global map.  An app that embeds a complete
-interactive environment simply consumes everything while it is alive; the
-terminal returns true for every key until its process exits.
+The handler has first refusal on every key the buffer's mode context leaves
+unbound: a true result consumes the event, a false one lets it continue
+through the keymaps -- the mode context, then the global map.  A key the
+context binds, starts a binding with, or names as its escape goes straight
+to the keymaps; the handler never sees it.  An app that embeds a complete
+interactive environment simply consumes everything it is offered while it
+is alive; the terminal returns true for every key until its process exits.
 
 The way out of such an app is keymap data, not a mode of dispatch.  The
 app's mode context names an escape prefix, and binds what that prefix
@@ -62,8 +64,8 @@ A sequence starting with the escape that the context does not bind resolves,
 minus the prefix, in the global map: `C-] C-x C-f` runs `find-file!!` from
 inside a captured terminal.  Multi-key bindings wait for their remaining
 keys, commands keep control through their synchronous prompts, and when the
-command returns the next key goes to the app's handler again.  (The handler
-must decline the escape key itself for the context bindings to see it.)
+command returns the next key goes to the app's handler again.  The handler
+need not know about the escape: the dispatcher consults the context first.
 
 The handler is optional. Thus these are equivalent:
 

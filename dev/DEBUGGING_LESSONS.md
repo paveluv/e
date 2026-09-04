@@ -5,6 +5,43 @@ expensive twice. Each entry records the symptom as first reported, the
 theories that failed, the step that actually cracked it, the root cause,
 and what generalizes. Add new entries at the top.
 
+## The escape the keymap declared and the app still swallowed (2026-09-04)
+
+**Symptom.** Inside a live terminal buffer, `C-]` did nothing visible:
+the status line still promised "C-] to escape", but the key went to the
+shell as a literal 0x1d and no global command could be run from inside
+the capture.
+
+**Root cause.** When capture became keymap data (the `'terminal`
+context names `C-]` as its escape and binds `C-] C-]` and `C-] C-y`),
+the explicit "decline C-]" clause left the terminal's event handler --
+the escape was now the dispatcher's business.  But the dispatcher kept
+giving the app handler first refusal of every key, and the handler
+encodes any `C-<char>` for the child, `C-]` included.  The keymap
+declared the escape; nothing consulted it before the app did.  The
+manual papered over the gap with "the handler must decline the escape
+key itself", which no handler did.  No suite drove `C-]`: the
+interactive suite left its nested shell with `exit`.
+
+**Fix.** `main:handle-key!` asks the buffer's mode context first: a key
+the context binds, starts a binding with, or names as its escape goes to
+the keymaps, and the app's handler sees only the keys its context leaves
+unbound.  The redundant plain `C-y` binding in the terminal context went
+with it (it would have hijacked the child's `C-y`).  The interactive
+suite now runs `C-] M-x` and `C-] C-]` inside the nested shell.
+
+**What generalizes.**
+
+- When a behavior turns into declarative data, find every consumer of
+  the old imperative path and make the dispatcher read the data; a
+  declaration nobody consults is a comment with syntax.
+- A manual rule of the form "X must remember to do Y" for the design to
+  work marks a seam in the wrong place.  Move Y to the one place that
+  already knows about it.
+- The suite drove the feature next to the bug (open a terminal, type
+  into it) but never the bug's own key.  Every escape hatch needs a
+  test that uses it.
+
 ## A library that exports init! collides with every importer's (2026-09-03)
 
 **Symptom.** The moment core.e's body joined edit.e, every app failed to

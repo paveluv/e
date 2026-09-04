@@ -3708,10 +3708,11 @@
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (paint:add-hyperlinker! terminal-row-hyperlinks)
     (keymap:bind! "C-c t" terminal!!)
-    (keymap:bind-default! 'terminal "C-y" terminal-yank!)
     ;; C-] is the way out of a captured terminal: C-] C-] sends the
     ;; character itself, C-] C-y pastes the kill ring, and any other
-    ;; C-] sequence runs one global command (the context's escape)
+    ;; C-] sequence runs one global command (the context's escape).
+    ;; The dispatcher hands these to the keymaps before the handler
+    ;; sees them; every other key is the child's.
     (keymap:bind-default! 'terminal "C-] C-]" terminal-literal-escape!)
     (keymap:bind-default! 'terminal "C-] C-y" terminal-yank!)
     (keymap:set-context-escape! 'terminal "C-]")

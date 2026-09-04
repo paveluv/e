@@ -129,9 +129,11 @@ Language layout remains modular through `register-indenter!` and
 ## Apps and views
 
 An app buffer owns dynamic rendered state and may handle input. A view is an
-app without interaction. An app's handler has first refusal on every key and
-passes the rest through to the keymaps; an app that consumes everything (the
-terminal) names an escape prefix in its mode's keymap context. Apps act on the
+app without interaction. An app's handler has first refusal on every key its
+mode context leaves unbound and passes the rest through to the keymaps; an app
+that consumes everything (the terminal) names an escape prefix in its mode's
+keymap context, and the dispatcher hands that key to the keymaps before the
+handler sees it. Apps act on the
 selected window, publish status hints, control cursor display, and consume
 mouse events without taking focus.
 
