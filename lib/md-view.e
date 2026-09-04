@@ -949,11 +949,11 @@
            (let ([url (caddr link)])
              (unless (equal? hint-shown url)
                (set! hint-shown url)
-               (show-prompt-message! "hyperlink: " url #f)))]
+               (paint:show-prompt-message! "hyperlink: " url #f)))]
           [hint-shown
            (when (equal? (current-message)
                          (string-append "hyperlink: " hint-shown))
-             (show-message! "" #f))
+             (paint:show-message! "" #f))
            (set! hint-shown #f)])))
     '())
 

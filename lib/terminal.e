@@ -466,7 +466,7 @@
         0 (scrollback-count (terminal-state-history state))))
 
   (define (present-terminal-live-screen! state)
-    (set-buffer-viewports!
+    (paint:set-buffer-viewports!
       (terminal-state-buffer state)
       (terminal-cursor-position state)
       (terminal-live-screen-top state)
@@ -486,7 +486,7 @@
                     (terminal-state-unfollowed-windows state))))
     (page-window-fraction! direction fraction)
     (set-point-without-scroll! (terminal-cursor-position state))
-    (when (point-visible?)
+    (when (paint:point-visible?)
       (terminal-state-unfollowed-windows-set!
         state (remq (selected-window)
                     (terminal-state-unfollowed-windows state)))))
@@ -2315,7 +2315,7 @@
                        (enter-alternate-screen! state mode)
                        (leave-alternate-screen! state mode))
                    (when (terminal-state-buffer state)
-                     (reset-buffer-viewports!
+                     (paint:reset-buffer-viewports!
                        (terminal-state-buffer state)
                        (terminal-cursor-position state)))]
                   [else
@@ -3191,7 +3191,7 @@
                                screen-styles))))
               ;; Cell/style rows are dynamic renderer data; their structural
               ;; placeholder lines often remain identical across frames.
-              (view-invalidate! (terminal-state-buffer state)))
+              (paint:view-invalidate! (terminal-state-buffer state)))
             (terminal-state-dirty-set! state #f))
           (when (and (eq? (current-buffer) (terminal-state-buffer state))
                      (not (memq (selected-window)

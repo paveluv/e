@@ -20,6 +20,7 @@
 (library (eval)
   (export init! eval! eval!! eval-copy-result)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
           (only (describe) doc-lookup doc-forms register-descriptions!)
@@ -272,7 +273,7 @@
     ;; Scheme highlighting for the M-x prompt: the label stays grey,
     ;; the expression styles as Scheme with the editor's own names in
     ;; the editor style.
-    (prompt-styler "M-x "
+    (paint:prompt-styler "M-x "
       (lambda (input)
         (guard (ex [else #f])
           (let ([scheme (find-mode "scheme")])
@@ -458,7 +459,7 @@
                             [completion-highlight
                              (lambda (label)
                                (editor-symbol? (string->symbol label)))]
-                            [echo-highlight mx-echo-styles])
+                            [paint:echo-highlight mx-echo-styles])
                (prompt! "M-x " complete-symbol "("
                         (box (log:log-history 'eval car))
                         complete-editor-symbol normalize-input))])
@@ -468,9 +469,9 @@
         ;; its end, drawn as the evaluation-in-progress underline.
         ;; An indicator, not a record: the expression is already
         ;; logged under eval.
-        (show-prompt-message! "M-x " s mx-echo-styles)
+        (paint:show-prompt-message! "M-x " s mx-echo-styles)
         (let-values ([(outcome output-records)
-                      (parameterize ([cursor-in-echo #t])
+                      (parameterize ([paint:cursor-in-echo #t])
                         (redraw!)
                         (evaluation-outcome s s))])
           ;; One structured record per exchange: history reads the query,
