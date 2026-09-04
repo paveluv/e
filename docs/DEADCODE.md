@@ -19,7 +19,8 @@ with a date; deletions note the commit.
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
   `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
   `pump-handlers-installed`, `head-client-hooked`,
-  `conflict-status-hinted`, `completions-status-hinted`
+  `conflict-status-hinted`, `completions-status-hinted`,
+  `paint-mode-hooked`
   (core, the v2 wiring; `state-subscription` now lives in head.e).
   Skip these in future sweeps.
 

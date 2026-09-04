@@ -177,7 +177,16 @@ stopped knowing about capture.
       alongside: the shared pure string helpers (tail, prefix?,
       suffix?, join) now have one home below the seams, and styles.e/
       keymap.e dropped their local copies
-- [~] `paint.e` begun: the row painter moved -- display-editor-line
+- [~] `paint.e`: the row painter, then the window painter -- paint-window!
+      with its status line, paint-dividers!, the highlighter/hyperlinker/
+      status-hint registries, soft-wrap geometry and wrap policy (the
+      wrap-lines knob stays bare for config.e), and the screen cache with
+      begin-frame!/invalidate; the mode registry reaches it through one
+      hook (#(name render row-styler line-styler)).  Native scrolling was
+      removed rather than moved.  Remaining with the core: the frame
+      driver -- scroll-window!/page-window!, the echo area's painting,
+      redraw-frame!, place-cursor!, terminal size -- and the prompts.
+      History: the row painter moved first -- display-editor-line
       (styled runs, marks, links, selection, wrap/truncation edges),
       emit-runs, ansi/goto/fit, soft-wrap break computation, and
       hyperlink detection, all pure given their inputs and headlessly

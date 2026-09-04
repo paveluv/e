@@ -25,7 +25,7 @@
          buffer
          (lambda () (insert-text! "https://example.com/path")))
        (check 'buffer-link-ranges
-              (buffer-line-hyperlinks buffer 0)
+              (paint:buffer-line-hyperlinks buffer 0)
               '((0 24 "https://example.com/path"))))
 
      (display "2 hyperlink checks passed\n")))

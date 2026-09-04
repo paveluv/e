@@ -21,6 +21,7 @@
           next-conflict! keep-mine! keep-disk!
           list-buffers!)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (keymap) keymap:)
           (only (describe) register-descriptions!))
@@ -567,7 +568,7 @@
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the next buffer in alphabetical order, wrapping at the end.")))
     (buffers-view-buffer)
-    (add-highlighter!
+    (paint:add-highlighter!
       (lambda ()
         (cond
           [(and buffers-view (eq? (current-buffer) buffers-view))
@@ -602,5 +603,5 @@
         ("n" skip) ("N" skip) ("BACKSPACE" skip)
         ("q" stop) ("RET" stop) ("C-g" stop) ("ESC" stop)
         ("C-x" quit-prefix) ("C-x C-c" quit-editor)))
-    (add-highlighter!
+    (paint:add-highlighter!
       (lambda () (if query-match (list query-match) '())))))

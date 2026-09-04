@@ -20,6 +20,7 @@
           markdown-render markdown-view-install! markdown-browser
           markdown-view-max-width)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (styles) styles:)
           (prefix (keymap) keymap:) (only (sys) terminal-character-width))
@@ -960,8 +961,8 @@
     (register-md-faces!)
     (register-mode! "markdown-view" '() '() (lambda (line) #f)
                     #f view-row-styles)
-    (add-hyperlinker! view-row-links)
-    (add-highlighter! link-hint)
+    (paint:add-hyperlinker! view-row-links)
+    (paint:add-highlighter! link-hint)
     (head:add-pre-redraw-hook! refit-views!)
     (keymap:bind-default-key! 'markdown "C-c v" markdown-view!)
     (keymap:bind-default-key! 'markdown-view "C-c v" markdown-edit!)

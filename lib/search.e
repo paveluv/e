@@ -13,6 +13,7 @@
 (library (search)
   (export init! search!! search-fold-case)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (tty) tty:)
           (prefix (keymap) keymap:)
           (prefix (head) head:)
@@ -255,7 +256,7 @@
       '(((search!!) (("procedure" . "(search!!)")) "void"
          ("(search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
-    (add-highlighter! search-highlights)
+    (paint:add-highlighter! search-highlights)
     (keymap:bind-default-key! "C-s" search!!)
     (for-each
       (lambda (entry)

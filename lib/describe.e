@@ -34,6 +34,7 @@
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (styles) styles:)
           (prefix (keymap) keymap:) (only (md-view) markdown-view-install!)
@@ -840,8 +841,8 @@
          (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
          ("(core)") core "Editor lifecycle" #f
          "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
-        ((add-buffer-status-hint!)
-         (("procedure" . "(add-buffer-status-hint! procedure)")) "unspecified"
+        ((paint:add-buffer-status-hint!)
+         (("procedure" . "(paint:add-buffer-status-hint! procedure)")) "unspecified"
          ("(core)") core "Buffer lifecycle" #f
          "Register a module-owned status hint procedure called as `(procedure buffer active?)` for every window. It may return a string, a `(string . style)` pair, or #f.")
         ((fetch-describe-data!)

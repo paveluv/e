@@ -12,6 +12,7 @@
           terminal-emulator-mouse-input terminal-emulator-replies
           terminal-emulator-unsupported terminal-color-scheme!)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (log) log:)
           (prefix (styles) styles:) (sys)
@@ -3702,7 +3703,7 @@
                     terminal-row-render terminal-row-styles)
     (set! known-color-scheme (host-color-scheme))
     (add-color-scheme-hook! terminal-color-scheme!)
-    (add-hyperlinker! terminal-row-hyperlinks)
+    (paint:add-hyperlinker! terminal-row-hyperlinks)
     (keymap:bind-key! "C-c t" terminal!!)
     (keymap:bind-default-key! 'terminal "C-y" terminal-yank!)
     ;; C-] is the way out of a captured terminal: C-] C-] sends the
@@ -3713,7 +3714,7 @@
     (keymap:set-context-escape! 'terminal "C-]")
     (head:add-buffer-kill-hook! terminal-close!)
     (head:add-shutdown-hook! terminal-close-all!)
-    (add-buffer-status-hint!
+    (paint:add-buffer-status-hint!
       (lambda (buffer active?)
         (let ([state (terminal-of buffer)])
           (and state

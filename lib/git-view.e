@@ -3,6 +3,7 @@
 (library (git-view)
   (export init! git-log!! git-log-refresh!)
   (import (chezscheme) (core)
+          (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (keymap) keymap:) (except (git) init!)
           (only (describe) register-descriptions!))
@@ -237,7 +238,7 @@
          (("procedure" . "(git-log-refresh!)")) "void"
          ("(git-view)") git-view "Git" #f
          "Reload commits and changed files in the open `*git-log*` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
-    (add-highlighter!
+    (paint:add-highlighter!
       (lambda ()
         (if (and log-buffer (memq log-buffer (buffer-list)))
             (let ([row (call-with-buffer log-buffer
