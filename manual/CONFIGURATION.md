@@ -38,8 +38,8 @@ the file removes it on the next reload rather than leaving stale state behind.
 ## Common examples
 
 ```scheme
-(keymap:bind-key! "C-c s" save!!)
-(keymap:unbind-key! "C-v")
+(keymap:bind! "C-c s" save!!)
+(keymap:unbind! "C-v")
 (mode:add-extension! "scheme" ".foo")
 (indent-on-tab! "scheme" #f)
 (wrap-lines #f)

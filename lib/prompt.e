@@ -506,7 +506,7 @@
         ;; window controls without canceling the prompt.
         (let* ([event (head:read-key-event #t)]
                [action (and (not (eof-object? event))
-                            (keymap:key-event-binding 'prompt event))]
+                            (keymap:event-binding 'prompt event))]
                [previous-edge last-edge])
           (set! last-edge #f)
           (cond

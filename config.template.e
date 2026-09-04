@@ -67,8 +67,8 @@
 ;;                                ; Full reference: manual/STYLES.md
 ;;                                ; chrome is the editor's grey furniture
 ;;                                ; (prompt labels, log prefixes, ghost text)
-;; (keymap:bind-key! "M-l" log-view:show!)    ; pop the *log* view with one chord
-;; (keymap:bind-key! "C-c s" save!!)     ; arbitrary multi-key chords work
-;; (keymap:unbind-key! "C-v")            ; remove a global binding
-;; (keymap:bind-key! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
-;; (keymap:unbind-key! 'isearch "M-c")
+;; (keymap:bind! "M-l" log-view:show!)    ; pop the *log* view with one chord
+;; (keymap:bind! "C-c s" save!!)     ; arbitrary multi-key chords work
+;; (keymap:unbind! "C-v")            ; remove a global binding
+;; (keymap:bind! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
+;; (keymap:unbind! 'isearch "M-c")

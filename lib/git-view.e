@@ -260,4 +260,4 @@
                         (list shadow)))
                   '()))
             '())))
-    (keymap:bind-default-key! "C-x g" git-log!!)))
+    (keymap:bind-default! "C-x g" git-log!!)))

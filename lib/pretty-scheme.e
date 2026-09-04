@@ -332,8 +332,8 @@
     (mode:register! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
     (mode:register! "pretty-scheme-rainbow" '() '() scheme-styles #f
                     rainbow-styles)
-    (keymap:bind-default-key! ")" (lambda () (close! #\))))
-    (keymap:bind-default-key! "]" (lambda () (close! #\])))
+    (keymap:bind-default! ")" (lambda () (close! #\))))
+    (keymap:bind-default! "]" (lambda () (close! #\])))
     (paint:add-status-hint!
       (lambda ()
         (and (pretty-buffer?)

@@ -168,7 +168,7 @@
       (paint:redraw!)
       (let* ([event (head:read-key-event)]
              [action (and (not (eof-object? event))
-                          (keymap:key-event-binding 'isearch event))])
+                          (keymap:event-binding 'isearch event))])
         (cond
           [(eof-object? event) (main:dispatch-key! event)]
           [(eq? action 'accept)
@@ -261,10 +261,10 @@
          ("(search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
     (paint:add-highlighter! search-highlights)
-    (keymap:bind-default-key! "C-s" search!!)
+    (keymap:bind-default! "C-s" search!!)
     (for-each
       (lambda (entry)
-        (keymap:bind-default-key! 'isearch (car entry) (cadr entry)))
+        (keymap:bind-default! 'isearch (car entry) (cadr entry)))
       '(("C-s" repeat) ("C-g" cancel) ("RET" accept) ("ESC" accept)
         ("M-c" toggle-case) ("C-h" delete-character)
         ("BACKSPACE" delete-character)
