@@ -5,6 +5,30 @@ expensive twice. Each entry records the symptom as first reported, the
 theories that failed, the step that actually cracked it, the root cause,
 and what generalizes. Add new entries at the top.
 
+## A library that exports init! collides with every importer's (2026-09-03)
+
+**Symptom.** The moment core.e's body joined edit.e, every app failed to
+compile with "multiple definitions for init! in body": each imports the
+command layer bare, and edit.e -- a module, so it exports `init!` for
+the kernel's lifecycle -- now handed them a second `init!` next to
+their own.  Core never had one.
+
+**Root cause.** R6RS forbids a library body from defining a name it
+imports.  A bare import of a module that follows the init! protocol is
+therefore only safe from libraries that do not follow it themselves --
+which no app is.  The importers say `(except (edit) init!)` now.
+
+**What generalizes.** Two conventions met: "the command API is
+imported bare" and "every module exports init!".  Each was fine alone;
+the merge that made one library obey both surfaced the conflict in
+every importer at once, which at least made it impossible to miss.  A
+second, quieter surprise from the same merge: core created the seat's
+*scratch* buffer and first window at library load, so headless suites
+that never ran the main loop still had a window; moving that setup
+into `main:run` broke them with "#f is not of type window" far from
+the cause.  The seat's initial state belongs to the seat (head.e), where
+every importer gets it.
+
 ## The M-x environment is whatever the loader imports (2026-09-03)
 
 **Symptom.** After the loop moved from core.e to main.e and the loader

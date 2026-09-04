@@ -2,19 +2,22 @@
 
 ## Library architecture
 
-Everything in `lib/` is an R6RS library using the `.e` extension. `core.e` is
-`(core)`, `eval.e` is `(eval)`, and so on. The loader is only bootstrap: it
+Everything in `lib/` is an R6RS library using the `.e` extension. `edit.e` is
+`(edit)`, `eval.e` is `(eval)`, and so on. The loader is only bootstrap: it
 locates the adjacent libraries and compiled-object directory, configures Chez,
-imports core, and starts the editor.
+imports the command layer (`edit`, bare -- the names M-x sees), `main` and
+`kernel` (prefixed), and runs `(main:run)`.
 
-Core is a generic kernel for buffers, windows, editing, rendering, prompts,
-apps, and registration. `sys.e` owns libc, termios, ioctl, signals, PTYs, and
-other foreign procedures. Feature modules compose the published core API and,
-when necessary, narrowly scoped system facilities. Feature policy does not
-belong in core.
+There is no core any more (docs/DESIGN2.md, docs/V2_TASKS.md): the editor is
+layered seam modules -- `kernel`, `state`, `files`, `head`, `paint`, `prompt`,
+`modes`, `keymap`, ... -- each imported with its own prefix, `main.e` running
+the loop on top, and `edit.e`, the command layer, as the default app. `sys.e`
+owns libc, termios, ioctl, signals, PTYs, and other foreign procedures.
+Feature modules compose the command API and the seams and, when necessary,
+narrowly scoped system facilities.
 
-R6RS enforces the boundary. Core internals are invisible to modules and its
-exports are immutable. Extension code cannot accidentally reassign editor
+R6RS enforces the boundary. A library's internals are invisible to modules and
+its exports are immutable. Extension code cannot accidentally reassign editor
 state that was not intentionally published.
 
 ## Module shape
@@ -24,7 +27,8 @@ An extension exports `init!`, which performs its registrations:
 ```scheme
 (library (my-mode)
   (export init!)
-  (import (chezscheme) (core))
+  (import (chezscheme) (except (edit) init!)   ; the command layer, bare
+          (prefix (modes) modes:))             ; seams, prefixed
 
   (define (my-styles line) ...)
 

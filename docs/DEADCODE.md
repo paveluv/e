@@ -11,19 +11,28 @@ with a date; deletions note the commit.
 - **define-for-effect**: `(define name (side-effecting-expression))`
   runs initialization at library load; the name is intentionally
   never referenced. Confirmed instances: `buffer-printing`,
-  `core-keys-bound`, `log-formatters-init`, `log-presenter-installed`,
-  `styles-hook-installed`, `ui-audit-flushed-at-exit`,
-  `head-seat-initialized`, `buffers-initialized`, `mouse-hooked`,
-  `conflict-status-hinted`, `prompt-commands-allowed`, `main-hooked`
-  (core); `reload-hooked`, `reload-tail-hooked` (main);
-  `region-printing` (edit); `libc-character-locale`,
-  `libutil-loaded?` (sys); `state-subscription`, `ui-actor-registered`
-  (head); `adopt-hooked` (modes); `repaint-hooked` (paint);
+  `region-printing` (edit -- the command layer's other load-time
+  effects moved into its init! when core dissolved); `reload-hooked`,
+  `reload-tail-hooked` (main); `libc-character-locale`,
+  `libutil-loaded?` (sys); `state-subscription`, `ui-actor-registered`,
+  `seat-initialized` (head); `adopt-hooked` (modes); `repaint-hooked`
+  (paint);
   `completions-mode-registered`, `completions-status-hinted` (prompt);
   `frame-hooked`, `ask-presented`, `echo-greeting-shown` (main).
   Skip these in future sweeps.
 
 ## Deleted
+
+- 2026-09-03 `lib/core.e` itself: its last 2,419 lines became the
+  command layer in edit.e; the define-for-effect registrations became
+  init! statements (`core-keys-bound`, `log-formatters-init`,
+  `log-presenter-installed`, `styles-hook-installed`,
+  `ui-audit-flushed-at-exit`, `conflict-status-hinted`,
+  `prompt-commands-allowed`, `mouse-hooked`, `main-hooked` are no
+  longer names); `buffers-initialized`/`head-seat-initialized` became
+  head's `seat-initialized`.  describe.e's `register-descriptions!`,
+  `published-descriptions`, `entry-datum->doc-entry` (the registry half)
+  moved to docs.e.
 
 - 2026-09-03 `mouse-on?`, `set-mouse!` (core): a flag written and never
   read, and its setter; `mouse!` and startup call `tty:mouse-reporting!`

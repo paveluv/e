@@ -234,6 +234,7 @@ unless noted, loaded by the same loader. Layer by layer:
 | File | Owns |
 |---|---|
 | `kernel.e` | persistent cells, registries, module load/reload, init!/retract, config.e loading, mailboxes, the text of a caught condition (`condition-text`), the two refusal conditions (read-only, refused) |
+| `docs.e` | the documentation entry: one record per documented name, the eight-field validation, and the registry modules publish into at init! (`docs:register!`) -- below every module that documents itself |
 | `actors.e` | actor identity and sessions, mailboxes, the ask/reply interaction protocol |
 
 **State**:
@@ -275,7 +276,11 @@ that lets v0.1 reload modules under a running editor.
 | `https.e` | HTTP(S) with the channel/connector seams (unchanged) |
 
 **Apps** -- ported onto the seams, filenames as in v0.1: `edit.e`
-(file editing is just the default app), `eval.e`, `search.e`,
+(the command layer -- buffers, windows, files, editing, undo, the kill
+ring, indentation, the mouse, the default bindings, the generic
+editing helpers: file editing is just the default app, and what M-x
+sees bare; every other app imports it as `(except (edit) init!)`),
+`eval.e`, `search.e`,
 `paren.e`, `describe.e`, `terminal.e`, `md-mode.e`, `md-view.e`,
 `log-view.e`, `git.e`, `git-view.e`, `diff.e`, `scheme-mode.e`,
 `c-mode.e`, `scheme-format.e`, `pretty-scheme.e`.

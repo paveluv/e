@@ -134,8 +134,10 @@ the client side, everything below it is the server side.
 
 ## Core dissolution (crosses stages)
 
-Extraction order for the remaining core.e content, each leaving a
-re-export facade until its importers migrate.  Harmony rule (decided
+Done 2026-09-03: core.e is gone.  Its 6,676 lines became the seam
+modules below (each slice a commit, each leaving a facade until its
+importers migrated), `main.e` on top, and the command layer in
+`edit.e`.  The record of the slices follows.  Harmony rule (decided
 2026-09-03): a product feature that resists a clean seam is questioned,
 not accommodated -- the user should feel the architecture.  Applied so
 far: `C-x w` widen-window mode removed (redesign later), scrollbar
@@ -385,7 +387,28 @@ stopped knowing about capture.
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e
-- [ ] `edit.e` absorbs the command layer; core.e deleted
+- [x] `edit.e` absorbs the command layer; core.e deleted.  core's body
+      joined edit.e's (regions, replace, conflicts, buffer list) under
+      one library: the command API M-x sees bare, imported by the loader
+      into the top level and by every app as `(except (edit) init!)`
+      (the layer exports init! like any module, so an importer's own
+      init! would clash).  Its registrations -- default bindings, log
+      formatters and presenter, the styles hook, the shutdown hook, the
+      conflict status hint, the prompt's allowed commands, the mouse
+      handler, main's three setters -- gather in init!, owned by edit,
+      so a reload retracts and remakes them; only the record writer for
+      buffers stays a load-time effect.  The seat's first *scratch* and
+      window are head's own initial state (headless suites need them
+      without main).  `docs.e` was born to break the edit/describe
+      cycle: the documentation entry record, its validation, and the
+      registry (`docs:register!`, `docs:entries`) below every module
+      that documents itself; describe.e keeps the corpus and its
+      queries, sandbox.e reads the cursor from head instead of the
+      command layer.  core's `region-text` (four coordinates) is
+      `text-between`; the kernel's never-reload set is kernel and main
+- [x] docs.e: see above -- the twelve self-documenting modules call
+      docs:register!; describe's ("(core)") library fields read
+      ("(edit)")
 
 ## Tech debt ledger
 
@@ -402,5 +425,8 @@ priority; items graduate into stage tasks when picked up.
 | 15 | The delta/undo log bounds entries, not bytes | `lib/state.e` `delta-log-limit` (256) trims by count, but each delta pins its removed lines for invert/rebase: 256 large kills retain megabytes while 256 typed characters retain almost nothing. Fix: a secondary byte budget -- track retained removed-content size and trim the tail past N cells (keep the count cap too); adjust the `basis-too-old` comment in `edit!` and the undo-depth expectation in tests/state.ss. Repro/measure: kill a 5000-line region 256 times, watch resident size. |
 | 15 | eval.e still paints through a dup'd stdout port | `lib/eval.e` `evaluate!` (the `terminal (duplicate-standard-output-port)` let) streams stdout/stderr of evaluated code live while the main thread is busy inside the eval, so it cannot marshal via `run-on-main!` (the pump is not running).  The last display-port workaround.  Fix arrives with stage 4 agent sessions: agent evals run off-main and their output posts to mailboxes; a main-thread M-x eval can then simply defer its log lines. |
 | 20 | prompt.e writes the echo area through identifier-syntax facades | `lib/prompt.e` defines `message`, `message-ghost`, `message-styles`, `echo-cursor`, `echo-indent`, `echo-input-end`, `echo-scroll`, `echo-spans` as identifier macros over `echo:` accessors so the prompt's code moved verbatim. Fix: rewrite the sites to direct `echo:set-text!`/`echo:cursor` calls (a scripted pass; `(set! message X)` across line breaks is the awkward case) and drop the macros -- the same unwind core's remaining facades get when their code moves. |
+| 40 | edit.e is a 3,000-line command layer | `lib/edit.e` took core's whole body: buffer and window commands, files (visit/save/merge dialogs), editing with undo, kill ring and clipboard, indentation, mouse actions, default bindings, the log presenter and set-message!, plus the generic helpers. Harmony rule: split along what a user feels -- e.g. `buffers.e` (buffer and window commands), `files-app`/visiting and saving, `editing.e` (undo, kill/yank, self-insert, indentation), the mouse actions -- each an app registering its own bindings, with the shared notification API (set-message!, message-source) finding a home above paint. Decide the cut with the user first. |
+| 20 | edit.e keeps the identifier-syntax facades | `lib/edit.e` still defines `buffers`, `windows`, `layout-root`, `current-window`, `message`, `echo-pending`, `kill-ring`, `rows`, `cols` and the `define-state` macros (lines, point-row, ...) over head:/echo:/paint: accessors -- core's sugar, now the command layer's. Fix: the same scripted unwind planned for prompt.e's facades (see above), sitting naturally with the split. |
+| 15 | apps import the command layer bare | Every app says `(except (edit) init!)` because edit exports init! like a module. Options: a prefixed `edit:` convention (a large rename of user-visible M-x names -- config.e users type them bare), or an `init!`-free command-API library the layer re-exports. Weigh with the split. |
 | 25 | prompt.e has no headless suite | The prompt's loop reads keys from the head's pump (`head:read-key-event`), so only tests/interactive.ss (a real PTY) exercises prompt:read!, completions, and prompt:key!. Fix: a `head:post-key!` (or a test-only event source parameter) so tests/prompt.ss can script keys headlessly and check the returned input, history, completion notes, and the borrowed-window restore. |
 | 5 | scheme-format refuses the shebang test suites and garbles its read errors | `tools/scheme-format` fails on every `tests/*.ss` (the `#!/usr/bin/env scheme-script` first line does not read as data) and reports it as the raw template `~? at char ~a of ~s`: the tool prints a condition's message without its irritants. Fix: skip a leading shebang line, and print read errors through `kernel:condition-text`. Until then the format-before-commit rule covers lib/*.e only. |
