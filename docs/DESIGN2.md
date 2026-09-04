@@ -256,6 +256,7 @@ that lets v0.1 reload modules under a running editor.
 |---|---|
 | `tty.e` | the terminal backend: raw mode, key/mouse/paste decoding, byte output |
 | `styles.e` | faces and the style DSL |
+| `modes.e` | the mode registry: records, detection by extension and #! interpreter, the memoized line and whole-buffer stylers -- the mode NAME is a store property, the record is this head's |
 | `paint.e` | the screen model: damage, cache, painting, synchronized updates |
 | `keymap.e` | key syntax, binding contexts, per-head and per-mode dispatch |
 | `echo.e` | the notification area and prompts: the human frontend of ask/reply |

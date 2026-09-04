@@ -287,6 +287,19 @@ stopped knowing about capture.
       replaced the three condition formatters (core's error-text,
       head's and policy's condition-text): the kernel already catches
       conditions at the module boundary, so it also says what they read as
+- [x] `modes.e`: the mode registry -- the record, register!/find,
+      detection by extension and #! interpreter, later-added
+      extensions, assign!/choose!, the memoized line styler and
+      whole-buffer analyses, refresh! after reloads -- with
+      tests/modes.ss (28 checks, the registry's first).  Two owner
+      hooks went with it: paint imports modes directly instead of the
+      core's mode hook, and modes installs head's adopt hook itself
+      (head's set-client-hooks! became set-repaint-hook!, installed by
+      paint, and set-adopt-hook!).  Found on the way: the *completions*
+      buffer's mode had been set as a bare record since modes became
+      name-keyed, so it resolved to no mode and painted unstyled --
+      "completions" is a registered mode now, its styler reading the
+      completion-highlight predicate at styling time
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e

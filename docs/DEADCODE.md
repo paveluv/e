@@ -18,13 +18,22 @@ with a date; deletions note the commit.
   `ui-actor-registered`, `log-presenter-installed`,
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
   `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
-  `pump-handlers-installed`, `head-client-hooked`,
+  `pump-handlers-installed`, `completions-mode-registered`,
   `conflict-status-hinted`, `completions-status-hinted`,
-  `paint-mode-hooked`, `paint-redraw-hooked`
-  (core, the v2 wiring; `state-subscription` now lives in head.e).
+  `paint-redraw-hooked`
+  (core, the v2 wiring; `state-subscription` now lives in head.e),
+  `adopt-hooked` (modes), `repaint-hooked` (paint).
   Skip these in future sweeps.
 
 ## Deleted
+
+- 2026-09-03 `paint:set-mode-hook!`, `head:set-client-hooks!`,
+  `paint-mode-hooked`, `head-client-hooked`, `completions-mode` (core):
+  with the mode registry in modes.e, paint imports it directly and
+  modes installs head's adopt hook itself, so the core stopped
+  brokering both; the completions mode is registered once instead of
+  minted per prompt (`modes:make` was exported for that and is not
+  any more).
 
 - 2026-09-03 the string helpers' copies (core, scheme-format, https):
   `string-tail`, `string-prefix?`, `string-suffix?`, `string-join`,
