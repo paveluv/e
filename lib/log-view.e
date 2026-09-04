@@ -11,6 +11,7 @@
 (library (log-view)
   (export init! log-view show-log!)
   (import (chezscheme) (core)
+          (prefix (strings) strings:)
           (prefix (head) head:)
           (prefix (log) log:)
           (only (describe) register-descriptions!))
@@ -27,14 +28,14 @@
     ;; text styled by the component's registered styler.
     (let* ([n (string-length s)]
            [styles (make-vector n 'comment)]
-           [sep (and (> n 9) (string-search s ": " 9 n))])
+           [sep (and (> n 9) (strings:search s ": " 9 n))])
       (when sep
         (let* ([component (string->symbol (substring s 9 sep))]
                [styler (log:log-styler component)]
                [from (+ sep 2)]
                [inner (and styler
                            (guard (ex [else #f])
-                             (styler (string-tail s from))))])
+                             (styler (strings:tail s from))))])
           (if inner
               (let loop ([i from])
                 (when (< i n)
@@ -58,7 +59,7 @@
                 (set! lines
                   (append (let ([prefix (log-line-prefix e)])
                             (map (lambda (l) (string-append prefix l))
-                                 (split-lines (log:format-log-entry e))))
+                                 (strings:lines (log:format-log-entry e))))
                           lines)))))
           (set! rendered (log:log-length))
           (head:view-append! b lines))))

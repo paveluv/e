@@ -20,6 +20,8 @@
 (library (eval)
   (export init! eval! eval!! eval-copy-result)
   (import (chezscheme) (core)
+          (prefix (kernel) kernel:)
+          (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
@@ -43,12 +45,12 @@
                            (+ i 1)]
                           [else (loop (- i 1))]))]
            [head (substring s 0 start)]
-           [part (string-tail s start)])
+           [part (strings:tail s start)])
       (if (and (string=? part "") (not empty-ok?))
           '()
           (let ([names (sort string<?
                              (filter (lambda (name)
-                                       (and (string-prefix? part name)
+                                       (and (strings:prefix? part name)
                                             (keep? (string->symbol name))))
                                      (map symbol->string
                                           (environment-symbols
@@ -102,9 +104,9 @@
             [(symbol? p) (list (format ". ~a" p))]
             [(pair? (car p))
              (cons (format "[~a]"
-                           (string-join (map (lambda (x) (format "~a" x))
-                                             (car p))
-                                        " "))
+                           (strings:join (map (lambda (x) (format "~a" x))
+                                              (car p))
+                                         " "))
                    (loop (cdr p)))]
             [else (cons (format "~a" (car p)) (loop (cdr p)))])))
 
@@ -153,7 +155,7 @@
     ;; argument, but a rest marker (... or a dotted tail) absorbs any count.
     (cond [(or (null? tokens) (= n 0)) tokens]
           [(string=? (car tokens) "...") tokens]
-          [(string-prefix? ". " (car tokens)) tokens]
+          [(strings:prefix? ". " (car tokens)) tokens]
           [(and (pair? (cdr tokens)) (string=? (cadr tokens) "...")) tokens]
           [else (drop-params (cdr tokens) (- n 1))]))
 
@@ -209,8 +211,8 @@
                     (let ([left (drop-params tokens (cdar stack))])
                       (and (pair? left)
                            (string-append
-                             (if (string-suffix? " " s) "" " ")
-                             (string-join left " "))))))))))
+                             (if (strings:suffix? " " s) "" " ")
+                             (strings:join left " "))))))))))
 
   ;;; Evaluation ----------------------------------------------------------------
 
@@ -319,22 +321,22 @@
   (define (reindent-scheme-input text pos)
     ;; Reindent every logical line and keep the cursor attached to the same
     ;; text even when an earlier edit shifts this line left or right.
-    (let* ([lines (split-lines text)]
+    (let* ([lines (strings:lines text)]
            [v (list->vector lines)]
            [stops (scheme-indent-lines v 0 (- (vector-length v) 1))]
-           [before (split-lines (substring text 0 pos))]
+           [before (strings:lines (substring text 0 pos))]
            [point-row (- (length before) 1)]
            [point-col (string-length (car (reverse before)))])
       (let loop ([rows lines] [cols stops] [row 0]
                  [built '()] [offset 0] [cursor #f])
         (if (null? rows)
-            (cons (string-join (reverse built) "\n") cursor)
+            (cons (strings:join (reverse built) "\n") cursor)
             (let* ([line (car rows)]
                    [old (leading-blanks line)]
                    [target (and (car cols) (nearest-stop (car cols) old))]
                    [laid (if target
                              (string-append (make-string target #\space)
-                                            (string-tail line old))
+                                            (strings:tail line old))
                              line)]
                    [cursor (if (= row point-row)
                                (+ offset
@@ -350,7 +352,7 @@
     ;; Preserve multiline insertion as entered; the prompt's central edit path
     ;; immediately runs reindent-scheme-input over the complete result.
     (cons (string-append (substring text 0 pos) inserted
-                         (string-tail text pos))
+                         (strings:tail text pos))
           (+ pos (string-length inserted))))
 
   (define (mx-edge-motion action text pos second?)
@@ -394,7 +396,7 @@
     ;; interrupt it whether it came from M-x or eval!.
     (define (run)
       (guard (ex [(interrupted? ex) "interrupted"]
-                 [else (format "error: ~a" (error-text ex))])
+                 [else (format "error: ~a" (kernel:condition-text ex))])
         (call-with-interrupt
           (lambda ()
             (call-as-one-edit! label
@@ -425,8 +427,8 @@
                                 (eq? (car outcome) (void)))))]
            [result (if failed?
                        outcome
-                       (string-join (map (lambda (v) (format "~s" v)) outcome)
-                                    ", "))])
+                       (strings:join (map (lambda (v) (format "~s" v)) outcome)
+                                     ", "))])
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
               (log:log! 'eval (cons query (if void? "#<void>" result)) #f)])
@@ -440,7 +442,7 @@
     ;; the M-x interaction environment and show its result in the echo area.
     (let* ([where (if (pair? rest) (car rest) (current-buffer))]
            [query (if (pair? rest) (format "(eval! ~s)" where) "(eval!)")]
-           [text (string-join (map region-text (regions-of where)) "\n")])
+           [text (strings:join (map region-text (regions-of where)) "\n")])
       (let-values ([(outcome output-records)
                     (evaluation-outcome query text)])
         (report-evaluation! query outcome output-records))

@@ -34,6 +34,7 @@
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
   (import (chezscheme) (core)
+          (prefix (strings) strings:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (styles) styles:)
@@ -565,7 +566,7 @@
                  '())
              (if (pair? (doc-libraries entry))
                  (list (format "libraries: ~a"
-                               (string-join (doc-libraries entry) ", ")))
+                               (strings:join (doc-libraries entry) ", ")))
                  '())
              (list (format "source: ~a, ~a"
                            (case (doc-source entry)
@@ -595,7 +596,7 @@
     (append
       (if (pair? (describe-page-keys page))
           (list (format "**keys**: ~a  "
-                        (string-join (describe-page-keys page) ", "))
+                        (strings:join (describe-page-keys page) ", "))
                 "")
           '())
       (let loop ([entries (describe-page-entries page)] [acc '()])
@@ -652,7 +653,7 @@
                   (lambda (names name)
                     (let ([text (symbol->string name)])
                       (if (or (eq-hashtable-ref seen name #f)
-                              (not (string-prefix? part text)))
+                              (not (strings:prefix? part text)))
                           names
                           (begin
                             (eq-hashtable-set! seen name #t)
@@ -709,7 +710,7 @@
     ;; pretty-scheme-* renderings, which draw the same buffer text.
     (let ([m (buffer-mode-name (current-buffer))])
       (and m (or (string=? m "scheme")
-                 (string-prefix? "pretty-scheme" m)))))
+                 (strings:prefix? "pretty-scheme" m)))))
 
   (define (describe-at-point!)
     ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.

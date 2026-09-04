@@ -90,7 +90,7 @@
           (only (chezscheme)
                 make-parameter make-mutex with-mutex fork-thread void
                 format remq cons* time-second current-time
-                make-weak-eq-hashtable display-condition
+                make-weak-eq-hashtable
                 call-with-string-output-port)
           (only (sys) duplicate-standard-input-port)
           (prefix (kernel) kernel:)
@@ -520,11 +520,6 @@
   (define (set-client-hooks! repaint adopt)
     (set! repaint-hook repaint)
     (set! adopt-hook adopt))
-
-  (define (condition-text ex)
-    (if (condition? ex)
-        (call-with-string-output-port (lambda (p) (display-condition ex p)))
-        (format "~a" ex)))
 
   (define (line-count b) (vector-length (buffer-lines b)))
 
@@ -1265,7 +1260,7 @@
                               (let ([text
                                      (format "App ~a refresh failed: ~a"
                                              (buffer-name (app-buffer a))
-                                             (condition-text ex))])
+                                             (kernel:condition-text ex))])
                                 (unless (equal? text (app-refresh-error a))
                                   (app-refresh-error-set! a text)
                                   (log:log! 'app text)))])
@@ -1346,7 +1341,7 @@
         (guard (ex [else
                     (log:log! 'kill-buffer!
                       (format "Buffer cleanup failed for ~a: ~a"
-                              (buffer-name b) (condition-text ex)))])
+                              (buffer-name b) (kernel:condition-text ex)))])
           (hook b)))
       (kernel:registry-items buffer-kill-hook-registry))
     (set! the-buffers (remq b the-buffers))

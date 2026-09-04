@@ -1,14 +1,12 @@
-;; strings.e -- the small pure string utilities shared by the modules
-;; that sit below core: the library (strings), v2 core dissolution
-;; (docs/DESIGN2.md).  Exported names drop the module stem, per the
-;; v2 import convention: (strings:tail s 2), (strings:prefix? "C-" s),
-;; (strings:join parts " ").
-;;
-;; core.e still carries its own copies under the string- names; they
-;; dissolve with it.
+;; strings.e -- the small pure string utilities every module shares:
+;; the library (strings), v2 core dissolution (docs/DESIGN2.md).  The
+;; one home of these helpers -- no module keeps a private copy.
+;; Exported names drop the module stem, per the v2 import convention:
+;; (strings:tail s 2), (strings:prefix? "C-" s), (strings:join parts
+;; " "), (strings:lines text).
 
 (library (strings)
-  (export tail prefix? suffix? join search)
+  (export tail prefix? suffix? join search lines common-prefix)
   (import (rnrs))
 
   (define (tail s i) (substring s i (string-length s)))
@@ -22,6 +20,26 @@
     (let ([ns (string-length suffix)] [n (string-length s)])
       (and (>= n ns)
            (string=? (substring s (- n ns) n) suffix))))
+
+  (define (lines s)
+    ;; s split at every newline: "" is one empty line, a trailing
+    ;; newline yields an empty last line
+    (let loop ([start 0] [i 0] [acc '()])
+      (cond [(= i (string-length s))
+             (reverse (cons (substring s start i) acc))]
+            [(char=? (string-ref s i) #\newline)
+             (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
+            [else (loop start (+ i 1) acc)])))
+
+  (define (common-prefix strs)
+    ;; the longest prefix shared by every string in the non-empty list
+    (fold-left (lambda (acc s)
+                 (let loop ([i 0])
+                   (if (and (< i (string-length acc)) (< i (string-length s))
+                            (char=? (string-ref acc i) (string-ref s i)))
+                       (loop (+ i 1))
+                       (substring acc 0 i))))
+               (car strs) (cdr strs)))
 
   (define (join xs sep)
     (if (null? xs)

@@ -40,12 +40,12 @@
                 box unbox set-box! format void environment eval
                 make-engine parameterize remq
                 open-string-input-port open-output-string
-                get-output-string display-condition
+                get-output-string
                 call-with-string-output-port)
           (prefix (state) state:)
           (prefix (actors) actors:)
           (prefix (only (log) log!) log:)
-          (only (kernel) persistent-cell))
+          (only (kernel) persistent-cell condition-text))
 
   ;;; Policies ----------------------------------------------------------------
 
@@ -142,10 +142,6 @@
                  (unbox live-sessions))))
 
   ;;; Fueled evaluation ---------------------------------------------------------
-
-  (define (condition-text ex)
-    (call-with-string-output-port
-      (lambda (port) (display-condition ex port))))
 
   (define (parse-expression text)
     (let ([port (open-string-input-port text)])
