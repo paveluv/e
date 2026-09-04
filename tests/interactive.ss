@@ -196,6 +196,11 @@
      (send! "exit\r")
      (wait-for! 'shell-exit-frees-buffer
                 (lambda () (not (find-cell "capturing input"))) 10000)
+     ;; The dead terminal must not log a failed refresh: its detachment
+     ;; happens on the main thread, never under a frame in progress
+     ;; (regression: the reader thread detached the app mid-refresh).
+     (settle! 500)
+     (check 'shell-exit-refreshes-cleanly (not (find-cell "refresh failed")))
      ;; -- window navigation inside a prompt ------------------------------
      ;; Split, start find-file, move focus right mid-prompt, accept: the
      ;; file must open in the newly focused right-hand window.

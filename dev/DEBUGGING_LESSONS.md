@@ -5,6 +5,41 @@ expensive twice. Each entry records the symptom as first reported, the
 theories that failed, the step that actually cracked it, the root cause,
 and what generalizes. Add new entries at the top.
 
+## The reader thread detached the app under a frame in progress (2026-09-04)
+
+**Symptom.** Exiting the shell inside a terminal buffer (C-d) logged
+`app: App *terminal* refresh failed: Exception in view-invalidate!: not
+an app or view buffer` -- once per exit, with the transcript otherwise
+intact.
+
+**Root cause.** The PTY reader thread's end-of-input handler did the
+buffer's afterlife itself: wake the main thread to paint, then turn the
+rendered cells into a plain transcript, then `head:detach-app!`.  The
+wake made the main thread paint at once, and a refresh of the still-dirty
+terminal was under way when the reader removed the app from the
+registry; the refresh reached `paint:view-invalidate!`, which requires
+an app buffer, and failed.  The same handler also replaced the buffer's
+lines from the reader thread -- a seat mutation off the main thread that
+happened not to be the one that blew up.
+
+**Fix.** The handler flips its own `alive` flag and posts the rest
+through `head:run-on-main!`: render the final screen, then materialize
+the transcript, then detach -- in that order, between frames.  Only the
+platform wait for the session leader stays on the reader thread.  The
+interactive suite checks that no "refresh failed" message follows the
+shell's exit.
+
+**What generalizes.**
+
+- Reader and feed threads may flip their own flags; every touch of seat
+  state (buffers, apps, names, facts) goes through `run-on-main!`.  The
+  compiler will not catch a violation here either.
+- "It only logs an error" is still a data race.  The visible failure was
+  the harmless half; the buffer-lines rewrite from the wrong thread was
+  the dangerous one, and both had the same fix.
+- A wake is a request to paint *now*; anything the waker does afterwards
+  runs concurrently with that paint.
+
 ## The escape the keymap declared and the app still swallowed (2026-09-04)
 
 **Symptom.** Inside a live terminal buffer, `C-]` did nothing visible:
