@@ -445,17 +445,22 @@
            [b (and (<= 1 row (length buffer-rows))
                    (list-ref buffer-rows (- row 1)))])
       (when b
-        (show-buffer-in-target! b)
-        ;; A separate target leaves the app focused. Its MRU update may move
-        ;; the activated buffer, so keep the active row attached to it.
+        (show-buffer! b)
+        ;; the view acts on the selected window -- its own, so activating
+        ;; a row replaces the list with the buffer (unless it is the list)
         (when (eq? (current-buffer) buffers-view)
           (refresh-buffers-view!)
           (select-buffer-row! b)))))
 
+  (define (previous-buffer)
+    ;; the buffer the user was in before this view: next in MRU order
+    (let ([bs (buffer-list)])
+      (if (and (pair? bs) (pair? (cdr bs))) (cadr bs) (car bs))))
+
   (define (handle-buffers-event! event)
     (cond [(string=? event "FOCUS")
            (refresh-buffers-view!)
-           (select-buffer-row! (target-buffer))
+           (select-buffer-row! (previous-buffer))
            #t]
           [(member event '("UP" "C-p"))
            (move-buffer-row! -1) #t]
@@ -519,14 +524,15 @@
           buffers-view)))
 
   (define (list-buffers!)
-    ;; Use the live table as an interactive buffer switcher in this window.
-    ;; show-buffer! records the window itself and the replaced buffer as the
-    ;; app target, so Enter completes the switch in place.
-    (let ([b (buffers-view-buffer)])
+    ;; Use the live table as an interactive buffer switcher in this
+    ;; window: Enter shows the chosen buffer here, completing the switch
+    ;; in place.
+    (let ([b (buffers-view-buffer)]
+          [was (current-buffer)])
       (refresh-buffers-view!)
-      (display-app-here! b)
+      (show-buffer! b)
       (refresh-buffers-view!)
-      (select-buffer-row! (target-buffer))
+      (select-buffer-row! was)
       (set-message! "")))
 
   (define (init!)

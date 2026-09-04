@@ -109,7 +109,7 @@
                           (git-diff-path (caddr row))))
         (set! diff-dirty? #t)
         (refresh-diff!)
-        (show-buffer-in-target! diff-buffer))))
+        (show-buffer! diff-buffer))))
 
   (define (reload-log!)
     (unless repository (error 'git-log-refresh! "Git log is not open"))
@@ -214,8 +214,10 @@
       (set! repository (git-open source))
       (load-log! repository)
       (refresh-log!)
-      (when (display-app! log-buffer)
-        (goto-point! '(1 . 0)))
+      (let ([w (display-buffer! log-buffer)])
+        (when w
+          (select-window! w)
+          (goto-point! '(1 . 0))))
       (void)))
 
   (define (init!)

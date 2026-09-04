@@ -18,7 +18,8 @@
           command-keys command-key command-hint
           sequence-bindings resolved-binding choose-binding
           binding-context binding-sequence binding-action
-          binding-kind binding-spec same-sequence?)
+          binding-kind binding-spec same-sequence?
+          set-context-escape! context-escape)
   (import (rnrs)
           (only (chezscheme)
                 format iota top-level-bound? top-level-value
@@ -208,6 +209,32 @@
     (case-lambda
       [(spec) (add-key-binding! 'global spec #f 'user)]
       [(context spec) (add-key-binding! context spec #f 'user)]))
+
+  ;;; Context escapes -------------------------------------------------------------
+
+  ;; A context whose handler consumes every unbound key (a captured
+  ;; app's) may name an escape prefix: a sequence starting with it that
+  ;; the context does not bind resolves, minus the prefix, in the
+  ;; global map -- one complete global command from inside the
+  ;; capture.  Registry-owned like a binding: it retracts with its
+  ;; module.
+
+  (define context-escapes (kernel:make-registry))
+
+  (define (set-context-escape! context spec)
+    (unless (symbol? context)
+      (error 'set-context-escape! "context must be a symbol" context))
+    (let ([tokens (key-spec spec)])
+      (unless (null? (cdr tokens))
+        (error 'set-context-escape! "the escape is a single key" spec))
+      (kernel:registry-add! context-escapes (cons context (car tokens)))))
+
+  (define (context-escape context)
+    ;; the context's escape token, or #f
+    (cond [(kernel:registry-find context-escapes
+                                 (lambda (e) (eq? (car e) context)))
+           => cdr]
+          [else #f]))
 
   ;;; Reverse lookup -------------------------------------------------------------
 

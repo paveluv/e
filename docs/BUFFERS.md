@@ -178,31 +178,18 @@ Both faces are configurable through the style DSL described in
 
 ### Keyboard and mouse controls
 
-- Up or `C-p`, Down or `C-n`: move the active row without changing the target.
-- Enter: show the active row's buffer in the target window.
-- Click a row: show it immediately in the target, without focusing `*buffers*`.
-- Wheel over the app: move one row and show it immediately, without changing
-  focus.
-- Click the app's status line: focus `*buffers*`; the previously focused window
-  becomes its target.
-- Click or drag its scrollbar: reposition the list and keep its active row in
-  the middle of the visible body without activating a target buffer.
+- Up or `C-p`, Down or `C-n`: move the active row.
+- Enter: show the active row's buffer in this window, completing the switch
+  in place.
+- Click a row: show it in the selected window.
+- Wheel over the app: move one row.
+- Click the app's status line: focus `*buffers*`.
 
-Ordinary content clicks focus their window, but `*buffers*` consumes row clicks
-to preserve target focus. Status-line clicks always focus their window and
-cannot be overridden by an app.
-
-### Target windows
-
-The target is the last window that was current before entering an app. Selecting
-a row changes that window, not necessarily the window displaying `*buffers*`.
-Its status line begins with `>` while the app has focus.
-
-If a target window is deleted, the target becomes ephemeral: the app remembers
-the target buffer, and the next selection creates a new target window. Two
-`*buffers*` windows may target one another, which makes it possible to swap
-which window contains the app. Full target semantics and the public app API are
-documented in [App buffers](APPS.md).
+Apps act on the selected window -- their own, when it is selected -- so
+`*buffers*` is an in-place switcher: choose a row and the list gives way to
+the buffer.  Status-line clicks always focus their window and cannot be
+overridden by an app.  The public app API is documented in
+[App buffers](APPS.md).
 
 ## Scrollbars
 
