@@ -17,6 +17,7 @@
 (library (pretty-scheme)
   (export init! pretty-scheme-clusters! pretty-scheme-depth! pretty-scheme-rainbow!)
   (import (chezscheme) (core)
+          (prefix (keymap) keymap:)
           (only (describe) register-descriptions!))
 
   ;;; Clusters ------------------------------------------------------------------
@@ -329,8 +330,8 @@
     (register-mode! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
     (register-mode! "pretty-scheme-rainbow" '() '() scheme-styles #f
                     rainbow-styles)
-    (bind-default-key! ")" (lambda () (close! #\))))
-    (bind-default-key! "]" (lambda () (close! #\])))
+    (keymap:bind-default-key! ")" (lambda () (close! #\))))
+    (keymap:bind-default-key! "]" (lambda () (close! #\])))
     (add-status-hint!
       (lambda ()
         (and (pretty-buffer?)

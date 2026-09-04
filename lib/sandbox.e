@@ -81,7 +81,8 @@
                 exact->inexact open-output-string get-output-string
                 put-string disable-interrupts enable-interrupts)
           (prefix (state) state:)
-          (prefix (only (core) current-buffer buffer-name point) core:)
+          (prefix (only (core) current-buffer point) core:)
+          (prefix (only (head) buffer-name) head:)
           (prefix (only (log) log-entries format-log-entry) log:)
           (prefix (only (describe)
                         doc-lookup doc-forms doc-returns
@@ -128,7 +129,7 @@
 
   (define (current-buffer-name)
     ;; the buffer the head's user is looking at
-    (core:buffer-name (core:current-buffer)))
+    (head:buffer-name (core:current-buffer)))
 
   (define (point)
     ;; the head's cursor: (row . col)

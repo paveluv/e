@@ -33,7 +33,9 @@
           doc-lookup doc-entries
           doc-names doc-forms doc-returns doc-libraries
           doc-source doc-chapter doc-url doc-browser-url doc-description)
-  (import (chezscheme) (core) (only (md-view) markdown-view-install!)
+  (import (chezscheme) (core)
+          (prefix (styles) styles:)
+          (prefix (keymap) keymap:) (only (md-view) markdown-view-install!)
           (only (https) https-download))
 
   (define-record-type (doc-entry make-doc-entry doc-entry?)
@@ -584,7 +586,7 @@
   (define (current-page name)
     ;; The structured source of truth for one rendering. Both registered
     ;; documentation and bindings are live and may change between redraws.
-    (make-describe-page name (doc-lookup name) (command-keys name)))
+    (make-describe-page name (doc-lookup name) (keymap:command-keys name)))
 
   (define (page-lines page)
     ;; Render a structured page as Markdown buffer lines.
@@ -755,10 +757,10 @@
         ((describe!!) (("procedure" . "(describe!!)")) "void"
          ("(describe)") describe "Documentation commands" #f
          "Prompt for a documented function name with completion, then display its live describe page.")
-        ((compile-style) (("procedure" . "(compile-style expression)")) "string"
+        ((styles:compile-style) (("procedure" . "(styles:compile-style expression)")) "string"
          ("(core)") core "Style customization" #f
          "Compile a style expression to terminal SGR parameters. The expression is a list containing attributes (`reset`, `bold`, `dim`, `italic`, `underline`, `blink`, `reverse`, `hidden`, or `strike`) and color clauses `(foreground color)` or `(background color)`; `fg` and `bg` are aliases. A color is a basic name from `black` through `white`, a `bright-` variant, an integer from 0 through 255, or `(rgb red green blue)`.")
-        ((set-style!) (("procedure" . "(set-style! face style)")) "void"
+        ((styles:set-style!) (("procedure" . "(styles:set-style! face style)")) "void"
          ("(core)") core "Style customization" #f
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
         ((markdown-view!) (("procedure" . "(markdown-view! [buffer])")) "void"
@@ -846,5 +848,5 @@
          ("(describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the local describe database, and load it.")))
     (prompt-inspector describe-input!)
-    (bind-default-key! "C-h f" describe!!)
-    (bind-default-key! "M-." describe-at-point!)))
+    (keymap:bind-default-key! "C-h f" describe!!)
+    (keymap:bind-default-key! "M-." describe-at-point!)))

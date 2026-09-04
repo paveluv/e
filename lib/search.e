@@ -13,6 +13,9 @@
 (library (search)
   (export init! search!! search-fold-case)
   (import (chezscheme) (core)
+          (prefix (tty) tty:)
+          (prefix (keymap) keymap:)
+          (prefix (head) head:)
           (only (describe) register-descriptions!))
 
   ;; Configuration: whether the incremental search folds case the
@@ -158,9 +161,9 @@
         (format "~aI-search~a: ~a" (if failed? "Failing " "")
                 (if (fold-for needle) "" " (exact)") needle))
       (redraw!)
-      (let* ([event (read-key-event)]
+      (let* ([event (head:read-key-event)]
              [action (and (not (eof-object? event))
-                          (key-event-binding 'isearch event))])
+                          (keymap:key-event-binding 'isearch event))])
         (cond
           [(eof-object? event) (dispatch-key! event)]
           [(eq? action 'accept)
@@ -222,7 +225,7 @@
                        (when next (goto-match-end! next shorter))
                        (loop shorter (and next (found next shorter))
                              (not next))))))]
-          [(key-event-character event)
+          [(tty:key-event-character event)
            => (lambda (c)
                 (let* ([longer (string-append needle (string c))]
                        [a (anchor match)]
@@ -253,10 +256,10 @@
          ("(search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
     (add-highlighter! search-highlights)
-    (bind-default-key! "C-s" search!!)
+    (keymap:bind-default-key! "C-s" search!!)
     (for-each
       (lambda (entry)
-        (bind-default-key! 'isearch (car entry) (cadr entry)))
+        (keymap:bind-default-key! 'isearch (car entry) (cadr entry)))
       '(("C-s" repeat) ("C-g" cancel) ("RET" accept) ("ESC" accept)
         ("M-c" toggle-case) ("C-h" delete-character)
         ("BACKSPACE" delete-character)

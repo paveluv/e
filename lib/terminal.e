@@ -11,7 +11,10 @@
           terminal-emulator-state terminal-emulator-input
           terminal-emulator-mouse-input terminal-emulator-replies
           terminal-emulator-unsupported terminal-color-scheme!)
-  (import (chezscheme) (core) (sys)
+  (import (chezscheme) (core)
+          (prefix (head) head:)
+          (prefix (log) log:)
+          (prefix (styles) styles:) (sys)
           (prefix (keymap) keymap:)
           (only (describe) register-descriptions!))
 
@@ -176,7 +179,7 @@
     ;; log, the kill ring, the echo area) marshals to the main loop,
     ;; which runs it and paints.  Never blocks: safe under the
     ;; terminal lock.
-    (run-on-main! thunk))
+    (head:run-on-main! thunk))
 
   ;; The host's color scheme as last reported (see mode 2031 in core's
   ;; startup handshake): #f until known. Children that subscribed with
@@ -215,9 +218,9 @@
             (call-with-display-output
               state
               (lambda ()
-                (log! 'terminal
-                      (format "~a sent unsupported ~a"
-                              (buffer-name buffer) feature)))))))))
+                (log:log! 'terminal
+                  (format "~a sent unsupported ~a"
+                          (head:buffer-name buffer) feature)))))))))
 
   (define (control-signature family text final)
     ;; Keep parameters because private mode numbers identify the actual
@@ -1651,11 +1654,11 @@
                     state
                     (lambda ()
                       (copy-to-kill-buffer! clipboard)
-                      (log! 'terminal
-                            (format
-                              "Received clipboard from ~a, stored in kill ring"
-                              (buffer-name
-                                (terminal-state-buffer state))))))))))))))
+                      (log:log! 'terminal
+                        (format
+                          "Received clipboard from ~a, stored in kill ring"
+                          (head:buffer-name
+                            (terminal-state-buffer state))))))))))))))
 
   (define (dispatch-osc! state)
     (let* ([text (control-text state)]
@@ -1859,11 +1862,11 @@
               (let ([name (string->symbol
                             (format "terminal-sgr-~a" style-serial))])
                 (set! style-serial (+ style-serial 1))
-                ;; set-style! accepts SGR parameters, not a complete escape
+                ;; styles:set-style! accepts SGR parameters, not a complete escape
                 ;; sequence. Passing CSI here produced CSI CSI ... m m; the
                 ;; second trailing `m` was painted as text by the host
                 ;; terminal, most visibly during top's frequent SGR changes.
-                (set-style! name (format "0;~a" sequence))
+                (styles:set-style! name (format "0;~a" sequence))
                 (hashtable-set! style-cache sequence name)
                 (hashtable-set! style-sequences name sequence)
                 name)))))
@@ -3242,7 +3245,7 @@
       ;; Output must become visible while the main thread is blocked
       ;; reading the editor's keyboard: wake it.  Wakes coalesce, so a
       ;; chatty child costs one frame per pump, not one per chunk.
-      (wake-main!))
+      (head:wake-main!))
     (define (show-bell!)
       (let ([generation
              (with-mutex (terminal-state-lock state)
@@ -3631,8 +3634,8 @@
 
   (define (terminal!! . command*)
     (let* ([command (and (pair? command*) (car command*))]
-           [directory (or (and (buffer-file (current-buffer))
-                               (let ([path (buffer-file (current-buffer))])
+           [directory (or (and (head:buffer-file (current-buffer))
+                               (let ([path (head:buffer-file (current-buffer))])
                                  (let loop ([index (- (string-length path) 1)])
                                    (cond [(< index 0) (current-directory)]
                                          [(char=? (string-ref path index) #\/)
@@ -3700,13 +3703,13 @@
     (set! known-color-scheme (host-color-scheme))
     (add-color-scheme-hook! terminal-color-scheme!)
     (add-hyperlinker! terminal-row-hyperlinks)
-    (bind-key! "C-c t" terminal!!)
-    (bind-default-key! 'terminal "C-y" terminal-yank!)
+    (keymap:bind-key! "C-c t" terminal!!)
+    (keymap:bind-default-key! 'terminal "C-y" terminal-yank!)
     ;; C-] is the way out of a captured terminal: C-] C-] sends the
     ;; character itself, C-] C-y pastes the kill ring, and any other
     ;; C-] sequence runs one global command (the context's escape)
-    (bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
-    (bind-default-key! 'terminal "C-] C-y" terminal-yank!)
+    (keymap:bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
+    (keymap:bind-default-key! 'terminal "C-] C-y" terminal-yank!)
     (keymap:set-context-escape! 'terminal "C-]")
     (add-buffer-kill-hook! terminal-close!)
     (add-shutdown-hook! terminal-close-all!)

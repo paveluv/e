@@ -8,19 +8,19 @@
 
 (eval
   '(begin
-     (import (core))
+     (import (core) (prefix (paint) paint:) (prefix (head) head:))
 
      (define (check label actual expected)
        (unless (equal? actual expected)
          (error 'hyperlink-test label actual expected)))
 
      (check 'detect-url
-            (detect-hyperlinks "See https://example.com/path.")
+            (paint:detect-hyperlinks "See https://example.com/path.")
             '((4 28 "https://example.com/path")))
 
      ;; Exercise the generic buffer validation path. This catches accidental
      ;; shadowing of list procedures by the numeric line length.
-     (let ([buffer (new-buffer "*hyperlink-test*")])
+     (let ([buffer (head:new-buffer "*hyperlink-test*")])
        (call-with-buffer
          buffer
          (lambda () (insert-text! "https://example.com/path")))

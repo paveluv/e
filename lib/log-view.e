@@ -11,6 +11,7 @@
 (library (log-view)
   (export init! log-view show-log!)
   (import (chezscheme) (core)
+          (prefix (log) log:)
           (only (describe) register-descriptions!))
 
   (define (log-line-prefix e)
@@ -28,7 +29,7 @@
            [sep (and (> n 9) (string-search s ": " 9 n))])
       (when sep
         (let* ([component (string->symbol (substring s 9 sep))]
-               [styler (log-styler component)]
+               [styler (log:log-styler component)]
                [from (+ sep 2)]
                [inner (and styler
                            (guard (ex [else #f])
@@ -48,17 +49,17 @@
     (define b #f)
     (define rendered 0)
     (define (refresh!)
-      (when (< rendered (log-length))
+      (when (< rendered (log:log-length))
         (let ([lines '()])
-          (do ([i (- (log-length) 1) (- i 1)]) ((< i rendered))
-            (let ([e (log-record i)])
+          (do ([i (- (log:log-length) 1) (- i 1)]) ((< i rendered))
+            (let ([e (log:log-record i)])
               (when (pred e)
                 (set! lines
                   (append (let ([prefix (log-line-prefix e)])
                             (map (lambda (l) (string-append prefix l))
-                                 (split-lines (format-log-entry e))))
+                                 (split-lines (log:format-log-entry e))))
                           lines)))))
-          (set! rendered (log-length))
+          (set! rendered (log:log-length))
           (view-append! b lines))))
     (set! b (register-view! name refresh!))
     (set-buffer-mode! b "log")

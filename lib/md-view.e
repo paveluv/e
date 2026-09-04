@@ -19,18 +19,21 @@
   (export init! markdown-view! markdown-edit!
           markdown-render markdown-view-install! markdown-browser
           markdown-view-max-width)
-  (import (chezscheme) (core) (only (sys) terminal-character-width))
+  (import (chezscheme) (core)
+          (prefix (head) head:)
+          (prefix (styles) styles:)
+          (prefix (keymap) keymap:) (only (sys) terminal-character-width))
 
   ;;; Faces -------------------------------------------------------------
 
   (define (register-md-faces!)
-    (set-style! 'md-h1 '(bold underline))
-    (set-style! 'md-h2 '(bold))
-    (set-style! 'md-h3 '(bold italic))
-    (set-style! 'md-h4 '(italic))
-    (set-style! 'md-quote '(italic (foreground bright-black)))
-    (set-style! 'md-link '(underline (foreground 33)))
-    (set-style! 'md-code '(reset)))
+    (styles:set-style! 'md-h1 '(bold underline))
+    (styles:set-style! 'md-h2 '(bold))
+    (styles:set-style! 'md-h3 '(bold italic))
+    (styles:set-style! 'md-h4 '(italic))
+    (styles:set-style! 'md-quote '(italic (foreground bright-black)))
+    (styles:set-style! 'md-link '(underline (foreground 33)))
+    (styles:set-style! 'md-code '(reset)))
 
   (define markdown-view-max-width
     ;; Reading width cap: a view in a wider window wraps at this many
@@ -843,7 +846,7 @@
         (error 'markdown-view! "not a markdown buffer" b))
       (let ([source (buffer-lines-list b)]
             [row (car (point))])
-        (install-render! b source source (buffer-read-only b))
+        (install-render! b source source (head:buffer-read-only b))
         (set-buffer-read-only! b #t)
         (set-buffer-mode! b "markdown-view")
         (goto-point! (cons (view-row-showing b row) 0)))
@@ -905,7 +908,7 @@
         [(string-prefix? "#" url)
          (set-message! "Anchor links are not followed yet")]
         [else
-         (let* ([base (buffer-file (current-buffer))]
+         (let* ([base (head:buffer-file (current-buffer))]
                 [dir (if base (path-parent base) "")]
                 [dir (if (string=? dir "") "." dir)]
                 [target (string-append dir "/" url)])
@@ -960,7 +963,7 @@
     (add-hyperlinker! view-row-links)
     (add-highlighter! link-hint)
     (add-pre-redraw-hook! refit-views!)
-    (bind-default-key! 'markdown "C-c v" markdown-view!)
-    (bind-default-key! 'markdown-view "C-c v" markdown-edit!)
-    (bind-default-key! 'markdown-view "RET" follow-md-link!)
-    (bind-default-key! 'markdown-view "MOUSE-CLICK" click-md-link!)))
+    (keymap:bind-default-key! 'markdown "C-c v" markdown-view!)
+    (keymap:bind-default-key! 'markdown-view "C-c v" markdown-edit!)
+    (keymap:bind-default-key! 'markdown-view "RET" follow-md-link!)
+    (keymap:bind-default-key! 'markdown-view "MOUSE-CLICK" click-md-link!)))
