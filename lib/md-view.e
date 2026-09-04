@@ -20,6 +20,7 @@
           markdown-render markdown-view-install! markdown-browser
           markdown-view-max-width)
   (import (chezscheme) (core)
+          (prefix (echo) echo:)
           (prefix (modes) modes:)
           (prefix (strings) strings:)
           (prefix (paint) paint:)
@@ -953,7 +954,7 @@
                (set! hint-shown url)
                (paint:show-prompt-message! "hyperlink: " url #f)))]
           [hint-shown
-           (when (equal? (current-message)
+           (when (equal? (echo:text)
                          (string-append "hyperlink: " hint-shown))
              (paint:show-message! "" #f))
            (set! hint-shown #f)])))

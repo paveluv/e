@@ -64,12 +64,11 @@
 
 
     complete! show-completions! dismiss-completions!
-    read-paste
 
     (rename (handle-key! dispatch-key!))
     selected-window select-window! quitting?
     set-message!
-    current-message prompt-active? mouse!
+    prompt-active? mouse!
     present-log-entry! present-log-entries!
 
 
@@ -82,7 +81,7 @@
 
 
     publish-descriptions! published-descriptions
-    call-with-interrupt call-uninterrupted interrupted?
+    call-uninterrupted
     vector-fill-range!
     ;; the editor itself
     main)
@@ -250,7 +249,8 @@
     (identifier-syntax [id (echo:live-height)] [(set! id v) (echo:set-live-height! v)]))
   (define echo-greeting-shown (echo:set-text! (startup-greeting)))
 
-  (define kill-ring "")
+  (define-syntax kill-ring
+    (identifier-syntax [id (head:kill-ring)] [(set! id v) (head:set-kill-ring! v)]))
   (define last-command #f)
   (define suppress-history (make-parameter #f))
   (define quit? #f)
@@ -261,12 +261,6 @@
   ;; remains of the screen.
 
   ;;; Small utilities -------------------------------------------------------
-
-  (define (string-insert s at addition)
-    (string-append (substring s 0 at) addition (strings:tail s at)))
-
-  (define (string-delete s from to)
-    (string-append (substring s 0 from) (strings:tail s to)))
 
   (define (vector-fill-range! v from to x)
     (let loop ([i from])
@@ -671,7 +665,7 @@
              [parts (split-inserted-lines s)])
         (if (null? (cdr parts))
             (begin
-              (set-line! row (string-insert old col s))
+              (set-line! row (strings:insert old col s))
               (set! point-col (+ col (string-length s))))
             (let* ([last (car (reverse parts))]
                    [replacement
@@ -699,7 +693,7 @@
              (format "delete ~s"
                      (string (string-ref (current-line) point-col))))
            (set-line! point-row
-             (string-delete (current-line) point-col (+ point-col 1)))
+             (strings:delete (current-line) point-col (+ point-col 1)))
            (changed!)]
           [(< point-row (- (vlen) 1))
            (record-edit! "delete newline")
@@ -824,7 +818,7 @@
 
   (define (delete-region! sr sc er ec)
     (if (= sr er)
-        (set-line! sr (string-delete (line-at sr) sc ec))
+        (set-line! sr (strings:delete (line-at sr) sc ec))
         (let ([joined (string-append (substring (line-at sr) 0 sc)
                                      (strings:tail (line-at er) ec))])
           (splice-lines! sr (+ er 1) (list joined)))))
@@ -1212,8 +1206,6 @@
       (if (and src (> (string-length s) 0))
           (log:log! src s)
           (paint:show-message! s #f))))
-  (define (current-message) message)
-
   (define (prompt-active?)
     ;; True while a prompt owns the echo area (cursor parked there).
     (and echo-cursor #t))
@@ -2397,17 +2389,17 @@
              (if (cursor-on-bottom?) (history-down) (vertical-move 1))]
             [(eq? action 'delete-forward)
              (if (< pos len)
-                 (edited (string-delete s pos (+ pos 1)) pos)
+                 (edited (strings:delete s pos (+ pos 1)) pos)
                  (loop s pos ""))]
             [(eq? action 'delete-backward)
              (if (= pos 0)
                  (loop s pos "")
-                 (edited (string-delete s (- pos 1) pos) (- pos 1)))]
+                 (edited (strings:delete s (- pos 1) pos) (- pos 1)))]
             [(eq? action 'kill)
              (set! kill-ring (strings:tail s pos))
              (edited (substring s 0 pos) pos)]
             [(eq? action 'yank)
-             (edited (string-insert s pos kill-ring)
+             (edited (strings:insert s pos kill-ring)
                      (+ pos (string-length kill-ring)))]
             [(eq? action 'complete)
              (set! hist-pos -1)
@@ -2438,19 +2430,19 @@
                      (edited (car result) (cdr result)))
                    (loop s pos "")))]
             [(eq? action 'paste)
-             (let* ([lines (split-pasted-lines (read-paste))]
+             (let* ([lines (tty:paste-lines (head:read-paste))]
                     [insert (prompt-multiline)])
                (if insert
                    (let ([result (insert s pos (strings:join lines "\n"))])
                      (edited (car result) (cdr result)))
                    (let ([text (strings:join lines " ")])
-                     (edited (string-insert s pos text)
+                     (edited (strings:insert s pos text)
                              (+ pos (string-length text))))))]
             [(prompt-window-command event)
              => (lambda (run) (loop s pos (run)))]
             [(tty:key-event-character event)
              => (lambda (c)
-                  (edited (string-insert s pos (string c)) (+ pos 1)))]
+                  (edited (strings:insert s pos (string c)) (+ pos 1)))]
             [else (loop s pos "")]))))
     ;; The prompt owns C-g while it runs, and its echo-area state is
     ;; restored however it exits -- an error unwinding through it
@@ -2553,82 +2545,25 @@
 
   ;;; Interruptible execution -------------------------------------------------
 
-  ;; A runaway computation run on the user's behalf (an M-x expression, a
-  ;; shell command, ...) would freeze the editor, so for its duration the
-  ;; terminal turns C-g into SIGINT (outside it the editor runs with
-  ;; signals off), and SIGINT becomes a raised condition, answering #t to
-  ;; interrupted?, that unwinds the computation -- C-g aborts an
-  ;; evaluation just as it cancels a prompt.  Limitation: only running
-  ;; Scheme can be interrupted this way -- a blocking foreign call runs
-  ;; to completion.
-  (define-condition-type &interrupted &serious make-interrupted interrupted?)
-
-  ;; Interaction owns C-g; interruption applies to computation.  While
-  ;; the editor waits for the user -- a prompt, a key query, a search --
-  ;; isig is off and C-g arrives as an ordinary key the interaction
-  ;; handles, so a command cancels the same way however it was invoked;
-  ;; between interactions an evaluation is interruptible.
-  (define isig-on? #f)
-
-  (define (set-isig! on)
-    (unless (eq? on isig-on?)
-      (set! isig-on? on)
-      (terminal-isig! on)))
-
+  ;; C-g's two lives -- a key during interaction, SIGINT during
+  ;; computation -- are the head's (head:call-uninterrupted,
+  ;; head:call-with-interrupt).  An interaction also owns the cursor:
+  ;; while it runs, the cursor follows the interaction's rules, not a
+  ;; parked evaluation's.
   (define (call-uninterrupted thunk)
-    ;; Interaction also owns the cursor: while it runs, the cursor
-    ;; follows the interaction's rules, not a parked evaluation's.
-    (let ([old isig-on?])
-      (dynamic-wind
-        (lambda () (set-isig! #f))
-        (lambda () (parameterize ([paint:cursor-in-echo #f]) (thunk)))
-        (lambda () (set-isig! old)))))
-
-  (define (call-with-interrupt thunk)
-    ;; Run thunk interruptibly by C-g.
-    (let ([saved (keyboard-interrupt-handler)]
-          [old isig-on?])
-      (dynamic-wind
-        (lambda ()
-          (keyboard-interrupt-handler
-            (lambda () (raise (make-interrupted))))
-          (set-isig! #t))
-        thunk
-        (lambda ()
-          (set-isig! old)
-          (keyboard-interrupt-handler saved)))))
+    (head:call-uninterrupted
+      (lambda () (parameterize ([paint:cursor-in-echo #f]) (thunk)))))
 
   ;;; Pasting and typed runs --------------------------------------------------
-
-  (define (split-pasted-lines s)
-    ;; Pasted text split at newlines, whichever convention the terminal
-    ;; delivered: \n, \r\n, or bare \r.
-    (let ([n (string-length s)])
-      (let loop ([i 0] [start 0] [acc '()])
-        (cond [(= i n) (reverse (cons (substring s start i) acc))]
-              [(char=? (string-ref s i) #\newline)
-               (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
-              [(char=? (string-ref s i) #\return)
-               (let ([next (if (and (< (+ i 1) n)
-                                    (char=? (string-ref s (+ i 1)) #\newline))
-                               (+ i 2) (+ i 1))])
-                 (loop next next (cons (substring s start i) acc)))]
-              [else (loop (+ i 1) start acc)]))))
-
-  (define pending-paste "")
-
-  (define (read-paste)
-    ;; The text of the paste event just consumed.
-    pending-paste)
 
   (define (paste-into-buffer!)
     ;; A bracketed paste: the whole text becomes one labeled edit, its
     ;; newlines becoming real line breaks.
-    (let ([text (read-paste)])
+    (let ([text (head:read-paste)])
       (unless (string=? text "")
         (call-as-one-edit! (format "insert ~s" text)
           (lambda ()
-            (let ([parts (split-pasted-lines text)])
+            (let ([parts (tty:paste-lines text)])
               (insert-text! (car parts))
               (for-each (lambda (part) (newline!) (insert-text! part))
                         (cdr parts))))))))
@@ -3005,7 +2940,7 @@
       (lambda () (state-frame-sync!) (paint:redraw!))
       run-posted-thunk!
       (lambda (handle? c b x y) (apply-mouse-event! handle? c b x y))
-      (lambda (text) (set! pending-paste text))
+      (lambda (text) (head:set-pending-paste! text))
       (lambda (scheme) (note-color-scheme! scheme))))
 
   (define (set-mark-command!)
@@ -3382,7 +3317,7 @@
     ;; editor's quit and unwind the evaluation instead.
     (let ([safe-quit (lambda args
                        (quit!!)
-                       (raise (make-interrupted)))])
+                       (raise (head:make-interrupted)))])
       (exit-handler safe-quit)
       (abort-handler safe-quit)
       (reset-handler safe-quit))

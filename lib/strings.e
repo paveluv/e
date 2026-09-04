@@ -6,7 +6,8 @@
 ;; " "), (strings:lines text).
 
 (library (strings)
-  (export tail prefix? suffix? join search lines common-prefix)
+  (export tail prefix? suffix? join search lines common-prefix
+          insert delete)
   (import (rnrs))
 
   (define (tail s i) (substring s i (string-length s)))
@@ -20,6 +21,12 @@
     (let ([ns (string-length suffix)] [n (string-length s)])
       (and (>= n ns)
            (string=? (substring s (- n ns) n) suffix))))
+
+  (define (insert s at addition)
+    (string-append (substring s 0 at) addition (tail s at)))
+
+  (define (delete s from to)
+    (string-append (substring s 0 from) (tail s to)))
 
   (define (lines s)
     ;; s split at every newline: "" is one empty line, a trailing

@@ -19,7 +19,7 @@
 
 (library (tty)
   (export read-event character-event key-event-character
-          mouse-reporting!)
+          mouse-reporting! paste-lines)
   (import (rnrs)
           (only (chezscheme) format char-ready?)
           (only (sys) terminal-output-port)
@@ -249,4 +249,21 @@
                       (string-append "M-"
                                      (if (string=? plain " ")
                                          "SPC"
-                                         plain))))]))])))))
+                                         plain))))]))]))))
+  ;;; Pasted text -------------------------------------------------------------------
+
+  (define (paste-lines s)
+    ;; Pasted text split at newlines, whichever convention the terminal
+    ;; delivered: \n, \r\n, or bare \r.
+    (let ([n (string-length s)])
+      (let loop ([i 0] [start 0] [acc '()])
+        (cond [(= i n) (reverse (cons (substring s start i) acc))]
+              [(char=? (string-ref s i) #\newline)
+               (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
+              [(char=? (string-ref s i) #\return)
+               (let ([next (if (and (< (+ i 1) n)
+                                    (char=? (string-ref s (+ i 1)) #\newline))
+                               (+ i 2) (+ i 1))])
+                 (loop next next (cons (substring s start i) acc)))]
+              [else (loop (+ i 1) start acc)]))))
+)

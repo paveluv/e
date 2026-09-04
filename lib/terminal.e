@@ -3581,7 +3581,7 @@
        #t]
       [(string=? event "PASTE")
        (terminal-follow! state)
-       (send-paste! state (read-paste))
+       (send-paste! state (head:read-paste))
        #t]
       [(string=? event "S-PAGEUP")
        (terminal-scroll! state -1 1)
