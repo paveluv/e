@@ -2073,8 +2073,8 @@
                   ;; say -- through a MOUSE-CLICK binding in its keymap.
                   (let ([context (mode:key-context (current-buffer))])
                     (when context
-                      (let ([action (keymap:key-event-binding context
-                                                              "MOUSE-CLICK")])
+                      (let ([action (keymap:event-binding context
+                                                          "MOUSE-CLICK")])
                         (when (procedure? action)
                           (guard (ex [else
                                       (set! message (kernel:condition-text ex))])
@@ -2523,7 +2523,7 @@
                           (paint:redraw!)     ; the match highlight, not the message
                           (let* ([event (head:read-key-event #f)]
                                  [action (and (not (eof-object? event))
-                                              (keymap:key-event-binding
+                                              (keymap:event-binding
                                                 'query-replace event))])
                             (case action
                               [(replace)
@@ -2540,7 +2540,7 @@
                               [(quit-prefix)
                                (let ([next (head:read-key-event #f)])
                                  (when (and (not (eof-object? next))
-                                            (eq? (keymap:key-event-binding
+                                            (eq? (keymap:event-binding
                                                    'query-replace "C-x" next)
                                               'quit-editor))
                                    (quit!!))
@@ -2879,7 +2879,7 @@
     ;; Core defaults are data, just like module and config bindings.
     (begin
       (for-each
-        (lambda (entry) (keymap:bind-default-key! (car entry) (cadr entry)))
+        (lambda (entry) (keymap:bind-default! (car entry) (cadr entry)))
         `(("C-@" ,set-mark-command!) ("C-a" ,beginning-of-line!)
           ("C-b" ,move-left!) ("C-d" ,delete-forward!)
           ("C-e" ,end-of-line!) ("C-f" ,move-right!)
@@ -2910,7 +2910,7 @@
           ("C-c a" ,answer!!)))
       (for-each
         (lambda (entry)
-          (keymap:bind-default-key! 'prompt (car entry) (cadr entry)))
+          (keymap:bind-default! 'prompt (car entry) (cadr entry)))
         '(("C-g" cancel) ("ESC" cancel) ("RET" accept)
           ("C-a" beginning) ("HOME" beginning)
           ("C-b" backward) ("LEFT" backward)
@@ -2979,16 +2979,16 @@
                             (string-length (buffer-line buffers-view row))
                             'active-shadow)))]
           [else '()])))
-    (keymap:bind-default-key! "C-x C-b" list-buffers!)
-    (keymap:bind-default-key! "M-S-UP" previous-buffer!)
-    (keymap:bind-default-key! "M-S-DOWN" next-buffer!)
-    (keymap:bind-default-key! "M-%" replace!!)
-    (keymap:bind-default-key! "M-n" next-conflict!)
-    (keymap:bind-default-key! "M-m" keep-mine!)
-    (keymap:bind-default-key! "M-d" keep-disk!)
+    (keymap:bind-default! "C-x C-b" list-buffers!)
+    (keymap:bind-default! "M-S-UP" previous-buffer!)
+    (keymap:bind-default! "M-S-DOWN" next-buffer!)
+    (keymap:bind-default! "M-%" replace!!)
+    (keymap:bind-default! "M-n" next-conflict!)
+    (keymap:bind-default! "M-m" keep-mine!)
+    (keymap:bind-default! "M-d" keep-disk!)
     (for-each
       (lambda (entry)
-        (keymap:bind-default-key! 'query-replace (car entry) (cadr entry)))
+        (keymap:bind-default! 'query-replace (car entry) (cadr entry)))
       '(("y" replace) ("Y" replace) ("SPC" replace)
         ("n" skip) ("N" skip) ("BACKSPACE" skip)
         ("q" stop) ("RET" stop) ("C-g" stop) ("ESC" stop)

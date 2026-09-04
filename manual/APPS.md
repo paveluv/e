@@ -54,8 +54,8 @@ should mean on its own terms:
 
 ```scheme
 (keymap:set-context-escape! 'terminal "C-]")
-(keymap:bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
-(keymap:bind-default-key! 'terminal "C-] C-y" terminal:yank!)
+(keymap:bind-default! 'terminal "C-] C-]" terminal-literal-escape!)
+(keymap:bind-default! 'terminal "C-] C-y" terminal:yank!)
 ```
 
 A sequence starting with the escape that the context does not bind resolves,

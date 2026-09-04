@@ -3707,13 +3707,13 @@
     (set! known-color-scheme (head:host-color-scheme))
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (paint:add-hyperlinker! terminal-row-hyperlinks)
-    (keymap:bind-key! "C-c t" terminal!!)
-    (keymap:bind-default-key! 'terminal "C-y" terminal-yank!)
+    (keymap:bind! "C-c t" terminal!!)
+    (keymap:bind-default! 'terminal "C-y" terminal-yank!)
     ;; C-] is the way out of a captured terminal: C-] C-] sends the
     ;; character itself, C-] C-y pastes the kill ring, and any other
     ;; C-] sequence runs one global command (the context's escape)
-    (keymap:bind-default-key! 'terminal "C-] C-]" terminal-literal-escape!)
-    (keymap:bind-default-key! 'terminal "C-] C-y" terminal-yank!)
+    (keymap:bind-default! 'terminal "C-] C-]" terminal-literal-escape!)
+    (keymap:bind-default! 'terminal "C-] C-y" terminal-yank!)
     (keymap:set-context-escape! 'terminal "C-]")
     (head:add-buffer-kill-hook! terminal-close!)
     (head:add-shutdown-hook! terminal-close-all!)

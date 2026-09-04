@@ -210,8 +210,8 @@ the commands' current key bindings, including user rebinding from `config.e`.
 (eval:copy-result #t)
 
 ;; Optional key rebinding examples.
-(keymap:bind-key! "C-c e" eval:run!)
-(keymap:bind-key! "M-X" eval:run!!)
+(keymap:bind! "C-c e" eval:run!)
+(keymap:bind! "M-X" eval:run!!)
 ```
 
 `eval:copy-result` is a parameter and may also be changed temporarily with

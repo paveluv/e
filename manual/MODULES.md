@@ -46,8 +46,8 @@ At startup the kernel discovers `lib/*.e`, loads each library, and calls its
 compilation order.  A failing module reports an error but does not prevent
 unrelated modules or the editor from starting.
 
-Bundled and third-party modules should use `keymap:bind-default-key!`.
-`keymap:bind-key!` is for deliberate user or session overrides, ensuring a
+Bundled and third-party modules should use `keymap:bind-default!`.
+`keymap:bind!` is for deliberate user or session overrides, ensuring a
 module reload cannot displace configuration choices.
 
 ## Hot reload

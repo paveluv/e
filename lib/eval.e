@@ -493,5 +493,5 @@
          ("(eval)") eval "Evaluation commands" #f
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (log:register-formatter! 'eval format-exchange style-exchange)
-    (keymap:bind-default-key! "C-x C-e" eval!)
-    (keymap:bind-default-key! "M-x" eval!!)))
+    (keymap:bind-default! "C-x C-e" eval!)
+    (keymap:bind-default! "M-x" eval!!)))

@@ -10,12 +10,12 @@ any meanings the key has inside prompts, incremental search, or query-replace.
 
 ## Global bindings
 
-`keymap:bind-key!` takes a key specification and a zero-argument command:
+`keymap:bind!` takes a key specification and a zero-argument command:
 
 ```scheme
-(keymap:bind-key! "M-l" log-view:show!)
-(keymap:bind-key! "C-c s" save!!)
-(keymap:bind-key! "C-c C-f" find-file!!)
+(keymap:bind! "M-l" log-view:show!)
+(keymap:bind! "C-c s" save!!)
+(keymap:bind! "C-c C-f" find-file!!)
 ```
 
 Global specifications may contain any number of space-separated key events.
@@ -28,15 +28,15 @@ such as `save!!`, `undo!`, `beginning-of-buffer!`, and `other-window!` can be
 used directly. A lambda can adapt a command that needs arguments:
 
 ```scheme
-(keymap:bind-key! "M-g" (lambda () (goto-point! '(0 . 0))))
-(keymap:bind-key! "C-c n" (lambda () (move-vertical! 10)))
+(keymap:bind! "M-g" (lambda () (goto-point! '(0 . 0))))
+(keymap:bind! "C-c n" (lambda () (move-vertical! 10)))
 ```
 
 Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:
 
 ```scheme
-(keymap:bind-key! ";" (lambda () (insert-text! " — ")))
+(keymap:bind! ";" (lambda () (insert-text! " — ")))
 ```
 
 ## Key names
@@ -68,9 +68,9 @@ input.
 Examples:
 
 ```scheme
-(keymap:bind-key! "C-c SPC" set-mark-command!)
-(keymap:bind-key! "PAGEUP" beginning-of-buffer!)
-(keymap:bind-key! "C-c LEFT" beginning-of-line!)
+(keymap:bind! "C-c SPC" set-mark-command!)
+(keymap:bind! "PAGEUP" beginning-of-buffer!)
+(keymap:bind! "C-c LEFT" beginning-of-line!)
 ```
 
 Terminal protocols cannot distinguish every physical key combination. In
@@ -80,19 +80,19 @@ configure it to send DEL if necessary.
 
 ## Removing and replacing bindings
 
-`keymap:unbind-key!` creates a user-level unbinding, so a lower-priority default does
+`keymap:unbind!` creates a user-level unbinding, so a lower-priority default does
 not become active again:
 
 ```scheme
-(keymap:unbind-key! "C-v")
-(keymap:unbind-key! "M-w")
+(keymap:unbind! "C-v")
+(keymap:unbind! "M-w")
 ```
 
 Binding the same specification again replaces its effective meaning. An exact
 user binding can also reclaim a key used as a default prefix:
 
 ```scheme
-(keymap:bind-key! "C-h" backspace!)
+(keymap:bind! "C-h" backspace!)
 ```
 
 Here `C-h` runs `backspace!` immediately instead of waiting for the default
@@ -110,10 +110,10 @@ Some interactions interpret keys using local state. Their bindings use a
 three-argument form consisting of the context, key, and semantic action:
 
 ```scheme
-(keymap:bind-key! 'isearch "M-i" 'toggle-case)
-(keymap:unbind-key! 'isearch "M-c")
-(keymap:bind-key! 'prompt "C-u" 'kill)
-(keymap:bind-key! 'query-replace "SPC" 'skip)
+(keymap:bind! 'isearch "M-i" 'toggle-case)
+(keymap:unbind! 'isearch "M-c")
+(keymap:bind! 'prompt "C-u" 'kill)
+(keymap:bind! 'query-replace "SPC" 'skip)
 ```
 
 Context bindings use action symbols rather than command procedures because the
@@ -135,8 +135,8 @@ Available actions are:
 Example:
 
 ```scheme
-(keymap:bind-key! 'isearch "M-i" 'toggle-case)
-(keymap:unbind-key! 'isearch "M-c")
+(keymap:bind! 'isearch "M-i" 'toggle-case)
+(keymap:unbind! 'isearch "M-c")
 ```
 
 Printable keys without contextual actions extend the search. Other unhandled
@@ -160,10 +160,10 @@ Available actions are:
 Example:
 
 ```scheme
-(keymap:bind-key! 'prompt "C-u" 'kill)
-(keymap:bind-key! 'prompt "M-p" 'up)
-(keymap:bind-key! 'prompt "M-n" 'down)
-(keymap:bind-key! 'prompt "M-RET" 'newline)
+(keymap:bind! 'prompt "C-u" 'kill)
+(keymap:bind! 'prompt "M-p" 'up)
+(keymap:bind! 'prompt "M-n" 'down)
+(keymap:bind! 'prompt "M-RET" 'newline)
 ```
 
 Printable keys without prompt actions insert themselves. Other unhandled keys
@@ -180,28 +180,28 @@ The ordinary configurable actions are:
 Example:
 
 ```scheme
-(keymap:bind-key! 'query-replace "r" 'replace)
-(keymap:bind-key! 'query-replace "s" 'skip)
-(keymap:bind-key! 'query-replace "q" 'stop)
+(keymap:bind! 'query-replace "r" 'replace)
+(keymap:bind! 'query-replace "s" 'skip)
+(keymap:bind! 'query-replace "q" 'stop)
 ```
 
 ## Inspecting bindings from Scheme
 
-`keymap:key-binding` returns the effective command or action, or `#f` when the key is
+`keymap:binding` returns the effective command or action, or `#f` when the key is
 unbound or has no explicit binding:
 
 ```scheme
-(keymap:key-binding "C-s")
-(keymap:key-binding 'isearch "M-c")
+(keymap:binding "C-s")
+(keymap:binding 'isearch "M-c")
 ```
 
 Code that has already read canonical events with `head:read-key-event` should use
-`keymap:key-event-binding` instead. It accepts events directly, without reparsing the
+`keymap:event-binding` instead. It accepts events directly, without reparsing the
 space-separated configuration syntax:
 
 ```scheme
 (let ([event (head:read-key-event)])
-  (keymap:key-event-binding 'isearch event))
+  (keymap:event-binding 'isearch event))
 ```
 
 `(head:read-key-event #f)` consumes mouse reports without applying them, which is
@@ -228,24 +228,24 @@ primarily useful to extension modules when constructing status or help text.
 
 ## Defaults in extension modules
 
-Modules should register suggested bindings with `keymap:bind-default-key!`, normally
+Modules should register suggested bindings with `keymap:bind-default!`, normally
 inside `init!`:
 
 ```scheme
 (define (init!)
-  (keymap:bind-default-key! "M-j" describe:at-point!))
+  (keymap:bind-default! "M-j" describe:at-point!))
 ```
 
 Context defaults use the corresponding three-argument form:
 
 ```scheme
-(keymap:bind-default-key! 'isearch "M-i" 'toggle-case)
+(keymap:bind-default! 'isearch "M-i" 'toggle-case)
 ```
 
-Defaults remain replaceable by `keymap:bind-key!` and `keymap:unbind-key!`. Registrations are
+Defaults remain replaceable by `keymap:bind!` and `keymap:unbind!`. Registrations are
 owned by their module, so reloading it retracts the old defaults before running
 its new `init!`; user choices remain effective.
 
-Use `keymap:bind-key!` in a module only when the module deliberately installs an
+Use `keymap:bind!` in a module only when the module deliberately installs an
 override rather than offering a default. For normal extension behavior,
-`keymap:bind-default-key!` is the cooperative choice.
+`keymap:bind-default!` is the cooperative choice.

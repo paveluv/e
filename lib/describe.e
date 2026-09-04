@@ -830,5 +830,5 @@
          ("(describe:this)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the local describe database, and load it.")))
     (prompt:inspector describe-input!)
-    (keymap:bind-default-key! "C-h f" describe!!)
-    (keymap:bind-default-key! "M-." describe-at-point!)))
+    (keymap:bind-default! "C-h f" describe!!)
+    (keymap:bind-default! "M-." describe-at-point!)))

@@ -12,9 +12,9 @@
 ;; like 'isearch.
 
 (library (keymap)
-  (export key-spec sequence-text
-          bind-key! bind-default-key! unbind-key!
-          key-binding key-event-binding binding-prefix?
+  (export (rename (key-spec spec)) sequence-text
+          (rename (bind-key! bind!)) (rename (bind-default-key! bind-default!)) (rename (unbind-key! unbind!))
+          (rename (key-binding binding)) (rename (key-event-binding event-binding)) binding-prefix?
           command-keys command-key command-hint
           sequence-bindings resolved-binding choose-binding
           binding-context binding-sequence binding-action
