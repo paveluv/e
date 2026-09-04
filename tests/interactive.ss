@@ -192,6 +192,30 @@
      (send! "\x18;0")                   ; C-x 0: back to one window
      (settle! 500)
 
+     ;; -- completions borrow the window and give it back ------------------
+     ;; M-x, a partial name, TAB: the *completions* view takes the window
+     ;; and lists the candidates; C-g hands the window's buffer back.  A
+     ;; second prompt reuses the same view.
+     (send! "\x1b;x")                   ; M-x
+     (settle! 500)
+     (send! "split-w\t\t")
+     (wait-for! 'completions-take-the-window
+                (lambda () (and (find-cell "*completions*")
+                                (find-cell "split-window!")))
+                5000)
+     (send! "\x7;")                     ; C-g
+     (wait-for! 'completions-give-the-window-back
+                (lambda () (and (not (find-cell "*completions*"))
+                                (find-cell "*terminal*")))
+                5000)
+     (send! "\x1b;x")
+     (settle! 500)
+     (send! "split-w\t\t")
+     (wait-for! 'completions-view-reused
+                (lambda () (find-cell "split-window!")) 5000)
+     (send! "\x7;")
+     (settle! 500)
+
      (send! "\x18;\x3;")                ; C-x C-c
      (let loop ()                       ; block until the editor exits
        (let ([character (guard (ex [else (eof-object)])
