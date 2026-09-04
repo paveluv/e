@@ -321,7 +321,7 @@
                    [(= row er) (cons 0 ec)]
                    [else (cons 0 line-length)])))))
 
-  ;; Whether (head:windows) soft-wrap by default -- for config.e; a window
+  ;; Whether windows soft-wrap by default -- for config.e; a window
   ;; toggled by hand (wrap!, C-x t) keeps its own setting.
   (define wrap-lines (make-parameter #t))
 
@@ -374,7 +374,7 @@
   (define (add-buffer-status-hint! proc)
     ;; Unlike a conventional status hint, this is evaluated for every painted
     ;; window as (proc buffer active?) and can therefore describe passive
-    ;; (head:windows) too.
+    ;; windows too.
     (kernel:registry-add! buffer-status-hints proc))
 
   (define (status-hint-values b active?)
@@ -526,7 +526,7 @@
   (define (paint! row xoff key draw)
     ;; Repaint the segment of the 0-based screen row starting at
     ;; column xoff unless it already shows key; a row shared by
-    ;; side-by-side (head:windows) caches one key per segment.
+    ;; side-by-side windows caches one key per segment.
     (let* ([entry (vector-ref screen-cache row)]
            [hit (and (pair? entry) (assv xoff entry))])
       (unless (and hit (equal? (cdr hit) key))
@@ -1234,7 +1234,7 @@
     ;; that overflows the width wraps the same way at indent zero --
     ;; up to eight lines, after which it scrolls, keeping the prompt
     ;; cursor's line visible; empty behind pending (current-lines) it folds
-    ;; away.  The whole area grows until the (head:windows) above hit their
+    ;; away.  The whole area grows until the windows above hit their
     ;; minimum; past that the oldest pending (current-lines) are evicted -- they
     ;; remain in *log*.
     (let* ([content (string-append (echo:text) (echo:ghost))]
