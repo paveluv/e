@@ -24,13 +24,13 @@
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
                 fork-thread sleep make-time current-time time-second)
-          (prefix (core) core:)
+          (prefix (edit) edit:)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (styles) styles:)
           (prefix (state) state:)
           (prefix (text) text:)
-          (only (describe) register-descriptions!))
+          (prefix (docs) docs:))
 
   (define blame-tint-seconds
     ;; how long another actor's edit stays tinted (0 turns tinting off)
@@ -139,7 +139,7 @@
 
   (define (buffer-of-id id)
     (find (lambda (b) (eqv? (head:buffer-state-id b) id))
-          (core:buffer-list)))
+          (edit:buffer-list)))
 
   (define (blame-highlights)
     (let* ([now (now-seconds)]
@@ -160,10 +160,10 @@
 
   (define (blame-at-point!)
     ;; who recently wrote the text at point, from the store's log
-    (let* ([b (core:current-buffer)]
+    (let* ([b (edit:current-buffer)]
            [id (head:buffer-state-id b)]
-           [p (core:point)])
-      (core:set-message!
+           [p (edit:point)])
+      (edit:set-message!
         (cond
           [(not id) "This buffer has no state twin"]
           [(find (lambda (entry)
@@ -194,7 +194,7 @@
     (styles:set-style! 'blame-4 '((background 54)))   ; deep purple
     (styles:set-style! 'blame-5 '((background 23)))   ; deep teal
     (styles:set-style! 'blame-6 '((background 58)))   ; olive
-    (register-descriptions!
+    (docs:register!
       '(((blame-at-point!)
          (("procedure" . "(blame-at-point!)")) "void"
          ("(blame)") blame "Blame" #f

@@ -10,11 +10,11 @@
 
 (library (paren)
   (export init! matching-paren-style)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (modes) modes:)
           (prefix (paint) paint:)
           (prefix (styles) styles:)
-          (only (describe) register-descriptions!))
+          (prefix (docs) docs:))
 
   ;; The named looks for the matched pair, in the style DSL. Box draws a
   ;; line above and below the bracket -- the closest widely rendered
@@ -93,7 +93,7 @@
 
   (define (init!)
     (paint:add-highlighter! paren-highlights)
-    (register-descriptions!
+    (docs:register!
       '(((matching-paren-style)
          (("parameter" . "(matching-paren-style [name])")) "symbol"
          ("(paren)") paren "Editing" #f

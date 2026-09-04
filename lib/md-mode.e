@@ -12,7 +12,7 @@
 
 (library (md-mode)
   (export init!)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (styles) styles:)
           (prefix (modes) modes:))
 

@@ -16,11 +16,11 @@
 
 (library (pretty-scheme)
   (export init! pretty-scheme-clusters! pretty-scheme-depth! pretty-scheme-rainbow!)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (modes) modes:)
           (prefix (paint) paint:)
           (prefix (keymap) keymap:)
-          (only (describe) register-descriptions!))
+          (prefix (docs) docs:))
 
   ;;; Clusters ------------------------------------------------------------------
 
@@ -315,7 +315,7 @@
     (toggle-mode! "pretty-scheme-rainbow"))
 
   (define (init!)
-    (register-descriptions!
+    (docs:register!
       '(((pretty-scheme-clusters!)
          (("procedure" . "(pretty-scheme-clusters!)")) "void"
          ("(pretty-scheme)") pretty-scheme "Display commands" #f

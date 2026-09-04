@@ -151,7 +151,7 @@
   ;; Extension modules are libraries in the lib directory, loaded
   ;; through here -- by the loader at startup, or later by hand -- so
   ;; the kernel knows which modules exist and owns their
-  ;; registrations.  The kernel and the core are the two libraries
+  ;; registrations.  The kernel and main are the two libraries
   ;; that never reload; everything else does, in place.
 
   (define modules '())          ; module names, in load order
@@ -165,7 +165,7 @@
   ;; exactly as code imports them -- M-x says (state:edit! ...) too
   (define seam-modules
     '(text state actors policy sandbox log styles keymap tty strings
-       files modes paint echo head prompt))
+       docs files modes paint echo head prompt))
 
   (define (init-module! name)
     ;; Import the module's library into the editor's top level
@@ -212,7 +212,7 @@
       (sort string<?
             (filter (lambda (file)
                       (and (dot-e? file)
-                           (not (member file '("core.e" "kernel.e" "main.e")))))
+                           (not (member file '("kernel.e" "main.e")))))
                     (directory-list (caar (library-directories)))))))
 
   (define (module-requires? name target)
@@ -279,21 +279,18 @@
                   (set! modules old-modules)
                   (restore-registrations! old-registrations)
                   (raise ex)])
-        (when (member name '("core" "kernel" "main"))
+        (when (member name '("kernel" "main"))
           (error 'reload-module!
                  (format "the ~a cannot be reloaded in place" name)))
-        ;; The core and main cannot reload, so a module they link against would
-        ;; fork on reload: the core keeps the instance it compiled
+        ;; main cannot reload, so a module it links against would
+        ;; fork on reload: main keeps the instance it compiled
         ;; against while everything else moves to the new one --
         ;; coherent stores through persistent cells, forked
         ;; registries.  Refuse rather than leave two instances.
-        (let ([linker (cond [(module-requires? "core" name) "core"]
-                            [(module-requires? "main" name) "main"]
-                            [else #f])])
-          (when linker
-            (error 'reload-module!
-                   (format "~a links against ~a: restart e to pick up changes"
-                           linker name))))
+        (when (module-requires? "main" name)
+          (error 'reload-module!
+                 (format "main links against ~a: restart e to pick up changes"
+                         name)))
         (unless (file-exists? source)
           (error 'reload-module! "no module source" source))
         (load source)

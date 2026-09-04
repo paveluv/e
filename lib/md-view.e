@@ -19,7 +19,7 @@
   (export init! markdown-view! markdown-edit!
           markdown-render markdown-view-install! markdown-browser
           markdown-view-max-width)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (echo) echo:)
           (prefix (modes) modes:)

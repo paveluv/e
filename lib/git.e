@@ -21,7 +21,7 @@
           git-file-patch
           git-error? git-error-code git-error-command git-error-stderr)
   (import (chezscheme)
-          (only (describe) register-descriptions!))
+          (prefix (docs) docs:))
 
   (define-record-type git-repository-record
     (fields (immutable path git-repository-path)))
@@ -326,7 +326,7 @@
                #\newline)))))
 
   (define (init!)
-    (register-descriptions!
+    (docs:register!
       '(((git-open) (("procedure" . "(git-open [path])")) "git-repository"
          ("(git)") git "Git" #f
          "Open the Git worktree containing `path`, which defaults to the current directory, and return a structured repository object.")

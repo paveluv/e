@@ -11,7 +11,7 @@
           terminal-emulator-state terminal-emulator-input
           terminal-emulator-mouse-input terminal-emulator-replies
           terminal-emulator-unsupported terminal-color-scheme!)
-  (import (chezscheme) (core)
+  (import (chezscheme) (except (edit) init!)
           (prefix (modes) modes:)
           (prefix (kernel) kernel:)
           (prefix (strings) strings:)
@@ -20,7 +20,7 @@
           (prefix (log) log:)
           (prefix (styles) styles:) (sys)
           (prefix (keymap) keymap:)
-          (only (describe) register-descriptions!))
+          (prefix (docs) docs:))
 
   (define-record-type terminal-state
     (fields buffer process lock
@@ -3734,7 +3734,7 @@
                                '("▶" . #f)
                                (cons tail 'italic))))
                    '((" " . #f) ("■" . #f)))))))
-    (register-descriptions!
+    (docs:register!
       '(((terminal!!)
          (("procedure" . "(terminal!! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f
