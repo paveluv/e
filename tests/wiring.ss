@@ -101,7 +101,7 @@
      (check 'typing-after-sync-mirrors (mirror-agrees? 'after) #t)
 
      ;; the foreign edit is on the audit stream
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (cadr entry) (quote state))) (log:log-entries)) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (cadr entry) (quote state))) (log:entries)) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'foreign-edit-audited (call-with-input-file probe read) #t)
@@ -259,7 +259,7 @@
      (pump! 300)
      (send! "\x1b;xlet ([id (head:buffer-state-id (current-buffer))]) (state:edit! (quote (agent rival)) id (state:revision id) (text:make-span 0 0 0 0) (list \"r\"))\r")
      (pump! 900)
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([texts (map (lambda (e) (log:format-log-entry e)) (log:log-entries (quote state)))]) (write (let scan ([ts texts]) (cond [(null? ts) (quote missing)] [(and (> (string-length (car ts)) 13) (string=? (substring (car ts) 0 13) \"ui: 3 edits i\")) (quote coalesced)] [else (scan (cdr ts))])) p))) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([texts (map (lambda (e) (log:format-entry e)) (log:entries (quote state)))]) (write (let scan ([ts texts]) (cond [(null? ts) (quote missing)] [(and (> (string-length (car ts)) 13) (string=? (substring (car ts) 0 13) \"ui: 3 edits i\")) (quote coalesced)] [else (scan (cdr ts))])) p))) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'ui-burst-coalesced-on-the-audit-stream
@@ -327,7 +327,7 @@
 
      ;; stage 4: the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make-policy (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (head:buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (head:buffer-state-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
                     probe))
      (pump! 1200)
      (check 'minted-session-evals-and-is-fenced

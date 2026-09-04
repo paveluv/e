@@ -84,7 +84,7 @@
           (prefix (only (head) buffer-name window-buffer current
                         window-prow window-pcol)
                   head:)
-          (prefix (only (log) log-entries format-log-entry) log:)
+          (prefix (only (log) entries format-entry) log:)
           (prefix (only (describe) doc-lookup) describe:)
           (prefix (only (docs) forms returns libraries description) docs:))
 
@@ -185,7 +185,7 @@
     ;; The newest entries of *log* -- errors and messages land there.
     ;; Default 20, at most 200.
     (let* ([n (min (if (pair? count) (car count) 20) 200)]
-           [entries (let take ([entries (log:log-entries)] [n n])
+           [entries (let take ([entries (log:entries)] [n n])
                       (if (or (= n 0) (null? entries))
                           '()
                           (cons (car entries)
@@ -195,7 +195,7 @@
           (apply string-append
                  (map (lambda (entry)
                         (string-append
-                          (clipped (log:format-log-entry entry) 500) "\n"))
+                          (clipped (log:format-entry entry) 500) "\n"))
                       (reverse entries))))))
 
   (define (describe-text name)

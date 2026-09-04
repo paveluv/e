@@ -254,7 +254,7 @@
 
   (define (run-hooks! hooks path)
     (for-each (lambda (p)
-                (guard (ex [else (log:log! 'save-file!
+                (guard (ex [else (log:add! 'save-file!
                                    (format "Save hook failed: ~a"
                                            (kernel:condition-text ex)))])
                   (p path)))

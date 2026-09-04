@@ -18,8 +18,8 @@
 ;; (query . result) and its history reads only the queries.
 
 (library (log)
-  (export log! log-record log-length log-entries log-history
-          register-log-formatter! log-styler format-log-entry
+  (export (rename (log! add!)) (rename (log-record record)) (rename (log-length length)) (rename (log-entries entries)) (rename (log-history history))
+          (rename (register-log-formatter! register-formatter!)) (rename (log-styler styler)) (rename (format-log-entry format-entry))
           set-presenter!)
   (import (rnrs)
           (only (chezscheme) box unbox set-box! format current-time void)

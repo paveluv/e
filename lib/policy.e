@@ -27,9 +27,9 @@
 ;; in-process trust boundary.
 
 (library (policy)
-  (export make-policy policy?
-          policy-grants policy-fuel policy-edits policy-buffers
-          policy-cap reader-policy
+  (export (rename (make-policy make)) policy?
+          (rename (policy-grants grants)) (rename (policy-fuel fuel)) (rename (policy-edits edits)) (rename (policy-buffers buffers))
+          (rename (policy-cap cap)) (rename (reader-policy reader))
           mint! session? session-actor session-owner sessions
           revoke! revoked?
           session-eval! session-edit! session-undo! session-ask!
@@ -44,7 +44,7 @@
                 call-with-string-output-port)
           (prefix (state) state:)
           (prefix (actors) actors:)
-          (prefix (only (log) log!) log:)
+          (prefix (only (log) add!) log:)
           (only (kernel) persistent-cell condition-text))
 
   ;;; Policies ----------------------------------------------------------------
@@ -89,7 +89,7 @@
                 (if (or (zero? n) (null? entries))
                     '()
                     (cons (car entries) (take (cdr entries) (- n 1))))))
-    (log:log! 'policy entry #f))
+    (log:add! 'policy entry #f))
 
   (define (audit-log . count)
     ;; the newest audit entries, newest first, as plain data

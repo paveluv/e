@@ -19,7 +19,7 @@
   ;; The named looks for the matched pair, in the style DSL. Box draws a
   ;; line above and below the bracket -- the closest widely rendered
   ;; approximation of a frame; a terminal that really draws SGR 51 can
-  ;; have it with (styles:set-style! 'matching-paren '(framed)). Colored uses
+  ;; have it with (styles:set! 'matching-paren '(framed)). Colored uses
   ;; the accent violet that also marks choices and resizes.
   (define matching-paren-style-table
     '((underline (underline))
@@ -37,7 +37,7 @@
           (unless hit
             (error 'matching-paren-style
                    "must be underline, box, bold, or colored" name))
-          (styles:set-style! 'matching-paren (cadr hit))
+          (styles:set! 'matching-paren (cadr hit))
           name))))
 
   (define (scan-paren b styles-of start-row start-col dir)

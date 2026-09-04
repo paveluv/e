@@ -24,7 +24,7 @@
           highlight-ranges add-hyperlinker! buffer-line-hyperlinks
           ranges-on-row region-span
           begin-frame! invalidate-screen-cache! erase-screen! paint!
-          paint-dividers! paint-window!
+
           screen-rows set-screen-rows! screen-cols set-screen-cols!
           mark-size-dirty! screen-live? set-screen-live! reset-cursor-style!
           redraw! redraw-lock visual-bell!
@@ -36,8 +36,8 @@
           completion-styler echo-cursor-now show-message!
           show-prompt-message! echo-append! echo-queue!
           present-echo! echo-log-prefix echo-log-spans
-          echo-log-rows display-echo-log-row paint-echo-area!
-          echo-cap update-echo-geometry! paint-visual-bell!
+          echo-log-rows display-echo-log-row
+          echo-cap update-echo-geometry!
           update-terminal-title! window-screen-position
           place-cursor! terminal-size!)
   (import (rnrs) (rnrs mutable-strings) (rnrs r5rs)
@@ -176,21 +176,21 @@
                                (equal? (link-at j) link))
                           (run (+ j 1))
                           j))])
-          (ansi "\x1b;[0m" (styles:style-code style))
-          (when sel (ansi (styles:style-code 'selection)))
+          (ansi "\x1b;[0m" (styles:code style))
+          (when sel (ansi (styles:code 'selection)))
           (case bg
-            [(match-point) (ansi (styles:style-code 'match-point))]
-            [(active) (ansi (styles:style-code 'active))]
-            [(active-shadow) (ansi (styles:style-code 'active-shadow))]
-            [(match) (ansi (styles:style-code 'match))]
+            [(match-point) (ansi (styles:code 'match-point))]
+            [(active) (ansi (styles:code 'active))]
+            [(active-shadow) (ansi (styles:code 'active-shadow))]
+            [(match) (ansi (styles:code 'match))]
             [else (void)])
-          (when mk (ansi (styles:style-code mk)))
+          (when mk (ansi (styles:code mk)))
           (when link (open-link link))
           (ansi (segment col end))
           (when link (close-link))
           (loop end))))
     (when edge
-      (ansi "\x1b;[0m" (styles:style-code 'chrome)
+      (ansi "\x1b;[0m" (styles:code 'chrome)
             (if (eq? edge 'wrap) "\\" "$")))
     (ansi "\x1b;[0m"))
 
@@ -208,7 +208,7 @@
                     (if (and (< j end) (eq? (at j) st))
                         (run (+ j 1))
                         j))])
-          (ansi "\x1b;[0m" (styles:style-code st) (substring content i j))
+          (ansi "\x1b;[0m" (styles:code st) (substring content i j))
           (emit j)))))
 
   ;;; Soft wrap -------------------------------------------------------------------
@@ -517,9 +517,9 @@
                 (paint! r x (list 'divider junction?)
                         (lambda ()
                           (if junction?
-                              (ansi (styles:style-code 'chrome)
+                              (ansi (styles:code 'chrome)
                                 "\x2534;\x1b;[0m")
-                              (ansi (styles:style-code 'chrome)
+                              (ansi (styles:code 'chrome)
                                 "\x2502;\x1b;[0m")))))))))
       (head:dividers)))
 
@@ -564,7 +564,7 @@
                     (if (eq? side 'right) (- (head:window-width w) 1) 0))
                   (list 'scrollbar glyph)
                   (lambda ()
-                    (ansi (styles:style-code 'chrome) glyph "\x1b;[0m")))))))
+                    (ansi (styles:code 'chrome) glyph "\x1b;[0m")))))))
 
   (define (paint-line-number! row x width line first-segment?)
     (when (> width 0)
@@ -577,7 +577,7 @@
                      label " ")])
         (paint! row x (list 'line-number text)
                 (lambda ()
-                  (ansi (styles:style-code 'chrome) text "\x1b;[0m"))))))
+                  (ansi (styles:code 'chrome) text "\x1b;[0m"))))))
 
   (define (paint-window! w start height ranges)
     (let* ([b (head:window-buffer w)]
@@ -1122,13 +1122,13 @@
            [text-end (min end (string-length text))]
            [ghost-start (max start (string-length text))]
            [content (string-append text ghost)])
-      (ansi "\x1b;[0m" (styles:style-code 'chrome) lead)
+      (ansi "\x1b;[0m" (styles:code 'chrome) lead)
       (when (< start text-end)
         (if styles
             (emit-runs text styles start text-end)
             (ansi "\x1b;[0m" (substring text start text-end))))
       (when (< ghost-start end)
-        (ansi "\x1b;[0m" (styles:style-code 'chrome)
+        (ansi "\x1b;[0m" (styles:code 'chrome)
           (substring content ghost-start end)))
       (ansi "\x1b;[0m"
         (make-string (max 0 (- cols (string-length lead) (- end start)
@@ -1202,7 +1202,7 @@
                                      (car (echo:styles))))))])
                     (ansi (make-string lead #\space))
                     (when (> lb 0)
-                      (ansi (styles:style-code 'chrome)
+                      (ansi (styles:code 'chrome)
                             (substring content 0 lb) "\x1b;[0m"))
                     (if styles
                         ;; styled runs for the typed part
@@ -1210,7 +1210,7 @@
                                    (+ start cut))
                         (ansi (substring content (+ start lb)
                                          (+ start cut))))
-                    (ansi "\x1b;[0m" (styles:style-code 'chrome)
+                    (ansi "\x1b;[0m" (styles:code 'chrome)
                           (substring content (+ start cut) end)
                           "\x1b;[0m"
                           (make-string

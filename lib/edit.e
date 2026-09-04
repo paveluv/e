@@ -765,12 +765,12 @@
             (head:buffer-base-set! b content)
             (head:buffer-stamp-set! b (files:stamp path))
             (modes:assign! b)
-            (log:log! 'visit-file! (cons "Loaded" path))
+            (log:add! 'visit-file! (cons "Loaded" path))
             b))
         (let ([b (head:new-buffer (unique-name (files:base-name path) #f))])
           (head:buffer-file-set! b path)
           (modes:assign! b)
-          (log:log! 'visit-file! (cons "New file:" path))
+          (log:add! 'visit-file! (cons "New file:" path))
           b)))
 
   (define (visit-file! path)
@@ -845,9 +845,9 @@
         (let ([pending (assq b merge-reports)])
           (when (and pending (not (buffer-has-conflicts? b)))
             (set! merge-reports (remq pending merge-reports))
-            (log:log! 'save-file!
+            (log:add! 'save-file!
               (format "Merge resolved -- details in ~a" (cdr pending)))))
-        (log:log! 'save-file! (cons "Wrote" path))
+        (log:add! 'save-file! (cons "Wrote" path))
         (files:run-post-save-hooks! path)
         #t))
     (files:run-pre-save-hooks! path)
@@ -1048,7 +1048,7 @@
     ;; editor's.
     (let ([src (message-source)])
       (if (and src (> (string-length s) 0))
-          (log:log! src s)
+          (log:add! src s)
           (paint:show-message! s #f))))
   (define (point) (cons point-row point-col))
   (define (mark) (and mark-active? (cons mark-row mark-col)))
@@ -1139,8 +1139,8 @@
     (let loop ([left entries])
       (when (pair? left)
         (let* ([e (car left)]
-               [text (log:format-log-entry e)]
-               [styler (log:log-styler (cadr e))]
+               [text (log:format-entry e)]
+               [styler (log:styler (cadr e))]
                [ghost (if (and (null? (cdr left)) (pair? tail))
                           (car tail)
                           "")])
@@ -1813,7 +1813,7 @@
                              (if file-name
                                (files:abbreviate (files:absolute file-name))
                                (default-directory))
-                             (box (log:log-history 'save-file! cdr))))])
+                             (box (log:history 'save-file! cdr))))])
       (when (and s (> (string-length s) 0)) (save-file! s)))
     (void))
 
@@ -1824,7 +1824,7 @@
     (let ([s (parameterize ([paint:echo-highlight
                              (file-prompt-styler "Find file: ")])
                (prompt:read! "Find file: " files:complete (default-directory)
-                             (box (log:log-history 'visit-file! cdr))))])
+                             (box (log:history 'visit-file! cdr))))])
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
   (define (quit!!)
@@ -2832,25 +2832,25 @@
   ;; retracts and remakes it; what the loop and the seams ask of the
   ;; commands is installed here too.
   (define (init!)
-    ;; The head's side of every log:log! -- present the fresh record
+    ;; The head's side of every log:add! -- present the fresh record
     ;; transiently in the echo area, styled by its component's styler.
     ;; Visible log views catch up at the next redraw.
     (log:set-presenter!
       (lambda (e show?)
         (when show?
           (if (message-progress)
-              (paint:echo-append! (cadr e) (log:format-log-entry e)
-                                  (log:log-styler (cadr e)) #t)
+              (paint:echo-append! (cadr e) (log:format-entry e)
+                                  (log:styler (cadr e)) #t)
               (present-log-entry! e)))))
     ;; The file commands' formatters: their entries are (verb . path),
     ;; formatted "verb path", their histories the paths (see
-    ;; log:log-history).
+    ;; log:history).
     (let ([fmt (lambda (d)
                  (if (pair? d)
                      (format "~a ~a" (car d) (cdr d))
                      (format "~a" d)))])
-      (log:register-log-formatter! 'visit-file! fmt)
-      (log:register-log-formatter! 'save-file! fmt))
+      (log:register-formatter! 'visit-file! fmt)
+      (log:register-formatter! 'save-file! fmt))
     ;; the status line shows a merge's conflicts as a hint the files code
     ;; owns -- painting knows nothing about merges
     (paint:add-buffer-status-hint!
@@ -2860,7 +2860,7 @@
                (and (> n 0)
                     (list (cons (format "  ~a conflict~a" n (if (= n 1) "" "s"))
                                 'red)))))))
-    (styles:set-styles-changed-hook!
+    (styles:set-changed-hook!
       (lambda () (paint:invalidate-screen-cache!)))
     (head:add-shutdown-hook! (lambda () (head:flush-ui-audit! 'all)))
     ;; the global commands a prompt may run without losing its input:

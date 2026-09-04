@@ -11,8 +11,8 @@
 ;; repaint everything).
 
 (library (styles)
-  (export compile-style style-escape set-style! style-code
-          set-styles-changed-hook! fill-range!)
+  (export (rename (compile-style compile)) (rename (style-escape escape)) (rename (set-style! set!)) (rename (style-code code))
+          (rename (set-styles-changed-hook! set-changed-hook!)) fill-range!)
   (import (rnrs)
           (only (chezscheme) format void)
           (prefix (kernel) kernel:)
