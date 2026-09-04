@@ -111,11 +111,18 @@
      ;; dispatcher must hand the context's escape to the keymaps before
      ;; the handler sees it (regression: the escape became keymap data
      ;; while the handler kept first refusal, and C-] went to the shell).
-     (send! "\x1d;\x1b;x")                ; C-] M-x
+     (send! "\x1d;")                      ; C-]
+     (wait-for! 'escape-shows-in-the-status-line
+                (lambda () (find-cell "▶ escaped")) 5000)
+     (send! "\x1b;x")                     ; M-x
      (wait-for! 'escape-opens-the-global-prompt
-                (lambda () (find-cell "M-x (")) 5000)
+                (lambda () (and (find-cell "M-x (") (find-cell "▶ escaped")))
+                5000)
      (send! "\x7;")                       ; C-g: back to the capture
-     (settle! 300)
+     (wait-for! 'capture-resumes-after-the-command
+                (lambda () (and (find-cell "capturing input")
+                                (not (find-cell "▶ escaped"))))
+                5000)
      (send! "cat -v\r")
      (settle! 500)
      (send! "\x1d;\x1d;\r")               ; C-] C-]: the literal character

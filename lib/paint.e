@@ -1340,6 +1340,10 @@
                       ;; a prompt: the cursor is in the echo area's input,
                       ;; which is editable whatever the buffer behind it
                       [(echo:cursor) "\x1b;[0 q"]
+                      ;; an escaped app: the next key is the editor's, so
+                      ;; the cursor is the editor's too
+                      [(eq? (head:escaped-buffer) (head:window-buffer (head:current)))
+                       "\x1b;[0 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
                          [(block) "\x1b;[2 q"]

@@ -3726,6 +3726,7 @@
                    (let ([tail
                           (cond
                             [(not active?) ""]
+                            [(eq? (head:escaped-buffer) buffer) " escaped"]
                             [else " capturing input, C-] to escape"])])
                      (if (terminal-state-bell-visible state)
                          (list '(" " . #f)

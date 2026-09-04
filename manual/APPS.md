@@ -66,6 +66,9 @@ inside a captured terminal.  Multi-key bindings wait for their remaining
 keys, commands keep control through their synchronous prompts, and when the
 command returns the next key goes to the app's handler again.  The handler
 need not know about the escape: the dispatcher consults the context first.
+While the escape is in progress `head:escaped-buffer` names the buffer, so a
+status hint can say so -- the terminal shows `▶ escaped` -- and the cursor
+takes the editor's shape rather than the app's.
 
 The handler is optional. Thus these are equivalent:
 

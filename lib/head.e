@@ -61,7 +61,8 @@
           read-key-event run-on-main! wake-main! in-main-pump
           run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
           quit! quitting? last-command set-last-command!
-          current-keys set-current-keys! dispatch-app-event!
+          current-keys set-current-keys! escaped-buffer set-escaped-buffer!
+          dispatch-app-event!
           host-color-scheme add-color-scheme-hook!
           tile! layout window-at window-button-at divider-at
           transfer-split! drag set-drag! double-click?
@@ -414,6 +415,14 @@
   (define the-current-keys '())
   (define (current-keys) the-current-keys)
   (define (set-current-keys! keys) (set! the-current-keys keys))
+
+  ;; the app buffer whose capture the dispatcher is escaping, from the
+  ;; escape key until the command it introduces returns; #f otherwise.
+  ;; The buffer's status hint and cursor show that the keys are the
+  ;; editor's meanwhile.
+  (define the-escaped-buffer #f)
+  (define (escaped-buffer) the-escaped-buffer)
+  (define (set-escaped-buffer! b) (set! the-escaped-buffer b))
 
   (define (start-input-reader!)
     (let ([stdin (sys:duplicate-standard-input-port)])
