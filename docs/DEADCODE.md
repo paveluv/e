@@ -19,13 +19,19 @@ with a date; deletions note the commit.
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
   `echo-greeting-shown`, `head-seat-initialized`, `buffers-initialized`,
   `pump-handlers-installed`, `completions-mode-registered`,
-  `conflict-status-hinted`, `completions-status-hinted`,
-  `paint-redraw-hooked`
+  `conflict-status-hinted`, `completions-status-hinted`
   (core, the v2 wiring; `state-subscription` now lives in head.e),
   `adopt-hooked` (modes), `repaint-hooked` (paint).
   Skip these in future sweeps.
 
 ## Deleted
+
+- 2026-09-03 `paint:set-redraw-hook!`, `paint-redraw-hooked` (core),
+  `paint:visual-bell-active?`/`set-visual-bell-active!`: the frame and
+  the bell live in paint.e, so nothing outside needs to ask for a frame
+  through a hook or flip the bell's flag.  The per-prompt creation and
+  deletion of the *completions* buffer (its store twin with it) went
+  too: the buffer is a registered view now.
 
 - 2026-09-03 `read-file` (describe): a private copy of core's; both are
   `files:read` now.  Core's own disk helpers (`read-file`, `disk-stamp`,

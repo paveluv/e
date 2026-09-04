@@ -188,9 +188,18 @@ stopped knowing about capture.
       (scroll-window!, page-size, view invalidation), the echo area's
       painting and geometry, the visual bell, the terminal title, and
       place-cursor! -- screen size and liveness behind accessors, with
-      one redraw hook the core installs.  Remaining with the core:
-      redraw-frame!/redraw! (the frame's orchestration, which leaves
-      with the main loop), page-window!, and the prompts.
+      one redraw hook the core installs.  Then the frame itself:
+      redraw!/redraw-frame! under the redraw lock, and the visual bell
+      -- the redraw hook is gone, paint:redraw! is the one frame entry
+      point (modules call it directly), and the clipboard's OSC 52
+      takes paint:redraw-lock.  Layout surgery went to head
+      (set-layout-root!, replace-layout-window!, and fit-layout!, the
+      too-small-screen collapse the frame asks for), and the
+      *completions* buffer became a registered view: refreshed against
+      the current layout by refresh-visible-views! like every app,
+      instead of a special step inside the frame; it persists like *log*
+      rather than being created and deleted per prompt.  Remaining with
+      the core: page-window! (a command) and the prompts.
       History: the row painter moved first -- display-editor-line
       (styled runs, marks, links, selection, wrap/truncation edges),
       emit-runs, ansi/goto/fit, soft-wrap break computation, and
