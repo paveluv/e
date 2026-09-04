@@ -11,11 +11,11 @@ with a date; deletions note the commit.
 - **define-for-effect**: `(define name (side-effecting-expression))`
   runs initialization at library load; the name is intentionally
   never referenced. Confirmed instances: `buffer-printing`,
-  `core-keys-bound`, `log-formatters-init`, `reload-hooked`,
-  `reload-tail-hooked`, `log-presenter-installed`,
+  `core-keys-bound`, `log-formatters-init`, `log-presenter-installed`,
   `styles-hook-installed`, `ui-audit-flushed-at-exit`,
   `head-seat-initialized`, `buffers-initialized`, `mouse-hooked`,
-  `conflict-status-hinted`, `prompt-commands-allowed` (core);
+  `conflict-status-hinted`, `prompt-commands-allowed`, `main-hooked`
+  (core); `reload-hooked`, `reload-tail-hooked` (main);
   `region-printing` (edit); `libc-character-locale`,
   `libutil-loaded?` (sys); `state-subscription`, `ui-actor-registered`
   (head); `adopt-hooked` (modes); `repaint-hooked` (paint);

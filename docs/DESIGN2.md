@@ -242,7 +242,7 @@ unless noted, loaded by the same loader. Layer by layer:
 |---|---|
 | `text.e` | pure text and span algebra: lines, anchored spans, edit rebasing -- no state, fully unit-testable |
 | `state.e` | the buffer store: buffers, revisions, the single-writer queue, marks, subscriptions, attributed undo, and buffer properties -- the buffer-level facts every head shares (visited file, mode name, read-only, disk base), so a second or remote head reads the same truth; per-seat state (cursors, selections, viewports) stays with heads |
-| `files.e` | the disk: path algebra, reading, stamps, permission-preserving writes, the line/trailing-newline algebra, the three-way merge over text, path completion -- no buffers, no dialogs; the server's side of a save |
+| `files.e` | the disk: path algebra, reading, stamps, permission-preserving writes, the line/trailing-newline algebra, the three-way merge over text, path completion, the pre/post-save hooks -- no buffers, no dialogs; the server's side of a save |
 | `log.e` | the structured log and audit stream (state, not UI) |
 | `policy.e` | permissions: capability minting per actor, budgets |
 | `sandbox.e` | the read-only capability environment for expression eval -- v0.1's `claude-safe`, generalized to any constrained actor |
@@ -263,7 +263,7 @@ that lets v0.1 reload modules under a running editor.
 | `echo.e` | the notification area's model: message, ghost, transient log queue, prompt geometry |
 | `prompt.e` | the prompt: the modal line editor in the echo area (history, completion with the *completions* view, M-x's multiline variants), single-key questions, the commands a prompt may run (allow!), the interaction guard (C-g as a key, the cursor) -- the human frontend of ask/reply |
 | `head.e` | a UI head: window tree and layout (with the fit-to-screen collapse), per-user state (kill ring, paste text, scroll, the last command, the keys being dispatched, the quit flag, the host's color scheme), the store client, the scheduling pump (which services its own side effects; two hooks reach up: the frame, the mouse), C-g interruption, the app event dispatch |
-| `main.e` | the editor: startup, the seat's loop, shutdown, key dispatch (mode context, global map, SELF-INSERT), the pending-ask presenter -- never reloaded; the loader runs `(main:run)` |
+| `main.e` | the editor: startup, the seat's loop, shutdown, key dispatch (mode context, global map, SELF-INSERT), the pending-ask presenter, config.e loading and the reload-on-save policy; what it asks of the command layer arrives through setters, so the layer reloads under it -- main itself never does; the loader runs `(main:run)` |
 
 **Platform** (infrastructure, layerless):
 

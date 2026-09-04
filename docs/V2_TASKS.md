@@ -368,6 +368,20 @@ stopped knowing about capture.
       (main:run).  Meta-wheel runs its global binding through a local
       helper; the dead `mouse-on?` flag and the never-produced "MOUSE"
       key went
+- [x] main stands alone: it imports nothing of the command layer, so
+      the layer can reload under it.  The save hooks live at the disk
+      seam (`files:add-pre-save-hook!`/`add-post-save-hook!`, run by the
+      save command; a raising hook logs); config.e loading and the
+      reload-on-save policy live in main (`main:load-config!`,
+      `main:modules-reload-on-save`, `main:config-reload-on-save`, the
+      after-reload hook, `reload-on-save!` as a post-save hook); and
+      what the loop asks of the commands arrives through three setters
+      the commands call at load -- `set-file-opener!` (the file
+      argument), `set-quit-command!` (the modified-buffers check behind
+      a stray exit), `set-after-key!` (clamp-point!).  Core imports main
+      now, not the reverse.  The bare `load-module!`/`reload-module!`
+      aliases are gone: the loader imports kernel prefixed into the M-x
+      environment alongside core (bare, the command names) and main
 - [ ] keyboard window resizing returns as plain M-x commands ("resize
       this window to N x M", enlarge/shrink by delta) and layouts become
       saveable/restorable data -- the tree is already data in head.e
