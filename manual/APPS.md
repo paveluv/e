@@ -63,6 +63,13 @@ assigning old coordinates after it returns can overwrite a newer refresh
 performed by a callback. Workers schedule head changes with
 `head:run-on-main!`.
 
+Use `(head:call-with-display-update thunk)` when a display operation also
+switches windows or places the cursor. Nested scopes defer repaint
+notification until the complete operation is installed. A repaint callback
+may then start a new display operation without having its state overwritten
+by the outer one. This batches only repaint notification: it does not defer
+arbitrary callbacks, lock the head, or roll back changes on an exception.
+
 ## Input capture and propagation
 
 App input is layered: an active prompt first, then the focused app, then e's

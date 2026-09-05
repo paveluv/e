@@ -79,7 +79,7 @@
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
           sync-foreign-edits! flush-ui-audit!
-          set-repaint-hook! set-adopt-hook!
+          set-repaint-hook! set-adopt-hook! call-with-display-update buffer-point
           add-buffer-kill-hook! add-pre-redraw-hook!
           before-frame! add-shutdown-hook! run-shutdown-hooks!
           registered-apps app-of app-buffer? detach-app! register-app!
@@ -98,9 +98,9 @@
           app-status-position-set! make-app app?)
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme) keyboard-interrupt-handler
-                make-parameter make-mutex with-mutex fork-thread void
+                make-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* time-second current-time
-                make-weak-eq-hashtable
+                make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
           (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
           (prefix (kernel) kernel:)
@@ -641,6 +641,26 @@
   ;; the mode registry gives an adopted buffer a mode (set-adopt-hook!).
 
   (define repaint-hook void)
+  (define display-update (make-parameter #f))
+
+  (define (request-repaint!)
+    (let ([pending (display-update)])
+      (if pending (set-box! pending #t) (repaint-hook))))
+
+  (define (call-with-display-update thunk)
+    ;; Compose seat changes before notifying the painter. Nested updates
+    ;; share one notification; callbacks run outside the scope and may
+    ;; start another update. This batches notification, not rollback or
+    ;; arbitrary extension callbacks. Seat work still runs on the head pump.
+    (if (display-update) (thunk)
+        (let ([pending (box #f)])
+          (dynamic-wind
+            void
+            (lambda () (parameterize ([display-update pending]) (thunk)))
+            (lambda ()
+              (when (unbox pending)
+                (set-box! pending #f)
+                (repaint-hook)))))))
   (define adopt-hook (lambda (b) (void)))
 
   (define (set-repaint-hook! proc) (set! repaint-hook proc))
@@ -1208,7 +1228,7 @@
             (log:add! 'store
               (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
                       (buffer-name b) old revision))
-            (repaint-hook))))))
+            (request-repaint!))))))
 
   (define (sync-store-buffer! b)
     ;; Event arrival is only a wakeup.  Reading text separately from
@@ -1292,7 +1312,7 @@
                            the-buffers)])
               (when b
                 (bump-buffer-revision! b)
-                (repaint-hook)))))
+                (request-repaint!)))))
         events)
       ;; Advance each affected buffer once, to a coherent text/anchor
       ;; revision.  A queued older event then becomes a harmless wakeup.
@@ -1589,7 +1609,7 @@
         (buffer-fact-set! b 'cursor-style cursor-style))
       (buffer-fact-set! b 'sticky-lines sticky-lines)
       (buffer-fact-set! b 'scrollbar scrollbar)
-      (repaint-hook)
+      (request-repaint!)
       b))
 
   (define (buffer-sticky-lines b)
@@ -1743,31 +1763,37 @@
       ;; Styles can change even when rendered text is equal.  Invalidate
       ;; cached rows for either change, and never write older state after
       ;; the callback returns: it may have adopted a newer rendering.
-      (when (or text-changed? facts-changed?) (repaint-hook))))
+      (when (or text-changed? facts-changed?) (request-repaint!))))
 
 
   (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) the-buffers))
 
+  (define (buffer-point b)
+    ;; Reading a position must not switch a window or invoke callbacks.
+    (let ([w (if (eq? (window-buffer the-current) b) the-current
+                 (find (lambda (w) (eq? (window-buffer w) b)) the-windows))])
+      (if w (cons (window-prow w) (window-pcol w))
+          (cons (buffer-spot-row b) (buffer-spot-col b)))))
+
   (define (set-window-buffer! w b)
     ;; Display b in w, remembering where point was in the old buffer and
-    ;; restoring where it last was in the new one.
+    ;; restoring where it last was in the new one. Redisplaying the same
+    ;; buffer preserves the live window; saved spots belong to hidden ones.
     (let ([old (window-buffer w)])
       (unless (eq? old b)
         (buffer-spot-row-set! old (window-prow w))
         (buffer-spot-col-set! old (window-pcol w))
         (buffer-spot-top-set! old (window-top w))
-        ;; Buffer identity is part of every content and status row, even when
-        ;; the new buffer happens to have equal text and presentation chrome.
-        ;; This is especially important when an asynchronous app paints its
-        ;; final frame while the main thread replaces it.
-        (repaint-hook)))
-    (window-buffer-set! w b)
-    (window-prow-set! w (buffer-spot-row b))
-    (window-pcol-set! w (buffer-spot-col b))
-    (window-top-set! w (buffer-spot-top b))
-    (window-topseg-set! w 0)
-    (window-left-set! w 0))
+        (window-buffer-set! w b)
+        (window-prow-set! w (buffer-spot-row b))
+        (window-pcol-set! w (buffer-spot-col b))
+        (window-top-set! w (buffer-spot-top b))
+        (window-topseg-set! w 0)
+        (window-left-set! w 0)
+        (clamp-buffer-positions! b)
+        ;; Identity and geometry agree before a callback can switch again.
+        (request-repaint!))))
 
   (define (forget-buffer! b)
     ;; Drop a local buffer or a record whose store twin is gone: kill

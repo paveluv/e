@@ -348,6 +348,16 @@ kind.  A local buffer's facts and generated text stay in the head and
 produce no store notifications; local points and selections are not
 published to other actors.
 
+`(head:buffer-point b)` reads point in the selected window when it shows
+`b`, otherwise in another window showing it, otherwise from its saved
+position. It does not switch windows or run repaint callbacks.
+`show-buffer!` on the already displayed buffer preserves the live cursor
+and viewport. To compose window changes and cursor placement before repaint
+callbacks run, use `(head:call-with-display-update thunk)`; nested calls
+produce one notification after all changes. The thunk's return values are
+preserved. Exceptions and escapes still notify completed changes; this scope
+does not roll them back.
+
 `head:buffer-lines-set!` and `head:store-reset!` accept a line list or vector.
 An empty input becomes one empty line. They validate the complete input and
 own a new vector; callers must treat the shared line strings as immutable.

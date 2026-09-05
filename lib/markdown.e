@@ -916,12 +916,14 @@
     (let ([source (if (pair? b*) (car b*) (current-buffer))])
       (unless (equal? (mode:name-of source) "markdown")
         (error 'markdown-view! "not a markdown buffer" source))
-      (head:add-buffer! source)
-      (let ([row (call-with-buffer source (lambda () (car (point))))]
-            [b (source-view source)])
-        (show-buffer! b)
-        (refresh-render! b)
-        (goto-point! (cons (view-row-showing (rendering-of b) row) 0)))
+      (head:call-with-display-update
+        (lambda ()
+          (head:add-buffer! source)
+          (let ([row (car (head:buffer-point source))]
+                [b (source-view source)])
+            (show-buffer! b)
+            (refresh-render! b)
+            (goto-point! (cons (view-row-showing (rendering-of b) row) 0)))))
       (void)))
 
   (define (markdown-edit! . b*)
@@ -933,11 +935,12 @@
       (let ([source (render-input b)])
         (unless (and (head:buffer? source) (memq source (head:buffers)))
           (error 'markdown-edit! "no live markdown source" b))
-        (refresh-render! b)
-        (let ([row (source-row-at (rendering-of b)
-                                  (call-with-buffer b (lambda () (car (point)))))])
-          (show-buffer! source)
-          (goto-point! (cons row 0))))
+        (head:call-with-display-update
+          (lambda ()
+            (refresh-render! b)
+            (let ([row (source-row-at (rendering-of b) (car (head:buffer-point b)))])
+              (show-buffer! source)
+              (goto-point! (cons row 0))))))
       (void)))
 
   (define (forget-render! b)

@@ -888,6 +888,36 @@
                      result))))
             '("Two" 1 "Three!" 2 #t #t "Three!" "Two" "Three!" 2))
 
+     (check 'markdown-toggles-keep-point-through-repaint-edits
+            (read-editor
+              '(let ([source (head:new-buffer "wired-navigation.md")]
+                     [was (current-buffer)] [once #t])
+                 (head:buffer-lines-set! source (vector "# Alpha" "" "# Middle" "" "# Omega"))
+                 (mode:choose! source "markdown")
+                 (show-buffer! source)
+                 (goto-point! '(2 . 0))
+                 (let ([result
+                        (dynamic-wind
+                          (lambda ()
+                            (head:set-repaint-hook!
+                              (lambda ()
+                                (paint:invalidate-screen-cache!)
+                                (when once
+                                  (set! once #f)
+                                  (head:store-edit! source (text:make-span 0 0 0 0) '("# Before" "" ""))
+                                  (head:before-frame!)))))
+                          (lambda ()
+                            (markdown:view!)
+                            (let ([view-point (point)] [view-line (buffer-line (current-buffer) (car (point)))])
+                              (set! once #t)
+                              (markdown:edit!)
+                              (list view-point view-line (point) (buffer-line source (car (point))))))
+                          (lambda () (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))))])
+                   (show-buffer! was)
+                   (kill-buffer! source)
+                   result)))
+            '((4 . 0) "Middle" (6 . 0) "# Middle"))
+
      (delete-file probe)
      (sys:close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))
