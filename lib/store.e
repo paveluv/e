@@ -22,13 +22,13 @@
   (export create! delete! reset! rename!
           buffer-list exists? buffer-name find-named
           snapshot snapshot-since revision line-count line extract
-          edit! undo! history blame
+          edit! undo! redo! history-step! undo-authors history blame
           set-mark! mark drop-mark! marks
           set-property! drop-property! property properties
           subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme)
-                box unbox set-box! make-mutex with-mutex format void)
+                box unbox set-box! make-mutex with-mutex format void remq)
           (prefix (text) text:)
           (prefix (kernel) kernel:))
 
@@ -40,10 +40,18 @@
     (fields (mutable label)
             (mutable text)       ; immutable line vector, per (text)
             (mutable revision)
-            (mutable deltas)     ; (#(revision actor delta) ...) newest first
+            (mutable deltas)     ; (#(revision actor delta origin) ...) newest first
             (mutable marks)      ; (((actor . name) . position) ...)
-            (mutable undo)       ; (#(revision actor delta live?) ...)
+            (mutable undo)       ; undo groups, most recent operation first
             (mutable properties))) ; ((key . datum) ...), see set-property!
+
+  (define-record-type undo-group
+    (fields id actor key
+            (mutable label)
+            (mutable parts)      ; the group's last deltas, newest first
+            (mutable live?)
+            (mutable redo-actor) ; (requester), or #f when redo was invalidated
+            (mutable complete?)))
 
   (define-record-type (store make-store store?)
     (fields lock
@@ -206,7 +214,11 @@
         (let* ([b (buffer-of 'snapshot-since id)]
                [entries (entries-since b basis)])
           (values (buffer-text b) (buffer-revision b)
-                  (and entries (map vector->list entries)))))))
+                  (and entries
+                       (map (lambda (entry)
+                              (list (vector-ref entry 0) (vector-ref entry 1)
+                                    (vector-ref entry 2)))
+                            entries)))))))
 
   (define (revision id)
     (locked (lambda () (buffer-revision (buffer-of 'revision id)))))
@@ -232,18 +244,20 @@
   (define (entries-since b basis)
     ;; The complete chain after basis, oldest first, or #f.  Edits and
     ;; incremental snapshot readers share the same retention boundary.
-    (let ([current (buffer-revision b)])
-      (cond
-        [(= basis current) '()]
-        [(or (> basis current)
-             (< basis (- current (length (buffer-deltas b)))))
-         #f]
-        [else
-         (let take ([entries (buffer-deltas b)] [acc '()])
-           (cond [(null? entries) acc]
-                 [(<= (vector-ref (car entries) 0) basis) acc]
-                 [else (take (cdr entries)
-                             (cons (car entries) acc))]))])))
+    (chain-since (buffer-deltas b) (buffer-revision b) basis))
+
+  (define (chain-since deltas current basis)
+    (cond
+      [(= basis current) '()]
+      [(or (> basis current)
+           (< basis (- current (length deltas))))
+       #f]
+      [else
+       (let take ([entries deltas] [acc '()])
+         (cond [(null? entries) acc]
+               [(<= (vector-ref (car entries) 0) basis) acc]
+               [else (take (cdr entries)
+                           (cons (car entries) acc))]))]))
 
   (define (deltas-since b basis)
     (let ([entries (entries-since b basis)])
@@ -258,29 +272,31 @@
            (let ([rebased (text:rebase-span span (car deltas))])
              (and rebased (rebase-through rebased (cdr deltas))))]))
 
-  (define (apply-locked! b actor span replacement record-undo?)
+  (define (install-edit! b id actor new-text delta origin)
+    ;; All committed edits, including history operations, pass here.
+    ;; The attribution log always retains the actual deltas; cancelling
+    ;; pairs is only a temporary proof used when planning another undo.
+    (let* ([new-revision (+ (buffer-revision b) 1)]
+           [entry (vector new-revision actor delta origin)])
+      (buffer-text-set! b new-text)
+      (buffer-revision-set! b new-revision)
+      (buffer-deltas-set!
+        b (bounded (cons entry (buffer-deltas b)) delta-log-limit))
+      (buffer-marks-set!
+        b (map (lambda (entry)
+                 (cons (car entry) (rebase-mark-value (cdr entry) delta)))
+               (buffer-marks b)))
+      (enqueue-event!
+        (append (list 'edit id new-revision actor delta)
+                (if origin (list origin) '())))
+      (values new-revision delta)))
+
+  (define (apply-locked! b id actor span replacement origin)
     ;; the single mutation point; the caller holds the lock and has a
     ;; span valid against the buffer's current text
     (let-values ([(new-text delta)
                   (text:apply-edit (buffer-text b) span replacement)])
-      (let ([new-revision (+ (buffer-revision b) 1)])
-        (buffer-text-set! b new-text)
-        (buffer-revision-set! b new-revision)
-        (buffer-deltas-set!
-          b (bounded (cons (vector new-revision actor delta)
-                           (buffer-deltas b))
-                     delta-log-limit))
-        (buffer-marks-set!
-          b (map (lambda (entry)
-                   (cons (car entry)
-                         (rebase-mark-value (cdr entry) delta)))
-                 (buffer-marks b)))
-        (when record-undo?
-          (buffer-undo-set!
-            b (bounded (cons (vector new-revision actor delta #t)
-                             (buffer-undo b))
-                       delta-log-limit)))
-        (values new-revision delta))))
+      (install-edit! b id actor new-text delta origin)))
 
   (define (bounded entries n)
     (let loop ([entries entries] [n n])
@@ -289,77 +305,237 @@
             [else (cons (car entries)
                         (loop (cdr entries) (- n 1)))])))
 
-  (define (edit! actor id basis span replacement)
+  (define (remember-edit! b actor context)
+    ;; A caller may identify a user-level action with (key label).
+    ;; Keys are actor-local and buffer-local.  Missing keys make a new
+    ;; action for each transaction; a group is never partially undone.
+    (for-each
+      (lambda (group)
+        (when (and (undo-group-redo-actor group)
+                   (equal? (car (undo-group-redo-actor group)) actor))
+          (undo-group-redo-actor-set! group #f)))
+      (buffer-undo b))
+    (let* ([entry (car (buffer-deltas b))]
+           [key (and context (car context))]
+           [label (and context (cadr context))]
+           [existing
+            (and key
+                 (find (lambda (group)
+                         (and (undo-group-live? group)
+                              (equal? (undo-group-actor group) actor)
+                              (equal? (undo-group-key group) key)))
+                       (buffer-undo b)))]
+           [group (or existing
+                      (make-undo-group (vector-ref entry 0) actor key label
+                                       '() #t #f #t))]
+           [parts (cons entry (undo-group-parts group))])
+      (when label (undo-group-label-set! group label))
+      (when (> (length parts) delta-log-limit)
+        (undo-group-complete?-set! group #f))
+      (undo-group-parts-set! group (bounded parts delta-log-limit))
+      (buffer-undo-set!
+        b (bounded (cons group (remq group (buffer-undo b))) delta-log-limit))))
+
+  (define (edit! actor id basis span replacement . options)
     ;; The transaction: apply the edit as the actor meant it against
     ;; the basis revision, rebasing it across whatever landed since --
     ;; or refuse.  -> (values 'applied revision)
     ;;             |  (values 'stale 'overlap)       edited meanwhile
     ;;             |  (values 'stale 'basis-too-old) log outgrown
-    (let ([outcome
-           (transact!
-             (lambda ()
-               (let* ([b (buffer-of 'edit! id)]
-                      [since (deltas-since b basis)]
-                      [rebased (and since
-                                    (rebase-through
-                                      (text:normalize-span span)
-                                      since))])
-                 (cond
-                   [(not since) (list 'stale 'basis-too-old)]
-                   [(not rebased) (list 'stale 'overlap)]
-                   [else
-                    (let-values ([(new-revision delta)
-                                  (apply-locked! b actor rebased
-                                                 replacement #t)])
-                      (enqueue-event! `(edit ,id ,new-revision ,actor ,delta))
-                      (list 'applied new-revision delta))]))))])
-      (case (car outcome)
-        [(applied)
-         (values 'applied (cadr outcome))]
-        [else (values 'stale (cadr outcome))])))
+    ;; Optional (key label) groups several transactions into one undo.
+    (let ([context (and (pair? options) (car options))])
+      (unless (and (<= (length options) 1)
+                   (or (not context)
+                       (and (list? context) (= (length context) 2)
+                            (or (not (cadr context)) (string? (cadr context))))))
+        (error 'edit! "expected optional (group-key label)" options))
+      (let ([outcome
+             (transact!
+               (lambda ()
+                 (let* ([b (buffer-of 'edit! id)]
+                        [since (deltas-since b basis)]
+                        [rebased (and since
+                                   (rebase-through
+                                     (text:normalize-span span)
+                                     since))])
+                   (cond
+                     [(not since) (list 'stale 'basis-too-old)]
+                     [(not rebased) (list 'stale 'overlap)]
+                     [else
+                      (let-values ([(new-revision delta)
+                                    (apply-locked! b id actor rebased
+                                                   replacement #f)])
+                        (remember-edit! b actor context)
+                        (list 'applied new-revision delta))]))))])
+        (case (car outcome)
+          [(applied)
+           (values 'applied (cadr outcome))]
+          [else (values 'stale (cadr outcome))]))))
 
-  (define (undo! actor id)
-    ;; Undo the actor's newest live edit -- only while its inverse
-    ;; still rebases cleanly across everything after it.
-    ;; -> (values 'applied revision) | (values 'blocked 'overlap)
-    ;;  | (values 'nothing #f)
-    (let ([outcome
-           (transact!
-             (lambda ()
-               (let* ([b (buffer-of 'undo! id)]
-                      [entry (find (lambda (entry)
-                                     (and (vector-ref entry 3)
-                                          (equal? (vector-ref entry 1)
-                                                  actor)))
-                                   (buffer-undo b))])
-                 (if (not entry)
-                     (list 'nothing #f)
-                     (let*-values
-                       ([(inverse-span replacement)
-                         (text:invert (vector-ref entry 2))]
-                        [(rebased)
-                         (rebase-through
-                           inverse-span
-                           (deltas-since b (vector-ref entry 0)))])
-                       (cond
-                         [(not rebased) (list 'blocked 'overlap)]
-                         [else
-                          (vector-set! entry 3 #f)
-                          (let-values ([(new-revision delta)
-                                        (apply-locked!
-                                          b actor rebased
-                                          replacement #f)])
-                            (enqueue-event! `(edit ,id ,new-revision ,actor ,delta))
-                            (list 'applied new-revision delta))]))))))])
-      (case (car outcome)
-        [(applied)
-         (values 'applied (cadr outcome))]
-        [else (values (car outcome) (cadr outcome))])))
+  (define (same-delta? a b)
+    (and (equal? (text:span-start (text:delta-span a))
+                 (text:span-start (text:delta-span b)))
+         (equal? (text:span-end (text:delta-span a))
+                 (text:span-end (text:delta-span b)))
+         (equal? (text:delta-new-end a) (text:delta-new-end b))
+         (equal? (text:delta-removed a) (text:delta-removed b))
+         (equal? (text:delta-inserted a) (text:delta-inserted b))))
+
+  (define (cancel-compensated entries next)
+    ;; Keep a chain with the same net effect.  If next reverses an
+    ;; operation in that chain, commute the inverse backwards through
+    ;; the intervening disjoint edits, then remove the cancelling pair.
+    ;; Their actual log entries and authorship are never removed.
+    (let ([origin (vector-ref next 3)])
+      (if (not origin)
+          (append entries (list next))
+          (let find-target ([remaining entries] [prefix '()])
+            (cond
+              [(null? remaining) (append entries (list next))]
+              [(= (vector-ref (car remaining) 0) (list-ref origin 3))
+               (let commute ([remaining (cdr remaining)]
+                             [inverse (text:invert-delta (vector-ref (car remaining) 2))]
+                             [shifted '()])
+                 (if (null? remaining)
+                     (and (same-delta? inverse (vector-ref next 2))
+                          (append (reverse prefix) (reverse shifted)))
+                     (let* ([entry (car remaining)]
+                            [delta (vector-ref entry 2)]
+                            [after (text:rebase-delta inverse delta)]
+                            [before (text:rebase-delta delta inverse 'stay)])
+                       (and after before
+                            (commute (cdr remaining) after
+                              (cons (vector (vector-ref entry 0) (vector-ref entry 1)
+                                            before (vector-ref entry 3))
+                                    shifted))))))]
+              [else (find-target (cdr remaining) (cons (car remaining) prefix))])))))
+
+  (define (effective-chain entries)
+    (fold-left (lambda (chain entry)
+                 (and chain (cancel-compensated chain entry)))
+               '() entries))
+
+  (define (prepare-history b actor group direction)
+    ;; Preflight every inverse against temporary immutable text.  A
+    ;; later refusal leaves the whole action, its redo state, and the
+    ;; live buffer untouched.  Simulated entries remain available for
+    ;; the rest of this transaction even if committing will trim them.
+    (if (not (undo-group-complete? group))
+        (values #f 'basis-too-old)
+        (let plan ([parts (undo-group-parts group)]
+                   [text (buffer-text b)]
+                   [revision (buffer-revision b)]
+                   [deltas (buffer-deltas b)]
+                   [planned '()])
+          (if (null? parts)
+              (values (reverse planned) #f)
+              (let* ([part (car parts)]
+                     [since (chain-since deltas revision (vector-ref part 0))]
+                     [chain (and since (effective-chain since))]
+                     [inverse
+                      (and chain
+                           (fold-left
+                             (lambda (inverse entry)
+                               (and inverse (text:rebase-delta inverse (vector-ref entry 2))))
+                             (text:invert-delta (vector-ref part 2)) chain))])
+                (cond
+                  [(not since) (values #f 'basis-too-old)]
+                  [(or (not inverse)
+                       (not (equal? (text:delta-removed inverse)
+                                    (text:extract text (text:delta-span inverse)))))
+                   (values #f 'overlap)]
+                  [else
+                   (let*-values ([(new-text delta)
+                                  (text:apply-edit text (text:delta-span inverse)
+                                                   (text:delta-inserted inverse))]
+                                 [(origin)
+                                  (list direction (undo-group-actor group)
+                                        (undo-group-id group) (vector-ref part 0))]
+                                 [(entry) (vector (+ revision 1) actor delta origin)])
+                     (plan (cdr parts) new-text (+ revision 1)
+                           (cons entry deltas)
+                           (cons (list new-text delta origin) planned)))]))))))
+
+  (define (undo-scope? scope)
+    (or (memq scope '(mine all))
+        (and (list? scope) (= (length scope) 2) (eq? (car scope) 'actor))))
+
+  (define (scope-matches? scope actor group)
+    (or (eq? scope 'all)
+        (equal? (undo-group-actor group)
+                (if (eq? scope 'mine) actor (cadr scope)))))
+
+  (define (history-step! actor id direction scope)
+    ;; The common history transaction.  Undo selects mine, all, or
+    ;; (actor who).  Redo always reverses this requester's latest undo,
+    ;; independently of the original author (scope must be mine).
+    ;; -> applied (revision action-id original-author group-key label)
+    ;;  | blocked overlap|basis-too-old | nothing #f
+    (unless (and (memq direction '(undo redo)) (undo-scope? scope)
+                 (or (eq? direction 'undo) (eq? scope 'mine)))
+      (error 'history-step! "invalid history direction or scope" direction scope))
+    (transact!
+      (lambda ()
+        (let* ([b (buffer-of 'history-step! id)]
+               [group
+                (find (lambda (group)
+                        (if (eq? direction 'undo)
+                            (and (undo-group-live? group) (scope-matches? scope actor group))
+                            (and (not (undo-group-live? group))
+                                 (undo-group-redo-actor group)
+                                 (equal? (car (undo-group-redo-actor group)) actor))))
+                      (buffer-undo b))])
+          (if (not group)
+              (values 'nothing #f)
+              (let-values ([(plan reason) (prepare-history b actor group direction)])
+                (if (not plan)
+                    (values 'blocked reason)
+                    (let ([parts '()])
+                      (for-each
+                        (lambda (step)
+                          (install-edit! b id actor (car step) (cadr step) (caddr step))
+                          (set! parts (cons (car (buffer-deltas b)) parts)))
+                        plan)
+                      (undo-group-parts-set! group parts)
+                      (undo-group-live?-set! group (eq? direction 'redo))
+                      (undo-group-redo-actor-set! group (and (eq? direction 'undo) (list actor)))
+                      (buffer-undo-set! b (cons group (remq group (buffer-undo b))))
+                      (values 'applied
+                              (list (buffer-revision b) (undo-group-id group)
+                                    (undo-group-actor group) (undo-group-key group)
+                                    (undo-group-label group)))))))))))
+
+  (define (undo! actor id . scope)
+    ;; Compatibility result: the new revision, or a refusal reason.
+    ;; The optional scope uses the same selector as history-step!.
+    (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
+    (let-values ([(status detail)
+                  (history-step! actor id 'undo (if (pair? scope) (car scope) 'mine))])
+      (values status (if (eq? status 'applied) (car detail) detail))))
+
+  (define (redo! actor id)
+    (let-values ([(status detail) (history-step! actor id 'redo 'mine)])
+      (values status (if (eq? status 'applied) (car detail) detail))))
+
+  (define (undo-authors id)
+    ;; Actors with retained live actions, newest first.  Selection is
+    ;; advisory: the actual history transaction rechecks under the lock.
+    (locked
+      (lambda ()
+        (let loop ([groups (buffer-undo (buffer-of 'undo-authors id))] [authors '()])
+          (cond
+            [(null? groups) (reverse authors)]
+            [(and (undo-group-live? (car groups))
+                  (not (member (undo-group-actor (car groups)) authors)))
+             (loop (cdr groups) (cons (undo-group-actor (car groups)) authors))]
+            [else (loop (cdr groups) authors)])))))
 
   (define (history id . count)
     ;; Attribution: the newest applied edits, as plain data --
     ;; ((revision actor start end new-end) ...) newest first, bounded
-    ;; by the delta log.  Resets clear it: a reset is a new baseline.
+    ;; by the delta log.  An inverse row appends its origin:
+    ;; (direction original-author action-id reversed-revision).
+    ;; Resets clear it: a reset is a new baseline.
     (let ([n (if (pair? count) (car count) 20)])
       (locked
         (lambda ()
@@ -370,11 +546,12 @@
                 (let* ([entry (car entries)]
                        [d (vector-ref entry 2)]
                        [s (text:delta-span d)])
-                  (cons (list (vector-ref entry 0)
-                              (vector-ref entry 1)
-                              (text:span-start s)
-                              (text:span-end s)
-                              (text:delta-new-end d))
+                  (cons (append (list (vector-ref entry 0)
+                                      (vector-ref entry 1)
+                                      (text:span-start s)
+                                      (text:span-end s)
+                                      (text:delta-new-end d))
+                                (if (vector-ref entry 3) (list (vector-ref entry 3)) '()))
                         (take (cdr entries) (- n 1))))))))))
 
   (define (blame id . count)

@@ -176,6 +176,182 @@
      (let-values ([(status info) (store:undo! bot u)])
        (check 'undo-blocked-by-overlap status 'blocked))
 
+     ;; Scope changes selection, never the original authorship or the
+     ;; overlap rule.  Redo follows the requester of an undo, even when
+     ;; that requester was undoing another actor's work.
+     (define reviewer '(head reviewer))
+     (define scoped (store:create! alice "undo-scopes" '("abc" "def")))
+     (store:edit! alice scoped 0 (span 0 0 0 3) '("ALICE"))
+     (store:edit! bot scoped 1 (span 1 0 1 3) '("BOT"))
+     (check 'undo-authors-newest-first (store:undo-authors scoped) (list bot alice))
+     (check 'undo-mine-is-the-default
+            (call-with-values (lambda () (store:undo! reviewer scoped)) list)
+            '(nothing #f))
+     (define scoped-events '())
+     (define scoped-token
+       (store:subscribe! scoped (lambda (event) (set! scoped-events (cons event scoped-events)))))
+     (check 'undo-another-actor
+            (call-with-values (lambda () (store:undo! reviewer scoped (list 'actor bot))) list)
+            '(applied 3))
+     (check 'targeted-undo-only-changes-that-author
+            (list (store:line scoped 0) (store:line scoped 1)) '("ALICE" "def"))
+     (check 'undo-event-preserves-author-and-requester
+            (list (cadddr (car scoped-events)) (list-ref (car scoped-events) 5))
+            (list reviewer (list 'undo bot 2 2)))
+     (check 'undo-history-preserves-author-and-requester
+            (list (cadr (car (store:history scoped))) (list-ref (car (store:history scoped)) 5))
+            (list reviewer (list 'undo bot 2 2)))
+     (check 'undo-removes-author-from-candidates (store:undo-authors scoped) (list alice))
+     (check 'other-actor-cannot-take-requesters-redo
+            (call-with-values (lambda () (store:redo! bot scoped)) list) '(nothing #f))
+     (check 'requester-can-redo-another-authors-change
+            (call-with-values (lambda () (store:redo! reviewer scoped)) list) '(applied 4))
+     (check 'redo-restores-selected-change (store:line scoped 1) "BOT")
+     (check 'redo-records-original-author
+            (list-ref (car (store:history scoped)) 5) (list 'redo bot 2 3))
+     (store:undo! reviewer scoped 'all)
+     (store:undo! reviewer scoped 'all)
+     (check 'all-scope-walks-back-through-authors
+            (list (store:line scoped 0) (store:line scoped 1)) '("abc" "def"))
+     (store:redo! reviewer scoped)
+     (store:redo! reviewer scoped)
+     (check 'redo-walks-forward-through-authors
+            (list (store:line scoped 0) (store:line scoped 1)) '("ALICE" "BOT"))
+     (let-values ([(text revision changes) (store:snapshot-since scoped 0)])
+       (check 'history-metadata-does-not-change-snapshot-chain
+              (for-all (lambda (entry) (= (length entry) 3)) changes) #t))
+     (store:unsubscribe! scoped-token)
+
+     ;; Once an overlapping change has itself been undone, it must no
+     ;; longer obstruct older history.  The actual provenance stays.
+     (define overlap (store:create! alice "undo-overlap" '("abc")))
+     (store:edit! alice overlap 0 (span 0 0 0 3) '("ALICE"))
+     (store:edit! bot overlap 1 (span 0 0 0 5) '("BOT"))
+     (check 'targeted-undo-respects-live-overlap
+            (call-with-values (lambda () (store:undo! reviewer overlap (list 'actor alice))) list)
+            '(blocked overlap))
+     (store:undo! reviewer overlap 'all)
+     (check 'undo-can-cross-a-compensated-overlap
+            (call-with-values (lambda () (store:undo! alice overlap)) list) '(applied 4))
+     (check 'compensated-overlap-restores-original (store:line overlap 0) "abc")
+     (check 'cancellation-retains-the-audit-log (length (store:history overlap)) 4)
+
+     ;; A user-level group may have a foreign edit between its parts.
+     ;; All parts undo atomically, preserving that intervening work.
+     (define grouped (store:create! alice "undo-group" '("base" "other")))
+     (define typing '(typing 1))
+     (store:edit! alice grouped 0 (span 0 0 0 4) '("Abase") (list typing "insert AB"))
+     (store:edit! bot grouped 1 (span 1 0 1 0) '("G"))
+     (store:edit! alice grouped 2 (span 0 0 0 5) '("ABbase") (list typing "insert AB"))
+     (define group-observations '())
+     (define group-token
+       (store:subscribe! grouped
+         (lambda (event)
+           (set! group-observations
+             (cons (list (store:line grouped 0) (store:line grouped 1)) group-observations)))))
+     (check 'group-undo-has-an-atomic-receipt
+            (call-with-values (lambda () (store:history-step! alice grouped 'undo 'mine)) list)
+            (list 'applied (list 5 1 alice typing "insert AB")))
+     (check 'group-notifications-see-the-complete-result
+            group-observations '(("base" "Gother") ("base" "Gother")))
+     (store:unsubscribe! group-token)
+     (store:redo! alice grouped)
+     (check 'group-redo-preserves-the-intervening-actor
+            (list (store:line grouped 0) (store:line grouped 1)) '("ABbase" "Gother"))
+     (store:undo! reviewer grouped 'all)
+     (store:undo! reviewer grouped 'all)
+     (check 'all-scope-treats-each-group-as-one-action
+            (list (store:line grouped 0) (store:line grouped 1)) '("base" "other"))
+
+     ;; A conflict in the oldest part is discovered before the newer
+     ;; part commits, including notifications and redo eligibility.
+     (define atomic (store:create! alice "undo-atomic" '("one" "two")))
+     (store:edit! alice atomic 0 (span 0 0 0 3) '("ONE") '(group "two lines"))
+     (store:edit! alice atomic 1 (span 1 0 1 3) '("TWO") '(group "two lines"))
+     (store:edit! bot atomic 2 (span 0 0 0 3) '("BOT"))
+     (define atomic-events '())
+     (define atomic-token
+       (store:subscribe! atomic (lambda (event) (set! atomic-events (cons event atomic-events)))))
+     (check 'conflicted-group-refuses-before-any-commit
+            (call-with-values (lambda () (store:undo! alice atomic)) list) '(blocked overlap))
+     (check 'conflicted-group-keeps-text-revision-and-events
+            (list (store:line atomic 0) (store:line atomic 1) (store:revision atomic) atomic-events)
+            '("BOT" "TWO" 3 ()))
+     (check 'refused-undo-has-no-redo
+            (call-with-values (lambda () (store:redo! alice atomic)) list) '(nothing #f))
+     (store:unsubscribe! atomic-token)
+     (store:undo! reviewer atomic (list 'actor bot))
+     (store:undo! alice atomic)
+     (check 'group-can-be-retried-after-conflict-is-undone
+            (list (store:line atomic 0) (store:line atomic 1)) '("one" "two"))
+     (store:edit! bot atomic (store:revision atomic) (span 0 0 0 3) '("changed"))
+     (check 'redo-refuses-a-new-overlap
+            (call-with-values (lambda () (store:redo! alice atomic)) list) '(blocked overlap))
+     (store:edit! alice atomic (store:revision atomic) (span 1 0 1 0) '("new "))
+     (check 'new-edit-invalidates-requesters-redo
+            (call-with-values (lambda () (store:redo! alice atomic)) list) '(nothing #f))
+
+     ;; Retention cannot turn an incomplete action into a partial undo.
+     (define aged (store:create! alice "undo-retention" '("old" "tail")))
+     (store:edit! alice aged 0 (span 0 0 0 3) '("OLD"))
+     (do ([i 0 (+ i 1)]) ((= i 257))
+       (store:edit! bot aged (store:revision aged) (span 1 0 1 0) '("x") '(long "long group")))
+     (define aged-revision (store:revision aged))
+     (check 'missing-provenance-refuses-history
+            (call-with-values (lambda () (store:undo! alice aged)) list) '(blocked basis-too-old))
+     (check 'truncated-group-refuses-as-a-whole
+            (call-with-values (lambda () (store:undo! reviewer aged 'all)) list) '(blocked basis-too-old))
+     (check 'retention-refusals-do-not-commit (store:revision aged) aged-revision)
+     (store:reset! bot aged '("new baseline"))
+     (check 'reset-does-not-resurrect-history
+            (call-with-values (lambda () (store:undo! reviewer aged 'all)) list) '(nothing #f))
+
+     ;; Generated chronological histories must walk exactly back and
+     ;; forward, including overlapping replacements and line changes.
+     ;; Each expected state was captured before undo, not computed by
+     ;; the history implementation or its cancellation algorithm.
+     (define history-seed 731)
+     (define (choose n)
+       (set! history-seed (mod (+ (* history-seed 25173) 13849) 65536))
+       (mod history-seed n))
+     (define (snapshot-text id)
+       (let-values ([(text revision) (store:snapshot id)]) text))
+     (define (text-positions text)
+       (let rows ([r 0] [out '()])
+         (if (= r (vector-length text)) out
+             (let cols ([c 0] [out out])
+               (if (> c (string-length (vector-ref text r)))
+                   (rows (+ r 1) out)
+                   (cols (+ c 1) (cons (cons r c) out)))))))
+     (check 'generated-histories-round-trip-through-all-actors
+            (let cases ([left 40])
+              (or (zero? left)
+                  (let* ([id (store:create! alice "generated-history" '("abc" "def"))]
+                         [states
+                          (let edits ([left 8] [states (list (snapshot-text id))])
+                            (if (zero? left) states
+                                (let* ([positions (text-positions (car states))]
+                                       [start (list-ref positions (choose (length positions)))]
+                                       [end (list-ref positions (choose (length positions)))]
+                                       [actor (list-ref (list alice bot reviewer) (choose 3))]
+                                       [replacement (list-ref '(("") ("X") ("Y" "Z") ("" "")) (choose 4))])
+                                  (store:edit! actor id (store:revision id)
+                                               (span (car start) (cdr start) (car end) (cdr end)) replacement)
+                                  (edits (- left 1) (cons (snapshot-text id) states)))))])
+                    (and
+                      (for-all
+                        (lambda (expected)
+                          (let-values ([(status detail) (store:undo! reviewer id 'all)])
+                            (and (eq? status 'applied) (equal? expected (snapshot-text id)))))
+                        (cdr states))
+                      (for-all
+                        (lambda (expected)
+                          (let-values ([(status detail) (store:redo! reviewer id)])
+                            (and (eq? status 'applied) (equal? expected (snapshot-text id)))))
+                        (cdr (reverse states)))
+                      (begin (store:delete! alice id) (cases (- left 1)))))))
+            #t)
+
      ;; -- attribution --------------------------------------------------------
 
      (define h (store:create! alice "blame" '("one" "two")))

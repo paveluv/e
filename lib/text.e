@@ -24,10 +24,10 @@
           make-span span? span-start span-end
           normalize-span span-empty? contains? overlap?
           position<? position<=? position=?
-          apply-edit extract invert
-          delta? delta-span delta-new-end delta-removed
+          apply-edit extract invert invert-delta difference
+          delta? delta-span delta-new-end delta-removed delta-inserted
           delta-line-shift
-          rebase-position rebase-span)
+          rebase-position rebase-span rebase-delta)
   (import (rnrs) (only (chezscheme) format))
 
   ;;; Positions and spans --------------------------------------------------
@@ -89,7 +89,8 @@
   (define-record-type (delta make-delta delta?)
     (fields span        ; the replaced span, in the old text
             new-end     ; where the replacement ends, in the new text
-            removed))   ; the replaced content, as replacement lines
+            removed     ; the replaced content, as replacement lines
+            inserted))  ; the replacement, so deltas can be inverted twice
 
   (define (delta-line-shift d)
     (- (car (delta-new-end d)) (car (span-end (delta-span d)))))
@@ -179,13 +180,56 @@
             ((= i (vector-length text)))
           (vector-set! new-text j (vector-ref text i)))
         (values new-text
-                (make-delta s new-end (extract text s))))))
+                (make-delta s new-end (extract text s) replacement)))))
 
   (define (invert d)
     ;; the edit that undoes a delta: -> (values span replacement)
     (values (span-of-positions (span-start (delta-span d))
                                (delta-new-end d))
             (delta-removed d)))
+
+  (define (invert-delta d)
+    ;; The inverse as another delta, including its content.  Inverting
+    ;; twice recovers the original operation; no document snapshot is
+    ;; needed to reason about an edit followed by its compensation.
+    (make-delta (span-of-positions (span-start (delta-span d))
+                                   (delta-new-end d))
+                (span-end (delta-span d))
+                (delta-inserted d) (delta-removed d)))
+
+  (define (difference before after)
+    ;; The smallest single replacement taking before to after: trim a
+    ;; common prefix, then a non-overlapping common suffix.  Walk line
+    ;; vectors with their implicit newlines, without flattening/copying
+    ;; the whole document.  Identical texts return an empty edit at EOF.
+    (define (end-of lines)
+      (let ([row (- (vector-length lines) 1)])
+        (cons row (string-length (vector-ref lines row)))))
+    (define (at lines p)
+      (let ([line (vector-ref lines (car p))])
+        (if (= (cdr p) (string-length line)) #\newline
+            (string-ref line (cdr p)))))
+    (define (next lines p)
+      (if (= (cdr p) (string-length (vector-ref lines (car p))))
+          (cons (+ (car p) 1) 0)
+          (cons (car p) (+ (cdr p) 1))))
+    (define (previous lines p)
+      (if (positive? (cdr p))
+          (cons (car p) (- (cdr p) 1))
+          (let ([row (- (car p) 1)])
+            (cons row (string-length (vector-ref lines row))))))
+    (let ([before-end (end-of before)] [after-end (end-of after)])
+      (let prefix ([start '(0 . 0)])
+        (if (and (position<? start before-end) (position<? start after-end)
+                 (char=? (at before start) (at after start)))
+            (prefix (next before start))
+            (let suffix ([old-end before-end] [new-end after-end])
+              (if (and (position<? start old-end) (position<? start new-end)
+                       (char=? (at before (previous before old-end))
+                               (at after (previous after new-end))))
+                  (suffix (previous before old-end) (previous after new-end))
+                  (values (span-of-positions start old-end)
+                          (extract after (span-of-positions start new-end)))))))))
 
   ;;; Rebasing --------------------------------------------------------------
 
@@ -215,7 +259,7 @@
     (and (position<? (span-start s) position)
          (position<? position (span-end s))))
 
-  (define (rebase-span s d)
+  (define (rebase-span s d . bias)
     ;; Map an edit's span across a delta -- strictly: any overlap with
     ;; the changed content, an insertion strictly inside the span, or
     ;; the span's own insertion point swallowed by the change, returns
@@ -232,12 +276,35 @@
                    (strictly-inside? (span-start changed) s)))
           #f
           (if (span-empty? s)
-              ;; one point: both endpoints move together
-              (let ([p (rebase-position (span-start s) d)])
+              ;; An insertion at the left edge of replaced content
+              ;; stays before that content's replacement.  Only two
+              ;; insertions at the same point need an ordering bias.
+              ;; Cursor rebasing still uses its normal forward bias.
+              (let ([p (if (and (not (span-empty? changed))
+                                (position=? (span-start s) (span-start changed)))
+                           (span-start changed)
+                           (apply rebase-position (span-start s) d bias))])
                 (span-of-positions p p))
               (span-of-positions
                 (rebase-position (span-start s) d)
                 (rebase-position (span-end s) d 'stay))))))
+
+  (define (rebase-delta d across . bias)
+    ;; Carry an operation through a disjoint edit, retaining both its
+    ;; removed and inserted text.  'stay gives an existing insertion
+    ;; priority when commuting a later inverse backwards past it.
+    (let ([s (apply rebase-span (delta-span d) across bias)])
+      (and s
+           (let* ([old-start (span-start (delta-span d))]
+                  [old-end (delta-new-end d)]
+                  [start (span-start s)]
+                  [rows (- (car old-end) (car old-start))])
+             (make-delta s
+                         (cons (+ (car start) rows)
+                               (if (zero? rows)
+                                   (+ (cdr start) (- (cdr old-end) (cdr old-start)))
+                                   (cdr old-end)))
+                         (delta-removed d) (delta-inserted d))))))
   ;;; Line-vector splicing -----------------------------------------------------------
 
   (define (splice v from to inserted)

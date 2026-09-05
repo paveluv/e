@@ -11,7 +11,8 @@
 
 (eval
   '(begin
-     (import (prefix (text) text:) (only (chezscheme) format))
+     (import (prefix (text) text:) (prefix (string) string:)
+             (only (chezscheme) format))
 
      (define checks 0)
 
@@ -98,6 +99,54 @@
      (check 'whole-text-replacement
             (car (apply-to base 0 0 3 7 '("fresh")))
             '("fresh"))
+
+     ;; A snapshot change is represented by one compact edit, preserving
+     ;; unchanged prefix/suffix content and its marks when undo applies it.
+     (define (difference-list before after)
+       (let-values ([(span replacement) (text:difference before after)])
+         (list (span->list span) replacement)))
+     (check 'difference-insert
+            (difference-list '#("abc") '#("aXbc"))
+            '(((0 . 1) (0 . 1)) ("X")))
+     (check 'difference-delete
+            (difference-list '#("aXbc") '#("abc"))
+            '(((0 . 1) (0 . 2)) ("")))
+     (check 'difference-split
+            (difference-list '#("ab") '#("a" "b"))
+            '(((0 . 1) (0 . 1)) ("" "")))
+     (check 'difference-join
+            (difference-list '#("a" "b") '#("ab"))
+            '(((0 . 1) (1 . 0)) ("")))
+     (check 'difference-no-change
+            (difference-list '#("a" "") '#("a" ""))
+            '(((1 . 0) (1 . 0)) ("")))
+     (check 'difference-preserves-common-lines
+            (difference-list '#("first" "abc" "last") '#("first" "aXbc" "last"))
+            '(((1 . 1) (1 . 1)) ("X")))
+
+     ;; Exhaust all pairs of short documents, including empty rows and
+     ;; newlines at either end.  This catches prefix/suffix overlap and
+     ;; cross-line coordinate errors beyond the hand-picked examples.
+     (define (short-strings depth)
+       (if (zero? depth)
+           '("")
+           (cons "" (apply append
+                      (map (lambda (prefix)
+                             (map (lambda (ch) (string-append prefix (string ch)))
+                                  '(#\a #\b #\newline)))
+                           (short-strings (- depth 1)))))))
+     (define samples (map (lambda (s) (list->vector (string:lines s))) (short-strings 3)))
+     (check 'difference-round-trips-short-documents
+            (for-all
+              (lambda (before)
+                (for-all
+                  (lambda (after)
+                    (let*-values ([(span replacement) (text:difference before after)]
+                                  [(result delta) (text:apply-edit before span replacement)])
+                      (equal? result after)))
+                  samples))
+              samples)
+            #t)
 
      (let-values ([(new-text delta)
                    (text:apply-edit base (span 1 0 2 10
@@ -203,6 +252,74 @@
      ;; an empty span strictly inside a replaced region is stale
      (check 'cursor-span-inside-replacement-is-stale
             (text:rebase-span (span 2 1 2 1) d) #f)
+
+     ;; -- reversible deltas and commuting compensation ----------------------
+
+     (define (delta-data d)
+       (list (span->list (text:delta-span d)) (text:delta-new-end d)
+             (text:delta-removed d) (text:delta-inserted d)))
+     (check 'double-inversion-recovers-delta
+            (delta-data (text:invert-delta (text:invert-delta d)))
+            (delta-data d))
+
+     (define (positions text)
+       (let rows ([r 0] [out '()])
+         (if (= r (vector-length text)) (reverse out)
+             (let cols ([c 0] [out out])
+               (if (> c (string-length (vector-ref text r)))
+                   (rows (+ r 1) out)
+                   (cols (+ c 1) (cons (cons r c) out)))))))
+     (define (spans text)
+       (let ([ps (positions text)])
+         (apply append
+           (map (lambda (start)
+                  (map (lambda (end)
+                         (span (car start) (cdr start) (car end) (cdr end)))
+                       (filter (lambda (end) (text:position<=? start end)) ps)))
+                ps))))
+     (define replacements '(("") ("X") ("" "") ("Y" "Z")))
+     (define commuting-base '#("abcd" "ef"))
+     (define commuting-cases 0)
+     (define (apply-delta text d)
+       (unless (equal? (text:extract text (text:delta-span d))
+                       (text:delta-removed d))
+         (error 'text-test "rebased delta changed its removed content" (delta-data d)))
+       (let-values ([(out applied)
+                     (text:apply-edit text (text:delta-span d) (text:delta-inserted d))])
+         (unless (equal? (delta-data applied) (delta-data d))
+           (error 'text-test "rebased delta geometry disagrees"))
+         out))
+     (check 'compensation-commutes-through-disjoint-edits
+            (for-all
+              (lambda (first-span)
+                (for-all
+                  (lambda (first-replacement)
+                    (let-values ([(after-first first)
+                                  (text:apply-edit commuting-base first-span first-replacement)])
+                      (let ([inverse (text:invert-delta first)])
+                        (for-all
+                          (lambda (second-span)
+                            (for-all
+                              (lambda (second-replacement)
+                                (let*-values ([(after-second second)
+                                               (text:apply-edit after-first second-span second-replacement)]
+                                              [(after-inverse) (text:rebase-delta inverse second)])
+                                  (or (not after-inverse)
+                                      (let ([before-second (text:rebase-delta second inverse 'stay)])
+                                        (set! commuting-cases (+ commuting-cases 1))
+                                        (or (and before-second
+                                                 (equal? (apply-delta after-second after-inverse)
+                                                         (apply-delta commuting-base before-second)))
+                                            (error 'text-test "compensation did not commute"
+                                                   (delta-data first) (delta-data second)
+                                                   (delta-data after-inverse)
+                                                   (and before-second (delta-data before-second))))))))
+                              replacements))
+                          (spans after-first)))))
+                  replacements))
+              (spans commuting-base))
+            #t)
+     (check 'compensation-exercises-many-boundaries (> commuting-cases 1000) #t)
 
      ;; -- validation ---------------------------------------------------------
 

@@ -334,6 +334,34 @@ future.  Rebase positions only through a complete chain.  When the head
 must resync without one, it clamps positions into the new text and logs
 the lost history.
 
+`(store:edit! actor id basis span replacement [context])` applies an
+attributed edit or returns a stale refusal.  The optional context is
+`(group-key label)`: the same non-false key groups that actor's transactions
+in this buffer into one undo action.  Without a key, each call is an action.
+
+`(store:undo! requester id [scope])` defaults to `mine`.  Use `all` to select
+the latest live action of any actor, or `(actor who)` to select that actor.
+`(store:redo! requester id)` reverses this requester's latest undo, including
+one that undid somebody else's work.  Both return `(values 'applied revision)`,
+`(values 'blocked reason)`, or `(values 'nothing #f)`.  Reasons include
+`overlap` and `basis-too-old`.  A group commits entirely or refuses entirely;
+undo and redo preserve the revision log.  The retained delta chain and each
+group's parts are bounded at 256; unavailable history never permits a
+partial group undo.  A new edit invalidates that requester's redo.
+
+`(store:history-step! requester id direction scope)` uses the same transaction
+but returns an applied receipt `(revision action-id original-author group-key
+label)` for a head's presentation.  Direction is `undo` or `redo`; redo's scope
+must be `mine`, meaning that requester's undo history.  `store:undo-authors`
+lists actors with retained live actions; the transaction rechecks eligibility.
+
+`store:history` returns newest-first `(revision actor start end new-end)`
+rows.  Undo/redo rows append `(direction original-author action-id reversed-revision)`.
+Their edit events likewise append this origin to the ordinary
+`(edit id revision requester delta)` shape.  This distinguishes the original
+author from the requester of the inverse.  `snapshot-since` continues to
+return three-field change entries.
+
 `(store:subscribe! id callback)` observes one shared buffer; use `#f` for
 all buffers and `(store:unsubscribe! token)` to revoke its returned token.
 Callbacks receive events in commit order outside the store lock, and can
