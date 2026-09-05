@@ -24,7 +24,7 @@
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
                 fork-thread sleep make-time current-time time-second)
-          (prefix (edit) edit:)
+          (except (edit) init!)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (style) style:)
@@ -37,9 +37,6 @@
     (make-parameter 8))
 
   (define per-buffer-cap 8)
-
-  ;; the local head's own edits are not news to the local head
-  (define local-head '(head main))
 
   (define faces '#(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))
 
@@ -76,7 +73,7 @@
                                       (vector-ref o 3))
                               o))
                         (unbox overlays)))
-         (when (and (not (equal? actor local-head))
+         (when (and (not (equal? actor head:ui-actor))
                     (> (blame-tint-seconds) 0))
            (add-overlay! id actor d)))]
       [(reset delete)
@@ -139,7 +136,7 @@
 
   (define (buffer-of-id id)
     (find (lambda (b) (eqv? (head:buffer-store-id b) id))
-          (edit:buffer-list)))
+          (buffer-list)))
 
   (define (blame-highlights)
     (let* ([now (now-seconds)]
@@ -160,10 +157,10 @@
 
   (define (blame-at-point!)
     ;; who recently wrote the text at point, from the store's log
-    (let* ([b (edit:current-buffer)]
+    (let* ([b (current-buffer)]
            [id (head:buffer-store-id b)]
-           [p (edit:point)])
-      (edit:set-message!
+           [p (point)])
+      (set-message!
         (cond
           [(not id) "This buffer has no store twin"]
           [(find (lambda (entry)

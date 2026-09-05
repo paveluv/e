@@ -22,6 +22,7 @@
   (import (chezscheme) (prefix (sys) sys:)
           (prefix (file) file:)
           (prefix (kernel) kernel:)
+          (prefix (startup) startup:)
           (prefix (head) head:)
           (prefix (paint) paint:)
           (prefix (echo) echo:)
@@ -281,11 +282,6 @@
 
   (define echo-greeting-shown (echo:set-text! (startup-greeting)))
 
-  (define (usage)
-    (display "Usage: e [file]\n")
-    (display "A tiny Emacs-like terminal editor. Set LINES/COLUMNS if needed.\n")
-    (display "Extension modules are loaded from the lib directory at startup.\n"))
-
   (define startup-page #f)
 
   (define (set-startup-page! proc)
@@ -296,10 +292,12 @@
     (set! startup-page proc))
 
   (define (run)
+    (actor:call-as head:ui-actor run-head))
+
+  (define (run-head)
     ;; The loader script is pure bootstrap; the extension modules are
     ;; loaded here, before the file argument needs their modes.
-    (let ([args (command-line-arguments)])
-      (when (and (pair? args) (member (car args) '("-h" "--help"))) (usage) (exit 0))
+    (let ([file (startup:file)])
       ;; the log-view module lists *log* from startup
       (for-each
         (lambda (failure)
@@ -309,8 +307,8 @@
             (echo:set-text! msg)))
         (reverse (kernel:load-modules!)))
       (load-config!)
-      (if (pair? args)
-          (open-file! (car args))
+      (if file
+          (open-file! file)
           (when startup-page
             (guard (ex [else (void)]) (startup-page))
             ;; the greeting outlives the page's own load chatter

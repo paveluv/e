@@ -1,7 +1,7 @@
 ;; actor.e -- actor identity and the interaction protocol: the
 ;; library (actor).
 ;;
-;; An actor is an identity (plain data: (head main), (agent claude 3))
+;; An actor is an identity (plain data: (head "desk"), (agent claude 3))
 ;; plus a registered delivery procedure.  Any actor may pose a
 ;; question to another -- (actor:ask! from to question choices
 ;; reply!) -- delivered through the target's registration: a human's
@@ -15,11 +15,11 @@
 
 (library (actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
-          deliver send!
+          current call-as deliver send!
           ask! answer! cancel! pending)
   (import (rnrs)
           (only (chezscheme) box unbox set-box! void make-mutex with-mutex
-                current-time time-second)
+                current-time time-second make-thread-parameter parameterize)
           (prefix (kernel) kernel:))
 
   ;;; Registration ----------------------------------------------------------
@@ -30,10 +30,9 @@
   (define registrations (kernel:make-registry registration-identity))
 
   (define (copy-data datum)
-    ;; Own admitted names/metadata, and never expose their mutable parts
-    ;; through directory snapshots, return values, or presence messages.
+    ;; Own admitted protocol data, and never expose its mutable parts.
     (let copy ([datum datum] [path '()])
-      (when (memq datum path) (error 'actor "cyclic directory data"))
+      (when (memq datum path) (error 'actor "cyclic protocol data"))
       (cond
         [(pair? datum)
          (let ([path (cons datum path)])
@@ -43,7 +42,16 @@
         [(string? datum) (string-copy datum)]
         [(bytevector? datum) (bytevector-copy datum)]
         [(or (null? datum) (symbol? datum) (number? datum) (boolean? datum) (char? datum)) datum]
-        [else (error 'actor "expected plain directory data" datum)])))
+        [else (error 'actor "expected plain protocol data" datum)])))
+
+  ;; Attribution context, not a capability. Callbacks may run on another
+  ;; actor's thread; their identity follows the work, not that thread's head.
+  (define current-actor (make-thread-parameter #f))
+
+  (define (current) (copy-data (current-actor)))
+
+  (define (call-as actor thunk)
+    (parameterize ([current-actor (copy-data actor)]) (thunk)))
 
   (define register!
     (case-lambda
@@ -109,9 +117,12 @@
     ;; deliver a protocol message; #t when the actor was reachable
     (kernel:call-with-runtime-registrations
       (lambda ()
-        (cond [(deliver to)
-               => (lambda (deliver!)
-                    (guard (ex [else #f]) (deliver! message) #t))]
+        (cond [(registration-of to)
+               => (lambda (entry)
+                    (guard (ex [else #f])
+                      (call-as (registration-identity entry)
+                        (lambda () ((registration-delivery entry) message)))
+                      #t))]
               [else #f]))))
 
   ;;; Ask and reply -----------------------------------------------------------
@@ -135,18 +146,20 @@
     ;; answerer (empty for free-form); reply! receives the answer.
     (unless (procedure? reply!)
       (error 'ask! "expected a reply procedure" reply!))
-    (let ([ticket
-           (with-mutex protocol-lock
-             (let ([ticket (+ (unbox ticket-counter) 1)])
-               (set-box! ticket-counter ticket)
-               (set-box! pending-asks
-                         (append (unbox pending-asks)
-                                 (list (vector ticket from to question choices reply!))))
-               ticket))])
+    (let* ([from (copy-data from)] [to (copy-data to)]
+           [question (copy-data question)] [choices (copy-data choices)]
+           [ticket
+            (with-mutex protocol-lock
+              (let ([ticket (+ (unbox ticket-counter) 1)])
+                (set-box! ticket-counter ticket)
+                (set-box! pending-asks
+                          (append (unbox pending-asks)
+                                  (list (vector ticket from to question choices reply!))))
+                ticket))])
       ;; Delivery may answer synchronously or ask again. Never call out
       ;; while holding the protocol lock; a failed delivery only cancels
       ;; its own ticket if it is still pending.
-      (if (send! to (list 'ask ticket from question choices))
+      (if (send! to (copy-data (list 'ask ticket from question choices)))
           ticket
           (begin (cancel! ticket) #f))))
 
@@ -155,10 +168,10 @@
     ;; ((ticket from question choices) ...)
     (fold-right (lambda (entry acc)
                   (if (equal? (vector-ref entry 2) to)
-                      (cons (list (vector-ref entry 0)
-                                  (vector-ref entry 1)
-                                  (vector-ref entry 3)
-                                  (vector-ref entry 4))
+                      (cons (copy-data (list (vector-ref entry 0)
+                                             (vector-ref entry 1)
+                                             (vector-ref entry 3)
+                                             (vector-ref entry 4)))
                             acc)
                       acc))
                 '()
@@ -182,7 +195,9 @@
            => (lambda (entry)
                 (guard (ex [else (void)])
                   (kernel:call-with-runtime-registrations
-                    (lambda () ((vector-ref entry 5) answer))))
+                    (lambda ()
+                      (call-as (vector-ref entry 1)
+                        (lambda () ((vector-ref entry 5) answer))))))
                 #t)]
           [else #f]))
 

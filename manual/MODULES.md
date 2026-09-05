@@ -4,9 +4,11 @@
 
 Everything in `lib/` is an R6RS library using the `.e` extension. `edit.e` is
 `(edit)`, `eval.e` is `(eval)`, and so on. The loader is only bootstrap: it
-locates the adjacent libraries and compiled-object directory, configures Chez,
-imports the command layer (`edit`, bare -- the names M-x sees), `main` and
-`kernel` (prefixed), and runs `(main:run)`.
+locates the adjacent libraries and compiled-object directory and configures
+Chez. It admits options through `startup` before importing the command layer
+(`edit`, bare -- the names M-x sees) and `main`, then runs `(main:run)`.
+`startup` and `kernel` are prefixed too. This ordering chooses the head's
+identity before the head creates shared state.
 
 The editor is layered seam modules -- `kernel`, `store`, `file`, `head`,
 `paint`, `prompt`, `mode`, `keymap`, ... -- with `main.e` running the loop on
@@ -118,6 +120,11 @@ clear the triggering initializer's staging and module owner. Registrations
 made by those callbacks are independent runtime changes unless the callback
 sets an explicit owner. A worker also operates independently of a staging
 scope on the thread that created it.
+
+The process head's actor registration and store subscription publish together
+as runtime registrations. They outlive an extension that happens to import
+the head first, even if that extension's initialization fails. Other
+extension-owned registrations retain the normal staged lifetime.
 
 `kernel:registry-observe! registry proc` returns a revocation token. After a
 commit, `proc` receives two lists: removed items and added items, newest first.

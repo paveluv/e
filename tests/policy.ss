@@ -38,7 +38,7 @@
      (define owner '(head test))
      (define owner-mail (kernel:make-mailbox))
      (actor:register! owner
-                       (lambda (m) (kernel:mailbox-post! owner-mail m)))
+                      (lambda (m) (kernel:mailbox-post! owner-mail m)))
      (define agent '(agent helper 1))
      (define notes (store:create! owner "notes" '("one" "two")))
      (define secret (store:create! owner "secret" '("hidden")))
@@ -83,11 +83,14 @@
      (define winded (policy:mint!
                       '(agent winded)
                       (policy:make '(+ car cons quote let lambda if)
-                                          10000 0 '() 4000)
+                                   10000 0 '() 4000)
                       owner audit!))
      (check 'fuel-runs-out
-            (policy:session-eval! winded "(let loop () (loop))")
-            '(fuel . "the evaluation ran out of fuel (an infinite loop?)"))
+            (actor:call-as owner
+              (lambda ()
+                (let ([result (policy:session-eval! winded "(let loop () (loop))")])
+                  (list result (actor:current)))))
+            (list '(fuel . "the evaluation ran out of fuel (an infinite loop?)") owner))
 
      ;; -- a narrowed grant subsets the sandbox -------------------------
 
@@ -167,17 +170,23 @@
                  '(mint eval edit undo ask revoke))
             '(#t #t #t #t #t #t))
 
-     ;; the default trail rides a persistent cell
-     (define quiet (policy:mint!
-                     '(agent quiet)
-                     (policy:make '(+) 10000 0 '() 4000)))
-     (policy:session-eval! quiet "(+ 1 1)")
+     ;; The implicit owner is the initiating actor, including a named head,
+     ;; or #f for headless callers. The default audit trail stays persistent.
+     (for-each
+       (lambda (context)
+         (check 'default-owner-follows-actor-context
+           (actor:call-as context
+             (lambda ()
+               (let* ([quiet (policy:mint! '(agent quiet) (policy:make '(+) 10000 0 '() 4000))]
+                      [result (policy:session-eval! quiet "(+ 1 1)")])
+                 (policy:revoke! quiet)
+                 (list (policy:session-owner quiet) result (actor:current)))))
+           (list context '(ok . "=> 2") context)))
+       '(#f (head "writing desk") (agent requester)))
      (check 'default-audit-records
             (let ([entries (policy:audit-log 10)])
               (and (assq 'mint entries) (assq 'eval entries) #t))
             #t)
-     (policy:revoke! quiet)
-
      (store:delete! owner notes)
      (store:delete! owner secret)
      (format #t "~a policy checks passed\n" checks)))

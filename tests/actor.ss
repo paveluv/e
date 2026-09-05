@@ -17,11 +17,15 @@
              (prefix (test) test:))
 
      ;; two mailbox-backed actors
-     (define human '(head test))
-     (define agent '(agent probe 1))
+     (define human '(head "test"))
+     (define agent '(agent "probe" 1))
      (define human-mail (kernel:make-mailbox))
      (define agent-mail (kernel:make-mailbox))
-     (actor:register! human (lambda (m) (kernel:mailbox-post! human-mail m)))
+     (define delivery-context #f)
+     (actor:register! human
+       (lambda (m)
+         (set! delivery-context (actor:current))
+         (kernel:mailbox-post! human-mail m)))
      (actor:register! agent (lambda (m) (kernel:mailbox-post! agent-mail m)))
 
      (test:check 'registered
@@ -175,26 +179,81 @@
      (for-each actor:unsubscribe! (list kept-watch revoked-watch mutating-watch blocker-watch late-watch))
      (actor:detach! fourth)
 
-     ;; -- an ask reaches the target, the answer routes back -------------
+     ;; The execution context is scoped, copied, and local to each thread.
+     ;; An exception or escape restores it just like an ordinary return.
+     (for-each
+       (lambda (ending)
+         (test:check (list 'actor-context ending)
+           (list
+             (actor:call-as human
+               (lambda ()
+                 (call/cc
+                   (lambda (escape)
+                     (guard (ex [else (void)])
+                       (actor:call-as agent
+                         (lambda ()
+                           (case ending
+                             [(abort) (error 'fixture "abort actor work")]
+                             [(escape) (escape #f)]))))))
+                 (actor:current)))
+             (actor:current))
+           (list human #f)))
+       '(return abort escape))
+     (define context-ready (test:gate))
+     (define context-release (test:gate))
+     (test:check 'actor-context-is-copied-and-thread-local
+       (actor:call-as human
+         (lambda ()
+           (let ([worker
+                  (test:worker
+                    (lambda ()
+                      (let ([identity (list 'agent (string-copy "worker"))])
+                        (actor:call-as identity
+                          (lambda ()
+                            (string-set! (cadr identity) 0 #\X)
+                            (string-set! (cadr (actor:current)) 0 #\Y)
+                            (context-ready #t)
+                            (test:await 'context-release context-release)
+                            (actor:current))))))])
+             (test:await 'context-ready context-ready)
+             (let ([during (actor:current)])
+               (context-release #t)
+               (list during (worker) (actor:current))))))
+       (list human '(agent "worker") human))
 
+     ;; Admission, delivered messages, and pending reads own separate data.
+     ;; The receiver runs as itself; the reply runs as the snapshotted asker,
+     ;; even when the asking and answering threads have another context.
      (define answer-box (box #f))
+     (define from (list 'agent (string-copy "probe") 1))
+     (define to (list 'head (string-copy "test")))
+     (define question (string-copy "Proceed?"))
+     (define choices (map string-copy '("yes" "no")))
      (define ticket
-       (actor:ask! agent human "Proceed?" '("yes" "no")
-                   (lambda (answer) (set-box! answer-box answer))))
-
-     (test:check 'ask-returns-a-ticket (number? ticket) #t)
-     (test:check 'ask-delivered
-       (kernel:mailbox-receive! human-mail)
-       (list 'ask ticket agent "Proceed?" '("yes" "no")))
-     (test:check 'ask-is-pending
-       (actor:pending human)
-       (list (list ticket agent "Proceed?" '("yes" "no"))))
-
-     (test:check 'answer-routes-back
-       (list (actor:answer! ticket "yes") (unbox answer-box))
-       '(#t "yes"))
-     (test:check 'answer-clears-pending (actor:pending human) '())
-     (test:check 'stale-ticket-refused (actor:answer! ticket "again") #f)
+       (actor:call-as human
+         (lambda ()
+           (actor:ask! from to question choices
+             (lambda (answer) (set-box! answer-box (list answer (actor:current))))))))
+     (define delivered-question (kernel:mailbox-receive! human-mail))
+     (define pending-question (car (actor:pending human)))
+     (for-each (lambda (text) (string-set! text 0 #\X))
+               (list (cadr from) (cadr to) question (car choices)))
+     (test:check 'question-admission-and-delivery-context
+       (list (number? ticket) delivery-context delivered-question pending-question (actor:current))
+       (list #t human (list 'ask ticket agent "Proceed?" '("yes" "no"))
+             (list ticket agent "Proceed?" '("yes" "no")) #f))
+     (for-each (lambda (text) (string-set! text 0 #\Y))
+               (list (cadr (caddr delivered-question)) (cadddr delivered-question)
+                     (car (list-ref delivered-question 4))
+                     (cadr (cadr pending-question)) (caddr pending-question)
+                     (car (cadddr pending-question))))
+     (test:check 'question-reads-and-reply-context
+       (list (actor:pending human)
+             (actor:call-as human
+               (lambda () (list (actor:answer! ticket "yes") (actor:current))))
+             (unbox answer-box) (actor:pending human) (actor:answer! ticket "again") (actor:current))
+       (list (list (list ticket agent "Proceed?" '("yes" "no")))
+             (list #t human) (list "yes" agent) '() #f #f))
 
      ;; -- ordering and cancellation --------------------------------------
 

@@ -104,6 +104,7 @@
                 call-with-string-output-port)
           (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
           (prefix (kernel) kernel:)
+          (prefix (startup) startup:)
           (prefix (tty) tty:)
           (prefix (store) store:)
           (prefix (text) text:)
@@ -730,8 +731,6 @@
   (define (buffer-stale b) (buffer-fact b 'stale #f))
   (define (buffer-stale-set! b v) (buffer-fact-set! b 'stale v))
 
-  (define ui-actor '(head main))
-
   (define (local-name name)
     ;; Locality is visible in every label, including user renames.
     ;; Existing tool keys keep their identity: *tool* names become
@@ -1124,14 +1123,12 @@
     ;; the one three-element shape
     (if (eq? (car event) 'delete) (caddr event) (list-ref event 3)))
 
-  (define (note-foreign-event event)
+  (define (note-foreign-event local-actor event)
     (when (and (memq (car event) '(edit reset property create rename delete))
-               (not (equal? (event-actor event) ui-actor)))
+               (not (equal? (event-actor event) local-actor)))
       (with-mutex foreign-lock
         (set! foreign-pending (cons event foreign-pending)))
       (wake-main!)))
-
-  (define store-subscription (store:subscribe! #f note-foreign-event))
 
   ;; The ui's own side of the audit stream, coalesced: keystrokes are
   ;; too many to log one by one, so consecutive ui edits to a buffer
@@ -1865,8 +1862,27 @@
 
   ;; another actor's message to this head wakes its loop; the question
   ;; is presented before the next frame
-  (define ui-actor-registered
-    (actor:register! ui-actor (lambda (message) (wake-main!))))
+  (define ui-actor
+    ;; Claim and subscribe together before creating buffers or marks. Both
+    ;; process-root registrations outlive any extension that first imports
+    ;; the head. A presence callback can immediately write to the store, so
+    ;; its subscriber captures the identity before ui-actor is initialized.
+    (kernel:call-with-runtime-registrations
+      (lambda ()
+        (let* ([requested (startup:name)]
+               [seed (or requested (startup:default-name))])
+          (let claim ([name seed] [suffix 2])
+            (guard (ex [(kernel:registration-conflict? ex)
+                        (if requested
+                            (error 'e "head name already in use" requested)
+                            (claim (string-append seed " " (number->string suffix))
+                                   (+ suffix 1)))])
+              (kernel:call-with-registration-update
+                (lambda ()
+                  (let ([identity (actor:register! (list 'head name)
+                                    (lambda (message) (wake-main!)) 'all)])
+                    (store:subscribe! #f (lambda (event) (note-foreign-event identity event)))
+                    identity)))))))))
 
   ;;; The seat's first state ---------------------------------------------------------
 

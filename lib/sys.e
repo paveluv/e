@@ -15,7 +15,7 @@
           duplicate-standard-input-port
           terminal-output-port
           terminal-character-width
-          canonical-file-path
+          canonical-file-path host-name terminal-name
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
           terminal-process-pid resize-terminal-process!
@@ -81,6 +81,14 @@
     (and libc-loaded?
          (guard (ex [else #f])
            (foreign-procedure "realpath" (string u8*) uptr))))
+  (define c-gethostname
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "gethostname" (u8* uptr) int))))
+  (define c-ttyname-r
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "ttyname_r" (int u8* uptr) int))))
   (define c-setlocale
     (and libc-loaded?
          (guard (ex [else #f])
@@ -318,6 +326,28 @@
       (close-terminal-descriptors! process)
       (wait-terminal-process! process 0)))
 
+  (define (nul-terminated-string bytes)
+    (let find ([n 0])
+      (cond [(= n (bytevector-length bytes)) #f]
+            [(zero? (bytevector-u8-ref bytes n))
+             (let ([trimmed (make-bytevector n)])
+               (bytevector-copy! bytes 0 trimmed 0 n)
+               (utf8->string trimmed))]
+            [else (find (+ n 1))])))
+
+  (define (host-name)
+    (and c-gethostname
+         (let ([out (make-bytevector 1024 0)])
+           (and (zero? (c-gethostname out (bytevector-length out)))
+                (nul-terminated-string out)))))
+
+  (define (terminal-name)
+    ;; ttyname_r owns its output buffer, unlike ttyname's shared C storage.
+    (and c-ttyname-r
+         (let ([out (make-bytevector 1024 0)])
+           (and (zero? (c-ttyname-r 0 out (bytevector-length out)))
+                (nul-terminated-string out)))))
+
   (define (canonical-file-path path)
     ;; The absolute, symlink-resolved spelling of an existing path, or #f.
     ;; PATH_MAX is commonly 4096; realpath fails instead of overflowing the
@@ -325,12 +355,7 @@
     (and c-realpath
          (let ([out (make-bytevector 4096 0)])
            (and (not (= (c-realpath path out) 0))
-                (let find ([n 0])
-                  (if (= (bytevector-u8-ref out n) 0)
-                      (let ([trimmed (make-bytevector n)])
-                        (bytevector-copy! out 0 trimmed 0 n)
-                        (utf8->string trimmed))
-                      (find (+ n 1))))))))
+                (nul-terminated-string out)))))
 
   ;; The destination for terminal-control output. Normally this is stdout;
   ;; clients that temporarily redirect process stdout can preserve a separate

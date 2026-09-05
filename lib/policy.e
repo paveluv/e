@@ -44,7 +44,7 @@
           (prefix (store) store:)
           (prefix (actor) actor:)
           (prefix (only (log) add!) log:)
-          (only (kernel) persistent-cell condition-text))
+          (prefix (only (kernel) persistent-cell condition-text) kernel:))
 
   ;;; Policies ----------------------------------------------------------------
 
@@ -77,7 +77,7 @@
   (define live-sessions (box '()))
 
   (define audit-limit 512)
-  (define audit-cell (persistent-cell 'policy-audit (lambda () '())))
+  (define audit-cell (kernel:persistent-cell 'policy-audit (lambda () '())))
 
   (define (bounded-audit! entry)
     ;; the persistent trail, and -- quietly -- the log stream, so
@@ -111,10 +111,10 @@
   (define (mint! actor p . options)
     ;; Mint a session for the actor under a policy.  Options, in
     ;; order: the owner actor consulted for anything beyond the grant
-    ;; (default (head main)) and the audit procedure (default: the
-    ;; persistent audit trail read by audit-log).
+    ;; (default: actor:current, or #f outside actor work) and the audit
+    ;; procedure (default: the persistent audit trail read by audit-log).
     (unless (policy? p) (error 'mint! "expected a policy" p))
-    (let* ([owner (if (pair? options) (car options) '(head main))]
+    (let* ([owner (if (pair? options) (car options) (actor:current))]
            [audit! (if (and (pair? options) (pair? (cdr options)))
                        (cadr options)
                        bounded-audit!)]
@@ -167,8 +167,10 @@
          (if (or (not form) (eq? form 'malformed))
              (cons 'error
                    (if form "unreadable expression" "an empty expression"))
-             (let ([outcome (fueled-eval form (session-env s)
-                                         (policy-fuel (session-policy s)))]
+             (let ([outcome (actor:call-as (session-actor s)
+                              (lambda ()
+                                (fueled-eval form (session-env s)
+                                  (policy-fuel (session-policy s)))))]
                    [cap (policy-cap (session-policy s))])
                (let ([result
                       (case (car outcome)
@@ -190,7 +192,7 @@
                            (cons (if (undefined-violation? ex)
                                      'unbound
                                      'error)
-                                 (clipped (condition-text ex) cap)))])])
+                                 (clipped (kernel:condition-text ex) cap)))])])
                  ((session-audit! s)
                   (list 'eval (session-actor s)
                         (clipped (format "~s" form) 200)

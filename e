@@ -1,6 +1,6 @@
 #!/usr/bin/env scheme-script
 ;; e -- loader for the e editor.
-;; Run:  ./e [file]
+;; Run:  ./e [--name NAME] [--] [file]
 ;;
 ;; scheme-script is the interpreter name Chez's man page recommends for
 ;; scripts; Linux distributions and Homebrew install it under exactly
@@ -58,5 +58,10 @@
 (compile-imported-libraries #t)
 
 (eval '(begin
-         (import (edit) (prefix (main) main:) (prefix (kernel) kernel:))
-         (main:run)))
+         (import (prefix (startup) startup:) (prefix (kernel) kernel:))
+         (startup:call-with-options (command-line-arguments)
+           (lambda ()
+             ;; A separate eval keeps head initialization after parsing.
+             (eval '(begin
+                      (import (edit) (prefix (main) main:))
+                      (main:run)))))))

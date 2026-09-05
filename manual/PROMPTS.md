@@ -91,11 +91,17 @@ lists pending questions in ticket order as `(ticket from question choices)`.
 the call that consumes the ticket and `#f` thereafter. Cancellation does
 not invoke the reply procedure.
 
+The protocol copies the question's actors, text, and choices on admission.
+Delivered questions and `pending` reads are independent snapshots; changing
+them cannot redirect a ticket or alter another reader's question.
+
 Concurrent questions retain distinct tickets. The protocol releases its lock
 before calling delivery or reply procedures, which may ask or answer another
 question.
-A reply runs on the answering thread; use `head:run-on-main!` for changes to
-the head from a worker. A failing reply still consumes its ticket.
+A reply runs on the answering thread with the asker's `actor:current`
+identity. A delivery through `actor:send!` runs with the recipient's
+identity. Use `head:run-on-main!` for changes to the head from a worker.
+A failing reply still consumes its ticket.
 Delivery and replies use published registrations, independently of a module
 reload that triggered them. Actors registered during initialization become
 reachable when that registration update commits; see [module registration](MODULES.md#registries-and-persistent-state).
@@ -126,6 +132,19 @@ a later event. Directory and presence data are independent snapshots.
 An already selected delivery may finish. Existing questions remain pending
 across detach/reload and are available on reattachment. Explicit answer or
 cancellation still consumes each ticket once.
+
+`actor:current` returns a copy of the executing actor's identity, or `#f`
+outside actor work. `actor:call-as who thunk` scopes that identity to the
+thunk and restores it on return, error, or escape. Scopes are local to each
+thread; a newly forked worker inherits its parent's context. This attributes
+work; it grants no permissions. The editor's startup, configuration, and
+command loop run as `head:ui-actor`.
+
+`policy:mint! actor policy [owner [audit!]]` defaults the escalation owner
+to `actor:current`. Standalone callers can supply an owner explicitly or
+use `actor:call-as`; without either, the owner is `#f` and questions have
+no implicit recipient. Session evaluation runs as the session actor and
+restores its caller's context, including when evaluation runs out of fuel.
 
 ## Prompt API
 

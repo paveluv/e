@@ -28,8 +28,8 @@
      (putenv "SHELL" "/bin/sh")
      (define mirror (terminal:make-emulator 24 100))
      (define process
-       (sys:spawn-terminal-process "/bin/sh" "exec ./e"
-                               (current-directory) 24 100))
+       (sys:spawn-terminal-process "/bin/sh" "exec ./e --name 'wired head λ'"
+                                   (current-directory) 24 100))
      (define from (transcoded-port
                     (sys:terminal-process-input process)
                     (make-transcoder (utf-8-codec) 'none 'replace)))
@@ -75,9 +75,10 @@
      (pump! 3000)
 
      ;; -- generated head views stay out of the store ---------------------
-     (check 'startup-store-has-only-scratch
-            (read-editor '(map store:buffer-name (store:buffer-list)))
-            '("*scratch*"))
+     (check 'startup-identity-and-store
+            (read-editor '(list head:ui-actor (actor:current)
+                                (map store:buffer-name (store:buffer-list))))
+            '((head "wired head λ") (head "wired head λ") ("*scratch*")))
      (check 'registered-apps-are-local
             (read-editor
               '(for-all (lambda (a) (not (head:buffer-store-id (head:app-buffer a))))
@@ -205,7 +206,7 @@
      (check 'foreign-edit-audited (call-with-input-file probe read) #t)
 
      ;; the human's cursor is a mark other actors can read
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (equal? (store:mark (quote (head main)) (head:buffer-store-id (current-buffer)) (quote point)) (point)) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (equal? (store:mark head:ui-actor (head:buffer-store-id (current-buffer)) (quote point)) (point)) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'point-published-as-mark
@@ -459,7 +460,7 @@
             (call-with-input-file probe read) #t)
 
      ;; the interaction protocol: an agent asks, the head answers ------
-     (send! (format "\x1b;xactor:ask! (quote (agent tester)) (quote (head main)) \"Proceed with the plan?\" (list \"yes\" \"no\") (lambda (answer) (call-with-output-file \"~a\" (lambda (p) (write answer p)) (quote replace)))\r"
+     (send! (format "\x1b;xactor:ask! (quote (agent tester)) head:ui-actor \"Proceed with the plan?\" (list \"yes\" \"no\") (lambda (answer) (call-with-output-file \"~a\" (lambda (p) (write answer p)) (quote replace)))\r"
                     probe))
      (pump! 1200)
      (check 'ask-indicator-shows
@@ -620,7 +621,7 @@
      ;; 'region span mark in the store; C-g deactivates and drops it
      (send! "\x1b;<\x0;\x6;\x6;\x6;")   ; M-<, C-@, then three C-f
      (pump! 600)
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (store:mark (quote (head main)) (head:buffer-store-id (current-buffer)) (quote region))]) (write (list (text:span-start s) (text:span-end s)) p))) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (store:mark head:ui-actor (head:buffer-store-id (current-buffer)) (quote region))]) (write (list (text:span-start s) (text:span-end s)) p))) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'region-published-as-a-span
@@ -628,7 +629,7 @@
             '((0 . 0) (0 . 3)))
      (send! "\x7;")                     ; C-g: the mark deactivates
      (pump! 600)
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (store:mark (quote (head main)) (head:buffer-store-id (current-buffer)) (quote region)) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (store:mark head:ui-actor (head:buffer-store-id (current-buffer)) (quote region)) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'region-dropped-on-quit
@@ -637,7 +638,7 @@
      ;; every window's cursor is published: a split adds a second
      ;; (point . serial) mark, closing it drops the mark
      (define (count-window-points)
-       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (length (filter (lambda (m) (and (pair? (car m)) (eq? (caar m) (quote point)))) (store:marks (quote (head main)) (head:buffer-store-id (current-buffer))))) p)) (quote replace)\r"
+       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (length (filter (lambda (m) (and (pair? (car m)) (eq? (caar m) (quote point)))) (store:marks head:ui-actor (head:buffer-store-id (current-buffer))))) p)) (quote replace)\r"
                       probe))
        (pump! 900)
        (call-with-input-file probe read))
@@ -648,9 +649,29 @@
      (pump! 600)
      (check 'closed-window-point-dropped (count-window-points) 1)
 
-     ;; blame: a rival's edit is attributed at point from the store's
-     ;; delta log (the tint itself is visual; the geometry is checked
-     ;; in tests/store.ss)
+     ;; Named-head edits stay untinted; foreign ink gets a blame face.
+     (read-editor '(begin (head:add-buffer! (head:new-buffer "blame-naming")) #t))
+     (check 'blame-tints-only-foreign-edits
+       (map
+         (lambda (actor-expression)
+           (read-editor
+             `(let ([id (head:buffer-store-id (head:buffer-named "blame-naming"))])
+                (store:edit! ,actor-expression id (store:revision id)
+                  (text:make-span 0 0 0 0) '("ink"))
+                #t))
+           ;; read-editor returns to the real pump, which delivers the
+           ;; blame subscriber's posted work before the next query.
+           (read-editor
+             '(let ([b (head:buffer-named "blame-naming")])
+                (length (filter (lambda (range)
+                                  (and (= (length range) 5) (eq? (car range) b)
+                                       (memq (list-ref range 4) '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
+                                (paint:highlight-ranges))))))
+         '(head:ui-actor (quote (agent rival))))
+       '(0 1))
+     (read-editor '(begin (kill-buffer! (head:buffer-named "blame-naming")) #t))
+
+     ;; A rival's edit is attributed at point from the store's delta log.
      (send! "\x1b;xlet ([id (head:buffer-store-id (current-buffer))]) (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 0 0 2) (list \"BL\"))\r")
      (pump! 600)
      (send! "\x1b;<")                   ; onto the rival's span
@@ -737,13 +758,18 @@
 
      ;; the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (let ([s (policy:mint! (quote (agent wired)) (policy:make (quote all) 10000000 0 (quote ()) 4000))]) (write (policy:session-eval! s \"(+ 1 2)\") p) (write (let-values ([(status detail) (policy:session-edit! s (head:buffer-store-id (current-buffer)) 1 (text:make-span 0 0 0 0) (quote (\"x\")))]) (list status detail)) p) (policy:revoke! s))) (quote replace)\r"
-                    probe))
-     (pump! 1200)
      (check 'minted-session-evals-and-is-fenced
-            (call-with-input-file probe
-              (lambda (p) (list (read p) (read p))))
-            '((ok . "=> 3") (refused buffer)))
+       (read-editor
+         '(let* ([s (policy:mint! '(agent wired) (policy:make 'all 10000000 0 '() 4000))]
+                 [result (policy:session-eval! s "(+ 1 2)")]
+                 [edit-result
+                  (let-values ([(status detail)
+                                (policy:session-edit! s (head:buffer-store-id (current-buffer))
+                                  1 (text:make-span 0 0 0 0) '("x"))])
+                    (list status detail))])
+            (policy:revoke! s)
+            (list (policy:session-owner s) (actor:current) result edit-result)))
+       '((head "wired head λ") (head "wired head λ") (ok . "=> 3") (refused buffer)))
 
      ;; a seam module main links against refuses to reload in place: main
      ;; cannot follow, and two library instances would fork

@@ -1,5 +1,19 @@
 # Configuration
 
+## Startup and head names
+
+Run `./e [--name NAME] [--] [file]`. A name is a nonempty string; quote it
+in the shell if it contains spaces. `--name=NAME` also works. `--` allows a
+file whose name begins with `-`. Help (`-h` or `--help`) and argument errors
+are handled before loading the editor or `config.e`.
+
+Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
+the terminal path when there is no terminal. Generated names gain ` 2`,
+` 3`, and so on if occupied; an explicitly requested name must be free.
+The identity is `(head "name")`, exposed as `head:ui-actor`. It is chosen
+before shared buffers or cursor marks are created. This build still runs
+one head in one process; daemon and attach modes are not implemented.
+
 ## Configuration file
 
 `config.e`, beside the loader script, is plain Scheme rather than an R6RS
