@@ -54,7 +54,7 @@ module reload cannot displace configuration choices.
 
 ## Hot reload
 
-Saving any module source from the active installation reloads it in place.
+Saving a reloadable extension's source from the active installation reloads it in place.
 Modules that import it recompile and reinitialize in dependency order. Editing
 outside e can be picked up explicitly:
 
@@ -62,15 +62,59 @@ outside e can be picked up explicitly:
 (kernel:reload-module! "paren")
 ```
 
-`main:modules-reload-on-save` controls automatic source reload. The kernel and
-`main` (the loop) are not hot-reloadable; everything else is, the command layer
-included.
+`main:modules-reload-on-save` controls automatic source reload. The kernel,
+`main` (the loop), and libraries that `main` imports directly or transitively
+require a restart. The editor refuses to reload those libraries to keep every
+caller using the same instance.
 
-Registrations are tagged with their owning module. Reload first retracts the
-old modes, keys, hooks, app callbacks, descriptions, and other registrations,
-then installs the new set. Authors do not need to unregister old values.
-Buffers, windows, and the live evaluation top level remain in place. If reload
-fails, the old module remains usable where possible and the failure is logged.
+Registrations are tagged with their owning module. Reload stages replacement
+modes, keys, hooks, app callbacks, and descriptions, then publishes them
+together after initialization and reload hooks succeed. Authors do not need
+to unregister old values. Other threads retain the published registrations
+while initialization runs. A failed or abandoned reload discards its staged
+changes, preserving concurrent registrations and revocations.
+
+Buffers, windows, and the live evaluation top level remain in place. Registry
+rollback does not undo arbitrary Scheme effects, resources, or library
+redefinition: old registered callbacks may remain usable even when new library
+exports already exist. The failure is logged.
+
+## Registries and persistent state
+
+`kernel:make-registry` returns an opaque handle. `kernel:registry-add!` tags an
+item with `kernel:registering-module`, or `#f` for a runtime registration.
+`kernel:registry-items`, `kernel:registry-entries`, and `kernel:registry-find`
+read newest entries first; the ownership read returns copied `(owner . item)`
+wrappers. Registered items remain the registering code's responsibility.
+
+`kernel:registry-remove!` selects entries from one snapshot, calling its
+predicate outside the kernel lock, then removes those entry identities from
+the latest state. `kernel:retract-module!` removes an owner's entries across
+registries. Both preserve unrelated concurrent changes.
+
+`kernel:call-with-registration-update` stages changes on the calling thread,
+which reads its own additions and removals. Nested success joins the parent;
+only the outer scope publishes. Exceptions and continuation escapes discard
+the scope's changes, and a closed scope cannot be resumed. Return values are
+preserved. Use this scope instead of the old snapshot/restore helpers, and
+publish new registration handles to runtime consumers only after it commits.
+Reads can observe later committed work; this publication scope does not make
+a read-then-add uniqueness check atomic.
+Module loading, reload, and configuration already use it; load and reload
+must run on the main pump.
+
+Store events and actor messages/replies use
+`kernel:call-with-runtime-registrations`. They resolve published callbacks and
+clear the triggering initializer's staging and module owner. Registrations
+made by those callbacks are independent runtime changes unless the callback
+sets an explicit owner. A worker also operates independently of a staging
+scope on the thread that created it.
+
+`kernel:persistent-cell key make-initial` initializes one box per key.
+Concurrent callers wait for the initializer, which runs outside the table
+lock and may request other keys. Failure or escape releases the key for
+retry; recursive initialization of the same key raises an error. Callers
+must synchronize subsequent mutations of the box's contents themselves.
 
 ## Public API conventions
 
@@ -146,4 +190,3 @@ Modules can publish structured documentation with `doc:register!` and
 component-specific log presentation with `log:register-formatter!`. Both
 registries participate in transactional reload. See [Describe](DESCRIBE.md)
 and [Logging](LOG.md).
-

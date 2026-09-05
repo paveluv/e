@@ -96,6 +96,9 @@ before calling delivery or reply procedures, which may ask or answer another
 question.
 A reply runs on the answering thread; use `head:run-on-main!` for changes to
 the head from a worker. A failing reply still consumes its ticket.
+Delivery and replies use published registrations, independently of a module
+reload that triggered them. Actors registered during initialization become
+reachable when that registration update commits; see [module registration](MODULES.md#registries-and-persistent-state).
 
 ## Prompt API
 

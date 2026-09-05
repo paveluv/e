@@ -31,9 +31,11 @@ Saving `config.e` inside e reloads it immediately. It can also be applied with:
 `main:config-reload-on-save` controls automatic reload. A configuration error is
 reported in the echo area and structured log without terminating the editor.
 
-Configuration-owned registrations are transactional where applicable. For
-example, removing a key binding, style override, or extra mode extension from
-the file removes it on the next reload rather than leaving stale state behind.
+Configuration-owned registrations publish together after the file finishes.
+Removing a key binding, style override, or extra mode extension from the file
+removes it on the next successful reload. A failed load keeps the previous
+registered settings and preserves concurrent runtime registrations. Parameter
+assignments and other Scheme effects that ran before the error remain applied.
 
 ## Common examples
 

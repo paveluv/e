@@ -46,10 +46,12 @@
 
   (define (send! to message)
     ;; deliver a protocol message; #t when the actor was reachable
-    (cond [(deliver to)
-           => (lambda (deliver!)
-                (guard (ex [else #f]) (deliver! message) #t))]
-          [else #f]))
+    (kernel:call-with-runtime-registrations
+      (lambda ()
+        (cond [(deliver to)
+               => (lambda (deliver!)
+                    (guard (ex [else #f]) (deliver! message) #t))]
+              [else #f]))))
 
   ;;; Ask and reply -----------------------------------------------------------
 
@@ -118,7 +120,8 @@
     (cond [(take-ticket! ticket)
            => (lambda (entry)
                 (guard (ex [else (void)])
-                  ((vector-ref entry 5) answer))
+                  (kernel:call-with-runtime-registrations
+                    (lambda () ((vector-ref entry 5) answer))))
                 #t)]
           [else #f]))
 

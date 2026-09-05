@@ -927,11 +927,13 @@
     ;; Caller holds the mutation lock.  The two-list FIFO keeps both
     ;; appends and removal amortized constant time.
     (let ([tokens
-           (map car
-                (filter (lambda (entry)
-                          (or (not (cadr entry))
-                              (equal? (cadr entry) (cadr event))))
-                        (kernel:registry-items subscriptions)))]
+           (kernel:call-with-runtime-registrations
+             (lambda ()
+               (map car
+                    (filter (lambda (entry)
+                              (or (not (cadr entry))
+                                  (equal? (cadr entry) (cadr event))))
+                            (kernel:registry-items subscriptions)))))]
           [s (current-store)])
       (unless (null? tokens)
         (store-events-back-set! s
@@ -977,11 +979,13 @@
             (when entered? (error 'store "cannot resume completed event delivery"))
             (set! entered? #t))
           (lambda ()
-            (let drain ()
-              (let ([delivery (next-delivery!)])
-                (when delivery
-                  (guard (ex [else (void)]) ((cdr delivery) (car delivery)))
-                  (drain)))))
+            (kernel:call-with-runtime-registrations
+              (lambda ()
+                (let drain ()
+                  (let ([delivery (next-delivery!)])
+                    (when delivery
+                      (guard (ex [else (void)]) ((cdr delivery) (car delivery)))
+                      (drain)))))))
           (lambda ()
             (locked (lambda () (store-delivering?-set! (current-store) #f)))
             ;; Finish queued work on an escape too, and cover a commit

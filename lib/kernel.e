@@ -9,7 +9,7 @@
           registering-module make-registry registry-add!
           registry-items registry-entries registry-find
           registry-remove!
-          retract-module! registration-snapshot restore-registrations!
+          retract-module! call-with-registration-update call-with-runtime-registrations
           module-source loaded-modules
           init-module! load-module! load-modules! module-requires?
           reload-module! add-after-reload-hook!
@@ -19,12 +19,13 @@
           condition-text)
   (import (rnrs)
           (only (chezscheme)
-                box unbox set-box! make-hashtable equal-hash
+                box unbox make-hashtable equal-hash
                 make-parameter format interaction-environment eval
                 library-exports library-requirements
                 library-directories directory-list load sort
                 parameterize make-mutex with-mutex make-condition
-                condition-wait condition-signal display-condition))
+                condition-wait condition-signal condition-broadcast
+                get-thread-id box? display-condition))
 
   ;;; Conditions --------------------------------------------------------------
 
@@ -92,70 +93,240 @@
   ;; newer entries.
 
   (define registering-module (make-parameter #f))
+  (define registry-lock (make-mutex))
+  (define-record-type (registry %make-registry registry?)
+    (fields (mutable contents)))
   (define registries '())
 
+  ;; Registration updates stage entry identities, never whole snapshots.
+  ;; The initiating thread reads its own changes; other threads see the
+  ;; committed lists until the outer update publishes all its deltas.
+  (define-record-type registration-update
+    (fields thread parent (mutable state) (mutable deltas)))
+  (define-record-type registration-delta
+    (fields registry (mutable additions) (mutable removals)))
+  (define current-registration-update (make-parameter #f))
+
+  (define (call-with-runtime-registrations thunk)
+    ;; A runtime effect is independent of any initializer that triggered
+    ;; it: resolve published callbacks, and do not give their registrations
+    ;; the caller's staging or module ownership. Explicit ownership inside
+    ;; the callback still works normally.
+    (parameterize ([current-registration-update #f] [registering-module #f])
+      (thunk)))
+
+  (define (active-registration-update)
+    (let ([update (current-registration-update)])
+      ;; Chez threads inherit parameters. A worker's registrations are
+      ;; independent of the scope that happened to start that thread.
+      (and update (= (registration-update-thread update) (get-thread-id))
+           (begin
+             (unless (eq? (registration-update-state update) 'active)
+               (error 'registry "registration update is already closed"))
+             update))))
+
+  (define (find-registration-delta update r)
+    (find (lambda (delta) (eq? (registration-delta-registry delta) r))
+          (registration-update-deltas update)))
+
+  (define (registration-delta! update r)
+    ;; Caller holds registry-lock.
+    (or (find-registration-delta update r)
+        (let ([delta (make-registration-delta r '() '())])
+          (registration-update-deltas-set! update
+            (cons delta (registration-update-deltas update)))
+          delta)))
+
+  (define (apply-registration-delta delta entries)
+    (let ([removed? (lambda (entry) (memq entry (registration-delta-removals delta)))])
+      (append (remp removed? (registration-delta-additions delta))
+              (remp removed? entries))))
+
+  (define (visible-registry-entries r update)
+    ;; Caller holds registry-lock; entry wrappers and list spines are
+    ;; private and never mutated after admission.
+    (if update
+        (let ([entries (visible-registry-entries r (registration-update-parent update))]
+              [delta (find-registration-delta update r)])
+          (if delta (apply-registration-delta delta entries) entries))
+        (registry-contents r)))
+
+  (define (registry-read r)
+    (with-mutex registry-lock
+      (visible-registry-entries r (active-registration-update))))
+
   (define (make-registry)
-    (let ([r (box '())])            ; entries (owner . item), newest first
-      (set! registries (cons r registries))
+    (let ([r (%make-registry '())]) ; entries (owner . item), newest first
+      (with-mutex registry-lock (set! registries (cons r registries)))
       r))
 
   (define (registry-add! r item)
-    (set-box! r (cons (cons (registering-module) item) (unbox r))))
+    (with-mutex registry-lock
+      (let ([entry (cons (registering-module) item)]
+            [update (active-registration-update)])
+        (if update
+            (let ([delta (registration-delta! update r)])
+              (registration-delta-additions-set! delta
+                (cons entry (registration-delta-additions delta))))
+            (registry-contents-set! r (cons entry (registry-contents r)))))))
 
-  (define (registry-items r) (map cdr (unbox r)))
+  (define (registry-items r) (map cdr (registry-read r)))
 
-  (define (registry-entries r) (unbox r))
+  (define (registry-entries r)
+    ;; Preserve the public shape without exposing ownership/identity
+    ;; wrappers to mutation. The registering module still owns its item.
+    (map (lambda (entry) (cons (car entry) (cdr entry))) (registry-read r)))
 
   (define (registry-find r match?)
-    (let loop ([entries (unbox r)])
+    ;; Predicates run against one snapshot, outside registry-lock.
+    (let loop ([entries (registry-read r)])
       (cond [(null? entries) #f]
             [(match? (cdar entries)) (cdar entries)]
             [else (loop (cdr entries))])))
 
+  (define (remove-registration-entries! r entries update)
+    ;; Caller holds registry-lock. Remove only selected identities from
+    ;; the latest list, preserving intervening registration/retraction.
+    (unless (null? entries)
+      (if update
+          (let ([delta (registration-delta! update r)])
+            (registration-delta-removals-set! delta
+              (append entries (registration-delta-removals delta))))
+          (registry-contents-set! r
+            (remp (lambda (entry) (memq entry entries)) (registry-contents r))))))
+
   (define (registry-remove! r match?)
     ;; drop entries whose item satisfies match?, whoever owns them --
     ;; for registrations with an explicit revocation handle (a store
-    ;; subscription's token, say), alongside ownership retraction
-    (set-box! r (remp (lambda (e) (match? (cdr e))) (unbox r))))
+    ;; subscription's token, say), alongside ownership retraction.
+    ;; Each predicate runs once per captured entry, without the lock.
+    (let ([entries (filter (lambda (entry) (match? (cdr entry))) (registry-read r))])
+      (with-mutex registry-lock
+        (remove-registration-entries! r entries (active-registration-update)))))
 
   (define (retract-module! owner)
-    (for-each (lambda (r)
-                (set-box! r (remp (lambda (e) (eq? (car e) owner))
-                                  (unbox r))))
-              registries))
+    (with-mutex registry-lock
+      (let ([update (active-registration-update)])
+        (for-each
+          (lambda (r)
+            (remove-registration-entries! r
+              (filter (lambda (entry) (eq? (car entry) owner))
+                      (visible-registry-entries r update))
+              update))
+          registries))))
 
-  (define (registration-snapshot)
-    ;; Registry lists are persistent: registration and retraction
-    ;; replace a box's list rather than mutating it, so retaining each
-    ;; old head is a complete, cheap rollback point.
-    (map (lambda (r) (cons r (unbox r))) registries))
+  (define (publish-registration-update! update)
+    ;; Caller holds registry-lock. Nested success merges into the parent;
+    ;; outer success applies deltas to current committed lists, so a
+    ;; concurrent revocation is never resurrected by rollback or commit.
+    (let ([parent (registration-update-parent update)])
+      (for-each
+        (lambda (delta)
+          (let ([r (registration-delta-registry delta)])
+            (if parent
+                (let ([target (registration-delta! parent r)])
+                  (registration-delta-additions-set! target
+                    (append (registration-delta-additions delta)
+                            (registration-delta-additions target)))
+                  (registration-delta-removals-set! target
+                    (append (registration-delta-removals delta)
+                            (registration-delta-removals target))))
+                (registry-contents-set! r
+                  (apply-registration-delta delta (registry-contents r))))))
+        (registration-update-deltas update))
+      (registration-update-state-set! update 'committed)
+      (registration-update-deltas-set! update '())))
 
-  (define (restore-registrations! snapshot)
-    (for-each (lambda (entry) (set-box! (car entry) (cdr entry)))
-              snapshot))
+  (define (call-with-registration-update thunk)
+    ;; Atomic publication of registry changes only, not arbitrary state
+    ;; or resource rollback. Do not publish new handles to other threads
+    ;; until this returns. Module loading/reloading runs on the main pump.
+    (let ([update (make-registration-update (get-thread-id)
+                    (active-registration-update) 'new '())])
+      (dynamic-wind
+        (lambda ()
+          (with-mutex registry-lock
+            (unless (eq? (registration-update-state update) 'new)
+              (error 'call-with-registration-update "cannot resume a closed update"))
+            (registration-update-state-set! update 'active)))
+        (lambda ()
+          (parameterize ([current-registration-update update])
+            (call-with-values thunk
+              (lambda results
+                (with-mutex registry-lock (publish-registration-update! update))
+                (apply values results)))))
+        (lambda ()
+          (with-mutex registry-lock
+            (when (eq? (registration-update-state update) 'active)
+              (registration-update-state-set! update 'aborted)
+              (registration-update-deltas-set! update '())))))))
+
+  ;;; Persistent cells ------------------------------------------------------
 
   (define persistent-cells (make-hashtable equal-hash equal?))
+  (define cells-lock (make-mutex))
+  (define-record-type cell-initialization
+    (fields thread signal))
 
   (define (persistent-cell key make-initial)
     ;; A box that survives module reloads: the first request under a
-    ;; key creates it; a reloaded module re-initializing gets the same
-    ;; box back, its state intact.
-    (or (hashtable-ref persistent-cells key #f)
-        (let ([cell (box (make-initial))])
-          (hashtable-set! persistent-cells key cell)
-          cell)))
+    ;; key initializes it, with other callers waiting for that result.
+    ;; Constructors run outside cells-lock and may request other keys.
+    (let ([initializing #f] [entered? #f])
+      ;; Arm cleanup before publishing an initialization reservation, so
+      ;; an interruption before the constructor starts cannot strand it.
+      (dynamic-wind
+        (lambda ()
+          (when entered? (error 'persistent-cell "cannot resume a closed initialization" key))
+          (set! entered? #t))
+        (lambda ()
+          (let ([entry
+                 (with-mutex cells-lock
+                   (let wait ()
+                     (let ([entry (hashtable-ref persistent-cells key #f)])
+                       (cond
+                         [(box? entry) entry]
+                         [entry
+                          (when (= (cell-initialization-thread entry) (get-thread-id))
+                            (error 'persistent-cell "recursive initialization of the same key" key))
+                          (condition-wait (cell-initialization-signal entry) cells-lock)
+                          (wait)]
+                         [else
+                          (set! initializing (make-cell-initialization (get-thread-id) (make-condition)))
+                          (hashtable-set! persistent-cells key initializing)
+                          initializing]))))])
+            (if (box? entry)
+                entry
+                (let ([cell (box (make-initial))])
+                  (with-mutex cells-lock (hashtable-set! persistent-cells key cell))
+                  cell))))
+        (lambda ()
+          (when initializing
+            (with-mutex cells-lock
+              (when (eq? (hashtable-ref persistent-cells key #f) initializing)
+                (hashtable-delete! persistent-cells key))
+              (condition-broadcast (cell-initialization-signal initializing))))))))
 
   ;;; Module lifecycle --------------------------------------------------------
 
   ;; Extension modules are libraries in the lib directory, loaded
   ;; through here -- by the loader at startup, or later by hand -- so
   ;; the kernel knows which modules exist and owns their
-  ;; registrations.  The kernel and main are the two libraries
-  ;; that never reload; everything else does, in place.
+  ;; registrations. Loading/reloading runs on the main pump. Kernel and
+  ;; main never reload, and reload also refuses libraries main imports,
+  ;; keeping every caller on the same instance.
 
-  (define modules '())          ; module names, in load order
+  ;; Membership commits with a module's registrations, including nested
+  ;; loads and continuation escapes. This private owner is the kernel's
+  ;; catalog lifetime, independent of any extension being reinitialized.
+  (define module-catalog (make-registry))
+  (define module-catalog-owner (list 'kernel-module-catalog))
 
-  (define (loaded-modules) modules)
+  (define (loaded-modules) (reverse (registry-items module-catalog)))
+
+  (define (record-module! name)
+    (parameterize ([registering-module module-catalog-owner])
+      (registry-add! module-catalog name)))
 
   (define (module-source name)
     (format "~a/~a.e" (caar (library-directories)) name))
@@ -182,14 +353,12 @@
 
   (define (load-module! name)
     ;; Loading is idempotent.  A failed first initialization also
-    ;; rolls back any registrations it made before raising.
-    (unless (member name modules)
-      (let ([old-registrations (registration-snapshot)])
-        (guard (ex [else
-                    (restore-registrations! old-registrations)
-                    (raise ex)])
+    ;; discards any registrations it staged before raising.
+    (unless (member name (loaded-modules))
+      (call-with-registration-update
+        (lambda ()
           (init-module! name)
-          (set! modules (append modules (list name)))))))
+          (record-module! name)))))
 
   (define (dot-e? file)
     (let ([n (string-length file)])
@@ -245,12 +414,13 @@
     (let ([path (config-file)])
       (if (not (file-exists? path))
           'absent
-          (begin
-            (retract-module! 'config)
-            (guard (ex [else ex])
-              (parameterize ([registering-module 'config])
-                (load path))
-              #t)))))
+          (guard (ex [else ex])
+            (call-with-registration-update
+              (lambda ()
+                (retract-module! 'config)
+                (parameterize ([registering-module 'config])
+                  (load path))
+                #t))))))
 
   ;; Layers above hang their after-reload work here (main reapplies
   ;; config, refreshes buffer modes, repaints); hooks receive the
@@ -263,43 +433,38 @@
   (define (reload-module! name*)
     ;; Reload a module in place: redefine its library from the
     ;; (edited) source, likewise every loaded module built on it, then
-    ;; retract all module registrations and run every init! afresh --
-    ;; the effect is exactly a clean startup, with the running
-    ;; session's state untouched.  Closures already captured keep
-    ;; running the old code; a module's own state starts over (unless
-    ;; it lives in a persistent cell).
+    ;; stage retraction and run every init! afresh before publishing the
+    ;; replacement registrations. Captured closures keep running old code.
+    ;; A module's own state starts over unless held in a persistent cell;
+    ;; library redefinition and arbitrary effects are outside rollback.
     (let* ([name (if (symbol? name*) (symbol->string name*) name*)]
-           [source (module-source name)]
-           [old-modules modules]
-           [old-registrations (registration-snapshot)])
-      (guard (ex [else
-                  (set! modules old-modules)
-                  (restore-registrations! old-registrations)
-                  (raise ex)])
-        (when (member name '("kernel" "main"))
-          (error 'reload-module!
-                 (format "the ~a cannot be reloaded in place" name)))
-        ;; main cannot reload, so a module it links against would
-        ;; fork on reload: main keeps the instance it compiled
-        ;; against while everything else moves to the new one --
-        ;; coherent stores through persistent cells, forked
-        ;; registries.  Refuse rather than leave two instances.
-        (when (module-requires? "main" name)
-          (error 'reload-module!
-                 (format "main links against ~a: restart e to pick up changes"
-                         name)))
-        (unless (file-exists? source)
-          (error 'reload-module! "no module source" source))
-        (load source)
-        (unless (member name modules)
-          (set! modules (append modules (list name))))
-        (for-each (lambda (m)
-                    (when (and (not (string=? m name))
-                               (module-requires? m name))
-                      (load (module-source m))))
-                  modules)
-        (for-each (lambda (m) (retract-module! (string->symbol m)))
-                  modules)
-        (for-each init-module! modules)
-        (for-each (lambda (hook) (hook name))
-                  (registry-items after-reload-hooks))))))
+           [source (module-source name)])
+      (call-with-registration-update
+        (lambda ()
+          (when (member name '("kernel" "main"))
+            (error 'reload-module!
+                   (format "the ~a cannot be reloaded in place" name)))
+          ;; main cannot reload, so a module it links against would
+          ;; fork on reload: main keeps the instance it compiled
+          ;; against while everything else moves to the new one --
+          ;; coherent stores through persistent cells, forked
+          ;; registries.  Refuse rather than leave two instances.
+          (when (module-requires? "main" name)
+            (error 'reload-module!
+                   (format "main links against ~a: restart e to pick up changes"
+                           name)))
+          (unless (file-exists? source)
+            (error 'reload-module! "no module source" source))
+          (load source)
+          (unless (member name (loaded-modules))
+            (record-module! name))
+          (for-each (lambda (m)
+                      (when (and (not (string=? m name))
+                                 (module-requires? m name))
+                        (load (module-source m))))
+                    (loaded-modules))
+          (for-each (lambda (m) (retract-module! (string->symbol m)))
+                    (loaded-modules))
+          (for-each init-module! (loaded-modules))
+          (for-each (lambda (hook) (hook name))
+                    (registry-items after-reload-hooks)))))))

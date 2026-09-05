@@ -9,9 +9,10 @@ It's "self-aware" because it knows its own internals (like most Lisp systems).
 It's "fully customizable" because its code is just one big configuration
 (code is data :)
 
-The editor is itself a Scheme system. It's a set of R6RS libraries, all of
-which, except the kernel and the main loop, are hot-reloadable. Editing and saving a module from
-within e applies the changes immediately.
+The editor is itself a Scheme system built from R6RS libraries. Editing and
+saving a reloadable extension from within e applies its changes immediately.
+The kernel, the main loop, and libraries linked into the main loop require a
+restart; see [the reload boundary](manual/MODULES.md#hot-reload).
 
 Highlights:
 
