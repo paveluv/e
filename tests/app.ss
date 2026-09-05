@@ -215,4 +215,13 @@
      (check 'next-refresh-picks-up-interleaved-record
             (vector-length (head:buffer-lines arrivals)) 2)
 
+     ;; A runtime-created view is registered outside module init.  It
+     ;; survives owner retraction, but init must still replace its code.
+     (define runtime-refresh (head:app-refresh! (head:app-of arrivals)))
+     (parameterize ([kernel:registering-module 'log-view-test]) (log-view:init!))
+     (check 'runtime-log-identity-survives-reload
+            (eq? arrivals (log-view:buffer 'during-refresh)) #t)
+     (check 'runtime-log-callback-is-rebound
+            (eq? runtime-refresh (head:app-refresh! (head:app-of arrivals))) #f)
+
      (format #t "~a app checks passed\n" checks)))

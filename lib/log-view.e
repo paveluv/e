@@ -106,6 +106,11 @@
       (lambda (b)
         (let ([components (head:buffer-fact b 'log-filter #f)])
           (when (and (not (head:buffer-store-id b)) (list? components))
-            (apply log-view components))))
+            ;; Views opened at runtime may have registrations owned by
+            ;; #f rather than this module.  Rebuild them too, replacing
+            ;; old callbacks even when retraction left them registered.
+            (make-log-view (if (null? components) "*log*"
+                               (format "*log ~a*" (car components)))
+                           components))))
       (head:buffers))
     (log-view)))                ; the *log* view, listed from startup
