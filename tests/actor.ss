@@ -22,7 +22,7 @@
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'actor-test label actual expected)))
+         (error 'actor-test (symbol->string label) actual expected)))
 
      ;; two mailbox-backed actors
      (define human '(head test))
@@ -98,5 +98,110 @@
          (sleep (make-time 'time-duration 25000000 0))
          (wait (- tries 1))))
      (check 'threaded-round-trip (unbox replied) "granted")
+
+     ;; A bounded worker harness propagates exceptions and times out if a
+     ;; callback was accidentally invoked while holding the protocol lock.
+     (define (run-race count task)
+       (let ([lock (make-mutex)] [start? #f] [finished 0] [results '()] [failures '()])
+         (for-each
+           (lambda (index)
+             (fork-thread
+               (lambda ()
+                 (let wait ()
+                   (unless (with-mutex lock start?)
+                     (sleep (make-time 'time-duration 1000000 0)) (wait)))
+                 (guard (ex [else
+                              (with-mutex lock
+                                (set! failures (cons ex failures))
+                                (set! finished (+ finished 1)))])
+                   (let ([result (task index)])
+                     (with-mutex lock
+                       (set! results (cons result results))
+                       (set! finished (+ finished 1))))))))
+           (iota count))
+         (with-mutex lock (set! start? #t))
+         (let wait ([tries 1000])
+           (unless (with-mutex lock (= finished count))
+             (when (zero? tries) (error 'actor-test "worker timeout" finished count))
+             (sleep (make-time 'time-duration 5000000 0))
+             (wait (- tries 1))))
+         (unless (null? failures) (raise (car failures)))
+         results))
+
+     (define stress '(head "question-stress"))
+     (define counts-lock (make-mutex))
+     (define delivered 0)
+     (define answers 0)
+     (actor:register! stress
+       (lambda (message) (with-mutex counts-lock (set! delivered (+ delivered 1)))))
+     (define issued
+       (run-race 8
+         (lambda (index)
+           (map (lambda (n)
+                  (actor:ask! agent stress (format "~a/~a" index n) '()
+                    (lambda (answer) (with-mutex counts-lock (set! answers (+ answers 1))))))
+                (iota 300)))))
+     (define tickets (list-sort < (apply append issued)))
+     (check 'concurrent-asks-are-all-delivered delivered 2400)
+     (check 'concurrent-asks-all-remain-pending (length (actor:pending stress)) 2400)
+     (check 'concurrent-tickets-are-contiguous
+            (+ 1 (- (car (reverse tickets)) (car tickets))) 2400)
+     (check 'concurrent-tickets-are-unique
+            (let increasing ([rest tickets])
+              (or (null? (cdr rest))
+                  (and (< (car rest) (cadr rest)) (increasing (cdr rest))))) #t)
+     (check 'pending-order-is-ticket-allocation-order
+            (map car (actor:pending stress)) tickets)
+     (run-race 8
+       (lambda (index)
+         (for-each (lambda (ticket) (actor:answer! ticket "yes")) (list-ref issued index))))
+     (check 'concurrent-answers-are-all-routed answers 2400)
+     (check 'concurrent-answers-clear-all-questions (actor:pending stress) '())
+
+     (do ([iteration 0 (+ iteration 1)]) ((= iteration 32))
+       (let* ([replies 0]
+              [ticket (actor:ask! agent stress "Race?" '()
+                        (lambda (answer) (with-mutex counts-lock (set! replies (+ replies 1)))))]
+              [outcomes
+               (run-race 8
+                 (lambda (index)
+                   (if (even? index)
+                       (cons 'answer (actor:answer! ticket "yes"))
+                       (cons 'cancel (actor:cancel! ticket)))))])
+         (check 'answer-cancel-has-one-winner (length (filter cdr outcomes)) 1)
+         (check 'reply-runs-only-for-the-winning-answer
+                replies (length (filter (lambda (outcome) (and (eq? (car outcome) 'answer) (cdr outcome))) outcomes)))
+         (check 'raced-ticket-is-consumed (actor:answer! ticket "again") #f)))
+
+     ;; Delivery can synchronously answer; its reply can inspect pending
+     ;; state and ask another question. Neither callback runs under the lock.
+     (define synchronous '(head "synchronous"))
+     (actor:register! synchronous (lambda (message) (actor:answer! (cadr message) "immediate")))
+     (define nested #f)
+     (define response #f)
+     (run-race 1
+       (lambda (index)
+         (actor:ask! agent synchronous "Now?" '()
+           (lambda (answer)
+             (set! response (list answer (actor:pending synchronous)))
+             (set! nested (actor:ask! agent stress "Next?" '() void))))))
+     (check 'synchronous-reply-observes-consumed-question response '("immediate" ()))
+     (check 'reply-can-ask-again (map car (actor:pending stress)) (list nested))
+     (actor:cancel! nested)
+     (check 'reply-question-can-be-cancelled (actor:pending stress) '())
+
+     (define broken '(head "failed-delivery"))
+     (actor:register! broken (lambda (message) (error 'delivery "failed")))
+     (define kept (actor:ask! agent stress "Keep?" '() void))
+     (check 'failed-deliveries-return-false
+            (run-race 8 (lambda (index) (actor:ask! agent broken "Fail?" '() void)))
+            (make-list 8 #f))
+     (check 'failed-deliveries-leave-no-pending-questions (actor:pending broken) '())
+     (check 'failed-deliveries-preserve-other-targets (map car (actor:pending stress)) (list kept))
+     (actor:cancel! kept)
+     (define throwing (actor:ask! agent stress "Throw?" '() (lambda (answer) (error 'reply "failed"))))
+     (check 'reply-failure-still-consumes-ticket (actor:answer! throwing "yes") #t)
+     (check 'reply-failure-cannot-be-replayed (actor:answer! throwing "again") #f)
+     (check 'no-stress-questions-remain (actor:pending stress) '())
 
      (format #t "~a actor checks passed\n" checks)))

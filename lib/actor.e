@@ -17,7 +17,7 @@
   (export register! unregister? deliver send!
           ask! answer! cancel! pending)
   (import (rnrs)
-          (only (chezscheme) box unbox set-box! format void)
+          (only (chezscheme) box unbox set-box! format void make-mutex with-mutex)
           (prefix (kernel) kernel:))
 
   ;;; Registration ----------------------------------------------------------
@@ -61,6 +61,10 @@
                                                (lambda () '())))
   (define ticket-counter (kernel:persistent-cell 'actors-tickets
                                                  (lambda () 0)))
+  (define protocol-lock
+    ;; Keep the lock across reload alongside the existing cells, so old
+    ;; reply closures and a new module instance serialize the same state.
+    (unbox (kernel:persistent-cell 'actors-protocol-lock make-mutex)))
 
   (define (ask! from to question choices reply!)
     ;; Pose a question; -> the ticket, or #f when the target actor is
@@ -68,12 +72,17 @@
     ;; answerer (empty for free-form); reply! receives the answer.
     (unless (procedure? reply!)
       (error 'ask! "expected a reply procedure" reply!))
-    (let ([ticket (+ (unbox ticket-counter) 1)])
-      (set-box! ticket-counter ticket)
-      (set-box! pending-asks
-                (append (unbox pending-asks)
-                        (list (vector ticket from to question choices
-                                      reply!))))
+    (let ([ticket
+           (with-mutex protocol-lock
+             (let ([ticket (+ (unbox ticket-counter) 1)])
+               (set-box! ticket-counter ticket)
+               (set-box! pending-asks
+                         (append (unbox pending-asks)
+                                 (list (vector ticket from to question choices reply!))))
+               ticket))])
+      ;; Delivery may answer synchronously or ask again. Never call out
+      ;; while holding the protocol lock; a failed delivery only cancels
+      ;; its own ticket if it is still pending.
       (if (send! to (list 'ask ticket from question choices))
           ticket
           (begin (cancel! ticket) #f))))
@@ -90,15 +99,18 @@
                             acc)
                       acc))
                 '()
-                (unbox pending-asks)))
+                (with-mutex protocol-lock (unbox pending-asks))))
 
   (define (take-ticket! ticket)
-    (let ([entry (find (lambda (entry)
-                         (eqv? (vector-ref entry 0) ticket))
-                       (unbox pending-asks))])
-      (when entry
-        (set-box! pending-asks (remq entry (unbox pending-asks))))
-      entry))
+    ;; Answer and cancellation compete for one atomic consumption. The
+    ;; winner receives the callback after releasing the lock.
+    (with-mutex protocol-lock
+      (let ([entry (find (lambda (entry)
+                           (eqv? (vector-ref entry 0) ticket))
+                         (unbox pending-asks))])
+        (when entry
+          (set-box! pending-asks (remq entry (unbox pending-asks))))
+        entry)))
 
   (define (answer! ticket answer)
     ;; Resolve an ask: the answer routes to the asker's reply

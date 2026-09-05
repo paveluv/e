@@ -76,6 +76,27 @@ parameter hints as built-in entries.
 `M-.` may inspect the value at the prompt cursor. In `M-x` it opens the live
 describe page for the Scheme symbol under or immediately before point.
 
+## Questions from other actors
+
+An agent or another actor can leave a question for you. The echo area shows
+the oldest pending question when no other message or prompt occupies it.
+Press `C-c a` (`answer!!`) to answer; Tab offers any supplied choices.
+Cancelling the prompt leaves the question pending so you can return to it.
+If it was withdrawn while you were typing, the editor says so when you submit.
+
+Extensions use `actor:ask! from to question choices reply!` to send a
+question. It returns a ticket, or `#f` if delivery fails. `actor:pending to`
+lists pending questions in ticket order as `(ticket from question choices)`.
+`actor:answer! ticket answer` and `actor:cancel! ticket` return `#t` for
+the call that consumes the ticket and `#f` thereafter. Cancellation does
+not invoke the reply procedure.
+
+Concurrent questions retain distinct tickets. The protocol releases its lock
+before calling delivery or reply procedures, which may ask or answer another
+question.
+A reply runs on the answering thread; use `head:run-on-main!` for changes to
+the head from a worker. A failing reply still consumes its ticket.
+
 ## Prompt API
 
 `prompt:read!` accepts completion, initial input, and history. Presentation can be
@@ -85,4 +106,3 @@ and `prompt:reindent`.
 
 Use `paint:show-prompt-message!` when a non-`prompt:read!` interaction should retain the
 same styled label and wrapped layout.
-
