@@ -1,7 +1,8 @@
 #!/usr/bin/env scheme-script
 
-;; The row painter: data in, ANSI out, testable against a string
-;; port.  Run from the repository root.
+;; Row painting and complete frames: data in, ANSI out, including
+;; synchronized scrolling and cleanup after a failed frame.
+;; Run from the repository root.
 
 (import (chezscheme))
 
@@ -13,6 +14,8 @@
   '(begin
      (import (prefix (paint) paint:)
              (prefix (style) style:)
+             (prefix (head) head:)
+             (prefix (kernel) kernel:)
              (prefix (only (sys) terminal-output-port) sys:)
              (only (chezscheme)
                    format open-output-string get-output-string
@@ -151,5 +154,79 @@
             (paint:valid-hyperlink? '(0 5 "http://x") 10) #t)
      (check 'invalid-hyperlink-range
             (paint:valid-hyperlink? '(5 3 "http://x") 10) #f)
+
+     ;; -- complete synchronized frames ----------------------------------
+
+     (define (sync-events text)
+       (let ([n (string-length text)]
+             [begin "\x1b;[?2026h"] [end "\x1b;[?2026l"])
+         (let scan ([at 0] [events '()])
+           (cond [(> (+ at 8) n) (reverse events)]
+                 [(string=? (substring text at (+ at 8)) begin)
+                  (scan (+ at 8) (cons 'begin events))]
+                 [(string=? (substring text at (+ at 8)) end)
+                  (scan (+ at 8) (cons 'end events))]
+                 [else (scan (+ at 1) events)]))))
+
+     (define document (head:new-local-buffer "paint frames"))
+     (head:buffer-lines-set! document
+       (list->vector
+         (map (lambda (row) (format "paint row ~a" row)) (iota 200))))
+     (head:add-buffer! document)
+     (head:set-window-buffer! (head:current) document)
+     ;; Let initial size detection settle, then use a fixed test grid.
+     (painted paint:redraw!)
+     (paint:set-screen-rows! 24)
+     (paint:set-screen-cols! 80)
+     (check 'frame-is-synchronized (sync-events (painted paint:redraw!)) '(begin end))
+     (define top-before (head:window-top (head:current)))
+     (define scrolling
+       (let loop ([row 0] [frames '()])
+         (if (= row 40)
+             (reverse frames)
+             (begin
+               (head:window-prow-set! (head:current) row)
+               (let ([frame (painted paint:redraw!)])
+                 (loop (+ row 1) (cons frame frames)))))))
+     (check 'scrolling-frames-are-synchronized
+            (map sync-events scrolling) (make-list 40 '(begin end)))
+     (check 'scrolling-moves-the-viewport
+            (> (head:window-top (head:current)) top-before) #t)
+     (define (current-top-line)
+       (vector-ref (head:buffer-lines document) (head:window-top (head:current))))
+     (check 'scrolling-paints-visible-text
+            (contains? (car (reverse scrolling)) (current-top-line)) #t)
+
+     ;; Malformed extension output can fail after the update begins.
+     ;; The error still reaches the caller, but the host must be released
+     ;; and the next frame must rebuild the invalidated shadow.
+     (parameterize ([kernel:registering-module 'paint-failure-test])
+       (paint:add-highlighter! (lambda () #f)))
+     (define failed-output (open-output-string))
+     (check 'frame-error-propagates
+            (parameterize ([sys:terminal-output-port failed-output])
+              (guard (ex [else #t]) (paint:redraw!) #f)) #t)
+     (check 'failed-frame-releases-synchronization
+            (sync-events (get-output-string failed-output)) '(begin end))
+     (kernel:retract-module! 'paint-failure-test)
+     (check 'failed-frame-forces-repaint
+            (contains? (painted paint:redraw!) (current-top-line)) #t)
+
+     ;; A nonlocal return must follow the same frame lifetime rule.
+     (define escaped-output (open-output-string))
+     (check 'frame-can-unwind
+            (call/cc
+              (lambda (escape)
+                (parameterize ([kernel:registering-module 'paint-escape-test])
+                  (paint:add-highlighter! (lambda () (escape 'escaped))))
+                (parameterize ([sys:terminal-output-port escaped-output])
+                  (paint:redraw!))
+                'returned))
+            'escaped)
+     (check 'unwound-frame-releases-synchronization
+            (sync-events (get-output-string escaped-output)) '(begin end))
+     (kernel:retract-module! 'paint-escape-test)
+     (check 'unwound-frame-forces-repaint
+            (contains? (painted paint:redraw!) (current-top-line)) #t)
 
      (format #t "~a paint checks passed\n" checks)))

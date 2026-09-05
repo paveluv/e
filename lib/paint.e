@@ -1376,12 +1376,7 @@
   ;; clipboard's OSC 52) takes the lock too.
   (define redraw-lock (make-mutex))
 
-  (define (redraw-frame!)
-    ;; The frame goes out inside a synchronized update (mode 2026):
-    ;; a supporting terminal holds rendering until the closing pair,
-    ;; so a scroll and the repaint over it appear as one; others
-    ;; ignore the mode.
-    (ansi "\x1b;[?2026h")
+  (define (paint-frame!)
     (terminal-size!)
     (update-echo-geometry!)
     ;; window geometry is otherwise set while painting, one frame
@@ -1421,9 +1416,24 @@
                   layout))
       (paint-echo-area!)
       (paint-visual-bell!))
-    (place-cursor!)
-    (ansi "\x1b;[?2026l")
-    (flush-output-port (sys:terminal-output-port)))
+    (place-cursor!))
+
+  (define (redraw-frame!)
+    ;; Every frame, scrolling included, is one synchronized update.
+    ;; Release the terminal even if a renderer fails or escapes; its
+    ;; partial output also invalidates the shadow used by later frames.
+    (let ([complete? #f])
+      (dynamic-wind
+        (lambda ()
+          (set! complete? #f)
+          (ansi "\x1b;[?2026h"))
+        (lambda ()
+          (paint-frame!)
+          (set! complete? #t))
+        (lambda ()
+          (unless complete? (invalidate-screen-cache!))
+          (ansi "\x1b;[?2026l")
+          (flush-output-port (sys:terminal-output-port))))))
 
   (define (redraw!)
     ;; a whole frame, title included, as one transaction
