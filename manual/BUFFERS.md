@@ -286,7 +286,8 @@ The public Scheme API exposes read-only inspection through `current-buffer`,
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
-`head:new-buffer`, `fresh-buffer`, `show-buffer!`, `display-buffer!`,
+`head:new-buffer`, `head:new-local-buffer`, `fresh-buffer`, `show-buffer!`,
+`display-buffer!`,
 `pop-up-or-reuse!`, `kill-buffer!`,
 `buffer-append!`, `mode:choose!`, and `set-buffer-read-only!` provide
 controlled mutation and display. `call-with-buffer` temporarily makes another
@@ -295,3 +296,12 @@ entries. `focus-window-up!`, `focus-window-down!`, `focus-window-left!`, and
 `focus-window-right!` expose directional focus to Scheme. App authors should
 use `head:view-replace!` and `head:view-append!` for generated content. Run
 `M-x (describe:show!!)` for live signatures and registered command documentation.
+
+`(head:new-buffer name)` creates a buffer in the shared store.
+`(head:new-local-buffer name)` creates a buffer belonging only to this
+head, with no store id.  Both start with one empty line; use
+`show-buffer!` or `display-buffer!` to put the result in the buffer list
+and a window.  The same text, mode, and fact accessors work on either
+kind.  A local buffer's facts and generated text stay in the head and
+produce no store notifications; local points and selections are not
+published to other actors.

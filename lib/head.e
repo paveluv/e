@@ -74,7 +74,7 @@
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
           mirror-create! adopt-store! adopt-local! reconverge-forked!
-          store-reset! store-edit! mirror-rename! new-buffer
+          store-reset! store-edit! mirror-rename! new-buffer new-local-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
           sync-foreign-edits! flush-ui-audit!
@@ -111,13 +111,10 @@
 
   ;;; The records ----------------------------------------------------------------
 
-  ;; The seat's working record for a store buffer: a client-side cache
-  ;; of the store's immutable text (adopted, never mutated in place)
-  ;; plus what only this seat cares about -- its selection, where it
-  ;; last was, its line-number toggle.  Buffer-level facts (file,
-  ;; mode, read-only, disk base, wrap, an app's presentation) are
-  ;; store properties, not fields:
-  ;; every head, local or across the wire, reads the same truth.
+  ;; A store buffer caches immutable text and reads its facts from the
+  ;; store.  A local buffer has no store id: its text and local-facts
+  ;; live here alone.  Selection, saved position, and line-number
+  ;; toggles belong to this seat in either case.
   (define-record-type buffer
     (fields (mutable name)          ; a cache of the store's label
             (mutable lines buffer-lines buffer-lines-raw-set!)
@@ -133,7 +130,17 @@
                      buffer-line-numbers-setting-set!)
             ;; the buffer's twin in the (store), and the store
             ;; revision this buffer's lines last agreed with
-            (mutable store-id) (mutable store-rev)))
+            (mutable store-id) (mutable store-rev)
+            local-facts)
+    ;; Keep the public constructor's shape: each record gets its own
+    ;; fact table, including records made by extensions or adoption.
+    (protocol
+      (lambda (new)
+        (lambda (name lines revision history mark-row mark-col marked
+                  spot-row spot-col spot-top line-numbers store-id store-rev)
+          (new name lines revision history mark-row mark-col marked
+               spot-row spot-col spot-top line-numbers store-id store-rev
+               (make-eq-hashtable))))))
 
   (define-record-type (window %make-window window?)
     (fields
@@ -634,10 +641,11 @@
 
   (define (line-count b) (vector-length (buffer-lines b)))
 
-  ;; Shared facts, read and written through the store.  The fallbacks
-  ;; only cover a buffer whose twin is missing (a store outage, a
-  ;; failed mirror creation); every created buffer initializes its
-  ;; managed facts, so an absent property reads honestly as #f.
+  ;; Facts have one owner: the store for shared buffers, the record's
+  ;; table for local ones.  Local reads distinguish an absent key
+  ;; (the caller's fallback) from an explicit #f.  Shared reads retain
+  ;; the store's absent-property value, #f; their fallback only covers
+  ;; a store failure.  Both constructors initialize managed defaults.
   ;;
   ;;   file    the visited path, or #f
   ;;   trailing whether the file ends in a newline
@@ -657,12 +665,14 @@
     (let ([id (buffer-store-id b)])
       (if id
           (guard (ex [else fallback]) (store:property id key))
-          fallback)))
+          (hashtable-ref (buffer-local-facts b) key fallback))))
 
   (define (buffer-fact-set! b key value)
-    (guard (ex [else (void)])
-      (when (buffer-store-id b)
-        (store:set-property! ui-actor (buffer-store-id b) key value))))
+    (let ([id (buffer-store-id b)])
+      (if id
+          (guard (ex [else (void)])
+            (store:set-property! ui-actor id key value))
+          (hashtable-set! (buffer-local-facts b) key value))))
 
   (define (buffer-file b) (buffer-fact b 'file #f))
   (define (buffer-file-set! b v) (buffer-fact-set! b 'file v))
@@ -803,21 +813,30 @@
       (guard (ex [else (void)])
         (store:rename! ui-actor (buffer-store-id b) (buffer-name b)))))
 
-  (define (new-buffer name)
+  (define (new-seat-buffer name shared?)
     (let ([b (make-buffer name (vector "") 0 (vector '() '())
                           0 0 #f 0 0 0 'default #f 0)])
-      (mirror-create! b)
+      (when shared? (mirror-create! b))
       ;; the managed facts start explicit, so absence stays honest
       (buffer-trailing-set! b #t)
       (buffer-mode-auto-set! b #t)
       (buffer-fact-set! b 'wrap 'default)
       b))
 
+  (define (new-buffer name)
+    (new-seat-buffer name #t))
+
+  (define (new-local-buffer name)
+    ;; Like new-buffer, the caller decides when to put it in the
+    ;; buffer list or a window.  No store buffer or event is created.
+    (new-seat-buffer name #f))
+
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
 
   (define (buffer-of-store-id id)
-    (find (lambda (b) (eqv? (buffer-store-id b) id)) the-buffers))
+    (and id
+         (find (lambda (b) (eqv? (buffer-store-id b) id)) the-buffers)))
 
   (define (adopt-store-buffer! id)
     ;; Another actor created a store buffer: give this head a record

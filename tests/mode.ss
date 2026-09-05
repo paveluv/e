@@ -2,9 +2,8 @@
 
 ;; The mode registry: registration and lookup, detection by extension
 ;; and interpreter line, hand-chosen modes, the memoized stylers, and
-;; re-resolution after a re-registration.  Headless: buffers come
-;; from (head), which mirrors them into the store.  Run from the
-;; repository root.
+;; re-resolution after a re-registration.  Headless: (head) supplies
+;; both store-backed and local buffers.  Run from the repository root.
 
 (import (chezscheme))
 
@@ -65,6 +64,22 @@
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
      (mode:choose! plain #f)
      (check 'unchosen (mode:of plain) #f)
+
+     ;; A local buffer uses the same mode API, without a store twin.
+     (define local (head:new-local-buffer "*local-mode*"))
+     (head:buffer-lines-set! local (vector "#!/usr/bin/env probesh" "local"))
+     (mode:assign! local)
+     (check 'local-detection (mode:name-of local) "probe")
+     (check 'local-detected-is-auto (head:buffer-mode-auto local) #t)
+     (check 'local-has-no-twin (head:buffer-store-id local) #f)
+     (mode:choose! local "probe")
+     (check 'local-chosen (mode:name-of local) "probe")
+     (check 'local-chosen-is-not-auto (head:buffer-mode-auto local) #f)
+     (check 'local-line-styles
+            (vector->list ((mode:line-styles local) "abc"))
+            '(keyword keyword keyword))
+     (mode:choose! local #f)
+     (check 'local-mode-cleared (mode:of local) #f)
 
      ;; -- extensions added later ----------------------------------------------
 
