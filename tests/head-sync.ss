@@ -84,4 +84,24 @@
      (check 'resync-clamps-into-shorter-text (point) '(0 . 0))
      (check 'resync-clamps-saved-viewport (head:buffer-spot-top b) 0)
 
+     ;; An explicit baseline reset also invalidates publication.  A
+     ;; subscriber can edit after reset before the head adopts its snapshot;
+     ;; unchanged numeric head coordinates must still replace the store's
+     ;; cursor that followed that subscriber's insertion.
+     (head:buffer-lines-set! b '#("abcdef"))
+     (head:window-pcol-set! w 2)
+     (head:before-frame!)
+     (define reset-token
+       (store:subscribe! id
+         (lambda (event)
+           (when (eq? (car event) 'reset)
+             (edit! (text:make-span 0 0 0 0) '("Q"))))))
+     (head:buffer-lines-set! b '#("abcdef"))
+     (store:unsubscribe! reset-token)
+     (head:before-frame!)
+     (check 'explicit-reset-adopts-the-subscribers-text (head:buffer-lines b) '#("Qabcdef"))
+     (check 'explicit-reset-keeps-clamped-coordinates (point) '(0 . 2))
+     (check 'explicit-reset-republishes-unchanged-coordinates
+            (store:mark head:ui-actor id 'point) (point))
+
      (format #t "~a head synchronization checks passed\n" checks)))

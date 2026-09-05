@@ -321,6 +321,28 @@
             #t)
      (check 'compensation-exercises-many-boundaries (> commuting-cases 1000) #t)
 
+     ;; Project positions chosen in a proposed result through an accepted
+     ;; rebase: inserted content keeps its offset, surrounding content follows
+     ;; the actual edits.  Test both replacement boundaries and later rows.
+     (let*-values ([(proposed intended)
+                    (text:apply-edit '#("abcdef" "ghij") (span 0 2 0 4) '("UV" "W"))]
+                   [(intervening foreign)
+                    (text:apply-edit '#("abcdef" "ghij") (span 0 0 0 0) '("before" ""))]
+                   [(actual) (text:rebase-delta intended foreign)])
+       (check 'result-points-retain-replacement-offsets
+              (map (lambda (p) (text:rebase-result-position p intended actual (list foreign)))
+                   '((0 . 2) (0 . 3) (1 . 0) (1 . 1)))
+              '((1 . 2) (1 . 3) (2 . 0) (2 . 1)))
+       (check 'result-points-follow-surrounding-content
+              (map (lambda (p) (text:rebase-result-position p intended actual (list foreign)))
+                   '((0 . 1) (1 . 2) (2 . 2)))
+              '((1 . 1) (2 . 2) (3 . 2))))
+     (let*-values ([(proposed intended) (text:apply-edit '#("abcdef") (span 0 2 0 4) '("X"))]
+                   [(intervening foreign) (text:apply-edit '#("abcdef") (span 0 4 0 4) '("Y"))]
+                   [(actual) (text:rebase-delta intended foreign)])
+       (check 'result-end-excludes-prior-insertion-at-right-boundary
+              (text:rebase-result-position '(0 . 3) intended actual (list foreign)) '(0 . 3)))
+
      ;; -- validation ---------------------------------------------------------
 
      (check 'positions-outside-rejected

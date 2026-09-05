@@ -467,6 +467,81 @@
             (read-editor '(map length (vector->list (head:buffer-history (current-buffer)))))
             before-conflict-history)
 
+     (check 'racing-keystroke-keeps-its-cursor
+            (read-editor
+              '(let* ([old (current-buffer)]
+                      [b (head:new-buffer "cursor-live")]
+                      [id (head:buffer-store-id b)]
+                      [token #f])
+                 (dynamic-wind
+                   void
+                   (lambda ()
+                     (head:buffer-lines-set! b '#("abcdef"))
+                     (show-buffer! b)
+                     (goto-point! '(0 . 2))
+                     (store:edit! '(agent cursor-live) id (store:revision id)
+                                  (text:make-span 0 0 0 0) '("Q"))
+                     (set! token
+                       (store:subscribe! id
+                         (lambda (event)
+                           (when (and (eq? (car event) 'edit)
+                                      (equal? (list-ref event 3) head:ui-actor))
+                             (store:edit! '(agent cursor-live) id (store:revision id)
+                                          (text:make-span 0 0 0 0) '("R"))
+                             (head:before-frame!)))))
+                     (insert-text! "X")
+                     (head:before-frame!)
+                     (list (vector->list (head:buffer-lines b)) (point)
+                           (store:mark head:ui-actor id 'point)))
+                   (lambda ()
+                     (when token (store:unsubscribe! token))
+                     (show-buffer! old)
+                     (kill-buffer! b)))))
+            '(("RQabXcdef") (0 . 5) (0 . 5)))
+
+     ;; R5: preserve both directions of a selection through inserted and
+     ;; removed rows, then retain only the surviving part of selected text.
+     (for-each
+       (lambda (backwards?)
+         (check (if backwards? 'backward-selection-follows-edits 'forward-selection-follows-edits)
+                (read-editor
+                  `(let* ([old (current-buffer)]
+                          [b (head:new-buffer "selection-live")]
+                          [id (head:buffer-store-id b)])
+                     (define (state)
+                       (let ([region (store:mark head:ui-actor id 'region)])
+                         (list (text:extract (head:buffer-lines b) region)
+                               (text:span-start region) (text:span-end region)
+                               (point) (mark))))
+                     (dynamic-wind
+                       void
+                       (lambda ()
+                         (head:buffer-lines-set! b '#("zero" "pick" "tail"))
+                         (show-buffer! b)
+                         (goto-point! (if ,backwards? '(1 . 4) '(1 . 0)))
+                         (set-mark-command!)
+                         (goto-point! (if ,backwards? '(1 . 0) '(1 . 4)))
+                         (store:edit! '(agent selection-live) id (store:revision id)
+                                      (text:make-span 0 0 0 0) '("new" ""))
+                         (head:before-frame!)
+                         (head:store-edit! b (text:make-span 0 0 0 0) '("own" ""))
+                         (head:before-frame!)
+                         (let ([inserted (state)])
+                           (store:edit! '(agent selection-live) id (store:revision id)
+                                        (text:make-span 0 0 2 0) '(""))
+                           (head:before-frame!)
+                           (store:edit! '(agent selection-live) id (store:revision id)
+                                        (text:make-span 0 4 1 2) '(""))
+                           (head:before-frame!)
+                           (list inserted (state))))
+                       (lambda () (show-buffer! old) (kill-buffer! b)))))
+                (if backwards?
+                    '((("pick") (3 . 0) (3 . 4) (3 . 0) (3 . 4))
+                      (("ck") (0 . 4) (0 . 6) (0 . 4) (0 . 6)))
+                    '((("pick") (3 . 0) (3 . 4) (3 . 4) (3 . 0))
+                      (("ck") (0 . 4) (0 . 6) (0 . 6) (0 . 4))))))
+       '(#f #t))
+
      ;; the selection is published: mark plus motion becomes the ui's
      ;; 'region span mark in the store; C-g deactivates and drops it
      (send! "\x1b;<\x0;\x6;\x6;\x6;")   ; M-<, C-@, then three C-f

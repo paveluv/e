@@ -74,7 +74,7 @@
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
           mirror-create! adopt-store!
-          store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
+          edit-basis store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
           unique-name add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
@@ -761,7 +761,9 @@
     (let-values ([(text revision) (store:snapshot (buffer-store-id b))])
       (buffer-lines-raw-set! b text)
       (buffer-store-rev-set! b revision)
-      (bump-buffer-revision! b)))
+      (bump-buffer-revision! b)
+      (clamp-buffer-positions! b)
+      (invalidate-buffer-marks! (buffer-store-id b))))
 
   (define (adopt-local! b text)
     ;; Only explicitly local buffers own their text in this head.
@@ -780,42 +782,117 @@
           (adopt-store! b))
         (adopt-local! b new-lines)))
 
-  (define (store-edit! b span replacement . context)
+  (define (edit-basis b)
+    ;; A proposal retains the text it was computed from, its owner, and
+    ;; its revision even if a callback advances the head while computing.
+    (list (buffer-lines b) (buffer-store-id b)
+          (if (buffer-store-id b) (buffer-store-rev b) (buffer-revision b))))
+
+  (define (store-edit! b span replacement . options)
     ;; The store rebases this declared intent under its mutation lock.
     ;; A stale result is already an unresolvable overlap/missing basis,
     ;; not permission to recompute a replacement against newer text.
     ;; Errors also propagate: no shared edit can fall back to a local
     ;; fork, including an error after the transaction has committed.
-    (define (local-text)
-      (let-values ([(new-text delta)
-                    (text:apply-edit (buffer-lines b) span replacement)])
-        new-text))
-    (define (edit-local!)
-      (adopt-local! b (local-text))
-      (when (and (not (buffer-store-id b)) (pair? context) (car context)
-                 (= (length (car context)) 3))
-        (for-each (lambda (entry) (buffer-fact-set! b (car entry) (cdr entry)))
-                  (caddr (car context)))))
-    (if (buffer-store-id b)
-        (let-values ([(status info)
-                      (apply store:edit! ui-actor (buffer-store-id b)
-                             (buffer-store-rev b)
-                             span replacement context)])
-          (if (eq? status 'applied)
-              (begin (adopt-store! b) (note-ui-edit! b))
-              (let ([reason (if (eq? info 'overlap)
-                                "another edit overlaps this change"
-                                "the edit's revision is no longer available")])
-                ;; Refresh for the next command, without changing the
-                ;; rejected command's history, dirty flag, or side effects.
-                (guard (ex [else (void)]) (sync-store-buffer! b))
-                (guard (ex [else (void)])
-                  (log:add! 'store
-                    (format "edit refused in ~s: ~a" (buffer-name b) reason)))
-                (raise (condition (kernel:make-refusal)
-                                  (make-message-condition
-                                    (format "Edit not applied: ~a" reason)))))))
-        (edit-local!)))
+    ;; Optional head placements are (place . desired) entries: place is
+    ;; a window, 'mark, or 'spot; desired is 'start, 'end, or a position
+    ;; in the proposed result.  A third option is a retained edit-basis.
+    ;; Placements are installed during adoption, before
+    ;; callbacks can advance the head again.  They never cross the store.
+    (unless (<= (length options) 3) (error 'store-edit! "too many options" options))
+    (let* ([context (and (pair? options) (car options))]
+           [placements (if (and (pair? options) (pair? (cdr options))) (cadr options) '())]
+           [source (if (= (length options) 3) (caddr options) (edit-basis b))]
+           [old (car source)]
+           [basis (caddr source)]
+           [proposal (delay (call-with-values (lambda () (text:apply-edit old span replacement)) list))])
+      (define (project-placements actual before after)
+        (map
+          (lambda (entry)
+            (let ([wanted (cdr entry)])
+              (cons (car entry)
+                    (fold-left text:rebase-position
+                      (case wanted
+                        [(start) (text:span-start (text:delta-span actual))]
+                        [(end) (text:delta-new-end actual)]
+                        [else
+                         (let ([plan (force proposal)])
+                           (text:rebase-result-position
+                             (clamp-text-position (car plan) wanted)
+                             (cadr plan) actual before))])
+                      after))))
+          placements))
+      (check-edit-placements! b placements)
+      (unless (and (eqv? (cadr source) (buffer-store-id b))
+                   (or (buffer-store-id b) (eq? old (buffer-lines b))))
+        (raise (condition (kernel:make-refusal)
+                          (make-message-condition "Edit not applied: the source buffer changed"))))
+      (if (buffer-store-id b)
+          (let-values ([(status info)
+                        (store:edit-with-snapshot! ui-actor (buffer-store-id b)
+                                                   basis span replacement context)])
+            (if (eq? status 'applied)
+                (let* ([committed (car info)]
+                       [changes (caddr info)]
+                       [backwards (reverse changes)]
+                       [actual (caddar backwards)]
+                       [before (map caddr (reverse (cdr backwards)))])
+                  (let-values ([(text revision after)
+                                (store:snapshot-since (buffer-store-id b) committed)])
+                    (adopt-snapshot! b basis text revision
+                                     (and after (append changes after))
+                                     (if after (project-placements actual before (map caddr after)) '()))
+                    (note-ui-edit! b committed)))
+                (let ([reason (if (eq? info 'overlap)
+                                  "another edit overlaps this change"
+                                  "the edit's revision is no longer available")])
+                  (guard (ex [else (void)]) (sync-store-buffer! b))
+                  (guard (ex [else (void)])
+                    (log:add! 'store
+                      (format "edit refused in ~s: ~a" (buffer-name b) reason)))
+                  (raise (condition (kernel:make-refusal)
+                                    (make-message-condition
+                                      (format "Edit not applied: ~a" reason)))))))
+          (let* ([plan (force proposal)] [text (car plan)] [delta (cadr plan)]
+                 [placed (project-placements delta '() '())])
+            (rebase-buffer-positions! b delta)
+            (adopt-local! b text)
+            (apply-edit-placements! b placed)
+            (clamp-buffer-positions! b)
+            (when (and context (= (length context) 3))
+              (for-each (lambda (entry) (buffer-fact-set! b (car entry) (cdr entry)))
+                        (caddr context)))))))
+
+  (define (check-edit-placements! b placements)
+    (unless
+      (and (list? placements)
+           (for-all
+             (lambda (entry)
+               (and (pair? entry)
+                    (or (memq (car entry) '(mark spot))
+                        (and (window? (car entry)) (eq? (window-buffer (car entry)) b)))
+                    (or (memq (cdr entry) '(start end))
+                        (and (pair? (cdr entry))
+                             (integer? (cadr entry)) (exact? (cadr entry)) (>= (cadr entry) 0)
+                             (integer? (cddr entry)) (exact? (cddr entry)) (>= (cddr entry) 0)))))
+             placements))
+      (error 'store-edit! "invalid head placements" placements)))
+
+  (define (apply-edit-placements! b placements)
+    (for-each
+      (lambda (entry)
+        (let ([place (car entry)] [p (cdr entry)])
+          (case place
+            [(mark) (buffer-mark-row-set! b (car p)) (buffer-mark-col-set! b (cdr p))]
+            [(spot) (buffer-spot-row-set! b (car p)) (buffer-spot-col-set! b (cdr p))]
+            [else
+             (when (eq? (window-buffer place) b)
+               (window-prow-set! place (car p)) (window-pcol-set! place (cdr p)))])))
+      placements))
+
+  (define (clamp-text-position text p)
+    (let ([row (max 0 (min (car p) (- (vector-length text) 1)))])
+      (cons row (max 0 (min (cdr p) (string-length (vector-ref text row)))))))
 
   (define (store-history! b direction scope)
     ;; Shared text always uses the store's attributed inverse journal.
@@ -829,7 +906,7 @@
                      (guard (ex [else (values 'blocked 'store-unavailable)])
                        (store:history-step! ui-actor (buffer-store-id b) direction scope))])
          (when (eq? status 'applied)
-           (sync-store-buffer! b #t)
+           (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b))
            (log:add! 'store
              (history-audit-line ui-actor (buffer-name b) direction
@@ -972,10 +1049,10 @@
   ;; order), when a burst goes stale, and at shutdown.
   (define ui-audit-bursts '())  ; (id . #(name first-rev last-rev n time))
 
-  (define (note-ui-edit! b)
+  (define (note-ui-edit! b revision)
     (guard (ex [else (void)])
       (let* ([id (buffer-store-id b)]
-             [rev (buffer-store-rev b)]
+             [rev revision]
              [hit (assv id ui-audit-bursts)]
              [now (time-second (current-time 'time-monotonic))])
         (if hit
@@ -1029,35 +1106,48 @@
       (buffer-spot-row-set! b (car p))
       (buffer-spot-col-set! b (cdr p)))
     (buffer-spot-top-set!
-      b (car (text:rebase-position (cons (buffer-spot-top b) 0) delta))))
+      b (car (text:rebase-position (cons (buffer-spot-top b) 0) delta)))
+    (let ([p (text:rebase-position (cons (buffer-mark-row b) (buffer-mark-col b)) delta)])
+      (buffer-mark-row-set! b (car p))
+      (buffer-mark-col-set! b (cdr p))))
 
-  (define (sync-store-buffer! b . include-own?)
+  (define (adopt-snapshot! b basis text revision changes placements)
+    ;; All anchors use the same chain, including our own edits.  A command
+    ;; can explicitly place an anchor in its accepted result, but never
+    ;; writes a coordinate from an older revision after adoption returns.
+    ;; A callback may already have adopted part or all of this snapshot.
+    (let* ([old (buffer-store-rev b)]
+           [advance? (> revision old)]
+           [complete? (and changes (<= basis old))])
+      (when (>= revision old)
+        (when advance?
+          (when complete?
+            (for-each (lambda (entry)
+                        (when (> (car entry) old) (rebase-buffer-positions! b (caddr entry))))
+                      changes))
+          (buffer-lines-raw-set! b text)
+          (bump-buffer-revision! b)
+          (buffer-store-rev-set! b revision))
+        (apply-edit-placements! b placements)
+        (clamp-buffer-positions! b)
+        ;; All head state is coherent before any callback can run.
+        (when advance?
+          (when (buffer-file b) (buffer-modified-set! b #t))
+          (unless complete?
+            (invalidate-buffer-marks! (buffer-store-id b))
+            (log:add! 'store
+              (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
+                      (buffer-name b) old revision))
+            (repaint-hook))))))
+
+  (define (sync-store-buffer! b)
     ;; Event arrival is only a wakeup.  Reading text separately from
     ;; its deltas can adopt a newer revision than the anchors follow.
     ;; Read both atomically, ignore already adopted events, and never
     ;; replay a partial or out-of-order chain across a missing basis.
-    (let-values ([(text revision changes)
-                  (store:snapshot-since (buffer-store-id b)
-                                        (buffer-store-rev b))])
-      (unless (= revision (buffer-store-rev b))
-        (if changes
-            (for-each
-              (lambda (entry)
-                (when (or (and (pair? include-own?) (car include-own?))
-                          (not (equal? (cadr entry) ui-actor)))
-                  (rebase-buffer-positions! b (caddr entry))))
-              changes)
-            (begin
-              (invalidate-buffer-marks! (buffer-store-id b))
-              (log:add! 'store
-                (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
-                        (buffer-name b) (buffer-store-rev b) revision))))
-        (buffer-lines-raw-set! b text)
-        (bump-buffer-revision! b)
-        (buffer-store-rev-set! b revision)
-        (when (buffer-file b) (buffer-modified-set! b #t))
-        (clamp-buffer-positions! b)
-        (repaint-hook))))
+    (let ([basis (buffer-store-rev b)])
+      (let-values ([(text revision changes) (store:snapshot-since (buffer-store-id b) basis)])
+        (adopt-snapshot! b basis text revision changes '()))))
 
   (define (sync-foreign-edits!)
     (let ([events (with-mutex foreign-lock

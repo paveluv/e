@@ -22,7 +22,7 @@
   (export create! delete! reset! rename!
           buffer-list exists? buffer-name find-named
           snapshot snapshot-since revision line-count line extract
-          edit! undo! redo! history-step! undo-authors history blame
+          edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
           set-mark! mark drop-mark! marks
           set-property! drop-property! property properties
           subscribe! unsubscribe!)
@@ -233,10 +233,10 @@
                [entries (entries-since b basis)])
           (values (buffer-text b) (buffer-revision b)
                   (and entries
-                       (map (lambda (entry)
-                              (list (vector-ref entry 0) (vector-ref entry 1)
-                                    (vector-ref entry 2)))
-                            entries)))))))
+                       (map change-data entries)))))))
+
+  (define (change-data entry)
+    (list (vector-ref entry 0) (vector-ref entry 1) (vector-ref entry 2)))
 
   (define (revision id)
     (locked (lambda () (buffer-revision (buffer-of 'revision id)))))
@@ -276,10 +276,6 @@
                [(<= (vector-ref (car entries) 0) basis) acc]
                [else (take (cdr entries)
                            (cons (car entries) acc))]))]))
-
-  (define (deltas-since b basis)
-    (let ([entries (entries-since b basis)])
-      (and entries (map (lambda (entry) (vector-ref entry 2)) entries))))
 
   (define (rebase-through span deltas)
     ;; the span carried across each delta in order, or #f when any
@@ -370,6 +366,17 @@
     ;;             |  (values 'stale 'basis-too-old) log outgrown
     ;; Optional (key label [properties]) groups transactions into one
     ;; undo and can change text-related properties in the same commit.
+    (let-values ([(status detail)
+                  (apply edit-with-snapshot! actor id basis span replacement options)])
+      (values status (if (eq? status 'applied) (car detail) detail))))
+
+  (define (edit-with-snapshot! actor id basis span replacement . options)
+    ;; The same transaction with an atomic acknowledgement:
+    ;; (revision text changes), ending at this edit, before subscribers
+    ;; can write again.  Changes include the complete chain from basis
+    ;; through the accepted edit, even if committing trims its oldest
+    ;; entry out of the retained log.  A head uses this to place its
+    ;; command's anchors without guessing where the edit actually landed.
     (let ([context (and (pair? options) (car options))])
       (unless (and (<= (length options) 1)
                    (or (not context)
@@ -387,11 +394,11 @@
              (transact!
                (lambda ()
                  (let* ([b (buffer-of 'edit! id)]
-                        [since (deltas-since b basis)]
+                        [since (entries-since b basis)]
                         [rebased (and since
                                    (rebase-through
                                      (text:normalize-span span)
-                                     since))])
+                                     (map (lambda (entry) (vector-ref entry 2)) since)))])
                    (cond
                      [(not since) (list 'stale 'basis-too-old)]
                      [(not rebased) (list 'stale 'overlap)]
@@ -402,10 +409,12 @@
                                                    (if (and context (= (length context) 3))
                                                        (caddr context) '()))])
                         (remember-edit! b actor context)
-                        (list 'applied new-revision delta))]))))])
+                        (list 'applied new-revision (buffer-text b)
+                              (append (map change-data since)
+                                      (list (list new-revision actor delta)))))]))))])
         (case (car outcome)
           [(applied)
-           (values 'applied (cadr outcome))]
+           (values 'applied (cdr outcome))]
           [else (values 'stale (cadr outcome))]))))
 
   (define (same-delta? a b)

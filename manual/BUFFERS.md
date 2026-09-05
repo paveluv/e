@@ -69,8 +69,11 @@ Edits from different actors combine automatically when their ranges do not
 overlap. If another edit consumes the text being changed, or the required
 revision history is no longer available, e reports `Edit not applied` and
 refreshes the buffer. The rejected edit leaves shared text and undo/redo
-history intact. A store failure also stops editing that shared buffer; the
-head does not keep an offline copy that later overwrites other actors' work.
+history intact. Store failures are reported to the caller; the head does not
+keep an offline copy that later overwrites other actors' work.
+Point and selection endpoints follow accepted edits, including edits that
+arrive while a command runs. Each window keeps its own point. If a reset or
+missing history prevents tracking a position, e keeps it within the new text.
 
 The alphabetical traversal is stable: merely visiting a buffer does not move it
 in that order. `M`-mousewheel performs the same previous/next operation on the
@@ -371,6 +374,27 @@ each call is an action.  Properties such as `((trailing . #t))` commit with
 the text and are included in its inverse.  Property versions are checked
 on undo and redo, so a later write blocks restoration even if it returns
 to the same value.  Public property queries omit deleted properties.
+
+`store:edit-with-snapshot!` takes the same arguments but returns
+`(values 'applied (revision text changes))`. This acknowledgement describes
+exactly the accepted transaction, even if a subscriber immediately edits
+again. Its complete `(revision actor delta)` chain starts after the supplied
+basis and includes this edit; a commit that trims the oldest retained log
+entry still returns that entry in its acknowledgement. Refusals are the same
+as for `store:edit!`.
+
+Head extensions can capture `(head:edit-basis b)` before computing a
+proposal. It contains the immutable source lines, store id (or `#f`), and
+revision. Pass it to `(head:store-edit! b span replacement context placements
+source)` so a callback advancing the head cannot change the proposal's
+basis. The context is the store edit context above. Placements are an alist
+whose keys are windows, `mark`, or `spot`, and whose values are `start`, `end`,
+or positions in the proposed result. The head projects them into the accepted
+revision and follows subsequent edits. Context, placements, and source are
+optional, in that order; defaults are `#f`, `()`, and the current head basis.
+Use placements to express a command's point movement instead of assigning
+coordinates saved before submission after the call returns. Local edits
+use the same geometry and refuse a proposal whose source text changed.
 
 `(store:undo! requester id [scope])` defaults to `mine`.  Use `all` to select
 the latest live action of any actor, or `(actor who)` to select that actor.

@@ -81,6 +81,43 @@
             (edit! bot b 999 0 0 0 0 '("y"))
             '(stale basis-too-old))
 
+     ;; An acknowledgement ends at the accepted transaction even if a
+     ;; subscriber writes again before the API returns to its caller.
+     (define acknowledged (store:create! alice "acknowledged" '("abc" "tail")))
+     (edit! bot acknowledged 0 0 0 0 0 '("Q"))
+     (define ack-token
+       (store:subscribe! acknowledged
+         (lambda (event)
+           (when (and (eq? (car event) 'edit) (equal? (list-ref event 3) alice))
+             (edit! bot acknowledged (store:revision acknowledged) 1 4 1 4 '("Z"))))))
+     (let-values ([(status receipt)
+                   (store:edit-with-snapshot! alice acknowledged 0 (span 0 2 0 2) '("X"))])
+       (check 'acknowledgement-applied status 'applied)
+       (check 'acknowledgement-has-exact-commit-revision (car receipt) 2)
+       (check 'acknowledgement-has-exact-commit-text (cadr receipt) '#("QabXc" "tail"))
+       (check 'acknowledgement-keeps-complete-basis-chain
+              (map (lambda (entry) (list (car entry) (cadr entry))) (caddr receipt))
+              (list (list 1 bot) (list 2 alice)))
+       (check 'acknowledged-insertion-has-rebased-end
+              (text:delta-new-end (caddr (cadr (caddr receipt)))) '(0 . 4))
+       (check 'subscriber-advanced-beyond-acknowledgement (store:revision acknowledged) 3)
+       (check 'subscriber-change-is-retained (store:line acknowledged 1) "tailZ"))
+     (store:unsubscribe! ack-token)
+     (let-values ([(status reason)
+                   (store:edit-with-snapshot! alice acknowledged 999 (span 0 0 0 0) '("bad"))])
+       (check 'snapshot-edit-refusal-keeps-the-original-contract
+              (list status reason) '(stale basis-too-old)))
+
+     (define ack-boundary (store:create! alice "ack-boundary" '("base" "tail")))
+     (do ([i 0 (+ i 1)]) ((= i 256))
+       (edit! bot ack-boundary (store:revision ack-boundary) 0 0 0 0 '("q")))
+     (let-values ([(status receipt)
+                   (store:edit-with-snapshot! alice ack-boundary 0 (span 1 0 1 0) '("X"))])
+       (check 'acknowledgement-keeps-entry-trimmed-by-its-own-commit
+              (length (caddr receipt)) 257)
+       (let-values ([(text revision changes) (store:snapshot-since ack-boundary 0)])
+         (check 'ordinary-log-already-lost-that-basis changes #f)))
+
      ;; -- marks ------------------------------------------------------------
 
      (define m (store:create! alice "marked" '("one two" "three")))
@@ -746,11 +783,11 @@
             (length (unbox sub-events)) 1)
      (store:delete! alice owned-buffer)
 
-     ;; -- the ui's whole-line splices, as edit's splice-lines! builds them ----
+     ;; -- whole-line replacements for store clients -----------------------
 
-     ;; edit.e's splice-lines! turns "replace lines [from, to)" into a
-     ;; span with three cases; these drive the same spans through
-     ;; edit! and pin the resulting text
+     ;; "Replace lines [from, to)" becomes a span with three cases.
+     ;; Ordinary UI primitives now submit character spans; clients that
+     ;; intentionally replace whole rows still need these boundary cases.
      (define (spliced from to inserted)
        (let* ([id (store:create! alice "spliced" '("aaa" "bbb" "ccc"))]
               [count 3]

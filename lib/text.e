@@ -27,7 +27,7 @@
           apply-edit extract invert invert-delta difference
           delta? delta-span delta-new-end delta-removed delta-inserted
           delta-line-shift
-          rebase-position rebase-span rebase-delta)
+          rebase-position rebase-span rebase-delta rebase-result-position)
   (import (rnrs) (only (chezscheme) format))
 
   ;;; Positions and spans --------------------------------------------------
@@ -305,6 +305,28 @@
                                    (+ (cdr start) (- (cdr old-end) (cdr old-start)))
                                    (cdr old-end)))
                          (delta-removed d) (delta-inserted d))))))
+
+  (define (rebase-result-position position intended actual before)
+    ;; A command chooses a position in its intended edit's result.  The
+    ;; accepted edit may have moved through BEFORE's intervening deltas.
+    ;; Inside the replacement, preserve the offset into that same inserted
+    ;; text (including both boundaries).  Outside it, recover the original
+    ;; content anchor and follow the real chain.  ACTUAL must be INTENDED
+    ;; rebased through BEFORE; later deltas use ordinary rebase-position.
+    (let ([start (span-start (delta-span intended))]
+          [end (delta-new-end intended)]
+          [landed (span-start (delta-span actual))])
+      (if (and (position<=? start position) (position<=? position end))
+          (let ([rows (- (car position) (car start))])
+            (cons (+ (car landed) rows)
+                  (if (zero? rows)
+                      (+ (cdr landed) (- (cdr position) (cdr start)))
+                      (cdr position))))
+          (rebase-position
+            (fold-left rebase-position
+                       (rebase-position position (invert-delta intended))
+                       before)
+            actual))))
   ;;; Line-vector splicing -----------------------------------------------------------
 
   (define (splice v from to inserted)

@@ -207,6 +207,12 @@
   (define-syntax kill-ring
     (identifier-syntax [id (head:kill-ring)] [(set! id v) (head:set-kill-ring! v)]))
   (define suppress-history (make-parameter #f))
+  ;; Desired anchors in the command's proposed result.  The head projects
+  ;; them into the accepted revision before adopting any later changes.
+  (define edit-point (make-parameter 'end))
+  (define edit-mark (make-parameter #f))
+  (define edit-source (make-parameter #f))
+  (define (edit-basis-for b) (or (edit-source) (head:edit-basis b)))
 
   ;;; Small utilities -------------------------------------------------------
 
@@ -244,13 +250,16 @@
       (head:store-edit! b span replacement
                         (if (pair? properties)
                           (list key (caddr action) (car properties))
-                          (list key (caddr action))))
+                          (list key (caddr action)))
+                        (cons (cons current-window (edit-point))
+                              (if (edit-mark) (list (cons 'mark (edit-mark))) '()))
+                        (edit-basis-for b))
       ((cadddr action))))
 
   (define (replace-buffer-lines! b target . properties)
     ;; Formatting, indentation, and merging are ordinary attributed
     ;; edits.  Only loading/rereading a baseline may reset the store.
-    (let-values ([(span replacement) (text:difference (head:buffer-lines b) target)])
+    (let-values ([(span replacement) (text:difference (car (edit-basis-for b)) target)])
       (apply submit-edit! b span replacement properties)))
 
   (define (editor-snapshot . key)
@@ -264,10 +273,10 @@
   (define (restore-snapshot! snapshot)
     ;; This is the local-buffer path.  Shared text never restores a
     ;; snapshot; the store's inverse operation owns its history.
-    (set! lines (car snapshot))
-    (set! point-row (cadr snapshot))
-    (set! point-col (caddr snapshot))
-    (set! trailing-newline? (cadddr snapshot))
+    (let-values ([(span replacement) (text:difference lines (car snapshot))])
+      (head:store-edit! (head:window-buffer current-window) span replacement
+                        (list #f #f (list (cons 'trailing (cadddr snapshot))))
+                        (list (cons current-window (cons (cadr snapshot) (caddr snapshot))))))
     ;; The buffer may have been saved or merged since this snapshot was
     ;; taken, changing its current disk base.  For a file buffer, derive
     ;; modified state from that base instead of restoring a stale flag.
@@ -572,50 +581,50 @@
               [else (loop (+ i 1) start acc)]))))
 
   (define (insert-text! s)
+    (insert-text-as! s (format "insert ~s" s)))
+
+  (define (insert-text-as! s label)
     ;; Buffer rows never contain newline characters.  Programmatic inserts
     ;; get the same structural treatment as a paste or repeated newline!.
     (unless (string=? s "")
-      (with-recorded-edit (format "insert ~s" s)
-        (let ([row point-row] [col point-col]
-              [parts (split-inserted-lines s)])
-          (submit-edit! (head:window-buffer current-window)
-                        (text:make-span row col row col) parts)
-          (set! point-row (+ row (- (length parts) 1)))
-          (set! point-col (if (null? (cdr parts))
-                            (+ col (string-length (car parts)))
-                            (string-length (car (reverse parts)))))
+      (let* ([b (head:window-buffer current-window)]
+             [source (edit-basis-for b)]
+             [row point-row] [col point-col]
+             [parts (split-inserted-lines s)])
+        (with-recorded-edit label
+          (parameterize ([edit-source source])
+            (submit-edit! b (text:make-span row col row col) parts))
           (changed!)))))
 
   (define (newline!)
-    (with-recorded-edit "newline" (insert-text! "\n")))
+    (insert-text-as! "\n" "newline"))
 
   (define (delete-forward!)
-    (cond [(< point-col (string-length (current-line)))
-           (with-recorded-edit
-             (format "delete ~s"
-                     (string (string-ref (current-line) point-col)))
-             (submit-edit! (head:window-buffer current-window)
-                           (text:make-span point-row point-col point-row (+ point-col 1))
-                           '(""))
-             (changed!))]
-          [(< point-row (- (vlen) 1))
-           (with-recorded-edit "delete newline"
-             (submit-edit! (head:window-buffer current-window)
-                           (text:make-span point-row point-col (+ point-row 1) 0) '(""))
-             (changed!))]))
+    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
+           [row point-row] [col point-col] [line (current-line)])
+      (cond [(< col (string-length line))
+             (with-recorded-edit (format "delete ~s" (string (string-ref line col)))
+               (parameterize ([edit-source source])
+                 (submit-edit! b (text:make-span row col row (+ col 1)) '("")))
+               (changed!))]
+            [(< row (- (vector-length (car source)) 1))
+             (with-recorded-edit "delete newline"
+               (parameterize ([edit-source source])
+                 (submit-edit! b (text:make-span row col (+ row 1) 0) '("")))
+               (changed!))])))
 
   (define (backspace!)
     (when (or (> point-col 0) (> point-row 0))
-      (with-recorded-edit
-        (if (> point-col 0)
-            (format "delete ~s"
-                    (string (string-ref (current-line) (- point-col 1))))
-            "delete newline")
-        (let* ([row (if (> point-col 0) point-row (- point-row 1))]
-               [col (if (> point-col 0) (- point-col 1) (string-length (line-at row)))])
-          (submit-edit! (head:window-buffer current-window)
-                        (text:make-span row col point-row point-col) '(""))
-          (set! point-row row) (set! point-col col)
+      (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
+             [end-row point-row] [end-col point-col]
+             [row (if (> end-col 0) end-row (- end-row 1))]
+             [col (if (> end-col 0) (- end-col 1) (string-length (line-at row)))])
+        (with-recorded-edit
+          (if (> end-col 0)
+              (format "delete ~s" (string (string-ref (line-at row) col)))
+              "delete newline")
+          (parameterize ([edit-source source])
+            (submit-edit! b (text:make-span row col end-row end-col) '("")))
           (changed!)))))
 
   ;;; Kill and yank ---------------------------------------------------------
@@ -685,12 +694,13 @@
     (void))
 
   (define (kill-line!)
-    (let* ([s (current-line)] [n (string-length s)])
-      (cond [(< point-col n)
-             (let ([text (substring s point-col n)])
+    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
+           [row point-row] [col point-col] [s (current-line)] [n (string-length s)])
+      (cond [(< col n)
+             (let ([text (substring s col n)])
                (with-recorded-edit (format "kill ~s" text)
-                 (submit-edit! (head:window-buffer current-window)
-                               (text:make-span point-row point-col point-row n) '(""))
+                 (parameterize ([edit-source source])
+                   (submit-edit! b (text:make-span row col row n) '("")))
                  (kill! text)
                  (changed!)))]
             [(< point-row (- (vlen) 1))
@@ -706,8 +716,7 @@
     ;; Kill-ring entries can span lines after consecutive C-k commands.  Insert
     ;; newlines as buffer structure rather than embedding them in a line string.
     (unless (string=? kill-ring "")
-      (with-recorded-edit (format "yank ~s" kill-ring)
-        (insert-text! kill-ring))))
+      (insert-text-as! kill-ring (format "yank ~s" kill-ring))))
 
   (define (text-between sr sc er ec)
     (if (= sr er)
@@ -728,16 +737,11 @@
   (define (replace-region-text! start end text)
     ;; Replace one ordered buffer range in a single structural operation.
     ;; Bulk editors use this instead of rebuilding a line once per match.
-    (with-recorded-edit "replace region"
-      (let ([sr (car start)] [sc (cdr start)]
-            [er (car end)] [ec (cdr end)]
-            [parts (split-inserted-lines text)])
-        (submit-edit! (head:window-buffer current-window)
-                      (text:make-span sr sc er ec) parts)
-        (set! point-row (+ sr (- (length parts) 1)))
-        (set! point-col (if (null? (cdr parts))
-                          (+ sc (string-length (car parts)))
-                          (string-length (car (reverse parts)))))
+    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
+           [parts (split-inserted-lines text)])
+      (with-recorded-edit "replace region"
+        (parameterize ([edit-source source])
+          (submit-edit! b (text:make-span (car start) (cdr start) (car end) (cdr end)) parts))
         (changed!))))
 
   (define (copy-region!)
@@ -759,11 +763,11 @@
         (let-values ([(sr sc er ec) (ordered-region)])
           (if (and (= sr er) (= sc ec))
               (set! message "Empty region")
-              (let ([text (text-between sr sc er ec)])
+              (let ([text (text-between sr sc er ec)]
+                    [source (edit-basis-for (head:window-buffer current-window))])
                 (with-recorded-edit (format "kill ~s" text)
-                  (delete-region! sr sc er ec)
+                  (parameterize ([edit-source source]) (delete-region! sr sc er ec))
                   (kill! text)
-                  (set! point-row sr) (set! point-col sc)
                   (changed!)))))))
 
   ;;; Files -----------------------------------------------------------------
@@ -924,14 +928,16 @@
     ;; buffer's name.  The buffer adopts the disk as its new base
     ;; either way -- the external change is incorporated, so the next
     ;; save writes cleanly.  One undo entry.
-    (let-values ([(merged merged-trailing conflicts report-lines)
-                  (file:merge path (head:buffer-base b) (buffer-text b) disk)])
-      (with-recorded-edit "merge from disk"
-        (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing)))
-        (head:buffer-base-set! b disk)
-        (head:buffer-stamp-set! b (file:stamp path))
-        (changed!)
-        (values conflicts (merge-report! b report-lines)))))
+    (let ([source (head:edit-basis b)] [wanted (point)])
+      (let-values ([(merged merged-trailing conflicts report-lines)
+                    (file:merge path (head:buffer-base b) (buffer-text b) disk)])
+        (with-recorded-edit "merge from disk"
+          (parameterize ([edit-source source] [edit-point wanted])
+            (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing))))
+          (head:buffer-base-set! b disk)
+          (head:buffer-stamp-set! b (file:stamp path))
+          (changed!)
+          (values conflicts (merge-report! b report-lines))))))
 
   (define (reread-from-disk! b path disk)
     ;; Discard the buffer's copy and adopt the disk verbatim.  Rereading is a
@@ -1405,21 +1411,23 @@
     ;; line is replaced, and the display follows -- point moves to the
     ;; last line in every window showing b, and in ones that show it later.
     ;; A transcript belongs in the buffer list even before it is shown.
+    (unless (for-all string? new-lines) (error 'buffer-append! "expected line strings" new-lines))
     (head:add-buffer! b)
-    (let ([v (head:buffer-lines b)]
-          [add (list->vector new-lines)])
-      (head:buffer-lines-set! b
-        (if (and (= (vector-length v) 1) (string=? (vector-ref v 0) ""))
-            add
-            (vector-append v add))))
-    (let ([last (- (vector-length (head:buffer-lines b)) 1)])
-      (head:buffer-spot-row-set! b last)
-      (head:buffer-spot-col-set! b 0)
-      (for-each (lambda (w)
-                  (when (eq? (head:window-buffer w) b)
-                    (head:window-prow-set! w last)
-                    (head:window-pcol-set! w 0)))
-                windows)))
+    (when (pair? new-lines)
+      (let* ([v (head:buffer-lines b)]
+             [last (- (vector-length v) 1)]
+             [col (string-length (vector-ref v last))]
+             [empty? (and (zero? last) (zero? col))])
+        (head:store-edit! b (text:make-span last col last col)
+                          (if empty? new-lines (cons "" new-lines))))
+      (let ([last (- (vector-length (head:buffer-lines b)) 1)])
+        (head:buffer-spot-row-set! b last)
+        (head:buffer-spot-col-set! b 0)
+        (for-each (lambda (w)
+                    (when (eq? (head:window-buffer w) b)
+                      (head:window-prow-set! w last)
+                      (head:window-pcol-set! w 0)))
+                  windows))))
 
   ;;; Buffer settings ---------------------------------------------------------
 
@@ -1500,7 +1508,9 @@
     ;; line's text, landing on the indentation when they sat inside
     ;; the old one.  -> whether anything changed.
     (define b (head:window-buffer current-window))
-    (define v (head:buffer-lines b))
+    (define v (car (edit-basis-for b)))
+    (define wanted-point (edit-point))
+    (define wanted-mark (edit-mark))
     (define n (vector-length v))
     (define (retabbed s col)
       (let ([rest (string:tail s (leading-blanks s))])
@@ -1523,8 +1533,8 @@
           (let ([nv (let ([o (make-vector n)])
                       (do ([i 0 (+ i 1)]) ((= i n) o)
                         (vector-set! o i (vector-ref v i))))]
-                [next-point-col point-col]
-                [next-mark-col mark-col])
+                [next-point-col (cdr wanted-point)]
+                [next-mark-col (and wanted-mark (cdr wanted-mark))])
             (for-each
               (lambda (change)
                 (let* ([row (car change)] [col (cdr change)]
@@ -1533,14 +1543,14 @@
                        [follow (lambda (c)
                                  (if (<= c lead) col (+ c (- col lead))))])
                   (vector-set! nv row (retabbed old col))
-                  (when (= row point-row)
-                    (set! next-point-col (follow point-col)))
-                  (when (and mark-active? (= row mark-row))
-                    (set! next-mark-col (follow mark-col)))))
+                  (when (= row (car wanted-point))
+                    (set! next-point-col (follow (cdr wanted-point))))
+                  (when (and wanted-mark (= row (car wanted-mark)))
+                    (set! next-mark-col (follow (cdr wanted-mark))))))
               changes)
-            (replace-buffer-lines! b nv)
-            (set! point-col next-point-col)
-            (set! mark-col next-mark-col))
+            (parameterize ([edit-point (cons (car wanted-point) next-point-col)]
+                           [edit-mark (and wanted-mark (cons (car wanted-mark) next-mark-col))])
+              (replace-buffer-lines! b nv)))
           (changed!)))
       (pair? changes)))
 
@@ -1551,7 +1561,9 @@
       (if (not entry)
           (begin (set! message "No indenter for this mode") #f)
           (let* ([b (head:window-buffer current-window)]
-                 [v (head:buffer-lines b)]
+                 [source (head:edit-basis b)]
+                 [v (car source)]
+                 [wanted (point)] [selected (mark)]
                  [last (min to (- (vector-length v) 1))]
                  [cols (let settle ([r from]
                                     [cs ((cadr entry) b from last)]
@@ -1564,7 +1576,8 @@
                                              (leading-blanks
                                                (vector-ref v r)))
                                            acc))))])
-            (apply-indent! from cols #f)
+            (parameterize ([edit-source source] [edit-point wanted] [edit-mark selected])
+              (apply-indent! from cols #f))
             #t))))
 
   (define (indent-line!)
@@ -1576,14 +1589,18 @@
       (if (not entry)
           (set! message "No indenter for this mode")
           (let* ([b (head:window-buffer current-window)]
-                 [cols ((cadr entry) b point-row point-row)]
+                 [source (head:edit-basis b)]
+                 [wanted (point)] [selected (mark)]
+                 [row (car wanted)]
+                 [lead (leading-blanks (vector-ref (car source) row))]
+                 [cols ((cadr entry) b row row)]
                  [col (and (pair? cols)
-                           (cycle-stops (car cols)
-                                        (leading-blanks
-                                          (line-at point-row))))])
+                           (cycle-stops (car cols) lead))])
             (when col
-              (apply-indent! point-row (list col) #t)
-              (when (< point-col col) (set! point-col col))))))
+              (unless (parameterize ([edit-source source] [edit-point wanted] [edit-mark selected])
+                        (apply-indent! row (list col) #t))
+                (when (and (eq? (car source) (head:buffer-lines b)) (< point-col col))
+                  (set! point-col col)))))))
     (void))
 
   (define (indent-tab!)
@@ -1620,7 +1637,7 @@
     ;; Replace rows [from, to] of the current buffer with lines (a
     ;; list), one undo entry; point keeps its row when it can.
     (define b (head:window-buffer current-window))
-    (define v (head:buffer-lines b))
+    (define v (car (edit-basis-for b)))
     (define n (vector-length v))
     (let ([nv (list->vector
                 (let loop ([r 0] [acc '()])
@@ -1635,8 +1652,6 @@
                                     (cons (vector-ref v r) acc))])))])
       (with-recorded-edit "format"
         (apply replace-buffer-lines! b (if (zero? (vector-length nv)) (vector "") nv) properties)
-        (set! point-row (max 0 (min point-row
-                                    (- (vector-length (head:buffer-lines b)) 1))))
         (changed!))))
 
   (define (format-rows! from to)
@@ -1647,7 +1662,9 @@
         [(not entry) (set! message "No formatter for this mode") #f]
         [else
          (let* ([b (head:window-buffer current-window)]
-                [v (head:buffer-lines b)]
+                [source (head:edit-basis b)]
+                [v (car source)]
+                [wanted (point)]
                 [last (min to (- (vector-length v) 1))]
                 [lines ((cadr entry) b from last)])
            (cond
@@ -1663,8 +1680,9 @@
              [else
               ;; Text and its final-newline fact form one undoable
               ;; transaction, including a change only to that fact.
-              (replace-rows! from last lines
-                             (if (= last (- (vector-length v) 1)) '((trailing . #t)) '()))
+              (parameterize ([edit-source source] [edit-point wanted])
+                (replace-rows! from last lines
+                               (if (= last (- (vector-length v) 1)) '((trailing . #t)) '())))
               #t]))])))
 
   (define (format-region!)
@@ -1917,7 +1935,7 @@
                (< (cadddr chain) 20))
           (let ([text (string-append (list-ref chain 4) s)])
             (parameterize ([suppress-history #t])
-              (with-recorded-edit (format "insert ~s" text) (insert-text! s)))
+              (insert-text-as! s (format "insert ~s" text)))
             (set! insert-chain
               (list b point-row point-col (+ (cadddr chain) 1) text)))
           (begin
@@ -2240,8 +2258,7 @@
   (define (redraw-command!)
     (paint:mark-size-dirty!) (paint:erase-screen!) (set! message "Screen redrawn"))
   (define (open-line!)
-    (let ([row point-row] [col point-col])
-      (newline!) (set! point-row row) (set! point-col col)))
+    (parameterize ([edit-point 'start]) (newline!)))
   (define (page-up!) (page-window! -1 1))
   (define (page-down!) (page-window! 1 1))
   (define (previous-line!) (move-vertical! -1))
@@ -2466,15 +2483,15 @@
       (lambda (n r)
         (+ n (call-with-buffer (region-buffer r)
                (lambda ()
-                 (let ([saved (point)])
+                 (let ([saved (point)] [source (head:edit-basis (region-buffer r))])
                    (call-as-one-edit!
                      (format "(replace-all! ~s ~s)" from to)
                      (lambda ()
                        (let-values ([(text count) (rewritten-region r)])
                          (when (> count 0)
-                           (replace-region-text! (region-start r)
-                                                 (region-end r) text))
-                         (goto-point! saved)
+                           (parameterize ([edit-source source] [edit-point saved])
+                             (replace-region-text! (region-start r)
+                                                   (region-end r) text)))
                          count))))))))
       0 (regions-of (where-of rest))))
 
