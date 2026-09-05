@@ -2,9 +2,17 @@
 
 Markdown buffers edit in the `markdown` mode ([syntax
 highlighting](STYLES.md) only). The `markdown-view` mode presents the
-same document formatted and read-only; `C-c v` toggles between them in
-either direction, keeping the cursor on the matching content. The
-describe browser renders its pages through the same viewer.
+document in a separate local, read-only buffer, initially named
+`*markdown filename*`. `C-c v` switches the selected window between
+source and view, keeping the cursor on the matching source row.
+Other windows keep their own buffer and cursor, so source and view
+can be displayed side by side. The describe browser renders its pages
+through the same viewer.
+
+Viewing leaves the source text, file state, mode, and undo history
+intact. Source edits appear in the view on the next redraw. Killing a
+view keeps its source; killing the source closes its dependent views.
+Relative file links resolve from the source file's directory.
 
 ## The presentation
 
@@ -50,17 +58,21 @@ restyled with `style:set!` in config.e.
 ## Scheme API
 
 ```scheme
-(markdown:view! [buffer])          ; present formatted, read-only
-(markdown:edit! [buffer])          ; restore the markdown source
+(markdown:view! [source])          ; show its local, read-only companion
+(markdown:edit! [view])            ; return to its live source
 (markdown:view-install! buffer lines) ; render lines into an app view
 (markdown:render lines [width])    ; => lines styles links source-rows
 ```
 
-`markdown:view!` stashes the source and the buffer's read-only state;
-`markdown:edit!` restores both. `markdown:render` is the pure renderer
+`markdown:view!` reuses a companion by source identity, including after
+either buffer is renamed. `markdown:edit!` returns to the live source
+without restoring an old snapshot or changing its read-only state.
+`markdown:render` is the pure renderer
 (the automated suite pins it; `width` bounds tables, default 79), and
-`markdown:view-install!` is how the describe browser presents its
-pages. The `markdown:browser` parameter holds the web-link command,
+`markdown:view-install!` renders literal lines into a local buffer;
+it refuses a shared buffer. These literal views have no source to
+return to with `markdown:edit!`. This is how the describe browser
+presents its pages. The `markdown:browser` parameter holds the web-link command,
 and `markdown:view-max-width` the reading-width cap:
 
 ```scheme
@@ -75,7 +87,7 @@ in per-mode contexts, consulted before the global map while a buffer of
 that mode is current:
 
 ```scheme
-;; as md-view.e's init! registers them
+;; as markdown.e's init! registers them
 (keymap:bind-default! 'markdown "C-c v" markdown:view!)
 (keymap:bind-default! 'markdown-view "C-c v" markdown:edit!)
 (keymap:bind-default! 'markdown-view "RET" follow-link)

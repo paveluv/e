@@ -440,6 +440,31 @@
                     [else (scan (+ row 1))]))
             #t)
 
+     ;; A rendered document stays local through a real module reload.
+     (check 'markdown-view-keeps-source-through-reload
+            (read-editor
+              '(let ([source (head:new-buffer "wired-markdown.md")])
+                 (head:buffer-lines-set! source (vector "# Wired" "" "body"))
+                 (mode:choose! source "markdown")
+                 (show-buffer! source)
+                 (let ([revision (head:buffer-store-rev source)]
+                       [text (head:buffer-lines source)])
+                   (markdown:view!)
+                   (let* ([view (current-buffer)]
+                          [refresh (head:app-refresh! (head:app-of view))])
+                     (kernel:reload-module! "markdown")
+                     (let ([result
+                            (list (not (head:buffer-store-id view))
+                                  (eq? source (head:buffer-fact view 'markdown-input #f))
+                                  (not (eq? refresh (head:app-refresh! (head:app-of view))))
+                                  (eq? text (head:buffer-lines source))
+                                  (= revision (store:revision (head:buffer-store-id source)))
+                                  (vector-ref ((mode:row-styles (mode:of view))
+                                               view 0 (buffer-line view 0)) 0))])
+                       (markdown:edit!)
+                       (append result (list (eq? source (current-buffer)))))))))
+            '(#t #t #t #t #t md-h1 #t))
+
      (delete-file probe)
      (sys:close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))

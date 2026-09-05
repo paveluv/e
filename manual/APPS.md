@@ -17,14 +17,17 @@ are local too.
 ## Registering an app
 
 ```scheme
-(head:register-app! name refresh! handle-event!)
+(head:register-app! key-or-buffer refresh! handle-event!)
 ```
 
-`name` is a stable tool key and its preferred initial buffer label.  If
+A string is a stable tool key and its preferred initial buffer label.  If
 that label is already used, the local buffer receives a suffix such as
 `<2>`.  An ordinary buffer with the same name is preserved.  Renaming
 the app changes its label; registering the same key again reuses the
 same local buffer and replaces its refresh and input handler.
+You can also pass an existing local buffer to attach the app directly
+to that identity, as a source's companion view does. Shared buffers
+are refused by this head-app API.
 `refresh!` takes no arguments and updates the registered buffer with
 `head:view-replace!` or `head:view-append!`. `handle-event!` receives one canonical
 event string, such as `"UP"`, `"RET"`, `"MOUSE-CLICK"`, or `"WHEEL-UP"`.
@@ -127,6 +130,8 @@ wants the app to stay visible shows the buffer elsewhere
 (`display-buffer!`).  The window tree is the only source of windows, and
 the user's window commands and mouse gestures move between them as usual
 while an app is focused.
+Each window keeps its own point and viewport, including multiple
+windows showing the same app.
 
 ## The buffers app
 

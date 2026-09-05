@@ -42,6 +42,18 @@
      (check 'invalid-registration-keeps-store (store-ids) initial-store)
      (check 'false-key-is-not-a-tool (head:find-tool-buffer #f) #f)
 
+     ;; Callers with an existing local identity can register it directly.
+     (define explicit (head:new-local-buffer "explicit app"))
+     (check 'register-existing-local
+            (eq? explicit (head:register-view! explicit void)) #t)
+     (check 'registered-local-is-listed (and (memq explicit (head:buffers)) #t) #t)
+     (check 'register-existing-shared-refused
+            (refused? (lambda ()
+                        (head:register-view! (head:window-buffer (head:current)) void)))
+            #t)
+     (check 'rejected-shared-registration-keeps-flags
+            (head:buffer-read-only (head:window-buffer (head:current))) #f)
+
      ;; A view never captures an ordinary buffer's label as identity.
      (define ordinary (head:new-buffer "*app-collision*"))
      (head:buffer-lines-set! ordinary (vector "keep my work"))
@@ -75,6 +87,24 @@
      (check 'detached-is-ordinary (head:app-buffer? app) #f)
      (check 'reattach-reuses-tool
             (eq? (head:register-view! "*app-collision*" void) app) #t)
+
+     ;; An offscreen refresh must leave a valid selection and viewport
+     ;; when the user reopens the app, even if its text became shorter.
+     (head:view-replace! explicit '("first" "second" "third"))
+     (show-buffer! explicit)
+     (goto-point! '(2 . 5))
+     (set-mark-command!)
+     (head:window-top-set! (head:current) 2)
+     (show-buffer! app)
+     (head:view-replace! explicit '("x"))
+     (show-buffer! explicit)
+     (check 'shorter-view-clamps-saved-point (point) '(0 . 1))
+     (check 'shorter-view-clamps-selection (mark) '(0 . 1))
+     (check 'shorter-view-clamps-saved-viewport (head:window-top (head:current)) 0)
+     (goto-point! '(0 . 0))
+     (copy-region!)
+     (check 'shorter-view-selection-can-be-copied (mark) #f)
+     (show-buffer! app)
 
      ;; A shared label wins even when it arrives after the local tool.
      (define collision

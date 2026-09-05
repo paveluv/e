@@ -9,8 +9,8 @@
 ;; [text](url) shows only the text -- the target lives in the buffer's
 ;; hyperlink layer, followed with RET or a mouse click.
 ;;
-;; markdown:view! turns a markdown buffer into this presentation
-;; (read-only, source stashed); markdown:edit! restores the source.
+;; markdown:view! shows a local presentation of a source buffer;
+;; markdown:edit! returns to that source without replacing its text.
 ;; Both try to keep the cursor on the matching content.  C-c v toggles
 ;; in either mode.  markdown:view-install! renders into app views --
 ;; the describe browser presents itself through it.
@@ -26,6 +26,7 @@
           (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
+          (prefix (file) file:)
           (prefix (style) style:)
           (prefix (keymap) keymap:) (prefix (only (sys) terminal-character-width) sys:))
 
@@ -763,18 +764,32 @@
 
   ;;; The mode and the toggle --------------------------------------------
 
-  ;; buffer -> (vector styles links rows source-lines read-only?)
-  (define renders (make-weak-eq-hashtable))
+  ;; Inputs and derived rendering are local buffer facts.  The cache
+  ;; is plain data, so a new module instance can read its old row map
+  ;; while rebuilding styles and text.  A fresh renderer token makes
+  ;; implementation changes invalidate the cache like width or input.
+  ;; #(styles links source-rows source-lines width measure renderer)
+  (define renderer-token (gensym "markdown-renderer"))
+  (define (rendering-of b)
+    (and (not (head:buffer-store-id b))
+         (head:buffer-fact b 'markdown-rendering #f)))
+  (define (rendering-styles r) (vector-ref r 0))
+  (define (rendering-links r) (vector-ref r 1))
+  (define (rendering-rows r) (vector-ref r 2))
+  (define (rendering-lines r) (vector-ref r 3))
+  (define (rendering-width r) (vector-ref r 4))
+  (define (rendering-measure r) (vector-ref r 5))
+  (define (rendering-renderer r) (vector-ref r 6))
 
   (define (view-row-styles b row line)
-    (let ([r (hashtable-ref renders b #f)])
-      (and r (< row (vector-length (vector-ref r 0)))
-           (vector-ref (vector-ref r 0) row))))
+    (let ([r (rendering-of b)])
+      (and r (<= 0 row) (< row (vector-length (rendering-styles r)))
+           (vector-ref (rendering-styles r) row))))
 
   (define (view-row-links b row line)
-    (let ([r (hashtable-ref renders b #f)])
-      (if (and r (< row (vector-length (vector-ref r 1))))
-          (vector-ref (vector-ref r 1) row)
+    (let ([r (rendering-of b)])
+      (if (and r (<= 0 row) (< row (vector-length (rendering-links r))))
+          (vector-ref (rendering-links r) row)
           '())))
 
   (define (render-width b)
@@ -785,99 +800,165 @@
       (min (markdown-view-max-width)
            (if width (max 20 width) 79))))
 
-  (define (install-render! b lines source stash-read-only)
-    (set-buffer-wrap! b (cons 'clean (markdown-view-max-width)))
-    (let ([width (render-width b)])
-      (let-values ([(rendered styles links rows)
-                    (markdown-render lines width)])
-        (hashtable-set! renders b
-                        (vector (list->vector styles)
-                                (list->vector links)
-                                (list->vector rows)
-                                source
-                                stash-read-only
-                                lines
-                                width))
-        (head:view-replace! b (if (null? rendered) (list "") rendered)))))
+  (define (source-row-at r row)
+    (let ([rows (rendering-rows r)])
+      (if (zero? (vector-length rows))
+          0
+          (vector-ref rows (max 0 (min row (- (vector-length rows) 1)))))))
 
-  (define (view-row-showing b source-row)
-    ;; the rendered line that came from the source row
-    (let* ([r (hashtable-ref renders b #f)]
-           [rows (vector-ref r 2)])
-      (let find ([k 0] [best 0])
+  (define (view-row-showing r source-row)
+    ;; Prefer the first rendered row for the closest source row.  A
+    ;; wrapped table cell can produce several rows from the same input.
+    (let ([rows (rendering-rows r)])
+      (let find ([k 0] [best 0] [closest -1])
         (cond [(>= k (vector-length rows)) best]
-              [(<= (vector-ref rows k) source-row) (find (+ k 1) k)]
-              [else best]))))
+              [(and (<= (vector-ref rows k) source-row)
+                    (> (vector-ref rows k) closest))
+               (find (+ k 1) k (vector-ref rows k))]
+              [else (find (+ k 1) best closest)]))))
+
+  (define (render-input b)
+    (and (not (head:buffer-store-id b))
+         (head:buffer-fact b 'markdown-input #f)))
+
+  (define (refresh-render! b)
+    (let ([input (render-input b)])
+      (when input
+        (let* ([lines (if (head:buffer? input)
+                          (head:buffer-lines input)
+                          (list->vector input))]
+               [width (render-width b)]
+               [measure (markdown-view-max-width)]
+               [old (rendering-of b)])
+          (unless (and old (eq? renderer-token (rendering-renderer old))
+                       (equal? lines (rendering-lines old))
+                       (= width (rendering-width old))
+                       (= measure (rendering-measure old)))
+            (let ([spot (and old (list (source-row-at old (head:buffer-spot-row b))
+                                       (head:buffer-spot-col b)
+                                       (source-row-at old (head:buffer-spot-top b))))]
+                  [mark (and old (head:buffer-marked b)
+                             (cons (source-row-at old (head:buffer-mark-row b))
+                                   (head:buffer-mark-col b)))]
+                  [anchors
+                   (if old
+                       (map (lambda (w)
+                              (list w
+                                    (source-row-at old (head:window-prow w))
+                                    (head:window-pcol w)
+                                    (source-row-at old (head:window-top w))))
+                            (filter (lambda (w) (eq? (head:window-buffer w) b))
+                                    (head:windows)))
+                       '())])
+              (let-values ([(text styles links rows)
+                            (markdown-render (vector->list lines) width)])
+                (let ([r (vector (list->vector styles)
+                                 (list->vector links)
+                                 (list->vector rows)
+                                 lines width measure renderer-token)])
+                  (set-buffer-wrap! b (cons 'clean measure))
+                  (head:buffer-fact-set! b 'markdown-rendering r)
+                  (head:view-replace! b text)
+                  (when spot
+                    (let ([row (view-row-showing r (car spot))])
+                      (head:buffer-spot-row-set! b row)
+                      (head:buffer-spot-col-set!
+                        b (min (cadr spot) (string-length (buffer-line b row))))
+                      (head:buffer-spot-top-set! b (view-row-showing r (caddr spot)))))
+                  (when mark
+                    (let ([row (view-row-showing r (car mark))])
+                      (head:buffer-mark-row-set! b row)
+                      (head:buffer-mark-col-set!
+                        b (min (cdr mark) (string-length (buffer-line b row))))))
+                  ;; Every window keeps its source row, not just the
+                  ;; selected window.  Refit also resets wrapped tops.
+                  (for-each
+                    (lambda (anchor)
+                      (let* ([w (car anchor)]
+                             [row (view-row-showing r (cadr anchor))])
+                        (head:window-prow-set! w row)
+                        (head:window-pcol-set!
+                          w (min (caddr anchor)
+                                 (string-length (buffer-line b row))))
+                        (head:window-top-set!
+                          w (view-row-showing r (cadddr anchor)))
+                        (head:window-topseg-set! w 0)))
+                    anchors)))))))))
 
   (define (refit-views!)
-    ;; A view rendered for one window width re-renders when that width
-    ;; changes -- a split or resize re-fits tables and their cells.
-    (vector-for-each
+    ;; Width, reading measure, and source text are inputs to the same
+    ;; renderer.  The local facts also rediscover views after reload.
+    (for-each
       (lambda (b)
-        (let ([r (hashtable-ref renders b #f)])
-          (when (and r (head:buffer-window-size b)
-                     (not (= (render-width b) (vector-ref r 6))))
-            (let* ([current? (eq? b (current-buffer))]
-                   [source-row
-                    (and current?
-                         (let ([rows (vector-ref r 2)]
-                               [row (car (point))])
-                           (if (< row (vector-length rows))
-                               (vector-ref rows row)
-                               0)))])
-              (install-render! b (vector-ref r 5) (vector-ref r 3)
-                               (vector-ref r 4))
-              (when current?
-                (goto-point!
-                  (cons (view-row-showing b source-row) 0)))))))
-      (hashtable-keys renders)))
+        (when (and (render-input b) (head:buffer-window-size b))
+          (refresh-render! b)))
+      (head:buffers)))
 
   (define (markdown-view-install! b lines)
-    ;; Render markdown lines into an app view; the view owns its
-    ;; lifecycle, so nothing is stashed.
-    (install-render! b lines #f #f)
+    ;; Literal input belongs to an existing local view, as in describe.
+    ;; Rendering can never replace a shared buffer's source text.
+    (unless (and (head:buffer? b) (not (head:buffer-store-id b)))
+      (error 'markdown-view-install! "expected a local buffer" b))
+    (unless (and (list? lines) (for-all string? lines))
+      (error 'markdown-view-install! "expected markdown lines" lines))
+    (head:buffer-fact-set! b 'markdown-input lines)
+    (head:buffer-read-only-set! b #t)
+    (mode:choose! b "markdown-view")
+    (refresh-render! b)
+    b)
+
+  (define (attach-source-view! b)
+    (head:register-view! b (lambda () (refresh-render! b)))
     (mode:choose! b "markdown-view")
     b)
 
-  (define (buffer-lines-list b)
-    (let loop ([r (- (buffer-line-count b) 1)] [acc '()])
-      (if (< r 0) acc (loop (- r 1) (cons (buffer-line b r) acc)))))
+  (define (source-view source)
+    ;; A source record is the identity, never its mutable label.  The
+    ;; relationship belongs only to the local companion, not the store.
+    (let ([b (or (find (lambda (b) (eq? (render-input b) source))
+                       (head:buffers))
+                 (head:new-local-buffer
+                   (format "*markdown ~a*" (head:buffer-name source))))])
+      (head:buffer-fact-set! b 'markdown-input source)
+      (attach-source-view! b)))
 
   (define (markdown-view! . b*)
-    ;; Present a markdown buffer read-only and formatted; the source
-    ;; comes back with markdown:edit!.
-    (let ([b (if (pair? b*) (car b*) (current-buffer))])
-      (unless (equal? (mode:name-of b) "markdown")
-        (error 'markdown-view! "not a markdown buffer" b))
-      (let ([source (buffer-lines-list b)]
-            [row (car (point))])
-        (install-render! b source source (head:buffer-read-only b))
-        (set-buffer-read-only! b #t)
-        (mode:choose! b "markdown-view")
-        (goto-point! (cons (view-row-showing b row) 0)))
+    ;; Show a local companion in this window; other windows can keep
+    ;; editing the original source at the same time.
+    (let ([source (if (pair? b*) (car b*) (current-buffer))])
+      (unless (equal? (mode:name-of source) "markdown")
+        (error 'markdown-view! "not a markdown buffer" source))
+      (head:add-buffer! source)
+      (let ([row (call-with-buffer source (lambda () (car (point))))]
+            [b (source-view source)])
+        (show-buffer! b)
+        (refresh-render! b)
+        (goto-point! (cons (view-row-showing (rendering-of b) row) 0)))
       (void)))
 
   (define (markdown-edit! . b*)
-    ;; Restore the stashed markdown source and make it editable again.
+    ;; Return to the live source, without restoring any old snapshot or
+    ;; changing its mode, read-only state, file facts, or undo history.
     (let ([b (if (pair? b*) (car b*) (current-buffer))])
       (unless (equal? (mode:name-of b) "markdown-view")
         (error 'markdown-edit! "not a markdown view" b))
-      (let ([r (hashtable-ref renders b #f)])
-        (unless (and r (vector-ref r 3))
-          (error 'markdown-edit! "no markdown source is stashed" b))
-        (let ([row (car (point))]
-              [rows (vector-ref r 2)])
-          (head:view-replace! b (vector-ref r 3))
-          (set-buffer-read-only! b (vector-ref r 4))
-          (mode:choose! b "markdown")
-          (set-buffer-wrap! b 'default)
-          (hashtable-delete! renders b)
-          (goto-point!
-            (cons (if (< row (vector-length rows))
-                      (vector-ref rows row)
-                      0)
-                  0))))
+      (let ([source (render-input b)])
+        (unless (and (head:buffer? source) (memq source (head:buffers)))
+          (error 'markdown-edit! "no live markdown source" b))
+        (refresh-render! b)
+        (let ([row (source-row-at (rendering-of b)
+                                  (call-with-buffer b (lambda () (car (point)))))])
+          (show-buffer! source)
+          (goto-point! (cons row 0))))
       (void)))
+
+  (define (forget-render! b)
+    ;; Killing a source closes its dependent presentations; killing a
+    ;; presentation leaves its source alone.  All companions are local.
+    (for-each
+      (lambda (view)
+        (when (eq? (render-input view) b) (head:forget-buffer! view)))
+      (head:buffers)))
 
   ;;; Following links ------------------------------------------------------
 
@@ -913,10 +994,13 @@
         [(string:prefix? "#" url)
          (set-message! "Anchor links are not followed yet")]
         [else
-         (let* ([base (head:buffer-file (current-buffer))]
-                [dir (if base (path-parent base) "")]
-                [dir (if (string=? dir "") "." dir)]
-                [target (string-append dir "/" url)])
+         (let* ([b (current-buffer)]
+                [input (render-input b)]
+                [base (head:buffer-file (if (head:buffer? input) input b))]
+                [dir (if base (or (file:directory-part base) "") "")]
+                [path (file:expand url)]
+                [target (if (string:prefix? "/" path) path
+                            (string-append dir path))])
            (visit-file! target)
            ;; a linked markdown document arrives already formatted
            (when (and (markdown-file? url)
@@ -968,6 +1052,16 @@
     (paint:add-hyperlinker! view-row-links)
     (paint:add-highlighter! link-hint)
     (head:add-pre-redraw-hook! refit-views!)
+    (head:add-buffer-kill-hook! forget-render!)
+    ;; Reconstruct callbacks and derived data from local inputs even
+    ;; when runtime-created registrations survived module retraction.
+    (for-each
+      (lambda (b)
+        (let ([input (render-input b)])
+          (when input
+            (when (head:buffer? input) (attach-source-view! b))
+            (refresh-render! b))))
+      (head:buffers))
     (keymap:bind-default! 'markdown "C-c v" markdown-view!)
     (keymap:bind-default! 'markdown-view "C-c v" markdown-edit!)
     (keymap:bind-default! 'markdown-view "RET" follow-md-link!)

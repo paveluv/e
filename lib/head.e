@@ -918,14 +918,19 @@
     (store-reset! b new-lines))
 
   (define (clamp-buffer-positions! b)
-    ;; keep the buffer's spot and every window's point inside the
-    ;; (possibly shorter) current lines
+    ;; Keep selection, saved position/viewport, and every window inside
+    ;; the (possibly shorter) current lines.
     (let* ([v (buffer-lines b)]
            [last (- (vector-length v) 1)])
       (buffer-spot-row-set! b (min (buffer-spot-row b) last))
       (buffer-spot-col-set!
         b (min (buffer-spot-col b)
                (string-length (vector-ref v (buffer-spot-row b)))))
+      (buffer-spot-top-set! b (min (buffer-spot-top b) last))
+      (buffer-mark-row-set! b (min (buffer-mark-row b) last))
+      (buffer-mark-col-set!
+        b (min (buffer-mark-col b)
+               (string-length (vector-ref v (buffer-mark-row b)))))
       (for-each
         (lambda (w)
           (when (eq? (window-buffer w) b)
@@ -1280,20 +1285,26 @@
       (buffer-read-only-set! b #t)
       b))
 
-  (define (register-app! name refresh! . handler)
+  (define (register-app! target refresh! . handler)
     ;; Validate before allocating a buffer or changing registrations.
     (unless (procedure? refresh!)
       (error 'register-app! "refresh must be a procedure" refresh!))
     (when (and (pair? handler) (not (procedure? (car handler))))
       (error 'register-app! "event handler must be a procedure"
              (car handler)))
-    (let* ([b (tool-buffer name)]
+    (let* ([b (if (buffer? target)
+                  (begin
+                    (when (buffer-store-id target)
+                      (error 'register-app! "head apps require a local buffer" target))
+                    target)
+                  (tool-buffer target))]
            [a (make-app b refresh! (and (pair? handler) (car handler))
                         #f 'default #f)])
       (buffer-read-only-set! b #t)
       ;; the buffer is an app's for good: a re-registration (a module
       ;; reloading) takes back the same tool, and its local facts stay.
       (buffer-fact-set! b 'app #t)
+      (add-buffer! b)
       ;; Re-registration in one init replaces rather than duplicates refreshes.
       (kernel:registry-remove! app-registry
                                (lambda (x) (eq? (app-buffer x) b)))
@@ -1458,8 +1469,8 @@
       [(right) (+ (window-xoff w) (window-width w) -1)]
       [else #f]))
 
-  (define (register-view! name refresh!)
-    (register-app! name refresh!))
+  (define (register-view! target refresh!)
+    (register-app! target refresh!))
 
   (define (view-buffer? b)
     (app-buffer? b))

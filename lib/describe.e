@@ -748,10 +748,10 @@
          "Override an editor face using a style expression accepted by `compile-style`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
         ((markdown:view!) (("procedure" . "(markdown:view! [buffer])")) "void"
          ("(md-view)") md-view "Markdown viewing" #f
-         "Present a markdown buffer formatted and read-only: markup strips into faces, paragraphs join, tables align, fenced code frames. `C-c v` toggles; `markdown:edit!` restores the source.")
+         "Show a local, read-only companion of a markdown source buffer. Markup strips into faces, paragraphs join, tables align, and fenced code frames. Source text and history stay intact; `C-c v` switches this window between source and view.")
         ((markdown:edit!) (("procedure" . "(markdown:edit! [buffer])")) "void"
          ("(md-view)") md-view "Markdown viewing" #f
-         "Restore a markdown view's stashed source and make it editable again, keeping the cursor on the matching content.")
+         "Return from a markdown companion to its live source at the matching row, preserving the source's text, mode, read-only state, and undo history.")
         ((markdown:view-max-width)
          (("parameter" . "(markdown:view-max-width [columns])"))
          "integer" ("(md-view)") md-view "Markdown viewing" #f
@@ -783,9 +783,9 @@
          ("(edit)") core "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
         ((head:register-app!)
-         (("procedure" . "(head:register-app! name refresh! [handle-event!])"))
+         (("procedure" . "(head:register-app! key-or-buffer refresh! [handle-event!])"))
          "buffer" ("(edit)") core "App buffers" #f
-         "Create or update a module-owned dynamic read-only app buffer. Its name must not collide with an ordinary buffer. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
+         "Create or update a local, read-only head app by stable string key, or attach it to an existing local buffer. Labels are suffixed on collision; renaming keeps the tool identity. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
         ((app-event-buffer-position)
          (("parameter" . "(app-event-buffer-position)")) "pair or #f"
          ("(edit)") core "App buffers" #f

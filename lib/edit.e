@@ -422,20 +422,10 @@
         (do ([i 0 (+ i 1)]) ((= i delta)) (move-right!))))
 
   (define (goto-point! p)
-    ;; Move point straight to (row . col), clamped into the buffer.
+    ;; Point belongs to the selected window, for apps and text alike.
+    ;; Move it straight to (row . col), clamped into the buffer.
     (set! point-row (max 0 (min (car p) (- (vlen) 1))))
-    (set! point-col (max 0 (min (cdr p) (string-length (current-line)))))
-    ;; App interaction state belongs to the buffer: every window showing the
-    ;; same app mirrors its cursor and selection row.
-    (when (head:app-buffer? (current-buffer))
-      (head:buffer-spot-row-set! (current-buffer) point-row)
-      (head:buffer-spot-col-set! (current-buffer) point-col)
-      (for-each
-        (lambda (w)
-          (when (eq? (head:window-buffer w) (current-buffer))
-            (head:window-prow-set! w point-row)
-            (head:window-pcol-set! w point-col)))
-        windows)))
+    (set! point-col (max 0 (min (cdr p) (string-length (current-line))))))
 
   ;; Vertical moves aim for a goal column, so point comes back to it after
   ;; passing through shorter lines (as in Emacs).  The goal survives exactly
