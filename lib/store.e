@@ -40,7 +40,7 @@
     (fields (mutable label)
             (mutable text)       ; immutable line vector, per (text)
             (mutable revision)
-            (mutable deltas)     ; (#(revision actor delta origin) ...) newest first
+            (mutable deltas)     ; (#(revision actor delta origin facts) ...) newest first
             (mutable marks)      ; (((actor . name) . position) ...)
             (mutable undo)       ; undo groups, most recent operation first
             (mutable properties))) ; ((key . datum) ...), see set-property!
@@ -69,6 +69,24 @@
                     1 '() '() #f))))
 
   (define (current-store) (unbox the-store))
+
+  ;; A property cell is an immutable (key . value) pair.  Its identity
+  ;; is its version, including a tombstone for absence: even a write
+  ;; that restores the old value invalidates an older undo precondition.
+  ;; Keep the sentinel across reload along with the store's cells.
+  (define missing-property
+    (unbox (kernel:persistent-cell 'store-missing-property
+             (lambda () (list 'missing-property)))))
+
+  (define (property-cell properties key) (assq key properties))
+
+  (define (replace-property-cell properties cell)
+    (cons cell (remp (lambda (entry) (eq? (car entry) (car cell))) properties)))
+
+  (define (apply-property-changes properties changes)
+    (fold-left (lambda (properties change)
+                 (replace-property-cell properties (caddr change)))
+               properties changes))
 
   (define (locked thunk)
     (with-mutex (store-lock (current-store)) (thunk)))
@@ -272,16 +290,17 @@
            (let ([rebased (text:rebase-span span (car deltas))])
              (and rebased (rebase-through rebased (cdr deltas))))]))
 
-  (define (install-edit! b id actor new-text delta origin)
+  (define (install-edit! b id actor new-text delta origin facts)
     ;; All committed edits, including history operations, pass here.
     ;; The attribution log always retains the actual deltas; cancelling
     ;; pairs is only a temporary proof used when planning another undo.
     (let* ([new-revision (+ (buffer-revision b) 1)]
-           [entry (vector new-revision actor delta origin)])
+           [entry (vector new-revision actor delta origin facts)])
       (buffer-text-set! b new-text)
       (buffer-revision-set! b new-revision)
       (buffer-deltas-set!
         b (bounded (cons entry (buffer-deltas b)) delta-log-limit))
+      (buffer-properties-set! b (apply-property-changes (buffer-properties b) facts))
       (buffer-marks-set!
         b (map (lambda (entry)
                  (cons (car entry) (rebase-mark-value (cdr entry) delta)))
@@ -289,14 +308,21 @@
       (enqueue-event!
         (append (list 'edit id new-revision actor delta)
                 (if origin (list origin) '())))
+      (for-each (lambda (change) (enqueue-event! `(property ,id ,(car change) ,actor))) facts)
       (values new-revision delta)))
 
-  (define (apply-locked! b id actor span replacement origin)
+  (define (apply-locked! b id actor span replacement origin properties)
     ;; the single mutation point; the caller holds the lock and has a
     ;; span valid against the buffer's current text
     (let-values ([(new-text delta)
                   (text:apply-edit (buffer-text b) span replacement)])
-      (install-edit! b id actor new-text delta origin)))
+      (install-edit! b id actor new-text delta origin
+        (map (lambda (update)
+               (list (car update)
+                     (or (property-cell (buffer-properties b) (car update))
+                         (cons (car update) missing-property))
+                     (cons (car update) (cdr update))))
+             properties))))
 
   (define (bounded entries n)
     (let loop ([entries entries] [n n])
@@ -342,13 +368,21 @@
     ;; or refuse.  -> (values 'applied revision)
     ;;             |  (values 'stale 'overlap)       edited meanwhile
     ;;             |  (values 'stale 'basis-too-old) log outgrown
-    ;; Optional (key label) groups several transactions into one undo.
+    ;; Optional (key label [properties]) groups transactions into one
+    ;; undo and can change text-related properties in the same commit.
     (let ([context (and (pair? options) (car options))])
       (unless (and (<= (length options) 1)
                    (or (not context)
-                       (and (list? context) (= (length context) 2)
-                            (or (not (cadr context)) (string? (cadr context))))))
-        (error 'edit! "expected optional (group-key label)" options))
+                       (and (list? context) (memv (length context) '(2 3))
+                            (or (not (cadr context)) (string? (cadr context)))
+                            (or (= (length context) 2)
+                                (let valid ([updates (caddr context)] [seen '()])
+                                  (or (null? updates)
+                                      (and (pair? updates) (pair? (car updates))
+                                           (symbol? (caar updates))
+                                           (not (memq (caar updates) seen))
+                                           (valid (cdr updates) (cons (caar updates) seen)))))))))
+        (error 'edit! "expected optional (group-key label [property-alist])" options))
       (let ([outcome
              (transact!
                (lambda ()
@@ -364,7 +398,9 @@
                      [else
                       (let-values ([(new-revision delta)
                                     (apply-locked! b id actor rebased
-                                                   replacement #f)])
+                                                   replacement #f
+                                                   (if (and context (= (length context) 3))
+                                                       (caddr context) '()))])
                         (remember-edit! b actor context)
                         (list 'applied new-revision delta))]))))])
         (case (car outcome)
@@ -406,7 +442,7 @@
                        (and after before
                             (commute (cdr remaining) after
                               (cons (vector (vector-ref entry 0) (vector-ref entry 1)
-                                            before (vector-ref entry 3))
+                                            before (vector-ref entry 3) (vector-ref entry 4))
                                     shifted))))))]
               [else (find-target (cdr remaining) (cons (car remaining) prefix))])))))
 
@@ -424,12 +460,14 @@
         (values #f 'basis-too-old)
         (let plan ([parts (undo-group-parts group)]
                    [text (buffer-text b)]
+                   [properties (buffer-properties b)]
                    [revision (buffer-revision b)]
                    [deltas (buffer-deltas b)]
                    [planned '()])
           (if (null? parts)
               (values (reverse planned) #f)
               (let* ([part (car parts)]
+                     [facts (vector-ref part 4)]
                      [since (chain-since deltas revision (vector-ref part 0))]
                      [chain (and since (effective-chain since))]
                      [inverse
@@ -440,6 +478,10 @@
                              (text:invert-delta (vector-ref part 2)) chain))])
                 (cond
                   [(not since) (values #f 'basis-too-old)]
+                  [(not (for-all (lambda (change)
+                                   (eq? (property-cell properties (car change)) (caddr change)))
+                                 facts))
+                   (values #f 'property-changed)]
                   [(or (not inverse)
                        (not (equal? (text:delta-removed inverse)
                                     (text:extract text (text:delta-span inverse)))))
@@ -451,10 +493,12 @@
                                  [(origin)
                                   (list direction (undo-group-actor group)
                                         (undo-group-id group) (vector-ref part 0))]
-                                 [(entry) (vector (+ revision 1) actor delta origin)])
-                     (plan (cdr parts) new-text (+ revision 1)
+                                 [(inverse-facts)
+                                  (map (lambda (change) (list (car change) (caddr change) (cadr change))) facts)]
+                                 [(entry) (vector (+ revision 1) actor delta origin inverse-facts)])
+                     (plan (cdr parts) new-text (apply-property-changes properties inverse-facts) (+ revision 1)
                            (cons entry deltas)
-                           (cons (list new-text delta origin) planned)))]))))))
+                           (cons (list new-text delta origin inverse-facts) planned)))]))))))
 
   (define (undo-scope? scope)
     (or (memq scope '(mine all))
@@ -493,7 +537,7 @@
                     (let ([parts '()])
                       (for-each
                         (lambda (step)
-                          (install-edit! b id actor (car step) (cadr step) (caddr step))
+                          (install-edit! b id actor (car step) (cadr step) (caddr step) (cadddr step))
                           (set! parts (cons (car (buffer-deltas b)) parts)))
                         plan)
                       (undo-group-parts-set! group parts)
@@ -677,19 +721,18 @@
       (lambda ()
         (let ([b (buffer-of 'set-property! id)])
           (buffer-properties-set!
-            b (cons (cons key value)
-                    (remp (lambda (entry) (eq? (car entry) key))
-                          (buffer-properties b))))
+            b (replace-property-cell (buffer-properties b) (cons key value)))
           (enqueue-event! `(property ,id ,key ,actor)))))
     (void))
 
   (define (drop-property! actor id key)
+    (unless (symbol? key)
+      (error 'drop-property! "expected a symbol key" key))
     (transact!
       (lambda ()
         (let ([b (buffer-of 'drop-property! id)])
           (buffer-properties-set!
-            b (remp (lambda (entry) (eq? (car entry) key))
-                    (buffer-properties b)))
+            b (replace-property-cell (buffer-properties b) (cons key missing-property)))
           (enqueue-event! `(property ,id ,key ,actor)))))
     (void))
 
@@ -697,8 +740,8 @@
     ;; the buffer's fact under key, or #f
     (locked
       (lambda ()
-        (cond [(assq key (buffer-properties (buffer-of 'property id)))
-               => cdr]
+        (cond [(property-cell (buffer-properties (buffer-of 'property id)) key)
+               => (lambda (cell) (and (not (eq? (cdr cell) missing-property)) (cdr cell)))]
               [else #f]))))
 
   (define (properties id)
@@ -706,7 +749,8 @@
     (locked
       (lambda ()
         (map (lambda (entry) (cons (car entry) (cdr entry)))
-             (buffer-properties (buffer-of 'properties id))))))
+             (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
+                     (buffer-properties (buffer-of 'properties id)))))))
 
   ;;; Subscriptions ------------------------------------------------------------
 

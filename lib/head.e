@@ -74,7 +74,7 @@
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
           mirror-create! adopt-store! adopt-local! reconverge-forked!
-          store-reset! store-edit! mirror-rename! new-buffer new-local-buffer
+          store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
           unique-name add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
@@ -121,7 +121,7 @@
                                    ; shared label cache or local <name>
             (mutable lines buffer-lines buffer-lines-raw-set!)
             (mutable revision)      ; the seat's repaint counter
-            (mutable history)       ; the seat's snapshot undo
+            (mutable history)       ; local undo; shared group labels/presentation
             (mutable mark-row) (mutable mark-col)
             (mutable marked)
             ;; where point was when the buffer was last displayed
@@ -824,7 +824,7 @@
           (set! forked-buffers (remq b forked-buffers)))
         (adopt-local! b new-lines)))
 
-  (define (store-edit! b span replacement)
+  (define (store-edit! b span replacement . context)
     ;; The ui's text edits go through the store first and the cache
     ;; adopts the result.  A stale refusal means a foreign edit
     ;; overlapped mid-command: this seat's content wins -- the edit
@@ -834,12 +834,18 @@
       (let-values ([(new-text delta)
                     (text:apply-edit (buffer-lines b) span replacement)])
         new-text))
+    (define (edit-local!)
+      (adopt-local! b (local-text))
+      (when (and (not (buffer-store-id b)) (pair? context) (car context)
+                 (= (length (car context)) 3))
+        (for-each (lambda (entry) (buffer-fact-set! b (car entry) (cdr entry)))
+                  (caddr (car context)))))
     (if (and (buffer-store-id b) (not (memq b forked-buffers)))
         (guard (ex [else (adopt-local! b (local-text))])
           (let-values ([(status info)
-                        (store:edit! ui-actor (buffer-store-id b)
-                                     (buffer-store-rev b)
-                                     span replacement)])
+                        (apply store:edit! ui-actor (buffer-store-id b)
+                               (buffer-store-rev b)
+                               span replacement context)])
             (if (eq? status 'applied)
                 (begin (adopt-store! b) (note-ui-edit! b))
                 (let ([foreign
@@ -863,7 +869,32 @@
                                    (list 'conflict (buffer-store-id b)
                                          (buffer-name b)
                                          ui-actor))))))))
-        (adopt-local! b (local-text))))
+        (edit-local!)))
+
+  (define (store-history! b direction scope)
+    ;; Shared text always uses the store's attributed inverse journal.
+    ;; A head snapshot is presentation state, never a source of shared
+    ;; replacement text.  Only the store call maps errors to refusal;
+    ;; a post-commit presentation error must not be called a refusal.
+    (cond
+      [(not (buffer-store-id b)) (values 'nothing #f)]
+      [(memq b forked-buffers) (values 'blocked 'local-fork)]
+      [else
+       (let-values ([(status detail)
+                     (guard (ex [else (values 'blocked 'store-unavailable)])
+                       (store:history-step! ui-actor (buffer-store-id b) direction scope))])
+         (when (eq? status 'applied)
+           (sync-store-buffer! b #t)
+           (flush-ui-audit! (buffer-store-id b))
+           (log:add! 'store
+             (history-audit-line ui-actor (buffer-name b) direction
+                                 (cadr detail) (caddr detail) (car detail))))
+         (values status detail))]))
+
+  (define (history-audit-line requester name direction action author revision)
+    (format "~s ~a action ~a by ~s in ~s at revision ~a"
+            requester (if (eq? direction 'undo) "undid" "redid")
+            action author name revision))
 
   (define (mirror-rename! b)
     (when (buffer-store-id b)
@@ -1055,7 +1086,7 @@
     (buffer-spot-top-set!
       b (car (text:rebase-position (cons (buffer-spot-top b) 0) delta))))
 
-  (define (sync-store-buffer! b)
+  (define (sync-store-buffer! b . include-own?)
     ;; Event arrival is only a wakeup.  Reading text separately from
     ;; its deltas can adopt a newer revision than the anchors follow.
     ;; Read both atomically, ignore already adopted events, and never
@@ -1067,7 +1098,8 @@
         (if changes
             (for-each
               (lambda (entry)
-                (unless (equal? (cadr entry) ui-actor)
+                (when (or (and (pair? include-own?) (car include-own?))
+                          (not (equal? (cadr entry) ui-actor)))
                   (rebase-buffer-positions! b (caddr entry))))
               changes)
             (begin
@@ -1115,18 +1147,16 @@
                      (format "~a set ~a of ~s"
                              actor (caddr event)
                              (store:buffer-name id))]
+                    [(edit)
+                     (if (> (length event) 5)
+                         (let ([origin (list-ref event 5)])
+                           (history-audit-line actor (store:buffer-name id)
+                                               (car origin) (caddr origin)
+                                               (cadr origin) (caddr event)))
+                         (format "~a edited ~s at ~a" actor (store:buffer-name id)
+                                 (text:span-start (text:delta-span (list-ref event 4)))))]
                     [else
-                     (format "~a ~a ~s~a"
-                             actor
-                             (if (eq? (car event) 'reset)
-                                 "reset" "edited")
-                             (store:buffer-name id)
-                             (if (eq? (car event) 'edit)
-                                 (format " at ~a"
-                                         (text:span-start
-                                           (text:delta-span
-                                             (list-ref event 4))))
-                                 ""))]))))))
+                     (format "~a reset ~s" actor (store:buffer-name id))]))))))
         events)
       ;; the buffer lifecycle across heads: another actor's buffers
       ;; appear in this head's list, renames follow, and a deletion

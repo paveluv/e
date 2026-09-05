@@ -60,7 +60,7 @@
     line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
-    kill-line! kill-region! copy-region! yank! undo! redo!
+    kill-line! kill-region! copy-region! yank! undo! redo! undo-scope undo-actor! undo-actor!!
     copy-to-kill-buffer! current-kill-ring
     forward-kill-ring-to-system-clipboard
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
@@ -229,12 +229,33 @@
   (define (vlen) (vector-length lines))
   (define (line-at n) (vector-ref lines n))
   (define (current-line) (line-at point-row))
+
+  (define (snapshot-key snapshot)
+    (and (> (length snapshot) 6) (list-ref snapshot 6)))
+
+  (define (submit-edit! b span replacement . properties)
+    ;; Head snapshots supply grouping and presentation only.  Shared
+    ;; undo is the store's inverse journal, never these saved vectors.
+    (let* ([entries (vector-ref (head:buffer-history b) 0)]
+           [entry (and (pair? entries) (car entries))]
+           [key (and entry (snapshot-key (cdr entry)))])
+      (head:store-edit! b span replacement
+                        (if (pair? properties)
+                          (list key (and entry (car entry)) (car properties))
+                          (and key (list key (car entry)))))))
+
+  (define (replace-buffer-lines! b target . properties)
+    ;; Formatting, indentation, and merging are ordinary attributed
+    ;; edits.  Only loading/rereading a baseline may reset the store.
+    (let-values ([(span replacement) (text:difference (head:buffer-lines b) target)])
+      (apply submit-edit! b span replacement properties)))
+
   (define (set-line! n s)
     ;; the store is the master: the edit goes there, the cache adopts
     (let ([b (head:window-buffer current-window)])
-      (head:store-edit! b (text:make-span n 0 n
-                                          (string-length (vector-ref lines n)))
-                        (list s))))
+      (submit-edit! b (text:make-span n 0 n
+                                      (string-length (vector-ref lines n)))
+                    (list s))))
 
   (define (splice-lines! from to inserted)
     ;; Replace whole lines [from, to) of the current buffer as one
@@ -243,7 +264,7 @@
     (let* ([b (head:window-buffer current-window)]
            [old lines]
            [count (vector-length old)])
-      (head:store-edit!
+      (submit-edit!
         b
         (cond
           [(< to count) (text:make-span from 0 to 0)]
@@ -261,14 +282,17 @@
           [(null? inserted) '("")]
           [else inserted]))))
 
-  (define (editor-snapshot)
+  (define (editor-snapshot . key)
     ;; the cache vectors are immutable now: snapshots share, never copy
     (list lines point-row point-col trailing-newline? modified?
-          (head:buffer-store-rev (head:window-buffer current-window))))
+          (head:buffer-store-rev (head:window-buffer current-window))
+          (if (pair? key) (car key)
+              (list 'head-edit head:ui-actor
+                    (head:buffer-store-rev (head:window-buffer current-window))))))
 
   (define (restore-snapshot! snapshot)
-    ;; The snapshot was just popped off a history stack, so nothing else
-    ;; references its line vector and it can be adopted without copying.
+    ;; This is the local-buffer path.  Shared text never restores a
+    ;; snapshot; the store's inverse operation owns its history.
     (set! lines (car snapshot))
     (set! point-row (cadr snapshot))
     (set! point-col (caddr snapshot))
@@ -283,6 +307,7 @@
             (not (string=? (buffer-text b) base))
             (list-ref snapshot 4))))
     (set! mark-active? #f)
+    (head:clamp-buffer-positions! (head:window-buffer current-window))
     (paint:invalidate-screen-cache!))
 
   ;; Undo entries are labeled with the user-level action that made them
@@ -316,14 +341,16 @@
                 (head:buffer-stale-set! b #t))
               (head:buffer-stamp-set! b stamp)))))))
 
-  (define (record-edit! label)
-    ;; Every editing command passes through here before touching the
-    ;; buffer, so this is also where read-only buffers are protected:
+  (define (check-editable!)
+    ;; The same guard protects fresh edits and history restoration:
     ;; #t forbids all edits, and a procedure decides per edit.
     (let ([guard (head:buffer-read-only (head:window-buffer current-window))])
       (when (if (procedure? guard) (not (guard)) guard)
         (raise (condition (kernel:make-read-only-error)
-                          (make-message-condition "buffer is read-only")))))
+                          (make-message-condition "buffer is read-only"))))))
+
+  (define (record-edit! label)
+    (check-editable!)
     (unless (suppress-history)
       (check-disk-before-edit!)
       (let ([group (edit-group)]
@@ -346,44 +373,103 @@
         (thunk)
         (parameterize ([edit-group (box (cons label '()))]) (thunk))))
 
-  (define (foreign-edits-since? b rev)
-    ;; did another actor edit this buffer's store copy after rev?
-    (and (head:buffer-store-id b)
-         (guard (ex [else #f])
-           (exists (lambda (entry)
-                     (and (> (car entry) rev)
-                          (not (equal? (cadr entry) head:ui-actor))))
-                   (store:history (head:buffer-store-id b) 256)))))
+  (define (check-undo-scope scope)
+    (unless (memq scope '(mine all))
+      (error 'undo-scope "expected mine or all" scope))
+    scope)
 
-  (define (history-shift! from to verb)
-    ;; The report -- what was undone or redone -- is also returned, so
-    ;; M-x (undo!) shows it as its result.  Restoring a snapshot from
-    ;; before another actor's edit would silently erase their work, so
-    ;; that refuses instead, like store:undo! reports 'blocked.
+  (define undo-scope (make-parameter 'mine check-undo-scope))
+
+  (define (no-history verb)
+    (format "No further ~a information" (string-downcase verb)))
+
+  (define (local-history-shift! from to verb scope)
+    (cond
+      [(and (pair? scope) (not (equal? (cadr scope) head:ui-actor)))
+       "Local buffers have no other actors' changes"]
+      [(null? (vector-ref history from)) (no-history verb)]
+      [else
+       (check-editable!)
+       (let* ([entry (car (vector-ref history from))]
+              [snapshot (cdr entry)]
+              [before (editor-snapshot (snapshot-key snapshot))])
+         (restore-snapshot! snapshot)
+         (vector-set! history from (cdr (vector-ref history from)))
+         (vector-set! history to (cons (cons (car entry) before) (vector-ref history to)))
+         (string:elide (if (car entry) (format "~a ~a" verb (car entry)) verb) cols))]))
+
+  (define (shared-history-shift! from to verb scope)
+    (check-editable!)
+    (let* ([b (head:window-buffer current-window)]
+           [before (editor-snapshot #f)])
+      (let-values ([(status detail)
+                    (head:store-history! b (if (zero? from) 'undo 'redo) scope)])
+        (case status
+          [(nothing) (no-history verb)]
+          [(applied)
+           (let* ([author (caddr detail)]
+                  [key (if (and (equal? author head:ui-actor) (list-ref detail 3))
+                           (list-ref detail 3)
+                           (list 'store-action author (cadr detail)))]
+                  [entry (find (lambda (entry) (equal? (snapshot-key (cdr entry)) key))
+                               (vector-ref history from))]
+                  [label (or (and entry (car entry)) (list-ref detail 4) "edit")])
+             (when entry
+               (vector-set! history from (remq entry (vector-ref history from))))
+             (vector-set! history to
+               (cons (cons label (append (list-head before 6) (list key)))
+                     (vector-ref history to)))
+             (set! mark-active? #f)
+             (set! goal-pos #f)
+             (set! modified?
+               (let ([base (head:buffer-base b)])
+                 (if base (not (string=? (buffer-text b) base)) #t)))
+             (head:clamp-buffer-positions! b)
+             (paint:invalidate-screen-cache!)
+             (string:elide (format "~a ~s: ~a" verb author label) cols))]
+          [else
+           (format "~a blocked: ~a" verb
+                   (case detail
+                     [(basis-too-old) "history is incomplete"]
+                     [(overlap) "another edit overlaps this action"]
+                     [(property-changed) "a text property changed after this action"]
+                     [(local-fork) "local edits have not been reconciled"]
+                     [else "the store is unavailable"]))]))))
+
+  (define (history-shift! from to verb scope)
     (set! message
-      (cond
-        [(null? (vector-ref history from))
-         (format "No further ~a information" (string-downcase verb))]
-        [(foreign-edits-since?
-           (head:window-buffer current-window)
-           (let ([snapshot (cdr (car (vector-ref history from)))])
-             (if (> (length snapshot) 5) (list-ref snapshot 5) 0)))
-         (format "~a blocked: another actor edited this buffer since"
-                 verb)]
-        [else
-         (let ([entry (car (vector-ref history from))])
-           (vector-set! history from (cdr (vector-ref history from)))
-           (vector-set! history to
-             (cons (cons (car entry) (editor-snapshot))
-                   (vector-ref history to)))
-           (restore-snapshot! (cdr entry))
-           (string:elide (if (car entry) (format "~a ~a" verb (car entry)) verb)
-             cols))]))
+      (if (head:buffer-store-id (head:window-buffer current-window))
+          (shared-history-shift! from to verb scope)
+          (local-history-shift! from to verb scope)))
     message)
 
-  (define (undo!) (history-shift! 0 1 "Undo"))
+  (define (undo! . scope)
+    (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
+    (history-shift! 0 1 "Undo"
+                    (if (pair? scope) (check-undo-scope (car scope)) (undo-scope))))
 
-  (define (redo!) (history-shift! 1 0 "Redo"))
+  (define (redo!) (history-shift! 1 0 "Redo" 'mine))
+
+  (define (undo-actor! who)
+    (history-shift! 0 1 "Undo" (list 'actor who)))
+
+  (define (undo-actor!!)
+    (let* ([b (head:window-buffer current-window)]
+           [id (head:buffer-store-id b)]
+           [authors (if id (store:undo-authors id) '())]
+           [choices (map (lambda (who) (cons (format "~s" who) who))
+                         (filter (lambda (who) (not (equal? who head:ui-actor))) authors))])
+      (if (null? choices)
+          (set! message "No other actors have undoable changes in this buffer")
+          (let ([answer (prompt:read! "Undo actor: "
+                          (lambda (prefix)
+                            (filter (lambda (name) (string:prefix? prefix name))
+                                    (map car choices))))])
+            (when answer
+              (let ([choice (assoc answer choices)])
+                (if choice (undo-actor! (cdr choice))
+                    (set! message "Choose an actor from the completion list")))))))
+    (void))
 
 
   ;;; Point, mark, and editing ----------------------------------------------
@@ -846,14 +932,14 @@
       [else (write!)]))
 
   (define (merge-report! b report-lines)
-    ;; The merge's paper trail: a read-only *merge-<buffer>* holding
+    ;; The merge's paper trail: a read-only <merge-buffer> holding
     ;; diff's unified-diff-style rendering -- built quietly, never
     ;; displayed; the echo names it.  -> the report buffer's name.
     (let* ([name (format "*merge-~a*" (head:buffer-name b))]
            [rb (fresh-buffer name)])
       (when (pair? report-lines) (apply buffer-append! rb report-lines))
       (head:buffer-read-only-set! rb #t)
-      name))
+      (head:buffer-name rb)))
 
   (define (merge-from-disk! b path disk)
     ;; Replace the buffer with the three-way merge of its base, its
@@ -866,8 +952,7 @@
       (head:buffer-base-set! b disk)
       (head:buffer-stamp-set! b (file:stamp path))
       (record-edit! "merge from disk")
-      (head:buffer-lines-set! b merged)
-      (head:buffer-trailing-set! b merged-trailing)
+      (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing)))
       (changed!)
       (values conflicts (merge-report! b report-lines))))
 
@@ -1474,7 +1559,7 @@
                 (when (and mark-active? (= row mark-row))
                   (set! mark-col (follow mark-col)))))
             changes)
-          (head:buffer-lines-set! b nv))
+          (replace-buffer-lines! b nv))
         (changed!))
       (pair? changes)))
 
@@ -1550,7 +1635,7 @@
         (set! message (format "Indented ~a lines" n))))
     (void))
 
-  (define (replace-rows! from to lines)
+  (define (replace-rows! from to lines . properties)
     ;; Replace rows [from, to] of the current buffer with lines (a
     ;; list), one undo entry; point keeps its row when it can.
     (define b (head:window-buffer current-window))
@@ -1568,7 +1653,7 @@
                         [else (loop (+ r 1)
                                     (cons (vector-ref v r) acc))])))])
       (record-edit! "format")
-      (head:buffer-lines-set! b (if (zero? (vector-length nv)) (vector "") nv))
+      (apply replace-buffer-lines! b (if (zero? (vector-length nv)) (vector "") nv) properties)
       (set! point-row (max 0 (min point-row
                                   (- (vector-length (head:buffer-lines b)) 1))))
       (changed!)))
@@ -1586,19 +1671,19 @@
                 [lines ((cadr entry) b from last)])
            (cond
              [(not lines) (set! message "Cannot format these lines") #f]
-             [(let same ([r from] [ls lines])
-                (if (null? ls)
-                    (> r last)
-                    (and (<= r last)
-                         (string=? (car ls) (vector-ref v r))
-                         (same (+ r 1) (cdr ls)))))
+             [(and (or (< last (- (vector-length v) 1)) trailing-newline?)
+                   (let same ([r from] [ls lines])
+                     (if (null? ls)
+                         (> r last)
+                         (and (<= r last)
+                              (string=? (car ls) (vector-ref v r))
+                              (same (+ r 1) (cdr ls))))))
               (set! message "Already formatted") #f]
              [else
-              (replace-rows! from last lines)
-              ;; formatted through the end: the file ends with exactly
-              ;; one newline
-              (when (= last (- (vector-length v) 1))
-                (set! trailing-newline? #t))
+              ;; Text and its final-newline fact form one undoable
+              ;; transaction, including a change only to that fact.
+              (replace-rows! from last lines
+                             (if (= last (- (vector-length v) 1)) '((trailing . #t)) '()))
               #t]))])))
 
   (define (format-region!)
@@ -1853,8 +1938,8 @@
                (= (caddr chain) point-col)
                (< (cadddr chain) 20))
           (let ([text (string-append (list-ref chain 4) s)])
-            (parameterize ([suppress-history #t]) (insert-text! s))
             (relabel-last-edit! (format "insert ~s" text))
+            (parameterize ([suppress-history #t]) (insert-text! s))
             (set! insert-chain
               (list b point-row point-col (+ (cadddr chain) 1) text)))
           (begin
@@ -2894,7 +2979,22 @@
 
     (mode:register! "buffers" '() '() buffers-styles)
     (doc:register!
-      '(((replace-all!)
+      '(((undo-scope) (("parameter" . "(undo-scope [scope])")) "symbol"
+         ("(edit)") edit "Editing commands" #f
+         "Choose the default scope of `undo!` and C-_. `mine` (the default) selects this head's latest live action; `all` selects the latest live action of any actor. The preference belongs to the head. Local buffers use their own history in either mode.")
+        ((undo!) (("procedure" . "(undo! [scope])")) "string"
+         ("(edit)") edit "Editing commands" #f
+         "Undo one action in the current buffer. Scope is `mine` or `all`; omission uses `undo-scope`. A supplied scope overrides the preference for this call only. Shared changes use attributed inverse edits; an overlap, changed text property, or unavailable history refuses without changing any part of the action.")
+        ((redo!) (("procedure" . "(redo!)")) "string"
+         ("(edit)") edit "Editing commands" #f
+         "Reverse this head's latest undo, including an undo of another actor's action. Redo uses the same overlap checks and is independent of `undo-scope`. A fresh edit by this head invalidates its redo.")
+        ((undo-actor!) (("procedure" . "(undo-actor! actor)")) "string"
+         ("(edit)") edit "Editing commands" #f
+         "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")
+        ((undo-actor!!) (("procedure" . "(undo-actor!!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Choose another actor from completion and undo its latest live action in the current shared buffer. Eligibility and overlap are rechecked after the choice. Use `redo!` to reverse that undo.")
+        ((replace-all!)
          (("procedure" . "(replace-all! from to [where])"))
          "integer" ("(edit)") edit "Editing commands" #f
          "Replace every occurrence of `from` with `to` in `where`. Each buffer is changed as one undo step and point is preserved. If `where` is omitted, use the selected region or the whole current buffer; it may also be a buffer, buffer name, region, buffer predicate, or list of these.")

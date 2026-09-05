@@ -142,7 +142,7 @@
      (pump! 400)
      (check 'kill-mirrors (mirror-agrees? 'kill) #t)
 
-     (send! "\x1f;")                   ; C-_: undo (the reset path)
+     (send! "\x1f;")                   ; C-_: undo (the inverse path)
      (pump! 400)
      (check 'undo-mirrors (mirror-agrees? 'undo) #t)
 
@@ -263,11 +263,137 @@
                      (store:delete! head:ui-actor id)))))
             '(((0 . 1) (0 . 1) 3) (0 . 1) (0 . 1) #("Yabcdef")))
 
-     ;; undo refuses to time-travel over the agent's work
+     ;; Own undo rebases through disjoint foreign changes and preserves
+     ;; their text and provenance rather than restoring a whole snapshot.
      (send! "\x1b;xundo!\r")
      (pump! 900)
-     (check 'undo-blocked-after-foreign-edit
-            (screen-has? 23 "blocked") #t)
+     (check 'own-undo-preserves-foreign-edits
+            (read-editor
+              '(and (string=? (buffer-line (current-buffer) 0) "above")
+                    (string:prefix? "AGENT " (buffer-line (current-buffer) 1))))
+            #t)
+
+     ;; R1: separate command invocations create two own actions with a
+     ;; foreign action between them.  Two undos and redos preserve it.
+     (check 'live-undo-fixture
+            (read-editor
+              '(let ([b (head:new-buffer "undo-live")])
+                 (head:buffer-lines-set! b '#("base" "other"))
+                 (show-buffer! b)
+                 (goto-point! '(0 . 0))
+                 (insert-text! "A")
+                 (head:buffer-lines b)))
+            '#("Abase" "other"))
+     (check 'live-first-undo-retains-foreign-provenance
+            (read-editor
+              '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
+                 (store:edit! '(agent undo-live) id (store:revision id)
+                              (text:make-span 1 0 1 0) '("G"))
+                 (head:before-frame!)
+                 (goto-point! '(0 . 5))
+                 (insert-text! "B")
+                 (undo!)
+                 (list (head:buffer-lines b)
+                       (and (exists (lambda (entry) (equal? (cadr entry) '(agent undo-live)))
+                                    (store:history id)) #t))))
+            '(#("Abase" "Gother") #t))
+     (check 'live-second-undo-keeps-foreign-text
+            (read-editor '(begin (undo!) (head:buffer-lines (current-buffer))))
+            '#("base" "Gother"))
+     (check 'live-redos-keep-foreign-text
+            (read-editor '(begin (redo!) (redo!) (head:buffer-lines (current-buffer))))
+            '#("AbaseB" "Gother"))
+
+     ;; The actor picker can undo that agent despite newer own actions.
+     (send! "\x1b;xundo-actor!!\r")
+     (pump! 500)
+     (send! "(agent undo-live)\r")
+     (pump! 600)
+     (check 'actor-picker-undoes-selected-agent
+            (read-editor '(list (head:buffer-lines (current-buffer)) (undo-scope)))
+            '(#("AbaseB" "other") mine))
+     (read-editor '(begin (redo!) (undo-scope 'all) #t))
+     (send! "\x1f;")
+     (pump! 500)
+     (check 'undo-key-honors-all-actor-preference
+            (read-editor '(head:buffer-lines (current-buffer)))
+            '#("AbaseB" "other"))
+     (send! "\x1f;")
+     (pump! 500)
+     (check 'all-actor-undo-continues-to-own-history
+            (read-editor '(head:buffer-lines (current-buffer)))
+            '#("Abase" "other"))
+     (read-editor '(begin (undo-scope 'mine) #t))
+
+     (check 'live-missing-history-does-not-restore-snapshots
+            (read-editor
+              '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
+                 (do ([i 0 (+ i 1)]) ((= i 257))
+                   (store:edit! '(agent undo-live) id (store:revision id)
+                                (text:make-span 1 0 1 0) '("x") '(long "long action")))
+                 (head:before-frame!)
+                 (let ([text (head:buffer-lines b)] [revision (store:revision id)]
+                       [report (undo!)])
+                   (list (and (string:search report "blocked" 0 (string-length report)) #t)
+                         (equal? text (head:buffer-lines b)) (= revision (store:revision id))))))
+            '(#t #t #t))
+     (check 'live-reset-clears-undo-without-reviving-head-history
+            (read-editor
+              '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
+                 (store:reset! '(agent undo-live) id '("foreign baseline"))
+                 (head:before-frame!)
+                 (undo! 'all)
+                 (head:buffer-lines b)))
+            '#("foreign baseline"))
+     (read-editor
+       '(let ([b (current-buffer)])
+          (show-buffer! (buffer "*scratch*"))
+          (kill-buffer! b)
+          #t))
+
+     ;; A disk merge is an ordinary undoable edit.  Its report keeps a
+     ;; stable tool identity and returns its actual, possibly renamed,
+     ;; local label to the user (Q20).
+     (define merge-path (string-append probe "-merge.txt"))
+     (call-with-output-file merge-path
+       (lambda (p) (display "base\nsame\nsame2\nsame3\nother\n" p)) 'replace)
+     (read-editor
+       `(begin
+          (visit-file! ,merge-path)
+          (goto-point! '(0 . 0))
+          (insert-text! "A")
+          (set-buffer-name!
+            (fresh-buffer (format "*merge-~a*" (head:buffer-name (current-buffer))))
+            "review merge")
+          #t))
+     (call-with-output-file merge-path
+       (lambda (p) (display "base\nsame\nsame2\nsame3\nGother\n" p)) 'replace)
+     (send! (format "\x1b;xvisit-file! ~s\r" merge-path))
+     (pump! 500)
+     (send! "m")
+     (pump! 900)
+     (check 'merge-reports-its-renamed-local-label
+            (read-editor
+              '(list (head:buffer-lines (current-buffer))
+                     (and (exists
+                            (lambda (entry)
+                              (string:suffix? "details in <review merge>" (log:format-entry entry)))
+                            (log:entries 'visit-file!)) #t)))
+            '(#("Abase" "same" "same2" "same3" "Gother") #t))
+     (check 'live-merge-undo-retains-prior-own-edit
+            (read-editor '(begin (undo!) (head:buffer-lines (current-buffer))))
+            '#("Abase" "same" "same2" "same3" "other"))
+     (check 'live-merge-redo
+            (read-editor '(begin (redo!) (head:buffer-lines (current-buffer))))
+            '#("Abase" "same" "same2" "same3" "Gother"))
+     (read-editor
+       '(let* ([b (current-buffer)]
+               [report (head:find-tool-buffer (format "*merge-~a*" (head:buffer-name b)))])
+          (show-buffer! (buffer "*scratch*"))
+          (kill-buffer! b)
+          (kill-buffer! report)
+          #t))
+     (delete-file merge-path)
 
      ;; bracketed paste rides the reader thread into the buffer
      (send! "\x5;")                    ; C-e

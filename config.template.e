@@ -41,6 +41,7 @@
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)
 ;; (eval:copy-result #t)          ; copy non-void eval:run!/M-x results for C-y
+;; (undo-scope 'mine)            ; 'all: undo the latest action by any actor
 ;; (forward-kill-ring-to-system-clipboard #f)
 ;;                              ; #t: also request an OSC 52 system-clipboard
 ;;                              ; update after kills and copies; the host
@@ -67,7 +68,7 @@
 ;;                                ; Full reference: manual/STYLES.md
 ;;                                ; chrome is the editor's grey furniture
 ;;                                ; (prompt labels, log prefixes, ghost text)
-;; (keymap:bind! "M-l" log-view:show!)    ; pop the *log* view with one chord
+;; (keymap:bind! "M-l" log-view:show!)    ; pop the <log> view with one chord
 ;; (keymap:bind! "C-c s" save!!)     ; arbitrary multi-key chords work
 ;; (keymap:unbind! "C-v")            ; remove a global binding
 ;; (keymap:bind! 'isearch "M-i" 'toggle-case) ; rebind a contextual action

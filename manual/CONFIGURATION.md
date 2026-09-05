@@ -46,6 +46,7 @@ the file removes it on the next reload rather than leaving stale state behind.
 (scrollbar #t)
 (scrollbar-position 'right)
 (line-numbers #f)
+(undo-scope 'all) ; include other actors' changes; default is 'mine
 (scheme-format:width 100)
 (style:set! 'editor '((foreground 135) bold))
 ```
@@ -59,4 +60,3 @@ and precedence rules.
 Each checkout reads only the `config.e`, `lib/`, `data/`, and compiled `eo/`
 beside its own loader. A project can therefore vendor a customized e checkout
 without affecting a personal installation elsewhere.
-

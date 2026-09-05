@@ -115,8 +115,30 @@ resolved. A read-only `<merge-name>` buffer records the merge report.
 
 Undo and redo history are per buffer. One typed run, pasted block, formatting
 operation, replacement, or grouped API edit normally forms one undo entry.
-The mark also belongs to the buffer, while point belongs to each ordinary
-window.
+`C-_` and `(undo!)` undo this head's latest action by default, preserving
+other actors' disjoint changes. To make ordinary undo include every actor,
+put this in `config.e` or evaluate it with `M-x`:
+
+```scheme
+(undo-scope 'all)              ; default: 'mine
+```
+
+`(undo! 'mine)` and `(undo! 'all)` override the setting for one call.
+`M-x undo-actor!!` opens an actor picker; `(undo-actor! actor)` selects an
+actor directly. Each selects that actor's latest live action without
+changing the preference. `C-M-_` or `(redo!)` reverses this head's latest
+undo, including one that undid another actor's work. A new edit by this
+head clears its redo; changing `undo-scope` does not.
+
+Shared undo applies an attributed inverse and retains both the original
+author and the requesting head in history. An overlapping edit, a changed
+text property, or unavailable history refuses the whole action. Formatting
+and disk merges include their final-newline setting in the same transaction;
+undo never restores shared text or facts from a head's old snapshot.
+Read-only protection applies to every scope. Local buffers keep their own
+snapshot history and behave the same under `mine` and `all`.
+
+The mark belongs to the buffer, while point belongs to each window.
 
 The kill buffer is global: text killed or copied in one buffer can be yanked in
 another. Consecutive kill commands accumulate, so repeated `C-k` followed by
@@ -336,15 +358,19 @@ the lost history.
 
 `(store:edit! actor id basis span replacement [context])` applies an
 attributed edit or returns a stale refusal.  The optional context is
-`(group-key label)`: the same non-false key groups that actor's transactions
-in this buffer into one undo action.  Without a key, each call is an action.
+`(group-key label [property-alist])`: the same non-false key groups that
+actor's transactions in this buffer into one undo action.  Without a key,
+each call is an action.  Properties such as `((trailing . #t))` commit with
+the text and are included in its inverse.  Property versions are checked
+on undo and redo, so a later write blocks restoration even if it returns
+to the same value.  Public property queries omit deleted properties.
 
 `(store:undo! requester id [scope])` defaults to `mine`.  Use `all` to select
 the latest live action of any actor, or `(actor who)` to select that actor.
 `(store:redo! requester id)` reverses this requester's latest undo, including
 one that undid somebody else's work.  Both return `(values 'applied revision)`,
 `(values 'blocked reason)`, or `(values 'nothing #f)`.  Reasons include
-`overlap` and `basis-too-old`.  A group commits entirely or refuses entirely;
+`overlap`, `property-changed`, and `basis-too-old`.  A group commits entirely or refuses entirely;
 undo and redo preserve the revision log.  The retained delta chain and each
 group's parts are bounded at 256; unavailable history never permits a
 partial group undo.  A new edit invalidates that requester's redo.

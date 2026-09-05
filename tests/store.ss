@@ -306,6 +306,60 @@
      (check 'reset-does-not-resurrect-history
             (call-with-values (lambda () (store:undo! reviewer aged 'all)) list) '(nothing #f))
 
+     ;; Text-related facts belong to the same transaction and inverse,
+     ;; so another head can undo exact file contents without UI snapshots.
+     (define factful (store:create! alice "undo-facts" '("base")))
+     (store:set-property! alice factful 'trailing #f)
+     (define fact-observations '())
+     (define fact-token
+       (store:subscribe! factful
+         (lambda (event)
+           (set! fact-observations
+             (cons (list (store:line factful 0) (store:property factful 'trailing))
+                   fact-observations)))))
+     (store:edit! alice factful 0 (span 0 0 0 4) '("BASE")
+                  '(format "format" ((trailing . #t))))
+     (check 'text-and-facts-commit-together fact-observations '(("BASE" #t) ("BASE" #t)))
+     (store:unsubscribe! fact-token)
+     (store:undo! reviewer factful 'all)
+     (check 'another-actor-undoes-text-and-facts
+            (list (store:line factful 0) (store:property factful 'trailing)) '("base" #f))
+     (store:redo! reviewer factful)
+     (check 'another-actor-redoes-text-and-facts
+            (list (store:line factful 0) (store:property factful 'trailing)) '("BASE" #t))
+     (store:set-property! bot factful 'trailing #f)
+     (store:set-property! bot factful 'trailing #t)
+     (define fact-revision (store:revision factful))
+     (check 'property-write-and-return-still-blocks-undo
+            (call-with-values (lambda () (store:undo! reviewer factful 'all)) list)
+            '(blocked property-changed))
+     (check 'fact-conflict-keeps-text-and-revision
+            (list (store:line factful 0) (store:revision factful)) (list "BASE" fact-revision))
+
+     ;; Multiple changes of one property in a group restore the right
+     ;; version in each inverse.  Even an absent property has a version.
+     (define absent (store:create! alice "undo-absent-fact" '("a" "b")))
+     (store:edit! alice absent 0 (span 0 0 0 1) '("A") '(g "group" ((trailing . #f))))
+     (store:edit! alice absent 1 (span 1 0 1 1) '("B") '(g "group" ((trailing . #t))))
+     (store:undo! reviewer absent 'all)
+     (check 'grouped-fact-undo-restores-absence (store:properties absent) '())
+     (store:redo! reviewer absent)
+     (check 'grouped-fact-redo-restores-value (store:property absent 'trailing) #t)
+     (store:undo! reviewer absent 'all)
+     (store:drop-property! bot absent 'trailing)
+     (check 'another-drop-invalidates-absent-fact-redo
+            (call-with-values (lambda () (store:redo! reviewer absent)) list)
+            '(blocked property-changed))
+     (check 'property-tombstones-stay-private (store:properties absent) '())
+     (define invalid-context-revision (store:revision absent))
+     (check 'duplicate-transaction-properties-refuse
+            (guard (ex [else #t])
+              (store:edit! alice absent invalid-context-revision (span 0 0 0 1) '("bad")
+                           '(g "bad" ((trailing . #t) (trailing . #f))))
+              #f)
+            #t)
+     (check 'invalid-context-never-commits (store:revision absent) invalid-context-revision)
+
      ;; Generated chronological histories must walk exactly back and
      ;; forward, including overlapping replacements and line changes.
      ;; Each expected state was captured before undo, not computed by
