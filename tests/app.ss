@@ -66,6 +66,23 @@
      (check 'ordinary-text-kept (buffer-text ordinary) "keep my work\n")
      (check 'ordinary-flags-kept (head:buffer-read-only ordinary) #f)
      (check 'app-is-read-only (head:buffer-read-only app) #t)
+     (check 'view-replacement-cannot-reset-shared-source
+            (refused? (lambda () (head:view-replace! ordinary '("bad")))) #t)
+     (check 'rejected-view-replacement-keeps-shared-source
+            (buffer-text ordinary) "keep my work\n")
+     (define app-basis (head:edit-basis app))
+     (check 'view-replacement-validates-all-facts
+            (refused? (lambda () (head:view-replace! app '("bad") '((custom . wrong) (trailing . invalid))))) #t)
+     (check 'view-replacement-validates-placement-owner
+            (refused? (lambda ()
+                        (head:view-replace! app '("bad") '((custom . wrong))
+                          (list (cons (head:current) '(0 . 0)))))) #t)
+     (check 'view-replacement-requires-numeric-placements
+            (refused? (lambda () (head:view-replace! app '("bad") '((custom . wrong)) '((mark . end))))) #t)
+     (check 'view-replacement-rejects-negative-positions
+            (refused? (lambda () (head:view-replace! app '("bad") '((custom . wrong)) '((spot -1 . 0))))) #t)
+     (check 'invalid-view-state-keeps-text-and-revision (head:edit-basis app) app-basis)
+     (check 'invalid-view-state-keeps-facts (head:buffer-fact app 'custom 'absent) 'absent)
      (head:set-app-presentation! app 1 #t #f 'bar)
      (set-buffer-name! app "renamed app")
      (define calls 0)

@@ -74,7 +74,7 @@
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
           mirror-create! adopt-store!
-          edit-basis store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
+          edit-basis snapshot-since store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
           unique-name add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
@@ -112,6 +112,8 @@
 
   ;;; The records ----------------------------------------------------------------
 
+  (define delta-log-limit 256)
+
   ;; A store buffer caches immutable text and reads its facts from the
   ;; store.  A local buffer has no store id: its text and local-facts
   ;; live here alone.  Selection, saved position, and line-number
@@ -133,16 +135,20 @@
             ;; the buffer's twin in the (store), and the store
             ;; revision this buffer's lines last agreed with
             (mutable store-id) (mutable store-rev)
+            ;; Local content has its own revision, independent of repaint.
+            ;; Either owner retains adopted deltas in a bounded ring, so
+            ;; derived views can follow exactly the text this head sees.
+            (mutable local-rev) (mutable changes)
             local-facts)
-    ;; Keep the public constructor's shape: each record gets its own
-    ;; fact table, including records made by extensions or adoption.
+    ;; Keep the public constructor's shape: each record gets private
+    ;; facts and content history, including extension/adoption records.
     (protocol
       (lambda (new)
         (lambda (name lines revision history mark-row mark-col marked
                   spot-row spot-col spot-top line-numbers store-id store-rev)
           (new name lines revision history mark-row mark-col marked
                spot-row spot-col spot-top line-numbers store-id store-rev
-               (make-eq-hashtable))))))
+               0 #f (make-eq-hashtable))))))
 
   (define-record-type (window %make-window window?)
     (fields
@@ -684,7 +690,7 @@
     (if (buffer-store-id b)
         (store:snapshot-state (buffer-store-id b))
         (let-values ([(keys data) (hashtable-entries (buffer-local-facts b))])
-          (values (buffer-lines b) (buffer-revision b)
+          (values (buffer-lines b) (content-revision b)
                   (map cons (vector->list keys) (vector->list data))))))
 
   (define (buffer-file b) (buffer-fact b 'file #f))
@@ -765,24 +771,62 @@
       b (store:create! ui-actor (buffer-name b)
                        (vector->list (buffer-lines b))))
     (buffer-store-rev-set! b 0)
+    (buffer-changes-set! b #f)
     (reserve-store-name! (buffer-name b)))
+
+  (define (content-revision b)
+    (if (buffer-store-id b) (buffer-store-rev b) (buffer-local-rev b)))
+
+  (define (adopt-text! b text revision changes)
+    ;; Keep only actual deltas ending at the adopted snapshot.  A reset or
+    ;; incomplete chain cuts provenance; it is never inferred from a diff.
+    ;; The lazy ring records each delta in O(1), without old text vectors.
+    (cond
+      [(not changes) (buffer-changes-set! b #f)]
+      [(pair? changes)
+       (let ([log (or (buffer-changes b) (make-vector delta-log-limit #f))])
+         (for-each (lambda (entry)
+                     (vector-set! log (mod (car entry) delta-log-limit) entry))
+                   changes)
+         (buffer-changes-set! b log))])
+    (buffer-lines-raw-set! b text)
+    (if (buffer-store-id b)
+        (buffer-store-rev-set! b revision)
+        (buffer-local-rev-set! b revision))
+    (bump-buffer-revision! b))
+
+  (define (snapshot-since b basis)
+    ;; Like store:snapshot-since, but ends at this head's cached source,
+    ;; including for local buffers.  Read on the head's pump: it does not
+    ;; pull newer store text or run callbacks.  #f omits an earlier basis.
+    (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0)))
+      (error 'snapshot-since "expected a content revision or #f" basis))
+    (let* ([text (buffer-lines b)] [revision (content-revision b)]
+           [log (buffer-changes b)]
+           [changes
+            (and basis (<= basis revision) (<= (- revision basis) delta-log-limit)
+                 (let scan ([next (+ basis 1)] [out '()])
+                   (if (> next revision) (reverse out)
+                       (let ([entry (and log (vector-ref log (mod next delta-log-limit)))])
+                         (and entry (= (car entry) next)
+                              ;; Own the public list spines, as the store does.
+                              (scan (+ next 1) (cons (list (car entry) (cadr entry) (caddr entry)) out)))))))])
+      (values text revision changes)))
 
   (define (adopt-store! b)
     ;; make the cache the store's current text -- the vectors are
     ;; immutable, so adoption is reference sharing, never a copy
     (let-values ([(text revision) (store:snapshot (buffer-store-id b))])
-      (buffer-lines-raw-set! b text)
-      (buffer-store-rev-set! b revision)
-      (bump-buffer-revision! b)
+      (adopt-text! b text revision #f)
       (clamp-buffer-positions! b)
       (invalidate-buffer-marks! (buffer-store-id b))))
 
-  (define (adopt-local! b text)
+  (define (adopt-local! b text delta)
     ;; Only explicitly local buffers own their text in this head.
     (when (buffer-store-id b)
       (error 'adopt-local! "a shared buffer must commit in the store"))
-    (buffer-lines-raw-set! b text)
-    (bump-buffer-revision! b))
+    (let ([revision (+ (buffer-local-rev b) 1)])
+      (adopt-text! b text revision (and delta (list (list revision ui-actor delta))))))
 
   (define (store-reset! b new-lines . facts)
     ;; Explicit baseline replacement (loading/rereading), never an
@@ -795,15 +839,14 @@
             (store:reset! ui-actor (buffer-store-id b) new-lines updates)
             (adopt-store! b))
           (let ([text (text:normalize new-lines)])
-            (adopt-local! b text)
+            (adopt-local! b text #f)
             (clamp-buffer-positions! b)
             (buffer-facts-set! b updates)))))
 
   (define (edit-basis b)
     ;; A proposal retains the text it was computed from, its owner, and
     ;; its revision even if a callback advances the head while computing.
-    (list (buffer-lines b) (buffer-store-id b)
-          (if (buffer-store-id b) (buffer-store-rev b) (buffer-revision b))))
+    (list (buffer-lines b) (buffer-store-id b) (content-revision b)))
 
   (define (store-edit! b span replacement . options)
     ;; The store rebases this declared intent under its mutation lock.
@@ -812,8 +855,9 @@
     ;; Errors also propagate: no shared edit can fall back to a local
     ;; fork, including an error after the transaction has committed.
     ;; Optional head placements are (place . desired) entries: place is
-    ;; a window, 'mark, or 'spot; desired is 'start, 'end, or a position
-    ;; in the proposed result.  A third option is a retained edit-basis.
+    ;; a window, 'mark, 'spot, (top . window), or 'spot-top; desired is
+    ;; 'start, 'end, or a position in the proposed result.  A third option
+    ;; is a retained edit-basis.
     ;; Placements are installed during adoption, before
     ;; callbacks can advance the head again.  They never cross the store.
     (unless (<= (length options) 3) (error 'store-edit! "too many options" options))
@@ -839,7 +883,7 @@
                              (cadr plan) actual before))])
                       after))))
           placements))
-      (check-edit-placements! b placements)
+      (check-placements! b placements)
       (store:validate-edit-context context)
       (unless (and (eqv? (cadr source) (buffer-store-id b))
                    (or (buffer-store-id b) (eq? old (buffer-lines b))))
@@ -874,38 +918,48 @@
           (let* ([plan (force proposal)] [text (car plan)] [delta (cadr plan)]
                  [placed (project-placements delta '() '())])
             (rebase-buffer-positions! b delta)
-            (adopt-local! b text)
-            (apply-edit-placements! b placed)
+            (adopt-local! b text delta)
+            (apply-placements! b placed)
             (clamp-buffer-positions! b)
             (when (and context (>= (length context) 3))
               (buffer-facts-set! b
                 (append (caddr context) (if (= (length context) 4) (cadddr context) '()))))))))
 
-  (define (check-edit-placements! b placements)
+  (define (placement-window place)
+    (cond [(window? place) place]
+          [(and (pair? place) (eq? (car place) 'top) (window? (cdr place))) (cdr place)]
+          [else #f]))
+
+  (define (check-placements! b placements)
     (unless
       (and (list? placements)
            (for-all
              (lambda (entry)
                (and (pair? entry)
-                    (or (memq (car entry) '(mark spot))
-                        (and (window? (car entry)) (eq? (window-buffer (car entry)) b)))
+                    (or (memq (car entry) '(mark spot spot-top))
+                        (let ([w (placement-window (car entry))])
+                          (and w (eq? (window-buffer w) b))))
                     (or (memq (cdr entry) '(start end))
                         (and (pair? (cdr entry))
                              (integer? (cadr entry)) (exact? (cadr entry)) (>= (cadr entry) 0)
                              (integer? (cddr entry)) (exact? (cddr entry)) (>= (cddr entry) 0)))))
              placements))
-      (error 'store-edit! "invalid head placements" placements)))
+      (error 'head "invalid position placements" placements)))
 
-  (define (apply-edit-placements! b placements)
+  (define (apply-placements! b placements)
     (for-each
       (lambda (entry)
         (let ([place (car entry)] [p (cdr entry)])
           (case place
             [(mark) (buffer-mark-row-set! b (car p)) (buffer-mark-col-set! b (cdr p))]
             [(spot) (buffer-spot-row-set! b (car p)) (buffer-spot-col-set! b (cdr p))]
+            [(spot-top) (buffer-spot-top-set! b (car p))]
             [else
-             (when (eq? (window-buffer place) b)
-               (window-prow-set! place (car p)) (window-pcol-set! place (cdr p)))])))
+             (let ([w (placement-window place)])
+               (when (eq? (window-buffer w) b)
+                 (if (window? place)
+                     (begin (window-prow-set! w (car p)) (window-pcol-set! w (cdr p)))
+                     (begin (window-top-set! w (car p)) (window-topseg-set! w 0)))))])))
       placements))
 
   (define (clamp-text-position text p)
@@ -1142,10 +1196,9 @@
             (for-each (lambda (entry)
                         (when (> (car entry) old) (rebase-buffer-positions! b (caddr entry))))
                       changes))
-          (buffer-lines-raw-set! b text)
-          (bump-buffer-revision! b)
-          (buffer-store-rev-set! b revision))
-        (apply-edit-placements! b placements)
+          (adopt-text! b text revision
+                       (and complete? (filter (lambda (entry) (> (car entry) old)) changes))))
+        (apply-placements! b placements)
         (clamp-buffer-positions! b)
         ;; All head state is coherent before any callback can run.
         ;; Adoption only reads shared truth; it never re-dirties a save.
@@ -1661,20 +1714,36 @@
                         (string-length (vector-ref nv last))))
                     tails)))))
 
-  (define (view-replace! b lines)
-    ;; Replace a view's rendering without disturbing windows when it has not
-    ;; changed. On a real change, keep point and the viewport where possible,
-    ;; clamping them only when the new rendering is shorter.
-    (let ([new (if (null? lines) (vector "") (list->vector lines))])
-      (unless (equal? (buffer-lines b) new)
-        (buffer-lines-set! b new)
-        ;; A view may be refreshed by a worker thread while the main input
-        ;; loop is between frames.  Its old row keys can otherwise survive a
-        ;; racing redraw even though the buffer revision changed.  Dynamic
-        ;; view replacement is comparatively rare (terminal emulation is the
-        ;; demanding case), so prefer a guaranteed coherent frame.
-        (repaint-hook)
-        (clamp-buffer-positions! b))))
+  (define (view-replace! b lines . options)
+    ;; Adopt a local rendering, optional facts, and numeric placements as
+    ;; one state before repaint callbacks can reenter.  Unplaced anchors
+    ;; keep their coordinates, clamped into the new text.  A top placement
+    ;; uses the key (top . window), or spot-top for the saved viewport.
+    (unless (and (buffer? b) (not (buffer-store-id b)))
+      (error 'view-replace! "expected a local buffer" b))
+    (unless (<= (length options) 2)
+      (error 'view-replace! "expected facts and position placements" options))
+    (let* ([new (text:normalize lines)]
+           [facts (store:validate-properties (if (pair? options) (car options) '()))]
+           [placements (if (= (length options) 2) (cadr options) '())]
+           [text-changed? (not (equal? (buffer-lines b) new))]
+           [facts-changed?
+            (exists (lambda (entry)
+                      (or (not (hashtable-contains? (buffer-local-facts b) (car entry)))
+                          (not (equal? (buffer-fact b (car entry) #f) (cdr entry)))))
+                    facts)])
+      (check-placements! b placements)
+      (unless (for-all (lambda (entry) (text:position? (cdr entry))) placements)
+        (error 'view-replace! "expected numeric position placements" placements))
+      (when text-changed? (adopt-local! b new #f))
+      (buffer-facts-set! b facts)
+      (apply-placements! b placements)
+      (clamp-buffer-positions! b)
+      (when (and facts-changed? (not text-changed?)) (bump-buffer-revision! b))
+      ;; Styles can change even when rendered text is equal.  Invalidate
+      ;; cached rows for either change, and never write older state after
+      ;; the callback returns: it may have adopted a newer rendering.
+      (when (or text-changed? facts-changed?) (repaint-hook))))
 
 
   (define (buffer-named name)

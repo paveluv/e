@@ -395,6 +395,15 @@ future.  Rebase positions only through a complete chain.  When the head
 must resync without one, it clamps positions into the new text and logs
 the lost history.
 
+For derived views, `(head:snapshot-since b basis)` returns the same three
+values from this head's adopted text, for either a local or shared buffer.
+It does not pull a newer store snapshot. Pass the previous content revision,
+or `#f` when there is no previous basis. The head retains up to 256 adopted
+deltas; reset or expired history returns `#f` for the chain. Local content
+revisions in this API, `head:edit-basis`, and `head:buffer-state` are distinct
+from `head:buffer-revision`, which counts repaint changes. Run head reads and
+mutations on the main pump; workers schedule work with `head:run-on-main!`.
+
 `(store:set-marks! actor id basis updates drops)` publishes named positions
 and regions in one batch. Updates are an alist of names to `(row . column)`
 positions or text spans; drops is a list of names. A numeric basis must be
@@ -433,8 +442,10 @@ proposal. It contains the immutable source lines, store id (or `#f`), and
 revision. Pass it to `(head:store-edit! b span replacement context placements
 source)` so a callback advancing the head cannot change the proposal's
 basis. The context is the store edit context above. Placements are an alist
-whose keys are windows, `mark`, or `spot`, and whose values are `start`, `end`,
-or positions in the proposed result. The head projects them into the accepted
+whose keys are windows, `mark`, `spot`, `(top . window)`, or `spot-top`, and
+whose values are `start`, `end`, or positions in the proposed result. A top
+placement uses the row and resets the window's wrapped top segment. The head
+projects them into the accepted
 revision and follows subsequent edits. Context, placements, and source are
 optional, in that order; defaults are `#f`, `()`, and the current head basis.
 Use placements to express a command's point movement instead of assigning

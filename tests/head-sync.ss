@@ -104,4 +104,69 @@
      (check 'explicit-reset-republishes-unchanged-coordinates
             (store:mark head:ui-actor id 'point) (point))
 
+     ;; Derived readers follow this head's adopted source, for either
+     ;; owner. Repaint/fact changes are not content revisions, and a
+     ;; store writer may be ahead of the text the head has adopted.
+     (define (since source basis)
+       (call-with-values (lambda () (head:snapshot-since source basis)) list))
+     (for-each
+       (lambda (local?)
+         (let ([source ((if local? head:new-local-buffer head:new-buffer) "source-history")])
+           (head:add-buffer! source)
+           (head:buffer-lines-set! source '#("alpha" "middle" "omega"))
+           (let* ([initial (head:edit-basis source)] [basis (caddr initial)])
+             (head:bump-buffer-revision! source)
+             (head:buffer-fact-set! source 'custom 'changed)
+             (check 'repaint-and-facts-preserve-content-basis (head:edit-basis source) initial)
+             (head:store-edit! source (text:make-span 0 0 0 0) '("before" ""))
+             (head:store-edit! source (text:make-span 3 5 3 5) '("!"))
+             (let* ([snapshot (since source basis)] [changes (caddr snapshot)])
+               (check 'source-chain-is-complete (map car changes) (list (+ basis 1) (+ basis 2)))
+               (check 'source-chain-preserves-unchanged-middle
+                      (fold-left text:rebase-position '(1 . 2) (map caddr changes)) '(2 . 2))
+               (check 'source-chain-ends-at-snapshot
+                      (fold-left
+                        (lambda (lines entry)
+                          (let ([delta (caddr entry)])
+                            (let-values ([(next ignored)
+                                          (text:apply-edit lines (text:delta-span delta)
+                                                           (text:delta-inserted delta))])
+                              next)))
+                        (car initial) changes)
+                      (car snapshot))
+               (check 'source-snapshot-keeps-adopted-vector
+                      (eq? (car snapshot) (head:buffer-lines source)) #t)
+               (check 'same-source-basis-is-empty (caddr (since source (cadr snapshot))) '())
+               (check 'future-source-basis-is-unavailable (caddr (since source (+ (cadr snapshot) 1))) #f)
+               (set-car! (car changes) -1)
+               (check 'source-history-read-does-not-expose-its-list
+                      (caar (caddr (since source basis))) (+ basis 1)))
+             (unless local?
+               (let ([snapshot (since source basis)] [id (head:buffer-store-id source)])
+                 (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("ahead" ""))
+                 (check 'unadopted-store-text-does-not-leak-into-source-read
+                        (since source basis) snapshot)
+                 (head:before-frame!)
+                 (check 'adoption-extends-source-chain (length (caddr (since source basis))) 3)
+                 ;; Store history can disappear while the head's source
+                 ;; and its already-adopted provenance remain coherent.
+                 (store:reset! bot id '("reset"))
+                 (check 'unadopted-reset-keeps-cached-source-chain
+                        (length (caddr (since source basis))) 3)
+                 (head:before-frame!)
+                 (check 'adopted-reset-cuts-source-chain (caddr (since source basis)) #f)))
+             (head:buffer-lines-set! source '#("new baseline"))
+             (head:store-edit! source (text:make-span 0 0 0 0) '("suffix" ""))
+             (check 'reset-with-new-edits-never-returns-a-partial-chain
+                    (caddr (since source basis)) #f)
+             (let ([basis (caddr (head:edit-basis source))])
+               (do ([i 0 (+ i 1)]) ((= i 256))
+                 (head:store-edit! source (text:make-span 0 0 0 0) '("x")))
+               (check 'source-history-retains-256-changes (length (caddr (since source basis))) 256)
+               (head:store-edit! source (text:make-span 0 0 0 0) '("x"))
+               (check 'expired-source-basis-is-unavailable (caddr (since source basis)) #f)
+               (check 'retained-source-suffix-still-complete
+                      (length (caddr (since source (+ basis 1)))) 256)))))
+       '(#f #t))
+
      (format #t "~a head synchronization checks passed\n" checks)))

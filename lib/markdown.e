@@ -26,6 +26,7 @@
           (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
+          (prefix (text) text:)
           (prefix (file) file:)
           (prefix (style) style:)
           (prefix (keymap) keymap:) (prefix (only (sys) terminal-character-width) sys:))
@@ -768,7 +769,7 @@
   ;; is plain data, so a new module instance can read its old row map
   ;; while rebuilding styles and text.  A fresh renderer token makes
   ;; implementation changes invalidate the cache like width or input.
-  ;; #(styles links source-rows source-lines width measure renderer)
+  ;; #(styles links source-rows source-lines width measure renderer input revision)
   (define renderer-token (gensym "markdown-renderer"))
   (define (rendering-of b)
     (and (not (head:buffer-store-id b))
@@ -780,6 +781,10 @@
   (define (rendering-width r) (vector-ref r 4))
   (define (rendering-measure r) (vector-ref r 5))
   (define (rendering-renderer r) (vector-ref r 6))
+  ;; Read old seven-field caches after a renderer reload.  They have no
+  ;; source provenance, so the first refresh can only clamp source rows.
+  (define (rendering-input r) (and (> (vector-length r) 7) (vector-ref r 7)))
+  (define (rendering-revision r) (and (> (vector-length r) 8) (vector-ref r 8)))
 
   (define (view-row-styles b row line)
     (let ([r (rendering-of b)])
@@ -822,68 +827,51 @@
          (head:buffer-fact b 'markdown-input #f)))
 
   (define (refresh-render! b)
-    (let ([input (render-input b)])
+    (let ([input (render-input b)] [old (rendering-of b)])
       (when input
-        (let* ([lines (if (head:buffer? input)
-                          (head:buffer-lines input)
-                          (list->vector input))]
-               [width (render-width b)]
-               [measure (markdown-view-max-width)]
-               [old (rendering-of b)])
-          (unless (and old (eq? renderer-token (rendering-renderer old))
-                       (equal? lines (rendering-lines old))
-                       (= width (rendering-width old))
-                       (= measure (rendering-measure old)))
-            (let ([spot (and old (list (source-row-at old (head:buffer-spot-row b))
-                                       (head:buffer-spot-col b)
-                                       (source-row-at old (head:buffer-spot-top b))))]
-                  [mark (and old (head:buffer-marked b)
-                             (cons (source-row-at old (head:buffer-mark-row b))
-                                   (head:buffer-mark-col b)))]
-                  [anchors
-                   (if old
-                       (map (lambda (w)
-                              (list w
-                                    (source-row-at old (head:window-prow w))
-                                    (head:window-pcol w)
-                                    (source-row-at old (head:window-top w))))
-                            (filter (lambda (w) (eq? (head:window-buffer w) b))
-                                    (head:windows)))
-                       '())])
-              (let-values ([(text styles links rows)
-                            (markdown-render (vector->list lines) width)])
-                (let ([r (vector (list->vector styles)
-                                 (list->vector links)
-                                 (list->vector rows)
-                                 lines width measure renderer-token)])
-                  (set-buffer-wrap! b (cons 'clean measure))
-                  (head:buffer-fact-set! b 'markdown-rendering r)
-                  (head:view-replace! b text)
-                  (when spot
-                    (let ([row (view-row-showing r (car spot))])
-                      (head:buffer-spot-row-set! b row)
-                      (head:buffer-spot-col-set!
-                        b (min (cadr spot) (string-length (buffer-line b row))))
-                      (head:buffer-spot-top-set! b (view-row-showing r (caddr spot)))))
-                  (when mark
-                    (let ([row (view-row-showing r (car mark))])
-                      (head:buffer-mark-row-set! b row)
-                      (head:buffer-mark-col-set!
-                        b (min (cdr mark) (string-length (buffer-line b row))))))
-                  ;; Every window keeps its source row, not just the
-                  ;; selected window.  Refit also resets wrapped tops.
-                  (for-each
-                    (lambda (anchor)
-                      (let* ([w (car anchor)]
-                             [row (view-row-showing r (cadr anchor))])
-                        (head:window-prow-set! w row)
-                        (head:window-pcol-set!
-                          w (min (caddr anchor)
-                                 (string-length (buffer-line b row))))
-                        (head:window-top-set!
-                          w (view-row-showing r (cadddr anchor)))
-                        (head:window-topseg-set! w 0)))
-                    anchors)))))))))
+        (let* ([source (and (head:buffer? input) input)]
+               [basis (and old (eq? source (rendering-input old)) (rendering-revision old))]
+               [width (render-width b)] [measure (markdown-view-max-width)])
+          (let-values ([(lines revision changes)
+                        (if source (head:snapshot-since source basis)
+                            (values (list->vector input) #f #f))])
+            (unless (and old (> (vector-length old) 8)
+                         (eq? renderer-token (rendering-renderer old))
+                         (eq? source (rendering-input old))
+                         (eqv? revision (rendering-revision old))
+                         (equal? lines (rendering-lines old))
+                         (= width (rendering-width old))
+                         (= measure (rendering-measure old)))
+              ;; The renderer maps rows, not source columns: markup and
+              ;; joined paragraphs make those different coordinate spaces.
+              ;; Follow each source row's start through the complete chain;
+              ;; keep the view column separately and clamp it on adoption.
+              (let* ([deltas (and changes (map caddr changes))]
+                     [anchor
+                      (lambda (row col)
+                        (let* ([p (cons (source-row-at old row) 0)]
+                               [p (if deltas (fold-left text:rebase-position p deltas) p)])
+                          (cons (max 0 (min (car p) (- (vector-length lines) 1))) col)))]
+                     [anchors
+                      (if old
+                          (append
+                            (list (cons 'spot (anchor (head:buffer-spot-row b) (head:buffer-spot-col b)))
+                                  (cons 'spot-top (anchor (head:buffer-spot-top b) 0))
+                                  (cons 'mark (anchor (head:buffer-mark-row b) (head:buffer-mark-col b))))
+                            (apply append
+                              (map (lambda (w)
+                                     (list (cons w (anchor (head:window-prow w) (head:window-pcol w)))
+                                           (cons (cons 'top w) (anchor (head:window-top w) 0))))
+                                   (filter (lambda (w) (eq? (head:window-buffer w) b)) (head:windows)))))
+                          '())])
+                (let-values ([(text styles links rows) (markdown-render (vector->list lines) width)])
+                  (let ([r (vector (list->vector styles) (list->vector links) (list->vector rows)
+                                   lines width measure renderer-token source revision)])
+                    (head:view-replace! b text
+                      (list (cons 'wrap (cons 'clean measure)) (cons 'markdown-rendering r))
+                      (map (lambda (entry)
+                             (cons (car entry) (cons (view-row-showing r (cadr entry)) (cddr entry))))
+                           anchors)))))))))))
 
   (define (refit-views!)
     ;; Width, reading measure, and source text are inputs to the same

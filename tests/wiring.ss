@@ -842,6 +842,52 @@
                        (append result (list (eq? source (current-buffer)))))))))
             '(#t #t #t #t #t md-h1 #t))
 
+     (check 'markdown-source-edits-preserve-both-view-windows
+            (read-editor
+              '(let* ([was (current-buffer)] [w1 (head:current)]
+                      [w2 (find (lambda (w) (not (eq? w w1))) (head:windows))]
+                      [other (head:window-buffer w2)]
+                      [source (head:new-buffer "wired-anchors.md")])
+                 (head:buffer-lines-set! source (vector "# One" "" "# Two" "" "# Three"))
+                 (mode:choose! source "markdown")
+                 (show-buffer! source)
+                 (markdown:view!)
+                 (let ([view (current-buffer)] [id (head:buffer-store-id source)])
+                   (head:set-window-buffer! w2 view)
+                   (goto-point! '(2 . 1))
+                   (head:window-top-set! w1 2)
+                   (head:window-prow-set! w2 4)
+                   (head:window-pcol-set! w2 2)
+                   (head:window-top-set! w2 4)
+                   (head:buffer-spot-row-set! view 4)
+                   (head:buffer-spot-col-set! view 2)
+                   (head:buffer-spot-top-set! view 2)
+                   (head:buffer-mark-row-set! view 4)
+                   (head:buffer-mark-col-set! view 2)
+                   (head:buffer-marked-set! view #t)
+                   (store:edit! '(agent wired-anchors) id (store:revision id)
+                                (text:make-span 0 0 0 0) '("# Before" "" ""))
+                   (store:edit! '(agent wired-anchors) id (store:revision id)
+                                (text:make-span 6 7 6 7) '("!"))
+                   (kernel:reload-module! "markdown")
+                   (head:before-frame!)
+                   (let ([result
+                          (list (buffer-line view (head:window-prow w1)) (head:window-pcol w1)
+                                (buffer-line view (head:window-prow w2)) (head:window-pcol w2)
+                                ;; Reload repaints while the M-x prompt
+                                ;; occupies screen rows, so the painter
+                                ;; may adjust visible tops to keep point.
+                                (<= 0 (head:window-top w1) (head:window-prow w1))
+                                (<= 0 (head:window-top w2) (head:window-prow w2))
+                                (buffer-line view (head:buffer-spot-row view))
+                                (buffer-line view (head:buffer-spot-top view))
+                                (buffer-line view (head:buffer-mark-row view)) (head:buffer-mark-col view))])
+                     (head:set-window-buffer! w2 other)
+                     (show-buffer! was)
+                     (kill-buffer! source)
+                     result))))
+            '("Two" 1 "Three!" 2 #t #t "Three!" "Two" "Three!" 2))
+
      (delete-file probe)
      (sys:close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))

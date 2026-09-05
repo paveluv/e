@@ -14,6 +14,13 @@ intact. Source edits appear in the view on the next redraw. Killing a
 view keeps its source; killing the source closes its dependent views.
 Relative file links resolve from the source file's directory.
 
+Each view window's cursor and viewport, the selection mark, and the saved
+position follow source edits, including another actor's edits and undo.
+Positions track source rows; rendered columns are kept where possible and
+clamped when a line becomes shorter. A source reload or expired edit history
+clamps positions into the new document. Width changes and renderer reloads
+use the same row mapping.
+
 ## The presentation
 
 - Emphasis markers disappear and their text wears the face instead:

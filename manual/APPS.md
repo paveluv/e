@@ -49,6 +49,20 @@ The local buffer and its facts remain, ready for the module to register
 the same tool key again.  Killing the buffer ends that tool instance;
 its next registration creates a new buffer.
 
+`(head:view-replace! buffer lines [facts [placements]])` installs a local
+rendering and its related state before repaint callbacks can run. `lines`
+is a line list or vector; `facts` is an optional alist. `placements` is an
+alist whose keys are windows showing this buffer, `mark`, `spot`,
+`(top . window)`, or `spot-top`, and whose values are `(row . column)`
+positions in the new rendering. Top placements use only the row and reset
+wrapped top segments. All positions are clamped into the new text; omitted
+ones keep their coordinates. Invalid input changes nothing. Changed facts
+invalidate painting even when the text is equal, as for a style change.
+Pass computed positions and presentation facts in the replacement call:
+assigning old coordinates after it returns can overwrite a newer refresh
+performed by a callback. Workers schedule head changes with
+`head:run-on-main!`.
+
 ## Input capture and propagation
 
 App input is layered: an active prompt first, then the focused app, then e's
