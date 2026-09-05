@@ -8,13 +8,23 @@ Apps look like buffers, participate in the buffer list, may appear in any
 window, and carry `[]` in their status line. Their content is refreshed while
 visible on every redraw.
 
+Head apps are local buffers: their generated text, modes, and presentation
+facts stay in this head.  They have no store id and do not appear in the
+store's buffer list or publish cursor marks.  This includes completions,
+buffer and git views, and log renderings.  Terminal and describe buffers
+are local too.
+
 ## Registering an app
 
 ```scheme
 (head:register-app! name refresh! handle-event!)
 ```
 
-`name` is the buffer name and must not already belong to an ordinary buffer.
+`name` is a stable tool key and its preferred initial buffer label.  If
+that label is already used, the local buffer receives a suffix such as
+`<2>`.  An ordinary buffer with the same name is preserved.  Renaming
+the app changes its label; registering the same key again reuses the
+same local buffer and replaces its refresh and input handler.
 `refresh!` takes no arguments and updates the registered buffer with
 `head:view-replace!` or `head:view-append!`. `handle-event!` receives one canonical
 event string, such as `"UP"`, `"RET"`, `"MOUSE-CLICK"`, or `"WHEEL-UP"`.
@@ -32,6 +42,9 @@ zero-based `(row . column)` addressed by the pointer. It may lie beyond the
 buffer's last line, allowing an app to ignore clicks in empty viewport space.
 Registrations belong to their module and disappear transactionally on unload
 or reload like modes, key bindings, and hooks.
+The local buffer and its facts remain, ready for the module to register
+the same tool key again.  Killing the buffer ends that tool instance;
+its next registration creates a new buffer.
 
 ## Input capture and propagation
 

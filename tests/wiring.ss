@@ -1,7 +1,7 @@
 #!/usr/bin/env scheme-script
 
-;; The head-to-store wiring: every head buffer mirrors into the
-;; (store), the head's edits arrive there transactionally, and
+;; The head-to-store wiring: shared buffers mirror into the store,
+;; local apps do not; the head's edits arrive transactionally, and
 ;; a foreign actor's store edit appears on the user's screen.  Drives
 ;; a live editor over a PTY; run from the repository root.
 
@@ -64,7 +64,41 @@
        (pump! 900)
        (equal? (call-with-input-file probe read) #t))
 
+     (define (read-editor expression)
+       (when (file-exists? probe) (delete-file probe))
+       (send! (format "\x1b;xcall-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\r"
+                      probe expression))
+       (pump! 900)
+       (call-with-input-file probe read))
+
      (pump! 3000)
+
+     ;; -- generated head views stay out of the store ---------------------
+     (check 'startup-store-has-only-scratch
+            (read-editor '(map store:buffer-name (store:buffer-list)))
+            '("*scratch*"))
+     (check 'registered-apps-are-local
+            (read-editor
+              '(for-all (lambda (a) (not (head:buffer-store-id (head:app-buffer a))))
+                        (head:registered-apps)))
+            #t)
+     (check 'buffer-list-refresh-never-mutates-store
+            (read-editor
+              '(let ([before (list-sort < (store:buffer-list))]
+                     [events '()]
+                     [was (current-buffer)])
+                 (let ([token (store:subscribe! #f
+                                (lambda (event) (set! events (cons event events))))])
+                   (dynamic-wind
+                     void
+                     (lambda ()
+                       (list-buffers!)
+                       (head:refresh-visible-views!)
+                       (show-buffer! was)
+                       (list (equal? before (list-sort < (store:buffer-list)))
+                             (null? events)))
+                     (lambda () (store:unsubscribe! token))))))
+            '(#t #t))
 
      ;; -- head edits mirror --------------------------------------------------
 
@@ -361,6 +395,20 @@
      (check 'main-linked-module-refuses-reload
             (echo-has? "main links against store")
             #t)
+
+     (check 'log-view-reload-rebinds-without-duplicating-rows
+            (read-editor
+              '(let ([b (head:find-tool-buffer "*log*")]
+                     [was (current-buffer)])
+                 (show-buffer! b)
+                 (head:refresh-visible-views!)
+                 (let ([old (head:buffer-lines b)])
+                   (kernel:reload-module! "log-view")
+                   (show-buffer! was)
+                   (list (eq? b (head:find-tool-buffer "*log*"))
+                         (head:app-buffer? b)
+                         (equal? old (head:buffer-lines b))))))
+            '(#t #t #t))
 
      ;; -- window numbers --------------------------------------------------
      ;; The first window is 0 and a split takes the smallest free number

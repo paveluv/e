@@ -229,14 +229,12 @@
                      (loop j))]))))))
 
   ;; The *completions* buffer is a view like any other: registered once
-  ;; as an app whose refresh pages the list to the window it borrowed,
-  ;; ephemeral (a head's own chrome, not adopted by other heads), and
-  ;; styled by the completions mode.
+  ;; as a local app whose refresh pages the list to the window it
+  ;; borrowed, styled by the completions mode.
 
   (define completions-buffer
     (let ([b (head:register-app! "*completions*"
                                  (lambda () (update-completions-size!)))])
-      (head:buffer-fact-set! b 'ephemeral #t)
       (mode:choose! b "completions")
       b))
 

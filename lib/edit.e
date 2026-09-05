@@ -725,23 +725,10 @@
         (or (and file-name (file:directory-part file-name))
             (string-append (current-directory) "/")))))
 
-  (define (unique-name base self)
-    ;; base, or base<2>, base<3>, ... -- whichever no other buffer uses.
-    (let ([used (make-hashtable string-hash string=?)])
-      (for-each (lambda (b)
-                  (unless (eq? b self)
-                    (hashtable-set! used (head:buffer-name b) #t)))
-                buffers)
-      (let loop ([k 1])
-        (let ([name (if (= k 1) base (format "~a<~a>" base k))])
-          (if (hashtable-ref used name #f)
-              (loop (+ k 1))
-              name)))))
-
   (define (set-buffer-name! b name)
     (unless (and (head:buffer? b) (string? name) (> (string-length name) 0))
       (error 'set-buffer-name! "expected a buffer and nonempty name" b name))
-    (head:buffer-name-set! b (unique-name name b))
+    (head:buffer-name-set! b (head:unique-name name b))
     (head:mirror-rename! b)
     b)
 
@@ -753,7 +740,7 @@
                                                  path (kernel:condition-text ex))))
                          #f])
           (let* ([content (file:read path)]
-                 [b (head:new-buffer (unique-name (file:base-name path) #f))])
+                 [b (head:new-buffer (head:unique-name (file:base-name path) #f))])
             (head:buffer-lines-set! b (file:lines content))
             (head:buffer-trailing-set! b (file:ends-in-newline? content))
             (head:buffer-file-set! b path)
@@ -762,7 +749,7 @@
             (mode:assign! b)
             (log:add! 'visit-file! (cons "Loaded" path))
             b))
-        (let ([b (head:new-buffer (unique-name (file:base-name path) #f))])
+        (let ([b (head:new-buffer (head:unique-name (file:base-name path) #f))])
           (head:buffer-file-set! b path)
           (mode:assign! b)
           (log:add! 'visit-file! (cons "New file:" path))
@@ -824,7 +811,7 @@
         (file:write! path lines trailing-newline?)
         (set! file-name path) (set! modified? #f)
         (begin
-          (head:buffer-name-set! b (unique-name (file:base-name path) b))
+          (head:buffer-name-set! b (head:unique-name (file:base-name path) b))
           (head:mirror-rename! b))
         ;; re-detect the mode only when the name changed: a plain
         ;; re-save must not clobber a mode chosen by hand; adoption
@@ -1027,6 +1014,7 @@
   ;;; Buffer and window commands ---------------------------------------------
 
   (define (show-buffer! b)
+    (head:add-buffer! b)
     (set! buffers (cons b (remq b buffers)))   ; most recently used first
     (head:set-window-buffer! current-window b))
 
@@ -1073,10 +1061,9 @@
 
   (define (fresh-buffer name)
     ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
-    ;; use head:register-view! instead. An existing buffer is reused: the
-    ;; windows showing it keep showing it and display-buffer! finds it
-    ;; on screen -- no kill, no second window, no duplication.
-    (let ([b (or (head:buffer-named name) (head:new-buffer name))])
+    ;; use head:register-view! instead.  The stable tool key reuses its
+    ;; own local buffer, never an ordinary buffer with the same label.
+    (let ([b (head:tool-buffer name)])
       (head:buffer-read-only-set! b #f)
       (head:buffer-lines-set! b (vector ""))
       (head:buffer-history-set! b (vector '() '()))
@@ -1342,7 +1329,7 @@
     ;; Show b without leaving the current window: in the window already
     ;; showing it, else the next window, else a fresh split.  The window,
     ;; or #f when the screen has no room for one.
-    (unless (memq b buffers) (set! buffers (append buffers (list b))))
+    (head:add-buffer! b)
     (cond
       [(find (lambda (w) (eq? (head:window-buffer w) b)) windows)]
       [(pair? (cdr (head:layout-leaves layout-root)))
@@ -1357,7 +1344,7 @@
     ;; window displaying b, otherwise create a new tile below the current one.
     ;; Focus stays where it was so the buffer remains a reference alongside
     ;; the command that requested it.
-    (unless (memq b buffers) (set! buffers (append buffers (list b))))
+    (head:add-buffer! b)
     (or (find (lambda (w) (eq? (head:window-buffer w) b)) windows)
         (split-current-window! 'below b)))
 
@@ -1366,7 +1353,7 @@
     ;; line is replaced, and the display follows -- point moves to the
     ;; last line in every window showing b, and in ones that show it later.
     ;; A transcript belongs in the buffer list even before it is shown.
-    (unless (memq b buffers) (set! buffers (append buffers (list b))))
+    (head:add-buffer! b)
     (let ([v (head:buffer-lines b)]
           [add (list->vector new-lines)])
       (head:buffer-lines-set! b

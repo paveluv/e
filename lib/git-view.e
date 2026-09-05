@@ -203,13 +203,17 @@
     ;; Git views are application state, not startup furniture. Create them
     ;; together on first use; re-register existing buffers after a hot reload
     ;; without making fresh sessions expose empty Git buffers.
-    (unless log-buffer
+    (unless (and log-buffer (memq log-buffer (head:buffers))
+                 (head:app-buffer? log-buffer))
       (set! log-buffer
         (head:register-app! "*git-log*" refresh-log! handle-log-event!))
+      (set! log-dirty? #t)
       (head:set-app-presentation! log-buffer 1 #t)
       (mode:choose! log-buffer "git:log"))
-    (unless diff-buffer
+    (unless (and diff-buffer (memq diff-buffer (head:buffers))
+                 (head:app-buffer? diff-buffer))
       (set! diff-buffer (head:register-view! "*git-diff*" refresh-diff!))
+      (set! diff-dirty? #t)
       (head:set-app-presentation! diff-buffer 1 #t)
       (mode:choose! diff-buffer "git:diff")))
 
@@ -231,7 +235,8 @@
     (mode:register! "git:diff" '() '() diff-styles)
     ;; A reload after Git was opened reconnects its surviving app buffers;
     ;; ordinary startup remains lazy.
-    (when (or (head:buffer-named "*git-log*") (head:buffer-named "*git-diff*"))
+    (when (or (head:find-tool-buffer "*git-log*")
+              (head:find-tool-buffer "*git-diff*"))
       (ensure-git-buffers!))
     (doc:register!
       '(((git-view:log!!) (("procedure" . "(git-view:log!! [path])")) "void"

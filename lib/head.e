@@ -75,6 +75,7 @@
           buffer-stale buffer-stale-set!
           mirror-create! adopt-store! adopt-local! reconverge-forked!
           store-reset! store-edit! mirror-rename! new-buffer new-local-buffer
+          unique-name add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
           sync-foreign-edits! flush-ui-audit!
@@ -693,12 +694,43 @@
 
   (define ui-actor '(head main))
 
+  (define (unique-name base self)
+    ;; Labels share one namespace in this head.  Include store buffers
+    ;; not yet adopted, so a new local label cannot hide a shared one.
+    (let ([used (make-hashtable string-hash string=?)]
+          [self-id (and self (buffer-store-id self))])
+      (for-each (lambda (b)
+                  (unless (eq? b self)
+                    (hashtable-set! used (buffer-name b) #t)))
+                the-buffers)
+      (guard (ex [else (void)])
+        (for-each (lambda (id)
+                    (unless (eqv? id self-id)
+                      (hashtable-set! used (store:buffer-name id) #t)))
+                  (store:buffer-list)))
+      (let loop ([k 1])
+        (let ([name (if (= k 1) base (format "~a<~a>" base k))])
+          (if (hashtable-ref used name #f)
+              (loop (+ k 1))
+              name)))))
+
+  (define (reserve-store-name! name)
+    ;; A shared label takes precedence.  Tool identity survives this
+    ;; local rename because it is independent of the displayed label.
+    (for-each
+      (lambda (b)
+        (when (and (not (buffer-store-id b))
+                   (string=? (buffer-name b) name))
+          (buffer-name-set! b (unique-name name b))))
+      the-buffers))
+
   (define (mirror-create! b)
     (guard (ex [else (void)])
       (buffer-store-id-set!
         b (store:create! ui-actor (buffer-name b)
                          (vector->list (buffer-lines b))))
-      (buffer-store-rev-set! b 0)))
+      (buffer-store-rev-set! b 0)
+      (reserve-store-name! (buffer-name b))))
 
   (define (adopt-store! b)
     ;; make the cache the store's current text -- the vectors are
@@ -811,7 +843,8 @@
   (define (mirror-rename! b)
     (when (buffer-store-id b)
       (guard (ex [else (void)])
-        (store:rename! ui-actor (buffer-store-id b) (buffer-name b)))))
+        (store:rename! ui-actor (buffer-store-id b) (buffer-name b))
+        (reserve-store-name! (buffer-name b)))))
 
   (define (new-seat-buffer name shared?)
     (let ([b (make-buffer name (vector "") 0 (vector '() '())
@@ -829,7 +862,36 @@
   (define (new-local-buffer name)
     ;; Like new-buffer, the caller decides when to put it in the
     ;; buffer list or a window.  No store buffer or event is created.
-    (new-seat-buffer name #f))
+    (new-seat-buffer (unique-name name #f) #f))
+
+  (define (add-buffer! b)
+    ;; Enter the head's buffer list without changing its MRU order.
+    ;; Claim a local label here too: another buffer may have taken
+    ;; the constructor's suggested name before this one was shown.
+    (unless (memq b the-buffers)
+      (if (buffer-store-id b)
+          (reserve-store-name! (buffer-name b))
+          (buffer-name-set! b (unique-name (buffer-name b) b)))
+      (set! the-buffers (append the-buffers (list b))))
+    b)
+
+  (define (find-tool-buffer key)
+    ;; A tool's key is stable across label changes and module reloads.
+    ;; The live buffer list owns its lifetime; no second registry of
+    ;; buffer identities needs cleanup or reload reconciliation.
+    (and (string? key)
+         (find (lambda (b)
+                 (and (not (buffer-store-id b))
+                      (equal? (buffer-fact b 'tool-key #f) key)))
+               the-buffers)))
+
+  (define (tool-buffer key)
+    (unless (and (string? key) (> (string-length key) 0))
+      (error 'tool-buffer "expected a nonempty string key" key))
+    (or (find-tool-buffer key)
+        (let ([b (new-local-buffer key)])
+          (buffer-fact-set! b 'tool-key key)
+          (add-buffer! b))))
 
   (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
@@ -840,20 +902,17 @@
 
   (define (adopt-store-buffer! id)
     ;; Another actor created a store buffer: give this head a record
-    ;; for it, so it shows in the buffer list like any other -- unless
-    ;; its creator marked it ephemeral (a head's own chrome, the
-    ;; *completions* view).  It
-    ;; joins at the end: this seat did not ask for it.  A buffer with
+    ;; for it, so it shows in the buffer list like any other.  It joins
+    ;; at the end: this seat did not ask for it.  A buffer with
     ;; no mode yet gets detection, recorded as the shared fact.
-    (unless (or (buffer-of-store-id id)
-                (store:property id 'ephemeral))
+    (unless (buffer-of-store-id id)
       (let-values ([(text revision) (store:snapshot id)])
         (let ([b (make-buffer (store:buffer-name id) text 0
                               (vector '() '()) 0 0 #f 0 0 0
                               'default id revision)])
           (unless (buffer-fact b 'mode #f) (adopt-hook b))
           (unless (buffer-fact b 'wrap #f) (buffer-fact-set! b 'wrap 'default))
-          (set! the-buffers (append the-buffers (list b)))))))
+          (add-buffer! b)))))
 
   (define (buffer-lines-set! b new-lines)
     (store-reset! b new-lines))
@@ -1001,6 +1060,7 @@
             (case (car event)
               [(create) (adopt-store-buffer! (cadr event))]
               [(rename)
+               (reserve-store-name! (caddr event))
                (let ([b (buffer-of-store-id (cadr event))])
                  (when b (buffer-name-set! b (caddr event))))]
               [(delete)
@@ -1221,23 +1281,19 @@
       b))
 
   (define (register-app! name refresh! . handler)
-    (let* ([named (buffer-named name)]
-           [_ (when (and named (not (buffer-fact named 'app #f)))
-                (error 'register-app! "buffer name is already in use" name))]
-           [b (or named (new-buffer name))]
+    ;; Validate before allocating a buffer or changing registrations.
+    (unless (procedure? refresh!)
+      (error 'register-app! "refresh must be a procedure" refresh!))
+    (when (and (pair? handler) (not (procedure? (car handler))))
+      (error 'register-app! "event handler must be a procedure"
+             (car handler)))
+    (let* ([b (tool-buffer name)]
            [a (make-app b refresh! (and (pair? handler) (car handler))
                         #f 'default #f)])
-      (unless (procedure? refresh!)
-        (error 'register-app! "refresh must be a procedure" refresh!))
-      (when (and (pair? handler) (not (procedure? (car handler))))
-        (error 'register-app! "event handler must be a procedure"
-               (car handler)))
       (buffer-read-only-set! b #t)
       ;; the buffer is an app's for good: a re-registration (a module
-      ;; reloading) may take the name back, and the presentation facts
-      ;; set on it persist as store properties
+      ;; reloading) takes back the same tool, and its local facts stay.
       (buffer-fact-set! b 'app #t)
-      (unless (memq b the-buffers) (set! the-buffers (append the-buffers (list b))))
       ;; Re-registration in one init replaces rather than duplicates refreshes.
       (kernel:registry-remove! app-registry
                                (lambda (x) (eq? (app-buffer x) b)))
@@ -1280,7 +1336,7 @@
             [(boolean? visibility) visibility]
             [else #t])))
 
-  ;; App presentation facts are store properties, so they outlive the
+  ;; App presentation facts belong to the buffer, so they outlive the
   ;; app record -- a reload's re-registration finds them in place -- but
   ;; they mean something only while an app owns the buffer.  Every reader
   ;; therefore asks app-of first: a detached buffer (a dead terminal's
@@ -1296,9 +1352,9 @@
     (and (app-of b) (buffer-fact b 'cursor-style #f)))
 
   (define (set-app-presentation! b sticky-lines scrollbar . options)
-    ;; Configure buffer-level presentation shared by every window -- and
-    ;; every head -- showing the app: store properties.  Sticky rows stay
-    ;; above the scrollable body; scrollbar is #f, #t (enabled using the
+    ;; Configure presentation shared by every window showing this local
+    ;; app.  Sticky rows stay above the scrollable body; scrollbar is
+    ;; #f, #t (enabled using the
     ;; configured side), left, or right.
     (let ([a (app-of b)])
       (unless a (error 'set-app-presentation! "not an app buffer" b))
@@ -1490,8 +1546,8 @@
     (window-left-set! w 0))
 
   (define (forget-buffer! b)
-    ;; drop this head's record of a buffer whose twin is gone -- kill
-    ;; hooks, the buffer list, apps, and every window showing it
+    ;; Drop a local buffer or a record whose store twin is gone: kill
+    ;; hooks, the buffer list, apps, and every window showing it.
     (for-each
       (lambda (hook)
         (guard (ex [else
@@ -1502,7 +1558,7 @@
       (kernel:registry-items buffer-kill-hook-registry))
     (set! the-buffers (remq b the-buffers))
     (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
-    (when (null? the-buffers) (set! the-buffers (list (new-buffer "*scratch*"))))
+    (when (null? the-buffers) (add-buffer! (new-buffer "*scratch*")))
     (for-each (lambda (w)
                 (when (eq? (window-buffer w) b)
                   (set-window-buffer! w (car the-buffers))))

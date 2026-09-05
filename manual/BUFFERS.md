@@ -305,3 +305,15 @@ and a window.  The same text, mode, and fact accessors work on either
 kind.  A local buffer's facts and generated text stay in the head and
 produce no store notifications; local points and selections are not
 published to other actors.
+
+Local labels share the head's buffer namespace.  A collision receives
+`<2>`, `<3>`, and so on; when a shared buffer arrives or is renamed,
+the local buffer yields the conflicting label.  `head:add-buffer!`
+adds a buffer to the list without displaying it and claims its label.
+
+`(head:tool-buffer key)` returns or creates a local tool buffer under a
+stable string key; `(head:find-tool-buffer key)` only looks it up.
+Renaming the displayed buffer does not change its tool key.  App
+registration and `fresh-buffer` use this same lookup, so a snapshot
+tool rebuilds its own buffer and preserves ordinary buffers with a
+matching label.  Killing a tool buffer removes that instance.

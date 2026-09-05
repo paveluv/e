@@ -46,26 +46,34 @@
               (style:fill-range! styles from n 'plain))))
       styles))
 
-  (define (make-log-view name pred)
-    ;; A view over the log: the records pred accepts, each formatted by
+  (define (make-log-view name components)
+    ;; A view over the selected components, each record formatted by
     ;; its component's formatter, one prefixed row per line, appended
     ;; past a high-water mark.
+    (define (accept? e)
+      (or (null? components) (eq? (cadr e) (car components))))
     (define b #f)
-    (define rendered 0)
+    (define rendered #f)
     (define (refresh!)
-      (when (< rendered (log:length))
-        (let ([lines '()])
-          (do ([i (- (log:length) 1) (- i 1)]) ((< i rendered))
-            (let ([e (log:record i)])
-              (when (pred e)
-                (set! lines
-                  (append (let ([prefix (log-line-prefix e)])
-                            (map (lambda (l) (string-append prefix l))
-                                 (string:lines (log:format-entry e))))
-                          lines)))))
-          (set! rendered (log:length))
-          (head:view-append! b lines))))
+      (let ([end (log:length)])
+        (when (or (not rendered) (< rendered end))
+          (let ([lines '()] [start (or rendered 0)])
+            (do ([i (- end 1) (- i 1)]) ((< i start))
+              (let ([e (log:record i)])
+                (when (accept? e)
+                  (set! lines
+                    (append (let ([prefix (log-line-prefix e)])
+                              (map (lambda (l) (string-append prefix l))
+                                   (string:lines (log:format-entry e))))
+                            lines)))))
+            ;; A new registration rebuilds from the records, replacing
+            ;; a previous rendering once; later refreshes only append.
+            (if rendered
+                (head:view-append! b lines)
+                (head:view-replace! b lines))
+            (set! rendered end)))))
     (set! b (head:register-view! name refresh!))
+    (head:buffer-fact-set! b 'log-filter components)
     (mode:choose! b "log")
     (refresh!)
     b)
@@ -74,13 +82,12 @@
     ;; The *log* view -- or a dynamic filtered one, *log eval* for
     ;; (log-view:buffer 'eval) -- created (or recreated after a kill) on
     ;; demand.
-    (if (null? component)
-        (or (head:buffer-named "*log*")
-            (make-log-view "*log*" (lambda (e) #t)))
-        (let ([name (format "*log ~a*" (car component))])
-          (or (head:buffer-named name)
-              (make-log-view name
-                (lambda (e) (eq? (cadr e) (car component))))))))
+    (let* ([name (if (null? component) "*log*"
+                   (format "*log ~a*" (car component)))]
+           [b (head:find-tool-buffer name)])
+      (if (and b (head:app-buffer? b))
+          b
+          (make-log-view name component))))
 
   (define (show-log!)
     ;; Pop up the *log* view.
@@ -93,4 +100,12 @@
          ("(log-view:buffer)") log-view "Log commands" #f
          "Display the live `*log*` view, containing timestamped editor messages and command results.")))
     (mode:register! "log" '() '() style-log-line)
+    ;; Registry retraction on reload leaves the local buffers alive.
+    ;; Rebind every saved filter, including views already on screen.
+    (for-each
+      (lambda (b)
+        (let ([components (head:buffer-fact b 'log-filter #f)])
+          (when (and (not (head:buffer-store-id b)) (list? components))
+            (apply log-view components))))
+      (head:buffers))
     (log-view)))                ; the *log* view, listed from startup
