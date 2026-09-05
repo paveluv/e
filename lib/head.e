@@ -73,7 +73,7 @@
           buffer-read-only buffer-read-only-set!
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
-          mirror-create! adopt-store! adopt-local! reconverge-forked!
+          mirror-create! adopt-store!
           store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
           unique-name add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
@@ -627,9 +627,8 @@
   ;; operation; this seat's edits enter the store transactionally;
   ;; wholesale replacements are resets; foreign actors' operations
   ;; flow back before each frame (sync-foreign-edits!); buffer facts
-  ;; are store properties.  If the store refuses (a foreign edit
-  ;; overlapped mid-command) or breaks, the seat keeps editing:
-  ;; content wins locally and the store is reset to match.
+  ;; are store properties.  Shared mutations must commit in the store;
+  ;; a refusal or failure cannot turn a shared cache into local truth.
   ;;
   ;; Two hooks reach upward, each installed by the module that owns
   ;; the answer: the painter invalidates its screen (set-repaint-hook!),
@@ -750,12 +749,11 @@
       the-buffers))
 
   (define (mirror-create! b)
-    (guard (ex [else (void)])
-      (buffer-store-id-set!
-        b (store:create! ui-actor (buffer-name b)
-                         (vector->list (buffer-lines b))))
-      (buffer-store-rev-set! b 0)
-      (reserve-store-name! (buffer-name b))))
+    (buffer-store-id-set!
+      b (store:create! ui-actor (buffer-name b)
+                       (vector->list (buffer-lines b))))
+    (buffer-store-rev-set! b 0)
+    (reserve-store-name! (buffer-name b)))
 
   (define (adopt-store! b)
     ;; make the cache the store's current text -- the vectors are
@@ -765,71 +763,29 @@
       (buffer-store-rev-set! b revision)
       (bump-buffer-revision! b)))
 
-  ;; Store outage: buffers whose cache forked from the store because a
-  ;; store call failed.  Each fork is logged once, edits stay local
-  ;; (never half-and-half), and every frame re-converges what it can.
-  (define forked-buffers '())
-
   (define (adopt-local! b text)
-    ;; the store is unreachable: keep editing on the local cache
-    ;; alone -- on the record, and queued for re-convergence
+    ;; Only explicitly local buffers own their text in this head.
+    (when (buffer-store-id b)
+      (error 'adopt-local! "a shared buffer must commit in the store"))
     (buffer-lines-raw-set! b text)
-    (bump-buffer-revision! b)
-    (when (and (buffer-store-id b) (not (memq b forked-buffers)))
-      (set! forked-buffers (cons b forked-buffers))
-      (guard (ex [else (void)])
-        (log:add! 'store
-          (format "store outage: ~s forked from the store"
-                  (buffer-name b))))))
-
-  (define (reconverge-forked!)
-    ;; recovery, at frame time: re-baseline each forked buffer from
-    ;; its cache; a store still down keeps the buffer queued, a dead
-    ;; buffer drops out.  A twin that no longer exists means another
-    ;; actor deleted the buffer: the head forgets it rather than
-    ;; resurrecting what someone killed (the lifecycle sync normally
-    ;; gets there first).
-    (when (pair? forked-buffers)
-      (set! forked-buffers
-        (filter
-          (lambda (b)
-            (guard (ex [else #t])
-              (cond
-                [(not (memq b the-buffers)) #f]
-                [(not (store:exists? (buffer-store-id b)))
-                 (buffer-store-id-set! b #f)
-                 (forget-buffer! b)
-                 #f]
-                [else
-                 (store:reset! ui-actor (buffer-store-id b)
-                               (buffer-lines b))
-                 (adopt-store! b)
-                 (log-reconvergence! b)
-                 #f])))
-          forked-buffers))))
-
-  (define (log-reconvergence! b)
-    (guard (ex [else (void)])
-      (log:add! 'store
-        (format "store recovered: ~s re-baselined from the editor"
-                (buffer-name b)))))
+    (bump-buffer-revision! b))
 
   (define (store-reset! b new-lines)
-    ;; wholesale replacement: a new store baseline, adopted back --
-    ;; which is exactly re-convergence, so a success unforks
+    ;; Explicit baseline replacement (loading/rereading), never an
+    ;; automatic response to a failed edit.  Failure leaves the cache
+    ;; untouched; a later frame cannot write it back over shared text.
     (if (buffer-store-id b)
-        (guard (ex [else (adopt-local! b new-lines)])
+        (begin
           (store:reset! ui-actor (buffer-store-id b) new-lines)
-          (adopt-store! b)
-          (set! forked-buffers (remq b forked-buffers)))
+          (adopt-store! b))
         (adopt-local! b new-lines)))
 
   (define (store-edit! b span replacement . context)
-    ;; The ui's text edits go through the store first and the cache
-    ;; adopts the result.  A stale refusal means a foreign edit
-    ;; overlapped mid-command: this seat's content wins -- the edit
-    ;; applies to the cache's coordinates and resets the store (the
-    ;; conflict is in the audit log; see the tech debt ledger).
+    ;; The store rebases this declared intent under its mutation lock.
+    ;; A stale result is already an unresolvable overlap/missing basis,
+    ;; not permission to recompute a replacement against newer text.
+    ;; Errors also propagate: no shared edit can fall back to a local
+    ;; fork, including an error after the transaction has committed.
     (define (local-text)
       (let-values ([(new-text delta)
                     (text:apply-edit (buffer-lines b) span replacement)])
@@ -840,35 +796,25 @@
                  (= (length (car context)) 3))
         (for-each (lambda (entry) (buffer-fact-set! b (car entry) (cdr entry)))
                   (caddr (car context)))))
-    (if (and (buffer-store-id b) (not (memq b forked-buffers)))
-        (guard (ex [else (adopt-local! b (local-text))])
-          (let-values ([(status info)
-                        (apply store:edit! ui-actor (buffer-store-id b)
-                               (buffer-store-rev b)
-                               span replacement context)])
-            (if (eq? status 'applied)
-                (begin (adopt-store! b) (note-ui-edit! b))
-                (let ([foreign
-                       (guard (ex [else #f])
-                         (find (lambda (entry)
-                                 (not (equal? (cadr entry) ui-actor)))
-                               (store:history (buffer-store-id b) 8)))])
-                  ;; the conflict is on the record before the seat wins
-                  (guard (ex [else (void)])
-                    (log:add! 'store
-                      (format "conflict: ui overrode ~a in ~s"
-                              (if foreign (cadr foreign) "another actor")
-                              (buffer-name b))))
-                  (store-reset! b (local-text))
-                  ;; ... and the losing actor is told, after the reset
-                  ;; settles, so a re-read sees the truth:
-                  ;; (conflict buffer-id buffer-name winning-actor)
-                  (when foreign
-                    (guard (ex [else (void)])
-                      (actor:send! (cadr foreign)
-                                   (list 'conflict (buffer-store-id b)
-                                         (buffer-name b)
-                                         ui-actor))))))))
+    (if (buffer-store-id b)
+        (let-values ([(status info)
+                      (apply store:edit! ui-actor (buffer-store-id b)
+                             (buffer-store-rev b)
+                             span replacement context)])
+          (if (eq? status 'applied)
+              (begin (adopt-store! b) (note-ui-edit! b))
+              (let ([reason (if (eq? info 'overlap)
+                                "another edit overlaps this change"
+                                "the edit's revision is no longer available")])
+                ;; Refresh for the next command, without changing the
+                ;; rejected command's history, dirty flag, or side effects.
+                (guard (ex [else (void)]) (sync-store-buffer! b))
+                (guard (ex [else (void)])
+                  (log:add! 'store
+                    (format "edit refused in ~s: ~a" (buffer-name b) reason)))
+                (raise (condition (kernel:make-refusal)
+                                  (make-message-condition
+                                    (format "Edit not applied: ~a" reason)))))))
         (edit-local!)))
 
   (define (store-history! b direction scope)
@@ -878,7 +824,6 @@
     ;; a post-commit presentation error must not be called a refusal.
     (cond
       [(not (buffer-store-id b)) (values 'nothing #f)]
-      [(memq b forked-buffers) (values 'blocked 'local-fork)]
       [else
        (let-values ([(status detail)
                      (guard (ex [else (values 'blocked 'store-unavailable)])
@@ -1312,12 +1257,9 @@
     (kernel:registry-add! pre-redraw-hook-registry proc))
 
   (define (before-frame!)
-    ;; What every frame is preceded by: the store's news -- lifecycle
-    ;; first, so a foreign deletion forgets the buffer before outage
-    ;; recovery could mistake its missing twin for a store fault --
-    ;; then the layers above, through the pre-redraw hooks.
+    ;; Adopt the store's news before the layers above refresh their
+    ;; views.  A frame never writes an old shared cache back to the store.
     (sync-foreign-edits!)
-    (reconverge-forked!)
     (flush-ui-audit! 'stale)
     (publish-head-marks!)
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))

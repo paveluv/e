@@ -20,7 +20,8 @@
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'wiring-test label actual expected)))
+         (error 'wiring-test (symbol->string label) actual expected
+                (map screen-line '(20 21 22 23)))))
 
      (define probe (format "/tmp/e-wiring-~a" (getenv "USER")))
 
@@ -452,21 +453,19 @@
             (substring (screen-line 0) 0 30)
             (make-string 30 #\x))
 
-     ;; a conflict tells the losing actor: a rival edit lands between
-     ;; the ui's basis and its keystroke (same eval, so no frame sync
-     ;; intervenes); the typed character comes back stale, the head wins
-     ;; by reset, and the rival's delivery receives the conflict message
-     (send! (format "\x1b;xactor:register! (quote (agent rival)) (lambda (m) (call-with-output-file \"~a\" (lambda (p) (write m p)) (quote replace)))\r"
-                    probe))
-     (pump! 600)
+     ;; A rival replaces the insertion point between the UI's basis and
+     ;; its keystroke (same eval, without a frame sync).  Refuse the
+     ;; keystroke, retain the rival's edit, and leave head history intact.
+     (define before-conflict-history
+       (read-editor '(map length (vector->list (head:buffer-history (current-buffer))))))
      (send! "\x1b;xlet ([id (head:buffer-store-id (current-buffer))]) (main:dispatch-key! \"M-<\") (main:dispatch-key! \"C-f\") (main:dispatch-key! \"C-f\") (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (main:dispatch-key! \"z\")\r")
      (pump! 900)
-     (check 'losing-actor-hears-the-conflict
-            (let ([m (call-with-input-file probe read)])
-              (list (car m) (cadddr m)))
-            '(conflict (head main)))
-     (check 'head-won-the-conflict
-            (screen-has? 0 "RIV") #f)
+     (check 'conflict-is-reported
+            (or (screen-has? 22 "not applied:") (screen-has? 23 "not applied:")) #t)
+     (check 'conflict-preserves-foreign-text (screen-has? 0 "RIV") #t)
+     (check 'conflict-keeps-head-history
+            (read-editor '(map length (vector->list (head:buffer-history (current-buffer)))))
+            before-conflict-history)
 
      ;; the selection is published: mark plus motion becomes the ui's
      ;; 'region span mark in the store; C-g deactivates and drops it

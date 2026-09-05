@@ -65,6 +65,13 @@ buffer is killed, e creates a new `*scratch*` buffer.
 Read-only buffers reject editing commands without creating an undo entry. The
 error is reported in the echo area rather than corrupting generated content.
 
+Edits from different actors combine automatically when their ranges do not
+overlap. If another edit consumes the text being changed, or the required
+revision history is no longer available, e reports `Edit not applied` and
+refreshes the buffer. The rejected edit leaves shared text and undo/redo
+history intact. A store failure also stops editing that shared buffer; the
+head does not keep an offline copy that later overwrites other actors' work.
+
 The alphabetical traversal is stable: merely visiting a buffer does not move it
 in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.

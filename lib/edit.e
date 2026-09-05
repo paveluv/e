@@ -153,12 +153,10 @@
   ;; seat is one of its clients.  A buffer record's lines field is a
   ;; cache of the store's immutable text vector, adopted after every
   ;; operation -- nothing here mutates a line vector in place.  Edits
-  ;; enter the store transactionally (whole-line and line-splice
-  ;; granularity), wholesale replacements are resets, and foreign
-  ;; actors' edits flow back before each frame (head:before-frame!).
-  ;; If the store refuses (a foreign edit overlapped mid-command) or
-  ;; breaks, the seat keeps editing: content wins locally and the store
-  ;; is reset to match.
+  ;; enter the store transactionally, explicit baseline replacements
+  ;; are resets, and foreign actors' edits flow back before each frame
+  ;; (head:before-frame!).  A refusal or failure stops the command;
+  ;; the head never overwrites shared text to force an edit through.
 
 
   (define-syntax define-state
@@ -236,51 +234,24 @@
   (define (submit-edit! b span replacement . properties)
     ;; Head snapshots supply grouping and presentation only.  Shared
     ;; undo is the store's inverse journal, never these saved vectors.
-    (let* ([entries (vector-ref (head:buffer-history b) 0)]
-           [entry (and (pair? entries) (car entries))]
+    ;; The entry is staged: do not clear redo or add it to the group's
+    ;; history until a mutation actually succeeds.
+    (let* ([action (pending-edit)]
+           [entry (and action (cadr action))]
            [key (and entry (snapshot-key (cdr entry)))])
+      (unless (and action (eq? (car action) b))
+        (error 'submit-edit! "edit has no pending action"))
       (head:store-edit! b span replacement
                         (if (pair? properties)
-                          (list key (and entry (car entry)) (car properties))
-                          (and key (list key (car entry)))))))
+                          (list key (caddr action) (car properties))
+                          (list key (caddr action))))
+      ((cadddr action))))
 
   (define (replace-buffer-lines! b target . properties)
     ;; Formatting, indentation, and merging are ordinary attributed
     ;; edits.  Only loading/rereading a baseline may reset the store.
     (let-values ([(span replacement) (text:difference (head:buffer-lines b) target)])
       (apply submit-edit! b span replacement properties)))
-
-  (define (set-line! n s)
-    ;; the store is the master: the edit goes there, the cache adopts
-    (let ([b (head:window-buffer current-window)])
-      (submit-edit! b (text:make-span n 0 n
-                                      (string-length (vector-ref lines n)))
-                    (list s))))
-
-  (define (splice-lines! from to inserted)
-    ;; Replace whole lines [from, to) of the current buffer as one
-    ;; transactional store edit -- so other actors' marks and bases
-    ;; survive ordinary typing.
-    (let* ([b (head:window-buffer current-window)]
-           [old lines]
-           [count (vector-length old)])
-      (submit-edit!
-        b
-        (cond
-          [(< to count) (text:make-span from 0 to 0)]
-          [(> from 0)
-           (text:make-span (- from 1)
-                           (string-length (vector-ref old (- from 1)))
-                           (- count 1)
-                           (string-length (vector-ref old (- count 1))))]
-          [else
-           (text:make-span 0 0 (- count 1)
-                           (string-length (vector-ref old (- count 1))))])
-        (cond
-          [(< to count) (append inserted '(""))]
-          [(> from 0) (cons "" inserted)]
-          [(null? inserted) '("")]
-          [else inserted]))))
 
   (define (editor-snapshot . key)
     ;; the cache vectors are immutable now: snapshots share, never copy
@@ -313,15 +284,11 @@
   ;; Undo entries are labeled with the user-level action that made them
   ;; -- "insert \"hello\"", "(replace-all! \"xx\" \"yy\")" -- and undo
   ;; and redo report the label.  Inside a call-as-one-edit! group, the
-  ;; box holds (label . buffers-snapshotted): one entry per buffer the
+  ;; box holds (label . buffer-entries): one entry per buffer the
   ;; group touches, labeled with the group's label (or, lacking one,
   ;; that buffer's first edit's).
   (define edit-group (make-parameter #f))
-
-  (define (push-undo! label)
-    (vector-set! history 0 (cons (cons label (editor-snapshot))
-                                 (vector-ref history 0)))
-    (vector-set! history 1 '()))
+  (define pending-edit (make-parameter #f))
 
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
@@ -349,21 +316,47 @@
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "buffer is read-only"))))))
 
-  (define (record-edit! label)
+  (define (call-with-recorded-edit! label thunk)
     (check-editable!)
-    (unless (suppress-history)
-      (check-disk-before-edit!)
-      (let ([group (edit-group)]
-            [b (head:window-buffer current-window)])
-        (cond [(not group) (push-undo! label)]
-              [(memq b (cdr (unbox group))) (void)]
-              [else (push-undo! (or (car (unbox group)) label))
-                    (set-box! group (cons (car (unbox group))
-                                          (cons b (cdr (unbox group)))))]))))
+    (let ([b (head:window-buffer current-window)]
+          [pending (pending-edit)])
+      (if (and pending (eq? (car pending) b))
+          (thunk)
+          (begin
+            (unless (suppress-history) (check-disk-before-edit!))
+            (let* ([h (head:buffer-history b)]
+                   [group (edit-group)]
+                   [group-hit (and group (assq b (cdr (unbox group))))]
+                   [group-entry (and group-hit (memq (cdr group-hit) (vector-ref h 0))
+                                     group-hit)]
+                   [previous
+                    (or (and group-entry (cdr group-entry))
+                        (and (not group) (suppress-history)
+                             (pair? (vector-ref h 0)) (car (vector-ref h 0))))]
+                   [label (cond [group-entry (car previous)]
+                                [group (or (car (unbox group)) label)]
+                                [else label])]
+                   [entry (or previous (cons label (editor-snapshot)))]
+                   [committed? #f]
+                   [commit!
+                    (lambda ()
+                      (unless committed?
+                        (unless previous
+                          (vector-set! h 0 (cons entry (vector-ref h 0))))
+                        (vector-set! h 1 '())
+                        (set-car! entry label)
+                        (when (and group (not group-entry))
+                          (set-box! group
+                            (cons (car (unbox group))
+                                  (cons (cons b entry) (remq group-hit (cdr (unbox group)))))))
+                        (set! committed? #t)))])
+              (parameterize ([pending-edit (list b entry label commit!)])
+                (thunk)))))))
 
-  (define (relabel-last-edit! label)
-    (let ([h (vector-ref history 0)])
-      (when (pair? h) (set-car! (car h) label))))
+  (define-syntax with-recorded-edit
+    (syntax-rules ()
+      [(_ label body ...)
+       (call-with-recorded-edit! label (lambda () body ...))]))
 
   (define (call-as-one-edit! label thunk)
     ;; Bundle every edit thunk makes into one labeled undo step per
@@ -433,7 +426,6 @@
                      [(basis-too-old) "history is incomplete"]
                      [(overlap) "another edit overlaps this action"]
                      [(property-changed) "a text property changed after this action"]
-                     [(local-fork) "local edits have not been reconciled"]
                      [else "the store is unavailable"]))]))))
 
   (define (history-shift! from to verb scope)
@@ -583,59 +575,48 @@
     ;; Buffer rows never contain newline characters.  Programmatic inserts
     ;; get the same structural treatment as a paste or repeated newline!.
     (unless (string=? s "")
-      (record-edit! (format "insert ~s" s))
-      (let* ([row point-row]
-             [col point-col]
-             [old (current-line)]
-             [parts (split-inserted-lines s)])
-        (if (null? (cdr parts))
-            (begin
-              (set-line! row (string:insert old col s))
-              (set! point-col (+ col (string-length s))))
-            (let* ([last (car (reverse parts))]
-                   [replacement
-                    (append
-                      (list (string-append (substring old 0 col) (car parts)))
-                      (reverse (cdr (reverse (cdr parts))))
-                      (list (string-append last (string:tail old col))))])
-              (splice-lines! row (+ row 1) replacement)
-              (set! point-row (+ row (- (length parts) 1)))
-              (set! point-col (string-length last))))
-        (changed!))))
+      (with-recorded-edit (format "insert ~s" s)
+        (let ([row point-row] [col point-col]
+              [parts (split-inserted-lines s)])
+          (submit-edit! (head:window-buffer current-window)
+                        (text:make-span row col row col) parts)
+          (set! point-row (+ row (- (length parts) 1)))
+          (set! point-col (if (null? (cdr parts))
+                            (+ col (string-length (car parts)))
+                            (string-length (car (reverse parts)))))
+          (changed!)))))
 
   (define (newline!)
-    (record-edit! "newline")
-    (let ([s (current-line)])
-      (set-line! point-row (substring s 0 point-col))
-      (splice-lines! (+ point-row 1) (+ point-row 1)
-                     (list (string:tail s point-col)))
-      (set! point-row (+ point-row 1)) (set! point-col 0)
-      (changed!)))
+    (with-recorded-edit "newline" (insert-text! "\n")))
 
   (define (delete-forward!)
     (cond [(< point-col (string-length (current-line)))
-           (record-edit!
+           (with-recorded-edit
              (format "delete ~s"
-                     (string (string-ref (current-line) point-col))))
-           (set-line! point-row
-             (string:delete (current-line) point-col (+ point-col 1)))
-           (changed!)]
+                     (string (string-ref (current-line) point-col)))
+             (submit-edit! (head:window-buffer current-window)
+                           (text:make-span point-row point-col point-row (+ point-col 1))
+                           '(""))
+             (changed!))]
           [(< point-row (- (vlen) 1))
-           (record-edit! "delete newline")
-           (set-line! point-row
-             (string-append (current-line) (line-at (+ point-row 1))))
-           (splice-lines! (+ point-row 1) (+ point-row 2) '())
-           (changed!)]))
+           (with-recorded-edit "delete newline"
+             (submit-edit! (head:window-buffer current-window)
+                           (text:make-span point-row point-col (+ point-row 1) 0) '(""))
+             (changed!))]))
 
   (define (backspace!)
     (when (or (> point-col 0) (> point-row 0))
-      (record-edit!
+      (with-recorded-edit
         (if (> point-col 0)
             (format "delete ~s"
                     (string (string-ref (current-line) (- point-col 1))))
-            "delete newline"))
-      (parameterize ([suppress-history #t])
-        (move-left!) (delete-forward!))))
+            "delete newline")
+        (let* ([row (if (> point-col 0) point-row (- point-row 1))]
+               [col (if (> point-col 0) (- point-col 1) (string-length (line-at row)))])
+          (submit-edit! (head:window-buffer current-window)
+                        (text:make-span row col point-row point-col) '(""))
+          (set! point-row row) (set! point-col col)
+          (changed!)))))
 
   ;;; Kill and yank ---------------------------------------------------------
 
@@ -707,13 +688,14 @@
     (let* ([s (current-line)] [n (string-length s)])
       (cond [(< point-col n)
              (let ([text (substring s point-col n)])
-               (record-edit! (format "kill ~s" text))
-               (kill! text)
-               (set-line! point-row (substring s 0 point-col))
-               (changed!))]
+               (with-recorded-edit (format "kill ~s" text)
+                 (submit-edit! (head:window-buffer current-window)
+                               (text:make-span point-row point-col point-row n) '(""))
+                 (kill! text)
+                 (changed!)))]
             [(< point-row (- (vlen) 1))
-             (kill! "\n")
-             (delete-forward!)])))
+             (delete-forward!)
+             (kill! "\n")])))
 
   (define (current-kill-ring)
     ;; The kill ring's text, for consumers outside the buffer -- the
@@ -724,12 +706,8 @@
     ;; Kill-ring entries can span lines after consecutive C-k commands.  Insert
     ;; newlines as buffer structure rather than embedding them in a line string.
     (unless (string=? kill-ring "")
-      (record-edit! (format "yank ~s" kill-ring))
-      (parameterize ([suppress-history #t])
-        (let ([parts (string:lines kill-ring)])
-          (insert-text! (car parts))
-          (for-each (lambda (part) (newline!) (insert-text! part))
-                    (cdr parts))))))
+      (with-recorded-edit (format "yank ~s" kill-ring)
+        (insert-text! kill-ring))))
 
   (define (text-between sr sc er ec)
     (if (= sr er)
@@ -744,24 +722,23 @@
                           (cons "\n" acc)))))))
 
   (define (delete-region! sr sc er ec)
-    (if (= sr er)
-        (set-line! sr (string:delete (line-at sr) sc ec))
-        (let ([joined (string-append (substring (line-at sr) 0 sc)
-                                     (string:tail (line-at er) ec))])
-          (splice-lines! sr (+ er 1) (list joined)))))
+    (submit-edit! (head:window-buffer current-window)
+                  (text:make-span sr sc er ec) '("")))
 
   (define (replace-region-text! start end text)
     ;; Replace one ordered buffer range in a single structural operation.
     ;; Bulk editors use this instead of rebuilding a line once per match.
-    (let ([sr (car start)] [sc (cdr start)]
-          [er (car end)] [ec (cdr end)])
-      (record-edit! "replace region")
-      (parameterize ([suppress-history #t])
-        (delete-region! sr sc er ec)
-        (set! point-row sr)
-        (set! point-col sc)
-        (insert-text! text))
-      (changed!)))
+    (with-recorded-edit "replace region"
+      (let ([sr (car start)] [sc (cdr start)]
+            [er (car end)] [ec (cdr end)]
+            [parts (split-inserted-lines text)])
+        (submit-edit! (head:window-buffer current-window)
+                      (text:make-span sr sc er ec) parts)
+        (set! point-row (+ sr (- (length parts) 1)))
+        (set! point-col (if (null? (cdr parts))
+                          (+ sc (string-length (car parts)))
+                          (string-length (car (reverse parts)))))
+        (changed!))))
 
   (define (copy-region!)
     ;; Save the region to the kill ring without deleting it -- M-w, as
@@ -783,11 +760,11 @@
           (if (and (= sr er) (= sc ec))
               (set! message "Empty region")
               (let ([text (text-between sr sc er ec)])
-                (record-edit! (format "kill ~s" text))
-                (kill! text)
-                (delete-region! sr sc er ec)
-                (set! point-row sr) (set! point-col sc)
-                (changed!))))))
+                (with-recorded-edit (format "kill ~s" text)
+                  (delete-region! sr sc er ec)
+                  (kill! text)
+                  (set! point-row sr) (set! point-col sc)
+                  (changed!)))))))
 
   ;;; Files -----------------------------------------------------------------
 
@@ -949,12 +926,12 @@
     ;; save writes cleanly.  One undo entry.
     (let-values ([(merged merged-trailing conflicts report-lines)
                   (file:merge path (head:buffer-base b) (buffer-text b) disk)])
-      (head:buffer-base-set! b disk)
-      (head:buffer-stamp-set! b (file:stamp path))
-      (record-edit! "merge from disk")
-      (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing)))
-      (changed!)
-      (values conflicts (merge-report! b report-lines))))
+      (with-recorded-edit "merge from disk"
+        (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing)))
+        (head:buffer-base-set! b disk)
+        (head:buffer-stamp-set! b (file:stamp path))
+        (changed!)
+        (values conflicts (merge-report! b report-lines)))))
 
   (define (reread-from-disk! b path disk)
     ;; Discard the buffer's copy and adopt the disk verbatim.  Rereading is a
@@ -1542,25 +1519,29 @@
                            (cons (cons r (car cs)) acc)
                            acc))))])
       (when (pair? changes)
-        (record-edit! "indent")
-        (let ([nv (let ([o (make-vector n)])
-                    (do ([i 0 (+ i 1)]) ((= i n) o)
-                      (vector-set! o i (vector-ref v i))))])
-          (for-each
-            (lambda (change)
-              (let* ([row (car change)] [col (cdr change)]
-                     [old (vector-ref v row)]
-                     [lead (leading-blanks old)]
-                     [follow (lambda (c)
-                               (if (<= c lead) col (+ c (- col lead))))])
-                (vector-set! nv row (retabbed old col))
-                (when (= row point-row)
-                  (set! point-col (follow point-col)))
-                (when (and mark-active? (= row mark-row))
-                  (set! mark-col (follow mark-col)))))
-            changes)
-          (replace-buffer-lines! b nv))
-        (changed!))
+        (with-recorded-edit "indent"
+          (let ([nv (let ([o (make-vector n)])
+                      (do ([i 0 (+ i 1)]) ((= i n) o)
+                        (vector-set! o i (vector-ref v i))))]
+                [next-point-col point-col]
+                [next-mark-col mark-col])
+            (for-each
+              (lambda (change)
+                (let* ([row (car change)] [col (cdr change)]
+                       [old (vector-ref v row)]
+                       [lead (leading-blanks old)]
+                       [follow (lambda (c)
+                                 (if (<= c lead) col (+ c (- col lead))))])
+                  (vector-set! nv row (retabbed old col))
+                  (when (= row point-row)
+                    (set! next-point-col (follow point-col)))
+                  (when (and mark-active? (= row mark-row))
+                    (set! next-mark-col (follow mark-col)))))
+              changes)
+            (replace-buffer-lines! b nv)
+            (set! point-col next-point-col)
+            (set! mark-col next-mark-col))
+          (changed!)))
       (pair? changes)))
 
   (define (indent-rows! from to)
@@ -1652,11 +1633,11 @@
                                              (cons (vector-ref v r) acc)))))]
                         [else (loop (+ r 1)
                                     (cons (vector-ref v r) acc))])))])
-      (record-edit! "format")
-      (apply replace-buffer-lines! b (if (zero? (vector-length nv)) (vector "") nv) properties)
-      (set! point-row (max 0 (min point-row
-                                  (- (vector-length (head:buffer-lines b)) 1))))
-      (changed!)))
+      (with-recorded-edit "format"
+        (apply replace-buffer-lines! b (if (zero? (vector-length nv)) (vector "") nv) properties)
+        (set! point-row (max 0 (min point-row
+                                    (- (vector-length (head:buffer-lines b)) 1))))
+        (changed!))))
 
   (define (format-rows! from to)
     ;; Format rows [from, to] by the mode's formatter; -> whether the
@@ -1910,10 +1891,7 @@
       (unless (string=? text "")
         (call-as-one-edit! (format "insert ~s" text)
           (lambda ()
-            (let ([parts (tty:paste-lines text)])
-              (insert-text! (car parts))
-              (for-each (lambda (part) (newline!) (insert-text! part))
-                        (cdr parts))))))))
+            (insert-text! (string:join (tty:paste-lines text) "\n")))))))
 
   ;; Consecutive typed characters coalesce into one undo entry (up to
   ;; twenty, as in Emacs), so undo removes the run, not one character.
@@ -1938,8 +1916,8 @@
                (= (caddr chain) point-col)
                (< (cadddr chain) 20))
           (let ([text (string-append (list-ref chain 4) s)])
-            (relabel-last-edit! (format "insert ~s" text))
-            (parameterize ([suppress-history #t]) (insert-text! s))
+            (parameterize ([suppress-history #t])
+              (with-recorded-edit (format "insert ~s" text) (insert-text! s)))
             (set! insert-chain
               (list b point-row point-col (+ (cadddr chain) 1) text)))
           (begin
@@ -2574,9 +2552,7 @@
                                                 'query-replace event))])
                             (case action
                               [(replace)
-                               (goto-point! hit)
-                               (do ([i 0 (+ i 1)]) ((= i m)) (delete-forward!))
-                               (insert-text! to)
+                               (replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
                                (set! replaced (+ replaced 1))
                                (loop (car (point)) (cdr (point)))]
                               [(skip)
