@@ -348,6 +348,10 @@ end to end with all suites green, adds tests for what it introduces,
 and updates the manual where behavior is user-visible.  In-process
 `e` is the product throughout; the socket arrives last.
 
+The v2 review in [section 11](#11-review-findings-and-prerequisites)
+records open defects in the current seams.  The milestone assignments
+below are completion gates; these fixes can land earlier on their own.
+
 ### M0 -- Local buffers
 
 - `head.e`: buffers without a twin; `local-facts` on the record;
@@ -371,6 +375,10 @@ and updates the manual where behavior is user-visible.  In-process
 - The `audience` property, honored by adoption.
 - Stale edits rebase through missed deltas instead of resetting; the
   conflict message is reserved for unresolvable rebases.
+- Close R1--R5: undo preserves foreign work, scratch edits trigger
+  unsaved-work protection, questions survive concurrent callers,
+  store events stay in revision order, and both selection endpoints
+  follow edits.
 - Tests: `tests/actor.ss` (directory, presence), `tests/store.ss`
   (audience), `wiring.ss` (a foreign edit racing a keystroke leaves
   both edits in the text).
@@ -409,6 +417,8 @@ and updates the manual where behavior is user-visible.  In-process
 
 - `log:add!` records carry the actor; the base's log is the one;
   the `*log*` view is a head app on a local buffer rendering it.
+- Close A2: concurrent appends preserve every record, including
+  during vector growth, before relying on the log for actor audits.
 - Tests: `tests/log.ss` (actor on records), `wiring.ss` (a head
   message appears in the base log under the head's actor).
 
@@ -418,6 +428,9 @@ and updates the manual where behavior is user-visible.  In-process
   highlight through the highlighter registry with a deadline, reveal
   by viewport, message through the echo area.
 - `sandbox:` gains `suggest!` under the session's policy.
+- Close R6 and R7 before extending capabilities: quotas hold under
+  overlapping calls, and reload revokes retained sessions and entry
+  points.
 - Tests: `tests/sandbox.ss` and `tests/policy.ss` (the call exists
   and is budgeted), `wiring.ss` (an agent highlight paints and
   fades; a refused one does not).
@@ -431,6 +444,9 @@ and updates the manual where behavior is user-visible.  In-process
   delivery on the head; optimistic apply with reconciliation.
 - `e --daemon`, `e --attach`, the module side declaration and
   loader filtering, `config.e` in both processes.
+- Resolve A1's reload contract for each process and document which
+  modules require restart.  Preserve R4's revision ordering through
+  event coalescing and resync.
 - Tests: `tests/wire.ss` (a base and a head in two processes over a
   socket: attach, adopt, edit, see the other's edit, detach,
   reattach and resync), `interactive.ss` run once in-process and once
@@ -444,6 +460,8 @@ and updates the manual where behavior is user-visible.  In-process
   claude module ports onto it, as a client of the base.
 - Tests: `tests/wire.ss` extended (an agent connection reads a
   buffer, edits within its quota, suggests a highlight a head shows).
+- Carry R6 and R7's regression checks over the connection: parallel
+  requests cannot overspend, and revoked sessions cannot resume work.
 
 ### Later, not scheduled
 
@@ -474,3 +492,156 @@ and updates the manual where behavior is user-visible.  In-process
   filtering or two files, `config.e` and `head.e`-style per-head
   settings, decided when M6 makes the difference visible.
 - **Naming the head-side renderer.**  `remote-app` is a placeholder.
+
+## 11. Review findings and prerequisites
+
+Review baseline (2026-09-04): `v2@8b28a92` against
+`main@a9a7b42`, covering 98 commits and 90 changed files.  The branch
+separates the former core into `kernel`, `store`/`text`,
+`head`/`paint`/`prompt`, and the command layer `edit`.  It still runs
+one head in one process; the base/head split and wire above are
+planned work.
+
+All seven correctness findings below are **open at this baseline**.
+Separate Scheme probes reproduced them.  All 19 existing automated
+suites passed (708 checks), including live PTY tests; optional
+`vttest` was not run.  The regression checks below are required new
+coverage, not claims about what those passing suites already test.
+Concurrent stress counts describe individual runs and vary with
+scheduling.
+
+### R1: Undo can discard another actor's work (P1; M1)
+
+`foreign-edits-since?` and `history-shift!` in
+[edit.e](../lib/edit.e) rely on the store's bounded delta history to
+decide whether restoring a snapshot is safe.  A human edit, a foreign
+edit, another human edit, and two undos reproduce data loss: the
+first undo resets the store and clears that history; the second sees
+no foreign edit and restores a snapshot from before it.
+
+Undo must preserve foreign work or refuse.  Its safety check needs
+provenance that survives resets and history truncation, or undo must
+be expressed as a safely rebased edit.  Missing history cannot count
+as proof that no foreign edit occurred.  Add a `tests/wiring.ss`
+regression for this sequence, plus cleared and truncated history;
+the foreign text must survive every permitted undo and redo.
+
+### R2: Foreign scratch edits do not become unsaved work (P1; M1)
+
+`sync-foreign-edits!` in [head.e](../lib/head.e) marks adopted text
+modified only when the buffer visits a file.  Editing an empty
+scratch buffer through the store leaves `buffer-clean?` true, so
+kill and quit can discard agent-written text without a warning.
+
+Dirty state for editable store buffers must be shared truth and
+cover scratch buffers as well as files.  Generated app output needs
+an explicit policy separate from unsaved user or agent work.  Add
+store and wiring checks that foreign edits make scratch buffers
+dirty and trigger the normal kill/quit protection; include the
+same check after another head adopts the buffer when M6 lands.
+
+### R3: Concurrent questions disappear (P2; M1)
+
+`ask!` and `take-ticket!` in [actor.e](../lib/actor.e) update the
+ticket counter and pending-question list without synchronization.
+Eight threads issuing 300 questions each returned 2,400 tickets but
+left only 414 pending in one run.  Lost questions cannot be answered;
+answer and cancel also race to consume a ticket.
+
+Allocate unique tickets and update or consume pending entries
+atomically.  Delivery and reply callbacks must run outside that
+lock.  Extend `tests/actor.ss` with concurrent asks and racing
+answer/cancel calls: every delivered, unanswered question remains
+pending, and each ticket can invoke its reply at most once.
+
+### R4: Store notifications can arrive out of order (P2; M1, M6)
+
+Mutations in [store.e](../lib/store.e) release the store lock before
+calling `notify!`.  A later commit can therefore notify first, while
+the head rebases positions in arrival order.  A controlled probe
+delivered revisions 3 then 2, moved a cursor to column 2 instead of
+1, and published that incorrect position back to the store.
+
+Enqueue events in commit order under the mutation lock and deliver
+them in that order, keeping subscriber callbacks outside the lock.
+Consumers must detect revision gaps or stale events and resync
+instead of applying deltas in arbitrary arrival order.  Add a
+barrier-controlled `tests/store.ss` case and a wiring check of the
+resulting cursor and published marks.  M6 must preserve the same
+contract when events are coalesced or a connection resyncs.
+
+### R5: Foreign edits change the selected text (P2; M1)
+
+`sync-foreign-edits!` in [head.e](../lib/head.e) rebases point and
+saved positions but leaves the selection mark unchanged.  Inserting
+a line above a selection of `pick` changed the selected text to
+`zero\npick`.  Region commands then act on unintended text, and
+publishing the head's marks can overwrite the store's correctly
+rebased region with the stale endpoint.
+
+Rebase both selection endpoints through the same ordered deltas,
+with a defined clamp/resync rule when a reset removes their text.
+Add `tests/wiring.ss` checks for forward and backward selections,
+insertions and deletions before or across them, and agreement
+between the visible selection and the published region.
+
+### R6: Concurrent edits exceed a session's quota (P2; M5)
+
+`session-edit!` in [policy.e](../lib/policy.e) checks the budget
+before entering the store and spends it after the store call and
+its callbacks return.  Holding the first call in a subscriber let a
+second call succeed too, despite a quota of one.
+
+Reserve quota atomically before applying an edit and refund it when
+the store refuses the edit.  All operations sharing the budget must
+use the same accounting.  Add a controlled overlapping-call test
+to `tests/policy.ss`: quota one permits exactly one accepted edit,
+and a refused edit does not consume the remaining allowance.  Repeat
+this through parallel agent requests in M7.
+
+### R7: Reload leaves old capabilities usable (P2; M5)
+
+[policy.e](../lib/policy.e) promises that reloading revokes existing
+sessions, but replacing `live-sessions` does not mark old session
+objects revoked.  Retaining a session and the old `session-eval!`
+procedure allowed evaluation after an actual module reload.
+
+Revocation must reach retained capabilities, including callers that
+cached an old entry point.  Use persistent revocation or generation
+state, or revoke all prior sessions before replacing the module.
+Add a reload regression that retains both a session and old entry
+points: evaluation, edits, and questions must refuse afterward;
+freshly minted sessions must still work.  Carry this check into M7's
+connection lifecycle.
+
+### A1: The documented reload boundary exceeds the implementation (M6)
+
+`reload-module!` in [kernel.e](../lib/kernel.e) rejects any library
+that `main` links against, to prevent the running loop from retaining
+an old instance while new code uses another.  Besides `kernel` and
+`main`, 16 libraries are pinned at this baseline: `actor`, `diff`,
+`echo`, `file`, `head`, `keymap`, `log`, `mode`, `paint`, `prompt`,
+`store`, `string`, `style`, `sys`, `text`, and `tty`.
+[README.md](../README.md) and [the module manual](../manual/MODULES.md)
+instead say everything except `kernel` and `main` can reload.
+
+Keep the guard unless the linkage and state-ownership problem is
+solved, and correct the documented boundary.  M6's module-side
+declaration alone does not solve reload: each process needs an
+explicit restart boundary.  Validate allowed and refused reloads
+against the running process's dependency graph.
+
+### A2: Concurrent logging loses audit records (M4)
+
+`append-record!` in [log.e](../lib/log.e) updates its vector and
+count without synchronization.  A stress run retained only 1,417
+of 8,000 appended records.  This race is inherited from the old
+logger, rather than introduced by the core split, but makes the
+shared actor audit trail unreliable.
+
+Synchronize append, vector growth, and publication of the count;
+readers need a coherent view.  Invoke presentation callbacks outside
+the lock.  Extend `tests/log.ss` with concurrent writers across
+growth boundaries and verify that every submitted record appears
+exactly once.  Actor attribution in M4 is complete only when records
+are also preserved under concurrent load.
