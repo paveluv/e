@@ -62,7 +62,6 @@
      (goto-point! '(1 . 4))
      (insert-text! "own")
      (undo!)
-     (head:buffer-modified-set! overlap #f)
      (goto-point! '(0 . 2))
      (set-mark-command!)
      (copy-to-kill-buffer! "saved kill")

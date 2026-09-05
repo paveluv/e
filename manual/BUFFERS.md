@@ -62,6 +62,10 @@ buffer requires confirmation. Killing a buffer removes its app registration,
 if any, and every window showing it changes to another live buffer. If the last
 buffer is killed, e creates a new `*scratch*` buffer.
 
+Scratch text written by another actor is unsaved work too. Making a buffer
+read-only still leaves its unsaved text protected by kill and quit prompts.
+Generated tools and views declare that their output can be discarded.
+
 Read-only buffers reject editing commands without creating an undo entry. The
 error is reported in the echo area rather than corrupting generated content.
 
@@ -97,6 +101,10 @@ whether its disk contents changed.
 Files round-trip byte-for-byte, including whether they end in a newline. A file
 buffer is considered clean when its text is identical to its disk baseline;
 timestamps alone do not make it modified.
+Saving captures the current shared text, including edits that have not yet
+appeared in a window. If another edit arrives during the save, that newer
+work stays marked unsaved. Undoing back to the saved contents makes the
+shared buffer clean again, regardless of which actor requested undo.
 
 ### External changes and rereading
 
@@ -340,6 +348,12 @@ kind.  A local buffer's facts and generated text stay in the head and
 produce no store notifications; local points and selections are not
 published to other actors.
 
+`head:buffer-lines-set!` and `head:store-reset!` accept a line list or vector.
+An empty input becomes one empty line. They validate the complete input and
+own a new vector; callers must treat the shared line strings as immutable.
+Reset is for an explicit baseline or generated view, and clears shared undo.
+Ordinary edits use `head:store-edit!`.
+
 Local labels share the head's buffer namespace.  A collision receives
 `<name 2>`, `<name 3>`, and so on; when a shared buffer arrives or is renamed,
 the local buffer yields the conflicting label.  `head:add-buffer!`
@@ -357,6 +371,21 @@ tool keys such as `"*log*"` therefore still identify the same tool, whose
 displayed name is now `<log>`.  Use the displayed label with `buffer` and
 the key with `head:find-tool-buffer`.
 
+`head:buffer-fact` uses its fallback only for an absent fact; an explicit
+`#f` remains `#f`, and store failures propagate. `head:buffer-facts-set!`
+accepts an alist and validates the whole batch before either owner changes
+any fact. The corresponding store call is `(store:set-properties! actor id
+facts)`. `base` is a string or `#f`; `trailing` and `disposable` are booleans.
+Shared `modified` is derived and cannot be set or dropped. Generated output
+can set `disposable` to `#t`; registered apps and tool buffers do so already.
+The local modified flag remains available for private command history.
+
+`(head:buffer-state b)` and `(store:snapshot-state id)` return
+`(values text revision facts)` from one current read. The shared form can be
+newer than the window's cached text. `(head:store-reset! b lines facts)` and
+`(store:reset! actor id lines facts)` install a baseline and related facts
+together; facts are optional. An invalid input changes neither text nor facts.
+
 For shared text, `(store:snapshot id)` returns immutable lines and their
 revision.  `(store:snapshot-since id basis)` also returns a complete list
 of `(revision actor delta)` changes since that basis, oldest first, read
@@ -368,12 +397,14 @@ the lost history.
 
 `(store:edit! actor id basis span replacement [context])` applies an
 attributed edit or returns a stale refusal.  The optional context is
-`(group-key label [property-alist])`: the same non-false key groups that
+`(group-key label [undo-facts [commit-facts]])`: the same non-false key groups that
 actor's transactions in this buffer into one undo action.  Without a key,
 each call is an action.  Properties such as `((trailing . #t))` commit with
 the text and are included in its inverse.  Property versions are checked
 on undo and redo, so a later write blocks restoration even if it returns
 to the same value.  Public property queries omit deleted properties.
+Optional commit facts are installed in the same transaction but survive
+undo, as a merge's disk baseline should. A key cannot appear in both lists.
 
 `store:edit-with-snapshot!` takes the same arguments but returns
 `(values 'applied (revision text changes))`. This acknowledgement describes

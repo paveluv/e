@@ -15,6 +15,7 @@
   '(begin
      (import (prefix (mode) mode:)
              (prefix (head) head:)
+             (prefix (store) store:)
              (only (chezscheme) format box unbox set-box!))
 
      (define checks 0)
@@ -64,6 +65,24 @@
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
      (mode:choose! plain #f)
      (check 'unchosen (mode:of plain) #f)
+
+     ;; Observers see the mode and whether it was detected as one choice.
+     (define atomic-mode (head:new-buffer "atomic.probe"))
+     (head:buffer-file-set! atomic-mode "/nowhere/atomic.probe")
+     (define mode-observations '())
+     (define mode-token
+       (store:subscribe! (head:buffer-store-id atomic-mode)
+         (lambda (event)
+           (when (eq? (car event) 'property)
+             (set! mode-observations
+               (cons (list (mode:name-of atomic-mode) (head:buffer-mode-auto atomic-mode))
+                     mode-observations))))))
+     (mode:choose! atomic-mode "probe")
+     (check 'manual-mode-choice-is-atomic mode-observations '(("probe" #f) ("probe" #f)))
+     (set! mode-observations '())
+     (mode:assign! atomic-mode)
+     (check 'detected-mode-choice-is-atomic mode-observations '(("probe" #t) ("probe" #t)))
+     (store:unsubscribe! mode-token)
 
      ;; A local buffer uses the same mode API, without a store twin.
      (define local (head:new-local-buffer "*local-mode*"))

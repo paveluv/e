@@ -47,7 +47,6 @@
 
      (define source (make-source "notes.md" '("# Heading" "" "one" "two")))
      (define id (head:buffer-store-id source))
-     (head:buffer-modified-set! source #t)
      (set-buffer-wrap! source #t)
      (define history (vector '(saved-undo) '(saved-redo)))
      (head:buffer-history-set! source history)

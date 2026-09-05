@@ -21,10 +21,11 @@
 (library (store)
   (export create! delete! reset! rename!
           buffer-list exists? buffer-name find-named
-          snapshot snapshot-since revision line-count line extract
+          snapshot snapshot-since snapshot-state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
           set-mark! mark drop-mark! marks
-          set-property! drop-property! property properties
+          set-property! set-properties! drop-property! property properties
+          validate-properties validate-edit-context
           subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme)
@@ -43,7 +44,9 @@
             (mutable deltas)     ; (#(revision actor delta origin facts) ...) newest first
             (mutable marks)      ; (((actor . name) . position) ...)
             (mutable undo)       ; undo groups, most recent operation first
-            (mutable properties))) ; ((key . datum) ...), see set-property!
+            (mutable properties) ; ((key . datum) ...), see set-property!
+            (mutable baseline)   ; cached (base-cell lines trailing?), or #f
+            (mutable modified))) ; derived from text/trailing and the baseline
 
   (define-record-type undo-group
     (fields id actor key
@@ -88,6 +91,80 @@
                  (replace-property-cell properties (caddr change)))
                properties changes))
 
+  (define (property-value b key fallback)
+    (let ([cell (property-cell (buffer-properties b) key)])
+      (if (and cell (not (eq? (cdr cell) missing-property))) (cdr cell) fallback)))
+
+  (define (refresh-modified! b)
+    ;; Dirty state is store truth, never a head's bookkeeping write.
+    ;; Parse the baseline once per property version; line equality can
+    ;; share unchanged strings and avoids serializing a file per key.
+    (let* ([cell (property-cell (buffer-properties b) 'base)]
+           [base (property-value b 'base #f)]
+           [cached (buffer-baseline b)]
+           [baseline
+            (and base
+                 (if (and cached (eq? cell (car cached))) cached
+                     (let-values ([(lines trailing?) (text:from-string base)])
+                       (list cell lines trailing?))))]
+           [text (buffer-text b)])
+      (buffer-baseline-set! b baseline)
+      (buffer-modified-set! b
+        (if baseline
+            (not (text:content=? text (property-value b 'trailing #t)
+                                 (cadr baseline) (caddr baseline)))
+            (not (and (= (vector-length text) 1)
+                      (string=? (vector-ref text 0) "")))))))
+
+  (define (validate-properties updates)
+    ;; A pure boundary shared with head-local facts.  Validate the whole
+    ;; batch before either owner can install any part of it.
+    (unless
+      (and (list? updates)
+           (let valid ([rest updates] [seen '()])
+             (or (null? rest)
+                 (let ([entry (car rest)])
+                   (and (pair? entry) (symbol? (car entry))
+                        (not (memq (car entry) seen))
+                        (case (car entry)
+                          [(base) (or (not (cdr entry)) (string? (cdr entry)))]
+                          [(trailing disposable) (boolean? (cdr entry))]
+                          [else #t])
+                        (valid (cdr rest) (cons (car entry) seen)))))))
+      (error 'validate-properties "expected unique symbol keys and valid fact values" updates))
+    updates)
+
+  (define (writable-properties updates)
+    (validate-properties updates)
+    (when (assq 'modified updates)
+      (error 'store "modified is derived from text and its baseline"))
+    updates)
+
+  (define (validate-edit-context context)
+    ;; Undo facts travel with the inverse.  Commit facts describe external
+    ;; state (e.g. a disk baseline) and survive undo, but commit atomically
+    ;; with the text.  A key cannot appear in both sets.
+    (unless (or (not context)
+                (and (list? context) (memv (length context) '(2 3 4))
+                     (or (not (cadr context)) (string? (cadr context)))))
+      (error 'validate-edit-context "expected (key label [undo-facts [commit-facts]])" context))
+    (when (and context (>= (length context) 3))
+      (writable-properties
+        (append (validate-properties (caddr context))
+                (if (= (length context) 4) (validate-properties (cadddr context)) '()))))
+    context)
+
+  (define (install-properties! b updates)
+    (buffer-properties-set! b
+      (fold-left (lambda (facts entry) (replace-property-cell facts (cons (car entry) (cdr entry))))
+                 (buffer-properties b) updates)))
+
+  (define (property-data b)
+    (cons (cons 'modified (buffer-modified b))
+          (map (lambda (entry) (cons (car entry) (cdr entry)))
+               (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
+                       (buffer-properties b)))))
+
   (define (locked thunk)
     (with-mutex (store-lock (current-store)) (thunk)))
 
@@ -109,35 +186,27 @@
   (define (create! actor buffer-name lines)
     ;; -> the new buffer's id.  Empty lines mean one empty line.
     ;; Subscribers hear (create id name actor).
-    (unless (and (list? lines) (for-all string? lines))
-      (error 'create! "lines must be a list of strings" lines))
-    (transact!
-      (lambda ()
-        (let* ([s (current-store)]
-               [id (store-next-id s)])
-          (store-next-id-set! s (+ id 1))
-          (hashtable-set!
-            (store-buffers s) id
-            (make-buffer buffer-name
-                         (list->vector (if (null? lines) '("") lines))
-                         0 '() '() '() '()))
-          (enqueue-event! `(create ,id ,buffer-name ,actor))
-          id))))
+    (let ([text (text:normalize lines)])
+      (transact!
+        (lambda ()
+          (let* ([s (current-store)]
+                 [id (store-next-id s)])
+            (store-next-id-set! s (+ id 1))
+            (let ([b (make-buffer buffer-name text 0 '() '() '() '() #f #f)])
+              (refresh-modified! b)
+              (hashtable-set! (store-buffers s) id b))
+            (enqueue-event! `(create ,id ,buffer-name ,actor))
+            id)))))
 
-  (define (reset! actor id lines)
+  (define (reset! actor id lines . facts)
     ;; Wholesale replacement: a new baseline, not an edit.  The delta
     ;; log and the undo history clear (a stale basis against a reset
     ;; refuses as basis-too-old), and marks clamp into the new text.
-    ;; Views that regenerate their whole content use this; edits
-    ;; should use edit!.
-    (let* ([text (cond [(vector? lines)
-                        (let ([copy (make-vector (vector-length lines))])
-                          (do ([i 0 (+ i 1)])
-                              ((= i (vector-length lines)) copy)
-                            (vector-set! copy i (vector-ref lines i))))]
-                       [(null? lines) (vector "")]
-                       [else (list->vector lines)])]
-           [text (if (zero? (vector-length text)) (vector "") text)]
+    ;; Related baseline facts may join the same transaction.  Loading
+    ;; a file supplies base/trailing/stamp; ordinary edits use edit!.
+    (unless (<= (length facts) 1) (error 'reset! "expected at most one fact batch" facts))
+    (let* ([text (text:normalize lines)]
+           [updates (writable-properties (if (pair? facts) (car facts) '()))]
            [new-revision
             (transact!
               (lambda ()
@@ -152,6 +221,8 @@
                                               (vector-ref text line)))])
                                  (cons line column)))])
                   (buffer-text-set! b text)
+                  (install-properties! b updates)
+                  (refresh-modified! b)
                   (buffer-revision-set! b (+ (buffer-revision b) 1))
                   (buffer-deltas-set! b '())
                   (buffer-undo-set! b '())
@@ -161,6 +232,7 @@
                                    (clamp-mark-value (cdr entry) clamp)))
                            (buffer-marks b)))
                   (enqueue-event! `(reset ,id ,(buffer-revision b) ,actor))
+                  (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
                   (buffer-revision b))))])
       new-revision))
 
@@ -219,6 +291,13 @@
       (lambda ()
         (let ([b (buffer-of 'snapshot id)])
           (values (buffer-text b) (buffer-revision b))))))
+
+  (define (snapshot-state id)
+    ;; Save/clean checks need text and its facts from the same read.
+    (locked
+      (lambda ()
+        (let ([b (buffer-of 'snapshot-state id)])
+          (values (buffer-text b) (buffer-revision b) (property-data b))))))
 
   (define (snapshot-since id basis)
     ;; -> (values text revision changes), from one read.  Changes are
@@ -286,7 +365,7 @@
            (let ([rebased (text:rebase-span span (car deltas))])
              (and rebased (rebase-through rebased (cdr deltas))))]))
 
-  (define (install-edit! b id actor new-text delta origin facts)
+  (define (install-edit! b id actor new-text delta origin facts commit-facts)
     ;; All committed edits, including history operations, pass here.
     ;; The attribution log always retains the actual deltas; cancelling
     ;; pairs is only a temporary proof used when planning another undo.
@@ -297,6 +376,8 @@
       (buffer-deltas-set!
         b (bounded (cons entry (buffer-deltas b)) delta-log-limit))
       (buffer-properties-set! b (apply-property-changes (buffer-properties b) facts))
+      (install-properties! b commit-facts)
+      (refresh-modified! b)
       (buffer-marks-set!
         b (map (lambda (entry)
                  (cons (car entry) (rebase-mark-value (cdr entry) delta)))
@@ -305,9 +386,10 @@
         (append (list 'edit id new-revision actor delta)
                 (if origin (list origin) '())))
       (for-each (lambda (change) (enqueue-event! `(property ,id ,(car change) ,actor))) facts)
+      (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) commit-facts)
       (values new-revision delta)))
 
-  (define (apply-locked! b id actor span replacement origin properties)
+  (define (apply-locked! b id actor span replacement origin properties commit-facts)
     ;; the single mutation point; the caller holds the lock and has a
     ;; span valid against the buffer's current text
     (let-values ([(new-text delta)
@@ -318,7 +400,8 @@
                      (or (property-cell (buffer-properties b) (car update))
                          (cons (car update) missing-property))
                      (cons (car update) (cdr update))))
-             properties))))
+             properties)
+        commit-facts)))
 
   (define (bounded entries n)
     (let loop ([entries entries] [n n])
@@ -378,18 +461,8 @@
     ;; entry out of the retained log.  A head uses this to place its
     ;; command's anchors without guessing where the edit actually landed.
     (let ([context (and (pair? options) (car options))])
-      (unless (and (<= (length options) 1)
-                   (or (not context)
-                       (and (list? context) (memv (length context) '(2 3))
-                            (or (not (cadr context)) (string? (cadr context)))
-                            (or (= (length context) 2)
-                                (let valid ([updates (caddr context)] [seen '()])
-                                  (or (null? updates)
-                                      (and (pair? updates) (pair? (car updates))
-                                           (symbol? (caar updates))
-                                           (not (memq (caar updates) seen))
-                                           (valid (cdr updates) (cons (caar updates) seen)))))))))
-        (error 'edit! "expected optional (group-key label [property-alist])" options))
+      (unless (<= (length options) 1) (error 'edit! "expected one context" options))
+      (validate-edit-context context)
       (let ([outcome
              (transact!
                (lambda ()
@@ -406,8 +479,10 @@
                       (let-values ([(new-revision delta)
                                     (apply-locked! b id actor rebased
                                                    replacement #f
-                                                   (if (and context (= (length context) 3))
-                                                       (caddr context) '()))])
+                                                   (if (and context (>= (length context) 3))
+                                                       (caddr context) '())
+                                                   (if (and context (= (length context) 4))
+                                                       (cadddr context) '()))])
                         (remember-edit! b actor context)
                         (list 'applied new-revision (buffer-text b)
                               (append (map change-data since)
@@ -546,7 +621,7 @@
                     (let ([parts '()])
                       (for-each
                         (lambda (step)
-                          (install-edit! b id actor (car step) (cadr step) (caddr step) (cadddr step))
+                          (install-edit! b id actor (car step) (cadr step) (caddr step) (cadddr step) '())
                           (set! parts (cons (car (buffer-deltas b)) parts)))
                         plan)
                       (undo-group-parts-set! group parts)
@@ -718,48 +793,53 @@
   ;; reads the same truth the first one wrote.  Per-seat state --
   ;; cursors, selections, viewports -- stays with heads and their
   ;; marks.  Values are data only -- #f included: a fact may be
-  ;; explicitly off -- and an absent property reads as #f;
-  ;; drop-property! forgets one.  Properties survive resets and
-  ;; renames (they are not text) and die with delete!.  Subscribers
-  ;; hear (property id key actor).
+  ;; explicitly off -- and an absent property uses its declared fallback.
+  ;; Modified is derived from text/trailing/base and cannot be written.
+  ;; Its causing edit/reset/property event already notifies observers;
+  ;; no redundant modified-property event is needed.  Other properties
+  ;; survive resets and renames unless explicitly updated, and die with
+  ;; delete!.  Subscribers hear (property id key actor).
 
   (define (set-property! actor id key value)
-    (unless (symbol? key)
-      (error 'set-property! "expected a symbol key" key))
+    (set-properties! actor id (list (cons key value))))
+
+  (define (set-properties! actor id updates)
+    (writable-properties updates)
     (transact!
       (lambda ()
-        (let ([b (buffer-of 'set-property! id)])
-          (buffer-properties-set!
-            b (replace-property-cell (buffer-properties b) (cons key value)))
-          (enqueue-event! `(property ,id ,key ,actor)))))
+        (let ([b (buffer-of 'set-properties! id)])
+          (install-properties! b updates)
+          (refresh-modified! b)
+          (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates))))
     (void))
 
   (define (drop-property! actor id key)
     (unless (symbol? key)
       (error 'drop-property! "expected a symbol key" key))
+    (when (eq? key 'modified) (error 'drop-property! "modified is derived"))
     (transact!
       (lambda ()
         (let ([b (buffer-of 'drop-property! id)])
           (buffer-properties-set!
             b (replace-property-cell (buffer-properties b) (cons key missing-property)))
+          (refresh-modified! b)
           (enqueue-event! `(property ,id ,key ,actor)))))
     (void))
 
-  (define (property id key)
-    ;; the buffer's fact under key, or #f
+  (define (property id key . fallback)
+    ;; Absence uses the fallback (#f by default); an explicit #f stays #f.
+    (unless (<= (length fallback) 1) (error 'property "expected one fallback" fallback))
     (locked
       (lambda ()
-        (cond [(property-cell (buffer-properties (buffer-of 'property id)) key)
-               => (lambda (cell) (and (not (eq? (cdr cell) missing-property)) (cdr cell)))]
-              [else #f]))))
+        (let ([b (buffer-of 'property id)])
+          (if (eq? key 'modified) (buffer-modified b)
+              (property-value b key (and (pair? fallback) (car fallback))))))))
 
   (define (properties id)
     ;; every fact, as fresh pairs: ((key . value) ...)
     (locked
       (lambda ()
-        (map (lambda (entry) (cons (car entry) (cdr entry)))
-             (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
-                     (buffer-properties (buffer-of 'properties id)))))))
+        (property-data (buffer-of 'properties id)))))
 
   ;;; Subscriptions ------------------------------------------------------------
 

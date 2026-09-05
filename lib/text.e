@@ -20,7 +20,7 @@
 ;; (text:rebase-position ...).
 
 (library (text)
-  (export splice
+  (export normalize from-string to-string content=? splice
           make-span span? span-start span-end
           normalize-span span-empty? contains? overlap?
           position<? position<=? position=?
@@ -29,6 +29,58 @@
           delta-line-shift
           rebase-position rebase-span rebase-delta rebase-result-position)
   (import (rnrs) (only (chezscheme) format))
+
+  ;;; Text boundaries ------------------------------------------------------
+
+  (define (normalize lines)
+    ;; Own the vector while sharing immutable line strings.  Baselines
+    ;; enter through this same boundary for local and shared buffers.
+    (unless (or (vector? lines) (list? lines))
+      (error 'normalize "expected a line vector or list" lines))
+    (let ([items (if (vector? lines) (vector->list lines) lines)])
+      (unless (for-all string? items)
+        (error 'normalize "expected line strings" lines))
+      (list->vector (if (null? items) '("") items))))
+
+  (define (from-string s)
+    ;; File contents as lines plus the final-newline fact.  Keeping this
+    ;; pure lets the store compare a disk baseline without doing I/O.
+    (let* ([n (string-length s)]
+           [trailing? (and (> n 0) (char=? (string-ref s (- n 1)) #\newline))]
+           [end (if trailing? (- n 1) n)])
+      (let loop ([i 0] [start 0] [lines '()])
+        (cond [(= i end)
+               (values (list->vector (reverse (cons (substring s start end) lines))) trailing?)]
+              [(char=? (string-ref s i) #\newline)
+               (loop (+ i 1) (+ i 1) (cons (substring s start i) lines))]
+              [else (loop (+ i 1) start lines)]))))
+
+  (define (to-string lines trailing?)
+    (let ([n (vector-length lines)])
+      (if (zero? n)
+          (if trailing? "\n" "")
+          (let loop ([i (- n 1)] [parts (if trailing? '("\n") '())])
+            (let ([parts (cons (vector-ref lines i) parts)])
+              (if (zero? i) (apply string-append parts)
+                  (loop (- i 1) (cons "\n" parts))))))))
+
+  (define (content=? left left-trailing? right right-trailing?)
+    ;; A final empty row without a trailing newline represents the same
+    ;; bytes as the preceding rows WITH one.  Compare those normal forms
+    ;; without allocating strings or copying a whole text on every edit.
+    (define (normal-length lines trailing?)
+      (let ([n (vector-length lines)])
+        (if (and (not trailing?) (> n 1) (string=? (vector-ref lines (- n 1)) ""))
+            (- n 1) n)))
+    (let ([nl (normal-length left left-trailing?)]
+          [nr (normal-length right right-trailing?)])
+      (and (= nl nr)
+           (eq? (or left-trailing? (< nl (vector-length left)))
+                (or right-trailing? (< nr (vector-length right))))
+           (let same ([i 0])
+             (or (= i nl)
+                 (and (string=? (vector-ref left i) (vector-ref right i))
+                      (same (+ i 1))))))))
 
   ;;; Positions and spans --------------------------------------------------
 

@@ -25,7 +25,7 @@
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'store-test label actual expected)))
+         (error 'store-test (symbol->string label) actual expected)))
 
      (define alice '(human alice))
      (define bot '(agent claude 1))
@@ -379,7 +379,8 @@
      (store:edit! alice absent 0 (span 0 0 0 1) '("A") '(g "group" ((trailing . #f))))
      (store:edit! alice absent 1 (span 1 0 1 1) '("B") '(g "group" ((trailing . #t))))
      (store:undo! reviewer absent 'all)
-     (check 'grouped-fact-undo-restores-absence (store:properties absent) '())
+     (check 'grouped-fact-undo-restores-absence
+            (remp (lambda (entry) (eq? (car entry) 'modified)) (store:properties absent)) '())
      (store:redo! reviewer absent)
      (check 'grouped-fact-redo-restores-value (store:property absent 'trailing) #t)
      (store:undo! reviewer absent 'all)
@@ -387,7 +388,8 @@
      (check 'another-drop-invalidates-absent-fact-redo
             (call-with-values (lambda () (store:redo! reviewer absent)) list)
             '(blocked property-changed))
-     (check 'property-tombstones-stay-private (store:properties absent) '())
+     (check 'property-tombstones-stay-private
+            (remp (lambda (entry) (eq? (car entry) 'modified)) (store:properties absent)) '())
      (define invalid-context-revision (store:revision absent))
      (check 'duplicate-transaction-properties-refuse
             (guard (ex [else #t])

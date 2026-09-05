@@ -31,6 +31,7 @@
           (prefix (only (sys) canonical-file-path) sys:)
           (prefix (only (diff) merge3 merge-report-lines) diff:)
           (prefix (string) string:)
+          (prefix (text) text:)
           (prefix (log) log:)
           (prefix (kernel) kernel:))
 
@@ -182,27 +183,13 @@
   (define (lines s)
     ;; s split at newlines, a trailing newline yielding no empty last
     ;; line: the shape comparisons and merges run on.
-    (let* ([n (string-length s)]
-           [body (if (and (> n 0)
-                          (char=? (string-ref s (- n 1)) #\newline))
-                     (substring s 0 (- n 1))
-                     s)])
-      (list->vector (string:lines body))))
+    (let-values ([(lines trailing?) (text:from-string s)]) lines))
 
   (define (ends-in-newline? s)
     (and (> (string-length s) 0)
          (char=? (string-ref s (- (string-length s) 1)) #\newline)))
 
-  (define (text v trailing?)
-    ;; the inverse of lines: the file's text for a line vector
-    (let ([n (vector-length v)])
-      (if (= n 0)
-          (if trailing? "\n" "")
-          (let loop ([i (- n 1)] [acc (if trailing? (list "\n") '())])
-            (let ([acc (cons (vector-ref v i) acc)])
-              (if (= i 0)
-                  (apply string-append acc)
-                  (loop (- i 1) (cons "\n" acc))))))))
+  (define text text:to-string)
 
   ;;; Merging -----------------------------------------------------------------------
 

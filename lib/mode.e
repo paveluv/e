@@ -116,8 +116,7 @@
 
   (define (assign-mode! b)
     (set-mode-of! b
-      (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0)))
-    (head:buffer-mode-auto-set! b #t))
+      (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0)) #t))
 
   (define (find-mode name)
     (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name))))
@@ -125,8 +124,7 @@
   (define (set-buffer-mode! b name)
     ;; Give b the registered mode called name (#f for none), regardless of
     ;; its file name -- how transcript buffers get their highlighting.
-    (set-mode-of! b (and name (find-mode name)))
-    (head:buffer-mode-auto-set! b #f))
+    (set-mode-of! b (and name (find-mode name)) #f))
 
   (define (key-context b)
     ;; A mode may carry its own key bindings under a context named
@@ -142,8 +140,10 @@
   (define (mode-of b)
     (let ([n (head:buffer-fact b 'mode #f)]) (and n (find-mode n))))
 
-  (define (set-mode-of! b m)
-    (head:buffer-fact-set! b 'mode (and m (mode-name m))))
+  (define (set-mode-of! b m . auto?)
+    (head:buffer-facts-set! b
+      (cons (cons 'mode (and m (mode-name m)))
+            (if (pair? auto?) (list (cons 'mode-auto (car auto?))) '()))))
 
   (define (no-styles s) #f)
 

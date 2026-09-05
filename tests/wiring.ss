@@ -106,6 +106,42 @@
                      (lambda () (store:unsubscribe! token))))))
             '(#t #t))
 
+     ;; A direct store edit of the otherwise empty scratch buffer is
+     ;; unsaved work.  Even read-only protection cannot make it disposable.
+     (check 'foreign-scratch-is-protected-before-head-adoption
+            (read-editor
+              '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
+                 (store:edit! '(agent scratch-state) id (store:revision id)
+                              (text:make-span 0 0 0 0) '("foreign work"))
+                 (head:buffer-read-only-set! b #t)
+                 (list (store:property id 'modified) (buffer-clean? b))))
+            '(#t #f))
+     (send! "\x1b;xquit!!\r")
+     (pump! 500)
+     (check 'foreign-scratch-triggers-quit-protection
+            (or (screen-has? 22 "Modified buffers exist")
+                (screen-has? 23 "Modified buffers exist")) #t)
+     (send! "n")
+     (pump! 300)
+     (send! "\x18;k\r")
+     (pump! 500)
+     (check 'foreign-read-only-scratch-triggers-kill-protection
+            (or (screen-has? 22 "kill anyway?") (screen-has? 23 "kill anyway?")) #t)
+     (send! "n")
+     (pump! 300)
+     (check 'cancelled-kill-keeps-foreign-scratch
+            (read-editor
+              '(let ([b (current-buffer)])
+                 (and (store:exists? (head:buffer-store-id b))
+                      (equal? (head:buffer-lines b) '#("foreign work")))))
+            #t)
+     (read-editor
+       '(begin
+          (head:buffer-read-only-set! (current-buffer) #f)
+          (head:store-reset! (current-buffer) '#(""))
+          (goto-point! '(0 . 0))
+          #t))
+
      ;; -- head edits mirror --------------------------------------------------
 
      (send! "hello")

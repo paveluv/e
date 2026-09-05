@@ -66,7 +66,7 @@
           host-color-scheme add-color-scheme-hook!
           tile! layout window-at window-button-at divider-at
           transfer-split! drag set-drag! double-click?
-          ui-actor buffer-fact buffer-fact-set!
+          ui-actor buffer-fact buffer-fact-set! buffer-facts-set! buffer-state
           buffer-file buffer-file-set! buffer-trailing buffer-trailing-set!
           buffer-modified buffer-modified-set!
           buffer-mode-auto buffer-mode-auto-set!
@@ -643,10 +643,9 @@
   (define (line-count b) (vector-length (buffer-lines b)))
 
   ;; Facts have one owner: the store for shared buffers, the record's
-  ;; table for local ones.  Local reads distinguish an absent key
-  ;; (the caller's fallback) from an explicit #f.  Shared reads retain
-  ;; the store's absent-property value, #f; their fallback only covers
-  ;; a store failure.  Both constructors initialize managed defaults.
+  ;; table for local ones.  Both distinguish an absent key (the caller's
+  ;; fallback) from an explicit #f.  Store failures propagate; no fallback
+  ;; can make missing shared truth look like a successful read or write.
   ;;
   ;;   file    the visited path, or #f
   ;;   trailing whether the file ends in a newline
@@ -665,15 +664,28 @@
   (define (buffer-fact b key fallback)
     (let ([id (buffer-store-id b)])
       (if id
-          (guard (ex [else fallback]) (store:property id key))
+          (store:property id key fallback)
           (hashtable-ref (buffer-local-facts b) key fallback))))
 
   (define (buffer-fact-set! b key value)
+    (buffer-facts-set! b (list (cons key value))))
+
+  (define (buffer-facts-set! b updates)
+    (store:validate-properties updates)
     (let ([id (buffer-store-id b)])
       (if id
-          (guard (ex [else (void)])
-            (store:set-property! ui-actor id key value))
-          (hashtable-set! (buffer-local-facts b) key value))))
+          (store:set-properties! ui-actor id updates)
+          (for-each (lambda (entry) (hashtable-set! (buffer-local-facts b) (car entry) (cdr entry)))
+                    updates))))
+
+  (define (buffer-state b)
+    ;; Unlike the command basis, this is current shared truth for save
+    ;; and discard decisions, including text not yet adopted by the head.
+    (if (buffer-store-id b)
+        (store:snapshot-state (buffer-store-id b))
+        (let-values ([(keys data) (hashtable-entries (buffer-local-facts b))])
+          (values (buffer-lines b) (buffer-revision b)
+                  (map cons (vector->list keys) (vector->list data))))))
 
   (define (buffer-file b) (buffer-fact b 'file #f))
   (define (buffer-file-set! b v) (buffer-fact-set! b 'file v))
@@ -772,15 +784,20 @@
     (buffer-lines-raw-set! b text)
     (bump-buffer-revision! b))
 
-  (define (store-reset! b new-lines)
+  (define (store-reset! b new-lines . facts)
     ;; Explicit baseline replacement (loading/rereading), never an
     ;; automatic response to a failed edit.  Failure leaves the cache
     ;; untouched; a later frame cannot write it back over shared text.
-    (if (buffer-store-id b)
-        (begin
-          (store:reset! ui-actor (buffer-store-id b) new-lines)
-          (adopt-store! b))
-        (adopt-local! b new-lines)))
+    (unless (<= (length facts) 1) (error 'store-reset! "expected one fact batch" facts))
+    (let ([updates (store:validate-properties (if (pair? facts) (car facts) '()))])
+      (if (buffer-store-id b)
+          (begin
+            (store:reset! ui-actor (buffer-store-id b) new-lines updates)
+            (adopt-store! b))
+          (let ([text (text:normalize new-lines)])
+            (adopt-local! b text)
+            (clamp-buffer-positions! b)
+            (buffer-facts-set! b updates)))))
 
   (define (edit-basis b)
     ;; A proposal retains the text it was computed from, its owner, and
@@ -823,6 +840,7 @@
                       after))))
           placements))
       (check-edit-placements! b placements)
+      (store:validate-edit-context context)
       (unless (and (eqv? (cadr source) (buffer-store-id b))
                    (or (buffer-store-id b) (eq? old (buffer-lines b))))
         (raise (condition (kernel:make-refusal)
@@ -859,9 +877,9 @@
             (adopt-local! b text)
             (apply-edit-placements! b placed)
             (clamp-buffer-positions! b)
-            (when (and context (= (length context) 3))
-              (for-each (lambda (entry) (buffer-fact-set! b (car entry) (cdr entry)))
-                        (caddr context)))))))
+            (when (and context (>= (length context) 3))
+              (buffer-facts-set! b
+                (append (caddr context) (if (= (length context) 4) (cadddr context) '()))))))))
 
   (define (check-edit-placements! b placements)
     (unless
@@ -929,9 +947,7 @@
                           0 0 #f 0 0 0 'default #f 0)])
       (when shared? (mirror-create! b))
       ;; the managed facts start explicit, so absence stays honest
-      (buffer-trailing-set! b #t)
-      (buffer-mode-auto-set! b #t)
-      (buffer-fact-set! b 'wrap 'default)
+      (buffer-facts-set! b '((trailing . #t) (mode-auto . #t) (wrap . default)))
       b))
 
   (define (new-buffer name)
@@ -971,6 +987,7 @@
     (or (find-tool-buffer key)
         (let ([b (new-local-buffer key)])
           (buffer-fact-set! b 'tool-key key)
+          (buffer-fact-set! b 'disposable #t)
           (add-buffer! b))))
 
   (define (bump-buffer-revision! b)
@@ -1131,8 +1148,8 @@
         (apply-edit-placements! b placements)
         (clamp-buffer-positions! b)
         ;; All head state is coherent before any callback can run.
+        ;; Adoption only reads shared truth; it never re-dirties a save.
         (when advance?
-          (when (buffer-file b) (buffer-modified-set! b #t))
           (unless complete?
             (invalidate-buffer-marks! (buffer-store-id b))
             (log:add! 'store
@@ -1409,6 +1426,7 @@
       ;; the buffer is an app's for good: a re-registration (a module
       ;; reloading) takes back the same tool, and its local facts stay.
       (buffer-fact-set! b 'app #t)
+      (buffer-fact-set! b 'disposable #t)
       (add-buffer! b)
       ;; Re-registration in one init replaces rather than duplicates refreshes.
       (kernel:registry-remove! app-registry

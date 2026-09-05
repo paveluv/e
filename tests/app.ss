@@ -134,7 +134,6 @@
      ;; Snapshot tools share the same identity rule, never user text.
      (define user-help (head:new-buffer "*help*"))
      (head:buffer-lines-set! user-help (vector "my notes"))
-     (head:buffer-modified-set! user-help #t)
      (head:buffer-read-only-set! user-help #t)
      (define user-history (vector '(saved) '()))
      (head:buffer-history-set! user-help user-history)

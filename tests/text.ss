@@ -27,6 +27,15 @@
 
      (define base '#("alpha bravo" "charlie" "delta echo" "foxtrot"))
 
+     (check 'equivalent-final-empty-row
+            (text:content=? '#("a" "") #f '#("a") #t) #t)
+     (check 'blank-line-is-significant
+            (text:content=? '#("a" "") #t '#("a") #t) #f)
+     (check 'empty-file-differs-from-newline
+            (text:content=? '#("") #f '#("") #t) #f)
+     (check 'different-lines-with-same-final-newline
+            (text:content=? '#("a" "") #f '#("b") #t) #f)
+
      ;; -- spans ----------------------------------------------------------
 
      (check 'span-normalizes

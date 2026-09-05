@@ -248,9 +248,7 @@
       (unless (and action (eq? (car action) b))
         (error 'submit-edit! "edit has no pending action"))
       (head:store-edit! b span replacement
-                        (if (pair? properties)
-                          (list key (caddr action) (car properties))
-                          (list key (caddr action)))
+                        (append (list key (caddr action)) properties)
                         (cons (cons current-window (edit-point))
                               (if (edit-mark) (list (cons 'mark (edit-mark))) '()))
                         (edit-basis-for b))
@@ -313,9 +311,10 @@
             (let ([disk (guard (ex [else #f])
                           (and (file-exists? file-name)
                                (file:read file-name)))])
-              (unless (and disk (string=? disk (head:buffer-base b)))
-                (head:buffer-stale-set! b #t))
-              (head:buffer-stamp-set! b stamp)))))))
+              (head:buffer-facts-set! b
+                (cons (cons 'stamp stamp)
+                      (if (and disk (string=? disk (head:buffer-base b)))
+                          '() '((stale . #t)))))))))))
 
   (define (check-editable!)
     ;; The same guard protects fresh edits and history restoration:
@@ -423,9 +422,6 @@
                      (vector-ref history to)))
              (set! mark-active? #f)
              (set! goal-pos #f)
-             (set! modified?
-               (let ([base (head:buffer-base b)])
-                 (if base (not (string=? (buffer-text b) base)) #t)))
              (head:clamp-buffer-positions! b)
              (paint:invalidate-screen-cache!)
              (string:elide (format "~a ~s: ~a" verb author label) cols))]
@@ -476,7 +472,9 @@
   ;;; Point, mark, and editing ----------------------------------------------
 
   (define (changed!)
-    (set! modified? #t) (set! message "") (set! mark-active? #f)
+    (unless (head:buffer-store-id (head:window-buffer current-window))
+      (set! modified? #t))
+    (set! message "") (set! mark-active? #f)
     (set! goal-pos #f))
 
   (define (ordered-region) ; -> start-row start-col end-row end-col
@@ -798,11 +796,9 @@
                          #f])
           (let* ([content (file:read path)]
                  [b (head:new-buffer (head:unique-name (file:base-name path) #f))])
-            (head:buffer-lines-set! b (file:lines content))
-            (head:buffer-trailing-set! b (file:ends-in-newline? content))
-            (head:buffer-file-set! b path)
-            (head:buffer-base-set! b content)
-            (head:buffer-stamp-set! b (file:stamp path))
+            (head:store-reset! b (file:lines content)
+              (list (cons 'trailing (file:ends-in-newline? content))
+                    (cons 'file path) (cons 'base content) (cons 'stamp (file:stamp path))))
             (mode:assign! b)
             (log:add! 'visit-file! (cons "Loaded" path))
             b))
@@ -829,8 +825,8 @@
                                        (file:read path)))])
                       (cond
                         [(and disk (string=? disk (head:buffer-base b)))
-                         (head:buffer-stamp-set! b (file:stamp path))
-                         (head:buffer-stale-set! b #f)]
+                         (head:buffer-facts-set! b
+                           (list (cons 'stamp (file:stamp path)) '(stale . #f)))]
                         [disk (reopen-changed-file! b path disk)]
                         [else
                          (parameterize ([message-source 'visit-file!])
@@ -865,8 +861,19 @@
                          (set-message!
                            (format "Save failed: ~a" (kernel:condition-text ex))))
                        #f])
-        (file:write! path lines trailing-newline?)
-        (set! file-name path) (set! modified? #f)
+        ;; Capture one coherent state after pre-save hooks.  The recorded
+        ;; baseline is exactly what was written, even if a store subscriber
+        ;; edits before these facts return.  Its dirty state stays derived.
+        (let-values ([(text revision facts) (head:buffer-state b)])
+          (let* ([trailing (cond [(assq 'trailing facts) => cdr] [else #t])]
+                 [written (file:text text trailing)])
+            (file:write! path text trailing)
+            (head:buffer-facts-set! b
+              (append (list (cons 'file path) (cons 'base written)
+                            (cons 'stamp (file:stamp path)) '(stale . #f))
+                      (if adopted? '((read-only . #f) (disposable . #f)) '())
+                      (if (head:buffer-store-id b) '()
+                          (list (cons 'modified (not (string=? (buffer-text b) written)))))))))
         (begin
           (head:buffer-name-set! b (head:unique-name (file:base-name path) b))
           (head:mirror-rename! b))
@@ -874,10 +881,7 @@
         ;; re-save must not clobber a mode chosen by hand; adoption
         ;; also lifts read-only -- the buffer visits an ordinary
         ;; file now, whatever protected its previous life
-        (when adopted? (mode:assign! b) (head:buffer-read-only-set! b #f))
-        (head:buffer-base-set! b (buffer-text b))
-        (head:buffer-stamp-set! b (file:stamp path))
-        (head:buffer-stale-set! b #f)
+        (when adopted? (mode:assign! b))
         ;; a conflicted merge reports its details once resolved --
         ;; saved with no markers left; the resolution preceded the
         ;; write, so its record does too
@@ -891,7 +895,7 @@
         #t))
     (file:run-pre-save-hooks! path)
     (cond
-      [(and disk (not adopted?) (not modified?)
+      [(and disk (not adopted?) (not (head:buffer-modified b))
             (head:buffer-base b) (string=? disk (head:buffer-base b)))
        ;; nothing to do, and the mtime stays untouched
        (set! message "No changes to save")
@@ -933,36 +937,23 @@
                     (file:merge path (head:buffer-base b) (buffer-text b) disk)])
         (with-recorded-edit "merge from disk"
           (parameterize ([edit-source source] [edit-point wanted])
-            (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing))))
-          (head:buffer-base-set! b disk)
-          (head:buffer-stamp-set! b (file:stamp path))
+            (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing))
+                                   (list (cons 'base disk) (cons 'stamp (file:stamp path)) '(stale . #f))))
           (changed!)
           (values conflicts (merge-report! b report-lines))))))
 
   (define (reread-from-disk! b path disk)
     ;; Discard the buffer's copy and adopt the disk verbatim.  Rereading is a
     ;; new baseline, not an edit: it clears modification and undo state.
-    (let* ([lines (file:lines disk)]
-           [last (- (vector-length lines) 1)])
-      (head:buffer-lines-set! b lines)
-      (head:buffer-trailing-set! b (file:ends-in-newline? disk))
-      (head:buffer-base-set! b disk)
-      (head:buffer-stamp-set! b (file:stamp path))
-      (head:buffer-stale-set! b #f)
-      (head:buffer-modified-set! b #f)
+    (let ([lines (file:lines disk)])
+      (head:store-reset! b lines
+        (append (list (cons 'trailing (file:ends-in-newline? disk))
+                      (cons 'base disk) (cons 'stamp (file:stamp path)) '(stale . #f))
+                (if (head:buffer-store-id b) '() '((modified . #f)))))
       (head:buffer-history-set! b (vector '() '()))
       (head:buffer-marked-set! b #f)
       (set! merge-reports (remp (lambda (p) (eq? (car p) b)) merge-reports))
-      (for-each
-        (lambda (w)
-          (when (eq? (head:window-buffer w) b)
-            (let ([row (min (head:window-prow w) last)])
-              (head:window-prow-set! w row)
-              (head:window-pcol-set! w
-                (min (head:window-pcol w)
-                     (string-length (vector-ref lines row))))
-              (head:window-top-set! w (min (head:window-top w) last)))))
-        windows)
+      (head:clamp-buffer-positions! b)
       (parameterize ([message-source 'visit-file!])
         (set-message! (format "Reread ~a" path)))
       #t))
@@ -980,8 +971,6 @@
                          (merge-from-disk! b path disk)])
              ;; The merge incorporated this disk version into the buffer's
              ;; baseline.  It remains modified only when it differs from disk.
-             (head:buffer-stale-set! b #f)
-             (head:buffer-modified-set! b (not (string=? (buffer-text b) disk)))
              (when (> conflicts 0)
                (set! merge-reports
                  (cons (cons b report-name)
@@ -1055,19 +1044,19 @@
     (file:text (head:buffer-lines b) (head:buffer-trailing b)))
 
   (define (buffer-clean? b)
-    ;; Nothing is lost by discarding b: it was never modified, it is
-    ;; read-only (a view, a report), its text is identical to what is
-    ;; on disk again, or it is an empty file-less buffer.
-    (or (not (head:buffer-modified b))
-        (head:buffer-read-only b)
-        (let ([path (head:buffer-file b)])
-          (if path
-              (and (file-exists? path)
-                   (guard (ex [else #f])
-                     (string=? (buffer-text b) (file:read path))))
-              (let ([v (head:buffer-lines b)])
-                (and (= (vector-length v) 1)
-                     (string=? (vector-ref v 0) "")))))))
+    ;; Discard decisions use one current snapshot, not an empty/stale
+    ;; head cache.  Read-only protects editing, not the lifetime of work.
+    ;; Generated tools explicitly opt into disposal; failed reads fail closed.
+    (guard (ex [else #f])
+      (let-values ([(text revision facts) (head:buffer-state b)])
+        (define (fact key fallback) (cond [(assq key facts) => cdr] [else fallback]))
+        (or (fact 'disposable #f)
+            (not (fact 'modified #f))
+            (let ([path (fact 'file #f)])
+              (if path
+                  (and (file-exists? path)
+                       (string=? (file:text text (fact 'trailing #t)) (file:read path)))
+                  (and (= (vector-length text) 1) (string=? (vector-ref text 0) ""))))))))
 
   ;;; Buffer and window commands ---------------------------------------------
 

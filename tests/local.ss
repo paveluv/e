@@ -69,7 +69,7 @@
 
      (define lines (vector "alpha" "bravo"))
      (head:buffer-lines-set! local lines)
-     (check 'local-replacement-keeps-vector (eq? (head:buffer-lines local) lines) #t)
+     (check 'local-replacement-owns-vector (eq? (head:buffer-lines local) lines) #f)
      (head:store-edit! local (text:make-span 0 1 0 4) '("L"))
      (check 'local-edit (head:buffer-lines local) '#("aLa" "bravo"))
      (check 'old-text-stays-unchanged lines '#("alpha" "bravo"))
@@ -112,7 +112,7 @@
      (check 'shared-write (store:property (head:buffer-store-id shared) 'custom) 'head)
      (store:set-property! '(agent test) (head:buffer-store-id shared) 'custom 'foreign)
      (check 'shared-read (head:buffer-fact shared 'custom #f) 'foreign)
-     (check 'shared-absence-keeps-store-semantics
-            (head:buffer-fact shared 'missing 'fallback) #f)
+     (check 'shared-absence-uses-declared-fallback
+            (head:buffer-fact shared 'missing 'fallback) 'fallback)
 
      (format #t "~a local checks passed\n" checks)))
