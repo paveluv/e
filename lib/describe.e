@@ -616,7 +616,7 @@
             (if (pop-up-or-reuse! b)
                 (set-message! "")
                 (set-message!
-                  (format "~a: see the *describe* buffer" name)))))
+                  (format "~a: see the <describe> buffer" name)))))
       (void)))
 
   (define-syntax describe
@@ -732,7 +732,7 @@
     (doc:register!
       '(((describe:show!) (("procedure" . "(describe:show! name)")) "void"
          ("(describe:this)") describe "Documentation commands" #f
-         "Display every documentation entry for `name` in a read-only Markdown `*describe*` buffer.")
+         "Display every documentation entry for `name` in a read-only Markdown `<describe>` buffer.")
         ((describe:at-point!)
          (("procedure" . "(describe:at-point!)")) "void"
          ("(describe:this)") describe "Documentation commands" #f

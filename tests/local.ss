@@ -34,6 +34,11 @@
      (head:set-buffers! (append (head:buffers) (list local other)))
      (head:set-window-buffer! (head:current) local)
 
+     (check 'local-label (head:buffer-name local) "<local-test>")
+     (check 'plain-local-label
+            (head:buffer-name (head:new-local-buffer "plain name")) "<plain name>")
+     (check 'bracketed-local-label-is-idempotent
+            (head:buffer-name (head:new-local-buffer "<ready>")) "<ready>")
      (check 'no-twin (head:buffer-store-id local) #f)
      (check 'no-false-id-lookup (head:buffer-of-store-id #f) #f)
      (check 'initial-text (head:buffer-lines local) '#(""))
@@ -87,7 +92,7 @@
 
      (head:buffer-name-set! local "*renamed-local*")
      (head:mirror-rename! local)
-     (check 'local-rename (head:buffer-name local) "*renamed-local*")
+     (check 'local-rename (head:buffer-name local) "<renamed-local>")
      (head:buffer-marked-set! local #t)
      (head:before-frame!)
      (check 'local-frame-publishes-no-marks

@@ -82,6 +82,11 @@
               '(for-all (lambda (a) (not (head:buffer-store-id (head:app-buffer a))))
                         (head:registered-apps)))
             #t)
+     (check 'local-tools-have-local-labels
+            (read-editor
+              '(map (lambda (key) (head:buffer-name (head:find-tool-buffer key)))
+                    '("*buffers*" "*log*" "*completions*")))
+            '("<buffers>" "<log>" "<completions>"))
      (check 'buffer-list-refresh-never-mutates-store
             (read-editor
               '(let ([before (list-sort < (store:buffer-list))]
@@ -105,6 +110,29 @@
      (send! "hello")
      (pump! 400)
      (check 'typing-mirrors (mirror-agrees? 'typing) #t)
+
+     ;; Quit's review option must find the buffer app by identity even
+     ;; after a user rename.  Restore the original window after review.
+     (check 'renaming-local-tool-keeps-angle-brackets
+            (read-editor
+              '(head:buffer-name
+                 (set-buffer-name! (head:find-tool-buffer "*buffers*")
+                                   "renamed buffer list")))
+            "<renamed buffer list>")
+     (send! "\x1b;xquit!!\r")
+     (pump! 500)
+     (send! "v")
+     (pump! 700)
+     (check 'quit-review-finds-renamed-local-tool
+            (read-editor
+              '(eq? (current-buffer) (head:find-tool-buffer "*buffers*")))
+            #t)
+     (read-editor
+       '(begin
+          (set-buffer-name! (head:find-tool-buffer "*buffers*") "buffers")
+          (select-window! (window 0))
+          (delete-other-windows!)
+          #t))
 
      (send! "\rworld")                 ; RET: the splice path
      (pump! 400)
@@ -414,7 +442,7 @@
             '(#f #f))
 
      ;; completions borrow the prompt's target window -- no pop-ups:
-     ;; TAB on an ambiguous M-x prefix shows *completions* where the
+     ;; TAB on an ambiguous M-x prefix shows <completions> where the
      ;; buffer was; the prompt's end hands the window back intact
      (send! "\x1b;xblame\t")            ; first TAB extends to "blame:"
      (pump! 400)
@@ -424,13 +452,13 @@
      (define (status-has? needle)
        (or (screen-has? 21 needle) (screen-has? 22 needle)))
      (check 'completions-borrow-the-target-window
-            (list (status-has? "*completions*")
+            (list (status-has? "<completions>")
                   (screen-has? 0 "blame:at-point!"))
             '(#t #t))
      (send! "\x7;")                     ; C-g: the prompt ends
      (pump! 600)
      (check 'target-window-handed-back
-            (list (status-has? "*completions*") (status-has? "*scratch*"))
+            (list (status-has? "<completions>") (status-has? "*scratch*"))
             '(#f #t))
 
      ;; the policy seam is live -- mint a session at M-x,

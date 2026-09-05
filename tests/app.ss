@@ -55,13 +55,13 @@
             (head:buffer-read-only (head:window-buffer (head:current))) #f)
 
      ;; A view never captures an ordinary buffer's label as identity.
-     (define ordinary (head:new-buffer "*app-collision*"))
+     (define ordinary (head:new-buffer "<app-collision>"))
      (head:buffer-lines-set! ordinary (vector "keep my work"))
      (head:add-buffer! ordinary)
      (define app (head:register-view! "*app-collision*" void))
      (check 'app-gets-distinct-buffer (eq? app ordinary) #f)
      (check 'app-local (head:buffer-store-id app) #f)
-     (check 'app-label-suffixed (head:buffer-name app) "*app-collision*<2>")
+     (check 'app-label-suffixed (head:buffer-name app) "<app-collision 2>")
      (head:view-replace! app '("generated"))
      (check 'ordinary-text-kept (buffer-text ordinary) "keep my work\n")
      (check 'ordinary-flags-kept (head:buffer-read-only ordinary) #f)
@@ -73,7 +73,7 @@
        (head:register-view! "*app-collision*"
          (lambda () (set! calls (+ calls 1)))))
      (check 'registration-after-rename-reuses-buffer (eq? again app) #t)
-     (check 'registration-keeps-renamed-label (head:buffer-name app) "renamed app")
+     (check 'registration-keeps-renamed-label (head:buffer-name app) "<renamed app>")
      (check 'registration-keeps-presentation (head:buffer-fact app 'sticky-lines #f) 1)
      (check 'registration-replaces-handler
             (length (filter (lambda (a) (eq? (head:app-buffer a) app))
@@ -108,28 +108,28 @@
 
      ;; A shared label wins even when it arrives after the local tool.
      (define collision
-       (store:create! '(agent test) "renamed app" '("shared")))
+       (store:create! '(agent test) "<renamed app>" '("shared")))
      (head:sync-foreign-edits!)
-     (check 'foreign-create-displaces-local (head:buffer-name app) "renamed app<2>")
+     (check 'foreign-create-displaces-local (head:buffer-name app) "<renamed app 2>")
      (check 'foreign-label-resolves-to-store
-            (head:buffer-store-id (head:buffer-named "renamed app")) collision)
+            (head:buffer-store-id (head:buffer-named "<renamed app>")) collision)
      (check 'identity-after-foreign-collision
             (eq? (head:register-view! "*app-collision*" void) app) #t)
-     (store:rename! '(agent test) collision "renamed app<2>")
+     (store:rename! '(agent test) collision "<renamed app 2>")
      (head:sync-foreign-edits!)
      (check 'foreign-rename-displaces-local
-            (head:buffer-name app) "renamed app<2><2>")
+            (head:buffer-name app) "<renamed app 2 2>")
      (check 'ordinary-user-rename-avoids-store
-            (head:buffer-name (set-buffer-name! app "renamed app<2>"))
-            "renamed app<2><2>")
+            (head:buffer-name (set-buffer-name! app "<renamed app 2>"))
+            "<renamed app 2 2>")
 
      ;; Names are claimed on list entry as well as construction.
      (define first (head:new-local-buffer "pending"))
      (define second (head:new-local-buffer "pending"))
      (show-buffer! first)
      (show-buffer! second)
-     (check 'late-name-claim-keeps-first (head:buffer-name first) "pending")
-     (check 'late-name-claim-suffixes-second (head:buffer-name second) "pending<2>")
+     (check 'late-name-claim-keeps-first (head:buffer-name first) "<pending>")
+     (check 'late-name-claim-suffixes-second (head:buffer-name second) "<pending 2>")
 
      ;; Snapshot tools share the same identity rule, never user text.
      (define user-help (head:new-buffer "*help*"))
@@ -141,7 +141,8 @@
      (head:add-buffer! user-help)
      (define tool (fresh-buffer "*help*"))
      (check 'snapshot-is-local (head:buffer-store-id tool) #f)
-     (check 'snapshot-label-suffixed (head:buffer-name tool) "*help*<2>")
+     (check 'snapshot-label-is-local (head:buffer-name tool) "<help>")
+     (check 'shared-tool-like-name-is-unchanged (head:buffer-name user-help) "*help*")
      (check 'snapshot-preserves-user-text (head:buffer-lines user-help) '#("my notes"))
      (check 'snapshot-preserves-user-dirty (head:buffer-modified user-help) #t)
      (check 'snapshot-preserves-user-read-only (head:buffer-read-only user-help) #t)

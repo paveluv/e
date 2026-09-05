@@ -9,11 +9,13 @@ The focused buffer is advertised to the containing terminal as
 `e: <buffer-name>`, allowing terminal emulators such as GNOME Terminal to show
 it in their tab or window title.
 
-The initial `*scratch*` buffer is an ordinary unvisited buffer. Names wrapped in
-asterisks conventionally identify generated tools: `*buffers*`, `*log*`,
-`*describe*`, `*completions*`, and merge reports. The convention itself does not
-determine behavior; registration makes a buffer an app or view, and its owner
-may make it read-only.
+The initial `*scratch*` buffer is an ordinary shared, unvisited buffer.
+Local buffers belong to this head and have names in angle brackets:
+`<buffers>`, `<log>`, `<describe>`, `<completions>`, and merge reports.
+Shared buffers retain file names or names such as `*scratch*`. Local names
+keep their brackets when renamed; duplicate labels become `<name 2>`,
+`<name 3>`, and so on. Names do not determine behavior: registration makes
+a buffer an app or view, and its owner may make it read-only.
 
 ## Buffer and window state
 
@@ -22,8 +24,8 @@ undo/redo history belong to the buffer. Point and scrolling belong to a window,
 so two ordinary windows showing the same buffer may be at different places.
 Returning to a buffer restores the position remembered by that window.
 
-App cursors are deliberately shared buffer state. Multiple windows showing the
-same app therefore mirror its active row; see [App buffers](APPS.md).
+App windows also keep independent points and viewports; see
+[App buffers](APPS.md).
 
 Every window has a status line. It begins with the window's number and a thin
 vertical line, `0▏`, then the state marker:
@@ -50,7 +52,7 @@ in that form.
 | Key | Action |
 |---|---|
 | `C-x b` | Prompt for a buffer name. Empty input selects the most recently used other buffer; an unknown name creates an unvisited buffer. |
-| `C-x C-b` | Show `*buffers*` in the current window as an interactive buffer switcher. |
+| `C-x C-b` | Show `<buffers>` in the current window as an interactive buffer switcher. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
@@ -68,7 +70,7 @@ in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.
 
 `C-x C-c` exits immediately when every buffer is clean. Otherwise its focused
-question offers `yes`, `no`, and `view`; `view` opens `*buffers*` and moves focus
+question offers `yes`, `no`, and `view`; `view` opens `<buffers>` and moves focus
 there so modified rows can be inspected before deciding.
 
 ## File buffers
@@ -107,7 +109,7 @@ Merge uses a three-way patience diff. Independent changes combine silently;
 collisions become `<<<<<<< buffer`, `=======`, and `>>>>>>> disk` regions.
 `M-n` moves to the next conflict, while `M-m` and `M-d` keep the buffer or disk
 side. Each resolution is one undo step, and saving waits until all conflicts are
-resolved. A read-only `*merge-<name>*` buffer records the merge report.
+resolved. A read-only `<merge-name>` buffer records the merge report.
 
 ## Undo, selections, and the kill buffer
 
@@ -153,13 +155,13 @@ not part of buffer text, point cannot enter it, and selections cannot include
 it. Clicking or dragging there addresses column zero of the corresponding text
 line.
 
-## The `*buffers*` app
+## The `<buffers>` app
 
 `C-x C-b` shows the app in the current window. Move to a row and press Enter
-to replace `*buffers*` with that buffer, making the command an alternative
+to replace `<buffers>` with that buffer, making the command an alternative
 interactive form of `C-x b`.
 
-`*buffers*` is a live, read-only table with these columns:
+`<buffers>` is a live, read-only table with these columns:
 
 | Column | Meaning |
 |---|---|
@@ -177,7 +179,7 @@ or line count changes. The bold header is sticky; modified rows are italic.
 
 The active row uses the `active` face. When another window has focus, the row
 for that window's buffer follows it with the lighter `active-shadow` face.
-Multiple windows showing `*buffers*` mirror the same active row.
+Each window showing `<buffers>` keeps its own point and active row.
 Both faces are configurable through the style DSL described in
 [Styles](STYLES.md).
 
@@ -188,10 +190,10 @@ Both faces are configurable through the style DSL described in
   in place.
 - Click a row: show it in the selected window.
 - Wheel over the app: move one row.
-- Click the app's status line: focus `*buffers*`.
+- Click the app's status line: focus `<buffers>`.
 
 Apps act on the selected window -- their own, when it is selected -- so
-`*buffers*` is an in-place switcher: choose a row and the list gives way to
+`<buffers>` is an in-place switcher: choose a row and the list gives way to
 the buffer.  Status-line clicks always focus their window and cannot be
 overridden by an app.  The public app API is documented in
 [App buffers](APPS.md).
@@ -199,7 +201,7 @@ overridden by an app.  The public app API is documented in
 ## Scrollbars
 
 Ordinary buffers show no scrollbar by default; `(scrollbar #t)` in config.e
-enables a one-column vertical bar for them, and `*buffers*` always shows one. The thin `│` is the track and the centered heavy
+enables a one-column vertical bar for them, and `<buffers>` always shows one. The thin `│` is the track and the centered heavy
 `┃` is the visible extent. Thumb size reflects the proportion of the buffer
 visible in the window, and its position reflects the scrollable range. Sticky
 app headers do not count as part of that range.
@@ -218,7 +220,7 @@ Configure scrollbars in `config.e`:
 ```
 
 An app may force a scrollbar or a side through `head:set-app-presentation!`.
-`*buffers*` forces it on but follows `scrollbar-position`.
+`<buffers>` forces it on but follows `scrollbar-position`.
 
 Every frame is a cached repaint -- rows are painted only when their content
 changed -- framed in a synchronized update, so fixed chrome never shifts and
@@ -264,7 +266,7 @@ it moves the whole horizontal boundary. The shorter perpendicular dividers
 resize only their own subtrees. The same `┴` caps a vertical divider where it
 meets a status line directly above the echo area; there it is only a visual
 termination, and dragging still resizes the vertical split.
-`*completions*` borrows the current window for the prompt's duration and
+`<completions>` borrows the current window for the prompt's duration and
 hands it back afterwards, point and viewport intact; there are no pop-up
 windows, so the split tree is the only source of windows.
 `M-Up`, `M-Down`,
@@ -307,7 +309,7 @@ produce no store notifications; local points and selections are not
 published to other actors.
 
 Local labels share the head's buffer namespace.  A collision receives
-`<2>`, `<3>`, and so on; when a shared buffer arrives or is renamed,
+`<name 2>`, `<name 3>`, and so on; when a shared buffer arrives or is renamed,
 the local buffer yields the conflicting label.  `head:add-buffer!`
 adds a buffer to the list without displaying it and claims its label.
 
@@ -317,6 +319,11 @@ Renaming the displayed buffer does not change its tool key.  App
 registration and `fresh-buffer` use this same lookup, so a snapshot
 tool rebuilds its own buffer and preserves ordinary buffers with a
 matching label.  Killing a tool buffer removes that instance.
+Names supplied as `name`, `<name>`, or legacy `*name*` get the local label
+`<name>`; tool keys retain the exact supplied string.  Existing built-in
+tool keys such as `"*log*"` therefore still identify the same tool, whose
+displayed name is now `<log>`.  Use the displayed label with `buffer` and
+the key with `head:find-tool-buffer`.
 
 For shared text, `(store:snapshot id)` returns immutable lines and their
 revision.  `(store:snapshot-since id basis)` also returns a complete list

@@ -138,7 +138,7 @@ selected window, publish status hints, control cursor display, and consume
 mouse events without taking focus.
 
 See [App buffers](APPS.md) for registration and event propagation, and
-[Buffers](BUFFERS.md) for the `*buffers*` interface.
+[Buffers](BUFFERS.md) for the `<buffers>` interface.
 
 ## Describe and log integration
 

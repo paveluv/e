@@ -7,12 +7,12 @@ completion. `M-.` describes the symbol at point in a Scheme buffer. `C-h k`
 describes a key, its resolved command, origin, shadowed bindings, and contextual
 meanings.
 
-Describe opens a read-only `*describe*` view in a new tile below the current
+Describe opens a read-only `<describe>` view in a new tile below the current
 window, or reuses a window already showing it. Focus remains in the requesting
 window. Its data remains structured until rendering, so pages can update
 dynamically. If the described value is a command, the page lists every key
 currently bound to it; rebinding or unbinding the command updates an already
-visible page on redraw. `C-h k` uses the same behavior for `*help*`.
+visible page on redraw. `C-h k` uses the same behavior for `<help>`.
 
 The completion prompt uses shared semantic styling: a partial name is italic,
 a complete Scheme name is upright, and an e-specific name uses the editor

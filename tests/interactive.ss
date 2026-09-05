@@ -222,7 +222,7 @@
      (wait-for! 'prompt-navigation-targets-focused-window
                 (lambda ()
                   (let ([readme (find-cell "README.md  L1")]
-                        [left (find-cell "*terminal*")])
+                        [left (find-cell "<terminal>")])
                     (and readme left
                          (= (car readme) (car left))
                          (> (cdr readme) (cdr left)))))
@@ -231,20 +231,20 @@
      (settle! 500)
 
      ;; -- completions borrow the window and give it back ------------------
-     ;; M-x, a partial name, TAB: the *completions* view takes the window
+     ;; M-x, a partial name, TAB: the <completions> view takes the window
      ;; and lists the candidates; C-g hands the window's buffer back.  A
      ;; second prompt reuses the same view.
      (send! "\x1b;x")                   ; M-x
      (settle! 500)
      (send! "split-w\t\t")
      (wait-for! 'completions-take-the-window
-                (lambda () (and (find-cell "*completions*")
+                (lambda () (and (find-cell "<completions>")
                                 (find-cell "split-window!")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back
-                (lambda () (and (not (find-cell "*completions*"))
-                                (find-cell "*terminal*")))
+                (lambda () (and (not (find-cell "<completions>"))
+                                (find-cell "<terminal>")))
                 5000)
      (send! "\x1b;x")
      (settle! 500)

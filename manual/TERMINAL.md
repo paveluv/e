@@ -7,11 +7,11 @@ e can host a real pseudo-terminal inside an app buffer. Start one with
 (terminal:open!!)
 ```
 
-The command opens `*terminal*` in the current window and starts
+The command opens `<terminal>` in the current window and starts
 `terminal:shell` as an interactive shell in the current file's directory (or
 e's current working directory for a file-less buffer). It defaults to
 `$SHELL`, falling back to `/bin/sh`. A second session is named
-`*terminal*<2>`, and so on.
+`<terminal 2>`, and so on.
 
 Set the shell in `config.e` when desired:
 
@@ -164,7 +164,7 @@ the logical cursor position. The primary screen also reflows while an
 alternate-screen application is active; the alternate screen itself remains a
 fixed application grid.
 OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
-asterisks, such as `*bash*`; duplicate names receive a numeric suffix.
+angle brackets, such as `<bash>`; duplicates become `<bash 2>` and so on.
 OSC 8 hyperlinks remain attached to their cells through editing, scrolling,
 scrollback reflow, and alternate-screen rendering. They enter e's generic
 buffer hyperlink layer, which emits OSC 8 to the host terminal around the
@@ -172,7 +172,7 @@ corresponding visible cells. Thus, links produced by an application inside an
 e terminal remain available to the outer terminal even when their labels are
 not URLs.
 OSC 52 clipboard writes from terminal children are decoded into exact UTF-8
-text and, by default, stored in e's kill ring. The echo area and `*log*` report
+text and, by default, stored in e's kill ring. The echo area and `<log>` report
 the terminal buffer that supplied the clipboard. Disable this independently
 of outbound clipboard forwarding in `config.e`:
 
@@ -216,7 +216,7 @@ the child has not requested mouse input.
 
 When a child sends a terminal sequence that e does not implement, e reports
 `<buffer-name> sent unsupported <feature>` in the echo area and
-`*log*`. Each distinct feature is reported only once per terminal buffer, so a
+`<log>`. Each distinct feature is reported only once per terminal buffer, so a
 full-screen program cannot flood the log by emitting it on every redraw.
 Diagnostics include the identifying CSI parameters or protocol selector but
 omit arbitrary OSC and DCS payloads, which may contain private application

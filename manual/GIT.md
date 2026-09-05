@@ -67,7 +67,7 @@ explicit.
 
 ## History browser
 
-`C-x g` or M-x `(git-view:log!!)` opens the `*git-log*` app for the repository
+`C-x g` or M-x `(git-view:log!!)` opens the `<git-log>` app for the repository
 containing the current file. Pass a path explicitly to browse another one:
 
 ```scheme
@@ -79,7 +79,7 @@ The repository heading stays fixed while the body scrolls. Click `[refresh]`
 beside the repository name, or press `r`, to reload it; the control changes
 color briefly while pressed. Use Up/Down or the wheel
 to move one row at a time. Enter on a file opens that file's patch in a
-read-only `*git-diff*` view in the current window, in place of the history.
+read-only `<git-diff>` view in the current window, in place of the history.
 Clicking a file performs the same action immediately and keeps keyboard focus
 where it was, following the normal app mouse convention.
 

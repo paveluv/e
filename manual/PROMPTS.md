@@ -53,7 +53,7 @@ The repetition is command-based rather than inferred from the cursor position.
 ## Completion
 
 Tab extends input to the longest common prefix. If nothing can be added, a
-second Tab shows `*completions*` in the current window -- the one the prompt
+second Tab shows `<completions>` in the current window -- the one the prompt
 was invoked from. Repeated Tab cycles through pages when the
 list is taller than the window. When the prompt finishes the window gets its
 buffer back, point and viewport intact; the split tree never changes.

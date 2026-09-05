@@ -117,7 +117,8 @@
   ;; live here alone.  Selection, saved position, and line-number
   ;; toggles belong to this seat in either case.
   (define-record-type buffer
-    (fields (mutable name)          ; a cache of the store's label
+    (fields (mutable name buffer-name buffer-name-raw-set!)
+                                   ; shared label cache or local <name>
             (mutable lines buffer-lines buffer-lines-raw-set!)
             (mutable revision)      ; the seat's repaint counter
             (mutable history)       ; the seat's snapshot undo
@@ -694,11 +695,31 @@
 
   (define ui-actor '(head main))
 
+  (define (local-name name)
+    ;; Locality is visible in every label, including user renames.
+    ;; Existing tool keys keep their identity: *tool* names become
+    ;; <tool> labels, and an already bracketed label is idempotent.
+    (let ([n (string-length name)])
+      (cond
+        [(and (>= n 2) (char=? (string-ref name 0) #\<)
+              (char=? (string-ref name (- n 1)) #\>))
+         name]
+        [(and (>= n 2) (char=? (string-ref name 0) #\*)
+              (char=? (string-ref name (- n 1)) #\*))
+         (string-append "<" (substring name 1 (- n 1)) ">")]
+        [else (string-append "<" name ">")])))
+
+  (define (buffer-name-set! b name)
+    (buffer-name-raw-set! b
+      (if (buffer-store-id b) name (local-name name))))
+
   (define (unique-name base self)
     ;; Labels share one namespace in this head.  Include store buffers
     ;; not yet adopted, so a new local label cannot hide a shared one.
-    (let ([used (make-hashtable string-hash string=?)]
-          [self-id (and self (buffer-store-id self))])
+    (let* ([used (make-hashtable string-hash string=?)]
+           [local? (and self (not (buffer-store-id self)))]
+           [base (if local? (local-name base) base)]
+           [self-id (and self (buffer-store-id self))])
       (for-each (lambda (b)
                   (unless (eq? b self)
                     (hashtable-set! used (buffer-name b) #t)))
@@ -709,7 +730,11 @@
                       (hashtable-set! used (store:buffer-name id) #t)))
                   (store:buffer-list)))
       (let loop ([k 1])
-        (let ([name (if (= k 1) base (format "~a<~a>" base k))])
+        (let ([name (cond
+                      [(= k 1) base]
+                      [local? (format "<~a ~a>"
+                                      (substring base 1 (- (string-length base) 1)) k)]
+                      [else (format "~a<~a>" base k)])])
           (if (hashtable-ref used name #f)
               (loop (+ k 1))
               name)))))
@@ -862,7 +887,9 @@
   (define (new-local-buffer name)
     ;; Like new-buffer, the caller decides when to put it in the
     ;; buffer list or a window.  No store buffer or event is created.
-    (new-seat-buffer (unique-name name #f) #f))
+    (let ([b (new-seat-buffer (local-name name) #f)])
+      (buffer-name-set! b (unique-name (buffer-name b) b))
+      b))
 
   (define (add-buffer! b)
     ;; Enter the head's buffer list without changing its MRU order.

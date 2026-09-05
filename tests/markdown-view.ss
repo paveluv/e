@@ -70,6 +70,7 @@
      (define view (current-buffer))
      (check 'view-is-a-companion (eq? view source) #f)
      (check 'view-is-local (head:buffer-store-id view) #f)
+     (check 'view-label-is-local (head:buffer-name view) "<markdown notes.md>")
      (check 'view-is-an-app (head:app-buffer? view) #t)
      (check 'view-is-read-only (head:buffer-read-only view) #t)
      (check 'view-has-no-file (head:buffer-file view) #f)

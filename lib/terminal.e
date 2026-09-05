@@ -1716,7 +1716,7 @@
                (lambda ()
                  (guard (ex [else (void)])
                    (set-buffer-name! (terminal-state-buffer state)
-                                     (format "*~a*" title)))))))]
+                                     title))))))]
         [else
          ;; OSC payloads can contain secrets (titles, paths, clipboard data),
          ;; so identify an unsupported command by its numeric selector only.
@@ -3674,7 +3674,7 @@
           )
       (set! serial (+ serial 1))
       (let* ([name (if (= serial 1) "*terminal*"
-                       (format "*terminal*<~a>" serial))]
+                       (format "*terminal ~a*" serial))]
              [prior (current-buffer)]
              [buffer #f]
              [state #f]

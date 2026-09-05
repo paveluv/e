@@ -98,7 +98,7 @@
     (doc:register!
       '(((log-view:show!) (("procedure" . "(log-view:show!)")) "void"
          ("(log-view:buffer)") log-view "Log commands" #f
-         "Display the live `*log*` view, containing timestamped editor messages and command results.")))
+         "Display the live `<log>` view, containing timestamped editor messages and command results.")))
     (mode:register! "log" '() '() style-log-line)
     ;; Registry retraction on reload leaves the local buffers alive.
     ;; Rebind every saved filter, including views already on screen.

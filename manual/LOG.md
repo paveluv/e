@@ -26,11 +26,11 @@ Code may mark a message as progress:
 
 A progress entry supersedes the newest visible entry from the same component
 instead of stacking. It never replaces another component's entry. Every
-progress update still receives its own record in `*log*`.
+progress update still receives its own record in `<log>`.
 
-## The `*log*` view
+## The `<log>` view
 
-`*log*` is a dynamic, read-only view backed by structured records. It is always
+`<log>` is a dynamic, read-only view backed by structured records. It is always
 present in the buffer list. At the end of the buffer it tails new entries;
 elsewhere its viewport remains still while records arrive.
 
@@ -40,7 +40,7 @@ Filtered log views are created dynamically:
 (log-view:buffer 'eval)
 ```
 
-This creates a buffer such as `*log eval*` containing only that component.
+This creates a buffer such as `<log eval>` containing only that component.
 
 Each record contains a nanosecond timestamp, component, and value. Components
 may register both a formatter and a styler, shared by the echo area and log

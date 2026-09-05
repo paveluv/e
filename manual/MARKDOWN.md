@@ -3,7 +3,7 @@
 Markdown buffers edit in the `markdown` mode ([syntax
 highlighting](STYLES.md) only). The `markdown-view` mode presents the
 document in a separate local, read-only buffer, initially named
-`*markdown filename*`. `C-c v` switches the selected window between
+`<markdown filename>`. `C-c v` switches the selected window between
 source and view, keeping the cursor on the matching source row.
 Other windows keep their own buffer and cursor, so source and view
 can be displayed side by side. The describe browser renders its pages

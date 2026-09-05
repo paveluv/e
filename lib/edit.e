@@ -1804,7 +1804,7 @@
           (case (and answer (char-downcase answer))
             [(#\y) (head:quit!)]
             [(#\v)
-             (let ([b (head:buffer-named "*buffers*")])
+             (let ([b (head:find-tool-buffer "*buffers*")])
                (if b
                    (let ([w (display-buffer! b)])
                      (when w
@@ -1813,7 +1813,7 @@
                        ;; initialization opportunity as its ordinary command.
                        (head:dispatch-app-event! "FOCUS")
                        (set! message "")))
-                   (set-message! "The *buffers* app is not available")))]
+                   (set-message! "The <buffers> app is not available")))]
             [else (void)]))))
 
   ;;; Pasting and typed runs --------------------------------------------------
@@ -2273,7 +2273,7 @@
       (head:buffer-read-only-set! b #t)
       (set! message "")
       (unless (pop-up-or-reuse! b)
-        (set-message! "The *help* buffer could not be displayed"))))
+        (set-message! "The <help> buffer could not be displayed"))))
 
   ;;; Regions and the generic helpers ------------------------------------------
 
@@ -2913,7 +2913,7 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Show `*buffers*` in the current window and make that window its own target. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to replace the app with the selected buffer, or click a row to switch immediately.")
+         "Show `<buffers>` in the current window and make that window its own target. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to replace the app with the selected buffer, or click a row to switch immediately.")
         ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")

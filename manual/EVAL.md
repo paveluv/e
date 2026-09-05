@@ -64,7 +64,7 @@ as they appeared in the editable prompt. Explicit input newlines occupy real
 echo-area rows; long individual lines still soft-wrap at the terminal edge.
 
 After completion, the transient echo record retains the command's explicit
-line breaks, matching its multiline representation in `*log*`.
+line breaks, matching its multiline representation in `<log>`.
 
 ### `eval:run!` — evaluate buffer or region text
 
@@ -147,7 +147,7 @@ child's line after it. Output is separated into structured log components:
 - the current output port and process stdout become `stdout` records;
 - the current error port and process stderr become `stderr` records.
 
-Each completed line receives its timestamp when it arrives, so `*log*`
+Each completed line receives its timestamp when it arrives, so `<log>`
 preserves the timing of long-running commands. A final unterminated line is
 emitted when evaluation closes the stream. stdout, stderr, and the evaluation
 result remain separate records.

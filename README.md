@@ -20,7 +20,7 @@ Highlights:
   (evaluation results, stdout, and stderr are captured separately).
 - Besides normal editing buffers, there are app buffers. They update their
   presentation from internal structures and can optionally
-  interact with the user (`*log*`, `*git-log*`, `*buffers*`, `*terminal*`).
+  interact with the user (`<log>`, `<git-log>`, `<buffers>`, `<terminal>`).
 - Windows form a recursive tiling layout that is easy to reshape: split in
   either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
 - `C-c t` turns the current buffer into a PTY-backed terminal able to run
@@ -86,7 +86,7 @@ On FreeBSD, where Chez installs a differently named script interpreter, run
 | `C-x C-w` | Save as |
 | `C-x C-c` | Quit safely |
 | `C-x b` | Switch buffers by name |
-| `C-x C-b` | Switch through the interactive `*buffers*` table |
+| `C-x C-b` | Switch through the interactive `<buffers>` table |
 | `C-x 2`, `C-x 3` | Split the current window below or right |
 | `C-x 0`, `C-x 1` | Delete this window or every other window |
 | `M-Arrows` | Move between windows along the cursor's screen ray |
@@ -123,7 +123,7 @@ immediately.
 ## Documentation
 
 - [Buffers and windows](manual/BUFFERS.md): files, splits, scrolling, line
-  numbers, scrollbars, mouse behavior, `*buffers*`, and the buffer API.
+  numbers, scrollbars, mouse behavior, `<buffers>`, and the buffer API.
 - [Evaluation](manual/EVAL.md): M-x, `eval!`, multiline commands, output capture,
   interruption, history, and result copying.
 - [Terminal buffers](manual/TERMINAL.md): capture, escape, emulation, scrollback,
@@ -145,7 +145,7 @@ immediately.
 - [Styles](manual/STYLES.md): the style DSL, faces, colors, terminal behavior, and
   configuration lifecycle.
 - [App buffers](manual/APPS.md): dynamic views, interaction, the escape
-  prefix, mouse events, and the `*buffers*` switcher.
+  prefix, mouse events, and the `<buffers>` switcher.
 - [Git](manual/GIT.md): structured repository queries and the history browser.
 - [Pretty Scheme](manual/PRETTY_SCHEME.md): structural delimiter glyphs, depth
   and rainbow variants, and semantic symbol styling.

@@ -54,7 +54,7 @@ its next registration creates a new buffer.
 App input is layered: an active prompt first, then the focused app, then e's
 global bindings, then the ordinary buffer fallback such as self-insertion.
 Most apps are partial: their handler consumes only their own controls and
-returns false for everything else. Thus `*buffers*` owns navigation and row
+returns false for everything else. Thus `<buffers>` owns navigation and row
 activation while `M-x`, window commands, and other global bindings pass
 through naturally.
 
@@ -93,6 +93,10 @@ The handler is optional. Thus these are equivalent:
 (head:register-app! "*example*" refresh!)
 ```
 
+Both display a local `<example>` buffer. The string is its stable tool
+key; changing the displayed label keeps that identity. Local renames
+retain angle brackets, and duplicate labels become `<example 2>`.
+
 Apps act on the selected window -- their own, when it is selected.  Use
 `show-buffer!` to show an app here, or `display-buffer!` to show it without
 leaving the current window.
@@ -118,7 +122,7 @@ text scroll.
 The same bar is off for ordinary buffers by default; `(scrollbar #t)`
 enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
 select the global side, which defaults to the right. An app's explicit side
-overrides that position. `*buffers*` always enables its bar and follows the
+overrides that position. `<buffers>` always enables its bar and follows the
 global side.
 
 ## Windows
@@ -135,7 +139,7 @@ windows showing the same app.
 
 ## The buffers app
 
-`*buffers*` is the first interactive app. It renders live buffer status and
+`<buffers>` is the first interactive app. It renders live buffer status and
 supports these controls:
 
 Its heading is sticky at the top of every window. The remaining rows scroll
@@ -152,7 +156,7 @@ extent.
 - Status-bar click: focus the app window.
 
 Status-bar clicks always focus their window; app handlers cannot override
-them. `*buffers*` returns `keep-focus` for content clicks because the click's
+them. `<buffers>` returns `keep-focus` for content clicks because the click's
 purpose is to switch a buffer, not to enter the app.
 
 Outside the app, `M-Shift-Up` and `M-Shift-Down` switch the current window through the
@@ -170,13 +174,12 @@ header is bold, and modified-buffer rows are italic. The table remains a live re
 removal, focus, modified state, read-only state, line count, mode, and file
 changes appear on redraw.
 
-While `*buffers*` has focus, its active row uses the `active` face. When focus
+While `<buffers>` has focus, its active row uses the `active` face. When focus
 moves to another window, the row for that window's buffer continues to follow
 it dynamically using the subtler `active-shadow` face.
 
-App cursors are buffer state: multiple windows showing one app mirror the same
-active row. The focused app window paints it with `active`; other windows use
-`active-shadow`.
+Each app window keeps its own point and active row. The focused app window
+paints its active row with `active`; unfocused windows use `active-shadow`.
 
 Refresh failures are logged under the `app` component and shown in the echo
 area. An unchanged failure is reported once instead of once per redraw; a

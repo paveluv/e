@@ -241,11 +241,11 @@
     (doc:register!
       '(((git-view:log!!) (("procedure" . "(git-view:log!! [path])")) "void"
          ("(git-view)") git-view "Git" #f
-         "Open the interactive `*git-log*` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
+         "Open the interactive `<git-log>` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
         ((git-view:refresh!)
          (("procedure" . "(git-view:refresh!)")) "void"
          ("(git-view)") git-view "Git" #f
-         "Reload commits and changed files in the open `*git-log*` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
+         "Reload commits and changed files in the open `<git-log>` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
     (paint:add-highlighter!
       (lambda ()
         (if (and log-buffer (memq log-buffer (buffer-list)))
