@@ -60,16 +60,14 @@
     (fields lock
             buffers              ; id -> buffer
             (mutable next-id)
-            (mutable events-front) ; ((event subscriber-token ...) ...)
-            (mutable events-back)
-            (mutable delivering?)))
+            deliveries))         ; ordered callbacks, shared kernel mechanism
 
   (define the-store
     (kernel:persistent-cell 'store
       (lambda ()
         (make-store (make-mutex)
                     (make-eqv-hashtable)
-                    1 '() '() #f))))
+                    1 (kernel:make-delivery-queue)))))
 
   (define (current-store) (unbox the-store))
 
@@ -174,7 +172,7 @@
     (call-with-values
       (lambda () (locked thunk))
       (lambda result
-        (drain-events!)
+        (kernel:drain-deliveries! (store-deliveries (current-store)))
         (apply values result))))
 
   (define (buffer-of who id)
@@ -924,8 +922,8 @@
     (void))
 
   (define (enqueue-event! event)
-    ;; Caller holds the mutation lock.  The two-list FIFO keeps both
-    ;; appends and removal amortized constant time.
+    ;; Caller holds the mutation lock. Capture recipients at commit;
+    ;; resolve their registrations again when the shared queue delivers.
     (let ([tokens
            (kernel:call-with-runtime-registrations
              (lambda ()
@@ -934,60 +932,12 @@
                               (or (not (cadr entry))
                                   (equal? (cadr entry) (cadr event))))
                             (kernel:registry-items subscriptions)))))]
-          [s (current-store)])
-      (unless (null? tokens)
-        (store-events-back-set! s
-          (cons (cons event tokens) (store-events-back s))))))
-
-  (define (next-delivery!)
-    (locked
-      (lambda ()
-        (let ([s (current-store)])
-          (let next ()
-            (when (null? (store-events-front s))
-              (store-events-front-set! s (reverse (store-events-back s)))
-              (store-events-back-set! s '()))
-            (and (pair? (store-events-front s))
-                 (let* ([front (store-events-front s)]
-                        [item (car front)])
-                   (if (null? (cdr item))
-                       (begin (store-events-front-set! s (cdr front)) (next))
-                       (let ([subscriber
-                              (kernel:registry-find subscriptions
-                                (lambda (entry) (= (car entry) (cadr item))))])
-                         ;; Consume one callback before invoking it.  If
-                         ;; it escapes, the rest of this event is intact.
-                         (store-events-front-set! s
-                           (cons (cons (car item) (cddr item)) (cdr front)))
-                         (if subscriber
-                             (cons (car item) (caddr subscriber))
-                             (next)))))))))))
-
-  (define (drain-events!)
-    (when (locked
+          [queue (store-deliveries (current-store))])
+      (for-each
+        (lambda (token)
+          (kernel:enqueue-delivery! queue
             (lambda ()
-              (let ([s (current-store)])
-                (and (not (store-delivering? s))
-                     (or (pair? (store-events-front s))
-                         (pair? (store-events-back s)))
-                     (begin (store-delivering?-set! s #t) #t)))))
-      (let ([entered? #f])
-        (dynamic-wind
-          (lambda ()
-            ;; A captured callback may escape, but resuming a completed
-            ;; drain would bypass ownership and race a newer drainer.
-            (when entered? (error 'store "cannot resume completed event delivery"))
-            (set! entered? #t))
-          (lambda ()
-            (kernel:call-with-runtime-registrations
-              (lambda ()
-                (let drain ()
-                  (let ([delivery (next-delivery!)])
-                    (when delivery
-                      (guard (ex [else (void)]) ((cdr delivery) (car delivery)))
-                      (drain)))))))
-          (lambda ()
-            (locked (lambda () (store-delivering?-set! (current-store) #f)))
-            ;; Finish queued work on an escape too, and cover a commit
-            ;; racing the empty-queue read before releasing the drainer.
-            (drain-events!)))))))
+              (let ([subscriber (kernel:registry-find subscriptions
+                                  (lambda (entry) (= (car entry) token)))])
+                (when subscriber ((caddr subscriber) event))))))
+        tokens))))

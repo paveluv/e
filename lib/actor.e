@@ -9,40 +9,101 @@
 ;; delivery posts to its mailbox.  Answers route back through the
 ;; ticket, asynchronously; nobody's keyboard is stolen.
 ;;
-;; Registrations ride kernel registries, so a reloaded module's stale
-;; delivery procedures retract with it; the pending-ask table rides a
-;; persistent cell, so open questions survive reloads.
+;; Directory metadata and delivery share one owned registration. The
+;; pending-ask table has its own lifetime: open questions survive reloads
+;; and detach until explicitly answered or cancelled.
 
 (library (actor)
-  (export register! unregister? deliver send!
+  (export register! registered? detach! attached describe subscribe! unsubscribe!
+          deliver send!
           ask! answer! cancel! pending)
   (import (rnrs)
-          (only (chezscheme) box unbox set-box! format void make-mutex with-mutex)
+          (only (chezscheme) box unbox set-box! void make-mutex with-mutex
+                current-time time-second)
           (prefix (kernel) kernel:))
 
   ;;; Registration ----------------------------------------------------------
 
-  (define registrations (kernel:make-registry))
+  (define-record-type registration
+    (fields identity attached-at capabilities delivery))
 
-  (define (register! actor deliver!)
-    ;; deliver! receives protocol messages -- for an ask:
-    ;; (ask ticket from question choices).  It may run on any thread;
-    ;; it must only do thread-safe work (post to a mailbox, wake a
-    ;; loop) and never block.
-    (unless (procedure? deliver!)
-      (error 'register! "expected a delivery procedure" deliver!))
-    (kernel:registry-add! registrations (cons actor deliver!))
-    actor)
+  (define registrations (kernel:make-registry registration-identity))
+
+  (define (copy-data datum)
+    ;; Own admitted names/metadata, and never expose their mutable parts
+    ;; through directory snapshots, return values, or presence messages.
+    (let copy ([datum datum] [path '()])
+      (when (memq datum path) (error 'actor "cyclic directory data"))
+      (cond
+        [(pair? datum)
+         (let ([path (cons datum path)])
+           (cons (copy (car datum) path) (copy (cdr datum) path)))]
+        [(vector? datum)
+         (list->vector (map (lambda (item) (copy item (cons datum path))) (vector->list datum)))]
+        [(string? datum) (string-copy datum)]
+        [(bytevector? datum) (bytevector-copy datum)]
+        [(or (null? datum) (symbol? datum) (number? datum) (boolean? datum) (char? datum)) datum]
+        [else (error 'actor "expected plain directory data" datum)])))
+
+  (define register!
+    (case-lambda
+      [(actor deliver!) (register! actor deliver! #f)]
+      [(actor deliver! capabilities)
+       ;; Identity is (kind name ...). Legacy symbol names remain valid;
+       ;; named heads use strings. Capabilities describe policy, never grant it.
+       (unless (and (list? actor) (>= (length actor) 2) (symbol? (car actor))
+                    (or (symbol? (cadr actor))
+                        (and (string? (cadr actor)) (> (string-length (cadr actor)) 0))))
+         (error 'register! "expected (kind name ...)" actor))
+       (unless (procedure? deliver!)
+         (error 'register! "expected a delivery procedure" deliver!))
+       (let ([identity (copy-data actor)] [capabilities (copy-data capabilities)])
+         (kernel:registry-add! registrations
+           (make-registration identity (time-second (current-time 'time-utc)) capabilities deliver!))
+         (copy-data identity))]))
+
+  (define (registration-of actor)
+    (kernel:registry-find registrations
+      (lambda (entry) (equal? (registration-identity entry) actor))))
+
+  (define (directory-entry entry)
+    (let* ([actor (registration-identity entry)] [name (cadr actor)])
+      (copy-data (list actor (car actor) (if (string? name) name (symbol->string name))
+                       (registration-attached-at entry) (registration-capabilities entry)))))
+
+  (define (attached)
+    ;; Oldest registration first; like kernel reads, initializers can
+    ;; inspect their staged view. Other threads only see committed actors.
+    (map directory-entry (reverse (kernel:registry-items registrations))))
+
+  (define (describe actor)
+    (let ([entry (registration-of actor)]) (and entry (directory-entry entry))))
+
+  (define (registered? actor) (and (registration-of actor) #t))
+
+  (define (detach! actor)
+    ;; Removes the captured endpoint only, never a concurrent replacement.
+    ;; Already selected deliveries may finish. Tickets remain independent.
+    (kernel:registry-remove! registrations
+      (lambda (entry) (equal? (registration-identity entry) actor))))
+
+  (define (subscribe! proc)
+    ;; One batch of (detached actor)/(attached actor) per commit; an
+    ;; atomic replacement reports both in the same batch, without a gap.
+    (unless (procedure? proc) (error 'subscribe! "expected a procedure" proc))
+    (kernel:registry-observe! registrations
+      (lambda (removed added)
+        (proc (append
+                (map (lambda (entry) (list 'detached (copy-data (registration-identity entry))))
+                     (reverse removed))
+                (map (lambda (entry) (list 'attached (copy-data (registration-identity entry))))
+                     (reverse added)))))))
+
+  (define (unsubscribe! token) (kernel:registry-unobserve! token))
 
   (define (deliver actor)
-    ;; the newest registered delivery for the actor, or #f
-    (cond [(kernel:registry-find
-             registrations
-             (lambda (entry) (equal? (car entry) actor)))
-           => cdr]
-          [else #f]))
-
-  (define (unregister? actor) (and (deliver actor) #t))
+    ;; Delivery procedures may run on any thread: post/wake, never block.
+    (let ([entry (registration-of actor)]) (and entry (registration-delivery entry))))
 
   (define (send! to message)
     ;; deliver a protocol message; #t when the actor was reachable

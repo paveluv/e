@@ -87,6 +87,13 @@ item with `kernel:registering-module`, or `#f` for a runtime registration.
 read newest entries first; the ownership read returns copied `(owner . item)`
 wrappers. Registered items remain the registering code's responsibility.
 
+`kernel:make-registry key-of` additionally requires unique keys. The key
+procedure runs once on admission, outside the kernel lock, and must return a
+stable value. The complete proposed state is checked before publication;
+`kernel:registration-conflict?` identifies a duplicate-key condition. A
+conflict discards the whole registration update, including changes to other
+registries. Individual mutations use this same publication rule.
+
 `kernel:registry-remove!` selects entries from one snapshot, calling its
 predicate outside the kernel lock, then removes those entry identities from
 the latest state. `kernel:retract-module!` removes an owner's entries across
@@ -99,7 +106,9 @@ the scope's changes, and a closed scope cannot be resumed. Return values are
 preserved. Use this scope instead of the old snapshot/restore helpers, and
 publish new registration handles to runtime consumers only after it commits.
 Reads can observe later committed work; this publication scope does not make
-a read-then-add uniqueness check atomic.
+a read-then-add check atomic. Use a keyed registry to enforce uniqueness at
+commit. Staging and `kernel:registering-module` are thread parameters, so
+overlapping updates cannot replace each other's context.
 Module loading, reload, and configuration already use it; load and reload
 must run on the main pump.
 
@@ -109,6 +118,23 @@ clear the triggering initializer's staging and module owner. Registrations
 made by those callbacks are independent runtime changes unless the callback
 sets an explicit owner. A worker also operates independently of a staging
 scope on the thread that created it.
+
+`kernel:registry-observe! registry proc` returns a revocation token. After a
+commit, `proc` receives two lists: removed items and added items, newest first.
+Observers are owned registrations; `kernel:registry-unobserve! token` also
+revokes one explicitly. A failed update or a net empty change emits nothing.
+Recipients are captured after the whole batch commits, so an observer added
+in that batch hears its changes, and an observer removed in it does not.
+Revocation also skips queued callbacks; a callback already selected may finish.
+
+The kernel and store share `kernel:make-delivery-queue`,
+`kernel:enqueue-delivery!`, and `kernel:drain-deliveries!`.
+Queue callbacks under the owning state lock and drain
+after releasing it. Delivery is ordered, outside initializer context, and
+survives a callback failure or escape. A completed delivery continuation
+cannot be resumed. Reentrant or concurrent writers may return before delivery;
+callbacks must not wait for a later notification. Mutating an observed
+registry can invoke its callbacks, so release application locks first.
 
 `kernel:persistent-cell key make-initial` initializes one box per key.
 Concurrent callers wait for the initializer, which runs outside the table

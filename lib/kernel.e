@@ -8,7 +8,8 @@
   (export persistent-cell
           registering-module make-registry registry-add!
           registry-items registry-entries registry-find
-          registry-remove!
+          registry-remove! registry-observe! registry-unobserve!
+          registration-conflict?
           retract-module! call-with-registration-update call-with-runtime-registrations
           module-source loaded-modules
           init-module! load-module! load-modules! module-requires?
@@ -16,16 +17,17 @@
           config-file load-config!
           make-read-only-error read-only-error? make-refusal refusal?
           make-mailbox mailbox-post! mailbox-receive!
+          make-delivery-queue enqueue-delivery! drain-deliveries!
           condition-text)
   (import (rnrs)
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
-                make-parameter format interaction-environment eval
+                make-thread-parameter format interaction-environment eval
                 library-exports library-requirements
                 library-directories directory-list load sort
                 parameterize make-mutex with-mutex make-condition
                 condition-wait condition-signal condition-broadcast
-                get-thread-id box? display-condition))
+                get-thread-id box? display-condition void))
 
   ;;; Conditions --------------------------------------------------------------
 
@@ -80,6 +82,63 @@
            (condition-wait (mailbox-signal mb) (mailbox-lock mb))
            (wait)]))))
 
+  ;;; Ordered delivery -----------------------------------------------------
+
+  ;; A writer queues callbacks inside its own commit lock, then drains
+  ;; after releasing it. One drainer finishes them in order; concurrent
+  ;; and reentrant writers never wait for their callbacks to run.
+  (define-record-type (delivery-queue %make-delivery-queue delivery-queue?)
+    (fields lock (mutable front) (mutable back) (mutable active?)))
+
+  (define (make-delivery-queue)
+    (%make-delivery-queue (make-mutex) '() '() #f))
+
+  (define (enqueue-delivery! queue thunk)
+    (with-mutex (delivery-queue-lock queue)
+      (delivery-queue-back-set! queue (cons thunk (delivery-queue-back queue)))))
+
+  (define (next-delivery! queue)
+    (with-mutex (delivery-queue-lock queue)
+      (when (null? (delivery-queue-front queue))
+        (delivery-queue-front-set! queue (reverse (delivery-queue-back queue)))
+        (delivery-queue-back-set! queue '()))
+      (and (pair? (delivery-queue-front queue))
+           (let ([next (car (delivery-queue-front queue))])
+             (delivery-queue-front-set! queue (cdr (delivery-queue-front queue)))
+             next))))
+
+  (define (drain-deliveries! queue)
+    (let ([entered? #f] [owns? #f])
+      (dynamic-wind
+        (lambda ()
+          (when entered? (error 'kernel "cannot resume completed event delivery"))
+          (set! entered? #t))
+        (lambda ()
+          ;; Arm cleanup before claiming the queue, including interruption
+          ;; between admission and the first callback.
+          (with-mutex (delivery-queue-lock queue)
+            (when (and (not (delivery-queue-active? queue))
+                       (or (pair? (delivery-queue-front queue))
+                           (pair? (delivery-queue-back queue))))
+              (set! owns? #t)
+              (delivery-queue-active?-set! queue #t)))
+          (when owns?
+            (call-with-runtime-registrations
+              (lambda ()
+                (let drain ()
+                  (let ([next (next-delivery! queue)])
+                    (when next
+                      (guard (ex [else (void)]) (next))
+                      (drain))))))))
+        (lambda ()
+          (when owns?
+            (with-mutex (delivery-queue-lock queue)
+              (delivery-queue-active?-set! queue #f))
+            (set! owns? #f)
+            ;; Finish the remainder on escape, and cover a writer racing
+            ;; the empty read before we relinquished the queue.
+            (drain-deliveries! queue))))))
+
   ;;; Registries ------------------------------------------------------------
 
   ;; Everything a module registers -- key bindings, modes,
@@ -92,10 +151,14 @@
   ;; (M-x, say) have owner #f and survive reloads.  Lookups prefer
   ;; newer entries.
 
-  (define registering-module (make-parameter #f))
+  (define registering-module (make-thread-parameter #f))
   (define registry-lock (make-mutex))
   (define-record-type (registry %make-registry registry?)
-    (fields (mutable contents)))
+    (fields key-of (mutable contents)))
+  (define-record-type registration
+    (fields owner key item))
+  (define-condition-type &registration-conflict &error make-registration-conflict
+    registration-conflict?)
   (define registries '())
 
   ;; Registration updates stage entry identities, never whole snapshots.
@@ -105,7 +168,7 @@
     (fields thread parent (mutable state) (mutable deltas)))
   (define-record-type registration-delta
     (fields registry (mutable additions) (mutable removals)))
-  (define current-registration-update (make-parameter #f))
+  (define current-registration-update (make-thread-parameter #f))
 
   (define (call-with-runtime-registrations thunk)
     ;; A runtime effect is independent of any initializer that triggered
@@ -138,12 +201,14 @@
           delta)))
 
   (define (apply-registration-delta delta entries)
-    (let ([removed? (lambda (entry) (memq entry (registration-delta-removals delta)))])
-      (append (remp removed? (registration-delta-additions delta))
-              (remp removed? entries))))
+    (if (null? (registration-delta-removals delta))
+        (append (registration-delta-additions delta) entries)
+        (let ([removed? (lambda (entry) (memq entry (registration-delta-removals delta)))])
+          (append (remp removed? (registration-delta-additions delta))
+                  (remp removed? entries)))))
 
   (define (visible-registry-entries r update)
-    ;; Caller holds registry-lock; entry wrappers and list spines are
+    ;; Caller holds registry-lock; entry records and list spines are
     ;; private and never mutated after admission.
     (if update
         (let ([entries (visible-registry-entries r (registration-update-parent update))]
@@ -155,111 +220,195 @@
     (with-mutex registry-lock
       (visible-registry-entries r (active-registration-update))))
 
-  (define (make-registry)
-    (let ([r (%make-registry '())]) ; entries (owner . item), newest first
-      (with-mutex registry-lock (set! registries (cons r registries)))
-      r))
+  (define make-registry
+    (case-lambda
+      [() (make-registry #f)]
+      [(key-of)
+       (unless (or (not key-of) (procedure? key-of))
+         (error 'make-registry "expected a key procedure or #f" key-of))
+       (let ([r (%make-registry key-of '())]) ; newest first
+         (with-mutex registry-lock (set! registries (cons r registries)))
+         r)]))
+
+  (define registration-observers (make-registry))
+  (define registration-deliveries (make-delivery-queue))
+
+  (define (mutate-registrations! thunk)
+    (if (active-registration-update) (thunk) (call-with-registration-update thunk)))
 
   (define (registry-add! r item)
-    (with-mutex registry-lock
-      (let ([entry (cons (registering-module) item)]
-            [update (active-registration-update)])
-        (if update
-            (let ([delta (registration-delta! update r)])
+    ;; Extract the stable key once, outside the lock. Uniqueness is
+    ;; checked against the whole candidate state at outer publication.
+    (let ([entry (make-registration (registering-module)
+                   (and (registry-key-of r) ((registry-key-of r) item)) item)])
+      (mutate-registrations!
+        (lambda ()
+          (with-mutex registry-lock
+            (let ([delta (registration-delta! (active-registration-update) r)])
               (registration-delta-additions-set! delta
-                (cons entry (registration-delta-additions delta))))
-            (registry-contents-set! r (cons entry (registry-contents r)))))))
+                (cons entry (registration-delta-additions delta)))))))))
 
-  (define (registry-items r) (map cdr (registry-read r)))
+  (define (registry-items r) (map registration-item (registry-read r)))
 
   (define (registry-entries r)
     ;; Preserve the public shape without exposing ownership/identity
     ;; wrappers to mutation. The registering module still owns its item.
-    (map (lambda (entry) (cons (car entry) (cdr entry))) (registry-read r)))
+    (map (lambda (entry) (cons (registration-owner entry) (registration-item entry)))
+         (registry-read r)))
 
   (define (registry-find r match?)
     ;; Predicates run against one snapshot, outside registry-lock.
     (let loop ([entries (registry-read r)])
       (cond [(null? entries) #f]
-            [(match? (cdar entries)) (cdar entries)]
+            [(match? (registration-item (car entries))) (registration-item (car entries))]
             [else (loop (cdr entries))])))
 
   (define (remove-registration-entries! r entries update)
     ;; Caller holds registry-lock. Remove only selected identities from
     ;; the latest list, preserving intervening registration/retraction.
     (unless (null? entries)
-      (if update
-          (let ([delta (registration-delta! update r)])
-            (registration-delta-removals-set! delta
-              (append entries (registration-delta-removals delta))))
-          (registry-contents-set! r
-            (remp (lambda (entry) (memq entry entries)) (registry-contents r))))))
+      (let ([delta (registration-delta! update r)])
+        (registration-delta-removals-set! delta
+          (append entries (registration-delta-removals delta))))))
 
   (define (registry-remove! r match?)
     ;; drop entries whose item satisfies match?, whoever owns them --
     ;; for registrations with an explicit revocation handle (a store
     ;; subscription's token, say), alongside ownership retraction.
     ;; Each predicate runs once per captured entry, without the lock.
-    (let ([entries (filter (lambda (entry) (match? (cdr entry))) (registry-read r))])
-      (with-mutex registry-lock
-        (remove-registration-entries! r entries (active-registration-update)))))
+    (let ([entries (filter (lambda (entry) (match? (registration-item entry))) (registry-read r))])
+      (mutate-registrations!
+        (lambda ()
+          (with-mutex registry-lock
+            (remove-registration-entries! r entries (active-registration-update)))))))
 
   (define (retract-module! owner)
-    (with-mutex registry-lock
-      (let ([update (active-registration-update)])
-        (for-each
-          (lambda (r)
-            (remove-registration-entries! r
-              (filter (lambda (entry) (eq? (car entry) owner))
-                      (visible-registry-entries r update))
-              update))
-          registries))))
+    (mutate-registrations!
+      (lambda ()
+        (with-mutex registry-lock
+          (let ([update (active-registration-update)])
+            (for-each
+              (lambda (r)
+                (remove-registration-entries! r
+                  (filter (lambda (entry) (eq? (registration-owner entry) owner))
+                          (visible-registry-entries r update))
+                  update))
+              registries))))))
+
+  (define (registry-observe! r proc)
+    ;; proc receives (removed-items added-items), one batch per commit.
+    ;; Like store subscribers, observers only hear future commits and
+    ;; can revoke callbacks already queued, but not one already running.
+    (unless (procedure? proc) (error 'registry-observe! "expected a procedure" proc))
+    (let ([token (list 'observer)])
+      (registry-add! registration-observers (list token r proc))
+      token))
+
+  (define (registry-unobserve! token)
+    (registry-remove! registration-observers (lambda (entry) (eq? (car entry) token))))
+
+  (define (commit-registrations! changes)
+    ;; Caller holds registry-lock. Validate every candidate BEFORE any
+    ;; registry is installed, so one lost claim discards the entire update.
+    (for-each
+      (lambda (change)
+        (when (registry-key-of (car change))
+          (let ([seen (make-hashtable equal-hash equal?)])
+            (for-each
+              (lambda (entry)
+                (let ([key (registration-key entry)])
+                  (when (hashtable-contains? seen key)
+                    (raise (condition (make-registration-conflict)
+                             (make-who-condition 'registry-add!)
+                             (make-message-condition "duplicate registry key"))))
+                  (hashtable-set! seen key #t)))
+              (caddr change)))))
+      changes)
+    (for-each (lambda (change) (registry-contents-set! (car change) (caddr change))) changes)
+    (let ([queued? #f])
+      (for-each
+        (lambda (change)
+          (let ([observers
+                 (filter (lambda (observer) (eq? (cadr (registration-item observer)) (car change)))
+                         (registry-contents registration-observers))])
+            (unless (null? observers)
+              (let* ([before (cadr change)] [after (caddr change)]
+                     [removed (remp (lambda (entry) (memq entry after)) before)]
+                     [added (remp (lambda (entry) (memq entry before)) after)])
+                (unless (and (null? removed) (null? added))
+                  (for-each
+                    (lambda (observer)
+                      (let ([item (registration-item observer)])
+                        (set! queued? #t)
+                        (enqueue-delivery! registration-deliveries
+                          (lambda ()
+                            (when (memq observer (registry-read registration-observers))
+                              ((caddr item) (map registration-item removed)
+                               (map registration-item added)))))))
+                    observers))))))
+        changes)
+      queued?))
 
   (define (publish-registration-update! update)
     ;; Caller holds registry-lock. Nested success merges into the parent;
     ;; outer success applies deltas to current committed lists, so a
     ;; concurrent revocation is never resurrected by rollback or commit.
-    (let ([parent (registration-update-parent update)])
-      (for-each
-        (lambda (delta)
-          (let ([r (registration-delta-registry delta)])
+    (let* ([parent (registration-update-parent update)]
+           [queued?
             (if parent
-                (let ([target (registration-delta! parent r)])
-                  (registration-delta-additions-set! target
-                    (append (registration-delta-additions delta)
+                (begin
+                  (for-each
+                    (lambda (delta)
+                      (let ([target (registration-delta! parent (registration-delta-registry delta))])
+                        (registration-delta-additions-set! target
+                          (append (registration-delta-additions delta)
                             (registration-delta-additions target)))
-                  (registration-delta-removals-set! target
-                    (append (registration-delta-removals delta)
-                            (registration-delta-removals target))))
-                (registry-contents-set! r
-                  (apply-registration-delta delta (registry-contents r))))))
-        (registration-update-deltas update))
+                        (registration-delta-removals-set! target
+                          (append (registration-delta-removals delta)
+                                  (registration-delta-removals target)))))
+                    (registration-update-deltas update))
+                  #f)
+                (commit-registrations!
+                  (map (lambda (delta)
+                         (let* ([r (registration-delta-registry delta)] [before (registry-contents r)])
+                           (list r before (apply-registration-delta delta before))))
+                       (registration-update-deltas update))))])
       (registration-update-state-set! update 'committed)
-      (registration-update-deltas-set! update '())))
+      (registration-update-deltas-set! update '())
+      queued?))
 
   (define (call-with-registration-update thunk)
     ;; Atomic publication of registry changes only, not arbitrary state
     ;; or resource rollback. Do not publish new handles to other threads
     ;; until this returns. Module loading/reloading runs on the main pump.
     (let ([update (make-registration-update (get-thread-id)
-                    (active-registration-update) 'new '())])
-      (dynamic-wind
+                    (active-registration-update) 'new '())]
+          [queued? #f])
+      (call-with-values
         (lambda ()
-          (with-mutex registry-lock
-            (unless (eq? (registration-update-state update) 'new)
-              (error 'call-with-registration-update "cannot resume a closed update"))
-            (registration-update-state-set! update 'active)))
-        (lambda ()
-          (parameterize ([current-registration-update update])
-            (call-with-values thunk
-              (lambda results
-                (with-mutex registry-lock (publish-registration-update! update))
-                (apply values results)))))
-        (lambda ()
-          (with-mutex registry-lock
-            (when (eq? (registration-update-state update) 'active)
-              (registration-update-state-set! update 'aborted)
-              (registration-update-deltas-set! update '())))))))
+          (dynamic-wind
+            (lambda ()
+              (with-mutex registry-lock
+                (unless (eq? (registration-update-state update) 'new)
+                  (error 'call-with-registration-update "cannot resume a closed update"))
+                (registration-update-state-set! update 'active)))
+            (lambda ()
+              (parameterize ([current-registration-update update])
+                (call-with-values thunk
+                  (lambda results
+                    (with-mutex registry-lock
+                      (set! queued? (publish-registration-update! update)))
+                    (apply values results)))))
+            (lambda ()
+              (with-mutex registry-lock
+                (when (eq? (registration-update-state update) 'active)
+                  (registration-update-state-set! update 'aborted)
+                  (registration-update-deltas-set! update '()))))))
+        (lambda results
+          ;; Only drain for a commit that queued observations. An unrelated
+          ;; registry mutation may be called with its owner's lock held.
+          (when queued? (drain-deliveries! registration-deliveries))
+          (apply values results)))))
 
   ;;; Persistent cells ------------------------------------------------------
 

@@ -100,6 +100,33 @@ Delivery and replies use published registrations, independently of a module
 reload that triggered them. Actors registered during initialization become
 reachable when that registration update commits; see [module registration](MODULES.md#registries-and-persistent-state).
 
+Actors have a directory as well as a mailbox. `actor:register! who deliver!
+[capabilities]` claims an identity `(kind name ...)`; names may be strings or
+legacy symbols. Duplicate identities raise a registration-conflict condition,
+including races between staged updates. Replace an endpoint by detaching and
+registering it in one `kernel:call-with-registration-update` scope. Directory
+metadata and delivery follow the same module ownership and rollback rules.
+
+`actor:attached` returns copied `(actor kind name attached-at capabilities)`
+entries, oldest registration first; `actor:describe who` returns one or `#f`.
+The display name is a string, and the timestamp is the UTC second when the
+registration was created. Optional capabilities are descriptive plain data,
+defaulting to `#f`; they do not grant permissions. `actor:registered? who`
+queries presence, replacing the old, misleading `unregister?` name.
+
+`actor:subscribe! proc` returns a token for `actor:unsubscribe!`. The callback
+receives one batch of `(detached actor)` and `(attached actor)` entries per
+committed change. Replacement reports both together. Callbacks run in commit
+order on a draining writer's thread, outside state locks; post head work with
+`head:run-on-main!`. Subscribers hear future commits, and revocation skips
+queued deliveries. As with store notifications, a callback must not wait for
+a later event. Directory and presence data are independent snapshots.
+
+`actor:detach! who` removes the captured endpoint; repeating it is harmless.
+An already selected delivery may finish. Existing questions remain pending
+across detach/reload and are available on reattachment. Explicit answer or
+cancellation still consumes each ticket once.
+
 ## Prompt API
 
 `prompt:read!` accepts completion, initial input, and history. Presentation can be
