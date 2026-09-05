@@ -395,6 +395,20 @@ future.  Rebase positions only through a complete chain.  When the head
 must resync without one, it clamps positions into the new text and logs
 the lost history.
 
+`(store:set-marks! actor id basis updates drops)` publishes named positions
+and regions in one batch. Updates are an alist of names to `(row . column)`
+positions or text spans; drops is a list of names. A numeric basis must be
+the current text revision. The result is `(values 'applied revision)` or
+`(values 'stale current-revision)`; staleness changes no marks. Invalid shapes,
+out-of-bounds coordinates, or repeated names are errors before mutation.
+Position and span values returned by `store:mark`/`store:marks` are copies.
+`store:set-mark!` and `store:drop-mark!` keep their immediate current-text
+behavior through the same validated boundary. Use the batch with a captured
+basis when publishing positions computed from a snapshot. Heads already do
+so and retry stale or failed publication without losing pending removals.
+A `#f` batch basis explicitly addresses the current text, as the single-mark
+helpers do.
+
 `(store:edit! actor id basis span replacement [context])` applies an
 attributed edit or returns a stale refusal.  The optional context is
 `(group-key label [undo-facts [commit-facts]])`: the same non-false key groups that

@@ -23,7 +23,7 @@
           buffer-list exists? buffer-name find-named
           snapshot snapshot-since snapshot-state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
-          set-mark! mark drop-mark! marks
+          set-mark! set-marks! mark drop-mark! marks
           set-property! set-properties! drop-property! property properties
           validate-properties validate-edit-context
           subscribe! unsubscribe!)
@@ -745,15 +745,59 @@
           (text:make-span (car start) (cdr start) (car end) (cdr end)))
         (clamp value)))
 
+  (define (copy-mark-value value)
+    ;; Own validated position pairs and return fresh ones on reads.  A
+    ;; caller must not be able to poison a later edit by mutating a pair.
+    (cond
+      [(text:position? value) (cons (car value) (cdr value))]
+      [(and (text:span? value) (text:position? (text:span-start value))
+            (text:position? (text:span-end value)))
+       (let ([start (text:span-start value)] [end (text:span-end value)])
+         (text:make-span (car start) (cdr start) (car end) (cdr end)))]
+      [else (error 'set-marks! "expected a nonnegative position or span" value)]))
+
+  (define (mark-in-text? value text)
+    (define (inside? p)
+      (and (< (car p) (vector-length text))
+           (<= (cdr p) (string-length (vector-ref text (car p))))))
+    (if (text:span? value)
+        (and (inside? (text:span-start value)) (inside? (text:span-end value)))
+        (inside? value)))
+
+  (define (set-marks! actor id basis updates drops)
+    ;; Positions and removals form one publication.  A numeric basis must
+    ;; match exactly; stale coordinates never overwrite rebased marks.
+    ;; #f explicitly addresses current text (legacy single-mark calls).
+    ;; -> (values applied revision) or (values stale current-revision).
+    (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0)))
+      (error 'set-marks! "expected a revision or #f" basis))
+    (unless (and (list? updates) (for-all pair? updates) (list? drops)
+                 (let unique ([names (append (map car updates) drops)] [seen '()])
+                   (or (null? names)
+                       (and (not (member (car names) seen))
+                            (unique (cdr names) (cons (car names) seen))))))
+      (error 'set-marks! "expected disjoint updates and removals with unique names" updates drops))
+    (let ([updates (map (lambda (entry) (cons (car entry) (copy-mark-value (cdr entry)))) updates)])
+      (locked
+        (lambda ()
+          (let ([b (buffer-of 'set-marks! id)])
+            (if (and basis (not (= basis (buffer-revision b))))
+                (values 'stale (buffer-revision b))
+                (begin
+                  (unless (for-all (lambda (entry) (mark-in-text? (cdr entry) (buffer-text b))) updates)
+                    (error 'set-marks! "a position is outside the declared text" updates))
+                  (buffer-marks-set! b
+                    (append (map (lambda (entry) (cons (mark-key actor (car entry)) (cdr entry))) updates)
+                            (remp (lambda (entry)
+                                    (and (equal? (caar entry) actor)
+                                         (or (assoc (cdar entry) updates) (member (cdar entry) drops))))
+                                  (buffer-marks b))))
+                  (values 'applied (buffer-revision b)))))))))
+
   (define (set-mark! actor id mark-name position)
-    (locked
-      (lambda ()
-        (let* ([b (buffer-of 'set-mark! id)]
-               [key (mark-key actor mark-name)]
-               [kept (remp (lambda (entry) (equal? (car entry) key))
-                           (buffer-marks b))])
-          (buffer-marks-set! b (cons (cons key position) kept)))))
-    (void))
+    (let-values ([(status revision)
+                  (set-marks! actor id #f (list (cons mark-name position)) '())])
+      (void)))
 
   (define (mark actor id mark-name)
     ;; the mark's current position, or #f
@@ -761,18 +805,12 @@
       (lambda ()
         (cond [(assoc (mark-key actor mark-name)
                       (buffer-marks (buffer-of 'mark id)))
-               => cdr]
+               => (lambda (entry) (copy-mark-value (cdr entry)))]
               [else #f]))))
 
   (define (drop-mark! actor id mark-name)
-    (locked
-      (lambda ()
-        (let ([b (buffer-of 'drop-mark! id)]
-              [key (mark-key actor mark-name)])
-          (buffer-marks-set!
-            b (remp (lambda (entry) (equal? (car entry) key))
-                    (buffer-marks b))))))
-    (void))
+    (let-values ([(status revision) (set-marks! actor id #f '() (list mark-name))])
+      (void)))
 
   (define (marks actor id)
     ;; the actor's marks in the buffer: ((name . position) ...)
@@ -780,7 +818,7 @@
       (lambda ()
         (fold-right (lambda (entry acc)
                       (if (equal? (caar entry) actor)
-                          (cons (cons (cdar entry) (cdr entry)) acc)
+                          (cons (cons (cdar entry) (copy-mark-value (cdr entry))) acc)
                           acc))
                     '()
                     (buffer-marks (buffer-of 'marks id))))))

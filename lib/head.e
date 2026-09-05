@@ -1272,40 +1272,45 @@
           (hashtable-set! window-serials w window-serial-counter)
           window-serial-counter)))
 
-  ;; (((id . name) . value) ...): value is (row . col) for a point,
-  ;; ((row . col) . (row . col)) for a region -- plain data, so frames
-  ;; without changes are equal? and publish nothing
+  ;; ((id revision marks) ...), acknowledged per buffer.  Values are
+  ;; positions or endpoint pairs for regions.  Revision is part of the
+  ;; comparison: the same numeric coordinates at a new revision are new
+  ;; intent, not proof that the store's rebased marks already agree.
   (define published-marks '())
 
   (define (invalidate-buffer-marks! id)
     ;; A resync's clamped positions may equal their last published
     ;; numbers while the store has rebased the actual marks elsewhere.
-    ;; Keep keys for removal, but force every desired mark to republish.
+    ;; Keep names for removal, but force every desired mark to republish.
     (set! published-marks
-      (map (lambda (entry)
-             (if (eqv? (caar entry) id) (cons (car entry) #f) entry))
+      (map (lambda (group)
+             (if (eqv? (car group) id) (list id #f (caddr group)) group))
            published-marks)))
+
+  (define (acknowledge-marks! id group)
+    (let ([kept (remp (lambda (entry) (eqv? (car entry) id)) published-marks)])
+      (set! published-marks (if group (cons group kept) kept))))
 
   (define (desired-head-marks)
     (fold-left
       (lambda (acc w)
-        (let ([id (buffer-store-id (window-buffer w))])
+        (let* ([b (window-buffer w)] [id (buffer-store-id b)])
           (if (not id)
               acc
-              (let* ([serial (window-serial w)]
+              (let* ([old (assv id acc)]
+                     [marks (if old (caddr old) '())]
+                     [serial (window-serial w)]
                      [selected? (eq? w the-current)]
                      [p (cons (window-prow w) (window-pcol w))]
-                     [acc (cons (cons (cons id (cons 'point serial)) p)
-                                acc)]
-                     [acc (if selected?
-                              (cons (cons (cons id 'point) p) acc)
-                              acc)])
-                (if (and selected? (buffer-marked (window-buffer the-current)))
-                    (let ([region (cons (cons (buffer-mark-row (window-buffer the-current)) (buffer-mark-col (window-buffer the-current))) p)])
-                      (cons* (cons (cons id (cons 'region serial)) region)
-                             (cons (cons id 'region) region)
-                             acc))
-                    acc)))))
+                     [marks (cons (cons (cons 'point serial) p) marks)]
+                     [marks (if selected? (cons (cons 'point p) marks) marks)]
+                     [marks
+                      (if (and selected? (buffer-marked b))
+                          (let ([region (cons (cons (buffer-mark-row b) (buffer-mark-col b)) p)])
+                            (cons* (cons (cons 'region serial) region) (cons 'region region) marks))
+                          marks)])
+                (cons (list id (buffer-store-rev b) marks)
+                      (remp (lambda (group) (eqv? (car group) id)) acc))))))
       '() the-windows))
 
   (define (mark-value value)
@@ -1317,24 +1322,40 @@
         value))
 
   (define (publish-head-marks!)
-    (guard (ex [else (void)])
-      (let ([desired (desired-head-marks)])
-        (unless (equal? desired published-marks)
-          (for-each
-            (lambda (entry)
-              (unless (assoc (car entry) desired)
-                (guard (ex [else (void)])
-                  (store:drop-mark! ui-actor (caar entry) (cdar entry)))))
-            published-marks)
-          (for-each
-            (lambda (entry)
-              (let ([old (assoc (car entry) published-marks)])
-                (unless (and old (equal? (cdr old) (cdr entry)))
-                  (guard (ex [else (void)])
-                    (store:set-mark! ui-actor (caar entry) (cdar entry)
-                                     (mark-value (cdr entry)))))))
-            desired)
-          (set! published-marks desired)))))
+    (let* ([desired (desired-head-marks)]
+           [ids (append (map car desired)
+                        (map car (filter (lambda (group) (not (assv (car group) desired)))
+                                         published-marks)))]
+           [resync '()])
+      (for-each
+        (lambda (id)
+          (let ([wanted (assv id desired)] [old (assv id published-marks)])
+            (unless (equal? wanted old)
+              ;; Failure retains the old acknowledgement and its removal
+              ;; keys; one unavailable buffer does not block other buffers.
+              (guard (ex [else (void)])
+                (if (not (store:exists? id))
+                    (acknowledge-marks! id #f)
+                    (let* ([marks (if wanted (caddr wanted) '())]
+                           [basis (if wanted (cadr wanted) (store:revision id))]
+                           [updates (map (lambda (entry) (cons (car entry) (mark-value (cdr entry)))) marks)]
+                           [drops (if old
+                                      (map car (filter (lambda (entry) (not (assoc (car entry) marks)))
+                                                       (caddr old)))
+                                      '())])
+                      (let-values ([(status revision) (store:set-marks! ui-actor id basis updates drops)])
+                        (if (eq? status 'applied)
+                            (acknowledge-marks! id wanted)
+                            (begin
+                              (invalidate-buffer-marks! id)
+                              (let ([b (buffer-of-store-id id)])
+                                (when b (set! resync (cons b resync)))))))))))))
+        ids)
+      ;; Finish all acknowledgements before adoption can run callbacks or
+      ;; reenter a frame.  Refresh even when notification delivery lags, then
+      ;; request another frame rather than spinning publication in a loop.
+      (for-each (lambda (b) (guard (ex [else (void)]) (sync-store-buffer! b))) resync)
+      (unless (null? resync) (wake-main!))))
 
 
   ;;; Apps and views ------------------------------------------------------------

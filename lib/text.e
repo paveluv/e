@@ -23,7 +23,7 @@
   (export normalize from-string to-string content=? splice
           make-span span? span-start span-end
           normalize-span span-empty? contains? overlap?
-          position<? position<=? position=?
+          position? position<? position<=? position=?
           apply-edit extract invert invert-delta difference
           delta? delta-span delta-new-end delta-removed delta-inserted
           delta-line-shift

@@ -535,6 +535,44 @@
                      (kill-buffer! b)))))
             '(("RQabXcdef") (0 . 5) (0 . 5)))
 
+     ;; Q17: a repaint callback writes after the head adopts a reset but
+     ;; before its marks publish.  Keep the store's rebased marks, then retry.
+     (check 'stale-publication-keeps-live-point-and-selection
+            (read-editor
+              '(let* ([old (current-buffer)]
+                      [b (head:new-buffer "publication-live")]
+                      [id (head:buffer-store-id b)]
+                      [armed? #t])
+                 (dynamic-wind
+                   void
+                   (lambda ()
+                     (head:store-reset! b '("abcdef"))
+                     (show-buffer! b)
+                     (goto-point! '(0 . 1))
+                     (set-mark-command!)
+                     (goto-point! '(0 . 4))
+                     (head:before-frame!)
+                     (store:reset! '(agent publication-live) id '("abcdef"))
+                     (let ([basis (store:revision id)])
+                       (head:set-repaint-hook!
+                         (lambda ()
+                           (when (and armed? (= (head:buffer-store-rev b) basis))
+                             (set! armed? #f)
+                             (store:edit! '(agent publication-live) id (store:revision id)
+                                          (text:make-span 0 0 0 0) '("Q")))
+                           (paint:invalidate-screen-cache!)))
+                       (head:before-frame!)
+                       (let ([published (store:mark head:ui-actor id 'point)]
+                             [region (store:mark head:ui-actor id 'region)])
+                         (head:before-frame!)
+                         (list published (list (text:span-start region) (text:span-end region))
+                               (point) (mark)))))
+                   (lambda ()
+                     (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))
+                     (show-buffer! old)
+                     (kill-buffer! b)))))
+            '((0 . 5) ((0 . 2) (0 . 5)) (0 . 5) (0 . 2)))
+
      ;; R5: preserve both directions of a selection through inserted and
      ;; removed rows, then retain only the surviving part of selected text.
      (for-each
