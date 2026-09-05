@@ -117,6 +117,11 @@ dissolution slice is made with it in mind: seam data stays plain
 (spans/deltas will need a canonical list form), the head layer is
 the client side, everything below it is the server side.
 
+Superseded 2026-09-04 by `dev/MULTIHEAD.md`: the base-and-heads
+design with milestones M0-M7.  The items below fold into its M6
+(the wire) and M7 (agents attach); local buffers, head identity,
+base apps, and the surface come first there.
+
 - [ ] serialize the seam data (spans, deltas) and write the protocol
       spec: request/response with ids plus the event stream; a
       connection is an actor with a minted policy session

@@ -17,6 +17,7 @@
   name; a command that was the bare stem gets a verb (`terminal:open!!`,
   `eval:run!`, `describe:show!`).
 - `manual/` is the user's manual (nothing else goes there); development notes live in `dev/`: the
-  design (DESIGN2.md), the tracker and tech-debt ledger (V2_TASKS.md),
+  design (DESIGN2.md), the multi-head design and its milestones
+  (MULTIHEAD.md), the tracker and tech-debt ledger (V2_TASKS.md),
   the dead-code ledger (DEADCODE.md), the debugging-lessons ledger
   (DEBUGGING_LESSONS.md), and the terminal test notes.
