@@ -317,3 +317,24 @@ Renaming the displayed buffer does not change its tool key.  App
 registration and `fresh-buffer` use this same lookup, so a snapshot
 tool rebuilds its own buffer and preserves ordinary buffers with a
 matching label.  Killing a tool buffer removes that instance.
+
+For shared text, `(store:snapshot id)` returns immutable lines and their
+revision.  `(store:snapshot-since id basis)` also returns a complete list
+of `(revision actor delta)` changes since that basis, oldest first, read
+atomically with the text.  An empty list means the basis is current;
+`#f` means reset or history truncation removed it, or the basis is in the
+future.  Rebase positions only through a complete chain.  When the head
+must resync without one, it clamps positions into the new text and logs
+the lost history.
+
+`(store:subscribe! id callback)` observes one shared buffer; use `#f` for
+all buffers and `(store:unsubscribe! token)` to revoke its returned token.
+Callbacks receive events in commit order outside the store lock, and can
+read or edit the store.  A write normally drains notifications before
+returning, but a concurrent or nested write returns after committing
+while another delivery is active.  Its notification follows later, so a
+callback must not wait for a later event's delivery.  New subscriptions
+observe future commits; revocation skips queued callbacks, while an
+already running callback may finish.  Exceptions do not stop delivery.
+Escaping a callback releases delivery ownership and drains queued work;
+resuming a continuation into completed delivery is an error.

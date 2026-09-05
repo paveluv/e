@@ -18,7 +18,7 @@
              (only (kernel) persistent-cell)
              (only (chezscheme)
                    box unbox set-box! parameterize fork-thread
-                   make-time sleep))
+                   make-time sleep make-mutex with-mutex))
 
      (define checks 0)
 
@@ -212,6 +212,177 @@
      (store:unsubscribe! token)
      (store:edit! bot b (store:revision b) (span 0 0 0 1) '("Z"))
      (check 'unsubscribed (length (unbox events)) 1)
+
+     ;; Hold the first event before another subscriber sees it.  A
+     ;; second writer must commit without entering callbacks in parallel
+     ;; or overtaking that event.  Gates control ordering, not sleeps.
+     (define gate-lock (make-mutex))
+     (define (gate-set! gate value)
+       (with-mutex gate-lock (set-box! gate value)))
+     (define (gate-read gate)
+       (with-mutex gate-lock (unbox gate)))
+     (define (await-gate gate)
+       (let wait ([tries 400])
+         (or (gate-read gate)
+             (begin
+               (when (zero? tries)
+                 (error 'store-test "notification gate timed out"))
+               (sleep (make-time 'time-duration 10000000 0))
+               (wait (- tries 1))))))
+
+     (define ordered (store:create! alice "ordered" '("abcdef")))
+     (define delivered (box '()))
+     (define entered (box #f))
+     (define release (box #f))
+     (define completed (box #f))
+     (define observer
+       (store:subscribe! ordered
+         (lambda (event)
+           (gate-set! delivered
+                      (cons (caddr event) (gate-read delivered))))))
+     ;; Registrations run newest first: the blocker precedes observer.
+     (define blocker
+       (store:subscribe! ordered
+         (lambda (event)
+           (when (= (caddr event) 1)
+             (gate-set! entered #t)
+             (await-gate release)))))
+     (fork-thread
+       (lambda ()
+         (gate-set! completed
+           (guard (ex [else 'failed])
+             (edit! alice ordered 0 0 0 0 2 '("x"))))))
+     (await-gate entered)
+     (define second-result (edit! bot ordered 1 0 0 0 2 '("y")))
+     (define while-blocked (gate-read delivered))
+     (gate-set! release #t)
+     (await-gate completed)
+     (check 'concurrent-writer-commits second-result '(applied 2))
+     (check 'blocked-writer-finishes (gate-read completed) '(applied 1))
+     (check 'callbacks-do-not-race while-blocked '())
+     (check 'events-follow-commit-order (reverse (gate-read delivered)) '(1 2))
+     (store:unsubscribe! blocker)
+     (store:unsubscribe! observer)
+
+     ;; A subscriber may itself write.  Every observer finishes the
+     ;; parent event before hearing that nested edit; there is no lock
+     ;; held across either callback or a wait for nested delivery.
+     (define nested (store:create! alice "nested" '("abc")))
+     (define nested-events '())
+     (define nested-observer
+       (store:subscribe! nested
+         (lambda (event)
+           (set! nested-events (cons (caddr event) nested-events)))))
+     (define nested-writer
+       (store:subscribe! nested
+         (lambda (event)
+           (when (= (caddr event) 1)
+             (store:edit! bot nested 1 (span 0 0 0 0) '("y"))))))
+     (store:edit! alice nested 0 (span 0 0 0 0) '("x"))
+     (check 'reentrant-events-follow-commit-order (reverse nested-events) '(1 2))
+     (check 'reentrant-write-landed (store:line nested 0) "yxabc")
+     (store:unsubscribe! nested-writer)
+     (store:unsubscribe! nested-observer)
+
+     ;; A coherent snapshot includes every retained intervening delta,
+     ;; even before a writer's notifications have finished delivery.
+     (let-values ([(text revision changes) (store:snapshot-since nested 0)])
+       (check 'incremental-snapshot-text text '#("yxabc"))
+       (check 'incremental-snapshot-revision revision 2)
+       (check 'incremental-snapshot-order (map car changes) '(1 2))
+       (check 'incremental-snapshot-attribution (map cadr changes) (list alice bot))
+       (check 'incremental-snapshot-deltas (for-all text:delta? (map caddr changes)) #t))
+     (let-values ([(text revision changes) (store:snapshot-since nested 2)])
+       (check 'incremental-snapshot-already-current changes '()))
+     (let-values ([(text revision changes) (store:snapshot-since nested 3)])
+       (check 'incremental-snapshot-future-basis changes #f))
+     (store:reset! bot nested '("fresh"))
+     (let-values ([(text revision changes) (store:snapshot-since nested 2)])
+       (check 'incremental-snapshot-reset-gap (list text revision changes)
+              '(#("fresh") 3 #f)))
+     (do ([i 0 (+ i 1)]) ((= i 257))
+       (store:edit! bot nested (+ 3 i) (span 0 0 0 0) '("x")))
+     (let-values ([(text revision changes) (store:snapshot-since nested 3)])
+       (check 'incremental-snapshot-truncated-gap changes #f))
+     (let-values ([(text revision changes) (store:snapshot-since nested 4)])
+       (check 'incremental-snapshot-retained-boundary
+              (list (length changes) (caar changes) (car (car (reverse changes))) revision)
+              '(256 5 260 260)))
+
+     ;; Registration applies to future commits; revocation also removes
+     ;; callbacks queued behind a subscriber that is currently running.
+     (define revoked (store:create! alice "revoked" '("abc")))
+     (define revoked-events '())
+     (define late-events '())
+     (define late-token #f)
+     (define revoked-token
+       (store:subscribe! revoked
+         (lambda (event) (set! revoked-events (cons event revoked-events)))))
+     (define revoker
+       (store:subscribe! revoked
+         (lambda (event)
+           (when (= (caddr event) 1)
+             (store:edit! bot revoked 1 (span 0 0 0 0) '("y"))
+             (set! late-token
+               (store:subscribe! revoked
+                 (lambda (event) (set! late-events (cons (caddr event) late-events)))))
+             (store:unsubscribe! revoked-token)))))
+     (store:edit! alice revoked 0 (span 0 0 0 0) '("x"))
+     (check 'revocation-skips-queued-callbacks revoked-events '())
+     (check 'subscription-skips-earlier-commits late-events '())
+     (store:edit! alice revoked 2 (span 0 0 0 0) '("z"))
+     (check 'subscription-hears-later-commits late-events '(3))
+     (store:unsubscribe! revoker)
+     (store:unsubscribe! late-token)
+
+     ;; One failing or escaping subscriber must not wedge the stream or
+     ;; discard the callbacks and events queued behind it.
+     (define escaping (store:create! alice "escaping" '("abc")))
+     (define escape-events '())
+     (define escape-observer
+       (store:subscribe! escaping
+         (lambda (event) (set! escape-events (cons (caddr event) escape-events)))))
+     (define escape-token #f)
+     (check 'subscriber-can-escape
+       (call/cc
+         (lambda (escape)
+           (set! escape-token
+             (store:subscribe! escaping
+               (lambda (event)
+                 (when (= (caddr event) 1)
+                   (store:edit! bot escaping 1 (span 0 0 0 0) '("y"))
+                   (escape 'escaped)))))
+           (store:edit! alice escaping 0 (span 0 0 0 0) '("x"))
+           'returned))
+       'escaped)
+     (check 'escape-drains-remaining-callbacks (reverse escape-events) '(1 2))
+     (store:unsubscribe! escape-token)
+     (define failing-token
+       (store:subscribe! escaping
+         (lambda (event) (error 'subscriber "intentional failure"))))
+     (store:edit! alice escaping 2 (span 0 0 0 0) '("z"))
+     (check 'subscriber-failure-keeps-stream-live (reverse escape-events) '(1 2 3))
+     (store:unsubscribe! failing-token)
+     (store:unsubscribe! escape-observer)
+
+     (define saved-delivery #f)
+     (define capture-token
+       (store:subscribe! escaping
+         (lambda (event)
+           (call/cc (lambda (resume) (set! saved-delivery resume))))))
+     (check 'completed-delivery-cannot-be-resumed
+            (let ([attempted? #f])
+              (guard (ex [else 'refused])
+                (store:edit! alice escaping 3 (span 0 0 0 0) '("q"))
+                (if attempted?
+                    'resumed
+                    (begin
+                      (set! attempted? #t)
+                      (saved-delivery 'again)))))
+            'refused)
+     (store:unsubscribe! capture-token)
+     (check 'delivery-remains-live-after-refused-resume
+            (edit! alice escaping 4 0 0 0 0 '("r")) '(applied 5))
 
      ;; -- concurrent writers -------------------------------------------------
 

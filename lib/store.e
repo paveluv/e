@@ -21,7 +21,7 @@
 (library (store)
   (export create! delete! reset! rename!
           buffer-list exists? buffer-name find-named
-          snapshot revision line-count line extract
+          snapshot snapshot-since revision line-count line extract
           edit! undo! history blame
           set-mark! mark drop-mark! marks
           set-property! drop-property! property properties
@@ -30,9 +30,7 @@
           (only (chezscheme)
                 box unbox set-box! make-mutex with-mutex format void)
           (prefix (text) text:)
-          (only (kernel)
-                persistent-cell make-registry registry-add!
-                registry-items registry-remove!))
+          (prefix (kernel) kernel:))
 
   ;;; The store -------------------------------------------------------------
 
@@ -50,19 +48,31 @@
   (define-record-type (store make-store store?)
     (fields lock
             buffers              ; id -> buffer
-            (mutable next-id)))
+            (mutable next-id)
+            (mutable events-front) ; ((event subscriber-token ...) ...)
+            (mutable events-back)
+            (mutable delivering?)))
 
   (define the-store
-    (persistent-cell 'store
+    (kernel:persistent-cell 'store
       (lambda ()
         (make-store (make-mutex)
                     (make-eqv-hashtable)
-                    1))))
+                    1 '() '() #f))))
 
   (define (current-store) (unbox the-store))
 
   (define (locked thunk)
     (with-mutex (store-lock (current-store)) (thunk)))
+
+  (define (transact! thunk)
+    ;; Mutation and its event enter the same critical section.  Only
+    ;; after releasing it may this writer become the event drainer.
+    (call-with-values
+      (lambda () (locked thunk))
+      (lambda result
+        (drain-events!)
+        (apply values result))))
 
   (define (buffer-of who id)
     (or (hashtable-ref (store-buffers (current-store)) id #f)
@@ -70,10 +80,12 @@
 
   ;;; Lifecycle and reading --------------------------------------------------
 
-  (define (create-locked! actor buffer-name lines)
+  (define (create! actor buffer-name lines)
+    ;; -> the new buffer's id.  Empty lines mean one empty line.
+    ;; Subscribers hear (create id name actor).
     (unless (and (list? lines) (for-all string? lines))
       (error 'create! "lines must be a list of strings" lines))
-    (locked
+    (transact!
       (lambda ()
         (let* ([s (current-store)]
                [id (store-next-id s)])
@@ -83,16 +95,8 @@
             (make-buffer buffer-name
                          (list->vector (if (null? lines) '("") lines))
                          0 '() '() '() '()))
+          (enqueue-event! `(create ,id ,buffer-name ,actor))
           id))))
-
-  (define (create! actor buffer-name lines)
-    ;; -> the new buffer's id.  lines: a list of strings; empty means
-    ;; one empty line, since a text always has at least one line.
-    ;; Subscribers hear (create id name actor): a head adopts buffers
-    ;; other actors open.
-    (let ([id (create-locked! actor buffer-name lines)])
-      (notify! `(create ,id ,buffer-name ,actor))
-      id))
 
   (define (reset! actor id lines)
     ;; Wholesale replacement: a new baseline, not an edit.  The delta
@@ -109,7 +113,7 @@
                        [else (list->vector lines)])]
            [text (if (zero? (vector-length text)) (vector "") text)]
            [new-revision
-            (locked
+            (transact!
               (lambda ()
                 (let ([b (buffer-of 'reset! id)]
                       [clamp (lambda (position)
@@ -130,24 +134,24 @@
                              (cons (car entry)
                                    (clamp-mark-value (cdr entry) clamp)))
                            (buffer-marks b)))
+                  (enqueue-event! `(reset ,id ,(buffer-revision b) ,actor))
                   (buffer-revision b))))])
-      (notify! `(reset ,id ,new-revision ,actor))
       new-revision))
 
   (define (rename! actor id new-name)
     ;; subscribers hear (rename id new-name actor)
-    (locked
+    (transact!
       (lambda ()
-        (buffer-label-set! (buffer-of 'rename! id) new-name)))
-    (notify! `(rename ,id ,new-name ,actor))
+        (buffer-label-set! (buffer-of 'rename! id) new-name)
+        (enqueue-event! `(rename ,id ,new-name ,actor))))
     (void))
 
   (define (delete! actor id)
-    (locked
+    (transact!
       (lambda ()
         (buffer-of 'delete! id)
-        (hashtable-delete! (store-buffers (current-store)) id)))
-    (notify! `(delete ,id ,actor))
+        (hashtable-delete! (store-buffers (current-store)) id)
+        (enqueue-event! `(delete ,id ,actor))))
     (void))
 
   (define (buffer-list)
@@ -190,6 +194,20 @@
         (let ([b (buffer-of 'snapshot id)])
           (values (buffer-text b) (buffer-revision b))))))
 
+  (define (snapshot-since id basis)
+    ;; -> (values text revision changes), from one read.  Changes are
+    ;; (revision actor delta) entries, oldest first, ending at exactly
+    ;; this snapshot.  #f means a reset or history truncation removed
+    ;; the basis (or it is in the future); '() means already current.
+    ;; Subscribers use events as wakeups, then advance text and anchors
+    ;; through this coherent chain, even if newer events are pending.
+    (locked
+      (lambda ()
+        (let* ([b (buffer-of 'snapshot-since id)]
+               [entries (entries-since b basis)])
+          (values (buffer-text b) (buffer-revision b)
+                  (and entries (map vector->list entries)))))))
+
   (define (revision id)
     (locked (lambda () (buffer-revision (buffer-of 'revision id)))))
 
@@ -211,9 +229,9 @@
 
   ;;; Edits -------------------------------------------------------------------
 
-  (define (deltas-since b basis)
-    ;; the deltas applied after the basis revision, oldest first, or
-    ;; #f when the basis has fallen out of the log
+  (define (entries-since b basis)
+    ;; The complete chain after basis, oldest first, or #f.  Edits and
+    ;; incremental snapshot readers share the same retention boundary.
     (let ([current (buffer-revision b)])
       (cond
         [(= basis current) '()]
@@ -225,8 +243,11 @@
            (cond [(null? entries) acc]
                  [(<= (vector-ref (car entries) 0) basis) acc]
                  [else (take (cdr entries)
-                             (cons (vector-ref (car entries) 2)
-                                   acc))]))])))
+                             (cons (car entries) acc))]))])))
+
+  (define (deltas-since b basis)
+    (let ([entries (entries-since b basis)])
+      (and entries (map (lambda (entry) (vector-ref entry 2)) entries))))
 
   (define (rebase-through span deltas)
     ;; the span carried across each delta in order, or #f when any
@@ -275,7 +296,7 @@
     ;;             |  (values 'stale 'overlap)       edited meanwhile
     ;;             |  (values 'stale 'basis-too-old) log outgrown
     (let ([outcome
-           (locked
+           (transact!
              (lambda ()
                (let* ([b (buffer-of 'edit! id)]
                       [since (deltas-since b basis)]
@@ -290,10 +311,10 @@
                     (let-values ([(new-revision delta)
                                   (apply-locked! b actor rebased
                                                  replacement #t)])
+                      (enqueue-event! `(edit ,id ,new-revision ,actor ,delta))
                       (list 'applied new-revision delta))]))))])
       (case (car outcome)
         [(applied)
-         (notify! `(edit ,id ,(cadr outcome) ,actor ,(caddr outcome)))
          (values 'applied (cadr outcome))]
         [else (values 'stale (cadr outcome))])))
 
@@ -303,7 +324,7 @@
     ;; -> (values 'applied revision) | (values 'blocked 'overlap)
     ;;  | (values 'nothing #f)
     (let ([outcome
-           (locked
+           (transact!
              (lambda ()
                (let* ([b (buffer-of 'undo! id)]
                       [entry (find (lambda (entry)
@@ -328,10 +349,10 @@
                                         (apply-locked!
                                           b actor rebased
                                           replacement #f)])
+                            (enqueue-event! `(edit ,id ,new-revision ,actor ,delta))
                             (list 'applied new-revision delta))]))))))])
       (case (car outcome)
         [(applied)
-         (notify! `(edit ,id ,(cadr outcome) ,actor ,(caddr outcome)))
          (values 'applied (cadr outcome))]
         [else (values (car outcome) (cadr outcome))])))
 
@@ -475,24 +496,24 @@
   (define (set-property! actor id key value)
     (unless (symbol? key)
       (error 'set-property! "expected a symbol key" key))
-    (locked
+    (transact!
       (lambda ()
         (let ([b (buffer-of 'set-property! id)])
           (buffer-properties-set!
             b (cons (cons key value)
                     (remp (lambda (entry) (eq? (car entry) key))
-                          (buffer-properties b)))))))
-    (notify! `(property ,id ,key ,actor))
+                          (buffer-properties b))))
+          (enqueue-event! `(property ,id ,key ,actor)))))
     (void))
 
   (define (drop-property! actor id key)
-    (locked
+    (transact!
       (lambda ()
         (let ([b (buffer-of 'drop-property! id)])
           (buffer-properties-set!
             b (remp (lambda (entry) (eq? (car entry) key))
-                    (buffer-properties b))))))
-    (notify! `(property ,id ,key ,actor))
+                    (buffer-properties b)))
+          (enqueue-event! `(property ,id ,key ,actor)))))
     (void))
 
   (define (property id key)
@@ -515,22 +536,26 @@
   ;; Subscribers hear changes as data: (edit id revision actor delta),
   ;; (reset id revision actor), (property id key actor), and the
   ;; buffer lifecycle -- (create id name actor), (rename id name
-  ;; actor), (delete id actor).  Delivery is synchronous and
-  ;; outside the store lock -- a subscriber may read state, but slow
-  ;; subscribers slow the writer; asynchronous delivery (to an agent's
-  ;; mailbox, over the wire) is future work.
+  ;; actor), (delete id actor).  Commits enqueue events under the store
+  ;; lock.  One writer drains them outside it, in commit order, finishing
+  ;; an event's subscribers before starting the next event.  Callbacks
+  ;; may read or mutate the store.  While a drainer is active, concurrent
+  ;; and reentrant writers return after committing; their events follow
+  ;; later.  A callback must not wait for delivery of a later event.
   ;;
   ;; Subscriptions are kernel-registry entries, so they are owned like
   ;; any registration: a module's subscription retracts when the
   ;; module reloads, before its init! subscribes afresh.  The token is
   ;; the explicit revocation handle for everything else.  Entries are
-  ;; (token buffer-id proc); the store mutex still serializes
-  ;; subscribe!/unsubscribe! against notify!'s read.
+  ;; (token buffer-id proc).  A commit captures its interested tokens;
+  ;; delivery resolves each live registration just before calling it.
+  ;; New subscribers never hear earlier commits, and revocation skips
+  ;; queued callbacks (an already running callback may still finish).
 
-  (define subscriptions (make-registry))
+  (define subscriptions (kernel:make-registry))
 
   (define subscription-counter
-    (persistent-cell 'store-subscription-counter (lambda () 0)))
+    (kernel:persistent-cell 'store-subscription-counter (lambda () 0)))
 
   (define (subscribe! id proc)
     ;; -> a token for unsubscribe!; id #f hears every buffer
@@ -540,24 +565,77 @@
       (lambda ()
         (let ([token (+ (unbox subscription-counter) 1)])
           (set-box! subscription-counter token)
-          (registry-add! subscriptions (list token id proc))
+          (kernel:registry-add! subscriptions (list token id proc))
           token))))
 
   (define (unsubscribe! token)
     (locked
       (lambda ()
-        (registry-remove! subscriptions
-                          (lambda (entry) (equal? (car entry) token)))))
+        (kernel:registry-remove! subscriptions
+                                 (lambda (entry) (equal? (car entry) token)))))
     (void))
 
-  (define (notify! event)
-    (let ([interested
-           (locked
-             (lambda ()
-               (filter (lambda (entry)
-                         (or (not (cadr entry))
-                             (equal? (cadr entry) (cadr event))))
-                       (registry-items subscriptions))))])
-      (for-each (lambda (entry)
-                  (guard (ex [else (void)]) ((caddr entry) event)))
-                interested))))
+  (define (enqueue-event! event)
+    ;; Caller holds the mutation lock.  The two-list FIFO keeps both
+    ;; appends and removal amortized constant time.
+    (let ([tokens
+           (map car
+                (filter (lambda (entry)
+                          (or (not (cadr entry))
+                              (equal? (cadr entry) (cadr event))))
+                        (kernel:registry-items subscriptions)))]
+          [s (current-store)])
+      (unless (null? tokens)
+        (store-events-back-set! s
+          (cons (cons event tokens) (store-events-back s))))))
+
+  (define (next-delivery!)
+    (locked
+      (lambda ()
+        (let ([s (current-store)])
+          (let next ()
+            (when (null? (store-events-front s))
+              (store-events-front-set! s (reverse (store-events-back s)))
+              (store-events-back-set! s '()))
+            (and (pair? (store-events-front s))
+                 (let* ([front (store-events-front s)]
+                        [item (car front)])
+                   (if (null? (cdr item))
+                       (begin (store-events-front-set! s (cdr front)) (next))
+                       (let ([subscriber
+                              (kernel:registry-find subscriptions
+                                (lambda (entry) (= (car entry) (cadr item))))])
+                         ;; Consume one callback before invoking it.  If
+                         ;; it escapes, the rest of this event is intact.
+                         (store-events-front-set! s
+                           (cons (cons (car item) (cddr item)) (cdr front)))
+                         (if subscriber
+                             (cons (car item) (caddr subscriber))
+                             (next)))))))))))
+
+  (define (drain-events!)
+    (when (locked
+            (lambda ()
+              (let ([s (current-store)])
+                (and (not (store-delivering? s))
+                     (or (pair? (store-events-front s))
+                         (pair? (store-events-back s)))
+                     (begin (store-delivering?-set! s #t) #t)))))
+      (let ([entered? #f])
+        (dynamic-wind
+          (lambda ()
+            ;; A captured callback may escape, but resuming a completed
+            ;; drain would bypass ownership and race a newer drainer.
+            (when entered? (error 'store "cannot resume completed event delivery"))
+            (set! entered? #t))
+          (lambda ()
+            (let drain ()
+              (let ([delivery (next-delivery!)])
+                (when delivery
+                  (guard (ex [else (void)]) ((cdr delivery) (car delivery)))
+                  (drain)))))
+          (lambda ()
+            (locked (lambda () (store-delivering?-set! (current-store) #f)))
+            ;; Finish queued work on an escape too, and cover a commit
+            ;; racing the empty-queue read before releasing the drainer.
+            (drain-events!)))))))

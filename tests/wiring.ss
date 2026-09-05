@@ -160,6 +160,81 @@
               (call-with-input-file probe read)
               (+ row-before 1)))
 
+     ;; A subscriber's nested edit used to notify the head first.  The
+     ;; insert then delete must move point 0 -> 2 -> 1, matching the
+     ;; store's mark, rather than replaying the deltas as delete/insert.
+     (check 'ordered-events-keep-cursor-and-mark-together
+            (read-editor
+              '(let* ([was (current-buffer)]
+                      [b (head:new-buffer "event-order-test")]
+                      [id (head:buffer-store-id b)]
+                      [token #f])
+                 (dynamic-wind
+                   void
+                   (lambda ()
+                     (head:buffer-lines-set! b '#("abcdef"))
+                     (show-buffer! b)
+                     (goto-point! '(0 . 0))
+                     (head:before-frame!)
+                     (set! token
+                       (store:subscribe! id
+                         (lambda (event)
+                           (when (and (eq? (car event) 'edit) (= (caddr event) 2))
+                             (store:edit! '(agent nested) id 2
+                                          (text:make-span 0 0 0 1) '(""))))))
+                     (store:edit! '(agent first) id 1
+                                  (text:make-span 0 0 0 0) '("XY"))
+                     (head:before-frame!)
+                     (list (point) (store:mark head:ui-actor id 'point)
+                           (head:buffer-lines b) (head:buffer-store-rev b)))
+                   (lambda ()
+                     (when token (store:unsubscribe! token))
+                     (show-buffer! was)
+                     (head:forget-buffer! b)
+                     (store:delete! head:ui-actor id)))))
+            '((0 . 1) (0 . 1) #("Yabcdef") 3))
+
+     ;; Revision 3 is already committed while its callback is running.
+     ;; A frame consuming revision 2 must adopt BOTH deltas with the
+     ;; revision-3 text, and the later notification must not move point
+     ;; again.  Calling the frame from this main-thread subscriber makes
+     ;; the missing-notification window deterministic without a sleep.
+     (check 'snapshot-ahead-of-notifications-keeps-positions-coherent
+            (read-editor
+              '(let* ([was (current-buffer)]
+                      [b (head:new-buffer "snapshot-order-test")]
+                      [id (head:buffer-store-id b)]
+                      [token #f]
+                      [during #f])
+                 (dynamic-wind
+                   void
+                   (lambda ()
+                     (head:buffer-lines-set! b '#("abcdef"))
+                     (show-buffer! b)
+                     (goto-point! '(0 . 0))
+                     (head:before-frame!)
+                     (store:edit! '(agent first) id 1
+                                  (text:make-span 0 0 0 0) '("XY"))
+                     (set! token
+                       (store:subscribe! id
+                         (lambda (event)
+                           (when (and (eq? (car event) 'edit) (= (caddr event) 3))
+                             (head:before-frame!)
+                             (set! during
+                               (list (point) (store:mark head:ui-actor id 'point)
+                                     (head:buffer-store-rev b)))))))
+                     (store:edit! '(agent second) id 2
+                                  (text:make-span 0 0 0 1) '(""))
+                     (head:before-frame!)
+                     (list during (point) (store:mark head:ui-actor id 'point)
+                           (head:buffer-lines b)))
+                   (lambda ()
+                     (when token (store:unsubscribe! token))
+                     (show-buffer! was)
+                     (head:forget-buffer! b)
+                     (store:delete! head:ui-actor id)))))
+            '(((0 . 1) (0 . 1) 3) (0 . 1) (0 . 1) #("Yabcdef")))
+
      ;; undo refuses to time-travel over the agent's work
      (send! "\x1b;xundo!\r")
      (pump! 900)

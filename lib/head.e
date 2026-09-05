@@ -944,7 +944,7 @@
   ;; Foreign actors edit the (store) directly; their changes
   ;; flow back into this seat's line caches before each frame.  The
   ;; subscription callback runs on whichever thread edited, so it only
-  ;; records the buffer id; the main loop does the adoption.
+  ;; queues the ordered events; the main loop does the adoption.
   (define foreign-lock (make-mutex))
   (define foreign-pending '())
 
@@ -1009,6 +1009,51 @@
                           (vector-ref v 1) (vector-ref v 2))
                   #f))))
           (reverse flushed)))))
+
+  (define (rebase-buffer-positions! b delta)
+    (for-each
+      (lambda (w)
+        (when (eq? (window-buffer w) b)
+          (let ([p (text:rebase-position
+                     (cons (window-prow w) (window-pcol w)) delta)])
+            (window-prow-set! w (car p))
+            (window-pcol-set! w (cdr p)))
+          (window-top-set!
+            w (car (text:rebase-position (cons (window-top w) 0) delta)))))
+      the-windows)
+    (let ([p (text:rebase-position
+               (cons (buffer-spot-row b) (buffer-spot-col b)) delta)])
+      (buffer-spot-row-set! b (car p))
+      (buffer-spot-col-set! b (cdr p)))
+    (buffer-spot-top-set!
+      b (car (text:rebase-position (cons (buffer-spot-top b) 0) delta))))
+
+  (define (sync-store-buffer! b)
+    ;; Event arrival is only a wakeup.  Reading text separately from
+    ;; its deltas can adopt a newer revision than the anchors follow.
+    ;; Read both atomically, ignore already adopted events, and never
+    ;; replay a partial or out-of-order chain across a missing basis.
+    (let-values ([(text revision changes)
+                  (store:snapshot-since (buffer-store-id b)
+                                        (buffer-store-rev b))])
+      (unless (= revision (buffer-store-rev b))
+        (if changes
+            (for-each
+              (lambda (entry)
+                (unless (equal? (cadr entry) ui-actor)
+                  (rebase-buffer-positions! b (caddr entry))))
+              changes)
+            (begin
+              (invalidate-buffer-marks! (buffer-store-id b))
+              (log:add! 'store
+                (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
+                        (buffer-name b) (buffer-store-rev b) revision))))
+        (buffer-lines-raw-set! b text)
+        (bump-buffer-revision! b)
+        (buffer-store-rev-set! b revision)
+        (when (buffer-file b) (buffer-modified-set! b #t))
+        (clamp-buffer-positions! b)
+        (repaint-hook))))
 
   (define (sync-foreign-edits!)
     (let ([events (with-mutex foreign-lock
@@ -1087,52 +1132,14 @@
                 (bump-buffer-revision! b)
                 (repaint-hook)))))
         events)
-      ;; carry every view's point across the foreign deltas, so a
-      ;; cursor keeps its content when an agent edits above it
-      (for-each
-        (lambda (event)
-          (when (eq? (car event) 'edit)
-            (let ([b (find (lambda (b)
-                             (eqv? (buffer-store-id b) (cadr event)))
-                           the-buffers)])
-              (when b
-                (guard (ex [else (void)])
-                  (let ([d (list-ref event 4)])
-                    (for-each
-                      (lambda (w)
-                        (when (eq? (window-buffer w) b)
-                          (let ([p (text:rebase-position
-                                     (cons (window-prow w)
-                                           (window-pcol w))
-                                     d)])
-                            (window-prow-set! w (car p))
-                            (window-pcol-set! w (cdr p)))
-                          (window-top-set!
-                            w (car (text:rebase-position
-                                     (cons (window-top w) 0) d)))))
-                      the-windows)
-                    (let ([p (text:rebase-position
-                               (cons (buffer-spot-row b)
-                                     (buffer-spot-col b))
-                               d)])
-                      (buffer-spot-row-set! b (car p))
-                      (buffer-spot-col-set! b (cdr p)))))))))
-        events)
+      ;; Advance each affected buffer once, to a coherent text/anchor
+      ;; revision.  A queued older event then becomes a harmless wakeup.
       (for-each
         (lambda (id)
           (let ([b (find (lambda (b) (eqv? (buffer-store-id b) id))
                          the-buffers)])
             (when b
-              (guard (ex [else (void)])
-                (let-values ([(text revision) (store:snapshot id)])
-                  (unless (= revision (buffer-store-rev b))
-                    ;; adoption is sharing: nothing mutates in place
-                    (buffer-lines-raw-set! b text)
-                    (bump-buffer-revision! b)
-                    (buffer-store-rev-set! b revision)
-                    (when (buffer-file b) (buffer-modified-set! b #t))
-                    (clamp-buffer-positions! b)
-                    (repaint-hook)))))))
+              (guard (ex [else (void)]) (sync-store-buffer! b)))))
         (let dedupe ([ids (map cadr events)] [seen '()])
           (cond [(null? ids) (reverse seen)]
                 [(memv (car ids) seen) (dedupe (cdr ids) seen)]
@@ -1160,6 +1167,15 @@
   ;; ((row . col) . (row . col)) for a region -- plain data, so frames
   ;; without changes are equal? and publish nothing
   (define published-marks '())
+
+  (define (invalidate-buffer-marks! id)
+    ;; A resync's clamped positions may equal their last published
+    ;; numbers while the store has rebased the actual marks elsewhere.
+    ;; Keep keys for removal, but force every desired mark to republish.
+    (set! published-marks
+      (map (lambda (entry)
+             (if (eqv? (caar entry) id) (cons (car entry) #f) entry))
+           published-marks)))
 
   (define (desired-head-marks)
     (fold-left
