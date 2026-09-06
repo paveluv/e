@@ -34,6 +34,16 @@
               [registered-at-creation? #f]
               [abandon (condition (make-error) (make-message-condition "abandon initializer"))])
          (for-each (lambda (name) (actor:register! (list 'head name) void)) occupied)
+         ;; The base can predate this head. Initial discovery must honor
+         ;; audience too; its inventory overlaps writes during the claim.
+         (unless (eq? kind 'conflict)
+           (for-each
+             (lambda (entry)
+               (store:create! '(agent startup) (car entry) '("already here")
+                              (list (cons 'audience (cadr entry)))))
+             (list (list "public before import" 'all)
+                   (list "private before import" (list expected))
+                   (list "hidden before import" '((head "elsewhere"))))))
          (store:subscribe! #f
            (lambda (event)
              (events event)
@@ -77,8 +87,9 @@
                  (list (eval '(map head:buffer-name (head:buffers)))
                        (store:mark expected (store:find-named "*scratch*") 'point))
                  (list (if (eq? kind 'named)
-                           '("*scratch*" "during claim" "after import")
-                           '("*scratch*" "after import"))
+                           '("*scratch*" "public before import" "private before import"
+                             "during claim" "after import")
+                           '("*scratch*" "public before import" "private before import" "after import"))
                        '(0 . 0)))))))
 
      (define (suite)

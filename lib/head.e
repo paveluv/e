@@ -73,7 +73,7 @@
           buffer-read-only buffer-read-only-set!
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
-          mirror-create! adopt-store!
+          adopt-store!
           edit-basis snapshot-since store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
           unique-name add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
@@ -750,19 +750,20 @@
       (if (buffer-store-id b) name (local-name name))))
 
   (define (unique-name base self)
-    ;; Labels share one namespace in this head.  Include store buffers
-    ;; not yet adopted, so a new local label cannot hide a shared one.
+    ;; Shared labels reserve the store namespace; local labels only
+    ;; compete with content visible to this head, including pending adoption.
     (let* ([used (make-hashtable string-hash string=?)]
            [local? (and self (not (buffer-store-id self)))]
            [base (if local? (local-name base) base)]
            [self-id (and self (buffer-store-id self))])
       (for-each (lambda (b)
-                  (unless (eq? b self)
+                  (when (and (not (eq? b self)) (or (not local?) (buffer-visible? b)))
                     (hashtable-set! used (buffer-name b) #t)))
                 the-buffers)
       (guard (ex [else (void)])
         (for-each (lambda (id)
-                    (unless (eqv? id self-id)
+                    (when (and (not (eqv? id self-id))
+                               (or (not local?) (store:visible? ui-actor id)))
                       (hashtable-set! used (store:buffer-name id) #t)))
                   (store:buffer-list)))
       (let loop ([k 1])
@@ -785,13 +786,7 @@
           (buffer-name-set! b (unique-name name b))))
       the-buffers))
 
-  (define (mirror-create! b)
-    (buffer-store-id-set!
-      b (store:create! ui-actor (buffer-name b)
-                       (vector->list (buffer-lines b))))
-    (buffer-store-rev-set! b 0)
-    (buffer-changes-set! b #f)
-    (reserve-store-name! (buffer-name b)))
+  (define initial-buffer-facts '((trailing . #t) (mode-auto . #t) (wrap . default)))
 
   (define (content-revision b)
     (if (buffer-store-id b) (buffer-store-rev b) (buffer-local-rev b)))
@@ -1015,28 +1010,38 @@
         (store:rename! ui-actor (buffer-store-id b) (buffer-name b))
         (reserve-store-name! (buffer-name b)))))
 
-  (define (new-seat-buffer name shared?)
-    (let ([b (make-buffer name (vector "") 0 (vector '() '())
-                          0 0 #f 0 0 0 'default #f 0)])
-      (when shared? (mirror-create! b))
-      ;; the managed facts start explicit, so absence stays honest
-      (buffer-facts-set! b '((trailing . #t) (mode-auto . #t) (wrap . default)))
-      b))
-
   (define (new-buffer name)
-    (new-seat-buffer name #t))
+    ;; Shared creation and notification adoption have one canonical record.
+    ;; A subscriber may reenter a frame before create! returns its id.
+    (let ([id (store:create! ui-actor name '("") initial-buffer-facts)])
+      (or (adopt-store-buffer! id)
+          (error 'new-buffer "created buffer is no longer visible" id))))
 
   (define (new-local-buffer name)
-    ;; Like new-buffer, the caller decides when to put it in the
-    ;; buffer list or a window.  No store buffer or event is created.
-    (let ([b (new-seat-buffer (local-name name) #f)])
+    ;; Local construction has no shared lifecycle. Its caller decides when
+    ;; to add/show it; opaque local facts and generated content stay here.
+    (let ([b (make-buffer (local-name name) (vector "") 0 (vector '() '())
+                          0 0 #f 0 0 0 'default #f 0)])
+      (buffer-facts-set! b initial-buffer-facts)
       (buffer-name-set! b (unique-name (buffer-name b) b))
       b))
+
+  (define (buffer-visible? b)
+    (let ([id (buffer-store-id b)])
+      (or (not id) (store:visible? ui-actor id))))
+
+  (define (ensure-buffer-visible! b)
+    (unless (buffer-visible? b)
+      (error 'head "buffer is not visible to this head" (buffer-name b)))
+    (let ([current (buffer-of-store-id (buffer-store-id b))])
+      (when (and current (not (eq? current b)))
+        (error 'head "buffer record has been retired" (buffer-name b)))))
 
   (define (add-buffer! b)
     ;; Enter the head's buffer list without changing its MRU order.
     ;; Claim a local label here too: another buffer may have taken
     ;; the constructor's suggested name before this one was shown.
+    (ensure-buffer-visible! b)
     (unless (memq b the-buffers)
       (if (buffer-store-id b)
           (reserve-store-name! (buffer-name b))
@@ -1071,18 +1076,27 @@
          (find (lambda (b) (eqv? (buffer-store-id b) id)) the-buffers)))
 
   (define (adopt-store-buffer! id)
-    ;; Another actor created a store buffer: give this head a record
-    ;; for it, so it shows in the buffer list like any other.  It joins
-    ;; at the end: this seat did not ask for it.  A buffer with
-    ;; no mode yet gets detection, recorded as the shared fact.
-    (unless (buffer-of-store-id id)
-      (let-values ([(text revision) (store:snapshot id)])
-        (let ([b (make-buffer (store:buffer-name id) text 0
-                              (vector '() '()) 0 0 #f 0 0 0
-                              'default id revision)])
-          (unless (buffer-fact b 'mode #f) (adopt-hook b))
-          (unless (buffer-fact b 'wrap #f) (buffer-fact-set! b 'wrap 'default))
-          (add-buffer! b)))))
+    ;; Initial content and audience come from one snapshot. Register the
+    ;; record before detection can reenter adoption; a hook may also hide
+    ;; or delete it, so never unconditionally add it again afterward.
+    (and (store:visible? ui-actor id)
+         (or (buffer-of-store-id id)
+             (let-values ([(text revision facts) (store:snapshot-state id)])
+               (let ([audience (assq 'audience facts)])
+                 (and (actor:in-audience? ui-actor (if audience (cdr audience) 'all))
+                      (call-with-display-update
+                        (lambda ()
+                          (let ([b (make-buffer (store:buffer-name id) text 0
+                                                (vector '() '()) 0 0 #f 0 0 0
+                                                'default id revision)])
+                            (add-buffer! b)
+                            (unless (assq 'wrap facts) (buffer-fact-set! b 'wrap 'default))
+                            (unless (buffer-fact b 'mode #f) (adopt-hook b))
+                            (if (buffer-visible? b)
+                                (buffer-of-store-id id)
+                                (begin
+                                  (forget-buffer! b)
+                                  #f)))))))))))
 
   (define (buffer-lines-set! b new-lines)
     (store-reset! b new-lines))
@@ -1125,7 +1139,11 @@
 
   (define (note-foreign-event local-actor event)
     (when (and (memq (car event) '(edit reset property create rename delete))
-               (not (equal? (event-actor event) local-actor)))
+               ;; Commands adopt their own text receipts. Lifecycle always
+               ;; goes through the same path, regardless of its author.
+               (or (not (equal? (event-actor event) local-actor))
+                   (memq (car event) '(create rename delete))
+                   (and (eq? (car event) 'property) (eq? (caddr event) 'audience))))
       (with-mutex foreign-lock
         (set! foreign-pending (cons event foreign-pending)))
       (wake-main!)))
@@ -1237,92 +1255,82 @@
         (adopt-snapshot! b basis text revision changes '()))))
 
   (define (sync-foreign-edits!)
-    (let ([events (with-mutex foreign-lock
-                    (let ([pending foreign-pending])
-                      (set! foreign-pending '())
-                      (reverse pending)))])
-      ;; the audit stream: every foreign operation is on the record --
-      ;; (log-view:buffer 'store) shows what other actors did
-      (for-each
-        (lambda (event)
-          (guard (ex [else (void)])
-            (let ([id (cadr event)] [actor (event-actor event)])
-              ;; the modified flag flips on every edit: audit the
-              ;; edits, not their bookkeeping shadow
-              (unless (and (eq? (car event) 'property)
-                           (eq? (caddr event) 'modified))
-                (flush-ui-audit! id)
-                (log:add! 'store
-                  (case (car event)
-                    [(create)
-                     (format "~a created ~s" actor (caddr event))]
-                    [(rename)
-                     (format "~a renamed ~s to ~s" actor
-                             (let ([b (buffer-of-store-id id)])
-                               (if b (buffer-name b) id))
-                             (caddr event))]
-                    [(delete)
-                     (format "~a deleted ~s" actor
-                             (let ([b (buffer-of-store-id id)])
-                               (if b (buffer-name b) id)))]
-                    [(property)
-                     (format "~a set ~a of ~s"
-                             actor (caddr event)
-                             (store:buffer-name id))]
-                    [(edit)
-                     (if (> (length event) 5)
-                         (let ([origin (list-ref event 5)])
-                           (history-audit-line actor (store:buffer-name id)
-                                               (car origin) (caddr origin)
-                                               (cadr origin) (caddr event)))
-                         (format "~a edited ~s at ~a" actor (store:buffer-name id)
-                                 (text:span-start (text:delta-span (list-ref event 4)))))]
-                    [else
-                     (format "~a reset ~s" actor (store:buffer-name id))]))))))
-        events)
-      ;; the buffer lifecycle across heads: another actor's buffers
-      ;; appear in this head's list, renames follow, and a deletion
-      ;; drops the record -- any window showing it moves on
-      (for-each
-        (lambda (event)
-          (guard (ex [else (void)])
-            (case (car event)
-              [(create) (adopt-store-buffer! (cadr event))]
-              [(rename)
-               (reserve-store-name! (caddr event))
-               (let ([b (buffer-of-store-id (cadr event))])
-                 (when b (buffer-name-set! b (caddr event))))]
-              [(delete)
-               (let ([b (buffer-of-store-id (cadr event))])
-                 (when b
-                   (buffer-store-id-set! b #f)   ; the twin is gone
-                   (forget-buffer! b)))]
-              [else (void)])))
-        events)
-      ;; a foreign fact changed (mode, file, read-only): the status
-      ;; line must repaint even though no text moved
-      (for-each
-        (lambda (event)
-          (when (eq? (car event) 'property)
-            (let ([b (find (lambda (b)
-                             (eqv? (buffer-store-id b) (cadr event)))
-                           the-buffers)])
-              (when b
-                (bump-buffer-revision! b)
-                (request-repaint!)))))
-        events)
-      ;; Advance each affected buffer once, to a coherent text/anchor
-      ;; revision.  A queued older event then becomes a harmless wakeup.
-      (for-each
-        (lambda (id)
-          (let ([b (find (lambda (b) (eqv? (buffer-store-id b) id))
-                         the-buffers)])
-            (when b
-              (guard (ex [else (void)]) (sync-store-buffer! b)))))
-        (let dedupe ([ids (map cadr events)] [seen '()])
-          (cond [(null? ids) (reverse seen)]
+    (let* ([events (with-mutex foreign-lock
+                     (let ([pending foreign-pending])
+                       (set! foreign-pending '())
+                       (reverse pending)))]
+           [ids (append initial-store-ids (map cadr events))])
+      ;; Consume the initial inventory before callbacks, just like events.
+      ;; Subsequent frames only visit buffers whose store state changed.
+      (set! initial-store-ids '())
+      (call-with-display-update
+        (lambda ()
+          ;; the audit stream: every foreign operation is on the record --
+          ;; (log-view:buffer 'store) shows what other actors did
+          (for-each
+            (lambda (event)
+              (guard (ex [else (void)])
+                (let ([id (cadr event)] [actor (event-actor event)])
+                  ;; the modified flag flips on every edit: audit the
+                  ;; edits, not their bookkeeping shadow
+                  (unless (and (eq? (car event) 'property)
+                            (eq? (caddr event) 'modified))
+                    (flush-ui-audit! id)
+                    (log:add! 'store
+                      (case (car event)
+                        [(create)
+                         (format "~a created ~s" actor (caddr event))]
+                        [(rename)
+                         (format "~a renamed ~s to ~s" actor
+                           (let ([b (buffer-of-store-id id)])
+                             (if b (buffer-name b) id))
+                           (caddr event))]
+                        [(delete)
+                         (format "~a deleted ~s" actor
+                           (let ([b (buffer-of-store-id id)])
+                             (if b (buffer-name b) id)))]
+                        [(property)
+                         (format "~a set ~a of ~s"
+                           actor (caddr event)
+                           (store:buffer-name id))]
+                        [(edit)
+                         (if (> (length event) 5)
+                           (let ([origin (list-ref event 5)])
+                             (history-audit-line actor (store:buffer-name id)
+                                                 (car origin) (caddr origin)
+                                                 (cadr origin) (caddr event)))
+                           (format "~a edited ~s at ~a" actor (store:buffer-name id)
+                                   (text:span-start (text:delta-span (list-ref event 4)))))]
+                        [else
+                         (format "~a reset ~s" actor (store:buffer-name id))]))))))
+            events)
+          ;; Reconcile each id once from current truth. Queued create/rename/
+          ;; audience changes may already be superseded; hidden labels do not
+          ;; displace local tools. Finish lifecycle, text and geometry before
+          ;; notifying the painter about either text or fact changes.
+          (for-each
+            (lambda (id)
+              (guard (ex [else (void)])
+                (let ([b (buffer-of-store-id id)])
+                  (if (store:visible? ui-actor id)
+                    (let ([b (or b (adopt-store-buffer! id))])
+                      (when b
+                        (let ([name (store:buffer-name id)])
+                          (unless (string=? name (buffer-name b))
+                            (buffer-name-set! b name)
+                            (reserve-store-name! name)))
+                        (sync-store-buffer! b)
+                        (when (exists (lambda (event)
+                                        (and (eqv? (cadr event) id)
+                                          (memq (car event) '(create rename property))))
+                                      events)
+                          (bump-buffer-revision! b)
+                          (request-repaint!))))
+                    (when b (forget-buffer! b))))))
+            (let dedupe ([ids ids] [seen '()])
+              (cond [(null? ids) (reverse seen)]
                 [(memv (car ids) seen) (dedupe (cdr ids) seen)]
-                [else (dedupe (cdr ids) (cons (car ids) seen))])))))
+                [else (dedupe (cdr ids) (cons (car ids) seen))])))))))
 
   ;; What the head looks at, published as store marks other actors can
   ;; read, refreshed per frame by a desired-versus-published diff:
@@ -1399,11 +1407,13 @@
            [resync '()])
       (for-each
         (lambda (id)
-          (let ([wanted (assv id desired)] [old (assv id published-marks)])
-            (unless (equal? wanted old)
-              ;; Failure retains the old acknowledgement and its removal
-              ;; keys; one unavailable buffer does not block other buffers.
-              (guard (ex [else (void)])
+          ;; Visibility is part of publication, inside the same per-buffer
+          ;; failure boundary. An outage retains acknowledgements/removal
+          ;; keys; it is neither a successful publication nor a hide event.
+          (guard (ex [else (void)])
+            (let ([wanted (and (store:visible? ui-actor id) (assv id desired))]
+                  [old (assv id published-marks)])
+              (unless (equal? wanted old)
                 (if (not (store:exists? id))
                     (acknowledge-marks! id #f)
                     (let* ([marks (if wanted (caddr wanted) '())]
@@ -1777,6 +1787,7 @@
     ;; Display b in w, remembering where point was in the old buffer and
     ;; restoring where it last was in the new one. Redisplaying the same
     ;; buffer preserves the live window; saved spots belong to hidden ones.
+    (ensure-buffer-visible! b)
     (let ([old (window-buffer w)])
       (unless (eq? old b)
         (buffer-spot-row-set! old (window-prow w))
@@ -1793,23 +1804,30 @@
         (request-repaint!))))
 
   (define (forget-buffer! b)
-    ;; Drop a local buffer or a record whose store twin is gone: kill
-    ;; hooks, the buffer list, apps, and every window showing it.
-    (for-each
-      (lambda (hook)
-        (guard (ex [else
-                    (log:add! 'kill-buffer!
-                      (format "Buffer cleanup failed for ~a: ~a"
-                              (buffer-name b) (kernel:condition-text ex)))])
-          (hook b)))
-      (kernel:registry-items buffer-kill-hook-registry))
-    (set! the-buffers (remq b the-buffers))
-    (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
-    (when (null? the-buffers) (add-buffer! (new-buffer "*scratch*")))
-    (for-each (lambda (w)
-                (when (eq? (window-buffer w) b)
-                  (set-window-buffer! w (car the-buffers))))
-              the-windows))
+    ;; Retire this head's record, never the store content. Keep its store
+    ;; id: a retained reference to hidden/deleted content cannot turn local.
+    ;; Remove it from fallback candidates and move windows before cleanup
+    ;; callbacks; cascading/repeated retirement has one cleanup and repaint.
+    (when (or (memq b the-buffers) (app-of b)
+              (exists (lambda (w) (eq? (window-buffer w) b)) the-windows))
+      (call-with-display-update
+        (lambda ()
+          (set! the-buffers (remq b the-buffers))
+          (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
+          (let ([fallback (or (find buffer-visible? the-buffers)
+                            (new-buffer (unique-name "*scratch*" #f)))])
+            (for-each (lambda (w)
+                        (when (eq? (window-buffer w) b)
+                          (set-window-buffer! w fallback)))
+                      the-windows))
+          (for-each
+            (lambda (hook)
+              (guard (ex [else
+                          (log:add! 'kill-buffer!
+                            (format "Buffer cleanup failed for ~a: ~a"
+                                    (buffer-name b) (kernel:condition-text ex)))])
+                (hook b)))
+            (kernel:registry-items buffer-kill-hook-registry))))))
 
 
   ;;; Interruptible execution -----------------------------------------------------------
@@ -1886,11 +1904,15 @@
 
   ;;; The seat's first state ---------------------------------------------------------
 
+  ;; Subscribe before taking the initial inventory: writes during the read
+  ;; are in the inventory, the queue, or both. Deduplicate at first adoption.
+  (define initial-store-ids (list-sort < (store:buffer-list)))
+
   ;; the seat begins as *scratch* in one window; views the modules above
   ;; register while loading join the list behind it
   (define seat-initialized
     (let ([b (new-buffer "*scratch*")])
-      (set! the-buffers (list b))
+      (set! the-buffers (cons b (remq b the-buffers)))
       (let ([w (make-window b 0 0 0 0 0 0 0 0 0 1 'default)])
         (set! the-windows (list w))
         (set! the-root w)

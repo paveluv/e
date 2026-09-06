@@ -15,12 +15,13 @@
 
 (library (actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
-          current call-as deliver send!
+          current call-as identity? audience? in-audience? deliver send!
           ask! answer! cancel! pending)
   (import (rnrs)
           (only (chezscheme) box unbox set-box! void make-mutex with-mutex
                 current-time time-second make-thread-parameter parameterize)
-          (prefix (kernel) kernel:))
+          (prefix (kernel) kernel:)
+          (prefix (datum) datum:))
 
   ;;; Registration ----------------------------------------------------------
 
@@ -29,29 +30,25 @@
 
   (define registrations (kernel:make-registry registration-identity))
 
-  (define (copy-data datum)
-    ;; Own admitted protocol data, and never expose its mutable parts.
-    (let copy ([datum datum] [path '()])
-      (when (memq datum path) (error 'actor "cyclic protocol data"))
-      (cond
-        [(pair? datum)
-         (let ([path (cons datum path)])
-           (cons (copy (car datum) path) (copy (cdr datum) path)))]
-        [(vector? datum)
-         (list->vector (map (lambda (item) (copy item (cons datum path))) (vector->list datum)))]
-        [(string? datum) (string-copy datum)]
-        [(bytevector? datum) (bytevector-copy datum)]
-        [(or (null? datum) (symbol? datum) (number? datum) (boolean? datum) (char? datum)) datum]
-        [else (error 'actor "expected plain protocol data" datum)])))
+  (define (identity? actor)
+    (and (list? actor) (>= (length actor) 2) (symbol? (car actor))
+         (or (symbol? (cadr actor))
+             (and (string? (cadr actor)) (> (string-length (cadr actor)) 0)))))
+
+  (define (audience? audience)
+    (or (eq? audience 'all) (and (list? audience) (for-all identity? audience))))
+
+  (define (in-audience? actor audience)
+    (or (eq? audience 'all) (and (member actor audience) #t)))
 
   ;; Attribution context, not a capability. Callbacks may run on another
   ;; actor's thread; their identity follows the work, not that thread's head.
   (define current-actor (make-thread-parameter #f))
 
-  (define (current) (copy-data (current-actor)))
+  (define (current) (datum:copy (current-actor)))
 
   (define (call-as actor thunk)
-    (parameterize ([current-actor (copy-data actor)]) (thunk)))
+    (parameterize ([current-actor (datum:copy actor)]) (thunk)))
 
   (define register!
     (case-lambda
@@ -59,16 +56,14 @@
       [(actor deliver! capabilities)
        ;; Identity is (kind name ...). Legacy symbol names remain valid;
        ;; named heads use strings. Capabilities describe policy, never grant it.
-       (unless (and (list? actor) (>= (length actor) 2) (symbol? (car actor))
-                    (or (symbol? (cadr actor))
-                        (and (string? (cadr actor)) (> (string-length (cadr actor)) 0))))
+       (unless (identity? actor)
          (error 'register! "expected (kind name ...)" actor))
        (unless (procedure? deliver!)
          (error 'register! "expected a delivery procedure" deliver!))
-       (let ([identity (copy-data actor)] [capabilities (copy-data capabilities)])
+       (let ([identity (datum:copy actor)] [capabilities (datum:copy capabilities)])
          (kernel:registry-add! registrations
            (make-registration identity (time-second (current-time 'time-utc)) capabilities deliver!))
-         (copy-data identity))]))
+         (datum:copy identity))]))
 
   (define (registration-of actor)
     (kernel:registry-find registrations
@@ -76,8 +71,8 @@
 
   (define (directory-entry entry)
     (let* ([actor (registration-identity entry)] [name (cadr actor)])
-      (copy-data (list actor (car actor) (if (string? name) name (symbol->string name))
-                       (registration-attached-at entry) (registration-capabilities entry)))))
+      (datum:copy (list actor (car actor) (if (string? name) name (symbol->string name))
+                        (registration-attached-at entry) (registration-capabilities entry)))))
 
   (define (attached)
     ;; Oldest registration first; like kernel reads, initializers can
@@ -102,9 +97,9 @@
     (kernel:registry-observe! registrations
       (lambda (removed added)
         (proc (append
-                (map (lambda (entry) (list 'detached (copy-data (registration-identity entry))))
+                (map (lambda (entry) (list 'detached (datum:copy (registration-identity entry))))
                      (reverse removed))
-                (map (lambda (entry) (list 'attached (copy-data (registration-identity entry))))
+                (map (lambda (entry) (list 'attached (datum:copy (registration-identity entry))))
                      (reverse added)))))))
 
   (define (unsubscribe! token) (kernel:registry-unobserve! token))
@@ -146,8 +141,8 @@
     ;; answerer (empty for free-form); reply! receives the answer.
     (unless (procedure? reply!)
       (error 'ask! "expected a reply procedure" reply!))
-    (let* ([from (copy-data from)] [to (copy-data to)]
-           [question (copy-data question)] [choices (copy-data choices)]
+    (let* ([from (datum:copy from)] [to (datum:copy to)]
+           [question (datum:copy question)] [choices (datum:copy choices)]
            [ticket
             (with-mutex protocol-lock
               (let ([ticket (+ (unbox ticket-counter) 1)])
@@ -159,7 +154,7 @@
       ;; Delivery may answer synchronously or ask again. Never call out
       ;; while holding the protocol lock; a failed delivery only cancels
       ;; its own ticket if it is still pending.
-      (if (send! to (copy-data (list 'ask ticket from question choices)))
+      (if (send! to (datum:copy (list 'ask ticket from question choices)))
           ticket
           (begin (cancel! ticket) #f))))
 
@@ -168,10 +163,10 @@
     ;; ((ticket from question choices) ...)
     (fold-right (lambda (entry acc)
                   (if (equal? (vector-ref entry 2) to)
-                      (cons (copy-data (list (vector-ref entry 0)
-                                             (vector-ref entry 1)
-                                             (vector-ref entry 3)
-                                             (vector-ref entry 4)))
+                      (cons (datum:copy (list (vector-ref entry 0)
+                                              (vector-ref entry 1)
+                                              (vector-ref entry 3)
+                                              (vector-ref entry 4)))
                             acc)
                       acc))
                 '()

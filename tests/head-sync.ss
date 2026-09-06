@@ -5,7 +5,7 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
@@ -13,13 +13,10 @@
   '(begin
      (import (prefix (head) head:)
              (prefix (store) store:)
-             (prefix (text) text:))
+             (prefix (text) text:)
+             (prefix (test) test:))
 
-     (define checks 0)
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'head-sync-test (symbol->string label) actual expected)))
+     (define check test:check)
 
      (define b (head:window-buffer (head:current)))
      (define id (head:buffer-store-id b))
@@ -169,4 +166,126 @@
                       (length (caddr (since source (+ basis 1)))) 256)))))
        '(#f #t))
 
-     (format #t "~a head synchronization checks passed\n" checks)))
+     ;; Audience is a head lifecycle fact. Initial/private content never
+     ;; gets a record or displaces a local label; later transitions adopt
+     ;; current content and retire only this head's state.
+     (define created-during-callback #f)
+     (define creation-token
+       (store:subscribe! #f
+         (lambda (event)
+           (when (string=? (store:buffer-name (cadr event)) "reentrant construction")
+             (case (car event)
+               [(create)
+                (store:reset! bot (cadr event) '("subscriber content"))
+                (head:adopt-store-buffer! (cadr event))]
+               ;; All subscribers finish create before this reset callback;
+               ;; the head has queued creation, but create! has not returned.
+               [(reset)
+                (head:before-frame!)
+                (set! created-during-callback (head:buffer-of-store-id (cadr event)))])))))
+     (define constructed (head:new-buffer "reentrant construction"))
+     (store:unsubscribe! creation-token)
+     (head:add-buffer! constructed)
+     (check 'shared-construction-reuses-reentrant-adoption
+            (list (eq? constructed created-during-callback)
+                  (head:buffer-lines constructed)
+                  (length (filter (lambda (b) (eqv? (head:buffer-store-id b)
+                                                    (head:buffer-store-id constructed)))
+                                  (head:buffers))))
+            '(#t #("subscriber content") 1))
+     (define other '(head "other"))
+     (define private
+       (store:create! head:ui-actor "<private>" '("seed")
+                      (list (cons 'audience (list other)) '(wrap . #f))))
+     (define local-tool (head:tool-buffer "private"))
+     (head:before-frame!)
+     (check 'private-creation-is-invisible
+            (list (head:buffer-of-store-id private) (head:adopt-store-buffer! private)
+                  (head:buffer-name local-tool)) '(#f #f "<private>"))
+     (define renaming-tool (head:tool-buffer "private-renamed"))
+     (store:rename! bot private "<private-renamed>")
+     (head:before-frame!)
+     (check 'hidden-rename-does-not-reserve-local-labels
+            (head:buffer-name renaming-tool) "<private-renamed>")
+     (define adoptions 0)
+     (head:set-adopt-hook!
+       (lambda (source)
+         (set! adoptions (+ adoptions 1))
+         (check 'adoption-is-canonical-before-callbacks
+                (eq? source (head:adopt-store-buffer! (head:buffer-store-id source))) #t)))
+     (define retained #f)
+     (store:edit! bot private 0 (text:make-span 0 0 0 4) '("kept"))
+     (define history (store:history private))
+     (store:set-mark! bot private 'point '(0 . 1))
+     (for-each
+       (lambda (entry)
+         (let ([author (car entry)] [audience (cadr entry)] [visible? (caddr entry)])
+           (store:set-property! author private 'audience audience)
+           (head:before-frame!)
+           (check 'audience-transition
+                  (and (head:buffer-of-store-id private) #t) visible?)
+           (if visible?
+               (begin
+                 (let ([current (head:buffer-of-store-id private)])
+                   (when retained
+                     (check 'retired-record-cannot-duplicate-readoption
+                            (test:raises? (lambda () (head:add-buffer! retained))) #t))
+                   (set! retained current))
+                 (head:set-window-buffer! w retained)
+                 (head:before-frame!)
+                 (check 'readmitted-content-and-facts
+                        (list (head:buffer-lines retained) (head:buffer-fact retained 'wrap 'missing)
+                              (store:mark head:ui-actor private 'point))
+                        '(#("kept") #f (0 . 0))))
+               (check 'retirement-preserves-store-and-rejects-redisplay
+                      (list (store:line private 0) (store:mark bot private 'point)
+                            (equal? (store:history private) history)
+                            (store:mark head:ui-actor private 'point)
+                            (eq? (head:window-buffer w) retained)
+                            (test:raises? (lambda () (head:add-buffer! retained)))
+                            (test:raises? (lambda () (head:set-window-buffer! w retained))))
+                      '("kept" (0 . 1) #t #f #f #t #t)))))
+       (list (list bot 'all #t) (list head:ui-actor '() #f)
+             (list head:ui-actor (list head:ui-actor) #t)
+             (list bot (list other) #f)))
+     (check 'each-visible-lifetime-detects-once adoptions 2)
+     ;; A superseded reveal/rename must never adopt or reserve its old name.
+     (store:set-property! bot private 'audience 'all)
+     (store:rename! bot private "<private>")
+     (store:set-property! bot private 'audience '())
+     (head:before-frame!)
+     (check 'coalesced-transitions-read-current-truth
+            (list adoptions (head:buffer-of-store-id private) (head:buffer-name local-tool))
+            '(2 #f "<private>"))
+     ;; Dropping the fact restores the default. A detection callback may
+     ;; itself hide the buffer and reenter a frame without resurrection.
+     (define cleanups 0)
+     (head:add-buffer-kill-hook!
+       (lambda (source)
+         (when (eqv? (head:buffer-store-id source) private)
+           (set! cleanups (+ cleanups 1)))))
+     (head:set-adopt-hook!
+       (lambda (source)
+         (store:set-property! head:ui-actor private 'audience '())
+         (head:before-frame!)))
+     (store:drop-property! head:ui-actor private 'audience)
+     (head:before-frame!)
+     (check 'callback-retirement-is-not-resurrected-or-repeated
+            (list (head:buffer-of-store-id private) cleanups (store:exists? private)) '(#f 1 #t))
+     (head:set-adopt-hook! (lambda (source) (void)))
+
+     ;; With no visible alternative, retirement creates a fresh scratch
+     ;; without stealing the hidden scratch's still-reserved store label.
+     (define last-visible (head:new-buffer "*scratch*<last>"))
+     (head:set-buffers! (list last-visible))
+     (head:set-window-buffer! w last-visible)
+     (store:set-property! head:ui-actor (head:buffer-store-id last-visible) 'audience '())
+     (head:before-frame!)
+     (check 'last-visible-buffer-gets-a-visible-fallback
+            (list (= (length (head:buffers)) 1)
+                  (store:visible? head:ui-actor (head:buffer-store-id (head:window-buffer w)))
+                  (eq? (head:window-buffer w) last-visible)
+                  (store:exists? (head:buffer-store-id last-visible)))
+            '(#t #t #f #t))
+
+     (test:finish! 'head-sync)))

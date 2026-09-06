@@ -20,7 +20,7 @@
 
 (library (store)
   (export create! delete! reset! rename!
-          buffer-list exists? buffer-name find-named
+          buffer-list exists? visible? buffer-name find-named
           snapshot snapshot-since snapshot-state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
           set-mark! set-marks! mark drop-mark! marks
@@ -31,6 +31,8 @@
           (only (chezscheme)
                 box unbox set-box! make-mutex with-mutex format void remq)
           (prefix (text) text:)
+          (prefix (actor) actor:)
+          (prefix (datum) datum:)
           (prefix (kernel) kernel:))
 
   ;;; The store -------------------------------------------------------------
@@ -127,6 +129,7 @@
                         (case (car entry)
                           [(base) (or (not (cdr entry)) (string? (cdr entry)))]
                           [(trailing disposable) (boolean? (cdr entry))]
+                          [(audience) (actor:audience? (cdr entry))]
                           [else #t])
                         (valid (cdr rest) (cons (car entry) seen)))))))
       (error 'validate-properties "expected unique symbol keys and valid fact values" updates))
@@ -159,7 +162,7 @@
 
   (define (property-data b)
     (cons (cons 'modified (buffer-modified b))
-          (map (lambda (entry) (cons (car entry) (cdr entry)))
+          (map datum:copy
                (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
                        (buffer-properties b)))))
 
@@ -181,16 +184,20 @@
 
   ;;; Lifecycle and reading --------------------------------------------------
 
-  (define (create! actor buffer-name lines)
+  (define (create! actor buffer-name lines . facts)
     ;; -> the new buffer's id.  Empty lines mean one empty line.
-    ;; Subscribers hear (create id name actor).
-    (let ([text (text:normalize lines)])
+    ;; Initial facts and content publish together, before the create event.
+    ;; Private content is never briefly visible to every head.
+    (unless (<= (length facts) 1) (error 'create! "expected one fact batch" facts))
+    (let ([text (text:normalize lines)]
+          [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))])
       (transact!
         (lambda ()
           (let* ([s (current-store)]
                  [id (store-next-id s)])
             (store-next-id-set! s (+ id 1))
             (let ([b (make-buffer buffer-name text 0 '() '() '() '() #f #f)])
+              (install-properties! b updates)
               (refresh-modified! b)
               (hashtable-set! (store-buffers s) id b))
             (enqueue-event! `(create ,id ,buffer-name ,actor))
@@ -204,7 +211,7 @@
     ;; a file supplies base/trailing/stamp; ordinary edits use edit!.
     (unless (<= (length facts) 1) (error 'reset! "expected at most one fact batch" facts))
     (let* ([text (text:normalize lines)]
-           [updates (writable-properties (if (pair? facts) (car facts) '()))]
+           [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))]
            [new-revision
             (transact!
               (lambda ()
@@ -259,6 +266,14 @@
     (locked
       (lambda ()
         (and (hashtable-ref (store-buffers (current-store)) id #f) #t))))
+
+  (define (visible? actor id)
+    ;; Audience is presentation/routing, not permission to read the store.
+    ;; Missing content is never visible; an absent audience means all.
+    (locked
+      (lambda ()
+        (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
+          (and b (actor:in-audience? actor (property-value b 'audience 'all)))))))
 
   (define (buffer-name id)
     (locked (lambda () (buffer-label (buffer-of 'buffer-name id)))))
@@ -461,30 +476,31 @@
     (let ([context (and (pair? options) (car options))])
       (unless (<= (length options) 1) (error 'edit! "expected one context" options))
       (validate-edit-context context)
-      (let ([outcome
-             (transact!
-               (lambda ()
-                 (let* ([b (buffer-of 'edit! id)]
-                        [since (entries-since b basis)]
-                        [rebased (and since
-                                   (rebase-through
-                                     (text:normalize-span span)
-                                     (map (lambda (entry) (vector-ref entry 2)) since)))])
-                   (cond
-                     [(not since) (list 'stale 'basis-too-old)]
-                     [(not rebased) (list 'stale 'overlap)]
-                     [else
-                      (let-values ([(new-revision delta)
-                                    (apply-locked! b id actor rebased
-                                                   replacement #f
-                                                   (if (and context (>= (length context) 3))
-                                                       (caddr context) '())
-                                                   (if (and context (= (length context) 4))
-                                                       (cadddr context) '()))])
-                        (remember-edit! b actor context)
-                        (list 'applied new-revision (buffer-text b)
-                              (append (map change-data since)
-                                      (list (list new-revision actor delta)))))]))))])
+      (let* ([properties (if (and context (>= (length context) 3))
+                           (datum:copy (caddr context)) '())]
+             [commit-facts (if (and context (= (length context) 4))
+                             (datum:copy (cadddr context)) '())]
+             [outcome
+              (transact!
+                (lambda ()
+                  (let* ([b (buffer-of 'edit! id)]
+                         [since (entries-since b basis)]
+                         [rebased (and since
+                                    (rebase-through
+                                      (text:normalize-span span)
+                                      (map (lambda (entry) (vector-ref entry 2)) since)))])
+                    (cond
+                      [(not since) (list 'stale 'basis-too-old)]
+                      [(not rebased) (list 'stale 'overlap)]
+                      [else
+                       (let-values ([(new-revision delta)
+                                     (apply-locked! b id actor rebased
+                                                    replacement #f
+                                                    properties commit-facts)])
+                         (remember-edit! b actor context)
+                         (list 'applied new-revision (buffer-text b)
+                               (append (map change-data since)
+                                       (list (list new-revision actor delta)))))]))))])
         (case (car outcome)
           [(applied)
            (values 'applied (cdr outcome))]
@@ -840,13 +856,13 @@
     (set-properties! actor id (list (cons key value))))
 
   (define (set-properties! actor id updates)
-    (writable-properties updates)
-    (transact!
-      (lambda ()
-        (let ([b (buffer-of 'set-properties! id)])
-          (install-properties! b updates)
-          (refresh-modified! b)
-          (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates))))
+    (let ([updates (datum:copy (writable-properties updates))])
+      (transact!
+        (lambda ()
+          (let ([b (buffer-of 'set-properties! id)])
+            (install-properties! b updates)
+            (refresh-modified! b)
+            (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)))))
     (void))
 
   (define (drop-property! actor id key)
@@ -869,7 +885,10 @@
       (lambda ()
         (let ([b (buffer-of 'property id)])
           (if (eq? key 'modified) (buffer-modified b)
-              (property-value b key (and (pair? fallback) (car fallback))))))))
+              (let ([cell (property-cell (buffer-properties b) key)])
+                (if (and cell (not (eq? (cdr cell) missing-property)))
+                    (datum:copy (cdr cell))
+                    (and (pair? fallback) (car fallback)))))))))
 
   (define (properties id)
     ;; every fact, as fresh pairs: ((key . value) ...)

@@ -339,14 +339,36 @@ entries. `focus-window-up!`, `focus-window-down!`, `focus-window-left!`, and
 use `head:view-replace!` and `head:view-append!` for generated content. Run
 `M-x (describe:show!!)` for live signatures and registered command documentation.
 
-`(head:new-buffer name)` creates a buffer in the shared store.
+`(head:new-buffer name)` creates a buffer in the shared store and adopts
+its canonical record into this head's buffer list.
 `(head:new-local-buffer name)` creates a buffer belonging only to this
-head, with no store id.  Both start with one empty line; use
-`show-buffer!` or `display-buffer!` to put the result in the buffer list
-and a window.  The same text, mode, and fact accessors work on either
-kind.  A local buffer's facts and generated text stay in the head and
+head, with no store id; its caller decides when to add it to the list.
+Both start with one empty line; use `show-buffer!` or `display-buffer!`
+to display the result in a window. The same text, mode, and fact accessors
+work on either kind. A local buffer's facts and generated text stay in the head and
 produce no store notifications; local points and selections are not
 published to other actors.
+
+`(store:create! actor name lines [facts])` returns a store id. The optional
+fact alist publishes atomically with the content, before the create event.
+Use `audience` to control which heads adopt it: `all` is the default,
+`((head "desk"))` selects one head, and `()` hides it from every head.
+For example, an agent can create content for the requesting head with:
+
+```scheme
+(store:create! '(agent helper) "*review*" '("Review notes")
+  (list (cons 'audience (list head:ui-actor))))
+```
+
+An audience change takes effect before the head's next frame, including
+changes made by that head. Hiding moves its windows to visible buffers,
+closes dependent local views, and withdraws its managed marks; shared text,
+history, and other actors' marks survive. Dropping `audience` restores the
+default. `(store:visible? actor id)` tests existence and audience; raw store
+reads remain available under their own policy. Audience is routing, not an
+access-control boundary. `(head:adopt-store-buffer! id)` returns the current
+head record, or `#f` when invisible. After readmission use that record;
+retained hidden or superseded records cannot be added or displayed again.
 
 `(head:buffer-point b)` reads point in the selected window when it shows
 `b`, otherwise in another window showing it, otherwise from its saved
@@ -365,7 +387,7 @@ Reset is for an explicit baseline or generated view, and clears shared undo.
 Ordinary edits use `head:store-edit!`.
 
 Local labels share the head's buffer namespace.  A collision receives
-`<name 2>`, `<name 3>`, and so on; when a shared buffer arrives or is renamed,
+`<name 2>`, `<name 3>`, and so on; when a visible shared buffer arrives or is renamed,
 the local buffer yields the conflicting label.  `head:add-buffer!`
 adds a buffer to the list without displaying it and claims its label.
 
@@ -389,6 +411,13 @@ facts)`. `base` is a string or `#f`; `trailing` and `disposable` are booleans.
 Shared `modified` is derived and cannot be set or dropped. Generated output
 can set `disposable` to `#t`; registered apps and tool buffers do so already.
 The local modified flag remains available for private command history.
+Shared fact admission and reads copy finite data: pairs, vectors, strings,
+bytevectors, and scalar Scheme data. Mutating a supplied value or a read
+result cannot change store state; use a fact transaction. Cycles and runtime
+objects such as procedures or records are rejected before mutation. Local
+facts can hold runtime objects, including a dynamic `read-only` guard;
+that procedure returns true to allow an edit. Use ordinary data flags for
+shared read-only state.
 
 `(head:buffer-state b)` and `(store:snapshot-state id)` return
 `(values text revision facts)` from one current read. The shared form can be

@@ -100,40 +100,30 @@
      (head:before-frame!)
      (check 'reentrant-queued-events-do-not-repeat (point) '(0 . 4))
 
-     ;; A callback before mutation may advance the cache too.  Commands
-     ;; keep their original range and basis across an editability check.
-     (define guarded (fresh "position-guard" '("abcdef")))
+     ;; Dynamic edit guards are head-local callbacks; shared facts are data.
+     ;; A guard changing local source after capture must not retarget intent.
+     ;; Shared callbacks and reentrant adoption are covered by the formatter
+     ;; and subscriber fixtures below, without storing procedures in the base.
+     (define guarded (fresh "position-guard" '("abcdef") #t))
      (goto-point! '(0 . 2))
      (head:buffer-read-only-set! guarded
        (lambda ()
-         (foreign! guarded (text:make-span 0 0 0 0) '("Q"))
-         (head:before-frame!)
+         (head:store-edit! guarded (text:make-span 0 0 0 0) '("Q"))
          #t))
-     (insert-text! "X")
+     (check 'guard-cannot-retarget-captured-local-intent
+            (let ([refused (refused? (lambda () (insert-text! "X")))])
+              (list refused (text-of guarded) (point)))
+            '(#t ("Qabcdef") (0 . 3)))
      (head:buffer-read-only-set! guarded #f)
-     (check 'preflight-adoption-preserves-intent (text-of guarded) '("QabXcdef"))
-     (check 'preflight-adoption-preserves-point (point) '(0 . 4))
-     (goto-point! '(0 . 2))
-     (head:buffer-read-only-set! guarded
-       (lambda ()
-         (foreign! guarded (text:make-span 0 1 0 5) '("R"))
-         (head:before-frame!)
-         #t))
-     (check 'preflight-overlap-still-refuses (refused? delete-forward!) #t)
-     (head:buffer-read-only-set! guarded #f)
-     (check 'preflight-overlap-cannot-delete-a-new-neighbor (text-of guarded) '("QRdef"))
 
      ;; A receipt must retain a chain that was complete on acceptance,
      ;; even if this very commit trims its oldest entry out of the log.
      (define retained (fresh "position-retention-boundary" '("abcdef")))
      (goto-point! '(0 . 2))
-     (head:buffer-read-only-set! retained
-       (lambda ()
-         (do ([i 0 (+ i 1)]) ((= i 256))
-           (foreign! retained (text:make-span 0 0 0 0) '("q")))
-         #t))
+     ;; These writes stay ahead of the head's adopted command basis.
+     (do ([i 0 (+ i 1)]) ((= i 256))
+       (foreign! retained (text:make-span 0 0 0 0) '("q")))
      (insert-text! "X")
-     (head:buffer-read-only-set! retained #f)
      (check 'acceptance-retains-the-whole-chain (point) '(0 . 259))
      (check 'acceptance-at-retention-boundary-keeps-text
             (substring (car (text-of retained)) 256 263) "abXcdef")
@@ -233,16 +223,11 @@
      (check 'indent-projects-selection-endpoint (bmark indented) '(2 . 2))
 
      ;; Replace-all's preserved point is expressed in its proposed result;
-     ;; a permission callback may not cause its target to include new text.
+     ;; a store write ahead of the head must not expand the intended target.
      (define replaced (fresh "position-replace-all" '("aba" "tail")))
      (goto-point! '(0 . 1))
-     (head:buffer-read-only-set! replaced
-       (lambda ()
-         (foreign! replaced (text:make-span 0 0 0 0) '("Q"))
-         (head:before-frame!)
-         #t))
+     (foreign! replaced (text:make-span 0 0 0 0) '("Q"))
      (replace-all! "a" "ZZ")
-     (head:buffer-read-only-set! replaced #f)
      (check 'replace-all-preserves-unseen-prefix (text-of replaced) '("QZZbZZ" "tZZil"))
      (check 'replace-all-projects-preserved-point (point) '(0 . 2))
 

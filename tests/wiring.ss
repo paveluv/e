@@ -716,8 +716,14 @@
                       probe))
        (pump! 900)
        (call-with-input-file probe read))
-     (send! "\x1b;xstore:create! (quote (agent rival)) \"rival-notes\" (list \"from the rival\")\r")
-     (pump! 900)
+     (read-editor
+       '(store:create! '(agent rival) "rival-notes" '("from the rival")
+                       '((audience (head "elsewhere")))))
+     (check 'private-foreign-buffer-stays-hidden
+            (member "rival-notes" (buffer-names)) #f)
+     (read-editor
+       '(begin (store:set-property! '(agent rival) (store:find-named "rival-notes")
+                                    'audience (list head:ui-actor)) #t))
      (check 'foreign-buffer-adopted
             (and (member "rival-notes" (buffer-names)) #t) #t)
      (send! "\x1b;xstore:rename! (quote (agent rival)) (store:find-named \"rival-notes\") \"rival-log\"\r")
@@ -726,15 +732,24 @@
             (list (and (member "rival-log" (buffer-names)) #t)
                   (member "rival-notes" (buffer-names)))
             '(#t #f))
-     (send! "\x18;brival-log\r")           ; C-x b: look at it
-     (pump! 900)
-     (check 'showing-the-foreign-buffer (screen-has? 0 "from the rival") #t)
-     (send! "\x1b;xstore:delete! (quote (agent rival)) (store:find-named \"rival-log\")\r")
-     (pump! 900)
-     (check 'foreign-delete-moves-the-window-on
-            (list (member "rival-log" (buffer-names))
-                  (screen-has? 0 "from the rival"))
-            '(#f #f))
+     (for-each
+       (lambda (hide?)
+         (send! "\x18;brival-log\r")           ; C-x b: look at it
+         (pump! 900)
+         (check 'showing-the-foreign-buffer (screen-has? 0 "from the rival") #t)
+         (read-editor
+           (if hide?
+               '(begin (head:buffer-fact-set! (current-buffer) 'audience '()) #t)
+               '(begin (store:delete! '(agent rival) (store:find-named "rival-log")) #t)))
+         (check 'retirement-moves-the-window-on
+                (list (member "rival-log" (buffer-names))
+                      (screen-has? 0 "from the rival")
+                      (read-editor '(and (store:find-named "rival-log") #t)))
+                (list #f #f hide?))
+         (when hide?
+           (read-editor
+             '(begin (store:drop-property! head:ui-actor (store:find-named "rival-log") 'audience) #t))))
+       '(#t #f))
 
      ;; completions borrow the prompt's target window -- no pop-ups:
      ;; TAB on an ambiguous M-x prefix shows <completions> where the

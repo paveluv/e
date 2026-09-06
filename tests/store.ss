@@ -6,7 +6,7 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
@@ -15,17 +15,12 @@
      (import (prefix (store) store:)
              (prefix (text) text:)
              (prefix (kernel) kernel:)
-             (only (kernel) persistent-cell)
+             (prefix (test) test:)
              (only (chezscheme)
                    box unbox set-box! parameterize fork-thread
                    make-time sleep make-mutex with-mutex))
 
-     (define checks 0)
-
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'store-test (symbol->string label) actual expected)))
+     (define check test:check)
 
      (define alice '(human alice))
      (define bot '(agent claude 1))
@@ -691,12 +686,12 @@
 
      ;; the store cell survives: asking again returns the same box
      (check 'persistent-cell-persists
-            (eq? (persistent-cell 'store (lambda () 'fresh))
-                 (persistent-cell 'store (lambda () 'fresh)))
+            (eq? (kernel:persistent-cell 'store (lambda () 'fresh))
+                 (kernel:persistent-cell 'store (lambda () 'fresh)))
             #t)
      (check 'persistent-cell-kept-the-store
-            (not (eq? (unbox (persistent-cell 'store
-                                              (lambda () 'fresh)))
+            (not (eq? (unbox (kernel:persistent-cell 'store
+                                                     (lambda () 'fresh)))
                       'fresh))
             #t)
 
@@ -709,6 +704,90 @@
             'rejected)
 
      ;; -- properties: buffer-level facts shared by every head ------------------
+
+     ;; Every shared admission owns finite data, including undo and commit
+     ;; facts. Every read owns its result. One table exercises all entrypoints
+     ;; and proves malformed batches cannot publish even their valid prefix.
+     (define (damage-facts! facts)
+       (let ([audience (cdr (assq 'audience facts))]
+             [metadata (cdr (assq 'metadata facts))])
+         (string-set! (cadar audience) 0 #\X)
+         (string-set! (car (vector-ref metadata 0)) 0 #\X)
+         (bytevector-u8-set! (cdr (vector-ref metadata 0)) 0 99)
+         (vector-set! metadata 0 'replaced)
+         (string-set! (cdr (assq 'base facts)) 0 #\X)
+         (set-cdr! (assq 'audience facts) 'all)))
+     (for-each
+       (lambda (kind)
+         (let* ([id (and (not (eq? kind 'create)) (store:create! alice "fact-owner" '("old")))]
+                [events (test:recorder)]
+                [creation #f]
+                [token (store:subscribe! #f
+                         (lambda (event)
+                           (events event)
+                           (when (eq? (car event) 'create)
+                             (set! creation (store:properties (cadr event))))))]
+                [commit (string-copy "disk")]
+                [admit! (lambda (facts)
+                          (case kind
+                            [(create) (store:create! alice "fact-owner" '("seed") facts)]
+                            [(set) (store:set-properties! alice id facts) id]
+                            [(reset) (store:reset! alice id '("seed") facts) id]
+                            [(edit)
+                             (store:edit! alice id (store:revision id) (span 0 0 0 3) '("seed")
+                                          (list 'owned "facts" facts (list (cons 'commit commit))))
+                             id]))]
+                [cycle (list 'cycle)]
+                [before (list (store:buffer-list) (and id (store:properties id))
+                              (and id (store:revision id)) (and id (store:line id 0)))])
+           (set-cdr! cycle cycle)
+           (check 'invalid-fact-batches-are-inert
+                  (map (lambda (bad)
+                         (and (test:raises? (lambda () (admit! (list '(valid . prefix) bad))))
+                              (null? (events))
+                              (equal? before
+                                      (list (store:buffer-list) (and id (store:properties id))
+                                            (and id (store:revision id)) (and id (store:line id 0))))))
+                       (list '(audience head "desk") '(audience (head ""))
+                             '(audience . #f) '(modified . #f)
+                             (cons 'metadata cycle) (cons 'read-only void)))
+                  '(#t #t #t #t #t #t))
+           (let* ([facts (list (cons 'audience (list (list 'head (string-copy "desk"))))
+                               (cons 'base (string-copy "seed\n"))
+                               (cons 'metadata (vector (cons (string-copy "value") (bytevector 1 2)))))]
+                  [id (admit! facts)]
+                  [notifications (events)])
+             (damage-facts! facts)
+             (string-set! commit 0 #\X)
+             (damage-facts! (store:properties id))
+             (let-values ([(text revision facts) (store:snapshot-state id)]) (damage-facts! facts))
+             (string-set! (cadar (store:property id 'audience)) 0 #\Y)
+             (vector-set! (store:property id 'metadata) 0 'changed)
+             (check 'facts-own-admission-and-every-read
+                    (list (store:property id 'audience) (store:property id 'metadata)
+                          (store:visible? '(head "desk") id) (store:visible? alice id)
+                          (eq? (store:property id 'absent void) void) (equal? (events) notifications)
+                          (store:property id 'base) (store:property id 'modified))
+                    (list '((head "desk")) '#(("value" . #vu8(1 2))) #t #f #t #t "seed\n"
+                          (eq? kind 'set)))
+             (when (eq? kind 'create)
+               (check 'initial-facts-publish-with-one-create
+                      (list (map car notifications) (assq 'audience creation)
+                            (assq 'metadata creation) (assq 'modified creation))
+                      '((create) (audience (head "desk"))
+                        (metadata . #(("value" . #vu8(1 2)))) (modified . #f))))
+             (when (eq? kind 'edit)
+               (store:undo! alice id)
+               (check 'undo-keeps-commit-facts-and-restores-audience
+                      (list (store:property id 'commit) (store:property id 'audience)
+                            (store:visible? alice id)) '("disk" #f #t))
+               (store:redo! alice id)
+               (check 'redo-keeps-owned-fact-values
+                      (list (store:property id 'audience) (store:property id 'metadata))
+                      '(((head "desk")) #(("value" . #vu8(1 2))))))
+             (store:unsubscribe! token)
+             (store:delete! alice id))))
+       '(create set reset edit))
 
      (define pb (store:create! alice "propped" '("x")))
      (store:set-property! alice pb 'file "/tmp/a.txt")
@@ -818,4 +897,4 @@
      (check 'splice-whole-buffer (spliced 0 3 '("Z")) '("Z"))
      (check 'splice-empty-buffer (spliced 0 3 '()) '(""))
 
-     (format #t "~a store checks passed\n" checks)))
+     (test:finish! 'store)))

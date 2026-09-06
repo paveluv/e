@@ -6,7 +6,7 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
@@ -21,15 +21,11 @@
              (prefix (markdown) markdown:)
              (prefix (kernel) kernel:)
              (prefix (keymap) keymap:)
-             (prefix (file) file:))
+             (prefix (file) file:)
+             (prefix (test) test:))
 
-     (define checks 0)
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'markdown-view-test label actual expected)))
-     (define (refused? thunk)
-       (guard (ex [else #t]) (thunk) #f))
+     (define check test:check)
+     (define refused? test:raises?)
      (define (find-row b text)
        (let loop ([r 0])
          (cond [(= r (buffer-line-count b)) (error 'find-row "missing line" text)]
@@ -206,15 +202,48 @@
      (markdown:view!)
      (define replacement-view (current-buffer))
      (check 'killed-view-is-recreated (eq? replacement-view view) #f)
-     (kill-buffer! source)
-     (check 'source-deleted (store:exists? id) #f)
-     (check 'source-deletion-closes-view (memq replacement-view (head:buffers)) #f)
-     (check 'source-deletion-removes-view-registration (head:app-of replacement-view) #f)
-     (check 'stale-view-cannot-restore-source
-            (refused? (lambda () (markdown:edit! replacement-view))) #t)
-     (store:delete! '(agent markdown-test) (head:buffer-store-id table))
-     (head:before-frame!)
-     (check 'foreign-delete-closes-view (memq table-view (head:buffers)) #f)
+     ;; Hiding and deleting share local retirement. A source in one window
+     ;; and its companion in another disappear before any repaint callback.
+     (define retiring #f)
+     (define cleanup-count 0)
+     (head:add-buffer-kill-hook!
+       (lambda (b) (when (eq? b retiring) (set! cleanup-count (+ cleanup-count 1)))))
+     (for-each
+       (lambda (entry)
+         (let* ([source (car entry)] [action (cadr entry)] [id (head:buffer-store-id source)]
+                [hidden? (memq action '(hide-own hide-foreign))])
+           (show-buffer! source)
+           (markdown:view!)
+           (let ([view (current-buffer)] [observations '()])
+             (set! retiring source)
+             (set! cleanup-count 0)
+             (head:set-window-buffer! w2 source)
+             (head:before-frame!)
+             (head:set-repaint-hook!
+               (lambda ()
+                 (set! observations
+                   (cons (list (memq source (head:buffers)) (memq view (head:buffers))
+                               (head:app-of view)
+                               (exists (lambda (w) (memq (head:window-buffer w) (list source view)))
+                                       (head:windows)))
+                         observations))))
+             (case action
+               [(kill) (kill-buffer! source)]
+               [(delete) (store:delete! '(agent markdown-test) id)]
+               [else (store:set-property! (if (eq? action 'hide-own) head:ui-actor '(agent markdown-test))
+                                          id 'audience '())])
+             (head:before-frame!)
+             (head:forget-buffer! source) ; repeated/reentrant retirement is inert
+             (head:set-repaint-hook! void)
+             (check 'source-retirement-is-coherent
+                    (list observations cleanup-count (store:exists? id)
+                          (refused? (lambda () (markdown:edit! view)))
+                          (refused? (lambda () (head:add-buffer! source)))
+                          (and hidden? (store:mark head:ui-actor id 'point)))
+                    (list '((#f #f #f #f)) 1 (and hidden? #t) #t #t #f)))))
+       (list (list source 'kill) (list table 'delete)
+             (list (make-source "private-own.md" '("# Own")) 'hide-own)
+             (list (make-source "private-foreign.md" '("# Foreign")) 'hide-foreign)))
 
      ;; The same companion relation works for a local markdown source.
      (define local-source (head:new-local-buffer "local source"))
@@ -227,4 +256,4 @@
      (markdown:edit!)
      (check 'return-to-local-source (eq? (current-buffer) local-source) #t)
 
-     (format #t "~a markdown-view checks passed\n" checks)))
+     (test:finish! 'markdown-view)))
