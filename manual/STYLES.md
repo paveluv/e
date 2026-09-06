@@ -125,6 +125,11 @@ string without the escape introducer:
 Invalid attributes, malformed clauses, and color components outside 0…255
 raise an error. An empty expression compiles to reset (`"0"`).
 
+`style:code` also accepts inline SGR parameter strings, useful for surface
+cells without registering a face. It accepts digits, semicolons, and colons
+(including the empty reset string), and returns the complete escape sequence.
+Other strings fall back to `plain`; they cannot inject terminal controls.
+
 For compatibility, `style:set!` still accepts a number as a 256-color
 foreground or a raw SGR parameter string:
 

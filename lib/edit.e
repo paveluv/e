@@ -104,6 +104,7 @@
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
           (prefix (paint) paint:) (prefix (string) string:)
+          (prefix (render) render:)
           (prefix (mode) mode:) (prefix (file) file:)
           (prefix (prompt) prompt:) (prefix (main) main:)
           (prefix (doc) doc:))
@@ -1988,7 +1989,8 @@
                           (head:window-line-number-width w)))])
       (cond
         [(< k sticky)
-         (cons (min k (- (vector-length v) 1)) col)]
+         (let ([row (min k (- (vector-length v) 1))])
+           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row col)))]
         [(paint:window-wrapped? w)
          (let loop ([i (max sticky (head:window-top w))]
                     [k (+ (- k sticky) (head:window-topseg w))])
@@ -2007,8 +2009,9 @@
                                                        (string-length line))))
                      (loop (+ i 1) (- k segs))))))]
         [else
-         (cons (+ (max sticky (head:window-top w)) (- k sticky))
-               (+ (head:window-left w) col))])))
+         (let ([row (+ (max sticky (head:window-top w)) (- k sticky))])
+           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row
+                                       (+ (head:window-left w) col))))])))
 
   (define (mouse-press! x y button)
     ;; A normal-buffer press focuses its window and places point. An app text

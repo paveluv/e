@@ -6,7 +6,7 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
@@ -16,17 +16,13 @@
              (prefix (style) style:)
              (prefix (head) head:)
              (prefix (kernel) kernel:)
+             (prefix (test) test:)
              (prefix (only (sys) terminal-output-port) sys:)
              (only (chezscheme)
                    format open-output-string get-output-string
                    parameterize))
 
-     (define checks 0)
-
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'paint-test label actual expected)))
+     (define check test:check)
 
      (define (contains? text needle)
        (let ([n (string-length text)] [m (string-length needle)])
@@ -94,6 +90,23 @@
             (stripped (paint-line "a\tb" "a\tb" #f '() '() 0 #f #f 5
                                   1000))
             "a b  ")
+
+     ;; The same row painter handles cell grids. Clip a wide glyph to
+     ;; blanks at either edge, and tolerate partial style vectors.
+     (check 'cell-grid-clipping
+       (map (lambda (range)
+              (stripped (paint-line "  x" '#("界" "" "x")
+                                    #f '() '() (car range) #f #f (cadr range) 3)))
+            '((0 1) (1 2) (0 3) (2 3)))
+       '(" " " x" "界x" "x  "))
+     (check 'invalid-or-short-row-styles-fall-back-to-plain
+       (map (lambda (styles)
+              (stripped (paint-line "abc" "abc" #f '() '() 0 styles #f 3 3)))
+            '(#(red) #() #t (red))) '("abc" "abc" "abc" "abc"))
+     (check 'equal-sgr-values-share-one-run
+       (paint-line "abc" "abc" #f '() '() 0
+                   (vector (string-copy "31") (string-copy "31") (string-copy "31")) #f 3 3)
+       "\x1b;[0m\x1b;[31mabc\x1b;[0m")
 
      ;; a link opens and closes an OSC 8 around its run
      (let ([out (paint-line "see http://x.example now"
@@ -229,4 +242,4 @@
      (check 'unwound-frame-forces-repaint
             (contains? (painted paint:redraw!) (current-top-line)) #t)
 
-     (format #t "~a paint checks passed\n" checks)))
+     (test:finish! 'paint)))

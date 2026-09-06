@@ -6,39 +6,39 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
 (eval
   '(begin
-     (import (edit) (prefix (only (style) compile) style:))
+     (import (edit) (prefix (style) style:) (prefix (test) test:))
 
-     (define checks 0)
+     (define check test:check)
 
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'style-test label actual expected)))
+     (check 'surface-sgr-values-are-parameters-only
+       (map style:code '("" "31" "4:3;38:2::1:2:3" "31mBAD" "\x1b;[31" "31\n"))
+       (list "\x1b;[m" "\x1b;[31m" "\x1b;[4:3;38:2::1:2:3m"
+             (style:code 'plain) (style:code 'plain) (style:code 'plain)))
 
      (check 'reset (style:compile '(reset)) "0")
      (check 'empty-is-reset (style:compile '()) "0")
      (check 'attributes
             (style:compile '(bold dim italic underline blink
-                             reverse hidden strike))
+                              reverse hidden strike))
             "1;2;3;4;5;7;8;9")
      (check 'extended-attributes
             (style:compile '(double-underline overline framed encircled
-                             superscript subscript))
+                              superscript subscript))
             "21;53;51;52;73;74")
      (check 'underline-variants
             (style:compile '(curly-underline dotted-underline
-                             dashed-underline))
+                              dashed-underline))
             "4:3;4:4;4:5")
      (check 'cancellations
             (style:compile '(normal-intensity no-italic no-underline
-                             no-blink no-reverse no-hidden no-strike
-                             no-frame no-overline))
+                              no-blink no-reverse no-hidden no-strike
+                              no-frame no-overline))
             "22;23;24;25;27;28;29;54;55")
      (check 'named-colors
             (style:compile '((foreground red) (background bright-blue)))
@@ -63,7 +63,7 @@
             "59")
      (check 'order-preserved
             (style:compile '(bold (foreground cyan) curly-underline
-                             (underline-color 135)))
+                              (underline-color 135)))
             "1;36;4:3;58;5;135")
      (check 'unknown-attribute-rejected
             (guard (ex [else 'rejected]) (style:compile '(sparkle)))
@@ -73,4 +73,4 @@
               (style:compile '((foreground maroon))))
             'rejected)
 
-     (format #t "~a style checks passed\n" checks)))
+     (test:finish! 'style)))

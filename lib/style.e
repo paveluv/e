@@ -190,6 +190,12 @@
 
   (define (style-code style)
     (or (style-override style)
+        ;; Surfaces carry SGR parameters as values, without allocating a
+        ;; face in this head's registry. Only parameter bytes can enter CSI.
+        (and (string? style)
+             (for-all (lambda (c) (or (char<=? #\0 c #\9) (memv c '(#\; #\:))))
+                      (string->list style))
+             (format "\x1b;[~am" style))
         (let ([hit (assq style default-styles)])
           (if hit (cdr hit) (cdar default-styles)))))
   ;;; Styles vectors --------------------------------------------------------------

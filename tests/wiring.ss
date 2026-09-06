@@ -962,6 +962,58 @@
                    result)))
             '((4 . 0) "Middle" (6 . 0) "# Middle"))
 
+     ;; A shared surface renders without a local app or a mode override.
+     ;; Character positions survive a cell grid, including real mouse input;
+     ;; a style/link-only publisher wakes the otherwise idle editor.
+     (define surface-id
+       (read-editor
+         '(let ([id (store:create! '(app surface-live) "*surface-live*"
+                                   '("界e\x301;Z") '((read-only . #t) (wrap . #t)))])
+            (delete-other-windows!)
+            (head:scrollbar #f)
+            (surface:publish! id #f 0
+              '((0 #("31" "31" "1" #f)
+                 #(("https://surface.example" "wide") ("https://surface.example" "wide") #f #f)
+                 ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4))
+            (show-buffer! (head:adopt-store-buffer! id))
+            (head:buffer-line-numbers-setting-set! (current-buffer) #f)
+            id)))
+     (check 'surface-paints-real-shared-text-and-cell-links
+       (list (screen-has? 0 "界éZ")
+             (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) 1))
+       '(#t ("https://surface.example" "wide")))
+     (check 'surface-mouse-cells-map-to-source-characters
+       (map (lambda (x)
+              (send! (format "\x1b;[<0;~a;1M\x1b;[<0;~a;1m" x x))
+              (pump! 200)
+              (read-editor '(point))) '(2 3))
+       '((0 . 0) (0 . 1)))
+     (read-editor
+       `(begin
+          (fork-thread
+            (lambda ()
+              (sleep (make-time 'time-duration 400000000 0))
+              (surface:publish! ,surface-id (car (surface:snapshot ,surface-id)) 0
+                '((0 #("32" "32" "1" #f)
+                   #(("https://updated.example" #f) ("https://updated.example" #f) #f #f)
+                   ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4)))) #t))
+     (check 'surface-only-worker-wakes-idle-head
+       (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) 1)
+       '("https://updated.example" #f))
+     (define surface-offsets
+       (read-editor '(begin (split-window-right!) (map head:window-xoff (head:windows)))))
+     (check 'surface-rendition-is-consistent-in-both-panes
+       (map (lambda (x) (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) (+ x 1)))
+            surface-offsets)
+       '(("https://updated.example" #f) ("https://updated.example" #f)))
+     (check 'surface-withdrawal-preserves-readable-source
+       (read-editor `(begin (surface:withdraw! ,surface-id (car (surface:snapshot ,surface-id)))
+                            (store:line ,surface-id 0))) "界e\x301;Z")
+     (check 'surface-withdrawal-removes-links-from-both-panes
+       (map (lambda (x) (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) (+ x 1)))
+            surface-offsets) '(#f #f))
+     (read-editor `(begin (delete-other-windows!) (kill-buffer! (head:buffer-of-store-id ,surface-id)) #t))
+
      (delete-file probe)
      (sys:close-terminal-process! process)
      (format #t "~a wiring checks passed\n" checks)))

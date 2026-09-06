@@ -51,6 +51,7 @@
           (prefix (style) style:)
           (prefix (string) string:)
           (prefix (head) head:)
+          (prefix (render) render:)
           (prefix (mode) mode:)
           (prefix (echo) echo:)
           (prefix (kernel) kernel:))
@@ -77,10 +78,10 @@
     ;; (the line goes on below) or 'trunc (past the right edge).
     ;; bound: the first column past this row's content (a word-wrapped
     ;; segment may end short of the width; the rest pads blank).
-    (define n (min (string-length s) bound))
+    (define n (min (if (vector? s) (vector-length s) (string-length s)) bound))
     (define limit (+ left width (if edge -1 0)))
     (define (style-at col)
-      (if (and styles (< col n)) (vector-ref styles col) 'plain))
+      (if (and (vector? styles) (< col n) (< col (vector-length styles))) (vector-ref styles col) 'plain))
     (define (mark-style m)
       (if (pair? (cddr m)) (caddr m) 'mark))
     (define (covers? m col)
@@ -133,11 +134,18 @@
           (let loop ([i from] [parts '()])
             (if (= i to)
                 (apply string-append (reverse parts))
-                (loop (+ i 1)
-                      (cons (if (and (< i (vector-length shown))
-                                     (< i bound))
-                                (vector-ref shown i) " ")
-                            parts))))
+                (if (or (>= i (min (vector-length shown) bound))
+                        (string=? (vector-ref shown i) ""))
+                    (loop (+ i 1) (cons " " parts))
+                    (let* ([end (let scan ([end (+ i 1)])
+                                  (if (and (< end (vector-length shown))
+                                           (string=? (vector-ref shown end) ""))
+                                      (scan (+ end 1)) end))]
+                           [edge (min end to bound)])
+                      ;; A clipped glyph occupies blanks, never half a wide
+                      ;; glyph spilling into a gutter or neighboring pane.
+                      (loop edge (cons (if (= edge end) (vector-ref shown i)
+                                           (make-string (- edge i) #\space)) parts))))))
           (let ([out (make-string (- to from) #\space)])
             (let loop ([i from])
               (when (and (< i to) (< i (min (string-length shown) bound)))
@@ -169,7 +177,7 @@
                [link (link-at col)]
                [end (let run ([j (+ col 1)])
                       (if (and (< j limit)
-                               (eq? (style-at j) style)
+                               (equal? (style-at j) style)
                                (eq? (bg-at j) bg)
                                (eq? (selected? j) sel)
                                (eq? (overlay-at j) mk)
@@ -205,7 +213,7 @@
                          'plain))]
                [st (at i)]
                [j (let run ([j (+ i 1)])
-                    (if (and (< j end) (eq? (at j) st))
+                    (if (and (< j end) (equal? (at j) st))
                         (run (+ j 1))
                         j))])
           (ansi "\x1b;[0m" (style:code st) (substring content i j))
@@ -331,9 +339,11 @@
     (head:buffer-fact b 'wrap 'default))
 
   (define (window-wrapped? w)
-    (let* ([choice (buffer-wrap-setting (head:window-buffer w))]
+    ;; A surfaced row is an app's cell grid. Reflow belongs to its publisher;
+    ;; withdrawal restores the head's ordinary buffer/window wrap setting.
+    (let* ([b (head:window-buffer w)] [choice (buffer-wrap-setting b)]
            [x (if (eq? choice 'default) (head:window-wrap w) choice)])
-      (if (eq? x 'default) (wrap-lines) x)))
+      (and (not (head:buffer-rendition b)) (if (eq? x 'default) (wrap-lines) x))))
 
   (define (clean-wrap? w)
     (let ([x (buffer-wrap-setting (head:window-buffer w))])
@@ -421,16 +431,34 @@
   (define (add-hyperlinker! proc)
     (kernel:registry-add! hyperlinkers proc))
 
+  (define (text-hyperlinks buffer row line)
+    (fold-left
+      (lambda (links proc)
+        (append
+          (filter (lambda (link)
+                    (valid-hyperlink? link (string-length line)))
+                  (guard (ex [else '()]) (proc buffer row line)))
+          links))
+      (detect-hyperlinks line) (kernel:registry-items hyperlinkers)))
+
   (define (buffer-line-hyperlinks buffer row)
-    (let ([line (vector-ref (head:buffer-lines buffer) row)])
-      (fold-left
-        (lambda (links proc)
-          (append
-            (filter (lambda (link)
-                      (valid-hyperlink? link (string-length line)))
-                    (guard (ex [else '()]) (proc buffer row line)))
-            links))
-        (detect-hyperlinks line) (kernel:registry-items hyperlinkers))))
+    ;; The public query returns source character ranges, including outside
+    ;; the visible viewport. Painting uses its already prepared frame below.
+    (let* ([text (head:buffer-lines buffer)]
+           [frame (head:read-rendition buffer (list (cons row (+ row 1))))]
+           [data (render:row frame row)])
+      (append
+        (if data
+            (map (lambda (range)
+                   (cons (render:character frame row (car range))
+                         (cons (render:character frame row (cadr range)) (cddr range))))
+                 (caddr data)) '())
+        (text-hyperlinks buffer row (vector-ref text row)))))
+
+  (define (cell-ranges frame row ranges)
+    (map (lambda (range)
+           (cons (render:column frame row (car range))
+                 (cons (render:column frame row (cadr range) #t) (cddr range)))) ranges))
 
   (define (ranges-on-row ranges w b row current?)
     (fold-left (lambda (acc r)
@@ -581,6 +609,8 @@
   (define (paint-window! w start height ranges)
     (let* ([b (head:window-buffer w)]
            [v (head:buffer-lines b)]
+           [frame (head:buffer-rendition b)]
+           [wrap? (window-wrapped? w)]
            [n (vector-length v)]
            [sticky (min height (head:buffer-sticky-lines b))]
            [top (max sticky (head:window-top w))]
@@ -607,8 +637,12 @@
                                 (and (< i n) i) (= seg 0))
             (if (< i n)
                 (let* ([line (vector-ref v i)]
+                       [data (render:row frame i)]
+                       [content (if data (car data) line)]
+                       [width (render:width frame i (string-length line))]
                        [shown (let ([r (vector-ref info 1)])
-                                (or (and r (guard (ex [else #f])
+                                (or (and data (car data))
+                                    (and r (guard (ex [else #f])
                                              (let ([t (r b i line)])
                                                (and (or (and (string? t)
                                                              (= (string-length t)
@@ -620,7 +654,7 @@
                                                                       (vector->list t))))
                                                     t))))
                                     line))]
-                       [wrapped? (and (>= i sticky) (window-wrapped? w))]
+                       [wrapped? (and (>= i sticky) wrap?)]
                        [breaks (and wrapped? (line-breaks w line))]
                        [slice-left (if wrapped?
                                        (segment-start breaks seg)
@@ -629,27 +663,31 @@
                                        (< (+ seg 1)
                                           (vector-length breaks)))
                                   (segment-start breaks (+ seg 1))
-                                  (string-length line))]
+                                  width)]
                        [edge (cond
                                [(and wrapped?
                                      (< (+ seg 1) (vector-length breaks)))
                                 (if (clean-wrap? w) #f 'wrap)]
                                [(and (not wrapped?)
-                                     (> (string-length line)
+                                     (> width
                                         (+ left content-width)))
                                 'trunc]    ; it continues past the edge: $
                                [else #f])]
                        [span (and current? (region-span i (string-length line)))]
-                       [marks (ranges-on-row ranges w b i current?)]
-                       [links (buffer-line-hyperlinks b i)])
+                       [span (and span (cons (render:column frame i (car span))
+                                             (render:column frame i (cdr span) #t)))]
+                       [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
+                       [links (append (if data (caddr data) '())
+                                      (cell-ranges frame i (text-hyperlinks b i line)))])
                   (let ([row-styles
-                         (let ([f (vector-ref info 2)])
-                           (and f (guard (ex [else #f]) (f b i line))))])
+                         (or (and data (cadr data))
+                             (let ([f (vector-ref info 2)])
+                               (and f (guard (ex [else #f]) (f b i line)))))])
                     (paint! row content-x
                             (list i line shown span marks links slice-left
                                   mode-tag row-styles edge)
                             (lambda ()
-                              (display-editor-line line shown span marks links
+                              (display-editor-line content shown span marks links
                                                    slice-left
                                                    (or row-styles
                                                        (styles-of line))
@@ -657,7 +695,7 @@
                                                    content-width
                                                    bound))))
                   (if (and (>= i sticky)
-                           (< (+ seg 1) (line-segments w line)))
+                           wrapped? (< (+ seg 1) (vector-length breaks)))
                       (loop (+ k 1) i (+ seg 1))
                       (loop (+ k 1)
                             (if (= (+ k 1) sticky) top (+ i 1)) 0)))
@@ -977,10 +1015,11 @@
               (head:window-top-set! w
                 (min (- prow (- height 1 m))
                      (max sticky (- (vector-length v) height)))))
-            (when (< pcol (head:window-left w)) (head:window-left-set! w pcol))
-            (when (>= pcol (+ (head:window-left w) (head:window-content-width w)))
-              (head:window-left-set! w
-                (- pcol (head:window-content-width w) -1))))))))
+            (let ([cell (render:column (head:buffer-rendition (head:window-buffer w)) prow pcol)])
+              (when (< cell (head:window-left w)) (head:window-left-set! w cell))
+              (when (>= cell (+ (head:window-left w) (head:window-content-width w)))
+                (head:window-left-set! w
+                  (- cell (head:window-content-width w) -1)))))))))
 
   ;; The cache holds, per screen row, the key describing what that row
   ;; currently shows; a row is repainted only when its key changes.  Any
@@ -1320,7 +1359,9 @@
                   (+ x
                      (- pcol (segment-start breaks (segment-of breaks pcol)))
                      1)))
-          (cons screen-row (+ x (- pcol (head:window-left w)) 1)))))
+          (cons screen-row
+                (+ x (- (render:column (head:buffer-rendition (head:window-buffer w)) prow pcol)
+                        (head:window-left w)) 1)))))
 
   (define (place-cursor!)
     ;; Park the cursor in the echo area (a prompt, or a running
@@ -1385,37 +1426,38 @@
     (head:refresh-visible-views!)
     ;; a terminal too small for the splits collapses back to one window
     (head:fit-layout! cols (- rows (echo:height)))
-    (let* ([layout (window-layout)]
-           [view (list rows cols
-                       (map (lambda (entry)
-                              (list (cadr entry) (caddr entry)
-                                    (head:window-xoff (car entry))
-                                    (head:window-width (car entry))))
-                            layout)
-                       ;; A scrollbar changes one window row from a single
-                       ;; full-width cached segment into two overlapping
-                       ;; segments (the bar and the content).  Row cache
-                       ;; entries are keyed by their starting column, so a
-                       ;; later full-width paint cannot selectively evict a
-                       ;; covered content segment.  Treat presentation
-                       ;; topology as part of the view and discard those
-                       ;; incompatible segment keys when buffers are switched.
-                       (map (lambda (w)
-                              (list (window-wrapped? w)
-                                    (head:window-scrollbar? w)
-                                    (head:window-line-number-width w)
-                                    (head:buffer-sticky-lines (head:window-buffer w))))
-                            (head:windows)))])
-      (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
-                layout)
-      (begin-frame! view rows)
-      (paint-dividers! layout)
-      (let ([ranges (highlight-ranges)])
-        (for-each (lambda (entry)
-                    (paint-window! (car entry) (cadr entry) (caddr entry) ranges))
-                  layout))
-      (paint-echo-area!)
-      (paint-visual-bell!))
+    (let ([layout (window-layout)])
+      (head:refresh-renditions!)
+      (let ([view (list rows cols
+                        (map (lambda (entry)
+                               (list (cadr entry) (caddr entry)
+                                     (head:window-xoff (car entry))
+                                     (head:window-width (car entry))))
+                             layout)
+                        ;; A scrollbar changes one window row from a single
+                        ;; full-width cached segment into two overlapping
+                        ;; segments (the bar and the content).  Row cache
+                        ;; entries are keyed by their starting column, so a
+                        ;; later full-width paint cannot selectively evict a
+                        ;; covered content segment.  Treat presentation
+                        ;; topology as part of the view and discard those
+                        ;; incompatible segment keys when buffers are switched.
+                        (map (lambda (w)
+                               (list (window-wrapped? w)
+                                     (head:window-scrollbar? w)
+                                     (head:window-line-number-width w)
+                                     (head:buffer-sticky-lines (head:window-buffer w))))
+                             (head:windows)))])
+        (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
+                  layout)
+        (begin-frame! view rows)
+        (paint-dividers! layout)
+        (let ([ranges (highlight-ranges)])
+          (for-each (lambda (entry)
+                      (paint-window! (car entry) (cadr entry) (caddr entry) ranges))
+                    layout))
+        (paint-echo-area!)
+        (paint-visual-bell!)))
     (place-cursor!))
 
   (define (redraw-frame!)

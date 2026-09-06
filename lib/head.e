@@ -29,6 +29,7 @@
           buffer-line-numbers-setting buffer-line-numbers-setting-set!
           buffer-store-id buffer-store-id-set!
           buffer-store-rev buffer-store-rev-set!
+          buffer-rendition read-rendition refresh-renditions!
           buffers set-buffers!
           kill-ring set-kill-ring! read-paste set-pending-paste!
           call-uninterrupted call-with-interrupt interrupted? make-interrupted
@@ -107,6 +108,8 @@
           (prefix (startup) startup:)
           (prefix (tty) tty:)
           (prefix (store) store:)
+          (prefix (surface) surface:)
+          (prefix (render) render:)
           (prefix (text) text:)
           (prefix (actor) actor:)
           (prefix (log) log:))
@@ -140,7 +143,8 @@
             ;; Either owner retains adopted deltas in a bounded ring, so
             ;; derived views can follow exactly the text this head sees.
             (mutable local-rev) (mutable changes)
-            local-facts)
+            local-facts
+            (mutable rendition buffer-rendition-raw buffer-rendition-set!))
     ;; Keep the public constructor's shape: each record gets private
     ;; facts and content history, including extension/adoption records.
     (protocol
@@ -149,7 +153,7 @@
                   spot-row spot-col spot-top line-numbers store-id store-rev)
           (new name lines revision history mark-row mark-col marked
                spot-row spot-col spot-top line-numbers store-id store-rev
-               0 #f (make-eq-hashtable))))))
+               0 #f (make-eq-hashtable) #f)))))
 
   (define-record-type (window %make-window window?)
     (fields
@@ -806,6 +810,9 @@
                      (vector-set! log (mod (car entry) delta-log-limit) entry))
                    changes)
          (buffer-changes-set! b log))])
+    ;; No old surface can describe newly adopted text, even if a callback
+    ;; asks for rendition before the next demanded frame has been prepared.
+    (buffer-rendition-set! b #f)
     (buffer-lines-raw-set! b text)
     (if (buffer-store-id b)
         (buffer-store-rev-set! b revision)
@@ -836,7 +843,52 @@
     (let-values ([(text revision) (store:snapshot (buffer-store-id b))])
       (adopt-text! b text revision #f)
       (clamp-buffer-positions! b)
+      (refresh-buffer-rendition! b)
       (invalidate-buffer-marks! (buffer-store-id b))))
+
+  (define (buffer-rendition b)
+    ;; Optional presentation fails closed when visibility cannot be read.
+    ;; The next frame retries; a store outage must not stop the head pump.
+    (guard (ex [else #f])
+      (and (buffer-rendition-raw b) (memq b the-buffers) (buffer-visible? b)
+           (buffer-rendition-raw b))))
+
+  (define (read-rendition b ranges)
+    ;; Explicit demand reads obey head visibility even through a retained
+    ;; reference whose retirement notification has not reached the pump.
+    (guard (ex [else #f])
+      (and (buffer-store-id b) (memq b the-buffers) (buffer-visible? b)
+           (render:prepare (buffer-rendition-raw b) (buffer-store-id b)
+                           (buffer-lines b) (buffer-store-rev b) ranges))))
+
+  (define (refresh-buffer-rendition! b)
+    ;; Fetch the current viewport and every row a viewport containing point
+    ;; could expose. Geometry can then scroll against one prepared generation
+    ;; without reading another frame halfway through layout. Cache size stays
+    ;; bounded by window heights; store coordinates remain characters.
+    (let* ([old (buffer-rendition-raw b)]
+           [ranges
+            (fold-left
+              (lambda (out w)
+                (if (eq? (window-buffer w) b)
+                    (let ([height (max 1 (window-size w))] [point (window-prow w)])
+                      (cons* (cons 0 (buffer-sticky-lines b))
+                             (cons (window-top w) (+ (window-top w) height))
+                             (cons (- point height -1) (+ point height)) out))
+                    out)) '() the-windows)]
+           [next (read-rendition b ranges)])
+      (unless (eq? old next)
+        (buffer-rendition-set! b next)
+        ;; Row keys already describe the complete rendition. A cursor-only
+        ;; update or viewport refill must not invalidate the whole screen.
+        (unless (equal? (render:header old) (render:header next))
+          (bump-buffer-revision! b)))))
+
+  (define (refresh-renditions!)
+    (for-each refresh-buffer-rendition!
+      (fold-left (lambda (seen w)
+                   (let ([b (window-buffer w)]) (if (memq b seen) seen (cons b seen))))
+                 '() the-windows)))
 
   (define (adopt-local! b text delta)
     ;; Only explicitly local buffers own their text in this head.
@@ -1087,6 +1139,7 @@
                                                 (vector '() '()) 0 0 #f 0 0 0
                                                 'default id revision)])
                             (add-buffer! b)
+                            (refresh-buffer-rendition! b)
                             (unless (assq 'wrap facts) (buffer-fact-set! b 'wrap 'default))
                             (unless (buffer-fact b 'mode #f) (adopt-hook b))
                             (if (buffer-visible? b)
@@ -1232,6 +1285,7 @@
                        (and complete? (filter (lambda (entry) (> (car entry) old)) changes))))
         (apply-placements! b placements)
         (clamp-buffer-positions! b)
+        (refresh-buffer-rendition! b)
         ;; All head state is coherent before any callback can run.
         ;; Adoption only reads shared truth; it never re-dirties a save.
         (when advance?
@@ -1466,6 +1520,7 @@
     ;; Adopt the store's news before the layers above refresh their
     ;; views.  A frame never writes an old shared cache back to the store.
     (sync-foreign-edits!)
+    (refresh-renditions!)
     (flush-ui-audit! 'stale)
     (publish-head-marks!)
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
@@ -1797,9 +1852,10 @@
         (window-top-set! w (buffer-spot-top b))
         (window-topseg-set! w 0)
         (window-left-set! w 0)
-        (clamp-buffer-positions! b)
-        ;; Identity and geometry agree before a callback can switch again.
-        (request-repaint!))))
+        (clamp-buffer-positions! b))
+      (refresh-buffer-rendition! b)
+      ;; Identity, geometry, and rendition agree before a callback can switch.
+      (unless (eq? old b) (request-repaint!))))
 
   (define (forget-buffer! b)
     ;; Retire this head's record, never the store content. Keep its store
@@ -1811,6 +1867,7 @@
       (call-with-display-update
         (lambda ()
           (set! the-buffers (remq b the-buffers))
+          (buffer-rendition-set! b #f)
           (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
           (let ([fallback (or (find buffer-visible? the-buffers)
                             (new-buffer "*scratch*"))])
@@ -1898,6 +1955,9 @@
                   (let ([identity (actor:register! (list 'head name)
                                     (lambda (message) (wake-main!)) 'all)])
                     (store:subscribe! #f (lambda (event) (note-foreign-event identity event)))
+                    ;; Surface events are wakeups. The head prepares current
+                    ;; demanded rows on its pump, never on a publisher thread.
+                    (surface:subscribe! #f (lambda (event) (wake-main!)))
                     identity)))))))))
 
   ;;; The seat's first state ---------------------------------------------------------

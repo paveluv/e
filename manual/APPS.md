@@ -72,9 +72,10 @@ arbitrary callbacks, lock the head, or roll back changes on an exception.
 
 ## Publishing shared rendition
 
-`surface:` attaches presentation data to a store buffer. It is available
-to base modules; automatic head rendering and terminal publication are
-not connected yet. Terminal and describe still use the local app API above.
+`surface:` attaches presentation data to a store buffer. The head renders
+visible surfaced buffers automatically, keeping their ordinary mode.
+Terminal and describe still use the local app API above; their migration
+and automatic base-app input/cursor following are not connected yet.
 
 ```scheme
 (surface:publish! id basis revision changes cursor size)
@@ -99,12 +100,38 @@ new text's end. Cell widths may differ from character counts and between
 rows. `cursor` is `#f` or `(buffer-row cell-column visible?)`; `size` is
 positive `(rows cols)`. Coordinates start at zero.
 
+For nontrivial glyph geometry, supply a `clusters` row attribute:
+
+```scheme
+;; Source "界éZ": two cells, a combining cluster, then one cell.
+'((clusters (1 . 2) (2 . 1) (1 . 1)))
+```
+
+Each positive exact pair is `(character-count . cell-count)`; their totals
+must match the source string and cell vectors. Omission declares one
+character per cell. Supply geometry from the app's layout. A glyph uses its
+leading cell's style/link. The head maps selection, cursor geometry, links,
+and mouse hits through these clusters while store positions stay in character
+coordinates. Surfaced grids do not soft-wrap in the head; publishers own
+reflow. Withdrawal restores the buffer/window wrap preference.
+
 `snapshot` returns `(generation text-revision cursor size)` or `#f`.
 `rows` returns entries for `[from,to)`, including `(row . #f)` for plain
 rows, or `#f` if the generation is no longer current. Match the text
 revision exactly and use one generation for all row ranges; retry after
 refusal. Store text and surface updates are separate, so a surface can
 lag. Inputs, returned metadata, and events have independent ownership.
+
+The head caches only rows needed around visible viewports and points, plus
+sticky rows. Missing or mismatched metadata, unsupported cluster maps, and
+unavailable reads fall back to ordinary text for that frame. Surface-only
+updates wake the head without forcing a full-screen repaint.
+`(head:buffer-rendition buffer)` returns its opaque prepared frame;
+`(head:read-rendition buffer ranges)` reads explicit `[from,to)` ranges
+given as `(from . to)` pairs without filling that cache. Both enforce current
+visibility and return `#f` when unavailable. `render:header` and `render:row`
+return owned header and `(cell-strings styles cell-link-ranges)` data from a
+frame; plain/unrequested rows return `#f`.
 
 `(surface:subscribe! id proc)` subscribes to one buffer, or all buffers
 when `id` is `#f`, and returns a token for `surface:unsubscribe!`.
