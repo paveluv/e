@@ -128,7 +128,18 @@
                         (not (memq (car entry) seen))
                         (case (car entry)
                           [(base) (or (not (cdr entry)) (string? (cdr entry)))]
-                          [(trailing disposable) (boolean? (cdr entry))]
+                          [(trailing disposable alive manages-viewport) (boolean? (cdr entry))]
+                          [(app) (or (boolean? (cdr entry))
+                                     (and (actor:identity? (cdr entry)) (eq? (cadr entry) 'app)))]
+                          [(capture)
+                           (or (not (cdr entry)) (eq? (cdr entry) 'all)
+                               (and (list? (cdr entry))
+                                    (for-all string? (if (and (pair? (cdr entry)) (eq? (cadr entry) 'except))
+                                                         (cddr entry) (cdr entry)))))]
+                          [(status) (or (not (cdr entry)) (string? (cdr entry)))]
+                          [(sticky-lines) (and (integer? (cdr entry)) (exact? (cdr entry)) (>= (cdr entry) 0))]
+                          [(cursor-style) (memq (cdr entry) '(#f default block underline bar
+                                                              blinking-block blinking-underline blinking-bar))]
                           [(audience) (actor:audience? (cdr entry))]
                           [else #t])
                         (valid (cdr rest) (cons (car entry) seen)))))))

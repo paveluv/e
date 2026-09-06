@@ -510,6 +510,7 @@
   (define (goto-point! p)
     ;; Point belongs to the selected window, for apps and text alike.
     ;; Move it straight to (row . col), clamped into the buffer.
+    (head:follow-app! current-window #f)
     (set! point-row (max 0 (min (car p) (- (vlen) 1))))
     (set! point-col (max 0 (min (cdr p) (string-length (current-line))))))
 
@@ -1967,16 +1968,10 @@
                           (if (on? i) (fwd (+ i 1)) i)))
         (set! mark-active? #t))))
 
-  ;; 1-based cell coordinates within the app's text viewport while a mouse
-  ;; event is dispatched, or #f for keyboard events.
-  (define app-event-position (make-parameter #f))
-  ;; Raw xterm button code (including modifier/motion bits) for an app mouse
-  ;; event, or #f for keyboard events.
-  (define app-event-button (make-parameter #f))
-  ;; The unclamped (row . column) addressed by an app content click. This can
-  ;; lie beyond the buffer and lets apps distinguish empty viewport space from
-  ;; their last rendered line.
-  (define app-event-buffer-position (make-parameter #f))
+  ;; Preserve the command-layer API; the head owns this delivery context.
+  (define app-event-position head:app-event-position)
+  (define app-event-button head:app-event-button)
+  (define app-event-buffer-position head:app-event-buffer-position)
   (define (window-position w start height x y)
     ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
     ;; band, wrap-aware: wrapped lines occupy successive screen rows,
@@ -2012,6 +2007,20 @@
          (let ([row (+ (max sticky (head:window-top w)) (- k sticky))])
            (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row
                                        (+ (head:window-left w) col))))])))
+
+  (define (call-with-app-mouse-event w start height x y button thunk)
+    ;; One coordinate boundary for clicks, drags, releases, and wheel ticks.
+    ;; Exclude chrome from viewport cells; retain raw character positions
+    ;; beyond text so apps can distinguish blank space from the last glyph.
+    (parameterize
+      ([app-event-position
+        (cons (max 1 (- x (head:window-xoff w)
+                        (if (eq? (head:window-scrollbar? w) 'left) 1 0)
+                        (head:window-line-number-width w)))
+              (max 1 (- y start)))]
+       [app-event-buffer-position (window-position w start height x y)]
+       [app-event-button button])
+      (thunk)))
 
   (define (mouse-press! x y button)
     ;; A normal-buffer press focuses its window and places point. An app text
@@ -2083,10 +2092,8 @@
                       ;; act on the click and explicitly preserve the old
                       ;; focus by returning keep-focus for MOUSE-CLICK.
                       (let ([result
-                             (parameterize
-                               ([app-event-buffer-position clicked]
-                                [app-event-button button])
-                               (head:dispatch-app-event! "MOUSE-CLICK"))])
+                             (call-with-app-mouse-event w start height x y button
+                               (lambda () (head:dispatch-app-event! "MOUSE-CLICK")))])
                         (cond [(eq? result 'ignore-click)
                                (goto-point! old-point)
                                (when (memq old windows)
@@ -2142,8 +2149,8 @@
                         (< (- y 1) (+ start height)))
                (goto-point! (window-position w start height x y))
                (if (head:app-buffer? (head:window-buffer w))
-                   (unless (parameterize ([app-event-button button])
-                             (head:dispatch-app-event! "MOUSE-DRAG"))
+                   (unless (call-with-app-mouse-event w start height x y button
+                             (lambda () (head:dispatch-app-event! "MOUSE-DRAG")))
                      (set! mark-active? #t))
                    (set! mark-active? #t))))))]))
 
@@ -2155,8 +2162,8 @@
                      (< (- y 1) (+ start height))
                      (head:app-buffer? (head:window-buffer w)))
             (goto-point! (window-position w start height x y))
-            (parameterize ([app-event-button button])
-              (head:dispatch-app-event! "MOUSE-RELEASE")))))))
+            (call-with-app-mouse-event w start height x y button
+              (lambda () (head:dispatch-app-event! "MOUSE-RELEASE"))))))))
 
   (define (mouse-wheel! x y button dir meta? shift?)
     ;; Scroll the window under the pointer; the focused window stays focused.
@@ -2169,23 +2176,21 @@
         (let ([old current-window]
               [w (car entry)])
           (set! current-window w)
+          (head:follow-app! w #f)
           (if (and meta? (memv dir '(0 1)))
               (run-global-key! (if (= dir 0) "M-S-UP" "M-S-DOWN"))
               (begin
-                (unless (parameterize
-                          ([app-event-position
-                            (cons (max 1 (- x (head:window-xoff w)))
-                                  (max 1 (- y (cadr entry))))]
-                           [app-event-button button])
-                          (head:dispatch-app-event!
-                            (string-append
-                              (if shift? "S-" "")
-                              (case dir
-                                [(0) "WHEEL-UP"]
-                                [(1) "WHEEL-DOWN"]
-                                [(2) "WHEEL-LEFT"]
-                                [(3) "WHEEL-RIGHT"]
-                                [else "WHEEL"]))))
+                (unless (call-with-app-mouse-event w (cadr entry) (caddr entry) x y button
+                          (lambda ()
+                            (head:dispatch-app-event!
+                              (string-append
+                                (if shift? "S-" "")
+                                (case dir
+                                  [(0) "WHEEL-UP"]
+                                  [(1) "WHEEL-DOWN"]
+                                  [(2) "WHEEL-LEFT"]
+                                  [(3) "WHEEL-RIGHT"]
+                                  [else "WHEEL"])))))
                   ((wheel-mover dir)))))
           (when (memq old windows) (set! current-window old))
           "MOUSE-HANDLED"))))

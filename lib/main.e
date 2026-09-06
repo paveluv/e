@@ -42,6 +42,7 @@
     ;; action leaking into the global map, is reported and remembered
     ;; as no command at all.
     (cond [(procedure? action)
+           (head:follow-app! (head:current) #f)
            (dynamic-wind void action
              (lambda () (head:set-last-command! action)))]
           [(not action)
@@ -73,7 +74,12 @@
                             (cdr sequence))]
                  [global (or escaped sequence)]
                  [hit (or in-context (keymap:resolved-binding 'global global))]
-                 [prefix? (or context-prefix? (keymap:binding-prefix? 'global global))])
+                 ;; Declaring an escape makes it a prefix on its own; an app
+                 ;; need not bind a dummy escaped command to keep it open.
+                 [prefix? (or context-prefix?
+                              (and escape (not in-context) (null? (cdr sequence))
+                                   (string=? first escape))
+                              (keymap:binding-prefix? 'global global))])
             (cond
               [prefix?
                (echo:set-text! (string-append (keymap:sequence-text sequence) "-"))

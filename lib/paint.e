@@ -730,7 +730,11 @@
                            head-prefix name
                            (+ status-row 1) (+ status-col 1))]
              [mode-text (if mode-tag (format "  (~a)" mode-tag) "")]
-             [hint-values (status-hint-values b current?)]
+             [hint-values
+              (let ([app-status (head:app-status b current?)])
+                (append (if (and app-status (not (string=? app-status "")))
+                            (list (cons (string-append " " app-status) #f)) '())
+                        (status-hint-values b current?)))]
              [hint-text (apply string-append (map car hint-values))]
              [hint-wide-extra
               (fold-left
@@ -1426,6 +1430,10 @@
     (head:refresh-visible-views!)
     ;; a terminal too small for the splits collapses back to one window
     (head:fit-layout! cols (- rows (echo:height)))
+    (window-layout)
+    (head:request-app-size!)
+    ;; Delivery may reenter and change the layout. Prepare and paint the
+    ;; current windows after that callout, with no later resize delivery.
     (let ([layout (window-layout)])
       (head:refresh-renditions!)
       (let ([view (list rows cols

@@ -63,7 +63,8 @@
           run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
           quit! quitting? last-command set-last-command!
           current-keys set-current-keys! escaped-buffer set-escaped-buffer!
-          dispatch-app-event!
+          dispatch-app-event! app-event-position app-event-buffer-position app-event-button
+          app-facts app-status follow-app! app-following? request-app-size!
           host-color-scheme add-color-scheme-hook!
           tile! layout window-at window-button-at divider-at
           transfer-split! drag set-drag! double-click?
@@ -99,7 +100,7 @@
           app-status-position-set! make-app app?)
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme) keyboard-interrupt-handler
-                make-parameter parameterize make-mutex with-mutex fork-thread void
+                make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* time-second current-time
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
@@ -183,7 +184,9 @@
       (mutable wgoal)
       ;; soft-wrap long lines onto continuation rows instead of
       ;; scrolling horizontally
-      (mutable wrap)))
+      (mutable wrap)
+      ;; Following a shared app is a window preference, never a store fact.
+      (mutable following?)))
 
   (define-record-type layout-split
     (fields orientation (mutable first) (mutable second)
@@ -219,7 +222,7 @@
                        xoff width wgoal wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size goal xoff width wgoal wrap))
+                  size goal xoff width wgoal wrap #t))
 
   (define (window-numbered n)
     ;; the live window numbered n, or #f
@@ -853,13 +856,14 @@
       (and (buffer-rendition-raw b) (memq b the-buffers) (buffer-visible? b)
            (buffer-rendition-raw b))))
 
-  (define (read-rendition b ranges)
+  (define (read-rendition b ranges . follow-height)
     ;; Explicit demand reads obey head visibility even through a retained
     ;; reference whose retirement notification has not reached the pump.
     (guard (ex [else #f])
       (and (buffer-store-id b) (memq b the-buffers) (buffer-visible? b)
            (render:prepare (buffer-rendition-raw b) (buffer-store-id b)
-                           (buffer-lines b) (buffer-store-rev b) ranges))))
+                           (buffer-lines b) (buffer-store-rev b) ranges
+                           (if (null? follow-height) 0 (car follow-height))))))
 
   (define (refresh-buffer-rendition! b)
     ;; Fetch the current viewport and every row a viewport containing point
@@ -867,6 +871,10 @@
     ;; without reading another frame halfway through layout. Cache size stays
     ;; bounded by window heights; store coordinates remain characters.
     (let* ([old (buffer-rendition-raw b)]
+           [facts (app-facts b)]
+           [following (if (app-live? facts)
+                          (filter (lambda (w) (and (eq? (window-buffer w) b) (follows-app? w))) the-windows)
+                          '())]
            [ranges
             (fold-left
               (lambda (out w)
@@ -876,13 +884,17 @@
                              (cons (window-top w) (+ (window-top w) height))
                              (cons (- point height -1) (+ point height)) out))
                     out)) '() the-windows)]
-           [next (read-rendition b ranges)])
+           [next (read-rendition b ranges
+                   (fold-left (lambda (height w) (max height 1 (window-size w))) 0 following))])
       (unless (eq? old next)
         (buffer-rendition-set! b next)
         ;; Row keys already describe the complete rendition. A cursor-only
         ;; update or viewport refill must not invalidate the whole screen.
         (unless (equal? (render:header old) (render:header next))
-          (bump-buffer-revision! b)))))
+          (bump-buffer-revision! b)))
+      (let ([header (render:header next)])
+        (when (and header (caddr header))
+          (for-each (lambda (w) (follow-rendition! w next header facts)) following)))))
 
   (define (refresh-renditions!)
     (for-each refresh-buffer-rendition!
@@ -1540,13 +1552,116 @@
   (define (app-of b)
     (find (lambda (a) (eq? (app-buffer a) b)) (registered-apps)))
 
-  (define (app-buffer? b) (and (app-of b) #t))
+  (define (app-fact facts key fallback)
+    (let ([entry (and facts (assq key facts))]) (if entry (cdr entry) fallback)))
+
+  (define (app-facts b)
+    ;; Read one owned fact batch, including audience and endpoint identity.
+    ;; Ordinary buffers avoid copying unrelated facts such as a file baseline.
+    (guard (ex [else #f])
+      (and (buffer-store-id b) (memq b the-buffers)
+           (actor:identity? (buffer-fact b 'app #f))
+           (let* ([facts (store:properties (buffer-store-id b))]
+                  [owner (app-fact facts 'app #f)])
+             (and (actor:identity? owner) (eq? (car owner) 'app)
+                  (actor:in-audience? ui-actor (app-fact facts 'audience 'all)) facts)))))
+
+  (define (app-live? facts) (eq? (app-fact facts 'alive #f) #t))
+
+  (define (app-buffer? b) (or (and (app-of b) #t) (app-live? (app-facts b))))
+
+  ;; Mouse context is head-owned; edit reexports these same parameters.
+  ;; Position is a one-based viewport cell pair, buffer position is an
+  ;; unclamped character pair, and button is the raw xterm code.
+  (define app-event-position (make-thread-parameter #f))
+  (define app-event-buffer-position (make-thread-parameter #f))
+  (define app-event-button (make-thread-parameter #f))
+
+  (define (captures? rule event)
+    (or (eq? rule 'all)
+        (and (pair? rule)
+             (if (eq? (car rule) 'except) (not (member event (cdr rule)))
+                 (and (member event rule) #t)))))
+
+  (define (follows-app? w)
+    (and (window-following? w) (not (eq? (window-buffer w) the-escaped-buffer))))
+
+  (define (app-following? w)
+    (and (follows-app? w) (app-live? (app-facts (window-buffer w)))
+         (let ([header (render:header (buffer-rendition (window-buffer w)))])
+           (and header (caddr header) #t))))
+
+  (define (follow-app! w following?)
+    (unless (boolean? following?) (error 'follow-app! "expected a boolean" following?))
+    (window-following?-set! w following?)
+    (void))
+
+  (define (follow-rendition! w frame header facts)
+    (let* ([b (window-buffer w)] [cursor (caddr header)] [row (car cursor)] [cell (cadr cursor)])
+      (window-prow-set! w row)
+      (window-pcol-set! w
+        (min (render:character frame row cell) (string-length (vector-ref (buffer-lines b) row))))
+      (when (app-fact facts 'manages-viewport #f)
+        ;; A managed grid occupies the transcript's tail. Smaller windows
+        ;; clip it around the cursor; ordinary apps keep normal scrolling.
+        (let* ([count (line-count b)] [height (max 1 (window-size w))]
+               [start (max 0 (- count (car (cadddr header))))])
+          (window-top-set! w
+            (max start (- row height -1)
+                 (min (window-top w) row (max start (- count height)))))
+          (window-topseg-set! w 0)
+          (window-left-set! w
+            (max 0 (- cell (window-content-width w) -1)
+                 (min (window-left w) cell (max 0 (- (cadr (cadddr header)) (window-content-width w))))))))))
+
+  (define (app-status b active?)
+    (let ([facts (app-facts b)])
+      (and facts
+           (string-append (or (app-fact facts 'status #f) "")
+             (if (and active? (app-live? facts)
+                      (let ([rule (app-fact facts 'capture #f)]) (and rule (not (null? rule)))))
+                 (if (eq? b the-escaped-buffer) " escaped" " capturing input") "")))))
+
+  (define last-app-size #f)
+
+  (define (request-app-size!)
+    ;; One offer per focused endpoint/window/grid. The producer decides which
+    ;; head owns sizing. Install the receipt before delivery can reenter.
+    (let* ([w the-current] [b (window-buffer w)] [facts (app-facts b)]
+           [next (and (app-live? facts)
+                      (list (app-fact facts 'app #f) (buffer-store-id b) w
+                            (max 1 (window-size w)) (window-content-width w)))])
+      (unless (equal? next last-app-size)
+        (set! last-app-size next)
+        (when next
+          (unless (actor:send! (car next)
+                    (list 'request ui-actor (cadr next) 'resize (cdddr next)))
+            (when (eq? last-app-size next) (set! last-app-size #f)))))))
 
   (define (dispatch-app-event! event)
-    ;; the current buffer's app handler: #t when it consumed the event
-    (let* ([a (app-of (window-buffer the-current))]
+    ;; Local handlers retain their result (including mouse focus decisions).
+    ;; Shared capture is decided here, before sending an owned message.
+    (when (string=? event "FOCUS") (set! last-app-size #f))
+    (let* ([w the-current] [b (window-buffer w)] [a (app-of b)]
            [handler (and a (app-handle-event! a))])
-      (and handler (handler event) #t)))
+      (if a (and handler (handler event))
+          (let ([facts (app-facts b)])
+            (and (app-live? facts) (not (eq? b the-escaped-buffer))
+                 (captures? (app-fact facts 'capture #f) event)
+                 (let* ([frame (buffer-rendition b)] [header (render:header frame)]
+                        [point (or (app-event-buffer-position) (cons (window-prow w) (window-pcol w)))]
+                        [data (list (cons 'point point)
+                                    (cons 'cell (cons (car point) (render:column frame (car point) (cdr point))))
+                                    (cons 'viewport (app-event-position)) (cons 'button (app-event-button))
+                                    (list 'size (max 1 (window-size w)) (window-content-width w))
+                                    (cons 'revision (buffer-store-rev b))
+                                    (cons 'generation (and header (car header))))])
+                   ;; Focus reports are notifications, not a request to stop
+                   ;; inspecting scrollback. Actual captured input resumes it.
+                   (unless (member event '("FOCUS" "BLUR")) (follow-app! w #t))
+                   (actor:send! (app-fact facts 'app #f)
+                     (list 'input ui-actor (buffer-store-id b) event
+                           (if (string=? event "PASTE") (cons (cons 'paste (read-paste)) data) data)))))))))
 
   (define (detach-app! b)
     ;; Preserve the app's current buffer contents while removing its
@@ -1617,7 +1732,9 @@
   (define (app-cursor-visible-in? w)
     (let* ([a (app-of (window-buffer w))]
            [visibility (and a (app-cursor-visible? a))])
-      (cond [(not a) #t]
+      (cond [(and (not a) (app-following? w))
+             (caddr (caddr (render:header (buffer-rendition (window-buffer w)))))]
+            [(not a) #t]
             [(eq? visibility 'default) #t]
             [(procedure? visibility)
              (guard (ex [else #t]) (visibility w))]
@@ -1633,11 +1750,13 @@
 
   (define (app-manages-window-viewport? w)
     (let ([b (window-buffer w)])
-      (and (app-of b) (buffer-fact b 'manages-viewport #f))))
+      (and (or (app-of b) (app-following? w)) (buffer-fact b 'manages-viewport #f))))
 
   (define (app-cursor-style b)
-    ;; the shape an app asked for through set-app-presentation!, or #f
-    (and (app-of b) (buffer-fact b 'cursor-style #f)))
+    ;; Local presentation or the followed shared app's shape, otherwise #f.
+    (if (app-of b) (buffer-fact b 'cursor-style #f)
+        (and (eq? b (window-buffer the-current)) (app-following? the-current)
+             (app-fact (app-facts b) 'cursor-style #f))))
 
   (define (set-app-presentation! b sticky-lines scrollbar . options)
     ;; Configure presentation shared by every window showing this local
@@ -1673,7 +1792,7 @@
       b))
 
   (define (buffer-sticky-lines b)
-    (if (app-of b)
+    (if (app-buffer? b)
         (min (or (buffer-fact b 'sticky-lines #f) 0) (line-count b))
         0))
 
@@ -1847,6 +1966,7 @@
         (buffer-spot-col-set! old (window-pcol w))
         (buffer-spot-top-set! old (window-top w))
         (window-buffer-set! w b)
+        (window-following?-set! w #t)
         (window-prow-set! w (buffer-spot-row b))
         (window-pcol-set! w (buffer-spot-col b))
         (window-top-set! w (buffer-spot-top b))
@@ -1958,6 +2078,9 @@
                     ;; Surface events are wakeups. The head prepares current
                     ;; demanded rows on its pump, never on a publisher thread.
                     (surface:subscribe! #f (lambda (event) (wake-main!)))
+                    (actor:subscribe!
+                      (lambda (events)
+                        (run-on-main! (lambda () (set! last-app-size #f)))))
                     identity)))))))))
 
   ;;; The seat's first state ---------------------------------------------------------

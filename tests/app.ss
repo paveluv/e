@@ -6,7 +6,7 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
@@ -17,16 +17,15 @@
              (prefix (store) store:)
              (prefix (kernel) kernel:)
              (prefix (log) log:)
+             (prefix (test) test:)
+             (prefix (actor) actor:) (prefix (surface) surface:) (prefix (render) render:)
+             (prefix (paint) paint:) (prefix (mode) mode:) (prefix (keymap) keymap:)
+             (prefix (main) main:)
              (prefix (git-view) git-view:)
              (prefix (log-view) log-view:))
 
-     (define checks 0)
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'app-test label actual expected)))
-     (define (refused? thunk)
-       (guard (ex [else #t]) (thunk) #f))
+     (define check test:check)
+     (define refused? test:raises?)
      (define (store-ids) (list-sort < (store:buffer-list)))
 
      ;; Invalid registrations do not allocate or mutate anything.
@@ -271,4 +270,144 @@
      (check 'runtime-log-callback-is-rebound
             (eq? runtime-refresh (head:app-refresh! (head:app-of arrivals))) #f)
 
-     (format #t "~a app checks passed\n" checks)))
+     ;; Mouse routing needs the handler's focus decision, not only truth.
+     (let* ([previous (current-buffer)] [result #f]
+            [b (head:register-app! "dispatch-results" void (lambda (event) result))])
+       (show-buffer! b)
+       (check 'local-dispatch-preserves-focus-results
+         (map (lambda (value) (set! result value) (head:dispatch-app-event! "MOUSE-CLICK"))
+           '(#f #t keep-focus ignore-click))
+         '(#f #t keep-focus ignore-click))
+       (show-buffer! previous)
+       (head:forget-buffer! b))
+
+     ;; One shared app exercises the complete head adapter. Its endpoint only
+     ;; receives data; no head app record or terminal renderer is registered.
+     (let* ([previous (current-buffer)] [w (head:current)] [owner '(app adapter-test)]
+            [messages (test:recorder)] [reenter #f]
+            [text (make-vector 50 "abc")])
+       (define (receive message)
+         (messages message)
+         (when reenter
+           (let ([next reenter]) (set! reenter #f) (next))))
+       (define (received kind) (filter (lambda (message) (eq? (car message) kind)) (messages)))
+       (vector-set! text 48 "界e\x301;Z")
+       (vector-set! text 49 "界e\x301;Z")
+       (actor:register! owner receive)
+       (let* ([id (store:create! owner "*adapter-test*" text
+                    `((app . ,owner) (alive . #t) (capture . all) (status . "working")
+                      (read-only . #t) (wrap . #f) (manages-viewport . #t) (cursor-style . bar)))]
+              [b (head:adopt-store-buffer! id)]
+              [other (head:make-window b 0 0 0 0 0 2 1 7 3 1 'default)])
+         (define (publish row visible?)
+           (surface:publish! id (let ([old (surface:snapshot id)]) (and old (car old))) 0
+             '((48 #(plain plain plain plain) #(#f #f #f #f) ((clusters (1 . 2) (2 . 1) (1 . 1))))
+               (49 #(plain plain plain plain) #(#f #f #f #f) ((clusters (1 . 2) (2 . 1) (1 . 1)))))
+             (list row 2 visible?) '(4 4)))
+         (define (position w) (list (head:window-prow w) (head:window-pcol w) (head:window-top w)))
+         (publish 48 #t)
+         (head:window-size-set! w 0)
+         (head:window-width-set! w 0)
+         (head:set-layout-root! (head:make-layout-split 'right w other 1 1))
+         (let ([seen #f])
+           (head:set-repaint-hook!
+             (lambda () (set! seen (list (position w) (head:app-cursor-style b)
+                                         (and (render:row (head:buffer-rendition b) 48) #t)))))
+           (head:set-window-buffer! w b)
+           (check 'shared-adoption-follows-before-first-layout-with-its-own-projection seen '((48 1 48) bar #t)))
+         (head:set-repaint-hook! paint:invalidate-screen-cache!)
+         (head:window-size-set! w 4)
+         (head:window-width-set! w 6)
+         (head:refresh-renditions!)
+         (check 'shared-grid-follows-in-different-window-sizes
+           (list (position w) (position other) (head:app-buffer? b) (head:app-of b))
+           '((48 1 46) (48 1 47) #t #f))
+         (head:follow-app! other #f)
+         (head:window-prow-set! other 0)
+         (head:window-pcol-set! other 0)
+         (head:window-top-set! other 0)
+         (publish 49 #f)
+         (head:refresh-renditions!)
+         (check 'following-is-per-window-and-honors-published-visibility
+           (list (position w) (position other) (head:app-cursor-visible-in? w)
+                 (head:app-cursor-visible-in? other)) '((49 1 46) (0 0 0) #f #t))
+         (check 'capture-is-declarative
+           (map (lambda (rule)
+                  (store:set-property! owner id 'capture rule)
+                  (map head:dispatch-app-event! '("UP" "x")))
+             '(#f all () ("UP") (except "UP")))
+           '((#f #f) (#t #t) (#f #f) (#t #f) (#f #t)))
+         (store:set-property! owner id 'capture 'all)
+         (let ([before (store:properties id)])
+           (check 'invalid-app-facts-refuse-the-whole-batch
+             (map (lambda (bad)
+                    (and (refused? (lambda () (store:set-properties! owner id (list '(status . "wrong") bad))))
+                         (equal? before (store:properties id))))
+               '((app . (head "wrong")) (alive . yes) (capture . #t) (capture except 4)
+                 (status . 3) (sticky-lines . -1) (cursor-style . invalid) (manages-viewport . 1)))
+             '(#t #t #t #t #t #t #t #t)))
+         (let ([paste (string-copy "paste me")] [raw (cons 48 1)] [identity (actor:current)])
+           (head:set-pending-paste! paste)
+           (parameterize ([app-event-buffer-position raw] [app-event-position '(3 . 2)] [app-event-button 0])
+             (head:dispatch-app-event! "PASTE"))
+           (string-set! paste 0 #\X)
+           (set-car! raw 999)
+           (let* ([message (car (reverse (received 'input)))] [data (list-ref message 4)])
+             (check 'shared-input-owns-paste-and-both-coordinate-spaces
+               (list (cadr message) (caddr message) (cadddr message) data)
+               (list head:ui-actor id "PASTE"
+                 `((paste . "paste me") (point 48 . 1) (cell 48 . 2) (viewport 3 . 2) (button . 0)
+                   (size 4 6) (revision . 0) (generation . ,(car (surface:snapshot id))))))
+             (set-car! (cadr message) 'damaged)
+             (check 'delivery-cannot-mutate-head-identity-or-context
+               (list (car head:ui-actor) (actor:current) (app-event-buffer-position)) (list 'head identity #f))))
+         (let ([before (length (received 'input))] [ran? #f])
+           (mode:register! "adapter-test" '() '() (lambda (line) #f))
+           (mode:choose! b "adapter-test")
+           (keymap:bind-default! 'adapter-test "UP" (lambda () (set! ran? #t)))
+           (keymap:set-context-escape! 'adapter-test "C-]")
+           (main:dispatch-key! "UP")
+           (check 'mode-command-wins-and-pauses-following
+             (list ran? (head:app-following? w) (- (length (received 'input)) before)) '(#t #f 0))
+           (main:dispatch-key! "x")
+           (check 'captured-key-resumes-following (head:app-following? w) #t)
+           (head:set-escaped-buffer! b)
+           (check 'escape-keeps-input-and-cursor-local
+             (list (head:dispatch-app-event! "x") (head:app-following? w)
+                   (head:app-cursor-visible-in? w) (head:app-cursor-style b) (head:app-status b #t))
+             '(#f #f #t #f "working escaped"))
+           (head:set-escaped-buffer! #f))
+         (set! reenter head:request-app-size!)
+         (head:request-app-size!)
+         (head:request-app-size!)
+         (head:window-width-set! w 5)
+         (head:request-app-size!)
+         (check 'size-offers-coalesce-before-reentrant-delivery
+           (received 'request)
+           (list (list 'request head:ui-actor id 'resize '(4 6))
+                 (list 'request head:ui-actor id 'resize '(4 5))))
+         (set! reenter (lambda () (head:follow-app! w #f) (head:refresh-renditions!)))
+         (head:dispatch-app-event! "x")
+         (check 'delivery-does-not-overwrite-reentrant-follow-state (head:app-following? w) #f)
+         (store:set-property! owner id 'audience '())
+         (check 'hidden-app-denies-retained-facts-and-input-before-cleanup
+           (list (head:app-facts b) (head:dispatch-app-event! "x")) '(#f #f))
+         (store:set-property! owner id 'audience 'all)
+         (actor:detach! owner)
+         (check 'unreachable-endpoint-declines-input (head:dispatch-app-event! "x") #f)
+         (actor:register! owner receive)
+         (store:set-properties! owner id '((alive . #f) (capture . #f) (status . "exited")))
+         (surface:withdraw! id (car (surface:snapshot id)))
+         (head:refresh-renditions!)
+         (check 'death-restores-ordinary-input-and-cursor-but-keeps-status
+           (list (head:app-buffer? b) (head:dispatch-app-event! "x") (head:app-cursor-style b)
+                 (head:app-cursor-visible-in? w) (head:app-manages-window-viewport? w)
+                 (head:app-status b #t) (store:line id 48))
+           '(#f #f #f #t #f "exited" "界e\x301;Z"))
+         (head:set-layout-root! w)
+         (head:set-window-buffer! w previous)
+         (store:delete! owner id)
+         (head:before-frame!)
+         (actor:detach! owner)))
+
+     (test:finish! 'app)))

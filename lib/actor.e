@@ -109,15 +109,17 @@
     (let ([entry (registration-of actor)]) (and entry (registration-delivery entry))))
 
   (define (send! to message)
-    ;; deliver a protocol message; #t when the actor was reachable
+    ;; Deliver an owned plain message; #f if unreachable or delivery fails.
+    ;; Invalid payloads raise before calling a reachable endpoint.
     (kernel:call-with-runtime-registrations
       (lambda ()
         (cond [(registration-of to)
                => (lambda (entry)
-                    (guard (ex [else #f])
-                      (call-as (registration-identity entry)
-                        (lambda () ((registration-delivery entry) message)))
-                      #t))]
+                    (let ([message (datum:copy message)])
+                      (guard (ex [else #f])
+                        (call-as (registration-identity entry)
+                          (lambda () ((registration-delivery entry) message)))
+                        #t)))]
               [else #f]))))
 
   ;;; Ask and reply -----------------------------------------------------------
@@ -154,7 +156,7 @@
       ;; Delivery may answer synchronously or ask again. Never call out
       ;; while holding the protocol lock; a failed delivery only cancels
       ;; its own ticket if it is still pending.
-      (if (send! to (datum:copy (list 'ask ticket from question choices)))
+      (if (send! to (list 'ask ticket from question choices))
           ticket
           (begin (cancel! ticket) #f))))
 
@@ -186,15 +188,18 @@
   (define (answer! ticket answer)
     ;; Resolve an ask: the answer routes to the asker's reply
     ;; procedure (on this thread).  -> #t, or #f for a stale ticket.
-    (cond [(take-ticket! ticket)
-           => (lambda (entry)
-                (guard (ex [else (void)])
-                  (kernel:call-with-runtime-registrations
-                    (lambda ()
-                      (call-as (vector-ref entry 1)
-                        (lambda () ((vector-ref entry 5) answer))))))
-                #t)]
-          [else #f]))
+    ;; Validate/copy before consuming the ticket: a malformed answer must
+    ;; not discard a question, and the callback owns its mutable payload.
+    (let ([answer (datum:copy answer)])
+      (cond [(take-ticket! ticket)
+             => (lambda (entry)
+                  (guard (ex [else (void)])
+                    (kernel:call-with-runtime-registrations
+                      (lambda ()
+                        (call-as (vector-ref entry 1)
+                          (lambda () ((vector-ref entry 5) answer))))))
+                  #t)]
+        [else #f])))
 
   (define (cancel! ticket)
     ;; Withdraw a question nobody answered.

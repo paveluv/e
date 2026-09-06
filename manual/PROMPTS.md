@@ -93,7 +93,11 @@ not invoke the reply procedure.
 
 The protocol copies the question's actors, text, and choices on admission.
 Delivered questions and `pending` reads are independent snapshots; changing
-them cannot redirect a ticket or alter another reader's question.
+them cannot redirect a ticket or alter another reader's question. All
+`actor:send!` messages and `actor:answer!` payloads also copy mutable plain
+data at delivery. Cycles and runtime values such as procedures are refused.
+An invalid answer raises before consuming its ticket, so the question stays
+pending. Sender and receiver may change their own copies independently.
 
 Concurrent questions retain distinct tickets. The protocol releases its lock
 before calling delivery or reply procedures, which may ask or answer another

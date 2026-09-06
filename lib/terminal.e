@@ -3573,11 +3573,12 @@
            => (lambda (bytes) (write-bytes! state bytes))]))
 
   (define (mouse-position state)
-    ;; The alternate screen presents no scrollback rows, so the buffer row
-    ;; must be offset by the live screen top, not the history length.
-    (or (app-event-position)
-        (cons (+ (cdr (point)) 1)
-              (+ (- (car (point)) (terminal-live-screen-top state)) 1))))
+    ;; The head supplies the addressed buffer cell for every pointer event.
+    ;; Local terminal placeholders are one character per cell. Offset by the
+    ;; captured live-screen origin, including while using the alternate grid.
+    (let ([position (or (app-event-buffer-position) (point))])
+      (cons (+ (cdr position) 1)
+            (+ (- (car position) (terminal-live-screen-top state)) 1))))
 
   (define (handle-terminal-event! state event)
     (cond

@@ -5,8 +5,8 @@ view is an app without an input handler: it renders changing state but leaves
 keys to the ordinary editor.
 
 Apps look like buffers, participate in the buffer list, may appear in any
-window, and carry `[]` in their status line. Their content is refreshed while
-visible on every redraw.
+window, and carry `[]` in their status line. Local apps refresh while visible;
+shared apps publish text, facts, and rendition through the store and surface.
 
 Head apps are local buffers: their generated text, modes, and presentation
 facts stay in this head.  They have no store id and do not appear in the
@@ -40,9 +40,15 @@ position. Returning `ignore-click` consumes the click and restores both the
 previous focus and the app's previous point. If the handler returns false—or the buffer is a view with no
 handler—the press also starts an ordinary text selection, so dragging selects
 from the clicked cell even though the buffer is read-only.
-During `"MOUSE-CLICK"`, `(app-event-buffer-position)` returns the unclamped
-zero-based `(row . column)` addressed by the pointer. It may lie beyond the
-buffer's last line, allowing an app to ignore clicks in empty viewport space.
+During clicks, drags, releases, and wheel events, `(app-event-buffer-position)`
+returns the unclamped zero-based `(row . character-column)` addressed by the
+pointer. It may lie beyond the buffer's last line, allowing an app to ignore
+empty viewport space. `(app-event-position)` is a one-based `(x . y)` cell
+position within the text viewport, excluding the scrollbar and line-number
+gutter. `(app-event-button)` is the raw xterm button code, including motion and
+modifier bits. These thread-local parameters are also exported by `head:`;
+the command-layer names reference the same context. They are `#f` outside
+pointer delivery.
 Registrations belong to their module and disappear transactionally on unload
 or reload like modes, key bindings, and hooks.
 The local buffer and its facts remain, ready for the module to register
@@ -74,8 +80,8 @@ arbitrary callbacks, lock the head, or roll back changes on an exception.
 
 `surface:` attaches presentation data to a store buffer. The head renders
 visible surfaced buffers automatically, keeping their ordinary mode.
-Terminal and describe still use the local app API above; their migration
-and automatic base-app input/cursor following are not connected yet.
+Shared apps can also declare input capture and cursor following as described
+below. Terminal and describe still use the local app API above.
 The terminal emulator provides an owned
 [`emulator-frame`](TERMINAL.md#scheme-api) containing text and complete
 surface rows for publishers that need terminal output.
@@ -154,6 +160,63 @@ audience permissions; consumers must apply the store's visibility rules.
 
 ## Input capture and propagation
 
+Shared apps register an `app` actor endpoint and publish its identity in the
+buffer's `app` fact. They do not register a local head app. Set related facts
+in one `store:set-properties!` batch:
+
+| Fact | Meaning |
+| --- | --- |
+| `app` | An actor identity, such as `(app example)`. |
+| `alive` | Boolean; enables app input and cursor following while true. |
+| `capture` | `#f` or `()` for none, `all`, a list of event strings, or `(except "EVENT" ...)`. |
+| `status` | A short string or `#f`; remains visible after the app stops. |
+| `cursor-style` | `default`, `block`, `underline`, `bar`, their `blinking-` variants, or `#f`. |
+| `sticky-lines` | Nonnegative count of leading rows kept visible. |
+| `scrollbar`, `wrap` | The same presentation preferences described below. |
+| `manages-viewport` | Boolean; declares a live grid at the transcript's tail. |
+
+The head checks current audience, liveness, capture, and keymap context before
+forwarding input through `actor:send!`. The receiver gets owned plain data:
+
+```scheme
+(input (head "name") buffer-id "MOUSE-CLICK"
+  ((point 8 . 1) (cell 8 . 2) (viewport 3 . 1) (button . 0)
+   (size 20 80) (revision . 12) (generation . 34)))
+```
+
+`point` is a zero-based buffer character position; `cell` projects that
+position through the displayed surface. `viewport` and `button` are the
+pointer parameters above, or `#f` for keys. `size` is the addressed window's
+content grid `(rows cols)`, excluding chrome. `revision` and `generation`
+identify the adopted text and rendition; generation is `#f` without a frame.
+A `"PASTE"` event additionally contains `(paste . "text")`. The producer
+decides how to handle an input based on an older frame. No reply is needed
+to decide capture; an unreachable or failing endpoint declines delivery.
+
+Each window initially follows the shared surface cursor. Editor commands
+and mouse navigation pause following; captured input resumes it. Focus and
+blur reports preserve the current preference. Escape suppresses following
+and gives the cursor back to the editor. Extensions can set the preference
+with `(head:follow-app! window boolean)`; `(head:app-following? window)` reports
+whether it is active. Following uses the same prepared surface generation
+as painting, even when the cursor moves offscreen.
+
+With `manages-viewport` true, the final `rows` text lines of surface size
+`(rows cols)` form the live grid, and the published cursor must lie there.
+Following windows anchor at that grid and clip around the cursor when smaller. Other apps use ordinary
+viewport scrolling. Inspection uses the editor's cursor visibility and shape;
+following uses the published ones. The selected app's status also shows
+`capturing input` or `escaped` when capture is enabled.
+
+After layout, the focused head sends `(request actor buffer-id resize (rows
+cols))` when its size offer changes or focus/presence is refreshed. Repeated
+offers coalesce, and every input also carries its window size. The producer
+chooses which head controls its one grid; latest-typist ownership belongs in
+the producer. Set `alive` and `capture` false together and withdraw the surface
+on exit; the text remains an ordinary read-only transcript. Store facts and
+surface frames are separate publications, so fact changes do not identify a
+surface generation.
+
 App input is layered: an active prompt first, then the focused app, then e's
 global bindings, then the ordinary buffer fallback such as self-insertion.
 Most apps are partial: their handler consumes only their own controls and
@@ -170,14 +233,16 @@ interactive environment simply consumes everything it is offered while it
 is alive; the terminal returns true for every key until its process exits.
 
 The way out of such an app is keymap data, not a mode of dispatch.  The
-app's mode context names an escape prefix, and binds what that prefix
-should mean on its own terms:
+app's mode context names an escape prefix and may bind app-specific sequences:
 
 ```scheme
 (keymap:set-context-escape! 'terminal "C-]")
 (keymap:bind-default! 'terminal "C-] C-]" terminal-literal-escape!)
 (keymap:bind-default! 'terminal "C-] C-y" terminal:yank!)
 ```
+
+Declaring the escape alone makes it wait for the next key; an app need not
+add a binding under that prefix.
 
 A sequence starting with the escape that the context does not bind resolves,
 minus the prefix, in the global map: `C-] C-x C-f` runs `find-file!!` from

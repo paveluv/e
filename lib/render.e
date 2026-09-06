@@ -67,18 +67,24 @@
             (hashtable-set! wanted i #t))) ranges)
       (list-sort < (vector->list (hashtable-keys wanted)))))
 
-  (define (prepare previous id text revision ranges)
+  (define (prepare previous id text revision ranges . follow-height)
     ;; A bounded retry handles publication between a header and its ranges.
     ;; Retain only demanded rows on a refill; scrolling cannot grow a history
     ;; cache. An unchanged complete request reuses the private projection.
-    (let ([wanted (requested-rows ranges (vector-length text))])
+    (let ([height (if (null? follow-height) 0 (car follow-height))])
       (let retry ([attempts 2])
         (let ([next (surface:snapshot id)])
           (and next (= (cadr next) revision)
-               (if (and previous (= (frame-id previous) id)
-                        (eq? (frame-text previous) text)
-                        (equal? (frame-header previous) next)
-                        (for-all (lambda (i) (hashtable-contains? (frame-rows previous) i)) wanted))
+               ;; A following viewport demands rows around this very cursor,
+               ;; inside the same generation read/retry as all other ranges.
+               (let* ([cursor (caddr next)]
+                      [ranges (if (and cursor (> height 0))
+                                  (cons (cons (- (car cursor) height -1) (+ (car cursor) height)) ranges) ranges)]
+                      [wanted (requested-rows ranges (vector-length text))])
+                 (if (and previous (= (frame-id previous) id)
+                       (eq? (frame-text previous) text)
+                       (equal? (frame-header previous) next)
+                       (for-all (lambda (i) (hashtable-contains? (frame-rows previous) i)) wanted))
                    previous
                    (let ([table (make-eqv-hashtable)])
                      (let fetch ([rest wanted])
@@ -95,7 +101,7 @@
                                     (let ([line (project (vector-ref text (car entry)) (cdr entry))])
                                       (and line (begin (hashtable-set! table (car entry) line) #t)))) rows)
                                 (fetch (cdr tail))]
-                               [else #f])))))))))))
+                               [else #f]))))))))))))
 
   (define (header frame) (and frame (datum:copy (frame-header frame))))
   (define (line-at frame row)

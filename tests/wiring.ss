@@ -7,21 +7,18 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (terminal) terminal:))
-
-     (define checks 0)
+     (import (prefix (sys) sys:) (prefix (terminal) terminal:) (prefix (test) test:))
 
      (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'wiring-test (symbol->string label) actual expected
-                (map screen-line '(20 21 22 23)))))
+       (guard (ex [else (error 'wiring-test (symbol->string label) actual expected
+                               (map screen-line '(20 21 22 23)))])
+         (test:check label actual expected)))
 
      (define probe (format "/tmp/e-wiring-~a" (getenv "USER")))
 
@@ -65,12 +62,14 @@
        (pump! 900)
        (equal? (call-with-input-file probe read) #t))
 
-     (define (read-editor expression)
+     (define (read-editor expression . prefix)
        (when (file-exists? probe) (delete-file probe))
-       (send! (format "\x1b;xcall-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\r"
-                      probe expression))
+       (send! (format "~a\x1b;xcall-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\r"
+                      (if (null? prefix) "" (car prefix)) probe expression))
        (pump! 900)
-       (call-with-input-file probe read))
+       (guard (ex [else (error 'read-editor "probe did not return a datum" expression
+                               (map screen-line '(20 21 22 23)))])
+         (call-with-input-file probe read)))
 
      (pump! 3000)
 
@@ -1014,6 +1013,109 @@
             surface-offsets) '(#f #f))
      (read-editor `(begin (delete-other-windows!) (kill-buffer! (head:buffer-of-store-id ,surface-id)) #t))
 
+     ;; A local handler's focus result survives the real mouse dispatcher.
+     (define app-cell
+       (read-editor
+         '(let ([b (head:register-app! "mouse-focus-live" void
+                     (lambda (event)
+                       (and (string=? event "MOUSE-CLICK")
+                            (head:buffer-fact (current-buffer) 'reply #f))))])
+            (head:view-replace! b '("first" "second"))
+            (split-window-right!)
+            (let ([w (cadr (head:windows))])
+              (head:set-window-buffer! w b)
+              (head:set-current! (car (head:windows)))
+              (paint:window-layout)
+              (cons (+ (head:window-xoff w) 2) (+ (cadr (assq w (head:layout))) 1))))))
+     (check 'app-mouse-focus-and-ignore-results-survive-dispatch
+       (map (lambda (reply offset)
+              (read-editor
+                `(begin (head:buffer-fact-set! (head:window-buffer (cadr (head:windows))) 'reply ',reply) #t))
+              (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
+                       (+ (car app-cell) offset) (+ (cdr app-cell) offset)
+                       (+ (car app-cell) offset) (+ (cdr app-cell) offset)))
+              (pump! 200)
+              (read-editor
+                '(list (eq? (selected-window) (car (head:windows)))
+                       (head:buffer-point (head:window-buffer (cadr (head:windows)))))))
+         '(keep-focus ignore-click) '(0 1))
+       '((#t (0 . 1)) (#t (0 . 1))))
+     (read-editor '(begin (kill-buffer! (head:window-buffer (cadr (head:windows))))
+                          (delete-other-windows!) #t))
+
+     ;; A shared endpoint receives keys/paste/pointers while the same surface
+     ;; projection drives actual output. Chrome is excluded from cell positions.
+     (define shared-pointer
+       (read-editor
+         '(let* ([owner '(app adapter-live)]
+                 [events (kernel:persistent-cell 'wiring-app-events (lambda () '()))]
+                 [text (make-vector 12 "abcdefgh")])
+            (vector-set! text 8 "界e\x301;Z    ")
+            (actor:register! owner (lambda (message) (set-box! events (cons message (unbox events)))))
+            (mode:register! "adapter-live" '() '() (lambda (line) #f))
+            (keymap:set-context-escape! 'adapter-live "C-]")
+            (let* ([id (store:create! owner "*adapter-live*" text
+                         `((app . ,owner) (alive . #t) (capture . all) (status . "ready")
+                           (read-only . #t) (wrap . #f) (scrollbar . left)
+                           (manages-viewport . #t) (cursor-style . bar)))]
+                   [b (head:adopt-store-buffer! id)])
+              (surface:publish! id #f 0
+                '((8 #(plain plain plain plain plain plain plain plain) #(#f #f #f #f #f #f #f #f)
+                   ((clusters (1 . 2) (2 . 1) (1 . 1) (1 . 1) (1 . 1) (1 . 1) (1 . 1)))))
+                '(8 2 #t) '(4 8))
+              (mode:choose! b "adapter-live")
+              (head:buffer-line-numbers-setting-set! b #t)
+              (show-buffer! b)
+              (head:follow-app! (selected-window) #t)
+              (paint:window-layout)
+              (cons (+ (head:window-xoff (selected-window))
+                       (head:window-line-number-width (selected-window)) 4) 1)))))
+     (check 'shared-app-paints-grid-and-declared-status
+       (list (screen-has? 0 "界éZ")
+             (exists (lambda (row) (screen-has? row "ready capturing input")) (iota 24))) '(#t #t))
+     (send! "x\x1b;[200~paste\ntext\x1b;[201~")
+     (pump! 250)
+     (check 'shared-app-receives-real-key-and-paste-as-owned-data
+       (read-editor
+         '(map (lambda (message)
+                 (list (cadr message) (cadddr message)
+                       (let ([paste (assq 'paste (list-ref message 4))]) (and paste (cdr paste)))))
+            (reverse (filter (lambda (message)
+                               (and (eq? (car message) 'input) (member (cadddr message) '("x" "PASTE"))))
+                       (unbox (kernel:persistent-cell 'wiring-app-events (lambda () '()))))))
+         "\x1d;")
+       '(((head "wired head λ") "x" #f) ((head "wired head λ") "PASTE" "paste\ntext")))
+     ;; The escaped probe is an editor command and pauses following. Resume
+     ;; with real input before addressing cells in the live grid again.
+     (send! "x")
+     (pump! 150)
+     (send! (format "\x1b;[<0;~a;~aM\x1b;[<32;~a;~aM\x1b;[<0;~a;~am\x1b;[<64;~a;~aM"
+              (car shared-pointer) (cdr shared-pointer) (car shared-pointer) (cdr shared-pointer)
+              (car shared-pointer) (cdr shared-pointer) (car shared-pointer) (cdr shared-pointer)))
+     (pump! 250)
+     (check 'all-pointer-phases-share-character-cell-and-viewport-coordinates
+       (read-editor
+         '(map (lambda (message)
+                 (let ([data (list-ref message 4)])
+                   (list (cadddr message) (cdr (assq 'point data)) (cdr (assq 'cell data))
+                         (cdr (assq 'viewport data)) (cdr (assq 'button data)))))
+            (reverse (filter (lambda (message)
+                               (and (eq? (car message) 'input)
+                                    (member (cadddr message) '("MOUSE-CLICK" "MOUSE-DRAG" "MOUSE-RELEASE" "WHEEL-UP"))))
+                       (unbox (kernel:persistent-cell 'wiring-app-events (lambda () '()))))))
+         "\x1d;")
+       '(("MOUSE-CLICK" (8 . 1) (8 . 2) (3 . 1) 0)
+         ("MOUSE-DRAG" (8 . 1) (8 . 2) (3 . 1) 32)
+         ("MOUSE-RELEASE" (8 . 1) (8 . 2) (3 . 1) 0)
+         ("WHEEL-UP" (8 . 1) (8 . 2) (3 . 1) 64)))
+     (check 'shared-app-escape-runs-a-complete-editor-command
+       (read-editor '(list (eq? (head:escaped-buffer) (current-buffer))
+                           (head:app-status (current-buffer) #t)) "\x1d;")
+       '(#t "ready escaped"))
+     (read-editor '(let ([b (current-buffer)])
+                     (actor:detach! '(app adapter-live))
+                     (kill-buffer! b) #t) "\x1d;")
+
      (delete-file probe)
      (sys:close-terminal-process! process)
-     (format #t "~a wiring checks passed\n" checks)))
+     (test:finish! 'wiring)))

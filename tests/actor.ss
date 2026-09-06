@@ -33,6 +33,37 @@
              (actor:registered? '(head nobody)))
        '(#t #t #f))
 
+     ;; Queued messages and replies use the same owned-data contract.
+     (test:check 'messages-and-answers-own-their-payloads
+       (map
+         (lambda (kind)
+           (let* ([payload (vector (string-copy "payload") (bytevector 1 2) (list 'original))]
+                  [received
+                   (if (eq? kind 'send)
+                       (begin (actor:send! human payload) (kernel:mailbox-receive! human-mail))
+                       (let* ([reply #f]
+                              [ticket (actor:ask! agent human "Payload?" '() (lambda (value) (set! reply value)))])
+                         (kernel:mailbox-receive! human-mail)
+                         (actor:answer! ticket payload)
+                         reply))])
+             (string-set! (vector-ref payload 0) 0 #\X)
+             (bytevector-u8-set! (vector-ref received 1) 0 9)
+             (set-car! (vector-ref received 2) 'changed)
+             (list kind (vector-ref received 0) (bytevector-u8-ref (vector-ref payload 1) 0)
+                   (car (vector-ref payload 2)))))
+         '(send answer))
+       '((send "payload" 1 original) (answer "payload" 1 original)))
+     (let* ([cycle (list 'cycle)] [reply #f]
+            [ticket (actor:ask! agent human "Valid?" '() (lambda (value) (set! reply value)))])
+       (kernel:mailbox-receive! human-mail)
+       (set-cdr! cycle cycle)
+       (test:check 'invalid-message-or-answer-is-refused-before-delivery-or-consumption
+         (list (map (lambda (payload)
+                      (list (test:raises? (lambda () (actor:send! human payload)))
+                            (test:raises? (lambda () (actor:answer! ticket payload))))) (list cycle void))
+               (map car (actor:pending human)) (actor:answer! ticket 'valid) reply)
+         (list '((#t #t) (#t #t)) (list ticket) #t 'valid)))
+
      ;; Directory records own their data. Admission and every read/callback
      ;; return independent snapshots, including nested capability metadata.
      (define identity (list 'head (string-copy "directory")))
