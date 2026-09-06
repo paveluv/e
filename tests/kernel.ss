@@ -17,6 +17,20 @@
 
      (define test-lock (make-mutex))
 
+     ;; Timed receives retain FIFO and later messages after a timeout.
+     (let ([mail (kernel:make-mailbox)] [entered (test:gate)])
+       (define (after ns) (add-duration (current-time 'time-monotonic) (make-time 'time-duration ns 0)))
+       (kernel:mailbox-post! mail 'first)
+       (kernel:mailbox-post! mail 'second)
+       (let* ([first (kernel:mailbox-receive! mail (current-time 'time-monotonic))]
+              [second (kernel:mailbox-receive! mail)]
+              [expired (kernel:mailbox-receive! mail (after 1000000))]
+              [waiting (test:worker (lambda () (entered #t) (kernel:mailbox-receive! mail (after 900000000))))])
+         (test:await 'receiving entered)
+         (kernel:mailbox-post! mail 'awake)
+         (test:check 'mailbox-deadline-keeps-queue-and-wake-semantics
+           (list first second expired (waiting)) '(first second #f awake))))
+
      ;; Hold predicate selection while another thread retracts an owner
      ;; and adds an unrelated registration. Removal must only consume its
      ;; selected entries, never restore or overwrite the older snapshot.

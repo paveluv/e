@@ -7,11 +7,12 @@ e can host a real pseudo-terminal inside an app buffer. Start one with
 (terminal:open!!)
 ```
 
-The command opens `<terminal>` in the current window and starts
+The command opens `*terminal*` in the current window and starts
 `terminal:shell` as an interactive shell in the current file's directory (or
 e's current working directory for a file-less buffer). It defaults to
 `$SHELL`, falling back to `/bin/sh`. A second session is named
-`<terminal 2>`, and so on.
+`*terminal 2*`, and so on. These are shared buffers: their actual live text
+and scrollback are readable through `store:` while the process runs.
 
 Set the shell in `config.e` when desired:
 
@@ -38,7 +39,9 @@ Window changes propagate through `TIOCSWINSZ`/`SIGWINCH`, so interactive
 shells, job control, screen-addressed programs such as `top`, and another
 instance of e work normally. The ioctl and signal are issued only when the
 PTY grid dimensions actually change; ordinary output redraws never interrupt
-the child with spurious resize notifications.
+the child with spurious resize notifications. The actor that last sent input
+controls the shared grid's size. Other views clip it to their own windows;
+focus reports alone do not take control of its size or color scheme.
 
 ## Input and leaving the terminal
 
@@ -51,8 +54,8 @@ reporting, wheel ticks scroll the local terminal history by one eighth of the
 window. `Shift-PageUp` and `Shift-PageDown` move by a full window;
 `Shift-wheel` explicitly selects local history even while the child reports
 mouse input. Scrolling is per window when several windows mirror one terminal.
-The terminal cursor disappears while that window is browsing history; the
-next keyboard or paste input returns it to the live cursor before sending the
+The editor's cursor replaces the terminal cursor while that window is browsing
+history; the next keyboard or paste input returns it to the live cursor before sending the
 input. Ordinary mouse selection remains available when the child is not
 tracking the mouse. A blinking block cursor marks the terminal's live input
 position by default. Programs can change its shape and blinking behavior with
@@ -80,8 +83,8 @@ output until its termination sequence instead of echoing it to the grid. The
 headless emulator exposes both the controller state and accumulated output for
 tests; e never invokes a host printer or command implicitly.
 
-The italic status hint distinguishes a focused terminal that is capturing
-input (`▶ capturing input, C-] to escape`), its temporarily escaped state
+The status hint distinguishes a focused terminal that is capturing
+input (`▶ capturing input`), its temporarily escaped state
 (`▶ escaped`), and a terminal running in a passive window (`▶`). After the
 process exits, every window shows `■`; capture is
 disabled and the retained terminal buffer remains a read-only transcript with
@@ -121,7 +124,7 @@ screen and restores it when the application exits.
 DEC screen-reverse mode is applied non-destructively, including the brief
 reverse-video transition used by terminfo's visual bell capability.
 BEL never produces sound or changes e's global echo area. It briefly replaces
-the terminal buffer's `▶` status marker with a red `♪`; both occupy the same cell
+the terminal buffer's `▶` status marker with `♪`; both occupy the same cell
 after the single mode/status spacer. Mirrored windows show the same
 buffer-owned indication without shifting their status text. Its asynchronous expiry cannot
 delay diagnostic text or later PTY input.
@@ -163,8 +166,9 @@ recorded soft-wrap boundaries while preserving explicit newlines, styles, and
 the logical cursor position. The primary screen also reflows while an
 alternate-screen application is active; the alternate screen itself remains a
 fixed application grid.
-OSC 0, 1, and 2 titles rename the buffer dynamically to the title wrapped in
-angle brackets, such as `<bash>`; duplicates become `<bash 2>` and so on.
+OSC 0, 1, and 2 title changes rename the shared buffer to the title wrapped in
+stars, such as `*bash*`; store name collisions receive a suffix such as
+`*bash*<2>`. An unchanged title does not overwrite a later user rename.
 OSC 8 hyperlinks remain attached to their cells through editing, scrolling,
 scrollback reflow, and alternate-screen rendering. They enter e's generic
 buffer hyperlink layer, which emits OSC 8 to the host terminal around the
@@ -172,7 +176,8 @@ corresponding visible cells. Thus, links produced by an application inside an
 e terminal remain available to the outer terminal even when their labels are
 not URLs.
 OSC 52 clipboard writes from terminal children are decoded into exact UTF-8
-text and, by default, stored in e's kill ring. The echo area and `<log>` report
+text and, by default, stored in the last input actor's head kill ring. The
+receiving head's echo area and `<log>` report
 the terminal buffer that supplied the clipboard. Disable this independently
 of outbound clipboard forwarding in `config.e`:
 
@@ -200,8 +205,8 @@ horizontal margins, with an explicit failure reply for unsupported requests.
 color count, RGB support, and other advertised color limits; unknown names
 receive the protocol's negative reply.
 
-The main screen retains scrollback; alternate-screen frames are never added
-to it. Configure the maximum retained line count in `config.e`:
+The main screen retains scrollback behind the alternate grid; alternate-screen
+frames are never added to that history. Configure the maximum retained line count in `config.e`:
 
 ```scheme
 (terminal:scrollback 10000) ; default
@@ -215,7 +220,7 @@ the child has not requested mouse input.
 ## Unsupported features
 
 When a child sends a terminal sequence that e does not implement, e reports
-`<buffer-name> sent unsupported <feature>` in the echo area and
+`*buffer-name*: Unsupported <feature>` in the echo area and
 `<log>`. Each distinct feature is reported only once per terminal buffer, so a
 full-screen program cannot flood the log by emitting it on every redraw.
 Diagnostics include the identifying CSI parameters or protocol selector but
@@ -299,7 +304,10 @@ give character and cell counts. The zero-based cursor is
 `(buffer-row cell-column visible?)`; `(rows cols)` describes the live grid,
 so historical row widths may differ. Facts currently contain `cursor-style`.
 This API returns a full frame; a publisher chooses which text and row changes
-to commit. The current terminal app still uses a local buffer.
+to commit. The live base app uses the same capture with main history retained
+before the alternate grid, then publishes attributed text edits and surface
+patches independently of head redraws. Mode 2026 delays those publications
+for up to one second; process exit flushes a held final frame immediately.
 
 Public feed, resize, and read operations serialize through the emulator's
 lock. Every read returns independently owned mutable data. Use `emulator-frame`
@@ -316,6 +324,19 @@ live in `sys.e`. The PTY session leader directly executes the configured shell,
 adding `-c command` only when a command is supplied; there is no intermediate
 `system()` process, and setup failures are written to the child terminal before
 it exits. Escape parsing, screen state, scrollback, input translation, and the
-app lifecycle live entirely in `terminal.e`; the seams provide only the generic
-app sizing, wrapping override, kill hook (`head`), key decoding (`tty`), and
-thread-safe redraw (`paint`) used by this and other apps.
+app lifecycle live in `vt.e`, with no head or painter dependency. `terminal.e`
+provides commands, escape/paging bindings, and local clipboard/diagnostic
+presentation. The shared app adapter owns each window's following and input
+projection. Killing the store buffer closes its process even when no head is
+looking at it. In the current combined process, quitting e ends the base too.
+
+Code that runs without a head can open and address the producer directly:
+
+```scheme
+(vt:open! actor command-or-#f directory rows cols [color-scheme]) ; store id
+(vt:send! actor id text (list rows cols) paste? [color-scheme])
+(vt:close! id)
+```
+
+The base library also exports the same emulator and shell/scrollback APIs
+as `terminal:`. Normal commands remain under `terminal:`.

@@ -114,24 +114,26 @@
      (define (difference-list before after)
        (let-values ([(span replacement) (text:difference before after)])
          (list (span->list span) replacement)))
-     (check 'difference-insert
-            (difference-list '#("abc") '#("aXbc"))
-            '(((0 . 1) (0 . 1)) ("X")))
-     (check 'difference-delete
-            (difference-list '#("aXbc") '#("abc"))
-            '(((0 . 1) (0 . 2)) ("")))
-     (check 'difference-split
-            (difference-list '#("ab") '#("a" "b"))
-            '(((0 . 1) (0 . 1)) ("" "")))
-     (check 'difference-join
-            (difference-list '#("a" "b") '#("ab"))
-            '(((0 . 1) (1 . 0)) ("")))
-     (check 'difference-no-change
-            (difference-list '#("a" "") '#("a" ""))
-            '(((1 . 0) (1 . 0)) ("")))
-     (check 'difference-preserves-common-lines
-            (difference-list '#("first" "abc" "last") '#("first" "aXbc" "last"))
-            '(((1 . 1) (1 . 1)) ("X")))
+     (check 'minimal-differences-across-characters-and-whole-rows
+       (map (lambda (entry) (apply difference-list entry))
+         '((#("abc") #("aXbc"))
+           (#("aXbc") #("abc"))
+           (#("ab") #("a" "b"))
+           (#("a" "b") #("ab"))
+           (#("a" "") #("a" ""))
+           (#("first" "abc" "last") #("first" "aXbc" "last"))
+           (#("first" "abc" "last" "") #("first" "aXbc" "last" ""))
+           (#("x" "tail" "") #("a" "b" "tail" ""))
+           (#("a" "" "tail") #("a" "tail"))))
+       '((((0 . 1) (0 . 1)) ("X"))
+         (((0 . 1) (0 . 2)) (""))
+         (((0 . 1) (0 . 1)) ("" ""))
+         (((0 . 1) (1 . 0)) (""))
+         (((1 . 0) (1 . 0)) (""))
+         (((1 . 1) (1 . 1)) ("X"))
+         (((1 . 1) (1 . 1)) ("X"))
+         (((0 . 0) (0 . 1)) ("a" "b"))
+         (((1 . 0) (2 . 0)) (""))))
 
      ;; Exhaust all pairs of short documents, including empty rows and
      ;; newlines at either end.  This catches prefix/suffix overlap and

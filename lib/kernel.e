@@ -27,6 +27,7 @@
                 library-directories directory-list load sort
                 parameterize make-mutex with-mutex make-condition
                 condition-wait condition-signal condition-broadcast
+                current-time time? time-type time<? time-difference
                 get-thread-id box? display-condition void))
 
   ;;; Conditions --------------------------------------------------------------
@@ -65,22 +66,30 @@
       (mailbox-tail-set! mb (cons message (mailbox-tail mb)))
       (condition-signal (mailbox-signal mb))))
 
-  (define (mailbox-receive! mb)
-    ;; blocks until a message arrives; strictly FIFO
-    (with-mutex (mailbox-lock mb)
-      (let wait ()
-        (cond
-          [(pair? (mailbox-head mb))
-           (let ([message (car (mailbox-head mb))])
-             (mailbox-head-set! mb (cdr (mailbox-head mb)))
-             message)]
-          [(pair? (mailbox-tail mb))
-           (mailbox-head-set! mb (reverse (mailbox-tail mb)))
-           (mailbox-tail-set! mb '())
-           (wait)]
-          [else
-           (condition-wait (mailbox-signal mb) (mailbox-lock mb))
-           (wait)]))))
+  (define (mailbox-receive! mb . timeout)
+    ;; Strictly FIFO. An optional monotonic deadline returns #f on timeout;
+    ;; recheck both the queue and deadline after every condition wake.
+    (let ([deadline (and (pair? timeout) (car timeout))])
+      (unless (or (not deadline) (and (time? deadline) (eq? (time-type deadline) 'time-monotonic)))
+        (error 'mailbox-receive! "expected a monotonic deadline or #f" deadline))
+      (with-mutex (mailbox-lock mb)
+        (let wait ()
+          (cond
+            [(pair? (mailbox-head mb))
+             (let ([message (car (mailbox-head mb))])
+               (mailbox-head-set! mb (cdr (mailbox-head mb)))
+               message)]
+            [(pair? (mailbox-tail mb))
+             (mailbox-head-set! mb (reverse (mailbox-tail mb)))
+             (mailbox-tail-set! mb '())
+             (wait)]
+            [else
+             (let ([now (current-time 'time-monotonic)])
+               (and (or (not deadline) (time<? now deadline))
+                 (begin
+                   (condition-wait (mailbox-signal mb) (mailbox-lock mb)
+                                   (and deadline (time-difference deadline now)))
+                   (wait))))])))))
 
   ;;; Ordered delivery -----------------------------------------------------
 

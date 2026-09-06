@@ -11,8 +11,8 @@ shared apps publish text, facts, and rendition through the store and surface.
 Head apps are local buffers: their generated text, modes, and presentation
 facts stay in this head.  They have no store id and do not appear in the
 store's buffer list or publish cursor marks.  This includes completions,
-buffer and git views, and log renderings.  Terminal and describe buffers
-are local too.
+buffer and git views, log renderings, and describe buffers. Terminal buffers
+are shared base apps: their live text is readable through `store:`.
 
 ## Registering an app
 
@@ -81,7 +81,7 @@ arbitrary callbacks, lock the head, or roll back changes on an exception.
 `surface:` attaches presentation data to a store buffer. The head renders
 visible surfaced buffers automatically, keeping their ordinary mode.
 Shared apps can also declare input capture and cursor following as described
-below. Terminal and describe still use the local app API above.
+below. The terminal uses this shared API; describe still uses the local API.
 The terminal emulator provides an owned
 [`emulator-frame`](TERMINAL.md#scheme-api) containing text and complete
 surface rows for publishers that need terminal output.
@@ -181,13 +181,14 @@ forwarding input through `actor:send!`. The receiver gets owned plain data:
 ```scheme
 (input (head "name") buffer-id "MOUSE-CLICK"
   ((point 8 . 1) (cell 8 . 2) (viewport 3 . 1) (button . 0)
-   (size 20 80) (revision . 12) (generation . 34)))
+   (size 20 80) (color-scheme . dark) (revision . 12) (generation . 34)))
 ```
 
 `point` is a zero-based buffer character position; `cell` projects that
 position through the displayed surface. `viewport` and `button` are the
 pointer parameters above, or `#f` for keys. `size` is the addressed window's
-content grid `(rows cols)`, excluding chrome. `revision` and `generation`
+content grid `(rows cols)`, excluding chrome. `color-scheme` is the head's
+`dark`, `light`, or unknown `#f` theme. `revision` and `generation`
 identify the adopted text and rendition; generation is `#f` without a frame.
 A `"PASTE"` event additionally contains `(paste . "text")`. The producer
 decides how to handle an input based on an older frame. No reply is needed
@@ -215,7 +216,9 @@ chooses which head controls its one grid; latest-typist ownership belongs in
 the producer. Set `alive` and `capture` false together and withdraw the surface
 on exit; the text remains an ordinary read-only transcript. Store facts and
 surface frames are separate publications, so fact changes do not identify a
-surface generation.
+surface generation. Routine app operations are recorded in the store audit
+log without filling the echo area; explicit app messages still use the usual
+presentation path.
 
 App input is layered: an active prompt first, then the focused app, then e's
 global bindings, then the ordinary buffer fallback such as self-insertion.
@@ -230,7 +233,7 @@ through the keymaps -- the mode context, then the global map.  A key the
 context binds, starts a binding with, or names as its escape goes straight
 to the keymaps; the handler never sees it.  An app that embeds a complete
 interactive environment simply consumes everything it is offered while it
-is alive; the terminal returns true for every key until its process exits.
+is alive; a shared terminal declares that capture through its store facts.
 
 The way out of such an app is keymap data, not a mode of dispatch.  The
 app's mode context names an escape prefix and may bind app-specific sequences:

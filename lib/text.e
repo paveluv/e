@@ -253,7 +253,9 @@
     ;; The smallest single replacement taking before to after: trim a
     ;; common prefix, then a non-overlapping common suffix.  Walk line
     ;; vectors with their implicit newlines, without flattening/copying
-    ;; the whole document.  Identical texts return an empty edit at EOF.
+    ;; the whole document. Skip equal rows at a time so a change at the
+    ;; end of a long transcript does not allocate per unchanged character.
+    ;; Identical texts return an empty edit at EOF.
     (define (end-of lines)
       (let ([row (- (vector-length lines) 1)])
         (cons row (string-length (vector-ref lines row)))))
@@ -272,16 +274,29 @@
             (cons row (string-length (vector-ref lines row))))))
     (let ([before-end (end-of before)] [after-end (end-of after)])
       (let prefix ([start '(0 . 0)])
-        (if (and (position<? start before-end) (position<? start after-end)
-                 (char=? (at before start) (at after start)))
-            (prefix (next before start))
-            (let suffix ([old-end before-end] [new-end after-end])
-              (if (and (position<? start old-end) (position<? start new-end)
-                       (char=? (at before (previous before old-end))
-                               (at after (previous after new-end))))
-                  (suffix (previous before old-end) (previous after new-end))
-                  (values (span-of-positions start old-end)
-                          (extract after (span-of-positions start new-end)))))))))
+        (cond
+          [(and (zero? (cdr start))
+                (< (car start) (min (car before-end) (car after-end)))
+                (string=? (vector-ref before (car start)) (vector-ref after (car start))))
+           (prefix (cons (+ (car start) 1) 0))]
+          [(and (position<? start before-end) (position<? start after-end)
+                (char=? (at before start) (at after start)))
+           (prefix (next before start))]
+          [else
+           (let suffix ([old-end before-end] [new-end after-end])
+             (cond
+               [(and (> (car old-end) (car start)) (> (car new-end) (car start))
+                     (= (cdr old-end) (string-length (vector-ref before (car old-end))))
+                     (= (cdr new-end) (string-length (vector-ref after (car new-end))))
+                     (string=? (vector-ref before (car old-end)) (vector-ref after (car new-end))))
+                (suffix (previous before (cons (car old-end) 0))
+                        (previous after (cons (car new-end) 0)))]
+               [(and (position<? start old-end) (position<? start new-end)
+                     (char=? (at before (previous before old-end))
+                             (at after (previous after new-end))))
+                (suffix (previous before old-end) (previous after new-end))]
+               [else (values (span-of-positions start old-end)
+                             (extract after (span-of-positions start new-end)))]))]))))
 
   ;;; Rebasing --------------------------------------------------------------
 

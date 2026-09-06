@@ -1365,7 +1365,10 @@
                            (format "~a edited ~s at ~a" actor (store:buffer-name id)
                                    (text:span-start (text:delta-span (list-ref event 4)))))]
                         [else
-                         (format "~a reset ~s" actor (store:buffer-name id))]))))))
+                         (format "~a reset ~s" actor (store:buffer-name id))])
+                      ;; Background app output remains on the audit record.
+                      ;; Echoing it would resize the very viewport it feeds.
+                      (not (and (pair? actor) (eq? (car actor) 'app))))))))
             events)
           ;; Reconcile each id once from current truth. Queued create/rename/
           ;; audience changes may already be superseded; hidden labels do not
@@ -1654,6 +1657,7 @@
                                     (cons 'cell (cons (car point) (render:column frame (car point) (cdr point))))
                                     (cons 'viewport (app-event-position)) (cons 'button (app-event-button))
                                     (list 'size (max 1 (window-size w)) (window-content-width w))
+                                    (cons 'color-scheme (host-color-scheme))
                                     (cons 'revision (buffer-store-rev b))
                                     (cons 'generation (and header (car header))))])
                    ;; Focus reports are notifications, not a request to stop

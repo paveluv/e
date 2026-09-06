@@ -56,7 +56,7 @@
      (define (fail! label)
        (for-each (lambda (line) (display (format "|~a|\n" line)))
                  (screen-lines))
-       (error 'interactive-test label))
+       (error 'interactive-test (format "~s" label)))
 
      (define (check label true?)
        (set! checks (+ checks 1))
@@ -222,7 +222,7 @@
      (wait-for! 'prompt-navigation-targets-focused-window
                 (lambda ()
                   (let ([readme (find-cell "README.md  L1")]
-                        [left (find-cell "<terminal>")])
+                        [left (find-cell "*terminal*")])
                     (and readme left
                          (= (car readme) (car left))
                          (> (cdr readme) (cdr left)))))
@@ -244,7 +244,7 @@
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back
                 (lambda () (and (not (find-cell "<completions>"))
-                                (find-cell "<terminal>")))
+                                (find-cell "*terminal*")))
                 5000)
      (send! "\x1b;x")
      (settle! 500)

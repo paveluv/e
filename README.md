@@ -21,7 +21,7 @@ Highlights:
   (evaluation results, stdout, and stderr are captured separately).
 - Besides normal editing buffers, there are app buffers. They update their
   presentation from internal structures and can optionally
-  interact with the user (`<log>`, `<git-log>`, `<buffers>`, `<terminal>`).
+  interact with the user (`<log>`, `<git-log>`, `<buffers>`, `*terminal*`).
 - Windows form a recursive tiling layout that is easy to reshape: split in
   either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
 - `C-c t` turns the current buffer into a PTY-backed terminal able to run

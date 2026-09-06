@@ -357,7 +357,7 @@
                (list (cadr message) (caddr message) (cadddr message) data)
                (list head:ui-actor id "PASTE"
                  `((paste . "paste me") (point 48 . 1) (cell 48 . 2) (viewport 3 . 2) (button . 0)
-                   (size 4 6) (revision . 0) (generation . ,(car (surface:snapshot id))))))
+                   (size 4 6) (color-scheme . #f) (revision . 0) (generation . ,(car (surface:snapshot id))))))
              (set-car! (cadr message) 'damaged)
              (check 'delivery-cannot-mutate-head-identity-or-context
                (list (car head:ui-actor) (actor:current) (app-event-buffer-position)) (list 'head identity #f))))
