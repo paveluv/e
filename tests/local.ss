@@ -91,7 +91,6 @@
      (check 'unchanged-view-keeps-revision (head:buffer-revision local) revision)
 
      (head:buffer-name-set! local "*renamed-local*")
-     (head:mirror-rename! local)
      (check 'local-rename (head:buffer-name local) "<renamed-local>")
      (head:buffer-marked-set! local #t)
      (head:before-frame!)

@@ -781,10 +781,7 @@
             (string-append (current-directory) "/")))))
 
   (define (set-buffer-name! b name)
-    (unless (and (head:buffer? b) (string? name) (> (string-length name) 0))
-      (error 'set-buffer-name! "expected a buffer and nonempty name" b name))
-    (head:buffer-name-set! b (head:unique-name name b))
-    (head:mirror-rename! b)
+    (head:buffer-name-set! b name)
     b)
 
   (define (file-buffer path)
@@ -795,14 +792,14 @@
                                                  path (kernel:condition-text ex))))
                          #f])
           (let* ([content (file:read path)]
-                 [b (head:new-buffer (head:unique-name (file:base-name path) #f))])
+                 [b (head:new-buffer (file:base-name path))])
             (head:store-reset! b (file:lines content)
               (list (cons 'trailing (file:ends-in-newline? content))
                     (cons 'file path) (cons 'base content) (cons 'stamp (file:stamp path))))
             (mode:assign! b)
             (log:add! 'visit-file! (cons "Loaded" path))
             b))
-        (let ([b (head:new-buffer (head:unique-name (file:base-name path) #f))])
+        (let ([b (head:new-buffer (file:base-name path))])
           (head:buffer-file-set! b path)
           (mode:assign! b)
           (log:add! 'visit-file! (cons "New file:" path))
@@ -874,9 +871,7 @@
                       (if adopted? '((read-only . #f) (disposable . #f)) '())
                       (if (head:buffer-store-id b) '()
                           (list (cons 'modified (not (string=? (buffer-text b) written)))))))))
-        (begin
-          (head:buffer-name-set! b (head:unique-name (file:base-name path) b))
-          (head:mirror-rename! b))
+        (head:buffer-name-set! b (file:base-name path))
         ;; re-detect the mode only when the name changed: a plain
         ;; re-save must not clobber a mode chosen by hand; adoption
         ;; also lifts read-only -- the buffer visits an ordinary

@@ -169,14 +169,19 @@
   (define (locked thunk)
     (with-mutex (store-lock (current-store)) (thunk)))
 
-  (define (transact! thunk)
+  (define (own-actor actor)
+    (unless (actor:identity? actor) (error 'store "expected actor (kind name ...)" actor))
+    (datum:copy actor))
+
+  (define (transact! actor thunk)
     ;; Mutation and its event enter the same critical section.  Only
     ;; after releasing it may this writer become the event drainer.
-    (call-with-values
-      (lambda () (locked thunk))
-      (lambda result
-        (kernel:drain-deliveries! (store-deliveries (current-store)))
-        (apply values result))))
+    (let ([actor (own-actor actor)])
+      (call-with-values
+        (lambda () (locked (lambda () (thunk actor))))
+        (lambda result
+          (kernel:drain-deliveries! (store-deliveries (current-store)))
+          (apply values result)))))
 
   (define (buffer-of who id)
     (or (hashtable-ref (store-buffers (current-store)) id #f)
@@ -184,23 +189,44 @@
 
   ;;; Lifecycle and reading --------------------------------------------------
 
+  (define (own-name name)
+    (unless (and (string? name) (> (string-length name) 0))
+      (error 'store "expected a nonempty buffer name" name))
+    (string-copy name))
+
+  (define (unique-name base self)
+    ;; Caller holds the store lock. Hidden buffers share this namespace;
+    ;; deletion releases a name and renaming does not compete with itself.
+    (let ([used (make-hashtable string-hash string=?)])
+      (vector-for-each
+        (lambda (id)
+          (unless (eqv? id self)
+            (hashtable-set! used (buffer-label (buffer-of 'unique-name id)) #t)))
+        (hashtable-keys (store-buffers (current-store))))
+      (let next ([name base] [suffix 2])
+        (if (hashtable-ref used name #f)
+            (next (format "~a<~a>" base suffix) (+ suffix 1))
+            name))))
+
   (define (create! actor buffer-name lines . facts)
     ;; -> the new buffer's id.  Empty lines mean one empty line.
     ;; Initial facts and content publish together, before the create event.
     ;; Private content is never briefly visible to every head.
     (unless (<= (length facts) 1) (error 'create! "expected one fact batch" facts))
-    (let ([text (text:normalize lines)]
+    (let ([name (own-name buffer-name)]
+          [text (text:normalize lines)]
           [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))])
-      (transact!
-        (lambda ()
+      (transact! actor
+        (lambda (actor)
           (let* ([s (current-store)]
+                 [name (unique-name name #f)]
                  [id (store-next-id s)])
             (store-next-id-set! s (+ id 1))
-            (let ([b (make-buffer buffer-name text 0 '() '() '() '() #f #f)])
+            (let ([b (make-buffer name text 0 '() '() '() '() #f #f)])
               (install-properties! b updates)
               (refresh-modified! b)
               (hashtable-set! (store-buffers s) id b))
-            (enqueue-event! `(create ,id ,buffer-name ,actor))
+            (enqueue-event! `(create ,id ,name ,actor))
             id)))))
 
   (define (reset! actor id lines . facts)
@@ -213,8 +239,8 @@
     (let* ([text (text:normalize lines)]
            [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))]
            [new-revision
-            (transact!
-              (lambda ()
+            (transact! actor
+              (lambda (actor)
                 (let ([b (buffer-of 'reset! id)]
                       [clamp (lambda (position)
                                (let* ([line (min (car position)
@@ -242,16 +268,19 @@
       new-revision))
 
   (define (rename! actor id new-name)
-    ;; subscribers hear (rename id new-name actor)
-    (transact!
-      (lambda ()
-        (buffer-label-set! (buffer-of 'rename! id) new-name)
-        (enqueue-event! `(rename ,id ,new-name ,actor))))
-    (void))
+    ;; -> the accepted name at this commit, before subscribers can rename
+    ;; again. The returned string and each notification own their data.
+    (let ([name (own-name new-name)])
+      (transact! actor
+        (lambda (actor)
+          (let* ([b (buffer-of 'rename! id)] [name (unique-name name id)])
+            (buffer-label-set! b name)
+            (enqueue-event! `(rename ,id ,name ,actor))
+            (string-copy name))))))
 
   (define (delete! actor id)
-    (transact!
-      (lambda ()
+    (transact! actor
+      (lambda (actor)
         (buffer-of 'delete! id)
         (hashtable-delete! (store-buffers (current-store)) id)
         (enqueue-event! `(delete ,id ,actor))))
@@ -276,22 +305,14 @@
           (and b (actor:in-audience? actor (property-value b 'audience 'all)))))))
 
   (define (buffer-name id)
-    (locked (lambda () (buffer-label (buffer-of 'buffer-name id)))))
+    (locked (lambda () (string-copy (buffer-label (buffer-of 'buffer-name id))))))
 
   (define (find-named wanted)
-    ;; the lowest-numbered buffer with this name, or #f
+    ;; The uniquely named buffer, or #f.
     (locked
       (lambda ()
-        (let ([ids (vector->list
-                     (hashtable-keys
-                       (store-buffers (current-store))))])
-          (let scan ([ids (list-sort < ids)])
-            (cond [(null? ids) #f]
-                  [(equal? (buffer-label
-                             (buffer-of 'find-named (car ids)))
-                           wanted)
-                   (car ids)]
-                  [else (scan (cdr ids))]))))))
+        (find (lambda (id) (equal? (buffer-label (buffer-of 'find-named id)) wanted))
+              (vector->list (hashtable-keys (store-buffers (current-store))))))))
 
   (define (snapshot id)
     ;; -> (values text revision): the text vector is immutable, so the
@@ -328,7 +349,7 @@
                        (map change-data entries)))))))
 
   (define (change-data entry)
-    (list (vector-ref entry 0) (vector-ref entry 1) (vector-ref entry 2)))
+    (list (vector-ref entry 0) (datum:copy (vector-ref entry 1)) (vector-ref entry 2)))
 
   (define (revision id)
     (locked (lambda () (buffer-revision (buffer-of 'revision id)))))
@@ -476,13 +497,14 @@
     (let ([context (and (pair? options) (car options))])
       (unless (<= (length options) 1) (error 'edit! "expected one context" options))
       (validate-edit-context context)
-      (let* ([properties (if (and context (>= (length context) 3))
+      (let* ([group-context (and context (datum:copy (list (car context) (cadr context)) values))]
+             [properties (if (and context (>= (length context) 3))
                            (datum:copy (caddr context)) '())]
              [commit-facts (if (and context (= (length context) 4))
                              (datum:copy (cadddr context)) '())]
              [outcome
-              (transact!
-                (lambda ()
+              (transact! actor
+                (lambda (actor)
                   (let* ([b (buffer-of 'edit! id)]
                          [since (entries-since b basis)]
                          [rebased (and since
@@ -497,10 +519,10 @@
                                      (apply-locked! b id actor rebased
                                                     replacement #f
                                                     properties commit-facts)])
-                         (remember-edit! b actor context)
+                         (remember-edit! b actor group-context)
                          (list 'applied new-revision (buffer-text b)
                                (append (map change-data since)
-                                       (list (list new-revision actor delta)))))]))))])
+                                       (list (change-data (car (buffer-deltas b)))))))]))))])
         (case (car outcome)
           [(applied)
            (values 'applied (cdr outcome))]
@@ -616,8 +638,8 @@
     (unless (and (memq direction '(undo redo)) (undo-scope? scope)
                  (or (eq? direction 'undo) (eq? scope 'mine)))
       (error 'history-step! "invalid history direction or scope" direction scope))
-    (transact!
-      (lambda ()
+    (transact! actor
+      (lambda (actor)
         (let* ([b (buffer-of 'history-step! id)]
                [group
                 (find (lambda (group)
@@ -643,9 +665,10 @@
                       (undo-group-redo-actor-set! group (and (eq? direction 'undo) (list actor)))
                       (buffer-undo-set! b (cons group (remq group (buffer-undo b))))
                       (values 'applied
-                              (list (buffer-revision b) (undo-group-id group)
-                                    (undo-group-actor group) (undo-group-key group)
-                                    (undo-group-label group)))))))))))
+                              (datum:copy
+                                (list (buffer-revision b) (undo-group-id group)
+                                      (undo-group-actor group) (undo-group-key group)
+                                      (undo-group-label group)) values))))))))))
 
   (define (undo! actor id . scope)
     ;; Compatibility result: the new revision, or a refusal reason.
@@ -666,7 +689,7 @@
       (lambda ()
         (let loop ([groups (buffer-undo (buffer-of 'undo-authors id))] [authors '()])
           (cond
-            [(null? groups) (reverse authors)]
+            [(null? groups) (datum:copy (reverse authors))]
             [(and (undo-group-live? (car groups))
                   (not (member (undo-group-actor (car groups)) authors)))
              (loop (cdr groups) (cons (undo-group-actor (car groups)) authors))]
@@ -688,12 +711,12 @@
                 (let* ([entry (car entries)]
                        [d (vector-ref entry 2)]
                        [s (text:delta-span d)])
-                  (cons (append (list (vector-ref entry 0)
-                                      (vector-ref entry 1)
-                                      (text:span-start s)
-                                      (text:span-end s)
-                                      (text:delta-new-end d))
-                                (if (vector-ref entry 3) (list (vector-ref entry 3)) '()))
+                  (cons (datum:copy (append (list (vector-ref entry 0)
+                                              (vector-ref entry 1)
+                                              (text:span-start s)
+                                              (text:span-end s)
+                                              (text:delta-new-end d))
+                                      (if (vector-ref entry 3) (list (vector-ref entry 3)) '())))
                         (take (cdr entries) (- n 1))))))))))
 
   (define (blame id . count)
@@ -725,8 +748,8 @@
                   (walk (cdr entries)
                         (cons d later)
                         (- n 1)
-                        (cons (list current
-                                    (vector-ref entry 1)
+                        (cons (list (copy-mark-value current)
+                                    (datum:copy (vector-ref entry 1))
                                     (vector-ref entry 0))
                               acc)))))))))
 
@@ -791,7 +814,9 @@
                        (and (not (member (car names) seen))
                             (unique (cdr names) (cons (car names) seen))))))
       (error 'set-marks! "expected disjoint updates and removals with unique names" updates drops))
-    (let ([updates (map (lambda (entry) (cons (car entry) (copy-mark-value (cdr entry)))) updates)])
+    (let ([actor (own-actor actor)]
+          [updates (map (lambda (entry) (cons (datum:copy (car entry)) (copy-mark-value (cdr entry)))) updates)]
+          [drops (datum:copy drops)])
       (locked
         (lambda ()
           (let ([b (buffer-of 'set-marks! id)])
@@ -832,7 +857,7 @@
       (lambda ()
         (fold-right (lambda (entry acc)
                       (if (equal? (caar entry) actor)
-                          (cons (cons (cdar entry) (copy-mark-value (cdr entry))) acc)
+                          (cons (cons (datum:copy (cdar entry)) (copy-mark-value (cdr entry))) acc)
                           acc))
                     '()
                     (buffer-marks (buffer-of 'marks id))))))
@@ -857,8 +882,8 @@
 
   (define (set-properties! actor id updates)
     (let ([updates (datum:copy (writable-properties updates))])
-      (transact!
-        (lambda ()
+      (transact! actor
+        (lambda (actor)
           (let ([b (buffer-of 'set-properties! id)])
             (install-properties! b updates)
             (refresh-modified! b)
@@ -869,8 +894,8 @@
     (unless (symbol? key)
       (error 'drop-property! "expected a symbol key" key))
     (when (eq? key 'modified) (error 'drop-property! "modified is derived"))
-    (transact!
-      (lambda ()
+    (transact! actor
+      (lambda (actor)
         (let ([b (buffer-of 'drop-property! id)])
           (buffer-properties-set!
             b (replace-property-cell (buffer-properties b) (cons key missing-property)))
@@ -958,5 +983,7 @@
             (lambda ()
               (let ([subscriber (kernel:registry-find subscriptions
                                   (lambda (entry) (= (car entry) token)))])
-                (when subscriber ((caddr subscriber) event))))))
+                ;; Each recipient owns the envelope and metadata. The only
+                ;; opaque leaf is the immutable text delta, shared as before.
+                (when subscriber ((caddr subscriber) (datum:copy event values)))))))
         tokens))))

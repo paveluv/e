@@ -74,8 +74,8 @@
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
           adopt-store!
-          edit-basis snapshot-since store-reset! store-edit! store-history! mirror-rename! new-buffer new-local-buffer
-          unique-name add-buffer! tool-buffer find-tool-buffer
+          edit-basis snapshot-since store-reset! store-edit! store-history! new-buffer new-local-buffer
+          add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
           sync-foreign-edits! flush-ui-audit!
@@ -746,32 +746,35 @@
         [else (string-append "<" name ">")])))
 
   (define (buffer-name-set! b name)
-    (buffer-name-raw-set! b
-      (if (buffer-store-id b) name (local-name name))))
+    (unless (and (buffer? b) (string? name) (> (string-length name) 0))
+      (error 'buffer-name-set! "expected a buffer and nonempty name" b name))
+    (if (buffer-store-id b)
+        (begin
+          (ensure-buffer-visible! b)
+          (store:rename! ui-actor (buffer-store-id b) name)
+          ;; A subscriber can rename, hide, delete, or readmit this id before
+          ;; rename! returns. Reconcile current truth, even if delivery is
+          ;; still queued behind another callback; never install a stale ack.
+          (sync-foreign-edits! (buffer-store-id b)))
+        (buffer-name-raw-set! b (unique-local-name (string-copy name) b))))
 
-  (define (unique-name base self)
-    ;; Shared labels reserve the store namespace; local labels only
-    ;; compete with content visible to this head, including pending adoption.
+  (define (unique-local-name base self)
+    ;; Local labels only compete with content visible to this head,
+    ;; including pending adoption. The store allocates all shared names.
     (let* ([used (make-hashtable string-hash string=?)]
-           [local? (and self (not (buffer-store-id self)))]
-           [base (if local? (local-name base) base)]
-           [self-id (and self (buffer-store-id self))])
+           [base (local-name base)])
       (for-each (lambda (b)
-                  (when (and (not (eq? b self)) (or (not local?) (buffer-visible? b)))
+                  (when (and (not (eq? b self)) (buffer-visible? b))
                     (hashtable-set! used (buffer-name b) #t)))
                 the-buffers)
       (guard (ex [else (void)])
         (for-each (lambda (id)
-                    (when (and (not (eqv? id self-id))
-                               (or (not local?) (store:visible? ui-actor id)))
+                    (when (store:visible? ui-actor id)
                       (hashtable-set! used (store:buffer-name id) #t)))
                   (store:buffer-list)))
       (let loop ([k 1])
-        (let ([name (cond
-                      [(= k 1) base]
-                      [local? (format "<~a ~a>"
-                                      (substring base 1 (- (string-length base) 1)) k)]
-                      [else (format "~a<~a>" base k)])])
+        (let ([name (if (= k 1) base
+                      (format "<~a ~a>" (substring base 1 (- (string-length base) 1)) k))])
           (if (hashtable-ref used name #f)
               (loop (+ k 1))
               name)))))
@@ -783,7 +786,7 @@
       (lambda (b)
         (when (and (not (buffer-store-id b))
                    (string=? (buffer-name b) name))
-          (buffer-name-set! b (unique-name name b))))
+          (buffer-name-set! b name)))
       the-buffers))
 
   (define initial-buffer-facts '((trailing . #t) (mode-auto . #t) (wrap . default)))
@@ -1004,12 +1007,6 @@
             requester (if (eq? direction 'undo) "undid" "redid")
             action author name revision))
 
-  (define (mirror-rename! b)
-    (when (buffer-store-id b)
-      (guard (ex [else (void)])
-        (store:rename! ui-actor (buffer-store-id b) (buffer-name b))
-        (reserve-store-name! (buffer-name b)))))
-
   (define (new-buffer name)
     ;; Shared creation and notification adoption have one canonical record.
     ;; A subscriber may reenter a frame before create! returns its id.
@@ -1023,7 +1020,7 @@
     (let ([b (make-buffer (local-name name) (vector "") 0 (vector '() '())
                           0 0 #f 0 0 0 'default #f 0)])
       (buffer-facts-set! b initial-buffer-facts)
-      (buffer-name-set! b (unique-name (buffer-name b) b))
+      (buffer-name-set! b (buffer-name b))
       b))
 
   (define (buffer-visible? b)
@@ -1045,7 +1042,7 @@
     (unless (memq b the-buffers)
       (if (buffer-store-id b)
           (reserve-store-name! (buffer-name b))
-          (buffer-name-set! b (unique-name (buffer-name b) b)))
+          (buffer-name-set! b (buffer-name b)))
       (set! the-buffers (append the-buffers (list b))))
     b)
 
@@ -1254,12 +1251,12 @@
       (let-values ([(text revision changes) (store:snapshot-since (buffer-store-id b) basis)])
         (adopt-snapshot! b basis text revision changes '()))))
 
-  (define (sync-foreign-edits!)
+  (define (sync-foreign-edits! . changed-ids)
     (let* ([events (with-mutex foreign-lock
                      (let ([pending foreign-pending])
                        (set! foreign-pending '())
                        (reverse pending)))]
-           [ids (append initial-store-ids (map cadr events))])
+           [ids (append initial-store-ids (map cadr events) changed-ids)])
       ;; Consume the initial inventory before callbacks, just like events.
       ;; Subsequent frames only visit buffers whose store state changed.
       (set! initial-store-ids '())
@@ -1317,13 +1314,14 @@
                       (when b
                         (let ([name (store:buffer-name id)])
                           (unless (string=? name (buffer-name b))
-                            (buffer-name-set! b name)
+                            (buffer-name-raw-set! b name)
                             (reserve-store-name! name)))
                         (sync-store-buffer! b)
-                        (when (exists (lambda (event)
-                                        (and (eqv? (cadr event) id)
-                                          (memq (car event) '(create rename property))))
-                                      events)
+                        (when (or (memv id changed-ids)
+                                  (exists (lambda (event)
+                                            (and (eqv? (cadr event) id)
+                                              (memq (car event) '(create rename property))))
+                                    events))
                           (bump-buffer-revision! b)
                           (request-repaint!))))
                     (when b (forget-buffer! b))))))
@@ -1815,7 +1813,7 @@
           (set! the-buffers (remq b the-buffers))
           (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
           (let ([fallback (or (find buffer-visible? the-buffers)
-                            (new-buffer (unique-name "*scratch*" #f)))])
+                            (new-buffer "*scratch*"))])
             (for-each (lambda (w)
                         (when (eq? (window-buffer w) b)
                           (set-window-buffer! w fallback)))

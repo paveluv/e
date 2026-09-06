@@ -12,7 +12,9 @@ it in their tab or window title.
 The initial `*scratch*` buffer is an ordinary shared, unvisited buffer.
 Local buffers belong to this head and have names in angle brackets:
 `<buffers>`, `<log>`, `<describe>`, `<completions>`, and merge reports.
-Shared buffers retain file names or names such as `*scratch*`. Local names
+Shared buffers retain file names or names such as `*scratch*`. Shared names
+are unique across the store, including buffers hidden from this head;
+collisions receive `<2>`, `<3>`, and so on, as in `notes<2>`. Local names
 keep their brackets when renamed; duplicate labels become `<name 2>`,
 `<name 3>`, and so on. Names do not determine behavior: registration makes
 a buffer an app or view, and its owner may make it read-only.
@@ -360,6 +362,18 @@ For example, an agent can create content for the requesting head with:
   (list (cons 'audience (list head:ui-actor))))
 ```
 
+Shared names must be nonempty strings. Creation and
+`(store:rename! actor id name)` claim the first free name atomically,
+including under concurrent calls. Renaming excludes the buffer's own name;
+deletion releases it. `store:buffer-name` returns the current name and
+`store:find-named` returns its id or `#f`. Returned strings are copies.
+`rename!` returns the name accepted at that commit; a subscriber can rename
+or delete the buffer before the call returns. For a head record, use
+`(set-buffer-name! b name)` or `(head:buffer-name-set! b name)` to commit and
+adopt its current name. A failed rename preserves the cached label and
+reports the error. The old `head:unique-name` and `head:mirror-rename!`
+entrypoints are removed.
+
 An audience change takes effect before the head's next frame, including
 changes made by that head. Hiding moves its windows to visible buffers,
 closes dependent local views, and withdraws its managed marks; shared text,
@@ -449,7 +463,9 @@ positions or text spans; drops is a list of names. A numeric basis must be
 the current text revision. The result is `(values 'applied revision)` or
 `(values 'stale current-revision)`; staleness changes no marks. Invalid shapes,
 out-of-bounds coordinates, or repeated names are errors before mutation.
-Position and span values returned by `store:mark`/`store:marks` are copies.
+Actors, mark names, and position/span values are copied on admission;
+`store:mark`/`store:marks` return owned names and coordinates. Names are
+finite plain data, commonly symbols or lists identifying windows.
 `store:set-mark!` and `store:drop-mark!` keep their immediate current-text
 behavior through the same validated boundary. Use the batch with a captured
 basis when publishing positions computed from a snapshot. Heads already do
@@ -467,6 +483,10 @@ on undo and redo, so a later write blocks restoration even if it returns
 to the same value.  Public property queries omit deleted properties.
 Optional commit facts are installed in the same transaction but survive
 undo, as a merge's disk baseline should. A key cannot appear in both lists.
+Labels and plain key structure are copied at admission and readback.
+Grouping retains `equal?` matching. Opaque runtime leaves in an in-process
+key retain their original identity; keep their equality stable while the
+action is retained. Use plain keys for transportable work.
 
 `store:edit-with-snapshot!` takes the same arguments but returns
 `(values 'applied (revision text changes))`. This acknowledgement describes
@@ -514,8 +534,20 @@ Their edit events likewise append this origin to the ordinary
 author from the requester of the inverse.  `snapshot-since` continues to
 return three-field change entries.
 
+Store operations validate and copy `(kind name ...)` actor identities
+before mutation. The kind is a symbol; the name is a nonempty string or a
+symbol, and any additional metadata is finite plain data. Registration is
+independent of attribution. History, blame, incremental changes, author
+lists, and receipts own their returned actors and metadata; history/blame
+coordinates are copies too. Text vectors, line strings, and delta records
+retain the text algebra's immutable sharing contract: do not mutate them
+or the coordinates and replacement lists reachable through a delta.
+
 `(store:subscribe! id callback)` observes one shared buffer; use `#f` for
 all buffers and `(store:unsubscribe! token)` to revoke its returned token.
+Each callback owns its event envelope and metadata; changing those cannot
+affect the store or another subscriber. Edit deltas remain immutable shared
+values.
 Callbacks receive events in commit order outside the store lock, and can
 read or edit the store.  A write normally drains notifications before
 returning, but a concurrent or nested write returns after committing

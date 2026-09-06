@@ -17,8 +17,7 @@
              (prefix (kernel) kernel:)
              (prefix (test) test:)
              (only (chezscheme)
-                   box unbox set-box! parameterize fork-thread
-                   make-time sleep make-mutex with-mutex))
+                   box unbox set-box! parameterize))
 
      (define check test:check)
 
@@ -43,6 +42,44 @@
      (check 'content (map (lambda (n) (store:line b n)) '(0 1 2))
             '("alpha" "bravo" "charlie"))
      (check 'fresh-revision (store:revision b) 0)
+
+     ;; Creation and rename arbitrate the same namespace under contention,
+     ;; including hidden names, existing suffixes, self-renames and reuse.
+     (for-each
+       (lambda (kind)
+         (let* ([base (format "claim-~a" kind)]
+                [hidden (store:create! alice base '("") '((audience))) ]
+                [reserved (store:create! alice (string-append base "<2>") '(""))]
+                [events (test:recorder)]
+                [token (store:subscribe! #f (lambda (event) (when (eq? (car event) kind) (events event))))]
+                [ids
+                 (test:parallel 4
+                   (lambda (index)
+                     (let* ([name (string-copy base)]
+                            [id (store:create! bot (if (eq? kind 'create) name "rename-seed") '(""))]
+                            [accepted (if (eq? kind 'rename) (store:rename! bot id name) (store:buffer-name id))])
+                       (string-set! name 0 #\X)
+                       (string-set! accepted 0 #\Y)
+                       id)))]
+                [name (store:buffer-name (car ids))])
+           (check (list kind 'claims-own-names-and-events)
+                  (list (list-sort string<? (map store:buffer-name ids))
+                        (length (events))
+                        (for-all (lambda (event) (eqv? (cadr event) (store:find-named (caddr event)))) (events))
+                        (store:find-named base))
+                  (list (map (lambda (n) (format "~a<~a>" base n)) '(3 4 5 6)) 4 #t hidden))
+           (check 'self-rename-keeps-its-claim (store:rename! bot (car ids) name) name)
+           (check 'invalid-names-refuse-before-mutation
+                  (for-all (lambda (bad)
+                             (and (test:raises? (lambda () (store:create! bot bad '(""))))
+                                  (test:raises? (lambda () (store:rename! bot (car ids) bad)))))
+                           '("" #f 42)) #t)
+           (check 'failed-rename-keeps-label (store:buffer-name (car ids)) name)
+           (store:delete! alice (car ids))
+           (check 'deletion-releases-the-first-free-name
+                  (store:buffer-name (store:create! bot base '(""))) name)
+           (store:unsubscribe! token)))
+       '(create rename))
 
      ;; -- transactions -----------------------------------------------------
 
@@ -455,6 +492,63 @@
      (store:reset! alice h '("fresh"))
      (check 'reset-clears-history (store:history h) '())
 
+     ;; Metadata is owned at admission and at every history read. Keys copy
+     ;; plain structure but retain opaque in-process leaves by identity.
+     (define (fresh-author) (list 'agent (string-copy "writer")))
+     (define (damage-author! actor) (string-set! (cadr actor) 0 #\X))
+     (define metadata (store:create! alice "metadata" '("seed")))
+     (define author (fresh-author))
+     (define opaque-key (box 'token))
+     (define key (vector (string-copy "group") opaque-key))
+     (define label (string-copy "two insertions"))
+     (let-values ([(status receipt)
+                   (store:edit-with-snapshot! author metadata 0 (span 0 0 0 0) '("A") (list key label))])
+       (damage-author! author)
+       (string-set! (vector-ref key 0) 0 #\X)
+       (string-set! label 0 #\X)
+       (damage-author! (cadar (caddr receipt))))
+     (let-values ([(text revision changes) (store:snapshot-since metadata 0)])
+       (damage-author! (cadar changes)))
+     (let ([row (car (store:history metadata))])
+       (damage-author! (cadr row))
+       (for-each (lambda (p) (set-cdr! p 99)) (cddr row)))
+     (damage-author! (cadar (store:blame metadata)))
+     (damage-author! (car (store:undo-authors metadata)))
+     (check 'history-owns-attribution-and-geometry
+            (store:history metadata) '((1 (agent "writer") (0 . 0) (0 . 0) (0 . 1))))
+     (store:edit! (fresh-author) metadata 1 (span 0 0 0 0) '("B")
+                  (list (vector "group" opaque-key) #f))
+     (define before-blame (store:history metadata))
+     (for-each
+       (lambda (row)
+         (set-cdr! (text:span-start (car row)) 99)
+         (set-cdr! (text:span-end (car row)) 99))
+       (store:blame metadata))
+     (check 'rebased-blame-does-not-expose-stored-delta-endpoints
+            (store:history metadata) before-blame)
+     (define requester (list 'head (string-copy "reviewer")))
+     (let-values ([(status detail) (store:history-step! requester metadata 'undo 'all)])
+       (check 'owned-group-key-still-combines-the-action
+              (list status (store:line metadata 0) (caddr detail) (list-ref detail 4)
+                    (eq? (vector-ref (list-ref detail 3) 1) opaque-key))
+              '(applied "seed" (agent "writer") "two insertions" #t))
+       (damage-author! requester)
+       (damage-author! (caddr detail))
+       (string-set! (vector-ref (list-ref detail 3) 0) 0 #\Y)
+       (string-set! (list-ref detail 4) 0 #\Y))
+     (let ([origin (list-ref (car (store:history metadata)) 5)])
+       (damage-author! (cadr origin))
+       (set-car! origin 'changed))
+     (let-values ([(status detail) (store:history-step! '(head "reviewer") metadata 'redo 'mine)])
+       (check 'redo-owns-requester-origin-and-receipt
+              (list status (store:line metadata 0) (caddr detail)
+                    (vector-ref (list-ref detail 3) 0) (list-ref detail 4)
+                    (list-ref (car (store:history metadata)) 5))
+              '(applied "BAseed" (agent "writer") "group" "two insertions"
+                        (redo (agent "writer") 1 3))))
+     (check 'default-undo-still-belongs-to-original-author
+            (call-with-values (lambda () (store:undo! '(agent "writer") metadata)) list) '(applied 8))
+
      ;; -- subscriptions ------------------------------------------------------
 
      (define events (box '()))
@@ -480,51 +574,33 @@
      ;; Hold the first event before another subscriber sees it.  A
      ;; second writer must commit without entering callbacks in parallel
      ;; or overtaking that event.  Gates control ordering, not sleeps.
-     (define gate-lock (make-mutex))
-     (define (gate-set! gate value)
-       (with-mutex gate-lock (set-box! gate value)))
-     (define (gate-read gate)
-       (with-mutex gate-lock (unbox gate)))
-     (define (await-gate gate)
-       (let wait ([tries 400])
-         (or (gate-read gate)
-             (begin
-               (when (zero? tries)
-                 (error 'store-test "notification gate timed out"))
-               (sleep (make-time 'time-duration 10000000 0))
-               (wait (- tries 1))))))
-
      (define ordered (store:create! alice "ordered" '("abcdef")))
-     (define delivered (box '()))
-     (define entered (box #f))
-     (define release (box #f))
-     (define completed (box #f))
+     (define delivered (test:recorder))
+     (define entered (test:gate))
+     (define release (test:gate))
      (define observer
        (store:subscribe! ordered
          (lambda (event)
-           (gate-set! delivered
-                      (cons (caddr event) (gate-read delivered))))))
+           (delivered (list (caddr event) (cadddr event))))))
      ;; Registrations run newest first: the blocker precedes observer.
      (define blocker
        (store:subscribe! ordered
          (lambda (event)
            (when (= (caddr event) 1)
-             (gate-set! entered #t)
-             (await-gate release)))))
-     (fork-thread
-       (lambda ()
-         (gate-set! completed
-           (guard (ex [else 'failed])
-             (edit! alice ordered 0 0 0 0 2 '("x"))))))
-     (await-gate entered)
-     (define second-result (edit! bot ordered 1 0 0 0 2 '("y")))
-     (define while-blocked (gate-read delivered))
-     (gate-set! release #t)
-     (await-gate completed)
+             (entered #t)
+             (test:await 'delivery-release release)))))
+     (define completed (test:worker (lambda () (edit! alice ordered 0 0 0 0 2 '("x")))))
+     (test:await 'delivery-entered entered)
+     (define queued-author (fresh-author))
+     (define second-result (edit! queued-author ordered 1 0 0 0 2 '("y")))
+     (damage-author! queued-author)
+     (define while-blocked (delivered))
+     (release #t)
      (check 'concurrent-writer-commits second-result '(applied 2))
-     (check 'blocked-writer-finishes (gate-read completed) '(applied 1))
+     (check 'blocked-writer-finishes (completed) '(applied 1))
      (check 'callbacks-do-not-race while-blocked '())
-     (check 'events-follow-commit-order (reverse (gate-read delivered)) '(1 2))
+     (check 'events-follow-commit-order-with-owned-actors
+            (delivered) (list (list 1 alice) '(2 (agent "writer"))))
      (store:unsubscribe! blocker)
      (store:unsubscribe! observer)
 
@@ -547,6 +623,15 @@
      (check 'reentrant-write-landed (store:line nested 0) "yxabc")
      (store:unsubscribe! nested-writer)
      (store:unsubscribe! nested-observer)
+     (define rename-writer
+       (store:subscribe! nested
+         (lambda (event)
+           (when (and (eq? (car event) 'rename) (string=? (caddr event) "rename-once"))
+             (store:rename! bot nested "rename-twice")))))
+     (check 'rename-receipt-describes-its-commit-before-reentrant-changes
+            (let ([accepted (store:rename! alice nested "rename-once")])
+              (list accepted (store:buffer-name nested))) '("rename-once" "rename-twice"))
+     (store:unsubscribe! rename-writer)
 
      ;; A coherent snapshot includes every retained intervening delta,
      ;; even before a writer's notifications have finished delivery.
@@ -666,20 +751,11 @@
                            (store:edit! actor race basis s
                                         (list "" tag))])
                (unless (eq? status 'applied) (retry)))))))
-     (define finished (list (box #f) (box #f)))
-     (for-each
-       (lambda (actor flag)
-         (fork-thread
-           (lambda ()
-             (do ([i 0 (+ i 1)]) ((= i 25))
-               (append-line! actor (format "~a-~a" (cadr actor) i)))
-             (set-box! flag #t))))
-       (list alice bot) finished)
-     (let wait ([tries 400])
-       (unless (for-all unbox finished)
-         (when (zero? tries) (error 'store-test "race did not finish"))
-         (sleep (make-time 'time-duration 25000000 0))
-         (wait (- tries 1))))
+     (test:parallel 2
+       (lambda (index)
+         (let ([actor (list-ref (list alice bot) index)])
+           (do ([i 0 (+ i 1)]) ((= i 25))
+             (append-line! actor (format "~a-~a" (cadr actor) i))))))
      (check 'all-racing-appends-landed (store:line-count race) 51)
 
      ;; -- persistence across reload -------------------------------------------
@@ -827,23 +903,75 @@
      (store:unsubscribe! prop-token)
      (store:delete! alice pb)
 
-     ;; -- the buffer lifecycle is an event stream too ------------------------
-
-     (define life-events (box '()))
-     (define life-token
-       (store:subscribe!
-         #f (lambda (event)
-              (when (memq (car event) '(create rename delete))
-                (set-box! life-events
-                          (cons event (unbox life-events)))))))
-     (define lb (store:create! bot "agent-notes" '("n")))
-     (store:rename! bot lb "agent-log")
-     (store:delete! bot lb)
-     (check 'lifecycle-events
-            (reverse (unbox life-events))
-            (list (list 'create lb "agent-notes" bot)
-                  (list 'rename lb "agent-log" bot)
-                  (list 'delete lb bot)))
+     ;; Every event recipient owns its metadata. A preceding subscriber
+     ;; mutates each envelope, actor, name and undo origin it receives.
+     (define life-events (test:recorder))
+     (define life-token (store:subscribe! #f life-events))
+     (define damaging-token
+       (store:subscribe! #f
+         (lambda (event)
+           (damage-author! (if (eq? (car event) 'delete) (caddr event) (cadddr event)))
+           (case (car event)
+             [(create rename) (string-set! (caddr event) 0 #\X)]
+             [(edit)
+              (when (pair? (list-tail event 5))
+                (damage-author! (cadr (list-ref event 5)))
+                (set-car! (list-ref event 5) 'changed))])
+           (set-car! event 'changed))))
+     (define life-name (string-copy "agent-notes"))
+     (define lb (store:create! (fresh-author) life-name '("n")))
+     (string-set! life-name 0 #\X)
+     (check 'create-event-and-input-do-not-own-the-name (store:buffer-name lb) "agent-notes")
+     (string-set! (store:rename! (fresh-author) lb "agent-log") 0 #\X)
+     (check 'rename-event-and-receipt-do-not-own-the-name (store:buffer-name lb) "agent-log")
+     (define before-metadata (call-with-values (lambda () (store:snapshot-state lb)) list))
+     (define before-ids (store:buffer-list))
+     (define cycle (list 'agent "writer"))
+     (set-cdr! (cdr cycle) cycle)
+     (define admissions
+       (list (lambda (a) (store:create! a "invalid-actor" '("")))
+             (lambda (a) (store:rename! a lb "invalid-actor"))
+             (lambda (a) (store:reset! a lb '("bad")))
+             (lambda (a) (store:delete! a lb))
+             (lambda (a) (store:edit! a lb 0 (span 0 0 0 1) '("bad")))
+             (lambda (a) (store:history-step! a lb 'undo 'all))
+             (lambda (a) (store:set-mark! a lb 'point '(0 . 0)))
+             (lambda (a) (store:set-property! a lb 'mode "bad"))
+             (lambda (a) (store:drop-property! a lb 'mode))))
+     (check 'every-operation-rejects-malformed-or-nondata-actors
+            (for-all (lambda (bad)
+                       (for-all (lambda (admit!) (test:raises? (lambda () (admit! bad)))) admissions))
+                     (list #f '(agent "") cycle (list 'agent "writer" void))) #t)
+     (check 'invalid-context-metadata-refuses-before-an-edit
+            (for-all (lambda (context)
+                       (test:raises?
+                         (lambda () (store:edit! (fresh-author) lb 0 (span 0 0 0 1) '("bad") context))))
+                     (list '(key 42) (list cycle "cyclic key"))) #t)
+     (check 'metadata-refusals-preserve-store-state-and-events
+            (list (store:buffer-list) (call-with-values (lambda () (store:snapshot-state lb)) list)
+                  (store:buffer-name lb) (store:history lb) (store:marks (fresh-author) lb)
+                  (length (life-events)))
+            (list before-ids before-metadata "agent-log" '() '() 2))
+     (store:edit! (fresh-author) lb 0 (span 0 0 0 1) '("N"))
+     (store:undo! (fresh-author) lb)
+     (store:reset! (fresh-author) lb '("reset"))
+     (store:set-property! (fresh-author) lb 'mode "scheme")
+     (store:drop-property! (fresh-author) lb 'mode)
+     (store:delete! (fresh-author) lb)
+     (check 'every-notification-keeps-its-own-metadata
+            (map (lambda (event)
+                   (if (eq? (car event) 'edit)
+                       (append (list-head event 4) (list-tail event 5)) event))
+                 (life-events))
+            (list (list 'create lb "agent-notes" '(agent "writer"))
+                  (list 'rename lb "agent-log" '(agent "writer"))
+                  (list 'edit lb 1 '(agent "writer"))
+                  (list 'edit lb 2 '(agent "writer") '(undo (agent "writer") 1 1))
+                  (list 'reset lb 3 '(agent "writer"))
+                  (list 'property lb 'mode '(agent "writer"))
+                  (list 'property lb 'mode '(agent "writer"))
+                  (list 'delete lb '(agent "writer"))))
+     (store:unsubscribe! damaging-token)
      (store:unsubscribe! life-token)
 
      ;; -- subscriptions are registry-owned ------------------------------------

@@ -14,6 +14,7 @@
      (import (prefix (head) head:)
              (prefix (store) store:)
              (prefix (text) text:)
+             (prefix (kernel) kernel:)
              (prefix (test) test:))
 
      (define check test:check)
@@ -165,6 +166,70 @@
                (check 'retained-source-suffix-still-complete
                       (length (caddr (since source (+ basis 1)))) 256)))))
        '(#f #t))
+
+     ;; Shared names come from the store, including hidden reservations.
+     ;; Rename commits before changing the head; local tools yield to the
+     ;; accepted shared label, and failures leave the cached name intact.
+     (define hidden-name (store:create! bot "claimed" '("") '((audience))))
+     (define named (head:new-buffer "claimed"))
+     (define rival (head:new-buffer "claimed"))
+     (head:buffer-name-set! rival "claimed")
+     (check 'shared-construction-and-rename-adopt-store-claims
+            (list (head:buffer-name named) (head:buffer-name rival)) '("claimed<2>" "claimed<3>"))
+     (define rename-tool (head:tool-buffer "shared-rename"))
+     (head:buffer-name-set! named "<shared-rename>")
+     (check 'accepted-shared-name-displaces-local-label
+            (list (head:buffer-name named) (head:buffer-name rename-tool)
+                  (eq? (head:find-tool-buffer "shared-rename") rename-tool))
+            '("<shared-rename>" "<shared-rename 2>" #t))
+     (define store-cell (kernel:persistent-cell 'store (lambda () (error 'head-sync "missing store"))))
+     (define saved-store (unbox store-cell))
+     (dynamic-wind
+       (lambda () (set-box! store-cell #f))
+       (lambda ()
+         (check 'rename-failure-is-reported
+                (test:raises? (lambda () (head:buffer-name-set! named "uncommitted"))) #t))
+       (lambda () (set-box! store-cell saved-store)))
+     (check 'failed-rename-does-not-change-presentation
+            (head:buffer-name named) "<shared-rename>")
+
+     ;; A rename subscriber can advance lifecycle and reenter a frame before
+     ;; the call returns. Reconcile the canonical current record, even when
+     ;; hiding and readmitting has retired the record passed to the setter.
+     (for-each
+       (lambda (kind)
+         (let* ([source (head:new-buffer (format "rename-~a" kind))]
+                [id (head:buffer-store-id source)]
+                [pending (format "pending-~a" kind)]
+                [final (format "final-~a" kind)]
+                [token
+                 (store:subscribe! id
+                   (lambda (event)
+                     (when (and (eq? (car event) 'rename) (string=? (caddr event) pending))
+                       (case kind
+                         [(rename) (store:rename! bot id final)]
+                         [(hide readmit) (store:set-property! bot id 'audience '())]
+                         [(delete) (store:delete! bot id)])
+                       (head:before-frame!)
+                       (when (eq? kind 'readmit)
+                         (store:drop-property! bot id 'audience)
+                         (head:adopt-store-buffer! id)
+                         (store:rename! bot id final)))))]
+                [visible? (and (memq kind '(rename readmit)) #t)])
+           (head:set-window-buffer! w source)
+           (head:buffer-name-set! source pending)
+           (store:unsubscribe! token)
+           (let ([current (head:buffer-of-store-id id)])
+             (check (list kind 'rename-adopts-current-lifecycle)
+                    (list (and current (head:buffer-name current))
+                          (eq? current source) (store:exists? id)
+                          (eq? (head:window-buffer w) source))
+                    (list (and visible? final) (eq? kind 'rename)
+                          (not (eq? kind 'delete)) (eq? kind 'rename)))
+             (head:before-frame!)
+             (check 'queued-rename-cannot-resurrect-retired-records
+                    (eq? (head:buffer-of-store-id id) current) #t))))
+       '(rename hide delete readmit))
 
      ;; Audience is a head lifecycle fact. Initial/private content never
      ;; gets a record or displaces a local label; later transitions adopt

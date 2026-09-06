@@ -4,7 +4,7 @@
 ;; and a head only acknowledges publication at the intended revision.
 
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
@@ -13,15 +13,12 @@
      (import (prefix (head) head:)
              (prefix (store) store:)
              (prefix (text) text:)
-             (prefix (kernel) kernel:))
+             (prefix (kernel) kernel:)
+             (prefix (test) test:))
 
-     (define checks 0)
      (define bot '(agent mark-test))
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'mark-test (symbol->string label) actual expected)))
-     (define (raises? thunk) (guard (ex [else #t]) (thunk) #f))
+     (define check test:check)
+     (define raises? test:raises?)
 
      (define id (store:create! bot "mark-validation" '("abcdef" "tail")))
      (store:set-mark! bot id 'point '(0 . 2))
@@ -54,6 +51,24 @@
      (set-cdr! (text:span-end (store:mark bot id 'region)) -1)
      (check 'span-endpoints-are-owned-and-read-as-copies
             (ends (store:mark bot id 'region)) '((0 . 1) (0 . 4)))
+
+     (let ([id (store:create! bot "mark-identity" '("abcdef"))]
+           [mark-owner (list 'agent (string-copy "marker"))]
+           [mark-name (vector (string-copy "bookmark"))])
+       (store:set-mark! mark-owner id mark-name '(0 . 2))
+       (string-set! (cadr mark-owner) 0 #\X)
+       (string-set! (vector-ref mark-name 0) 0 #\X)
+       (string-set! (vector-ref (caar (store:marks '(agent "marker") id)) 0) 0 #\Y)
+       (check 'marks-own-actor-and-name-through-admission-and-reads
+              (store:mark '(agent "marker") id '#("bookmark")) '(0 . 2))
+       (check 'nondata-mark-names-refuse-the-whole-batch
+              (raises? (lambda () (store:set-marks! '(agent "marker") id 0
+                                                    (list (cons void '(0 . 0))) '(#("bookmark"))))) #t)
+       (store:edit! bot id 0 (text:make-span 0 0 0 0) '("X"))
+       (check 'owned-mark-identity-survives-edit-and-remains-addressable
+              (store:mark '(agent "marker") id '#("bookmark")) '(0 . 3))
+       (store:drop-mark! '(agent "marker") id '#("bookmark"))
+       (check 'owned-name-can-be-removed (store:marks '(agent "marker") id) '()))
 
      ;; A batch is actor-owned, atomic, and does not advance text revision.
      (store:set-mark! '(agent other) id 'point '(1 . 2))
@@ -91,14 +106,6 @@
 
      ;; Pause after head adoption and let a writer commit before publication.
      ;; Reset's normal repaint hook provides the barrier without a test hook.
-     (define gate-lock (make-mutex))
-     (define (gate-read cell) (with-mutex gate-lock (unbox cell)))
-     (define (gate-set! cell value) (with-mutex gate-lock (set-box! cell value)))
-     (define (await! cell)
-       (let loop ([left 400])
-         (cond [(gate-read cell) => values]
-               [(zero? left) (error 'mark-test "barrier timed out")]
-               [else (sleep (make-time 'time-duration 5000000 0)) (loop (- left 1))])))
      (define b (head:window-buffer (head:current)))
      (define hid (head:buffer-store-id b))
      (define w (head:current))
@@ -111,27 +118,28 @@
      (head:before-frame!)
      (store:reset! bot hid '("abcdef"))
      (define reset-revision (store:revision hid))
-     (define adopted (box #f))
-     (define written (box #f))
+     (define adopted (test:gate))
+     (define written (test:gate))
      (define armed? #t)
-     (fork-thread
-       (lambda ()
-         (await! adopted)
-         (gate-set! written
-           (guard (ex [else 'failed])
-             (store:edit! bot hid (store:revision hid) (text:make-span 0 0 0 0) '("Q"))
-             'done))))
+     (define writer
+       (test:worker
+         (lambda ()
+           (test:await 'mark-adoption adopted)
+           (dynamic-wind
+             (lambda () (void))
+             (lambda () (store:edit! bot hid (store:revision hid) (text:make-span 0 0 0 0) '("Q")) 'done)
+             (lambda () (written #t))))))
      (dynamic-wind
        (lambda ()
          (head:set-repaint-hook!
            (lambda ()
              (when (and armed? (= (head:buffer-store-rev b) reset-revision))
                (set! armed? #f)
-               (gate-set! adopted #t)
-               (await! written)))))
+               (adopted #t)
+               (test:await 'mark-write written)))))
        (lambda () (head:before-frame!))
        (lambda () (head:set-repaint-hook! (lambda () (void)))))
-     (check 'writer-crossed-publication-barrier (gate-read written) 'done)
+     (check 'writer-crossed-publication-barrier (writer) 'done)
      (check 'stale-publication-keeps-rebased-point (store:mark head:ui-actor hid 'point) '(0 . 5))
      (check 'stale-publication-keeps-rebased-region
             (ends (store:mark head:ui-actor hid 'region)) '((0 . 2) (0 . 5)))
@@ -190,4 +198,4 @@
      (check 'window-removal-keeps-unmanaged-actor-marks
             (store:marks head:ui-actor other-id) '((custom . (0 . 1))))
 
-     (format #t "~a mark checks passed\n" checks)))
+     (test:finish! 'mark)))

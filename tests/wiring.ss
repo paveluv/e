@@ -710,15 +710,14 @@
 
      ;; the buffer lifecycle crosses heads: a rival's new buffer appears
      ;; in this head's list, its rename follows, and its deletion drops
-     ;; the record -- even while a window is showing it
-     (define (buffer-names)
-       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (map head:buffer-name (buffer-list)) p)) (quote replace)\r"
-                      probe))
-       (pump! 900)
-       (call-with-input-file probe read))
+     ;; the record -- even while a window is showing it. Hidden labels
+     ;; reserve the shared namespace for both store and head commands.
+     (define (buffer-names) (read-editor '(map head:buffer-name (buffer-list))))
      (read-editor
-       '(store:create! '(agent rival) "rival-notes" '("from the rival")
-                       '((audience (head "elsewhere")))))
+       '(begin
+          (store:create! '(agent rival) "rival-log" '("") '((audience)))
+          (store:create! '(agent rival) "rival-notes" '("from the rival")
+                         '((audience (head "elsewhere"))))))
      (check 'private-foreign-buffer-stays-hidden
             (member "rival-notes" (buffer-names)) #f)
      (read-editor
@@ -726,30 +725,34 @@
                                     'audience (list head:ui-actor)) #t))
      (check 'foreign-buffer-adopted
             (and (member "rival-notes" (buffer-names)) #t) #t)
-     (send! "\x1b;xstore:rename! (quote (agent rival)) (store:find-named \"rival-notes\") \"rival-log\"\r")
-     (pump! 900)
+     (define rival-label
+       (read-editor '(store:rename! '(agent rival) (store:find-named "rival-notes") "rival-log")))
      (check 'foreign-rename-follows
-            (list (and (member "rival-log" (buffer-names)) #t)
+            (list rival-label (and (member rival-label (buffer-names)) #t)
                   (member "rival-notes" (buffer-names)))
-            '(#t #f))
+            '("rival-log<2>" #t #f))
+     (check 'head-rename-adopts-the-store-claim
+            (read-editor `(head:buffer-name (set-buffer-name! (head:buffer-named ,rival-label) "rival-log")))
+            rival-label)
      (for-each
        (lambda (hide?)
-         (send! "\x18;brival-log\r")           ; C-x b: look at it
+         (send! (string-append "\x18;b" rival-label "\r")) ; C-x b: look at it
          (pump! 900)
          (check 'showing-the-foreign-buffer (screen-has? 0 "from the rival") #t)
          (read-editor
            (if hide?
                '(begin (head:buffer-fact-set! (current-buffer) 'audience '()) #t)
-               '(begin (store:delete! '(agent rival) (store:find-named "rival-log")) #t)))
+               `(begin (store:delete! '(agent rival) (store:find-named ,rival-label)) #t)))
          (check 'retirement-moves-the-window-on
-                (list (member "rival-log" (buffer-names))
+                (list (member rival-label (buffer-names))
                       (screen-has? 0 "from the rival")
-                      (read-editor '(and (store:find-named "rival-log") #t)))
+                      (read-editor `(and (store:find-named ,rival-label) #t)))
                 (list #f #f hide?))
          (when hide?
            (read-editor
-             '(begin (store:drop-property! head:ui-actor (store:find-named "rival-log") 'audience) #t))))
+             `(begin (store:drop-property! head:ui-actor (store:find-named ,rival-label) 'audience) #t))))
        '(#t #f))
+     (read-editor '(begin (store:delete! '(agent rival) (store:find-named "rival-log")) #t))
 
      ;; completions borrow the prompt's target window -- no pop-ups:
      ;; TAB on an ambiguous M-x prefix shows <completions> where the
