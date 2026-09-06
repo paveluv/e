@@ -70,6 +70,58 @@ may then start a new display operation without having its state overwritten
 by the outer one. This batches only repaint notification: it does not defer
 arbitrary callbacks, lock the head, or roll back changes on an exception.
 
+## Publishing shared rendition
+
+`surface:` attaches presentation data to a store buffer. It is available
+to base modules; automatic head rendering and terminal publication are
+not connected yet. Terminal and describe still use the local app API above.
+
+```scheme
+(surface:publish! id basis revision changes cursor size)
+(surface:snapshot id)
+(surface:rows id generation from to)
+(surface:withdraw! id basis)
+```
+
+Publish row rendition, cursor, and size together. `basis` is the previous
+surface generation, or `#f` for no surface; `revision` is the store text
+revision. The two return values are `applied` and a generation, or `stale`
+and `frame-changed`/`text-changed`. Malformed data raises without changing
+the frame. Identical publication keeps the generation and does not notify.
+
+`changes` contains unique `(row styles hyperlinks attributes)` entries.
+Styles and hyperlinks are equal-length cell vectors: styles contain
+symbols, SGR strings, or `#f`; links contain `(uri id)` or `#f`, with a
+nonempty URI string and a string or `#f` id. Attributes are plain acyclic
+data. `(row . #f)` drops rendition. Omitted rows retain their metadata at
+the same row number: remap them when text moves, and drop rows past the
+new text's end. Cell widths may differ from character counts and between
+rows. `cursor` is `#f` or `(buffer-row cell-column visible?)`; `size` is
+positive `(rows cols)`. Coordinates start at zero.
+
+`snapshot` returns `(generation text-revision cursor size)` or `#f`.
+`rows` returns entries for `[from,to)`, including `(row . #f)` for plain
+rows, or `#f` if the generation is no longer current. Match the text
+revision exactly and use one generation for all row ranges; retry after
+refusal. Store text and surface updates are separate, so a surface can
+lag. Inputs, returned metadata, and events have independent ownership.
+
+`(surface:subscribe! id proc)` subscribes to one buffer, or all buffers
+when `id` is `#f`, and returns a token for `surface:unsubscribe!`.
+Subscriptions follow module registration lifetime. Events are
+`(surface id generation revision changed-rows cursor size)`; changed rows
+are sorted, `all` means invalidate every cached row, and `()` means only
+cursor/size changed. Pending notices merge per subscriber/buffer and keep
+the latest header. Callbacks can reenter and run outside state locks;
+a publication's receipt may already have been superseded when it returns.
+Batch app output into frames before publishing; the seam has no timer.
+
+Withdrawal uses the same generation guard, returns `applied` with a new
+generation, and emits `(surface id generation #f all #f #f)`. Repeated
+withdrawal returns `applied #f`. It leaves the store text intact. Deleting
+the store buffer also retires its surface. Raw reads do not enforce
+audience permissions; consumers must apply the store's visibility rules.
+
 ## Input capture and propagation
 
 App input is layered: an active prompt first, then the focused app, then e's
