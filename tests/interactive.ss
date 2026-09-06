@@ -158,7 +158,7 @@
        (wait-for! 'scrollback-still-shows-line
                   (lambda () (find-cell "red line 2 ")) 5000)
        (check 'palette-change-recolors-cached-rows
-              (not (eq? red-style (style-at (find-cell "red line 2 "))))))
+              (not (equal? red-style (style-at (find-cell "red line 2 "))))))
 
      ;; -- clear(1)'s ED 3 erases the scrollback ---------------------------
      (send! "\x1b;[6;2~")

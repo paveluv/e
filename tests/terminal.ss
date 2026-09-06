@@ -2,20 +2,16 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
 (eval
   '(begin
-     (import (prefix (terminal) terminal:))
+     (import (prefix (terminal) terminal:) (prefix (test) test:)
+             (prefix (head) head:) (prefix (paint) paint:))
 
-     (define checks 0)
-
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'terminal-test label actual expected)))
+     (define check test:check)
 
      (define (state-ref emulator key)
        (cdr (assq key (terminal:emulator-state emulator))))
@@ -303,7 +299,7 @@
        (check 'sgr-cell-style
               (eq? (vector-ref (vector-ref
                                  (terminal:emulator-styles terminal) 0) 0)
-                               'plain)
+                   'plain)
               #f))
 
      (let ([terminal (terminal:make-emulator 1 4)])
@@ -331,14 +327,14 @@
        (terminal:emulator-feed! colon "\x1b;[4m\x1b;[58:5:196mX")
        (terminal:emulator-feed! plain "\x1b;[4m\x1b;[5mX")
        (check 'underline-color-groups-as-one-operation
-              (eq? (style-at semicolon 0 0) (style-at colon 0 0)) #t)
+              (equal? (style-at semicolon 0 0) (style-at colon 0 0)) #t)
        (check 'underline-color-is-not-blink
-              (eq? (style-at semicolon 0 0) (style-at plain 0 0)) #f)
+              (equal? (style-at semicolon 0 0) (style-at plain 0 0)) #f)
        (terminal:emulator-feed! semicolon "\x1b;[59mY")
        (terminal:emulator-feed! plain "\x1b;[2G\x1b;[0m\x1b;[4mY")
        (check 'underline-color-reset-keeps-underline
-              (eq? (style-at semicolon 0 1)
-                   (style-at plain 0 1))
+              (equal? (style-at semicolon 0 1)
+                (style-at plain 0 1))
               #t))
 
      (let ([truncated (terminal:make-emulator 1 4)]
@@ -835,8 +831,8 @@
               (state-ref terminal 'default-colors) '((171 205 239) . #f))
        (check 'osc-default-recolors-plain
               (eq? (vector-ref
-                      (vector-ref (terminal:emulator-styles terminal) 0) 0)
-                    'plain)
+                     (vector-ref (terminal:emulator-styles terminal) 0) 0)
+                   'plain)
               #f)
        (terminal:emulator-feed! terminal "\x1b;]110\x7;")
        (check 'osc-default-foreground-reset
@@ -956,7 +952,7 @@
        ;; its query reports the feature disabled.
        (terminal:emulator-feed! terminal "\x1b;[1mX\x1b;[>4;2mY\x1b;[>4;m")
        (check 'xtmodkeys-does-not-alter-rendition
-              (eq? (style-at terminal 0 0) (style-at terminal 0 1)) #t)
+              (equal? (style-at terminal 0 0) (style-at terminal 0 1)) #t)
        (terminal:emulator-feed! terminal "\x1b;[?4m")
        (check 'xtqmodkeys-reports-disabled
               (terminal:emulator-replies terminal) '("\x1b;[>4;0m"))
@@ -1168,4 +1164,76 @@
                       0 3))
               '(30 "abc")))
 
-     (format #t "~a terminal checks passed\n" checks)))
+     ;; The publication boundary owns text, rendition, geometry and facts;
+     ;; no generated face registration or head callback is needed to read it.
+     (let ([emulator (terminal:make-emulator 1 5)] [calls (test:recorder)])
+       (dynamic-wind
+         (lambda () (head:set-repaint-hook! (lambda () (calls 'repaint))))
+         (lambda ()
+           (terminal:emulator-feed! emulator
+             "\x1b;[31m\x1b;]8;id=wide;https://frame.example\x1b;\\界\x1b;]8;;\x1b;\\q\x301;Z\x1b;[6 q")
+           (let* ([frame (terminal:emulator-frame emulator)]
+                  [row (car (cadr frame))])
+             (check 'frame-pairs-text-rendition-cursor-and-facts
+               frame
+               '(#("界q\x301;Z ")
+                 ((0 #("0;31" "0;31" "0;31" "0;31" plain)
+                   #(("https://frame.example" "wide") ("https://frame.example" "wide") #f #f #f)
+                   ((clusters (1 . 2) (2 . 1) (1 . 1) (1 . 1)))))
+                 (0 4 #t) (1 5) ((cursor-style . bar))))
+             (string-set! (vector-ref (car frame) 0) 0 #\X)
+             (string-set! (vector-ref (cadr row) 0) 0 #\X)
+             (string-set! (car (vector-ref (caddr row) 0)) 0 #\X)
+             (set-car! (caddr frame) 99)
+             (set-car! (car (cdar (cadddr row))) 99)
+             (check 'frame-mutation-cannot-change-the-emulator
+               (list (vector-ref (terminal:emulator-screen emulator) 0)
+                     (style-at emulator 0 0)
+                     (vector-ref (vector-ref (terminal:emulator-hyperlinks emulator) 0) 0)
+                     (caddr (terminal:emulator-frame emulator)))
+               '("界q\x301;Z " "0;31" ("https://frame.example" "wide") (0 4 #t))))
+           (head:run-deferred!)
+           (check 'frame-feed-and-read-do-not-call-the-head (calls) '()))
+         (lambda () (head:set-repaint-hook! paint:invalidate-screen-cache!)))
+       (let* ([links (terminal:emulator-hyperlinks emulator)]
+              [uri (car (vector-ref (vector-ref links 0) 0))])
+         (string-set! uri 0 #\X)
+         (check 'legacy-link-reads-also-own-their-payload
+           (car (vector-ref (vector-ref (terminal:emulator-hyperlinks emulator) 0) 0))
+           "https://frame.example"))
+       (let ([frame (terminal:emulator-frame emulator)])
+         (terminal:emulator-feed! emulator "\x1b;[?2026h\x1b;[HNEW\x1b;[?25l")
+         (check 'synchronized-frame-is-held (terminal:emulator-frame emulator) #f)
+         (terminal:emulator-feed! emulator "\x1b;[?2026l")
+         (check 'synchronized-release-keeps-the-old-snapshot-independent
+           (list (vector-ref (car frame) 0) (caddr frame)
+                 (vector-ref (car (terminal:emulator-frame emulator)) 0)
+                 (caddr (terminal:emulator-frame emulator)))
+           '("界q\x301;Z " (0 4 #t) "NEWZ " (0 3 #f)))))
+
+     ;; Feed and resize use the same lock as frame capture. Any sampled
+     ;; frame must contain the dimensions and cursor of its own text grid.
+     (let* ([emulator (terminal:make-emulator 2 8)]
+            [writer (test:worker
+                      (lambda ()
+                        (do ([i 0 (+ i 1)]) ((= i 60))
+                          (terminal:emulator-resize! emulator (+ 2 (mod i 2)) (+ 5 (mod i 4)))
+                          (terminal:emulator-feed! emulator "\x1b;[2J\x1b;[Habc\x1b;[32mZ"))))]
+            [coherent?
+             (for-all
+               (lambda (i)
+                 (let* ([frame (terminal:emulator-frame emulator)]
+                        [text (car frame)] [rows (cadr frame)] [cursor (caddr frame)] [size (cadddr frame)])
+                   (and (>= (vector-length text) (car size))
+                        (= (vector-length text) (length rows))
+                        (for-all (lambda (row)
+                                   (and (= (vector-length (cadr row))
+                                           (string-length (vector-ref text (car row))))
+                                        (or (< (car row) (- (length rows) (car size)))
+                                            (= (vector-length (cadr row)) (cadr size))))) rows)
+                        (<= (- (length rows) (car size)) (car cursor))
+                        (< (car cursor) (length rows)) (< (cadr cursor) (cadr size))))) (iota 60))])
+       (writer)
+       (check 'concurrent-frames-never-mix-dimensions coherent? #t))
+
+     (test:finish! 'terminal)))

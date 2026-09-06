@@ -76,6 +76,9 @@ arbitrary callbacks, lock the head, or roll back changes on an exception.
 visible surfaced buffers automatically, keeping their ordinary mode.
 Terminal and describe still use the local app API above; their migration
 and automatic base-app input/cursor following are not connected yet.
+The terminal emulator provides an owned
+[`emulator-frame`](TERMINAL.md#scheme-api) containing text and complete
+surface rows for publishers that need terminal output.
 
 ```scheme
 (surface:publish! id basis revision changes cursor size)

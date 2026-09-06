@@ -261,6 +261,7 @@ output:
 (define vt (terminal:make-emulator 24 80))
 (terminal:emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
 (terminal:emulator-resize! vt 40 100)
+(terminal:emulator-frame vt)        ; owned coherent frame, or #f during mode 2026
 (terminal:emulator-screen vt)       ; copied vector of cell rows
 (terminal:emulator-styles vt)       ; copied vector of cell-style rows
 (terminal:emulator-hyperlinks vt)   ; copied vector of cell link metadata
@@ -275,6 +276,37 @@ Mouse coordinates are one-based. The numeric code uses the xterm button and
 modifier bits, and the final argument distinguishes a release from a press or
 motion event. The procedure returns `#f` while mouse tracking is disabled.
 Hyperlink cells are either `#f` or `(URI id)`, where `id` may itself be `#f`.
+Style cells are `plain` or complete SGR parameter strings such as `"0;31"`;
+the leading reset prevents inheritance from the preceding cell. They do not
+allocate named faces. `emulator-state` includes the `cursor-style` symbol.
+
+`terminal:emulator-frame` reads text and presentation together:
+
+```scheme
+;; (text rows cursor size facts)
+'(#("界éZ ")
+  ((0 #(plain plain plain plain plain) #(#f #f #f #f #f)
+      ((clusters (1 . 2) (2 . 1) (1 . 1) (1 . 1)))))
+  (0 4 #t) (1 5) ((cursor-style . blinking-block)))
+```
+
+Text contains displayed strings, including main-screen scrollback. While the
+alternate screen is active it contains only that screen; main history stays
+in the emulator and reappears on leaving alternate mode. Rows are complete
+`(row styles hyperlinks attributes)` entries suitable for
+[surface publication](APPS.md#publishing-shared-rendition). Cluster pairs
+give character and cell counts. The zero-based cursor is
+`(buffer-row cell-column visible?)`; `(rows cols)` describes the live grid,
+so historical row widths may differ. Facts currently contain `cursor-style`.
+This API returns a full frame; a publisher chooses which text and row changes
+to commit. The current terminal app still uses a local buffer.
+
+Public feed, resize, and read operations serialize through the emulator's
+lock. Every read returns independently owned mutable data. Use `emulator-frame`
+when several layers must describe the same instant; separate read calls may
+observe different updates. It returns `#f` during a child's mode 2026 hold,
+bounded to one second. Older inspection APIs continue reading parsed state
+during that hold. Reading a frame does not consume pending output.
 
 `terminal:emulator-feed!` currently accepts decoded Scheme text. The live PTY
 reader performs UTF-8 decoding before feeding the same state machine.

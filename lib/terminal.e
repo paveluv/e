@@ -7,6 +7,7 @@
           (rename (make-terminal-emulator make-emulator)) (rename (terminal-emulator? emulator?))
           (rename (terminal-emulator-feed! emulator-feed!)) (rename (terminal-emulator-resize! emulator-resize!))
           (rename (terminal-emulator-screen emulator-screen))
+          (rename (terminal-emulator-frame emulator-frame))
           (rename (terminal-emulator-styles emulator-styles)) (rename (terminal-emulator-hyperlinks emulator-hyperlinks))
           (rename (terminal-emulator-state emulator-state)) (rename (terminal-emulator-input emulator-input))
           (rename (terminal-emulator-mouse-input emulator-mouse-input)) (rename (terminal-emulator-replies emulator-replies))
@@ -18,7 +19,7 @@
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (log) log:)
-          (prefix (style) style:) (prefix (sys) sys:)
+          (prefix (datum) datum:) (prefix (sys) sys:)
           (prefix (keymap) keymap:)
           (prefix (doc) doc:))
 
@@ -38,7 +39,7 @@
             (mutable insert) (mutable newline) (mutable reverse-screen)
             (mutable cursor-keys) (mutable keypad) (mutable meta-eight-bit)
             (mutable controls-eight-bit)
-            (mutable cursor-visible) (mutable tab-stops)
+            (mutable cursor-visible) (mutable cursor-shape) (mutable tab-stops)
             (mutable last-character)
             (mutable dirty) (mutable alive) (mutable bell) (mutable prefix)
             (mutable bell-visible) (mutable bell-generation)
@@ -52,8 +53,7 @@
             (mutable history)
             (mutable unfollowed-windows)
             (mutable styles) (mutable main-styles)
-            (mutable rendered-cells) (mutable rendered-styles)
-            (mutable rendered-links)
+            (mutable rendered)
             (mutable sgr) (mutable style) (mutable link) (mutable clipboard)
             (mutable palette) (mutable default-foreground)
             (mutable default-background)
@@ -72,6 +72,11 @@
             (mutable line-attributes)
             (mutable main-line-attributes)
             (mutable alternate-line-attributes)))
+
+  ;; Captured under the emulator lock, immutable after capture. The head
+  ;; adopts one frame after releasing the lock; public reads copy plain data.
+  (define-record-type frame (fields rows cursor size top position cursor-shape alternate?))
+  (define-record-type rendition (fields cells styles links placeholder))
 
   ;; Hyperlinks are rendition metadata just like color and attributes. Keeping
   ;; both in the existing style grid makes every cell-moving operation carry
@@ -169,14 +174,10 @@
 
   (define terminals '())
   (define serial 0)
-  (define style-serial 0)
-  (define style-cache (make-hashtable string-hash string=?))
-  (define style-sequences (make-eq-hashtable))
   ;; Unknown sequences are useful compatibility reports, but full-screen
   ;; programs may emit the same one on every redraw. Remember signatures per
   ;; emulator so each missing feature is presented only once per terminal.
   (define unsupported-features (make-weak-eq-hashtable))
-  (define style-lock (make-mutex))
 
   (define (call-with-display-output state thunk)
     ;; Reader- and feed-thread work that touches editor state (the
@@ -301,7 +302,7 @@
       #f #t #f                                   ; wrap-pending autowrap origin
       #f #f #f                                   ; insert newline reverse
       #f #f #f #f                                ; cursor-keys keypad meta c1
-      #t (default-tab-stops cols) #\space        ; cursor, tabs, last char
+      #t 'blinking-block (default-tab-stops cols) #\space ; cursor, tabs, last char
       live? live? #f #f                          ; dirty alive bell prefix
       #f 0                                       ; bell visible, generation
       #f #f #f #f #f                             ; mouse modes, focus
@@ -310,7 +311,7 @@
       #f #f #f #f                                ; saved alternate screen
       (make-empty-scrollback) '()                ; history, unfollowed
       (make-style-screen rows cols 'plain) #f    ; styles, main styles
-      #f (make-style-screen rows cols 'plain) #f ; rendered cells/styles/links
+      #f                                         ; captured frame
       "" 'plain #f #f                            ; sgr style link clipboard
       (make-vector 256 #f) #f #f                 ; palette, default colors
       #f "" (cons 0 '())                         ; printer
@@ -331,8 +332,9 @@
       (error 'terminal-emulator-feed! "expected a terminal emulator" emulator))
     (unless (string? text)
       (error 'terminal-emulator-feed! "expected a string" text))
-    (string-for-each (lambda (character) (feed-character! emulator character))
-                     text)
+    (with-mutex (terminal-state-lock emulator)
+      (string-for-each (lambda (character) (feed-character! emulator character)) text)
+      (unless (string=? text "") (terminal-state-dirty-set! emulator #t)))
     (void))
 
   (define (terminal-emulator-resize! emulator rows cols)
@@ -342,7 +344,7 @@
                  (integer? cols) (exact? cols) (> cols 0))
       (error 'terminal-emulator-resize!
              "rows and columns must be positive exact integers" rows cols))
-    (resize-screen! emulator rows cols)
+    (with-mutex (terminal-state-lock emulator) (resize-screen! emulator rows cols))
     (void))
 
   (define (displayed-screen-row emulator row)
@@ -357,100 +359,94 @@
   (define (screen-row-indexes emulator)
     (iota (terminal-state-rows emulator)))
 
+  (define (read-emulator emulator who thunk)
+    (unless (terminal-emulator? emulator) (error who "expected a terminal emulator" emulator))
+    (with-mutex (terminal-state-lock emulator) (datum:copy (thunk))))
+
   (define (terminal-emulator-screen emulator)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-screen "expected a terminal emulator" emulator))
-    (list->vector
-      (map (lambda (row)
-             (cell-row->string (displayed-screen-row emulator row)))
-           (screen-row-indexes emulator))))
+    (read-emulator emulator 'emulator-screen
+      (lambda ()
+        (list->vector
+          (map (lambda (row) (cell-row->string (displayed-screen-row emulator row)))
+               (screen-row-indexes emulator))))))
 
   (define (terminal-emulator-styles emulator)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-styles "expected a terminal emulator" emulator))
-    (list->vector
-      (map (lambda (row)
-             (effective-style-row emulator
-                                  (displayed-style-row emulator row)))
-           (screen-row-indexes emulator))))
+    (read-emulator emulator 'emulator-styles
+      (lambda ()
+        (list->vector
+          (map (lambda (row) (effective-style-row emulator (displayed-style-row emulator row)))
+               (screen-row-indexes emulator))))))
 
   (define (terminal-emulator-hyperlinks emulator)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-hyperlinks
-             "expected a terminal emulator" emulator))
-    (list->vector
-      (map (lambda (row)
-             (vector-map cell-style-link
-                         (displayed-style-row emulator row)))
-           (screen-row-indexes emulator))))
+    (read-emulator emulator 'emulator-hyperlinks
+      (lambda ()
+        (list->vector
+          (map (lambda (row) (vector-map cell-style-link (displayed-style-row emulator row)))
+               (screen-row-indexes emulator))))))
 
   (define (terminal-emulator-state emulator)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-state "expected a terminal emulator" emulator))
-    `((rows . ,(terminal-state-rows emulator))
-      (columns . ,(terminal-state-cols emulator))
-      (scrollback-lines . ,(scrollback-count (terminal-state-history emulator)))
-      (wrapped-rows . ,(vector->list (terminal-state-wrapped emulator)))
-      (cursor . ,(cons (terminal-state-row emulator)
+    (read-emulator emulator 'emulator-state
+      (lambda ()
+        `((rows . ,(terminal-state-rows emulator))
+          (columns . ,(terminal-state-cols emulator))
+          (scrollback-lines . ,(scrollback-count (terminal-state-history emulator)))
+          (wrapped-rows . ,(vector->list (terminal-state-wrapped emulator)))
+          (cursor . ,(cons (terminal-state-row emulator)
                        (terminal-state-col emulator)))
-      (scroll-region . ,(cons (terminal-state-scroll-top emulator)
+          (scroll-region . ,(cons (terminal-state-scroll-top emulator)
                               (terminal-state-scroll-bottom emulator)))
-      (horizontal-margins . ,(cons (terminal-state-left-margin emulator)
+          (horizontal-margins . ,(cons (terminal-state-left-margin emulator)
                                    (terminal-state-right-margin emulator)))
-      (horizontal-margin-mode . ,(terminal-state-margin-mode emulator))
-      (memory-lock . ,(terminal-state-memory-lock emulator))
-      (printer-controller . ,(terminal-state-printer-controller emulator))
-      (printer-output . ,(printer-output-text emulator))
-      (wrap-pending . ,(terminal-state-wrap-pending emulator))
-      (autowrap . ,(terminal-state-autowrap emulator))
-      (origin . ,(terminal-state-origin emulator))
-      (insert . ,(terminal-state-insert emulator))
-      (newline . ,(terminal-state-newline emulator))
-      (reverse-screen . ,(terminal-state-reverse-screen emulator))
-      (bell-pending . ,(terminal-state-bell emulator))
-      (bell-visible . ,(terminal-state-bell-visible emulator))
-      (cursor-visible . ,(terminal-state-cursor-visible emulator))
-      (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
-      (application-keypad . ,(terminal-state-keypad emulator))
-      (eight-bit-meta . ,(terminal-state-meta-eight-bit emulator))
-      (eight-bit-controls . ,(terminal-state-controls-eight-bit emulator))
-      (clipboard . ,(terminal-state-clipboard emulator))
-      (mouse-tracking . ,(terminal-state-mouse emulator))
-      (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
-      (utf8-mouse . ,(terminal-state-mouse-utf8 emulator))
-      (urxvt-mouse . ,(terminal-state-mouse-urxvt emulator))
-      (focus-reporting . ,(terminal-state-focus-reporting emulator))
-      (bracketed-paste . ,(terminal-state-bracketed emulator))
-      (reverse-wraparound . ,(and (memv 45 (terminal-state-extra-modes
-                                             emulator))
-                                  #t))
-      (default-colors . ,(cons (terminal-state-default-foreground emulator)
-                               (terminal-state-default-background emulator)))))
+          (horizontal-margin-mode . ,(terminal-state-margin-mode emulator))
+          (memory-lock . ,(terminal-state-memory-lock emulator))
+          (printer-controller . ,(terminal-state-printer-controller emulator))
+          (printer-output . ,(printer-output-text emulator))
+          (wrap-pending . ,(terminal-state-wrap-pending emulator))
+          (autowrap . ,(terminal-state-autowrap emulator))
+          (origin . ,(terminal-state-origin emulator))
+          (insert . ,(terminal-state-insert emulator))
+          (newline . ,(terminal-state-newline emulator))
+          (reverse-screen . ,(terminal-state-reverse-screen emulator))
+          (bell-pending . ,(terminal-state-bell emulator))
+          (bell-visible . ,(terminal-state-bell-visible emulator))
+          (cursor-visible . ,(terminal-state-cursor-visible emulator))
+          (cursor-style . ,(terminal-state-cursor-shape emulator))
+          (application-cursor-keys . ,(terminal-state-cursor-keys emulator))
+          (application-keypad . ,(terminal-state-keypad emulator))
+          (eight-bit-meta . ,(terminal-state-meta-eight-bit emulator))
+          (eight-bit-controls . ,(terminal-state-controls-eight-bit emulator))
+          (clipboard . ,(terminal-state-clipboard emulator))
+          (mouse-tracking . ,(terminal-state-mouse emulator))
+          (sgr-mouse . ,(terminal-state-mouse-sgr emulator))
+          (utf8-mouse . ,(terminal-state-mouse-utf8 emulator))
+          (urxvt-mouse . ,(terminal-state-mouse-urxvt emulator))
+          (focus-reporting . ,(terminal-state-focus-reporting emulator))
+          (bracketed-paste . ,(terminal-state-bracketed emulator))
+          (reverse-wraparound . ,(and (memv 45 (terminal-state-extra-modes
+                                                 emulator))
+                                   #t))
+          (default-colors . ,(cons (terminal-state-default-foreground emulator)
+                               (terminal-state-default-background emulator)))))))
 
   (define (terminal-emulator-input emulator event)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-input "expected a terminal emulator" emulator))
     (unless (string? event)
       (error 'terminal-emulator-input "expected an event string" event))
-    (event-bytes emulator event))
+    (read-emulator emulator 'emulator-input (lambda () (event-bytes emulator event))))
 
   (define (terminal-emulator-replies emulator)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-replies "expected a terminal emulator" emulator))
-    (reverse (terminal-state-replies emulator)))
+    (read-emulator emulator 'emulator-replies (lambda () (reverse (terminal-state-replies emulator)))))
 
   (define (terminal-emulator-unsupported emulator)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-unsupported
-             "expected a terminal emulator" emulator))
-    (let ([seen (hashtable-ref unsupported-features emulator #f)])
-      (if seen (sort string<? (vector->list (hashtable-keys seen))) '())))
+    (read-emulator emulator 'emulator-unsupported
+      (lambda ()
+        (let ([seen (hashtable-ref unsupported-features emulator #f)])
+          (if seen (sort string<? (vector->list (hashtable-keys seen))) '())))))
 
   (define (terminal-of buffer)
     (find (lambda (state) (eq? (terminal-state-buffer state) buffer))
           terminals))
 
-  (define (terminal-cursor-position state)
+  (define (state-cursor-position state)
     ;; A decorated row shows each character two cells wide, so the
     ;; presented cursor column doubles there.
     (let* ([row (terminal-state-row state)]
@@ -466,16 +462,24 @@
                row)
             col)))
 
-  (define (terminal-live-screen-top state)
+  (define (state-screen-top state)
     (if (terminal-state-main-screen state)
         0 (scrollback-count (terminal-state-history state))))
 
+  (define (terminal-cursor-position state)
+    (let ([frame (terminal-state-rendered state)])
+      (if frame (cons (car (frame-cursor frame)) (cadr (frame-cursor frame))) '(0 . 0))))
+
+  (define (terminal-live-screen-top state)
+    (let ([frame (terminal-state-rendered state)]) (if frame (frame-top frame) 0)))
+
   (define (present-terminal-live-screen! state)
-    (paint:set-buffer-viewports!
-      (terminal-state-buffer state)
-      (terminal-cursor-position state)
-      (terminal-live-screen-top state)
-      (terminal-state-unfollowed-windows state)))
+    (when (terminal-state-rendered state)
+      (paint:set-buffer-viewports!
+        (terminal-state-buffer state)
+        (terminal-cursor-position state)
+        (terminal-live-screen-top state)
+        (terminal-state-unfollowed-windows state))))
 
   (define (terminal-follow! state)
     (terminal-state-unfollowed-windows-set!
@@ -534,7 +538,11 @@
         (let ([cell (vector-ref cells i)] [style (vector-ref styles i)])
           (let-values ([(first second)
                         (if (string=? cell "")
-                            (values "" "")
+                            ;; The wide glyph already occupies the first
+                            ;; pair. Its source continuation needs two cells
+                            ;; of padding; more empty continuations would
+                            ;; claim a four-cell glyph the host cannot draw.
+                            (values " " " ")
                             (double-width-pair cell))])
             (vector-set! new-cells (* 2 i) first)
             (vector-set! new-cells (+ (* 2 i) 1) second)
@@ -1866,27 +1874,15 @@
       (terminal-state-col-set! state col)))
 
   (define (sgr-style sequence)
-    (if (string=? sequence "")
-        'plain
-        (with-mutex style-lock
-          (or (hashtable-ref style-cache sequence #f)
-              (let ([name (string->symbol
-                            (format "terminal-sgr-~a" style-serial))])
-                (set! style-serial (+ style-serial 1))
-                ;; style:set! accepts SGR parameters, not a complete escape
-                ;; sequence. Passing CSI here produced CSI CSI ... m m; the
-                ;; second trailing `m` was painted as text by the host
-                ;; terminal, most visibly during top's frequent SGR changes.
-                (style:set! name (format "0;~a" sequence))
-                (hashtable-set! style-cache sequence name)
-                (hashtable-set! style-sequences name sequence)
-                name)))))
+    ;; A face is a value each head can render, never a head registration.
+    ;; Reset first so a cell's complete rendition does not inherit prior SGR.
+    (if (string=? sequence "") 'plain (string-append "0;" sequence)))
+
+  (define (style-parameters style)
+    (if (eq? style 'plain) "" (substring style 2 (string-length style))))
 
   (define (reversed-style style)
-    (let* ([sequence
-            (if (eq? style 'plain) ""
-                (with-mutex style-lock
-                  (hashtable-ref style-sequences style #f)))]
+    (let* ([sequence (style-parameters style)]
            [operations (and sequence
                             (sgr-operations (parameter-list sequence)))])
       (if (not operations) style
@@ -1919,10 +1915,7 @@
     (append (list (if foreground? 38 48) 2) color))
 
   (define (resolved-style state style)
-    (let* ([sequence
-            (if (eq? style 'plain) ""
-                (with-mutex style-lock
-                  (hashtable-ref style-sequences style "")))]
+    (let* ([sequence (style-parameters style)]
            [operations (if (string=? sequence "") '()
                            (sgr-operations (parameter-list sequence)))]
            [palette (terminal-state-palette state)]
@@ -2115,19 +2108,11 @@
       (terminal-state-main-line-attributes-set! state #f)
       (terminal-state-alternate-line-attributes-set! state #f)
       (terminal-state-dirty-set! state #t)
-      (when (terminal-state-buffer state)
-        (set-cursor-shape! state 'blinking-block))))
+      (set-cursor-shape! state 'blinking-block)))
 
   (define (set-cursor-shape! state shape)
-    ;; The cursor shape is a presentation fact of the buffer -- seat
-    ;; state -- so the feed thread hands it to the main thread; by then
-    ;; the terminal may have died and detached.
-    (call-with-display-output
-      state
-      (lambda ()
-        (guard (ex [else (void)])
-          (head:set-app-presentation! (terminal-state-buffer state)
-                                      0 #f #f shape)))))
+    (terminal-state-cursor-shape-set! state shape)
+    (terminal-state-dirty-set! state #t))
 
   (define (soft-reset-terminal-state! state)
     ;; DECSTR restores operational modes and rendition without erasing text.
@@ -2327,17 +2312,11 @@
                   [(2004) (terminal-state-bracketed-set! state on?)]
                   [(1048) (if on? (save-cursor! state) (restore-cursor! state))]
                   [(47 1047 1049)
-                   ;; The alternate and primary screens have unrelated row
-                   ;; spaces. A scrollback offset from one is meaningless in
-                   ;; the other and can crop a nested full-screen program.
-                   (terminal-state-unfollowed-windows-set! state '())
+                   ;; Viewports belong to the head. Adoption observes the
+                   ;; screen switch in its captured frame after this lock.
                    (if on?
                        (enter-alternate-screen! state mode)
-                       (leave-alternate-screen! state mode))
-                   (when (terminal-state-buffer state)
-                     (paint:reset-buffer-viewports!
-                       (terminal-state-buffer state)
-                       (terminal-cursor-position state)))]
+                       (leave-alternate-screen! state mode))]
                   [else
                    (report-unsupported!
                      state (format "private mode ~a" mode))]))
@@ -2661,7 +2640,7 @@
                     (terminal-reply! state "\x1b;P>|e\x1b;\\")
                     (report-unsupported!
                       state (control-signature "CSI" text final)))]
-               [(and cursor-shape? (terminal-state-buffer state))
+               [cursor-shape?
                 (set-cursor-shape!
                   state
                   (case (param parameters 0 0)
@@ -3147,94 +3126,104 @@
                   (terminal-state-osc-text-set!
                     state (empty-control-text)))))])]))
 
+  (define (capture-rendition state cells styles)
+    (make-rendition cells (effective-style-row state styles)
+                    (vector-map cell-style-link styles) (placeholder-line cells)))
+
+  (define (capture-frame state)
+    ;; Caller holds the emulator lock. Unchanged scrollback rendition is
+    ;; shared privately; live vectors are copied before the writer resumes.
+    (let* ([entries (if (terminal-state-main-screen state) '()
+                      (scrollback-entries (terminal-state-history state)))]
+           [table (rendered-scrollback-table state)]
+           [history
+            (map (lambda (entry)
+                   (or (hashtable-ref table entry #f)
+                       (let ([row (capture-rendition state (scrollback-line-cells entry)
+                                                     (scrollback-line-styles entry))])
+                         (hashtable-set! table entry row) row))) entries)]
+           [screen
+            (map (lambda (row)
+                   (let-values ([(cells styles fresh?) (displayed-row state row)])
+                     (capture-rendition state (if fresh? cells (vector-copy cells)) styles)))
+                 (screen-row-indexes state))]
+           [point (state-cursor-position state)])
+      (make-frame (list->vector (append history screen))
+                  (list (car point) (cdr point) (terminal-state-cursor-visible state))
+                  (list (terminal-state-rows state) (terminal-state-cols state))
+                  (state-screen-top state)
+                  (cons (terminal-state-row state) (terminal-state-col state))
+                  (terminal-state-cursor-shape state)
+                  (and (terminal-state-main-screen state) #t))))
+
+  (define (cell-clusters cells)
+    (let scan ([at 0] [out '()])
+      (if (= at (vector-length cells)) (reverse out)
+          (let ([end (let run ([end (+ at 1)])
+                       (if (and (< end (vector-length cells))
+                                (string=? (vector-ref cells end) ""))
+                           (run (+ end 1)) end))])
+            (scan end (cons (cons (string-length (vector-ref cells at)) (- end at)) out))))))
+
+  (define (terminal-emulator-frame emulator)
+    ;; One owned (text rows cursor size facts) snapshot, ready for the
+    ;; store/surface publisher. A child composing a synchronized frame gets
+    ;; its existing bounded hold; older inspection APIs still read raw state.
+    (read-emulator emulator 'emulator-frame
+      (lambda ()
+        (and (not (synchronized-update-pending? emulator))
+             (let* ([frame (capture-frame emulator)] [rows (frame-rows frame)])
+               (list (vector-map (lambda (row) (cell-row->string (rendition-cells row))) rows)
+                     (map (lambda (i)
+                            (let ([row (vector-ref rows i)])
+                              (list i (rendition-styles row) (rendition-links row)
+                                    (list (cons 'clusters (cell-clusters (rendition-cells row)))))))
+                          (iota (vector-length rows)))
+                     (frame-cursor frame) (frame-size frame)
+                     (list (cons 'cursor-style (frame-cursor-shape frame)))))))))
+
   (define (refresh-terminal! state)
-    (let ([size (head:buffer-window-size (terminal-state-buffer state))])
-      (when size
-        (with-mutex (terminal-state-lock state)
-          (resize-screen! state (max 1 (car size)) (max 1 (cdr size)))
-          (when (and (terminal-state-dirty state)
-                     (not (synchronized-update-pending? state)))
-            ;; Snapshot cells and faces together while the PTY grid is locked.
-            ;; Painting either one live can combine different stages of a
-            ;; full-screen application's redisplay into one torn frame.
-            (let* ([entries
-                    (if (terminal-state-main-screen state)
-                        '()
-                        (scrollback-entries (terminal-state-history state)))]
-                   [table (rendered-scrollback-table state)]
-                   [rendered
-                    (map (lambda (entry)
-                           (or (hashtable-ref table entry #f)
-                               (let* ([faces (scrollback-line-styles entry)]
-                                      [row (vector
-                                             (scrollback-line-cells entry)
-                                             (effective-style-row state faces)
-                                             (vector-map cell-style-link
-                                                         faces)
-                                             (placeholder-line
-                                               (scrollback-line-cells
-                                                 entry)))])
-                                 (hashtable-set! table entry row)
-                                 row)))
-                         entries)]
-                   [screen-pairs
-                    (map (lambda (row)
-                           (let-values ([(cells styles fresh?)
-                                         (displayed-row state row)])
-                             ;; Live rows mutate under the reader thread;
-                             ;; expanded rows are already private copies.
-                             (cons (if fresh? cells (vector-copy cells))
-                                   styles)))
-                         (screen-row-indexes state))]
-                   [screen-cells (map car screen-pairs)]
-                   [screen-styles (map cdr screen-pairs)])
-              (head:view-replace!
-                (terminal-state-buffer state)
-                (append (map (lambda (row) (vector-ref row 3)) rendered)
-                        (map placeholder-line screen-cells)))
-              (terminal-state-rendered-cells-set!
-                state
-                (list->vector
-                  (append (map (lambda (row) (vector-ref row 0)) rendered)
-                          screen-cells)))
-              (terminal-state-rendered-styles-set!
-                state
-                (list->vector
-                  (append (map (lambda (row) (vector-ref row 1)) rendered)
-                          (map (lambda (row) (effective-style-row state row))
-                               screen-styles))))
-              (terminal-state-rendered-links-set!
-                state
-                (list->vector
-                  (append (map (lambda (row) (vector-ref row 2)) rendered)
-                          (map (lambda (row) (vector-map cell-style-link row))
-                               screen-styles))))
-              ;; Cell/style rows are dynamic renderer data; their structural
-              ;; placeholder lines often remain identical across frames.
-              (paint:view-invalidate! (terminal-state-buffer state)))
-            (terminal-state-dirty-set! state #f))
-          (when (and (eq? (current-buffer) (terminal-state-buffer state))
-                     (not (memq (selected-window)
-                                (terminal-state-unfollowed-windows state))))
-            (present-terminal-live-screen! state))))))
+    (let* ([buffer (terminal-state-buffer state)] [size (head:buffer-window-size buffer)])
+      (let ([next
+             (with-mutex (terminal-state-lock state)
+               ;; A hidden terminal keeps its current grid but still needs
+               ;; a final snapshot when its process exits.
+               (when size (resize-screen! state (max 1 (car size)) (max 1 (cdr size))))
+               (and (or (terminal-state-dirty state) (not (terminal-state-rendered state)))
+                    (or (not (terminal-state-alive state)) (not (synchronized-update-pending? state)))
+                    (let ([frame (capture-frame state)])
+                      (terminal-state-dirty-set! state #f) frame)))])
+        ;; Finish every head change before callbacks can reenter refresh.
+        ;; No repaint or viewport callback executes under the emulator lock.
+        (head:call-with-display-update
+          (lambda ()
+            (when next
+              (let ([old (terminal-state-rendered state)])
+                (when (or (not old) (not (eq? (frame-alternate? old) (frame-alternate? next))))
+                  (terminal-state-unfollowed-windows-set! state '())))
+              (terminal-state-rendered-set! state next)
+              (head:view-replace! buffer
+                (vector-map rendition-placeholder (frame-rows next))
+                (list (cons 'cursor-style (frame-cursor-shape next))))
+              (paint:view-invalidate! buffer))
+            (when (and (eq? (current-buffer) buffer)
+                       (not (memq (selected-window) (terminal-state-unfollowed-windows state))))
+              (present-terminal-live-screen! state)))))))
+
+  (define (rendered-row buffer row)
+    (let* ([state (terminal-of buffer)] [frame (and state (terminal-state-rendered state))])
+      (and frame (< row (vector-length (frame-rows frame))) (vector-ref (frame-rows frame) row))))
 
   (define (terminal-row-styles buffer row line)
-    (let ([state (terminal-of buffer)])
-      (and state (terminal-state-rendered-styles state)
-           (< row (vector-length (terminal-state-rendered-styles state)))
-           (vector-ref (terminal-state-rendered-styles state) row))))
+    (let ([row (rendered-row buffer row)]) (and row (rendition-styles row))))
 
   (define (terminal-row-render buffer row line)
-    (let ([state (terminal-of buffer)])
-      (and state (terminal-state-rendered-cells state)
-           (< row (vector-length (terminal-state-rendered-cells state)))
-           (vector-ref (terminal-state-rendered-cells state) row))))
+    (let ([row (rendered-row buffer row)]) (and row (rendition-cells row))))
 
   (define (terminal-row-hyperlinks buffer row line)
-    (let ([state (terminal-of buffer)])
-      (if (and state (terminal-state-rendered-links state)
-               (< row (vector-length (terminal-state-rendered-links state))))
-          (let ([links (vector-ref (terminal-state-rendered-links state) row)])
+    (let ([row (rendered-row buffer row)])
+      (if row
+          (let ([links (rendition-links row)])
             (let loop ([column 0] [ranges '()])
               (if (= column (vector-length links))
                   (reverse ranges)
@@ -3253,13 +3242,14 @@
           '())))
 
   (define (materialize-terminal-transcript! state)
-    (when (terminal-state-rendered-cells state)
-      (head:view-replace!
-        (terminal-state-buffer state)
-        (map cell-row->string
-             (vector->list (terminal-state-rendered-cells state))))
-      (terminal-state-rendered-cells-set! state #f)
-      (terminal-state-rendered-styles-set! state #f)))
+    (let ([frame (terminal-state-rendered state)] [buffer (terminal-state-buffer state)])
+      (head:call-with-display-update
+        (lambda ()
+          (terminal-state-rendered-set! state #f)
+          (when frame
+            (head:view-replace! buffer
+              (vector-map (lambda (row) (cell-row->string (rendition-cells row))) (frame-rows frame))))
+          (head:detach-app! buffer)))))
 
   (define (reader-loop state)
     (define (display-redraw!)
@@ -3300,9 +3290,7 @@
           (guard (ex [else (void)]) (refresh-terminal! state))
           (guard (ex [else (void)])
             (set-buffer-wrap! (terminal-state-buffer state) #f))
-          (guard (ex [else (void)]) (materialize-terminal-transcript! state))
-          (guard (ex [else (void)])
-            (head:detach-app! (terminal-state-buffer state)))))
+          (guard (ex [else (void)]) (materialize-terminal-transcript! state))))
       ;; Publish the dead state before waiting for the session leader.  A
       ;; platform-specific wait must never make the editor appear frozen.
       (guard (ex [else (void)]) (display-redraw!))
@@ -3572,16 +3560,13 @@
                        (+ 32 (min y 223)))]))))
 
   (define (terminal-emulator-mouse-input emulator code x y release?)
-    (unless (terminal-emulator? emulator)
-      (error 'terminal-emulator-mouse-input
-             "expected a terminal emulator" emulator))
     (unless (and (integer? code) (integer? x) (> x 0)
                  (integer? y) (> y 0) (boolean? release?))
       (error 'terminal-emulator-mouse-input
              "expected a button code, positive coordinates, and release flag"
              code x y release?))
-    (and (terminal-state-mouse emulator)
-         (mouse-bytes emulator code x y release?)))
+    (read-emulator emulator 'emulator-mouse-input
+      (lambda () (and (terminal-state-mouse emulator) (mouse-bytes emulator code x y release?)))))
 
   (define (send-mouse! state code x y release?)
     (cond [(mouse-bytes state code x y release?)
@@ -3703,7 +3688,8 @@
             buffer
             (lambda (window)
               (and state
-                   (terminal-state-cursor-visible state)
+                   (terminal-state-rendered state)
+                   (caddr (frame-cursor (terminal-state-rendered state)))
                    (not (memq window
                               (terminal-state-unfollowed-windows state))))))
           (mode:choose! buffer "terminal")
@@ -3720,8 +3706,8 @@
               buffer
               (lambda (ignored)
                 (and (terminal-state-alive state)
-                     (cons (terminal-state-row state)
-                           (terminal-state-col state)))))
+                     (terminal-state-rendered state)
+                     (frame-position (terminal-state-rendered state)))))
             (set! terminals (cons state terminals))
             (fork-thread (lambda () (reader-loop state)))
             (void))))))
@@ -3794,6 +3780,10 @@
          (("procedure" . "(terminal:emulator-screen emulator)")) "vector"
          ("(terminal)") terminal "Terminal" #f
          "Return a copy of a headless emulator's visible cell rows.")
+        ((terminal:emulator-frame)
+         (("procedure" . "(terminal:emulator-frame emulator)")) "list or #f"
+         ("(terminal)") terminal "Terminal" #f
+         "Return one owned (text rows cursor size facts) snapshot for store/surface publication, including displayed scrollback and cluster geometry. Return #f during a child's bounded mode 2026 hold. Cursor and row coordinates refer to the returned text; facts include cursor-style.")
         ((terminal:emulator-styles)
          (("procedure" . "(terminal:emulator-styles emulator)")) "vector"
          ("(terminal)") terminal "Terminal" #f

@@ -235,4 +235,35 @@
      (test:check 'delete-denies-metadata-before-cleanup
        (list (head:buffer-rendition current) (head:read-rendition current '((0 . 1)))) '(#f #f))
      (head:before-frame!)
+
+     ;; The emulator's publication data must drive the ordinary surface
+     ;; renderer, including physical glyph widths, without a terminal mode.
+     (test:check 'emulator-frames-render-through-the-surface-contract
+       (map
+         (lambda (case)
+           (let ([emulator (terminal:make-emulator 2 8)])
+             (terminal:emulator-feed! emulator (cdr case))
+             (let* ([frame (terminal:emulator-frame emulator)] [text (car frame)]
+                    [id (store:create! author "emulator-frame" text '((audience . ())))]
+                    [height (vector-length text)] [mirror (terminal:make-emulator (+ height 1) 8)]
+                    [port (open-output-string)])
+               (surface:publish! id #f 0 (cadr frame) (caddr frame) (cadddr frame))
+               (let-values ([(text revision) (store:snapshot id)])
+                 (let ([rendered (render:prepare #f id text revision (list (cons 0 height)))])
+                   (parameterize ([sys:terminal-output-port port])
+                     (do ([i 0 (+ i 1)]) ((= i height))
+                       (let ([row (render:row rendered i)])
+                         (paint:goto (+ i 1) 1)
+                         (paint:display-editor-line (car row) (car row) #f '() (caddr row)
+                           0 (cadr row) #f 8 8))))))
+               (terminal:emulator-feed! mirror (get-output-string port))
+               (store:delete! author id)
+               (cons (car case)
+                     (equal? (vector->list text)
+                       (map (lambda (i) (vector-ref (terminal:emulator-screen mirror) i)) (iota height)))))))
+         '((clusters . "界q\x301;Z")
+           (decorated . "\x1b;#6界A")
+           (scrollback . "one\r\ntwo\r\nthree\r\nfour")
+           (alternate . "one\r\ntwo\r\nthree\x1b;[?1049hALT")))
+       '((clusters . #t) (decorated . #t) (scrollback . #t) (alternate . #t)))
      (test:finish! 'render)))
