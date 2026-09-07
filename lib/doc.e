@@ -1,7 +1,7 @@
 ;; doc.e -- the documentation corpus's entry: the library (doc).
 ;;
 ;; One record for every documented name -- from the reference corpus
-;; describe.e extracts (TSPL, CSUG) or from a module describing its
+;; reference.e extracts (TSPL, CSUG) or from a module describing its
 ;; own commands -- and the registry modules publish into at init!, so
 ;; a module's reload retracts its entries with its other
 ;; registrations.  Below every module that documents itself, the

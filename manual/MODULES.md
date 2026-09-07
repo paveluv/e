@@ -18,6 +18,10 @@ termios, ioctl, signals, PTYs, and other foreign procedures. Feature modules
 compose the command API and the seams and, when necessary, narrowly scoped
 system facilities.
 
+Documentation data lives in `reference` and the module-entry registry in `doc`.
+Use `reference:lookup` for queries that need no browser; `describe` adds the
+head's prompts, key annotations, and Markdown display.
+
 Every library but `edit` is imported with its own prefix, and that is also how
 M-x sees it: `store:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only `edit`'s
 names are bare. Modules are named in the singular (`style`, `file`, `mode`,

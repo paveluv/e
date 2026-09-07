@@ -12,8 +12,8 @@
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
 ;; down arrows browse the history, and C-g interrupts a runaway
-;; evaluation. Parameter suggestions are read live from the describe
-;; module's structured entries, with source and arity as fallbacks.
+;; evaluation. Parameter suggestions query the base's reference corpus
+;; and live module entries, with source and arity as fallbacks.
 ;; C-x C-e runs eval:run! over the whole current buffer, or an explicit
 ;; region/buffer target, in that same top level.
 
@@ -28,8 +28,7 @@
           (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
-          (prefix (only (describe) lookup) describe:)
-          (prefix (doc) doc:)
+          (prefix (only (reference) lookup) reference:)
           (prefix (doc) doc:)
           (only (edit) regions-of region-text)
           (prefix (only (scheme-format) indent-lines) scheme-format:)
@@ -131,7 +130,7 @@
                                       (signature-arity best))))
                       (set! best sig)))))
               (doc:forms entry)))
-          (describe:lookup sym))
+          (reference:lookup sym))
         (and best (signature-tokens best)))))
 
   (define (symbol-params sym)

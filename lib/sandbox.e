@@ -21,11 +21,11 @@
 ;;      plain data -- strings, numbers, pairs, lists.  Never export
 ;;      anything that hands out a mutable structure the editor holds.
 ;;
-;;   2. Evaluations are fueled by engines (policy.e), and an engine's
-;;      expiry suspends without unwinding: a reader caught mid-lock
-;;      would strand the store's mutex forever.  Every reader that
-;;      can take a lock therefore runs with interrupts off -- fuel
-;;      still bounds the computation around it.
+;;   2. Evaluations are fueled by engines (policy.e). Expiry runs wind
+;;      exits, including with-mutex cleanup. Readers must publish only
+;;      complete state and release resources on unwind. The small store
+;;      reads below retain their interrupt mask; corpus loading remains
+;;      interruptible and uses its own wind-protected mutex.
 
 (library (sandbox)
   (export
@@ -83,7 +83,7 @@
                         window-prow window-pcol)
                   head:)
           (prefix (only (log) entries format-entry) log:)
-          (prefix (only (describe) lookup) describe:)
+          (prefix (only (reference) lookup) reference:)
           (prefix (only (doc) forms returns libraries description) doc:))
 
   ;; Rule 2 above: nothing between disable and enable may raise
@@ -200,9 +200,9 @@
     ;; The documentation corpus, flattened: R6RS, Chez Scheme, and
     ;; every e command and parameter.  The authoritative reference.
     (let ([entries (guard (ex [else '()])
-                     (describe:lookup (if (symbol? name)
-                                          name
-                                          (string->symbol name))))])
+                     (reference:lookup (if (symbol? name)
+                                         name
+                                         (string->symbol name))))])
       (if (null? entries)
           (format "no documentation entry for ~a" name)
           (clipped

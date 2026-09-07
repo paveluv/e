@@ -28,8 +28,10 @@ extensions from the Chez Scheme User's Guide. Fetch it once from inside e:
 ```
 
 The command downloads and extracts roughly 1,400 entries into
-`data/describe/`, which is intentionally outside version control. Downloading
-uses `curl`; parsing and indexing are handled by `describe.e`.
+`data/describe/`, which is intentionally outside version control. It uses the
+[HTTP client](HTTPS.md). Fetch steps are recorded in `<log>`; completion also
+appears in the echo area. Queries remain available during a fetch, and another
+fetch is refused until the current one finishes.
 
 Without the downloaded corpus, module-published documentation remains
 available.
@@ -43,9 +45,14 @@ collection, optionally filtered by a predicate. The entry accessors
 manual to be queried by ordinary Scheme code.
 
 ```scheme
-(describe 'eq-hashtable-ref)
+(describe:this eq-hashtable-ref)
 (describe:lookup 'lambda)
 ```
+
+Code that needs documentation data can import `(reference)` under `reference:`.
+Its `lookup`, `entries`, and `browser-url` operations are also exported under
+`describe:`; `reference:fetch!` is the same operation as `describe:fetch-data!`.
+These queries include both the downloaded corpus and current `doc:` registrations.
 
 ## Publishing module documentation
 

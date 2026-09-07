@@ -7,21 +7,18 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
 (eval
   '(begin
      (import (prefix (store) store:)
+             (prefix (only (reference) lookup) reference:)
+             (prefix (test) test:)
              (only (chezscheme) environment eval format))
 
-     (define checks 0)
-
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'sandbox-test label actual expected)))
+     (define check test:check)
 
      (define (contains? text needle)
        (let ([n (string-length text)] [m (string-length needle)])
@@ -98,5 +95,44 @@
                       tier)
             #t)
 
+     ;; A cold corpus read may exhaust its engine fuel. Wind cleanup must
+     ;; release its resources and leave no partial index for another reader;
+     ;; retain the expired engine through the descriptor check so GC cannot
+     ;; hide a leak, then discard it as policy:session-eval! does.
+     (let* ([root (format "/tmp/e-sandbox-reference-~a-~a" (get-process-id) (random 1000000))]
+            [data (string-append root "/data/describe")]
+            [path (string-append data "/describe.sdata")]
+            [descriptors (cond [(file-directory? "/proc/self/fd") "/proc/self/fd"]
+                               [(file-directory? "/dev/fd") "/dev/fd"] [else #f])]
+            [expired #f]
+            [describe-text (eval 'describe-text tier)])
+       (for-each mkdir (list root (string-append root "/lib")
+                             (string-append root "/data") data))
+       (dynamic-wind
+         void
+         (lambda ()
+           (call-with-output-file path
+             (lambda (port)
+               (write
+                 (map (lambda (i)
+                        (list (list (if (zero? i) 'fuel-reference (string->symbol (format "fuel~a" i))))
+                              '(("procedure" . "(fuel-reference)"))
+                              #f '() 'fixture "Fuel" #f "bounded reference"))
+                      (iota 10000)) port)))
+           (parameterize ([library-directories
+                           (cons (cons (string-append root "/lib") "eo") (library-directories))])
+             (let ([before (and descriptors (length (directory-list descriptors)))])
+               ((make-engine (lambda () (describe-text 'fuel-reference))) 10000
+                (lambda (ticks value) (void)) (lambda (engine) (set! expired engine)))
+               (let* ([finish (test:worker (lambda () (length (reference:lookup 'fuel-reference))))]
+                      [count (finish)]
+                      [after (and descriptors (length (directory-list descriptors)))])
+                 (check 'expired-documentation-read-keeps-corpus-usable
+                   (list (procedure? expired) count (equal? before after)) '(#t 1 #t))))))
+         (lambda ()
+           (set! expired #f)
+           (delete-file path)
+           (for-each delete-directory
+             (list data (string-append root "/data") (string-append root "/lib") root)))))
      (store:delete! '(head test) id)
-     (format #t "~a sandbox checks passed\n" checks)))
+     (test:finish! 'sandbox)))
