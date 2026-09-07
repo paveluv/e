@@ -241,7 +241,7 @@
      (let ([other (head:tool-buffer "projection-resize")])
        (head:set-layout-root!
          (head:make-layout-split 'below w
-           (head:make-window other 0 0 0 0 2 12 1 80 80 1 'default) 1 1))
+           (head:make-window other 0 0 0 0 2 12 80 80 'default) 1 1))
        (paint:set-screen-rows! 5)
        (paint:set-screen-cols! 80)
        (publish '((2 #(blue blue blue) #(#f #f #f) ())))

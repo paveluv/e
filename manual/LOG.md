@@ -73,19 +73,24 @@ File prompts use it to recall visited and saved paths; `M-x` uses eval records
 for expression history. History is therefore presentation-independent and
 does not scrape rendered text.
 
+Policy activity uses the same structured log, with no separate audit history:
+
+```scheme
+(map log:datum (log:entries 'policy))
+```
+
+These events are recorded quietly and remain visible in `<log policy>`.
+
 ## API
 
 - `(log:add! component datum [show?])` adds a record; the component is a
   symbol, and `show?` defaults to true. Passing `#f` logs quietly.
-- `(log:record index)` returns one owned record by its zero-based append
-  index; an index outside the log raises an error.
 - `(log:entries [component])` returns owned records, newest first, optionally
   filtered by component.
 - `(log:snapshot [start])` returns two values: records from `start` (default
   zero), newest first, and the count captured with that snapshot. Use the
   returned count as the next start for an incremental reader. Formatting
   callbacks run after the snapshot, so additions belong to the next read.
-- `log:length` reports the record count.
 - `log:history` derives values for interactive history.
 - `log:register-formatter!` installs component presentation.
 - `present-log-entry!` and `present-log-entries!` expose the shared echo

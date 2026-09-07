@@ -144,11 +144,19 @@ thread; a newly forked worker inherits its parent's context. This attributes
 work; it grants no permissions. The editor's startup, configuration, and
 command loop run as `head:ui-actor`.
 
-`policy:mint! actor policy [owner [audit!]]` defaults the escalation owner
+`policy:mint! actor policy [owner]` defaults the escalation owner
 to `actor:current`. Standalone callers can supply an owner explicitly or
 use `actor:call-as`; without either, the owner is `#f` and questions have
 no implicit recipient. Session evaluation runs as the session actor and
 restores its caller's context, including when evaluation runs out of fuel.
+
+`policy:make grants fuel buffers cap` specifies the sandbox bindings,
+engine ticks per evaluation, writable buffer names (`'any` or a list), and
+result/output character cap. `policy:reader` grants the read-only sandbox
+with an empty writable-buffer list. Sessions have no edit-count limit;
+`policy:revoke!` ends their permission. `policy:sessions` lists `(actor owner)`
+pairs. Session events go quietly to the shared log under component `policy`;
+use `log:entries`/`log:datum` to query them and `log:subscribe!` to observe them.
 
 ## Prompt API
 

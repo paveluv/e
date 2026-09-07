@@ -102,9 +102,10 @@
        (list (map (lambda (args) (test:raises? (lambda () (apply actor:register! args)))) invalid-registrations)
              (equal? before-invalid (actor:attached)))
        (list (make-list (length invalid-registrations) #t) #t))
-     (test:check 'duplicate-identity-keeps-the-endpoint
-       (list (test:raises? (lambda () (actor:register! canonical void)) kernel:registration-conflict?)
-             (eq? original-delivery (actor:deliver canonical))) '(#t #t))
+     (let* ([refused? (test:raises? (lambda () (actor:register! canonical void)) kernel:registration-conflict?)]
+            [sent? (actor:send! canonical 'still-original)])
+       (test:check 'duplicate-identity-keeps-the-endpoint
+         (list refused? sent? (original-delivery)) '(#t #t (hello still-original))))
 
      ;; One replacement fixture covers commit, exception, and continuation
      ;; escape. Other threads and presence retain the published endpoint

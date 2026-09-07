@@ -1328,8 +1328,7 @@
                   [first (- usable second)]
                   [w (head:make-window b top-row (head:window-topseg current-window)
                                        left-col point-row point-col
-                                       (max 1 (- second 1))
-                                       (max 1 (- second 1)) 0 0 second
+                                       (max 1 (- second 1)) 0 0
                                        (head:window-wrap current-window))]
                   [node (head:make-layout-split orientation current-window w
                                                 first second)])

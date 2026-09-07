@@ -47,8 +47,8 @@
      ;; Nonselected windows and saved/selection positions must follow too.
      (define b (fresh "position-before" '("abcdef" "tail")))
      (define w (head:current))
-     (define w2 (head:make-window b 1 0 0 1 2 12 1 80 80 1 'default))
-     (define w3 (head:make-window b 0 0 0 0 5 12 1 80 80 1 'default))
+     (define w2 (head:make-window b 1 0 0 1 2 12 80 80 'default))
+     (define w3 (head:make-window b 0 0 0 0 5 12 80 80 'default))
      (head:set-windows! (append (head:windows) (list w2 w3)))
      (head:buffer-spot-row-set! b 1)
      (head:buffer-spot-col-set! b 1)

@@ -70,7 +70,6 @@
     display write newline format
     ;; the editor, read-only, by name
     buffer-names buffer-lines-count buffer-text-line buffer-revision
-    current-buffer-name point
     read-buffer list-buffers log-tail describe-text)
   (import (rnrs) (rnrs mutable-strings)
           (only (chezscheme)
@@ -79,9 +78,6 @@
                 exact->inexact open-output-string get-output-string
                 put-string disable-interrupts enable-interrupts)
           (prefix (store) store:)
-          (prefix (only (head) buffer-name window-buffer current
-                        window-prow window-pcol)
-                  head:)
           (prefix (only (log) entries format-entry) log:)
           (prefix (only (reference) lookup) reference:)
           (prefix (only (doc) forms returns libraries description) doc:))
@@ -123,14 +119,6 @@
   (define (buffer-revision name)
     (let ([id (named 'buffer-revision name)])
       (uninterruptible (lambda () (store:revision id)))))
-
-  (define (current-buffer-name)
-    ;; the buffer the head's user is looking at
-    (head:buffer-name (head:window-buffer (head:current))))
-
-  (define (point)
-    ;; the head's cursor: (row . col)
-    (cons (head:window-prow (head:current)) (head:window-pcol (head:current))))
 
   ;;; Bounded, formatted views -----------------------------------------------
 

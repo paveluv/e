@@ -11,14 +11,17 @@
   '(begin
      (import (prefix (log) log:) (prefix (actor) actor:)
              (prefix (kernel) kernel:) (prefix (test) test:))
+     (define (record-count)
+       (let-values ([(records end) (log:snapshot)]) end))
      (define head '(head "log test"))
-     (define base (log:length))
+     (define base (record-count))
      (define entry (actor:call-as head (lambda () (log:add! 'probe "hello" #f))))
-     (test:check 'owned-actor-record-at-an-index
-       (list (and (integer? (log:time entry)) (exact? (log:time entry)) (> (log:time entry) 0))
-             (cdr entry) (= (log:length) (+ base 1))
-             (equal? entry (log:record base)) (eq? entry (log:record base)))
-       (list #t (list head 'probe "hello") #t #t #f))
+     (let-values ([(records end) (log:snapshot base)])
+       (test:check 'owned-actor-record-and-snapshot
+         (list (and (integer? (log:time entry)) (exact? (log:time entry)) (> (log:time entry) 0))
+               (cdr entry) (= end (+ base 1))
+               (equal? records (list entry)) (eq? entry (car records)))
+         (list #t (list head 'probe "hello") #t #t #f)))
      (log:add! 'other '(a . b) #f)
      (log:add! 'probe "again" #f)
      (test:check 'newest-first-component-queries-and-anonymous-base-work
@@ -29,10 +32,10 @@
        (let-values ([(records end) (log:snapshot (+ base 1))])
          (list (map log:datum records) end))
        (list '("again" (a . b)) (+ base 3)))
-     (test:check 'invalid-reads-and-subscriptions-do-not-expose-unused-slots
+     (test:check 'invalid-snapshots-and-subscriptions-refuse
        (map test:raises?
-         (list (lambda () (log:record -1)) (lambda () (log:record (log:length)))
-               (lambda () (log:snapshot (+ (log:length) 1)))
+         (list (lambda () (log:snapshot -1)) (lambda () (log:snapshot 1.0))
+               (lambda () (log:snapshot (+ (record-count) 1)))
                (lambda () (log:subscribe! #f)) (lambda () (log:add! "component" 'bad))))
        '(#t #t #t #t #t))
 
@@ -57,7 +60,7 @@
 
      (let* ([actor (list 'head (string-copy "owned"))]
             [payload (vector (string-copy "first") (list 'item) (u8-list->bytevector '(1 2)))]
-            [index (log:length)] [observed (test:recorder)])
+            [index (record-count)] [observed (test:recorder)])
        (define (change! e)
          (set-car! e 0)
          (string-set! (cadr (log:actor e)) 0 #\X)
@@ -69,20 +72,20 @@
        (let* ([first (log:subscribe! (lambda (e mode) (when (eq? (log:component e) 'owned) (change! e))))]
               [second (log:subscribe! (lambda (e mode) (when (eq? (log:component e) 'owned) (observed e))))]
               [returned (actor:call-as actor (lambda () (log:add! 'owned payload #f)))]
-              [original (log:record index)])
+              [original (car (log:entries 'owned))])
          (string-set! (cadr actor) 0 #\Y)
          (string-set! (vector-ref payload 0) 0 #\Y)
          (set-car! (vector-ref payload 1) 'caller)
          (bytevector-u8-set! (vector-ref payload 2) 0 8)
          (for-each change!
-           (list returned (log:record index) (car (log:entries 'owned))
+           (list returned (car (log:entries 'owned))
                  (let-values ([(records end) (log:snapshot index)]) (car records))))
          (log:register-formatter! 'owned
            (lambda (d) (string-set! (vector-ref d 0) 0 #\Z) (vector-ref d 0)))
-         (log:format-entry (log:record index))
+         (log:format-entry (car (log:entries 'owned)))
          (log:history 'owned (lambda (d) (string-set! (vector-ref d 0) 0 #\Z) (vector-ref d 0)))
          (test:check 'input-results-readers-and-subscribers-own-independent-data
-           (list (log:record index) (observed)) (list original (list original)))
+           (list (car (log:entries 'owned)) (observed)) (list original (list original)))
          (for-each log:unsubscribe! (list first second))))
      (let ([box (box 1)] [cycle (cons 'loop '())])
        (set-cdr! cycle cycle)
@@ -122,7 +125,7 @@
      ;; Hold delivery while writers cross growth boundaries. Readers see a
      ;; committed prefix; writers complete before the first callback is freed.
      ;; A reentrant append follows that prefix, with its parent's context.
-     (let* ([start (log:length)] [arrived (test:gate)] [release (test:gate)]
+     (let* ([start (record-count)] [arrived (test:gate)] [release (test:gate)]
             [heard (test:recorder)] [revoked (test:recorder)] [late (test:recorder)]
             [late-token #f] [fixed #f] [writer-count 4] [per-writer 80])
        (define (worker-actor i) (list 'agent (format "writer-~a" i)))

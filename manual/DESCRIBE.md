@@ -47,7 +47,7 @@ available.
 
 ## Structured queries
 
-`describe:lookup` returns entries for a name. `describe:entries` returns the complete
+`reference:lookup` returns entries for a name. `reference:entries` returns the complete
 collection, optionally filtered by a predicate. The entry accessors
 (`doc:names`, `doc:forms`, `doc:returns`, `doc:libraries`, `doc:source`,
 `doc:chapter`, `doc:url`, `doc:description`) expose each field, allowing the
@@ -55,13 +55,14 @@ manual to be queried by ordinary Scheme code.
 
 ```scheme
 (describe:this eq-hashtable-ref)
-(describe:lookup 'lambda)
+(reference:lookup 'lambda)
 ```
 
 Code that needs documentation data can import `(reference)` under `reference:`.
-Its `lookup`, `entries`, and `browser-url` operations are also exported under
-`describe:`; `reference:fetch!` is the same operation as `describe:fetch-data!`.
-These queries include both the downloaded corpus and current `doc:` registrations.
+Its `lookup`, `entries`, and `browser-url` operations own corpus queries;
+`reference:fetch!` is the same operation as the interactive
+`describe:fetch-data!` command. These queries include both the downloaded corpus
+and current `doc:` registrations.
 
 For a head integration, `reference:page!` takes a head actor, a name and a list
 of key annotations, returning the private source's store id or `#f` when the

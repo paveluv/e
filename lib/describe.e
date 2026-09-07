@@ -1,13 +1,12 @@
 ;; describe.e -- the head's reference browser and documentation commands.
 ;;
-;; Corpus queries and fetching are aliases of the base's reference: API.
-;; This facade adds completion, local key annotations, and Markdown display.
+;; Corpus queries belong to reference:. This facade adds completion, local
+;; key annotations, Markdown display, and the interactive fetch command.
 
 (library (describe)
   (export init! (rename (describe this) (describe! show!) (describe!! show!!)
                         (describe-at-point! at-point!)
-                        (reference:fetch! fetch-data!) (reference:lookup lookup)
-                        (reference:entries entries) (reference:browser-url browser-url)))
+                        (reference:fetch! fetch-data!)))
   (import (chezscheme) (except (edit) init!)
           (prefix (doc) doc:) (prefix (reference) reference:)
           (prefix (prompt) prompt:) (prefix (mode) mode:)

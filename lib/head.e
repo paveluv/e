@@ -27,7 +27,7 @@
           buffer-spot-col buffer-spot-col-set!
           buffer-spot-top buffer-spot-top-set!
           buffer-line-numbers-setting buffer-line-numbers-setting-set!
-          buffer-store-id buffer-store-id-set!
+          buffer-store-id
           buffer-store-rev buffer-store-rev-set!
           buffer-rendition read-rendition refresh-renditions!
           buffers set-buffers!
@@ -41,10 +41,8 @@
           window-prow window-prow-set!
           window-pcol window-pcol-set!
           window-size window-size-set!
-          window-goal window-goal-set!
           window-xoff window-xoff-set!
           window-width window-width-set!
-          window-wgoal window-wgoal-set!
           window-wrap window-wrap-set!
           make-layout-split layout-split?
           layout-split-orientation
@@ -139,7 +137,7 @@
                      buffer-line-numbers-setting-set!)
             ;; the buffer's twin in the (store), and the store
             ;; revision this buffer's lines last agreed with
-            (mutable store-id) (mutable store-rev)
+            store-id (mutable store-rev)
             ;; Local content has its own revision, independent of repaint.
             ;; Either owner retains adopted deltas in a bounded ring, so
             ;; derived views can follow exactly the text this head sees.
@@ -169,19 +167,12 @@
       (mutable topseg)
       (mutable left)
       (mutable prow) (mutable pcol)
-      ;; text height in screen lines, written by the layout: the
-      ;; goal is the user's chosen proportion, and the layout
-      ;; realizes the goals in whatever space is there --
-      ;; recomputed fresh each redraw, so temporary changes (a
-      ;; grown echo area) never drift them
+      ;; Text height is layout output; proportions belong to the split tree.
       (mutable size)
-      (mutable goal)
       ;; horizontal band geometry, written by the layout: the
       ;; window's first screen column and its width
       (mutable xoff)
       (mutable width)
-      ;; column proportion within a band shared side by side
-      (mutable wgoal)
       ;; soft-wrap long lines onto continuation rows instead of
       ;; scrolling horizontally
       (mutable wrap)
@@ -218,11 +209,10 @@
       (let loop ([n 0])
         (if (memv n taken) (loop (+ n 1)) n))))
 
-  (define (make-window buffer top topseg left prow pcol size goal
-                       xoff width wgoal wrap)
+  (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size goal xoff width wgoal wrap #t))
+                  size xoff width wrap #t))
 
   (define (window-numbered n)
     ;; the live window numbered n, or #f
@@ -2101,7 +2091,7 @@
   (define seat-initialized
     (let ([b (new-buffer "*scratch*")])
       (set! the-buffers (cons b (remq b the-buffers)))
-      (let ([w (make-window b 0 0 0 0 0 0 0 0 0 1 'default)])
+      (let ([w (make-window b 0 0 0 0 0 0 0 0 'default)])
         (set! the-windows (list w))
         (set! the-root w)
         (set! the-current w))))

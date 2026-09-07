@@ -81,7 +81,7 @@
      (head:window-size-set! w1 12)
      (define source (fresh "anchors.md" #f))
      (define view (current-buffer))
-     (define w2 (head:make-window view 4 0 0 4 2 12 1 80 80 1 'default))
+     (define w2 (head:make-window view 4 0 0 4 2 12 80 80 'default))
      (head:set-layout-root! (head:make-layout-split 'right w1 w2 1 1))
      (goto-point! '(2 . 3))
      (head:window-top-set! w1 2)
@@ -126,7 +126,7 @@
      (for-each
        (lambda (local?)
          (let* ([source (fresh "private-or-shared.md" local?)] [view (current-buffer)]
-                [source-window (head:make-window source 0 0 0 0 0 12 1 80 80 1 'default)])
+                [source-window (head:make-window source 0 0 0 0 0 12 80 80 'default)])
            (head:set-windows! (list w1 w2 source-window))
            (place! view "Middle" "Omega" #f)
            (call-with-buffer source (lambda () (goto-point! '(0 . 0)) (insert-text! "# Before\n\n")))
@@ -252,18 +252,13 @@
             (vector-ref (head:buffer-fact table-view 'markdown-rendering #f) 8)
             (caddr (head:edit-basis table)))
 
-     ;; Seven-field caches from the previous renderer still permit
-     ;; width/reload projection, and acquire provenance on first refresh.
-     (define old-cache (head:buffer-fact table-view 'markdown-rendering #f))
-     (define legacy (make-vector 7))
-     (do ([i 0 (+ i 1)]) ((= i 7)) (vector-set! legacy i (vector-ref old-cache i)))
-     (head:buffer-fact-set! table-view 'markdown-rendering legacy)
+     ;; Rebinding the current renderer preserves source anchors on refit.
      (head:window-width-set! w1 80)
      (kernel:retract-module! 'markdown-anchor)
      (parameterize ([kernel:registering-module 'markdown-anchor]) (markdown:init!))
      (head:before-frame!)
-     (check 'legacy-cache-reload-preserves-anchors (anchors table-view) (expected "After table" "Tail" #f))
-     (check 'legacy-cache-reload-adds-provenance
+     (check 'renderer-rebind-preserves-anchors (anchors table-view) (expected "After table" "Tail" #f))
+     (check 'renderer-rebind-keeps-provenance
             (vector-ref (head:buffer-fact table-view 'markdown-rendering #f) 8)
             (caddr (head:edit-basis table)))
 

@@ -780,7 +780,7 @@
      ;; evaluate through its sandbox, and hit the edit allowlist
      (check 'minted-session-evals-and-is-fenced
        (read-editor
-         '(let* ([s (policy:mint! '(agent wired) (policy:make 'all 10000000 0 '() 4000))]
+         '(let* ([s (policy:mint! '(agent wired) (policy:make 'all 10000000 '() 4000))]
                  [result (policy:session-eval! s "(+ 1 2)")]
                  [edit-result
                   (let-values ([(status detail)
@@ -1069,15 +1069,13 @@
 
      (check 'reference-queries-share-one-base-after-head-reloads
        (read-editor
-         '(list (eq? describe:lookup reference:lookup)
-                (eq? describe:entries reference:entries)
-                (eq? describe:fetch-data! reference:fetch!)
-                (eq? describe:browser-url reference:browser-url)
+         '(list (eq? describe:fetch-data! reference:fetch!)
                 (map (lambda (name) (kernel:module-requires? name "describe")) '("sandbox" "eval"))
+                (kernel:module-requires? "sandbox" "head")
                 (length (reference:lookup 'describe:show!))
                 (let ([text (sandbox:describe-text 'describe:show!)])
                   (and (string:search text "(describe:show! name)" 0 (string-length text)) #t))))
-       '(#t #t #t #t (#f #f) 1 #t))
+       '(#t (#f #f) #f 1 #t))
 
      ;; M2 exit, deliberately after the reload scenarios above (Q71): the
      ;; base's live transcript is readable by an actor, then

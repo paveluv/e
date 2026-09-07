@@ -782,10 +782,8 @@
   (define (rendering-width r) (vector-ref r 4))
   (define (rendering-measure r) (vector-ref r 5))
   (define (rendering-renderer r) (vector-ref r 6))
-  ;; Read old seven-field caches after a renderer reload.  They have no
-  ;; source provenance, so the first refresh can only clamp source rows.
-  (define (rendering-input r) (and (> (vector-length r) 7) (vector-ref r 7)))
-  (define (rendering-revision r) (and (> (vector-length r) 8) (vector-ref r 8)))
+  (define (rendering-input r) (vector-ref r 7))
+  (define (rendering-revision r) (vector-ref r 8))
 
   (define (view-row-styles b row line)
     (let ([r (rendering-of b)])
@@ -836,7 +834,7 @@
           (let-values ([(lines revision changes)
                         (if source (head:snapshot-since source basis)
                             (values (list->vector input) #f #f))])
-            (unless (and old (> (vector-length old) 8)
+            (unless (and old
                          (eq? renderer-token (rendering-renderer old))
                          (eq? source (rendering-input old))
                          (eqv? revision (rendering-revision old))

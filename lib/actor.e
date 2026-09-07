@@ -15,7 +15,7 @@
 
 (library (actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
-          current call-as identity? audience? in-audience? deliver send!
+          current call-as identity? audience? in-audience? send!
           ask! answer! cancel! pending)
   (import (rnrs)
           (only (chezscheme) box unbox set-box! void make-mutex with-mutex
@@ -103,10 +103,6 @@
                      (reverse added)))))))
 
   (define (unsubscribe! token) (kernel:registry-unobserve! token))
-
-  (define (deliver actor)
-    ;; Delivery procedures may run on any thread: post/wake, never block.
-    (let ([entry (registration-of actor)]) (and entry (registration-delivery entry))))
 
   (define (send! to message)
     ;; Deliver an owned plain message; #f if unreachable or delivery fails.

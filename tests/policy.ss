@@ -1,13 +1,13 @@
 #!/usr/bin/env scheme-script
 
 ;; Capability minting and budgets: sessions curried with an actor's
-;; identity, fueled evaluation, edit quotas and allowlists, the
+;; identity, fueled evaluation and buffer permissions, the
 ;; escalation path, revocation, and the audit trail.  Run from the
 ;; repository root.
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
@@ -18,21 +18,10 @@
              (prefix (text) text:)
              (prefix (actor) actor:)
              (prefix (kernel) kernel:)
-             (only (chezscheme) box unbox set-box! format))
+             (prefix (log) log:)
+             (prefix (test) test:))
 
-     (define checks 0)
-
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'policy-test label actual expected)))
-
-     (define (contains? text needle)
-       (let ([n (string-length text)] [m (string-length needle)])
-         (let scan ([i 0])
-           (cond [(> (+ i m) n) #f]
-                 [(string=? (substring text i (+ i m)) needle) #t]
-                 [else (scan (+ i 1))]))))
+     (define check test:check)
 
      ;; an owner head with a mailbox, and a buffer to work on
      (define owner '(head test))
@@ -43,48 +32,47 @@
      (define notes (store:create! owner "notes" '("one" "two")))
      (define secret (store:create! owner "secret" '("hidden")))
 
-     ;; the audit trail, injected
-     (define audit '())
-     (define (audit! entry) (set! audit (cons entry audit)))
+     ;; Observe the shared log instead of replacing the policy's audit sink.
+     (define observed (test:recorder))
+     (define audit-subscription
+       (log:subscribe!
+         (lambda (record presentation)
+           (when (eq? (log:component record) 'policy)
+             (observed (list (log:datum record) presentation))))))
 
      (define s (policy:mint!
                  agent
-                 (policy:make 'all 100000000 2 '("notes") 4000)
-                 owner audit!))
+                 (policy:make 'all 100000000 '("notes") 4000)
+                 owner))
 
-     (check 'minted (policy:session? s) #t)
-     (check 'session-is-listed
-            (policy:sessions) (list (list agent owner 2)))
+     (check 'minted-listed-and-audited-once
+       (list (policy:session? s) (policy:sessions)
+             (map log:datum (log:entries 'policy)))
+       (list #t (list (list agent owner)) (list (list 'mint agent owner))))
 
      ;; -- fueled evaluation in the granted environment -----------------
 
-     (check 'eval-computes
-            (policy:session-eval! s "(+ 1 2)") '(ok . "=> 3"))
-     (check 'eval-accepts-a-datum
-            (policy:session-eval! s '(* 2 3)) '(ok . "=> 6"))
-     (check 'eval-captures-output
-            (policy:session-eval! s "(display \"hi\") (+ 1 2)")
-            '(ok . "=> 3\noutput:\nhi"))
-     (check 'eval-multiple-values
-            (policy:session-eval! s "(values 1 2)") '(ok . "=> 1, 2"))
-     (check 'eval-reads-the-store
-            (policy:session-eval! s "(buffer-text-line \"notes\" 0)")
-            '(ok . "=> \"one\""))
-     (check 'eval-refuses-the-unbound
-            (car (policy:session-eval! s "(delete-file \"x\")"))
-            'unbound)
-     (check 'eval-reports-errors
-            (car (policy:session-eval! s "(car '())"))
-            'error)
-     (check 'eval-empty
-            (policy:session-eval! s "") '(error . "an empty expression"))
+     (for-each
+       (lambda (example)
+         (check (list 'evaluation (car example))
+           (policy:session-eval! s (car example)) (cadr example)))
+       '(("(+ 1 2)" (ok . "=> 3"))
+         ((* 2 3) (ok . "=> 6"))
+         ("(display \"hi\") (+ 1 2)" (ok . "=> 3\noutput:\nhi"))
+         ("(values 1 2)" (ok . "=> 1, 2"))
+         ("(buffer-text-line \"notes\" 0)" (ok . "=> \"one\""))
+         ("" (error . "an empty expression"))))
+     (check 'evaluation-failures
+       (map (lambda (form) (car (policy:session-eval! s form)))
+         '("(delete-file \"x\")" "(car '())"))
+       '(unbound error))
 
      ;; a tiny fuel tank: the loop cannot hang anything
      (define winded (policy:mint!
                       '(agent winded)
                       (policy:make '(+ car cons quote let lambda if)
-                                   10000 0 '() 4000)
-                      owner audit!))
+                                   10000 '() 4000)
+                      owner))
      (check 'fuel-runs-out
             (actor:call-as owner
               (lambda ()
@@ -100,39 +88,41 @@
             (car (policy:session-eval! winded "(buffer-names)"))
             'unbound)
 
-     ;; -- attributed, budgeted edits ------------------------------------
+     ;; -- attributed edits and buffer permissions -----------------------
+
+     (define (mutation-result thunk)
+       (let-values ([(status detail) (thunk)])
+         (list status (if (number? detail) #t detail))))
 
      (define (try-edit! session id line)
-       (let-values ([(status detail)
-                     (policy:session-edit!
-                       session id (store:revision id)
-                       (text:make-span 0 0 0 0) (list line))])
-         (list status (number? detail))))
+       (mutation-result
+         (lambda ()
+           (policy:session-edit! session id (store:revision id)
+             (text:make-span 0 0 0 0) (list line)))))
+
+     (define (try-undo! session id)
+       (mutation-result (lambda () (policy:session-undo! session id))))
 
      (check 'edit-applies (try-edit! s notes "zero ") '(applied #t))
      (check 'edit-is-attributed
             (cadr (car (store:history notes))) agent)
-     (check 'undo-own-edit
-            (let-values ([(status detail)
-                          (policy:session-undo! s notes)])
-              status)
-            'applied)
-     (check 'second-edit-applies (try-edit! s notes "again ") '(applied #t))
-     (check 'quota-exhausted
-            (let-values ([(status detail)
-                          (policy:session-edit!
-                            s notes (store:revision notes)
-                            (text:make-span 0 0 0 0) '("more "))])
-              (list status detail))
-            '(refused quota))
-     (check 'allowlist-refuses-other-buffers
-            (let-values ([(status detail)
-                          (policy:session-edit!
-                            s secret (store:revision secret)
-                            (text:make-span 0 0 0 0) '("leak "))])
-              (list status detail))
-            '(refused buffer))
-     (check 'secret-untouched (store:line secret 0) "hidden")
+     (let* ([undo (try-undo! s notes)]
+            [restored (store:line notes 0)]
+            [again (try-edit! s notes "again ")]
+            [more (try-edit! s notes "more ")])
+       (check 'edits-continue-after-undo
+         (list undo restored again more (store:line notes 0))
+         '((applied #t) "one" (applied #t) (applied #t) "more again one")))
+     (check 'allowlist-gates-edits-and-undo
+       (list (try-edit! s secret "leak ") (try-undo! s secret)
+             (store:line secret 0))
+       '((refused buffer) (refused buffer) "hidden"))
+     (let ([reader (policy:mint! '(agent reader) (policy:reader) owner)])
+       (check 'reader-has-no-write-permission
+         (list (policy:session-eval! reader "(buffer-text-line \"notes\" 1)")
+               (try-edit! reader notes "x") (try-undo! reader notes))
+         '((ok . "=> \"two\"") (refused buffer) (refused buffer)))
+       (policy:revoke! reader))
 
      ;; -- the escalation path: the session asks its owner --------------
 
@@ -149,26 +139,12 @@
      ;; -- revocation ----------------------------------------------------
 
      (check 'revoke (policy:revoke! s) #t)
-     (check 'revoked-eval-refused
-            (car (policy:session-eval! s "(+ 1 2)")) 'refused)
-     (check 'revoked-edit-refused
-            (let-values ([(status detail)
-                          (policy:session-edit!
-                            s notes (store:revision notes)
-                            (text:make-span 0 0 0 0) '("x"))])
-              (list status detail))
-            '(refused revoked))
-     (check 'revoked-ask-refused
-            (policy:session-ask! s "Anyone?" '() (lambda (a) a)) #f)
-     (check 'revoked-not-listed
-            (assoc agent (policy:sessions)) #f)
-
-     ;; -- the audit trail ------------------------------------------------
-
-     (check 'audit-kinds
-            (map (lambda (kind) (and (assq kind audit) #t))
-                 '(mint eval edit undo ask revoke))
-            '(#t #t #t #t #t #t))
+     (check 'all-revoked-entry-points-refuse
+       (list (car (policy:session-eval! s "(+ 1 2)"))
+             (try-edit! s notes "x") (try-undo! s notes)
+             (policy:session-ask! s "Anyone?" '() (lambda (a) a))
+             (assoc agent (policy:sessions)))
+       '(refused (refused revoked) (refused revoked) #f #f))
 
      ;; The implicit owner is the initiating actor, including a named head,
      ;; or #f for headless callers. The default audit trail stays persistent.
@@ -177,16 +153,22 @@
          (check 'default-owner-follows-actor-context
            (actor:call-as context
              (lambda ()
-               (let* ([quiet (policy:mint! '(agent quiet) (policy:make '(+) 10000 0 '() 4000))]
+               (let* ([quiet (policy:mint! '(agent quiet) (policy:make '(+) 10000 '() 4000))]
                       [result (policy:session-eval! quiet "(+ 1 1)")])
                  (policy:revoke! quiet)
                  (list (policy:session-owner quiet) result (actor:current)))))
            (list context '(ok . "=> 2") context)))
        '(#f (head "writing desk") (agent requester)))
-     (check 'default-audit-records
-            (let ([entries (policy:audit-log 10)])
-              (and (assq 'mint entries) (assq 'eval entries) #t))
-            #t)
+     (let* ([records (log:entries 'policy)]
+            [events (reverse (observed))])
+       (set-car! (log:datum (car records)) 'rewritten)
+       (check 'one-quiet-owned-audit-stream
+         (list (map (lambda (record) (list (log:datum record) #f)) (log:entries 'policy))
+               (map (lambda (kind) (and (assq kind (map car events)) #t))
+                 '(mint eval edit undo ask revoke)))
+         (list events '(#t #t #t #t #t #t))))
+     (log:unsubscribe! audit-subscription)
+     (policy:revoke! winded)
      (store:delete! owner notes)
      (store:delete! owner secret)
-     (format #t "~a policy checks passed\n" checks)))
+     (test:finish! 'policy)))

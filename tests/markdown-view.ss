@@ -51,7 +51,7 @@
      (define w1 (head:current))
      (head:window-width-set! w1 80)
      (head:window-size-set! w1 12)
-     (define w2 (head:make-window source 0 0 0 0 0 12 1 80 80 1 'default))
+     (define w2 (head:make-window source 0 0 0 0 0 12 80 80 'default))
      (head:set-layout-root! (head:make-layout-split 'right w1 w2 1 1))
 
      (define original-text (head:buffer-lines source))

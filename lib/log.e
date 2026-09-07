@@ -2,10 +2,10 @@
 ;; (utc-nanoseconds actor component datum), indexed in append order. Views
 ;; and echo presentation subscribe; neither owns a second history.
 (library (log)
-  (export add! record length snapshot entries history
+  (export add! snapshot entries history
           (rename (car time) (cadr actor) (caddr component) (cadddr datum))
           register-formatter! styler format-entry subscribe! unsubscribe! progress)
-  (import (except (rnrs) length)
+  (import (rnrs)
           (only (chezscheme) unbox format current-time time-second time-nanosecond
                 make-mutex with-mutex void make-thread-parameter parameterize print-graph)
           (prefix (kernel) kernel:) (prefix (actor) actor:) (prefix (datum) datum:))
@@ -22,15 +22,6 @@
 
   (define progress (state-progress data))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
-  (define (length) (with-mutex (state-lock data) (state-count data)))
-
-  (define (record i)
-    (datum:copy
-      (with-mutex (state-lock data)
-        (unless (and (natural? i) (< i (state-count data)))
-          (error 'record "index outside the log" i))
-        (vector-ref (state-records data) i))))
-
   (define snapshot
     (case-lambda
       [() (snapshot 0)]

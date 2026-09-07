@@ -226,7 +226,7 @@
                (for-all (lambda (i) (eq? (vector-ref styles (+ prefix i)) 'string))
                         (iota (string-length "before reload")))))
        '(#t #t))
-     (define log-count (log:length))
+     (define log-records (log:entries))
      (kernel:retract-module! 'log-view-test)
      (check 'log-registration-retracted (head:app-buffer? all-log) #f)
      (check 'filtered-registration-retracted (head:app-buffer? filtered-log) #f)
@@ -239,7 +239,7 @@
      (check 'log-rebuilt-without-duplicates (head:buffer-lines all-log) old-all)
      (check 'filtered-rebuilt-without-duplicates
             (head:buffer-lines filtered-log) old-filtered)
-     (check 'rebuild-does-not-add-records (log:length) log-count)
+     (check 'rebuild-does-not-change-records (log:entries) log-records)
      (log:add! 'app-probe "after reload" #f)
      (show-buffer! filtered-log)
      (head:refresh-visible-views!)
@@ -307,7 +307,7 @@
                     `((app . ,owner) (alive . #t) (capture . all) (status . "working")
                       (read-only . #t) (wrap . #f) (manages-viewport . #t) (cursor-style . bar)))]
               [b (head:adopt-store-buffer! id)]
-              [other (head:make-window b 0 0 0 0 0 2 1 7 3 1 'default)])
+              [other (head:make-window b 0 0 0 0 0 2 7 3 'default)])
          (define (publish row visible?)
            (surface:publish! id (let ([old (surface:snapshot id)]) (and old (car old))) 0
              '((48 #(plain plain plain plain) #(#f #f #f #f) ((clusters (1 . 2) (2 . 1) (1 . 1))))
