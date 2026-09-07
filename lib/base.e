@@ -51,15 +51,18 @@
              (let-values ([(lines revision facts) (store:snapshot-state id)])
                (list lines revision facts))))]
       [(edit)
-       (arity 4)
+       (unless (<= 4 (length args) 5) (error 'wire "expected buffer, basis, span, lines and optional context"))
        (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
          (error 'wire "expected a nonnegative basis revision"))
        (call-with-values
-         (lambda () (policy:session-edit! session (car args) (cadr args)
-                      (text:datum->span (caddr args)) (cadddr args))) list)]
+         (lambda () (apply policy:session-edit! session (car args) (cadr args)
+                      (text:datum->span (caddr args)) (cadddr args) (list-tail args 4))) list)]
       [(undo)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional undo scope"))
        (call-with-values (lambda () (apply policy:session-undo! session args)) list)]
+      [(redo)
+       (arity 1)
+       (call-with-values (lambda () (policy:session-redo! session (car args))) list)]
       [else (error 'wire "unknown request" operation)]))
 
   (define (serve-connection connection)
@@ -80,7 +83,7 @@
                            (memq (car actor) '(head agent)) (string? (cadr actor)))
                 (error 'wire "expected (hello 1 (head-or-agent name))"))
               (let* ([p ((connection-policy) (datum:copy actor))]
-                     [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo))])
+                     [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo redo))])
                 (set! session (policy:mint! actor p (and (eq? (car actor) 'head) actor)))
                 ;; Queue hello before publishing; name refusal still revokes
                 ;; this connection's session without touching the old owner.

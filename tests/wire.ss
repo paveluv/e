@@ -62,6 +62,7 @@
          (define old-eval policy:session-eval!)
          (define old-edit policy:session-edit!)
          (define old-undo policy:session-undo!)
+         (define old-redo policy:session-redo!)
          (define old-ask policy:session-ask!)
          (define refused-core
            (map (lambda (name)
@@ -76,6 +77,7 @@
            (list (old-eval held "(+ 1 2)")
                  (call-with-values (lambda () (old-edit held 999 0 (text:make-span 0 0 0 0) '("x"))) list)
                  (call-with-values (lambda () (old-undo held 999)) list)
+                 (call-with-values (lambda () (old-redo held 999)) list)
                  (old-ask held "still active?" '() void) (policy:sessions)))
          (define notes (store:create! '(base e) "notes λ" '("hello λ")
                          (list (cons 'bootstrap footprint)
@@ -180,7 +182,7 @@
            (let* ([head (connect)] [identity '(head "desk λ")])
              (test:check 'claim-precedes-welcome-and-queued-mail
                (list (hello head identity) (receive head))
-               (list (list 'hello 1 identity '(read edit undo)) '(event (from-base "welcome"))))
+               (list (list 'hello 1 identity '(read edit undo redo)) '(event (from-base "welcome"))))
              (let* ([ids (rpc head 'buffers)] [snapshot (rpc head 'snapshot (car ids))]
                     [facts (caddr snapshot)])
                (test:check 'base-only-config-and-owned-snapshot
@@ -190,7 +192,7 @@
                (test:check 'core-reload-refuses-and-explicit-revoke-reaches-retained-entries
                  (cdr (assq 'authority facts))
                  '((#t #t #t #t #t) (ok . "=> 3")
-                   ((refused . "the session is revoked") (refused revoked) (refused revoked) #f ())))
+                   ((refused . "the session is revoked") (refused revoked) (refused revoked) (refused revoked) #f ())))
                (string-set! (vector-ref (car snapshot) 0) 0 #\X)
                (test:check 'client-mutation-cannot-change-the-base
                  (car (rpc head 'snapshot (car ids))) '#("hello λ")))
@@ -207,9 +209,12 @@
                (map (lambda (message) (list-head (exchange head message) 3))
                  '((request 1 edit) (request 2 snapshot 999) (request 3 buffers extra)
                    (request 4 edit 1 0 (0 0 -1 0) ("x")) (request 5 edit 1 0.5 (0 0 0 0) ("x"))
-                   (request 6 undo 1 everyone) (request 7 actors)))
+                   (request 6 undo 1 everyone)
+                   (request 7 edit 1 0 (0 0 0 0) ("x") (g "invalid" ((trailing . #t)) ((trailing . #f))))
+                   (request 8 edit 1 0 (0 0 0 0) ("x") #f #f)
+                   (request 9 redo 1 all) (request 10 actors)))
                '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 error)
-                 (reply 5 error) (reply 6 error) (reply 7 ok)))
+                 (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error) (reply 9 error) (reply 10 ok)))
              (test:check 'existing-endpoint-is-never-unlinked
                (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name 1))
                '(#t "notes λ"))
@@ -228,13 +233,15 @@
                     [writers (list first second)] [actors '((agent "first") (agent "second"))])
                (test:check 'configured-agents-use-server-selected-permissions
                  (map (lambda (connection actor) (list (hello connection actor) (receive connection))) writers actors)
-                 (map (lambda (actor) (list (list 'hello 1 actor '(read edit undo)) '(event (from-base "welcome")))) actors))
+                 (map (lambda (actor) (list (list 'hello 1 actor '(read edit undo redo)) '(event (from-base "welcome")))) actors))
                ;; Hold the first policy audit callback after commit. A second
                ;; actor commits before the first reply: its receipt must still
                ;; describe exactly its own accepted revision and anchor chain.
-               (wire:send! (sys:connection-output first) '(request 7 edit 1 0 (0 0 0 5) ("HELLO")))
+               (wire:send! (sys:connection-output first)
+                 '(request 7 edit 1 0 (0 0 0 5) ("HELLO")
+                    ((batch 1) "replace and prefix" ((trailing . #f)) ((saved-stamp . "observed")))))
                (test:await 'first-edit-committed (lambda () (file-exists? edit-held)))
-               (let ([second-result (rpc second 'edit 1 0 '(0 7 0 7) '("!"))])
+               (let ([second-result (rpc second 'edit 1 0 '(0 7 0 7) '("!") '((batch 1) "other actor"))])
                  (write-text edit-release "continue")
                  (let ([results (list (reply-value (receive first)) second-result)])
                    (test:check 'authoritative-receipts-rebase-and-attribute-both-writers
@@ -259,16 +266,37 @@
                  (list (rpc second 'edit 1 0 '(0 1 0 3) '("bad"))
                        (rpc agent 'edit 1 2 '(0 0 0 0) '("bad"))
                        (rpc first 'edit 2 0 '(0 0 0 0) '("bad"))
-                       (rpc agent 'undo 1 'all) (rpc first 'undo 2)
+                       (rpc agent 'undo 1 'all) (rpc first 'undo 2) (rpc agent 'redo 1) (rpc first 'redo 2)
                        (car (rpc agent 'snapshot 1)) (car (rpc agent 'snapshot 2)))
-                 '((stale overlap) (refused buffer) (refused buffer) (refused buffer) (refused buffer)
+                 '((stale overlap) (refused buffer) (refused buffer) (refused buffer) (refused buffer) (refused buffer) (refused buffer)
                    #("HELLO λ!") #("a local audience")))
-               (let* ([mine (rpc first 'undo 1)] [after-mine (car (rpc agent 'snapshot 1))]
+               ;; Repeating an actor/buffer-local key joins its two commits,
+               ;; across the other writer's same-key edit. Undo facts reverse
+               ;; with the text; observed external facts survive undo/redo.
+               (rpc first 'edit 1 2 '(0 0 0 0) '("A") '((batch 1) "replace and prefix"))
+               (let* ([mine (rpc first 'undo 1)] [after-mine (rpc agent 'snapshot 1)]
                       [again (rpc first 'undo 1)] [other (rpc first 'undo 1 '(actor (agent "second")))])
-                 (rpc second 'edit 1 4 '(0 0 0 0) '("B"))
-                 (test:check 'undo-defaults-to-mine-with-explicit-actor-and-all-scopes
-                   (list mine after-mine again other (rpc first 'undo 1 'all) (car (rpc agent 'snapshot 1)))
-                   '((applied 3) #("hello λ!") (nothing #f) (applied 4) (applied 6) #("hello λ"))))
+                 (test:check 'grouped-undo-defaults-to-mine-and-keeps-commit-facts
+                   (list mine (car after-mine) (assq 'trailing (caddr after-mine))
+                         (assq 'saved-stamp (caddr after-mine)) again other)
+                   '((applied 5) #("hello λ!") #f (saved-stamp . "observed") (nothing #f) (applied 6))))
+               (let* ([original-author (rpc second 'redo 1)] [other (rpc first 'redo 1)]
+                      [mine (rpc first 'redo 1)] [after (rpc agent 'snapshot 1)]
+                      [undo-group (rpc first 'undo 1 'all)] [undo-other (rpc first 'undo 1 'all)])
+                 (test:check 'redo-belongs-to-the-undo-requester-and-restores-whole-groups
+                   (list original-author other mine (car after)
+                         (assq 'trailing (caddr after)) (assq 'saved-stamp (caddr after))
+                         undo-group undo-other (car (rpc agent 'snapshot 1)))
+                   '((nothing #f) (applied 7) (applied 9) #("AHELLO λ!")
+                     (trailing . #f) (saved-stamp . "observed") (applied 11) (applied 12) #("hello λ"))))
+               (rpc first 'edit 1 12 '(0 0 0 0) '("") '(protect "protect" ((read-only . #t))))
+               (let ([before (rpc agent 'snapshot 1)])
+                 (test:check 'wire-clients-cannot-bypass-read-only-with-facts-or-history
+                   (list (rpc first 'edit 1 13 '(0 0 0 0) '("bad") '(escape "escape" ((read-only . #f))))
+                         (rpc second 'edit 1 13 '(0 0 0 0) '("bad"))
+                         (rpc first 'undo 1 'all) (rpc first 'redo 1)
+                         (equal? before (rpc agent 'snapshot 1)))
+                   '((refused read-only) (refused read-only) (refused read-only) (refused read-only) #t)))
                (for-each sys:close-connection! writers)
                (test:await 'connection-sessions-revoked
                  (lambda () (equal? (inventory agent) (list (list identity #f))))))
@@ -282,8 +310,10 @@
                (car (rpc agent 'snapshot 1)) '#("agent work while detached"))
              (let ([head (connect)])
                (hello head '(head "desk λ")) (receive head)
-               (test:check 'released-name-can-read-current-state
-                 (car (rpc head 'snapshot 1)) '#("agent work while detached")))
+               (test:check 'released-name-reads-producer-work-and-respects-read-only
+                 (list (car (rpc head 'snapshot 1))
+                       (rpc head 'edit 1 14 '(0 0 0 0) '("bad")) (rpc head 'undo 1) (rpc head 'redo 1))
+                 '(#("agent work while detached") (refused read-only) (refused read-only) (refused read-only))))
              (stop!)
              (test:check 'stop-closes-idle-clients-and-releases-the-path
                (list (eof-object? (receive idle)) (eof-object? (receive agent)) (file-exists? socket))

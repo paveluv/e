@@ -966,7 +966,7 @@
       (if (buffer-store-id b)
           (let-values ([(status info)
                         (store:edit-with-snapshot! ui-actor (buffer-store-id b)
-                                                   basis span replacement context)])
+                                                   basis span replacement context 'any)])
             (if (eq? status 'applied)
                 (let* ([committed (car info)]
                        [changes (caddr info)]
@@ -979,9 +979,10 @@
                                      (and after (append changes after))
                                      (if after (project-placements actual before (map caddr after)) '()))
                     (note-ui-edit! b committed)))
-                (let ([reason (if (eq? info 'overlap)
-                                  "another edit overlaps this change"
-                                  "the edit's revision is no longer available")])
+                (let ([reason (case info
+                                [(read-only) "the buffer is read-only"]
+                                [(overlap) "another edit overlaps this change"]
+                                [else "the edit's revision is no longer available"])])
                   (guard (ex [else (void)]) (sync-store-buffer! b))
                   (guard (ex [else (void)])
                     (log:add! 'store
@@ -1050,7 +1051,7 @@
       [else
        (let-values ([(status detail)
                      (guard (ex [else (values 'blocked 'store-unavailable)])
-                       (store:history-step! ui-actor (buffer-store-id b) direction scope))])
+                       (store:history-step! ui-actor (buffer-store-id b) direction scope 'any))])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b))

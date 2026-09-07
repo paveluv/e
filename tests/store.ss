@@ -842,6 +842,40 @@
             (guard (ex [else 'rejected]) (store:line m 0))
             'rejected)
 
+     ;; Client edits and history steps share one guarded transaction. A
+     ;; refusal cannot consume undo/redo or publish any part of a fact change;
+     ;; a trusted producer can still update read-only output through that path.
+     (for-each
+       (lambda (direction)
+         (let ([id (store:create! alice "write-access" '("base") '((trailing . #t)))])
+           (define (mutate access)
+             (call-with-values
+               (lambda ()
+                 (if (eq? direction 'edit)
+                     (store:edit-with-snapshot! alice id (store:revision id)
+                       (span 0 0 0 0) '("Y") '(change "edit" ((read-only . #f))) access)
+                     (store:history-step! alice id direction 'mine access))) list))
+           (define (state)
+             (list (call-with-values (lambda () (store:snapshot-state id)) list)
+                   (store:history id) (store:marks alice id) (store:undo-authors id)))
+           (store:edit! alice id 0 (span 0 0 0 0) '("x") '(seed "seed" ((trailing . #f))))
+           (when (eq? direction 'redo) (store:undo! alice id))
+           (store:set-mark! alice id 'point '(0 . 2))
+           (store:set-property! alice id 'read-only #t)
+           (let* ([before (state)] [events (test:recorder)] [token (store:subscribe! id events)]
+                  [results (map mutate '(any ("write-access") () ("other")))]
+                  [invalid? (test:raises? (lambda () (mutate 42)))]
+                  [unchanged? (and (equal? before (state)) (null? (events)))]
+                  [producer (mutate #f)])
+             (check (list direction 'guarded-client-and-trusted-producer)
+               (list results invalid? unchanged? (car producer) (store:line id 0))
+               (list '((refused read-only) (refused read-only) (refused buffer) (refused buffer))
+                     #t #t 'applied
+                     (case direction [(edit) "Yxbase"] [(undo) "base"] [(redo) "xbase"])))
+             (store:unsubscribe! token))
+           (store:delete! alice id)))
+       '(edit undo redo))
+
      ;; -- properties: buffer-level facts shared by every head ------------------
 
      ;; Every shared admission owns finite data, including undo and commit

@@ -26,7 +26,7 @@
           (rename (policy-cap cap)) (rename (reader-policy reader))
           mint! session? session-actor session-owner sessions
           revoke! revoked?
-          session-eval! session-edit! session-undo! session-ask!)
+          session-eval! session-edit! session-undo! session-redo! session-ask!)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
                 current-output-port
@@ -86,6 +86,12 @@
     ;; subscribe through log. Policy events do not interrupt the head's echo.
     (log:add! 'policy entry #f))
 
+  (define (call-as-session s thunk)
+    ;; Work and its audit share the session actor, for direct callers as well
+    ;; as wire clients. Mint/revoke remain actions of the controlling caller.
+    ;; call-as restores that caller even after fuel exhaustion or an error.
+    (actor:call-as (session-actor s) thunk))
+
   (define (clipped text cap)
     (if (> (string-length text) cap)
         (string-append (substring text 0 cap) " ...")
@@ -144,51 +150,51 @@
               (loop (cons datum acc)))))))
 
   (define (session-eval! s text)
-    ;; Evaluate an expression (a string, or a datum) in the session's
-    ;; granted environment, under its fuel.  -> (status . text):
-    ;;   ('ok . "=> values, plus any printed output")
-    ;;   ('unbound . _)  the grant does not cover a name: ask the owner
-    ;;   ('fuel . _)     the budget ran out
-    ;;   ('error . _)  |  ('refused . _)
-    (cond
-      [(revoked? s) '(refused . "the session is revoked")]
-      [else
-       (let ([form (guard (ex [else 'malformed])
-                     (if (string? text) (parse-expression text) text))])
-         (if (or (not form) (eq? form 'malformed))
-             (cons 'error
-                   (if form "unreadable expression" "an empty expression"))
-             (let ([outcome (actor:call-as (session-actor s)
-                              (lambda ()
-                                (fueled-eval form (session-env s)
-                                  (policy-fuel (session-policy s)))))]
-                   [cap (policy-cap (session-policy s))])
-               (let ([result
-                      (case (car outcome)
-                        [(ok)
-                         (cons 'ok
-                               (clipped
-                                 (string-append
-                                   (format "=> ~a"
-                                           (values-text (cadr outcome)))
-                                   (if (string=? (caddr outcome) "")
-                                       ""
-                                       (string-append
-                                         "\noutput:\n" (caddr outcome))))
-                                 cap))]
-                        [(fuel)
-                         '(fuel . "the evaluation ran out of fuel (an infinite loop?)")]
-                        [else
-                         (let ([ex (cadr outcome)])
-                           (cons (if (undefined-violation? ex)
-                                     'unbound
-                                     'error)
-                                 (clipped (kernel:condition-text ex) cap)))])])
-                 (audit!
-                   (list 'eval (session-actor s)
-                         (clipped (format "~s" form) 200)
-                         (car result)))
-                 result))))]))
+    (call-as-session s
+      (lambda ()
+        ;; Evaluate an expression (a string, or a datum) in the session's
+        ;; granted environment, under its fuel.  -> (status . text):
+        ;;   ('ok . "=> values, plus any printed output")
+        ;;   ('unbound . _)  the grant does not cover a name: ask the owner
+        ;;   ('fuel . _)     the budget ran out
+        ;;   ('error . _)  |  ('refused . _)
+        (cond
+          [(revoked? s) '(refused . "the session is revoked")]
+          [else
+           (let ([form (guard (ex [else 'malformed])
+                         (if (string? text) (parse-expression text) text))])
+             (if (or (not form) (eq? form 'malformed))
+                 (cons 'error
+                       (if form "unreadable expression" "an empty expression"))
+                 (let ([outcome (fueled-eval form (session-env s)
+                                             (policy-fuel (session-policy s)))]
+                       [cap (policy-cap (session-policy s))])
+                   (let ([result
+                          (case (car outcome)
+                            [(ok)
+                             (cons 'ok
+                                   (clipped
+                                     (string-append
+                                       (format "=> ~a"
+                                               (values-text (cadr outcome)))
+                                       (if (string=? (caddr outcome) "")
+                                           ""
+                                           (string-append
+                                             "\noutput:\n" (caddr outcome))))
+                                     cap))]
+                            [(fuel)
+                             '(fuel . "the evaluation ran out of fuel (an infinite loop?)")]
+                            [else
+                             (let ([ex (cadr outcome)])
+                               (cons (if (undefined-violation? ex)
+                                         'unbound
+                                         'error)
+                                     (clipped (kernel:condition-text ex) cap)))])])
+                     (audit!
+                       (list 'eval (session-actor s)
+                             (clipped (format "~s" form) 200)
+                             (car result)))
+                     result))))]))))
 
   (define (values-text vals)
     (if (null? vals)
@@ -218,48 +224,56 @@
 
   ;;; Attributed mutation ------------------------------------------------------
 
-  (define (buffer-allowed? s id)
-    (let ([allowed (policy-buffers-raw (session-policy s))])
-      (or (eq? allowed 'any)
-          (member (guard (ex [else #f]) (store:buffer-name id))
-                  allowed))))
+  (define (session-mutate! s operation id transact)
+    ;; The policy supplies data; the store checks the current name/read-only
+    ;; fact and commits under one lock. No unlocked permission preflight.
+    (if (revoked? s) (values 'refused 'revoked)
+        (let-values ([(status detail)
+                      (transact (session-actor s) (policy-buffers-raw (session-policy s)))])
+          (audit! (list operation (session-actor s) id status
+                        (if (eq? status 'applied) (car detail) detail)))
+          (values status
+            (if (not (eq? status 'applied)) detail
+                (if (eq? operation 'edit) (datum:copy detail text:delta->datum) (car detail)))))))
 
-  (define (session-edit! s id basis span lines)
-    ;; One owned plain receipt: applied (revision text changes), ending at
-    ;; this transaction even if subscribers write again before return.
-    ;; Changes use text's canonical delta datums; no store aliases escape.
-    ;; Otherwise the store's (values status detail),
-    ;; plus (values 'refused 'revoked|'buffer).
-    (cond
-      [(revoked? s) (values 'refused 'revoked)]
-      [(not (buffer-allowed? s id)) (values 'refused 'buffer)]
-      [else
-       (let-values ([(status detail)
-                     (store:edit-with-snapshot! (session-actor s) id basis span lines)])
-         (audit!
-           (list 'edit (session-actor s) id status
-                 (if (eq? status 'applied) (car detail) detail)))
-         (values status (if (eq? status 'applied) (datum:copy detail text:delta->datum) detail)))]))
+  (define (session-edit! s id basis span lines . context)
+    (call-as-session s
+      (lambda ()
+        ;; One owned plain receipt (revision text changes), ending at this
+        ;; commit. Optional grouping/undo/commit facts use the store context.
+        ;; Own the span/lines too: the pure store shares immutable inputs.
+        ;; The connection never supplies write access; the session owns it.
+        (unless (<= (length context) 1) (error 'session-edit! "expected one edit context"))
+        (session-mutate! s 'edit id
+          (lambda (actor access)
+            (store:edit-with-snapshot! actor id basis
+              (text:datum->span (text:span->datum span)) (datum:copy lines)
+              (and (pair? context) (datum:copy (car context))) access))))))
+
+  (define (session-history! s id direction scope)
+    (call-as-session s
+      (lambda ()
+        (session-mutate! s direction id
+          (lambda (actor access) (store:history-step! actor id direction scope access))))))
 
   (define (session-undo! s id . scope)
     ;; Default mine, or all/(actor who), under the same buffer permission.
-    (cond
-      [(revoked? s) (values 'refused 'revoked)]
-      [(not (buffer-allowed? s id)) (values 'refused 'buffer)]
-      [else
-       (let-values ([(status detail)
-                     (apply store:undo! (session-actor s) id scope)])
-         (audit!
-           (list 'undo (session-actor s) id status))
-         (values status detail))]))
+    (unless (<= (length scope) 1) (error 'session-undo! "expected one undo scope"))
+    (session-history! s id 'undo (if (pair? scope) (car scope) 'mine)))
+
+  (define (session-redo! s id)
+    ;; Redo belongs to the requester who undid, even for another author's edit.
+    (session-history! s id 'redo 'mine))
 
   (define (session-ask! s question choices reply!)
-    ;; ask the session's owner -- the escalation path when the grant
-    ;; is not enough; -> the ticket, or #f
-    (if (revoked? s)
-        #f
-        (begin
-          (audit!
-            (list 'ask (session-actor s) (clipped question 200)))
-          (actor:ask! (session-actor s) (session-owner s)
-                      question choices reply!)))))
+    (call-as-session s
+      (lambda ()
+        ;; ask the session's owner -- the escalation path when the grant
+        ;; is not enough; -> the ticket, or #f
+        (if (revoked? s)
+            #f
+            (begin
+              (audit!
+                (list 'ask (session-actor s) (clipped question 200)))
+              (actor:ask! (session-actor s) (session-owner s)
+                          question choices reply!)))))))

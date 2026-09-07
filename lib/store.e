@@ -200,6 +200,25 @@
     (or (hashtable-ref (store-buffers (current-store)) id #f)
         (error who (format "no buffer ~a" id))))
 
+  (define (own-write-access access)
+    ;; #f is a trusted producer update. Clients pass 'any or their allowed
+    ;; buffer names; both respect read-only. Only data crosses this boundary,
+    ;; never a policy callback under the store lock.
+    (unless (or (not access) (eq? access 'any)
+                (and (list? access) (for-all string? access)))
+      (error 'store "expected #f, any, or allowed buffer names" access))
+    (datum:copy access))
+
+  (define (write-refusal id access)
+    ;; Caller holds the mutation lock. A rename or read-only toggle cannot
+    ;; land between permission checking and the edit/history transaction.
+    (and access
+         (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
+           (cond [(not (or (eq? access 'any)
+                           (and b (member (buffer-label b) access)))) 'buffer]
+                 [(and b (property-value b 'read-only #f)) 'read-only]
+                 [else #f]))))
+
   ;;; Lifecycle and reading --------------------------------------------------
 
   (define (own-name name)
@@ -538,8 +557,9 @@
     ;; or refuse.  -> (values 'applied revision)
     ;;             |  (values 'stale 'overlap)       edited meanwhile
     ;;             |  (values 'stale 'basis-too-old) log outgrown
-    ;; Optional (key label [properties]) groups transactions into one
-    ;; undo and can change text-related properties in the same commit.
+    ;; Optional context (key label [undo-facts [commit-facts]]) groups edits
+    ;; and commits facts with the text. Optional write access follows it;
+    ;; clients pass 'any or allowed names, producers omit it (#f).
     (let-values ([(status detail)
                   (apply edit-with-snapshot! actor id basis span replacement options)])
       (values status (if (eq? status 'applied) (car detail) detail))))
@@ -551,8 +571,9 @@
     ;; through the accepted edit, even if committing trims its oldest
     ;; entry out of the retained log.  A head uses this to place its
     ;; command's anchors without guessing where the edit actually landed.
-    (let ([context (and (pair? options) (car options))])
-      (unless (<= (length options) 1) (error 'edit! "expected one context" options))
+    (unless (<= (length options) 2) (error 'edit! "expected context and write access" options))
+    (let ([context (and (pair? options) (car options))]
+          [access (own-write-access (and (= (length options) 2) (cadr options)))])
       (validate-edit-context context)
       (let* ([group-context (and context (datum:copy (list (car context) (cadr context)) values))]
              [properties (if (and context (>= (length context) 3))
@@ -562,28 +583,30 @@
              [outcome
               (transact! actor
                 (lambda (actor)
-                  (let* ([b (buffer-of 'edit! id)]
-                         [since (entries-since b basis)]
-                         [rebased (and since
-                                    (rebase-through
-                                      (text:normalize-span span)
-                                      (map (lambda (entry) (vector-ref entry 2)) since)))])
-                    (cond
-                      [(not since) (list 'stale 'basis-too-old)]
-                      [(not rebased) (list 'stale 'overlap)]
-                      [else
-                       (let-values ([(new-revision delta)
-                                     (apply-locked! b id actor rebased
-                                                    replacement #f
-                                                    properties commit-facts)])
-                         (remember-edit! b actor group-context)
-                         (list 'applied new-revision (buffer-text b)
-                               (append (map change-data since)
-                                       (list (change-data (car (buffer-deltas b)))))))]))))])
+                  (cond [(write-refusal id access) => (lambda (reason) (list 'refused reason))]
+                    [else
+                     (let* ([b (buffer-of 'edit! id)]
+                            [since (entries-since b basis)]
+                            [rebased (and since
+                                       (rebase-through
+                                         (text:normalize-span span)
+                                         (map (lambda (entry) (vector-ref entry 2)) since)))])
+                       (cond
+                         [(not since) (list 'stale 'basis-too-old)]
+                         [(not rebased) (list 'stale 'overlap)]
+                         [else
+                          (let-values ([(new-revision delta)
+                                        (apply-locked! b id actor rebased
+                                                       replacement #f
+                                                       properties commit-facts)])
+                            (remember-edit! b actor group-context)
+                            (list 'applied new-revision (buffer-text b)
+                              (append (map change-data since)
+                                      (list (change-data (car (buffer-deltas b)))))))]))])))])
         (case (car outcome)
           [(applied)
            (values 'applied (cdr outcome))]
-          [else (values 'stale (cadr outcome))]))))
+          [else (values (car outcome) (cadr outcome))]))))
 
   (define (same-delta? a b)
     (and (equal? (text:span-start (text:delta-span a))
@@ -686,46 +709,51 @@
         (equal? (undo-group-actor group)
                 (if (eq? scope 'mine) actor (cadr scope)))))
 
-  (define (history-step! actor id direction scope)
+  (define (history-step! actor id direction scope . access*)
     ;; The common history transaction.  Undo selects mine, all, or
     ;; (actor who).  Redo always reverses this requester's latest undo,
     ;; independently of the original author (scope must be mine).
     ;; -> applied (revision action-id original-author group-key label)
-    ;;  | blocked overlap|basis-too-old | nothing #f
+    ;;  | blocked overlap|basis-too-old | nothing #f | refused read-only|buffer
+    ;; Optional write access is the same client/producer rule as edit!.
     (unless (and (memq direction '(undo redo)) (undo-scope? scope)
                  (or (eq? direction 'undo) (eq? scope 'mine)))
       (error 'history-step! "invalid history direction or scope" direction scope))
-    (transact! actor
-      (lambda (actor)
-        (let* ([b (buffer-of 'history-step! id)]
-               [group
-                (find (lambda (group)
-                        (if (eq? direction 'undo)
-                            (and (undo-group-live? group) (scope-matches? scope actor group))
-                            (and (not (undo-group-live? group))
+    (unless (<= (length access*) 1) (error 'history-step! "expected one write access" access*))
+    (let ([access (own-write-access (and (pair? access*) (car access*)))])
+      (transact! actor
+        (lambda (actor)
+          (cond [(write-refusal id access) => (lambda (reason) (values 'refused reason))]
+            [else
+             (let* ([b (buffer-of 'history-step! id)]
+                    [group
+                     (find (lambda (group)
+                             (if (eq? direction 'undo)
+                               (and (undo-group-live? group) (scope-matches? scope actor group))
+                               (and (not (undo-group-live? group))
                                  (undo-group-redo-actor group)
                                  (equal? (car (undo-group-redo-actor group)) actor))))
-                      (buffer-undo b))])
-          (if (not group)
-              (values 'nothing #f)
-              (let-values ([(plan reason) (prepare-history b actor group direction)])
-                (if (not plan)
-                    (values 'blocked reason)
-                    (let ([parts '()])
-                      (for-each
-                        (lambda (step)
-                          (install-edit! b id actor (car step) (cadr step) (caddr step) (cadddr step) '())
-                          (set! parts (cons (car (buffer-deltas b)) parts)))
-                        plan)
-                      (undo-group-parts-set! group parts)
-                      (undo-group-live?-set! group (eq? direction 'redo))
-                      (undo-group-redo-actor-set! group (and (eq? direction 'undo) (list actor)))
-                      (buffer-undo-set! b (cons group (remq group (buffer-undo b))))
-                      (values 'applied
-                              (datum:copy
-                                (list (buffer-revision b) (undo-group-id group)
-                                      (undo-group-actor group) (undo-group-key group)
-                                      (undo-group-label group)) values))))))))))
+                       (buffer-undo b))])
+               (if (not group)
+                 (values 'nothing #f)
+                 (let-values ([(plan reason) (prepare-history b actor group direction)])
+                   (if (not plan)
+                     (values 'blocked reason)
+                     (let ([parts '()])
+                       (for-each
+                         (lambda (step)
+                           (install-edit! b id actor (car step) (cadr step) (caddr step) (cadddr step) '())
+                           (set! parts (cons (car (buffer-deltas b)) parts)))
+                         plan)
+                       (undo-group-parts-set! group parts)
+                       (undo-group-live?-set! group (eq? direction 'redo))
+                       (undo-group-redo-actor-set! group (and (eq? direction 'undo) (list actor)))
+                       (buffer-undo-set! b (cons group (remq group (buffer-undo b))))
+                       (values 'applied
+                               (datum:copy
+                                 (list (buffer-revision b) (undo-group-id group)
+                                       (undo-group-actor group) (undo-group-key group)
+                                       (undo-group-label group)) values)))))))])))))
 
   (define (undo! actor id . scope)
     ;; Compatibility result: the new revision, or a refusal reason.

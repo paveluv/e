@@ -25,6 +25,13 @@
 
      ;; an owner head with a mailbox, and a buffer to work on
      (define owner '(head "test"))
+     (define (from-owner thunk)
+       (actor:call-as owner
+         (lambda ()
+           (call-with-values thunk
+             (lambda results
+               (unless (equal? (actor:current) owner) (error 'policy-test "caller actor leaked"))
+               (apply values results))))))
      (define owner-mail (kernel:make-mailbox))
      (actor:register! owner
                       (lambda (m) (kernel:mailbox-post! owner-mail m)))
@@ -65,7 +72,7 @@
      (for-each
        (lambda (example)
          (check (list 'evaluation (car example))
-           (policy:session-eval! s (car example)) (cadr example)))
+           (from-owner (lambda () (policy:session-eval! s (car example)))) (cadr example)))
        '(("(+ 1 2)" (ok . "=> 3"))
          ((* 2 3) (ok . "=> 6"))
          ("(display \"hi\") (+ 1 2)" (ok . "=> 3\noutput:\nhi"))
@@ -101,7 +108,7 @@
      ;; -- attributed edits and buffer permissions -----------------------
 
      (define (mutation-result thunk)
-       (let-values ([(status detail) (thunk)])
+       (let-values ([(status detail) (from-owner thunk)])
          (list status (if (eq? status 'applied) #t detail))))
 
      (define (try-edit! session id line)
@@ -110,45 +117,78 @@
            (policy:session-edit! session id (store:revision id)
              (text:make-span 0 0 0 0) (list line)))))
 
-     (define (try-undo! session id)
-       (mutation-result (lambda () (policy:session-undo! session id))))
+     (define (try-history! session id direction)
+       (mutation-result
+         (lambda () ((if (eq? direction 'undo) policy:session-undo! policy:session-redo!) session id))))
 
+     (define (try-writes! session id)
+       (cons (try-edit! session id "bad")
+             (map (lambda (direction) (try-history! session id direction)) '(undo redo))))
+
+     (define input-span (text:make-span 0 0 0 0))
+     (define input-lines (map string-copy '("zero" "middle" "")))
      (let-values ([(status receipt)
-                   (policy:session-edit! s notes 0 (text:make-span 0 0 0 0) '("zero "))])
+                   (from-owner
+                     (lambda () (policy:session-edit! s notes 0 input-span input-lines)))])
+       ;; Pure text/store clients promise immutable lines and coordinates;
+       ;; a session must own them just as it owns context and reply data.
+       (set-car! (text:span-start input-span) 1)
+       (string-set! (cadr input-lines) 0 #\X)
+       (set-car! input-lines "changed")
        (string-set! (vector-ref (cadr receipt) 0) 0 #\X)
        (let* ([change (car (caddr receipt))] [delta (caddr change)])
          (string-set! (cadr (cadr change)) 0 #\Y)
          (string-set! (caaddr delta) 0 #\Z))
-       (check 'edit-receipt-owns-plain-text-and-delta-data
-         (list status (car receipt) (store:line notes 0)
+       (check 'edit-boundary-owns-inputs-and-receipt
+         (list status (car receipt) (let-values ([(lines revision) (store:snapshot notes)]) lines)
                (list? (caddr (car (caddr receipt)))))
-         '(applied 1 "zero one" #t)))
+         '(applied 1 #("zero" "middle" "one" "two") #t)))
      (check 'edit-is-attributed
             (cadr (car (store:history notes))) agent)
-     (let* ([undo (try-undo! s notes)]
+     (let* ([undo (try-history! s notes 'undo)]
             [restored (store:line notes 0)]
+            [redo (try-history! s notes 'redo)]
+            [redone (store:line notes 0)]
+            [undone (try-history! s notes 'undo)]
             [again (try-edit! s notes "again ")]
             [more (try-edit! s notes "more ")])
-       (check 'edits-continue-after-undo
-         (list undo restored again more (store:line notes 0))
-         '((applied #t) "one" (applied #t) (applied #t) "more again one")))
-     (check 'allowlist-gates-edits-and-undo
-       (list (try-edit! s secret "leak ") (try-undo! s secret)
-             (store:line secret 0))
-       '((refused buffer) (refused buffer) "hidden"))
+       (check 'edits-continue-after-undo-and-redo
+         (list undo restored redo redone undone again more (store:line notes 0))
+         '((applied #t) "one" (applied #t) "zero" (applied #t)
+           (applied #t) (applied #t) "more again one")))
+     (check 'allowlist-gates-all-mutations
+       (list (try-writes! s secret) (store:line secret 0))
+       '(((refused buffer) (refused buffer) (refused buffer)) "hidden"))
      (let ([reader (policy:mint! '(agent reader) (policy:reader) owner)])
        (check 'reader-has-no-write-permission
          (list (policy:session-eval! reader "(buffer-text-line \"notes\" 1)")
-               (try-edit! reader notes "x") (try-undo! reader notes))
-         '((ok . "=> \"two\"") (refused buffer) (refused buffer)))
+               (try-writes! reader notes))
+         '((ok . "=> \"two\"") ((refused buffer) (refused buffer) (refused buffer))))
        (policy:revoke! reader))
+
+     (store:set-property! owner notes 'read-only #t)
+     (let* ([before (call-with-values (lambda () (store:snapshot-state notes)) list)]
+            [results (try-writes! s notes)]
+            [bypass (mutation-result
+                      (lambda () (policy:session-edit! s notes (store:revision notes)
+                                   (text:make-span 0 0 0 0) '("bad")
+                                   '(bypass "bypass" ((read-only . #f))))))])
+       (store:rename! owner notes "renamed")
+       (check 'current-read-only-and-name-guard-the-entire-session-mutation
+         (list results bypass (try-writes! s notes)
+               (equal? before (call-with-values (lambda () (store:snapshot-state notes)) list)))
+         '(((refused read-only) (refused read-only) (refused read-only)) (refused read-only)
+           ((refused buffer) (refused buffer) (refused buffer)) #t)))
+     (store:rename! owner notes "notes")
+     (store:set-property! owner notes 'read-only #f)
 
      ;; -- the escalation path: the session asks its owner --------------
 
      (define got (box #f))
      (define ticket
-       (policy:session-ask! s "May I edit secret?" '("yes" "no")
-                            (lambda (answer) (set-box! got answer))))
+       (from-owner
+         (lambda () (policy:session-ask! s "May I edit secret?" '("yes" "no")
+                      (lambda (answer) (set-box! got answer))))))
      (check 'ask-reaches-the-owner
             (kernel:mailbox-receive! owner-mail)
             (list 'ask ticket agent "May I edit secret?" '("yes" "no")))
@@ -160,10 +200,10 @@
      (check 'revoke (policy:revoke! s) #t)
      (check 'all-revoked-entry-points-refuse
        (list (car (policy:session-eval! s "(+ 1 2)"))
-             (try-edit! s notes "x") (try-undo! s notes)
+             (try-writes! s notes)
              (policy:session-ask! s "Anyone?" '() (lambda (a) a))
              (assoc agent (policy:sessions)))
-       '(refused (refused revoked) (refused revoked) #f #f))
+       '(refused ((refused revoked) (refused revoked) (refused revoked)) #f #f))
 
      ;; The implicit owner is the initiating actor, including a named head,
      ;; or #f for headless callers. The default audit trail stays persistent.
@@ -175,8 +215,9 @@
                (let* ([quiet (policy:mint! '(agent quiet) (policy:make '(+) 10000 '() 4000))]
                       [result (policy:session-eval! quiet "(+ 1 1)")])
                  (policy:revoke! quiet)
-                 (list (policy:session-owner quiet) result (actor:current)))))
-           (list context '(ok . "=> 2") context)))
+                 (list (policy:session-owner quiet) result (actor:current)
+                       (log:actor (car (log:entries 'policy)))))))
+           (list context '(ok . "=> 2") context (or context '(base e)))))
        '(#f (head "writing desk") (agent requester)))
      (let* ([records (log:entries 'policy)]
             [events (reverse (observed))])
@@ -184,8 +225,12 @@
        (check 'one-quiet-owned-audit-stream
          (list (map (lambda (record) (list (log:datum record) #f)) (log:entries 'policy))
                (map (lambda (kind) (and (assq kind (map car events)) #t))
-                 '(mint eval edit undo ask revoke)))
-         (list events '(#t #t #t #t #t #t))))
+                 '(mint eval edit undo redo ask revoke))
+               (for-all (lambda (record)
+                          (let ([event (log:datum record)])
+                            (if (memq (car event) '(mint revoke)) #t
+                                (equal? (log:actor record) (cadr event))))) (log:entries 'policy)))
+         (list events '(#t #t #t #t #t #t #t) #t)))
      (log:unsubscribe! audit-subscription)
      (policy:revoke! winded)
      ;; Overlapping connection admission/teardown must retain every live

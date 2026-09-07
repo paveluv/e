@@ -429,6 +429,7 @@
           [else
            (format "~a blocked: ~a" verb
                    (case detail
+                     [(read-only) "the buffer is read-only"]
                      [(basis-too-old) "history is incomplete"]
                      [(overlap) "another edit overlaps this action"]
                      [(property-changed) "a text property changed after this action"]

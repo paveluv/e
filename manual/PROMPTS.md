@@ -147,8 +147,9 @@ command loop run as `head:ui-actor`.
 `policy:mint! actor policy [owner]` defaults the escalation owner
 to `actor:current`. Standalone callers can supply an owner explicitly or
 use `actor:call-as`; without either, the owner is `#f` and questions have
-no implicit recipient. Session evaluation runs as the session actor and
-restores its caller's context, including when evaluation runs out of fuel.
+no implicit recipient. Session work and its audit run as the session actor and
+restore the caller's context, including when evaluation runs out of fuel.
+Mint/revoke audits describe the controlling caller's actions.
 
 `policy:make grants fuel buffers cap` specifies the sandbox bindings,
 engine ticks per evaluation, writable buffer names (`'any` or a list), and
@@ -161,16 +162,25 @@ audits once. Operations admitted before revocation may finish, while later
 calls refuse. Session events go quietly to the shared log under component `policy`;
 use `log:entries`/`log:datum` to query them and `log:subscribe!` to observe them.
 
-`policy:session-edit! session buffer-id basis span lines` returns
+`policy:session-edit! session buffer-id basis span lines [context]` returns
 `(values 'applied (revision text-vector changes))` on success. This replaces
 the earlier revision-only result; take its first field for the revision.
 The receipt is owned plain data captured at the transaction, with each change
 represented as `(revision actor delta-datum)`; use `text:datum->delta` to
 reconstruct a delta. Stale/refused outcomes keep their existing meanings.
+Context is `#f` or `(key label [undo-facts [commit-facts]])`. Reuse a key for
+the parts of one action in one buffer; keys belong to the session actor.
+Undo reverses text and undo facts together. Commit facts describe external
+state and survive undo/redo. The context contains plain data only. The session
+owns the submitted span, replacement lines and context as well as its receipt.
 `policy:session-undo! session buffer-id [scope]` defaults to `mine`, and accepts
 `all` or `(actor who)` under the same buffer grant. It returns an applied
 revision or the store's blocked/nothing outcome, or a permission refusal.
-These session mutations currently do not check shared `read-only` flags.
+`policy:session-redo! session buffer-id` redoes that requester's latest undo,
+including an undo of another actor's action, with the same result forms.
+All three mutations check the current buffer name and shared `read-only` flag
+in the store transaction. A refusal returns `buffer`, `read-only` or `revoked`;
+an edit cannot clear an existing read-only flag through its own context.
 
 ## Prompt API
 

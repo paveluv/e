@@ -74,7 +74,8 @@ access; agents default to read-only sessions. For example, in `base-config.e`:
         (default-connection-policy actor))))
 ```
 
-This grants that named agent edits and undo in `notes`. The resolver receives
+This grants that named agent edits, undo and redo in `notes`, subject to the
+buffer's current name and read-only flag. The resolver receives
 an owned identity; the hello carries no permissions. Each connection gets a
 new session and disconnect revokes it. The grants/fuel/cap fields concern
 session evaluation, which is not yet exposed through the wire.

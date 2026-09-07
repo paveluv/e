@@ -409,6 +409,14 @@ own a new vector; callers must treat the shared line strings as immutable.
 Reset is for an explicit baseline or generated view, and clears shared undo.
 Ordinary edits use `head:store-edit!`.
 
+Shared head and policy edits, undo and redo check `read-only` inside the store
+transaction as well as at the command prompt. Trusted producers can still
+update their read-only output. The underlying `store:edit!` and
+`store:edit-with-snapshot!` accept optional write access after the edit context;
+`store:history-step!` accepts it after scope. Pass `'any` or a list of permitted
+buffer names for a client mutation. Omitted access (`#f`) is the trusted
+producer path; it is not exposed through session or wire requests.
+
 Local labels share the head's buffer namespace.  A collision receives
 `<name 2>`, `<name 3>`, and so on; when a visible shared buffer arrives or is renamed,
 the local buffer yields the conflicting label.  `head:add-buffer!`

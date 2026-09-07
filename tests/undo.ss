@@ -218,20 +218,21 @@
      (show-buffer! plain)
      (head:buffer-read-only-set! plain #t)
      (define protected-text (text-of plain))
-     (check 'read-only-undo-refuses
-            (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)])
-              (undo!) #f)
-            #t)
-     (check 'read-only-undo-keeps-text (text-of plain) protected-text)
-     (check 'read-only-all-undo-refuses
-            (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)])
-              (undo! 'all) #f) #t)
-     (check 'read-only-targeted-undo-refuses
-            (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)])
-              (undo-actor! bot) #f) #t)
-     (check 'read-only-redo-refuses
-            (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)])
-              (redo!) #f) #t)
+     (check 'read-only-history-commands-refuse
+       (map (lambda (command)
+              (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)]) (command) #f))
+            (list undo! (lambda () (undo! 'all)) (lambda () (undo-actor! bot)) redo!))
+       '(#t #t #t #t))
+     ;; The store transaction still protects the buffer if its flag changed
+     ;; after the command preflight, or a caller enters the head seam directly.
+     (check 'read-only-shared-entrypoints-refuse
+       (cons (guard (ex [(kernel:refusal? ex) (condition-message ex)] [else (raise ex)])
+               (head:store-edit! plain (text:make-span 0 0 0 0) '("bad")) #f)
+             (map (lambda (direction)
+                    (call-with-values (lambda () (head:store-history! plain direction 'mine)) list))
+                  '(undo redo)))
+       '("Edit not applied: the buffer is read-only" (refused read-only) (refused read-only)))
+     (check 'read-only-keeps-text (text-of plain) protected-text)
      (head:buffer-read-only-set! plain #f)
 
      ;; Local history requires no store provenance and emits no events.
