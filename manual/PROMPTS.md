@@ -155,8 +155,22 @@ engine ticks per evaluation, writable buffer names (`'any` or a list), and
 result/output character cap. `policy:reader` grants the read-only sandbox
 with an empty writable-buffer list. Sessions have no edit-count limit;
 `policy:revoke!` ends their permission. `policy:sessions` lists `(actor owner)`
-pairs. Session events go quietly to the shared log under component `policy`;
+pairs. Policies and session metadata own their inputs and returned values.
+Concurrent session admission/removal uses one inventory; repeated revocation
+audits once. Operations admitted before revocation may finish, while later
+calls refuse. Session events go quietly to the shared log under component `policy`;
 use `log:entries`/`log:datum` to query them and `log:subscribe!` to observe them.
+
+`policy:session-edit! session buffer-id basis span lines` returns
+`(values 'applied (revision text-vector changes))` on success. This replaces
+the earlier revision-only result; take its first field for the revision.
+The receipt is owned plain data captured at the transaction, with each change
+represented as `(revision actor delta-datum)`; use `text:datum->delta` to
+reconstruct a delta. Stale/refused outcomes keep their existing meanings.
+`policy:session-undo! session buffer-id [scope]` defaults to `mine`, and accepts
+`all` or `(actor who)` under the same buffer grant. It returns an applied
+revision or the store's blocked/nothing outcome, or a permission refusal.
+These session mutations currently do not check shared `read-only` flags.
 
 ## Prompt API
 

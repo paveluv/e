@@ -3,8 +3,8 @@
 ;;
 ;; A session binds an actor, a sandbox environment, buffer permissions,
 ;; and an owner for questions. Operations check the session and return
-;; plain results; revoke! ends permission. Metadata ownership still needs
-;; Q94's admission/query copies in dev/MULTIHEAD_PROGRESS.md.
+;; authoritative results; revoke! ends admission of further operations.
+;; Policy/identity data is owned on admission and on every query.
 ;;
 ;; Evaluation fuel (engines -- a loop cannot hang the editor), a
 ;; result-size cap, and a buffer allowlist live in the policy record
@@ -31,11 +31,13 @@
           (only (chezscheme)
                 current-output-port
                 box unbox set-box! format environment eval
-                make-engine parameterize remq
+                make-engine parameterize remq make-mutex with-mutex
                 open-string-input-port open-output-string
                 get-output-string)
           (prefix (store) store:)
+          (prefix (text) text:)
           (prefix (actor) actor:)
+          (prefix (datum) datum:)
           (prefix (only (log) add!) log:)
           (prefix (only (kernel) condition-text) kernel:))
 
@@ -47,8 +49,19 @@
   ;; fuel:    engine ticks per evaluation
   ;; buffers: 'any, or the list of buffer names the session may edit
   ;; cap:     result and output size, characters
-  (define-record-type (policy make-policy policy?)
-    (fields grants fuel buffers cap))
+  (define-record-type (policy policy-of-values policy?)
+    (fields (immutable grants policy-grants-raw) fuel
+            (immutable buffers policy-buffers-raw) cap))
+
+  (define (make-policy grants fuel buffers cap)
+    (unless (and (or (eq? grants 'all) (and (list? grants) (for-all symbol? grants)))
+                 (fixnum? fuel) (> fuel 0) (fixnum? cap) (>= cap 0)
+                 (or (eq? buffers 'any) (and (list? buffers) (for-all string? buffers))))
+      (error 'make "expected grants, positive fuel, buffer names and nonnegative cap"))
+    (policy-of-values (datum:copy grants) fuel (datum:copy buffers) cap))
+
+  (define (policy-grants p) (datum:copy (policy-grants-raw p)))
+  (define (policy-buffers p) (datum:copy (policy-buffers-raw p)))
 
   (define (reader-policy)
     ;; the whole read-only tier, no edits anywhere
@@ -57,13 +70,16 @@
   ;;; Sessions ----------------------------------------------------------------
 
   (define-record-type (session mint session?)
-    (fields actor
+    (fields (immutable actor session-actor-raw)
             policy
-            owner               ; the actor asked when more is needed
+            (immutable owner session-owner-raw) ; the actor asked when more is needed
             env                 ; the granted evaluation environment
             revoked))           ; box
 
-  (define live-sessions (box '()))
+  (define session-lock (make-mutex))
+  (define live-sessions '())
+  (define (session-actor s) (datum:copy (session-actor-raw s)))
+  (define (session-owner s) (datum:copy (session-owner-raw s)))
 
   (define (audit! entry)
     ;; One history and delivery mechanism: read log:entries 'policy or
@@ -88,25 +104,32 @@
       [(actor p) (mint! actor p (actor:current))]
       [(actor p owner)
        (unless (policy? p) (error 'mint! "expected a policy" p))
-       (let ([s (mint actor p owner (grant-environment (policy-grants p)) (box #f))])
-         (set-box! live-sessions (cons s (unbox live-sessions)))
-         (audit! (list 'mint actor owner))
+       (unless (and (actor:identity? actor) (or (not owner) (actor:identity? owner)))
+         (error 'mint! "expected actor and optional owner identities" actor owner))
+       (let ([s (mint (datum:copy actor) p (datum:copy owner)
+                  (grant-environment (policy-grants-raw p)) (box #f))])
+         (with-mutex session-lock (set! live-sessions (cons s live-sessions)))
+         (audit! (list 'mint (session-actor s) (session-owner s)))
          s)]))
 
   (define (revoke! s)
-    (set-box! (session-revoked s) #t)
-    (set-box! live-sessions (remq s (unbox live-sessions)))
-    (audit! (list 'revoke (session-actor s)))
+    ;; Admission/inventory commit together; logging and all user callbacks
+    ;; run outside this owner. An operation already admitted may finish.
+    (when (with-mutex session-lock
+            (and (not (revoked? s))
+                 (begin
+                   (set-box! (session-revoked s) #t)
+                   (set! live-sessions (remq s live-sessions)) #t)))
+      (audit! (list 'revoke (session-actor s))))
     #t)
 
   (define (revoked? s) (unbox (session-revoked s)))
 
   (define (sessions)
-    ;; the live sessions as data: ((actor owner) ...)
+    ;; Capture one inventory version, then copy its immutable metadata.
     (map (lambda (s)
            (list (session-actor s) (session-owner s)))
-         (filter (lambda (s) (not (revoked? s)))
-                 (unbox live-sessions))))
+         (with-mutex session-lock live-sessions)))
 
   ;;; Fueled evaluation ---------------------------------------------------------
 
@@ -196,33 +219,36 @@
   ;;; Attributed mutation ------------------------------------------------------
 
   (define (buffer-allowed? s id)
-    (let ([allowed (policy-buffers (session-policy s))])
+    (let ([allowed (policy-buffers-raw (session-policy s))])
       (or (eq? allowed 'any)
           (member (guard (ex [else #f]) (store:buffer-name id))
                   allowed))))
 
   (define (session-edit! s id basis span lines)
-    ;; store:edit! curried with the session's actor and checked
-    ;; against its policy.  -> the store's (values status detail),
+    ;; One owned plain receipt: applied (revision text changes), ending at
+    ;; this transaction even if subscribers write again before return.
+    ;; Changes use text's canonical delta datums; no store aliases escape.
+    ;; Otherwise the store's (values status detail),
     ;; plus (values 'refused 'revoked|'buffer).
     (cond
       [(revoked? s) (values 'refused 'revoked)]
       [(not (buffer-allowed? s id)) (values 'refused 'buffer)]
       [else
        (let-values ([(status detail)
-                     (store:edit! (session-actor s) id basis span lines)])
+                     (store:edit-with-snapshot! (session-actor s) id basis span lines)])
          (audit!
-           (list 'edit (session-actor s) id status detail))
-         (values status detail))]))
+           (list 'edit (session-actor s) id status
+                 (if (eq? status 'applied) (car detail) detail)))
+         (values status (if (eq? status 'applied) (datum:copy detail text:delta->datum) detail)))]))
 
-  (define (session-undo! s id)
-    ;; undo the session's own newest live edit
+  (define (session-undo! s id . scope)
+    ;; Default mine, or all/(actor who), under the same buffer permission.
     (cond
       [(revoked? s) (values 'refused 'revoked)]
       [(not (buffer-allowed? s id)) (values 'refused 'buffer)]
       [else
        (let-values ([(status detail)
-                     (store:undo! (session-actor s) id)])
+                     (apply store:undo! (session-actor s) id scope)])
          (audit!
            (list 'undo (session-actor s) id status))
          (values status detail))]))

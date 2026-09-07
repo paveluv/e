@@ -24,11 +24,11 @@ background job with its output redirected; SIGHUP leaves it running.
 SIGTERM or Ctrl-C stops it and its terminal processes. State is in memory
 for the life of the daemon; stopping it does not save a session to disk.
 
-This first implementation supports local read clients and actor mailbox
-delivery. Interactive attachment, editing through the connection and named
-screen restoration are still being built. The current protocol and Scheme
+Local clients can read, edit and undo according to their session's buffer
+permissions, and receive actor mailbox delivery. Interactive attachment and
+named screen restoration are still being built. The current protocol and Scheme
 client primitives are described in the development
-[wire contract](../dev/MULTIHEAD.md#implemented-wire-foundation-s11b).
+[wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).
 
 Only peers running as the same OS user connect. An existing socket path is
 never removed at startup, and a clean stop releases its path. After a crash,
@@ -60,6 +60,24 @@ guessing what they call. Base configuration errors stop startup.
 `kernel:config-file` and `kernel:load-config!` accept an optional `base` or
 `head` symbol; the default remains `head`. Supported head-app reload reapplies
 head configuration. Changes to the base runtime require a restart.
+
+The daemon uses `base:connection-policy`, a procedure parameter, to choose a
+policy from each connecting actor identity. Heads default to all-buffer write
+access; agents default to read-only sessions. For example, in `base-config.e`:
+
+```scheme
+(define default-connection-policy (base:connection-policy))
+(base:connection-policy
+  (lambda (actor)
+    (if (equal? actor '(agent "helper"))
+        (policy:make '() 10000 '("notes") 8000)
+        (default-connection-policy actor))))
+```
+
+This grants that named agent edits and undo in `notes`. The resolver receives
+an owned identity; the hello carries no permissions. Each connection gets a
+new session and disconnect revokes it. The grants/fuel/cap fields concern
+session evaluation, which is not yet exposed through the wire.
 
 ## Loading and reloading
 

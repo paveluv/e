@@ -5,21 +5,16 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
 (eval
   '(begin
      (import (prefix (text) text:) (prefix (string) string:)
-             (only (chezscheme) format))
+             (prefix (test) test:))
 
-     (define checks 0)
-
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'text-test label actual expected)))
+     (define check test:check)
 
      (define (span sl sc el ec) (text:make-span sl sc el ec))
      (define (span->list s)
@@ -154,7 +149,13 @@
                   (lambda (after)
                     (let*-values ([(span replacement) (text:difference before after)]
                                   [(result delta) (text:apply-edit before span replacement)])
-                      (equal? result after)))
+                      (let* ([decoded (text:datum->delta (text:delta->datum delta))]
+                             [applied (call-with-values
+                                        (lambda () (text:apply-edit before (text:delta-span decoded)
+                                                     (text:delta-inserted decoded))) list)])
+                        (and (equal? result after) (equal? (car applied) after)
+                             (equal? (text:delta-removed decoded)
+                                     (text:extract before (text:delta-span decoded)))))))
                   samples))
               samples)
             #t)
@@ -267,8 +268,24 @@
      ;; -- reversible deltas and commuting compensation ----------------------
 
      (define (delta-data d)
-       (list (span->list (text:delta-span d)) (text:delta-new-end d)
-             (text:delta-removed d) (text:delta-inserted d)))
+       (cons (text:delta-new-end d) (text:delta->datum d)))
+     (let* ([input (list (list 0 1 1 2) (list (string-copy "b") "cd") (list (string-copy "λ") "" "z"))]
+            [decoded (text:datum->delta input)] [output (text:delta->datum decoded)])
+       (set-car! (car input) 99)
+       (string-set! (caaddr input) 0 #\X)
+       (string-set! (caadr output) 0 #\Y)
+       (set-car! (car output) 99)
+       (check 'wire-delta-owns-both-directions-and-derives-its-end
+         (list (text:delta->datum decoded) (text:delta-new-end decoded))
+         '(((0 1 1 2) ("b" "cd") ("λ" "" "z")) (2 . 1))))
+     (check 'wire-geometry-refuses-malformed-data
+       (list
+         (map (lambda (d) (test:raises? (lambda () (text:datum->span d))))
+              '((0 0 0) (0 0 -1 0) (0 0 0 1.0) (0 0 0 x)))
+         (map (lambda (d) (test:raises? (lambda () (text:datum->delta d))))
+              '(((0 0 0 1) () ("x")) ((0 0 0 1) ("x") "y")
+                ((0 0 0 1) ("xx") ("y")) ((0 0 1 1) ("x") ("y")))))
+       '((#t #t #t #t) (#t #t #t #t)))
      (check 'double-inversion-recovers-delta
             (delta-data (text:invert-delta (text:invert-delta d)))
             (delta-data d))
@@ -364,4 +381,4 @@
                                                    '()))))
             '(rejected rejected rejected))
 
-     (format #t "~a text checks passed\n" checks)))
+     (test:finish! 'text)))

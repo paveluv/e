@@ -1,15 +1,24 @@
 ;; base.e -- process lifetime and the local daemon. No head imports.
 (library (base)
-  (export call-with-runtime run)
+  (export call-with-runtime run connection-policy)
   (import (chezscheme)
           (prefix (kernel) kernel:) (prefix (startup) startup:)
           (prefix (sys) sys:) (prefix (wire) wire:)
           (prefix (store) store:) (prefix (actor) actor:)
+          (prefix (policy) policy:) (prefix (text) text:) (prefix (datum) datum:)
           (prefix (file) file:) (prefix (vt) vt:))
 
   (define modules
     '("actor" "datum" "diff" "doc" "file" "git" "https" "log" "policy"
       "reference" "sandbox" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
+
+  ;; Base configuration selects permissions from the admitted local identity.
+  ;; The hello supplies no grants. Agent write access must be selected here.
+  (define connection-policy
+    (make-parameter
+      (lambda (actor)
+        (if (eq? (car actor) 'head) (policy:make 'all 100000000 'any 8000)
+            (policy:reader)))))
 
   (define (call-with-runtime thunk)
     ;; Pin before config can start active work. Plain e owns this same base
@@ -26,7 +35,7 @@
         (thunk))
       vt:close-all!))
 
-  (define (request operation args)
+  (define (request session operation args)
     (define (arity n)
       (unless (= (length args) n) (error 'wire "wrong request arity" operation)))
     (case operation
@@ -41,10 +50,20 @@
          (if (eq? operation 'name) (store:buffer-name id)
              (let-values ([(lines revision facts) (store:snapshot-state id)])
                (list lines revision facts))))]
+      [(edit)
+       (arity 4)
+       (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
+         (error 'wire "expected a nonnegative basis revision"))
+       (call-with-values
+         (lambda () (policy:session-edit! session (car args) (cadr args)
+                      (text:datum->span (caddr args)) (cadddr args))) list)]
+      [(undo)
+       (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional undo scope"))
+       (call-with-values (lambda () (apply policy:session-undo! session args)) list)]
       [else (error 'wire "unknown request" operation)]))
 
   (define (serve-connection connection)
-    (let ([owner (list 'connection connection)] [out (kernel:make-mailbox)] [writer #f])
+    (let ([owner (list 'connection connection)] [out (kernel:make-mailbox)] [writer #f] [session #f])
       (define (post! message) (kernel:mailbox-post! out message))
       (dynamic-wind void
         (lambda ()
@@ -60,11 +79,14 @@
               (unless (and (actor:identity? actor) (= (length actor) 2)
                            (memq (car actor) '(head agent)) (string? (cadr actor)))
                 (error 'wire "expected (hello 1 (head-or-agent name))"))
-              ;; Queue the welcome before publishing the endpoint, but start
-              ;; its writer only after the identity claim succeeds.
-              (post! (list 'hello wire:version actor '(read)))
-              (parameterize ([kernel:registering-module owner])
-                (actor:register! actor (lambda (message) (post! (list 'event message))) '(read)))
+              (let* ([p ((connection-policy) (datum:copy actor))]
+                     [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo))])
+                (set! session (policy:mint! actor p (and (eq? (car actor) 'head) actor)))
+                ;; Queue hello before publishing; name refusal still revokes
+                ;; this connection's session without touching the old owner.
+                (post! (list 'hello wire:version actor capabilities))
+                (parameterize ([kernel:registering-module owner])
+                  (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities)))
               (set! writer
                 (fork-thread
                   (lambda ()
@@ -87,9 +109,10 @@
                         (post!
                           (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
                             (list 'reply (cadr message) 'ok
-                              (request (caddr message) (cdddr message)))))
+                              (request session (caddr message) (cdddr message)))))
                         (loop)))))))))
         (lambda ()
+          (when session (policy:revoke! session))
           (kernel:retract-module! owner)
           (sys:close-connection! connection)
           (post! #f)

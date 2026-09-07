@@ -22,13 +22,14 @@
 (library (text)
   (export normalize from-string to-string content=? splice
           make-span span? span-start span-end
+          span->datum datum->span delta->datum datum->delta
           normalize-span span-empty? contains? overlap?
           position? position<? position<=? position=?
           apply-edit extract invert invert-delta difference
           delta? delta-span delta-new-end delta-removed delta-inserted
           delta-line-shift
           rebase-position rebase-span rebase-delta rebase-result-position)
-  (import (rnrs) (only (chezscheme) format))
+  (import (rnrs) (only (chezscheme) format) (prefix (datum) datum:))
 
   ;;; Text boundaries ------------------------------------------------------
 
@@ -117,6 +118,16 @@
 
   (define (span-empty? s) (position=? (span-start s) (span-end s)))
 
+  (define (span->datum s)
+    (list (car (span-start s)) (cdr (span-start s))
+          (car (span-end s)) (cdr (span-end s))))
+
+  (define (datum->span value)
+    (unless (and (list? value) (= (length value) 4)
+                 (for-all (lambda (n) (and (fixnum? n) (>= n 0))) value))
+      (error 'datum->span "expected four nonnegative coordinates" value))
+    (apply make-span value))
+
   (define (contains? s position)
     ;; strictly inside the half-open region
     (and (position<=? (span-start s) position)
@@ -143,6 +154,26 @@
             new-end     ; where the replacement ends, in the new text
             removed     ; the replaced content, as replacement lines
             inserted))  ; the replacement, so deltas can be inverted twice
+
+  (define (replacement-end start lines)
+    (let next ([lines lines] [row (car start)] [column (cdr start)])
+      (if (null? (cdr lines)) (cons row (+ column (string-length (car lines))))
+          (next (cdr lines) (+ row 1) 0))))
+
+  (define (delta->datum d)
+    ;; new-end is derived from start/inserted, never a second wire authority.
+    (datum:copy (list (span->datum (delta-span d)) (delta-removed d) (delta-inserted d))))
+
+  (define (datum->delta value)
+    (unless (and (list? value) (= (length value) 3)
+                 (for-all (lambda (lines) (and (list? lines) (pair? lines) (for-all string? lines)))
+                          (cdr value)))
+      (error 'datum->delta "expected span, removed and inserted lines" value))
+    (let* ([s (datum->span (car value))] [removed (datum:copy (cadr value))]
+           [inserted (datum:copy (caddr value))] [start (span-start s)])
+      (unless (position=? (span-end s) (replacement-end start removed))
+        (error 'datum->delta "removed lines disagree with the span" value))
+      (make-delta s (replacement-end start inserted) removed inserted)))
 
   (define (delta-line-shift d)
     (- (car (delta-new-end d)) (car (span-end (delta-span d)))))
@@ -203,12 +234,7 @@
                   (string-append first-piece suffix)
                   (string-append (list-ref replacement (- pieces 1))
                                  suffix))]
-             [new-end
-              (cons (+ start-line (- pieces 1))
-                    (if (= pieces 1)
-                        (+ start-column (string-length (car replacement)))
-                        (string-length
-                          (list-ref replacement (- pieces 1)))))]
+             [new-end (replacement-end start replacement)]
              [new-line-count (+ (vector-length text)
                                 (- pieces 1)
                                 (- (- end-line start-line)))]

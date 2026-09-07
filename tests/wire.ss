@@ -10,7 +10,7 @@
 (eval
   '(begin
      (import (prefix (wire) wire:) (prefix (sys) sys:) (prefix (test) test:)
-             (prefix (string) string:) (prefix (kernel) kernel:))
+             (prefix (string) string:) (prefix (kernel) kernel:) (prefix (text) text:))
 
      (define (encoded value)
        (let-values ([(port result) (open-bytevector-output-port)])
@@ -37,6 +37,9 @@
      (define socket (string-append root "/socket λ"))
      (define trigger (string-append root "/continue"))
      (define terminal-pid-file (string-append root "/terminal-pid"))
+     (define inventory-file (string-append root "/sessions"))
+     (define edit-held (string-append root "/edit-held"))
+     (define edit-release (string-append root "/edit-release"))
      (define (quote-shell text)
        (string-append "'" (apply string-append
                             (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
@@ -79,6 +82,26 @@
                                (cons 'process-id (get-process-id))
                                (cons 'authority (list refused-core retained revoked)))))
          (store:create! '(base e) "private" '("a local audience") '((audience (head "desk λ"))))
+         (define default-policy (base:connection-policy))
+         (base:connection-policy
+           (lambda (actor)
+             (if (member actor '((agent "first") (agent "second")))
+                 (policy:make '() 10000 '("notes λ") 0)
+                 (default-policy actor))))
+         (define held-edit? #f)
+         (log:subscribe!
+           (lambda (record presentation)
+             (when (eq? (log:component record) 'policy)
+               (let ([event (log:datum record)])
+                 (when (and (eq? (car event) 'edit) (equal? (cadr event) '(agent "first")) (not held-edit?))
+                   (set! held-edit? #t)
+                   (call-with-output-file ,edit-held (lambda (out) (display "committed" out)))
+                   (let wait ()
+                     (unless (file-exists? ,edit-release) (sleep (make-time 'time-duration 5000000 0)) (wait))))
+                 (when (memq (car event) '(mint revoke))
+                   (let ([inventory (policy:sessions)])
+                     (store:set-property! '(base e) notes 'sessions inventory)
+                     (call-with-output-file ,inventory-file (lambda (out) (write inventory out)) 'replace)))))))
          (actor:subscribe!
            (lambda (batch)
              (for-each (lambda (event)
@@ -119,11 +142,14 @@
          (set! clients (cons connection clients)) connection))
      (define (hello connection actor)
        (exchange connection (list 'hello wire:version actor)))
+     (define (reply-value reply)
+       (unless (and (list? reply) (= (length reply) 4) (equal? (list-head reply 3) '(reply 7 ok)))
+         (error 'wire-test "request failed" last-request reply))
+       (cadddr reply))
      (define (rpc connection operation . args)
-       (let ([reply (exchange connection (append (list 'request 7 operation) args))])
-         (unless (and (list? reply) (= (length reply) 4) (equal? (list-head reply 3) '(reply 7 ok)))
-           (error 'wire-test "request failed" operation reply))
-         (cadddr reply)))
+       (reply-value (exchange connection (append (list 'request 7 operation) args))))
+     (define (inventory connection)
+       (cdr (assq 'sessions (caddr (rpc connection 'snapshot 1)))))
 
      (let-values ([(input from errors pid) (open-process-ports command 'block (native-transcoder))])
        (define out-done
@@ -154,7 +180,7 @@
            (let* ([head (connect)] [identity '(head "desk λ")])
              (test:check 'claim-precedes-welcome-and-queued-mail
                (list (hello head identity) (receive head))
-               (list (list 'hello 1 identity '(read)) '(event (from-base "welcome"))))
+               (list (list 'hello 1 identity '(read edit undo)) '(event (from-base "welcome"))))
              (let* ([ids (rpc head 'buffers)] [snapshot (rpc head 'snapshot (car ids))]
                     [facts (caddr snapshot)])
                (test:check 'base-only-config-and-owned-snapshot
@@ -173,13 +199,17 @@
                       (let ([duplicate (connect)])
                         (list (car (exchange duplicate (list 'hello version identity)))
                               (eof-object? (receive duplicate))
-                              (and (member identity (map car (rpc head 'actors))) #t))))
+                              (and (member identity (map car (rpc head 'actors))) #t)
+                              (inventory head))))
                     '(0 1))
-               '((error #t #t) (error #t #t)))
+               (make-list 2 (list 'error #t #t (list (list identity identity)))))
              (test:check 'request-errors-preserve-the-connection
                (map (lambda (message) (list-head (exchange head message) 3))
-                 '((request 1 edit) (request 2 snapshot 999) (request 3 buffers extra) (request 4 actors)))
-               '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 ok)))
+                 '((request 1 edit) (request 2 snapshot 999) (request 3 buffers extra)
+                   (request 4 edit 1 0 (0 0 -1 0) ("x")) (request 5 edit 1 0.5 (0 0 0 0) ("x"))
+                   (request 6 undo 1 everyone) (request 7 actors)))
+               '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 error)
+                 (reply 5 error) (reply 6 error) (reply 7 ok)))
              (test:check 'existing-endpoint-is-never-unlinked
                (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name 1))
                '(#t "notes λ"))
@@ -194,6 +224,54 @@
                      '#("a local audience")))
              (test:await 'head-detached
                (lambda () (not (exists (lambda (entry) (eq? (caar entry) 'head)) (rpc agent 'actors)))))
+             (let* ([first (connect)] [second (connect)]
+                    [writers (list first second)] [actors '((agent "first") (agent "second"))])
+               (test:check 'configured-agents-use-server-selected-permissions
+                 (map (lambda (connection actor) (list (hello connection actor) (receive connection))) writers actors)
+                 (map (lambda (actor) (list (list 'hello 1 actor '(read edit undo)) '(event (from-base "welcome")))) actors))
+               ;; Hold the first policy audit callback after commit. A second
+               ;; actor commits before the first reply: its receipt must still
+               ;; describe exactly its own accepted revision and anchor chain.
+               (wire:send! (sys:connection-output first) '(request 7 edit 1 0 (0 0 0 5) ("HELLO")))
+               (test:await 'first-edit-committed (lambda () (file-exists? edit-held)))
+               (let ([second-result (rpc second 'edit 1 0 '(0 7 0 7) '("!"))])
+                 (write-text edit-release "continue")
+                 (let ([results (list (reply-value (receive first)) second-result)])
+                   (test:check 'authoritative-receipts-rebase-and-attribute-both-writers
+                     (map
+                       (lambda (result actor)
+                         (let* ([receipt (cadr result)] [changes (caddr receipt)]
+                                [reconstructed
+                                 (fold-left
+                                   (lambda (lines change)
+                                     (let ([delta (text:datum->delta (caddr change))])
+                                       (unless (equal? (text:extract lines (text:delta-span delta)) (text:delta-removed delta))
+                                         (error 'wire-test "wrong removed text" change))
+                                       (let-values ([(next actual) (text:apply-edit lines (text:delta-span delta) (text:delta-inserted delta))]) next)))
+                                   '#("hello λ") changes)])
+                           (list (car result) (car receipt) (cadr receipt)
+                                 (equal? reconstructed (cadr receipt))
+                                 (equal? (cadr (car (reverse changes))) actor)
+                                 (map car changes))))
+                       results actors)
+                     '((applied 1 #("HELLO λ") #t #t (1)) (applied 2 #("HELLO λ!") #t #t (1 2))))))
+               (test:check 'stale-and-permission-refusals-preserve-text
+                 (list (rpc second 'edit 1 0 '(0 1 0 3) '("bad"))
+                       (rpc agent 'edit 1 2 '(0 0 0 0) '("bad"))
+                       (rpc first 'edit 2 0 '(0 0 0 0) '("bad"))
+                       (rpc agent 'undo 1 'all) (rpc first 'undo 2)
+                       (car (rpc agent 'snapshot 1)) (car (rpc agent 'snapshot 2)))
+                 '((stale overlap) (refused buffer) (refused buffer) (refused buffer) (refused buffer)
+                   #("HELLO λ!") #("a local audience")))
+               (let* ([mine (rpc first 'undo 1)] [after-mine (car (rpc agent 'snapshot 1))]
+                      [again (rpc first 'undo 1)] [other (rpc first 'undo 1 '(actor (agent "second")))])
+                 (rpc second 'edit 1 4 '(0 0 0 0) '("B"))
+                 (test:check 'undo-defaults-to-mine-with-explicit-actor-and-all-scopes
+                   (list mine after-mine again other (rpc first 'undo 1 'all) (car (rpc agent 'snapshot 1)))
+                   '((applied 3) #("hello λ!") (nothing #f) (applied 4) (applied 6) #("hello λ"))))
+               (for-each sys:close-connection! writers)
+               (test:await 'connection-sessions-revoked
+                 (lambda () (equal? (inventory agent) (list (list identity #f))))))
              (write-text trigger "continue")
              (test:await 'background-agent
                (lambda () (equal? (car (rpc agent 'snapshot 1)) '#("agent work while detached"))))
@@ -211,14 +289,16 @@
                (list (eof-object? (receive idle)) (eof-object? (receive agent)) (file-exists? socket))
                '(#t #t #f)))
            (let ([terminal-pid (call-with-input-file terminal-pid-file read)])
-             (test:check 'base-stop-reaps-its-terminal
-               (zero? (system (format "kill -0 ~a 2>/dev/null" terminal-pid))) #f))
+             (test:check 'base-stop-reaps-its-terminal-and-revokes-every-session
+               (list (zero? (system (format "kill -0 ~a 2>/dev/null" terminal-pid)))
+                     (call-with-input-file inventory-file read)) '(#f ())))
            (let ([listener (sys:listen-local socket)]) (sys:close-local-listener! listener))
            (write-text socket "ordinary file")
            (test:check 'ordinary-file-at-socket-path-is-preserved
              (list (test:raises? (lambda () (sys:listen-local socket)))
                    (call-with-input-file socket get-string-all)) '(#t "ordinary file")))
          (lambda ()
+           (write-text edit-release "continue")
            (guard (ex [else (void)]) (stop!))
            (for-each sys:close-connection! clients)
            (for-each close-port (list input from errors))

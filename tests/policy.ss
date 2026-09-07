@@ -24,11 +24,11 @@
      (define check test:check)
 
      ;; an owner head with a mailbox, and a buffer to work on
-     (define owner '(head test))
+     (define owner '(head "test"))
      (define owner-mail (kernel:make-mailbox))
      (actor:register! owner
                       (lambda (m) (kernel:mailbox-post! owner-mail m)))
-     (define agent '(agent helper 1))
+     (define agent '(agent "helper" 1))
      (define notes (store:create! owner "notes" '("one" "two")))
      (define secret (store:create! owner "secret" '("hidden")))
 
@@ -40,15 +40,25 @@
            (when (eq? (log:component record) 'policy)
              (observed (list (log:datum record) presentation))))))
 
-     (define s (policy:mint!
-                 agent
-                 (policy:make 'all 100000000 '("notes") 4000)
-                 owner))
+     (define actor-input (list 'agent (string-copy "helper") 1))
+     (define owner-input (list 'head (string-copy "test")))
+     (define buffers-input (list (string-copy "notes")))
+     (define permissions (policy:make 'all 100000000 buffers-input 4000))
+     (define s (policy:mint! actor-input permissions owner-input))
+     (string-set! (cadr actor-input) 0 #\X)
+     (string-set! (cadr owner-input) 0 #\X)
+     (set-car! buffers-input "secret")
+     (set-car! (policy:buffers permissions) "secret")
+     (string-set! (cadr (policy:session-actor s)) 0 #\Y)
+     (string-set! (cadr (policy:session-owner s)) 0 #\Y)
+     (let ([row (car (policy:sessions))])
+       (set-car! (car row) 'rewritten)
+       (string-set! (cadadr row) 0 #\Z))
 
-     (check 'minted-listed-and-audited-once
-       (list (policy:session? s) (policy:sessions)
+     (check 'minted-metadata-and-permissions-own-inputs-and-queries
+       (list (policy:session? s) (policy:sessions) (policy:buffers permissions)
              (map log:datum (log:entries 'policy)))
-       (list #t (list (list agent owner)) (list (list 'mint agent owner))))
+       (list #t (list (list agent owner)) '("notes") (list (list 'mint agent owner))))
 
      ;; -- fueled evaluation in the granted environment -----------------
 
@@ -68,11 +78,11 @@
        '(unbound error))
 
      ;; a tiny fuel tank: the loop cannot hang anything
-     (define winded (policy:mint!
-                      '(agent winded)
-                      (policy:make '(+ car cons quote let lambda if)
-                                   10000 '() 4000)
-                      owner))
+     (define grants-input (list '+ 'car 'cons 'quote 'let 'lambda 'if))
+     (define narrow (policy:make grants-input 10000 '() 4000))
+     (set-car! grants-input 'delete-file)
+     (set-car! (policy:grants narrow) 'delete-file)
+     (define winded (policy:mint! '(agent winded) narrow owner))
      (check 'fuel-runs-out
             (actor:call-as owner
               (lambda ()
@@ -92,7 +102,7 @@
 
      (define (mutation-result thunk)
        (let-values ([(status detail) (thunk)])
-         (list status (if (number? detail) #t detail))))
+         (list status (if (eq? status 'applied) #t detail))))
 
      (define (try-edit! session id line)
        (mutation-result
@@ -103,7 +113,16 @@
      (define (try-undo! session id)
        (mutation-result (lambda () (policy:session-undo! session id))))
 
-     (check 'edit-applies (try-edit! s notes "zero ") '(applied #t))
+     (let-values ([(status receipt)
+                   (policy:session-edit! s notes 0 (text:make-span 0 0 0 0) '("zero "))])
+       (string-set! (vector-ref (cadr receipt) 0) 0 #\X)
+       (let* ([change (car (caddr receipt))] [delta (caddr change)])
+         (string-set! (cadr (cadr change)) 0 #\Y)
+         (string-set! (caaddr delta) 0 #\Z))
+       (check 'edit-receipt-owns-plain-text-and-delta-data
+         (list status (car receipt) (store:line notes 0)
+               (list? (caddr (car (caddr receipt)))))
+         '(applied 1 "zero one" #t)))
      (check 'edit-is-attributed
             (cadr (car (store:history notes))) agent)
      (let* ([undo (try-undo! s notes)]
@@ -169,6 +188,29 @@
          (list events '(#t #t #t #t #t #t))))
      (log:unsubscribe! audit-subscription)
      (policy:revoke! winded)
+     ;; Overlapping connection admission/teardown must retain every live
+     ;; session. Inventory readers and audit callbacks never share its lock.
+     (let* ([p (policy:reader)]
+            [created (test:parallel 12
+                       (lambda (i) (policy:mint! (list 'agent 'old i) p owner)))]
+            [reading (log:subscribe! (lambda (record presentation) (policy:sessions)))]
+            [replacement
+             (test:parallel 12
+               (lambda (i)
+                 (policy:revoke! (list-ref created i))
+                 (policy:mint! (list 'agent 'new i) p owner)))])
+       (check 'concurrent-mint-revoke-keeps-exact-owned-inventory
+         (let ([rows (policy:sessions)])
+           (list (= (length rows) 12)
+                 (for-all (lambda (s) (and (member (list (policy:session-actor s) owner) rows) #t)) replacement)
+                 (for-all policy:revoked? created))) '(#t #t #t))
+       (let ([before (length (filter (lambda (r) (eq? (car (log:datum r)) 'revoke)) (log:entries 'policy)))])
+         (test:parallel 24 (lambda (i) (policy:revoke! (list-ref replacement (mod i 12)))))
+         (check 'repeated-revocation-removes-and-audits-once
+           (list (policy:sessions)
+                 (- (length (filter (lambda (r) (eq? (car (log:datum r)) 'revoke)) (log:entries 'policy))) before))
+           '(() 12)))
+       (log:unsubscribe! reading))
      (store:delete! owner notes)
      (store:delete! owner secret)
      (test:finish! 'policy)))
