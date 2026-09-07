@@ -12,7 +12,7 @@
           registration-conflict?
           retract-module! call-with-registration-update call-with-runtime-registrations
           module-source loaded-modules
-          init-module! load-module! load-modules! module-requires?
+          init-module! load-module! load-modules! module-requires? pin-modules!
           reload-module! add-after-reload-hook!
           config-file load-config!
           make-read-only-error read-only-error? make-refusal refusal?
@@ -24,7 +24,7 @@
                 box unbox make-hashtable equal-hash
                 make-thread-parameter format interaction-environment eval
                 library-exports library-requirements library-requirements-options
-                library-directories directory-list load sort
+                library-directories load
                 parameterize make-mutex with-mutex make-condition
                 condition-wait condition-signal condition-broadcast
                 current-time time? time-type time<? time-difference
@@ -470,9 +470,16 @@
   ;; Extension modules are libraries in the lib directory, loaded
   ;; through here -- by the loader at startup, or later by hand -- so
   ;; the kernel knows which modules exist and owns their
-  ;; registrations. Loading/reloading runs on the main pump. Kernel and
-  ;; main never reload, and reload also refuses libraries main imports,
-  ;; keeping every caller on the same instance.
+  ;; registrations. Loading/reloading runs on the process's owning pump.
+  ;; Bootstrap pins its runtime roots and their imports before starting work.
+  ;; The kernel itself never reloads.
+
+  (define restart-roots '("kernel"))
+
+  (define (pin-modules! names)
+    ;; Monotonic for this image: a running owner cannot discard its linkage.
+    (set! restart-roots
+      (append (map string-copy names) restart-roots)))
 
   ;; Membership commits with a module's registrations, including nested
   ;; loads and continuation escapes. This private owner is the kernel's
@@ -518,26 +525,15 @@
           (init-module! name)
           (record-module! name)))))
 
-  (define (dot-e? file)
-    (let ([n (string-length file)])
-      (and (> n 2) (string=? (substring file (- n 2) n) ".e"))))
-
-  (define (load-modules!)
-    ;; Load every module in the lib directory, in name order --
-    ;; everything but the two libraries that never reload.  A broken
-    ;; module must not keep the others from loading: failures are
-    ;; returned as ((file . condition) ...) for the caller to report.
+  (define (load-modules! names)
+    ;; Bootstrap selects the modules explicitly. A broken module must not
+    ;; keep the others from loading; return ((file . condition) ...) as before.
     (fold-left
-      (lambda (failures file)
-        (guard (ex [else (cons (cons file ex) failures)])
-          (load-module! (substring file 0 (- (string-length file) 2)))
+      (lambda (failures name)
+        (guard (ex [else (cons (cons (string-append name ".e") ex) failures)])
+          (load-module! name)
           failures))
-      '()
-      (sort string<?
-            (filter (lambda (file)
-                      (and (dot-e? file)
-                           (not (member file '("kernel.e" "main.e")))))
-                    (directory-list (caar (library-directories)))))))
+      '() names))
 
   (define (module-requires? name target)
     ;; Does library (name) build on (target), directly or through
@@ -557,11 +553,20 @@
 
   ;;; The user's configuration -------------------------------------------------
 
-  (define (config-file)
-    ;; config.e next to the loader script: the lib directory's parent.
-    (string-append (caar (library-directories)) "/../config.e"))
+  (define (config-owner side)
+    (case side
+      [(head) 'config]
+      [(base) 'base-config]
+      [else (error 'config-file "expected base or head" side)]))
 
-  (define (load-config!)
+  (define config-file
+    (case-lambda
+      [() (config-file 'head)]
+      [(side)
+       (string-append (caar (library-directories)) "/../"
+                      (symbol->string (config-owner side)) ".e")]))
+
+  (define load-config!
     ;; The user's configuration: config.e, plain expressions evaluated
     ;; in the editor's top level (the M-x environment).  Loaded at
     ;; startup once the modules are up, and again after every module
@@ -571,16 +576,19 @@
     ;; load, so nothing accumulates.  -> 'absent without a config.e, #t
     ;; when it loaded cleanly, or the condition an error raised (the
     ;; rest of the file unread) for the caller to report.
-    (let ([path (config-file)])
-      (if (not (file-exists? path))
-          'absent
-          (guard (ex [else ex])
-            (call-with-registration-update
-              (lambda ()
-                (retract-module! 'config)
-                (parameterize ([registering-module 'config])
-                  (load path))
-                #t))))))
+    (case-lambda
+      [() (load-config! 'head)]
+      [(side)
+       (let ([path (config-file side)] [owner (config-owner side)])
+         (if (not (file-exists? path))
+           'absent
+           (guard (ex [else ex])
+             (call-with-registration-update
+               (lambda ()
+                 (retract-module! owner)
+                 (parameterize ([registering-module owner])
+                   (load path))
+                 #t)))))]))
 
   ;; Layers above hang their after-reload work here (main reapplies
   ;; config, refreshes buffer modes, repaints); hooks receive the
@@ -615,25 +623,20 @@
            [source (module-source name)])
       (call-with-registration-update
         (lambda ()
-          (when (member name '("kernel" "main"))
-            (error 'reload-module!
-                   (format "the ~a cannot be reloaded in place" name)))
-          ;; main cannot reload, so a module it links against would
-          ;; fork on reload: main keeps the instance it compiled
-          ;; against while everything else moves to the new one --
-          ;; coherent stores through persistent cells, forked
-          ;; registries.  Refuse rather than leave two instances.
-          (when (module-requires? "main" name)
-            (error 'reload-module!
-                   (format "main links against ~a: restart e to pick up changes"
-                           name)))
+          (cond [(find (lambda (root)
+                         (or (string=? root name) (module-requires? root name)))
+                       restart-roots)
+                 => (lambda (root)
+                      (error 'reload-module!
+                        (format "~a pins ~a: restart e to pick up changes" root name)))])
           (unless (file-exists? source)
             (error 'reload-module! "no module source" source))
-          (for-each (lambda (m) (load (module-source m))) (reload-order name))
-          (unless (member name (loaded-modules))
-            (record-module! name))
-          (for-each (lambda (m) (retract-module! (string->symbol m)))
-                    (loaded-modules))
-          (for-each init-module! (loaded-modules))
+          (let ([affected (reload-order name)])
+            (for-each (lambda (m) (load (module-source m))) affected)
+            (unless (member name (loaded-modules))
+              (record-module! name))
+            ;; Unrelated owners keep their registrations and active work.
+            (for-each (lambda (m) (retract-module! (string->symbol m))) affected)
+            (for-each init-module! affected))
           (for-each (lambda (hook) (hook name))
                     (registry-items after-reload-hooks)))))))

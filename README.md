@@ -11,7 +11,7 @@ It's "fully customizable" because its code is just one big configuration
 
 The editor is itself a Scheme system built from R6RS libraries. Editing and
 saving a reloadable extension from within e applies its changes immediately.
-The kernel, the main loop, and libraries linked into the main loop require a
+The kernel, base services, main loop and their linked libraries require a
 restart; see [the reload boundary](manual/MODULES.md#hot-reload).
 
 Highlights:
@@ -73,7 +73,11 @@ $ ~/git/project/.e/e file.txt
 ```
 
 Each installation is self-contained. It uses the `lib/`, `config.e`, `data/`,
-and compiled `eo/` beside its own loader.
+optional `base-config.e`, and compiled `eo/` beside its own loader.
+
+This branch also has a [daemon foundation](manual/CONFIGURATION.md#daemon-foundation):
+`e --daemon` runs a base with a local read protocol. Interactive attachment
+and restoration of a named screen are still being implemented.
 
 On FreeBSD, where Chez installs a differently named script interpreter, run
 `chez-scheme --script e` or change the shebang as explained in the loader.

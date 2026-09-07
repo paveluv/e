@@ -5,10 +5,12 @@
 Everything in `lib/` is an R6RS library using the `.e` extension. `edit.e` is
 `(edit)`, `eval.e` is `(eval)`, and so on. The loader is only bootstrap: it
 locates the adjacent libraries and compiled-object directory and configures
-Chez. It admits options through `startup` before importing the command layer
-(`edit`, bare -- the names M-x sees) and `main`, then runs `(main:run)`.
-`startup` and `kernel` are prefixed too. This ordering chooses the head's
-identity before the head creates shared state.
+Chez. It admits options through `startup`, then enters the `base` runtime.
+Plain `e` subsequently imports the command layer (`edit`, bare -- the names
+M-x sees) and `main`, and runs `(main:run)`. `--daemon` runs the base without
+importing a head. This ordering chooses a head's identity before it creates
+shared state. The base owns terminal processes through shutdown; a client
+disconnect owns only that connection and its actor registration.
 
 The editor is layered seam modules -- `kernel`, `store`, `file`, `head`,
 `paint`, `prompt`, `mode`, `keymap`, ... -- with `main.e` running the loop on
@@ -51,10 +53,11 @@ An extension exports `init!`, which performs its registrations:
     (mode:register! "my" '(".my") '() my-styles)))
 ```
 
-At startup the kernel discovers `lib/*.e`, loads each library, and calls its
-`init!`.  Dependencies are ordinary R6RS imports, so Chez determines
-compilation order.  A failing module reports an error but does not prevent
-unrelated modules or the editor from starting.
+`base` and `main` select their bundled modules explicitly. The kernel loads
+that list and calls each `init!`; dependencies remain ordinary R6RS imports.
+Load additional extensions with `(kernel:load-module! "my-mode")` from the
+appropriate configuration file. A failed base initializer stops startup;
+failed head extensions report their errors while the editor continues.
 
 Bundled and third-party modules should use `keymap:bind-default!`.
 `keymap:bind!` is for deliberate user or session overrides, ensuring a
@@ -71,9 +74,11 @@ outside e can be picked up explicitly:
 ```
 
 `main:modules-reload-on-save` controls automatic source reload. The kernel,
-`main` (the loop), and libraries that `main` imports directly or transitively
-require a restart. The editor refuses to reload those libraries to keep every
-caller using the same instance.
+`main` (the loop), the base services (including policy, terminal runtime and
+reference corpus), and their transitive imports require a restart. Bootstrap
+declares these process roots with `kernel:pin-modules!`; refusal happens before
+redefinition. A reload reinitializes only the affected module and its loaded
+importers. Unrelated owners keep their registrations and active work.
 
 Registrations are tagged with their owning module. Reload stages replacement
 modes, keys, hooks, app callbacks, and descriptions, then publishes them

@@ -791,8 +791,7 @@
             (list (policy:session-owner s) (actor:current) result edit-result)))
        '((head "wired head λ") (head "wired head λ") (ok . "=> 3") (refused buffer)))
 
-     ;; a seam module main links against refuses to reload in place: main
-     ;; cannot follow, and two library instances would fork
+     ;; Process roots pin the seam before any library can be redefined.
      (send! "\x1b;xkernel:reload-module! \"store\"\r")
      (pump! 1200)
      ;; the message wraps across the echo area's two rows (a trailing
@@ -815,8 +814,8 @@
            (cond [(> (+ i len) (string-length text)) #f]
                  [(string=? (substring text i (+ i len)) needle) #t]
                  [else (scan (+ i 1))]))))
-     (check 'main-linked-module-refuses-reload
-            (echo-has? "main links against store")
+     (check 'runtime-pinned-module-refuses-reload
+            (echo-has? "pins store")
             #t)
 
      (check 'shared-log-keeps-actors-local-presentation-and-reload-identity
@@ -991,7 +990,7 @@
             '((4 . 0) "Middle" (6 . 0) "# Middle"))
 
      ;; One live describe page exercises the source/companion boundary and
-     ;; all three permitted reloads. Fresh commands resolve the new exports;
+     ;; head-app reloads and core refusal. Fresh commands resolve the exports;
      ;; retaining an old procedure inside this driver would test old code.
      (check 'describe-page-retains-selection-and-refreshes-through-reload
        (read-editor
@@ -1026,15 +1025,21 @@
               (let* ([reloads
                       (fold-left
                         (lambda (out module)
-                          (append out (list (let ([callback (head:app-refresh! (head:app-of view))])
-                                              (kernel:reload-module! module)
+                          (append out (list (let* ([callback (head:app-refresh! (head:app-of view))]
+                                                   [outcome
+                                                    (guard (ex [(and (string=? module "reference")
+                                                                     (message-condition? ex)
+                                                                     (string:search (condition-message ex) "pins reference"
+                                                                       0 (string-length (condition-message ex))))
+                                                                'refused])
+                                                      (kernel:reload-module! module) 'reloaded)])
                                               (document! (string-append "Refreshed " module))
                                               (head:before-frame!)
                                               (head:refresh-visible-views!)
                                               (let ([revision (store:revision id)])
                                                 (head:before-frame!)
                                                 (head:before-frame!)
-                                                (list (= id (car (page))) (caddr (page))
+                                                (list outcome (= id (car (page))) (caddr (page))
                                                   (eq? view (markdown:companion source))
                                                   (not (eq? callback (head:app-refresh! (head:app-of view))))
                                                   (and (member (string-append "Refreshed " module)
@@ -1061,9 +1066,9 @@
                     (delete-other-windows!)
                     (list initial reloads labels unbound keeps-source retired)))))))
        '((#t #t #t "<describe>" "markdown" #t)
-         ((#t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
-          (#t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
-          (#t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t))
+         ((reloaded #t markdown:view! #t #f #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
+          (reloaded #t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
+          (refused #t markdown:view! #t #f #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t))
          ("reference source" "<reference view>")
          (() "**procedure**: `(markdown:view! [buffer])`  ") #t (#f #f #f)))
 

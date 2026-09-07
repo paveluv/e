@@ -10,10 +10,10 @@
 ;; result-size cap, and a buffer allowlist live in the policy record
 ;; and are enforced here, at the seam. Edits have no count budget.
 ;;
-;; Sessions are local to this library instance. Reload currently leaves
-;; retained capabilities usable (R7 in dev/MULTIHEAD.md); only explicit
-;; revoke! ends them. Audit records belong to the shared log and survive
-;; reloads there.
+;; Sessions are local to this library instance. The base bootstrap pins
+;; session authority for the process lifetime; supported reload refuses
+;; redefinition. Explicit revoke! ends a retained session's permission.
+;; Audit records belong to the shared log.
 ;;
 ;; The honest limit: in-process, all of this
 ;; constrains a misbehaving model, not hostile code.  One approved

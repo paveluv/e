@@ -2,4 +2,5 @@
 lib/#*#
 /data/
 /config.e
+/base-config.e
 /.reference/

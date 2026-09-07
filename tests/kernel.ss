@@ -619,10 +619,22 @@
            (for-each kernel:load-module! '("reload-a" "reload-m" "reload-z"))
            (test:check 'uninvoked-import-dependencies-are-visible
              (kernel:module-requires? "reload-a" "reload-z") #t)
-           (write-reload-root 2)
-           (kernel:reload-module! "reload-z")
-           (test:check 'reload-orders-the-complete-import-graph
-             (eval '(list (reload-a:value) (reload-m:value) (reload-z:value))) '(2 2 2))))
+           (let ([untouched (kernel:registry-find fixture-registry (lambda (entry) (eq? (car entry) 'active)))])
+             (write-reload-root 2)
+             (kernel:reload-module! "reload-z")
+             (test:check 'reload-orders-importers-without-reinitializing-unrelated-owners
+               (list (eval '(list (reload-a:value) (reload-m:value) (reload-z:value)))
+                     (eq? untouched (kernel:registry-find fixture-registry (lambda (entry) (eq? (car entry) 'active)))))
+               '((2 2 2) #t)))
+           (let ([root (string-copy "reload-a")] [held (eval 'reload-a:value)])
+             (kernel:pin-modules! (list root))
+             (string-set! root 0 #\X)
+             (write-reload-root 3)
+             (test:check 'process-roots-pin-their-imports-before-redefinition
+               (list (map (lambda (name) (test:raises? (lambda () (kernel:reload-module! name))))
+                          '("reload-a" "reload-m" "reload-z"))
+                     (held) (eval '(reload-z:value)))
+               '((#t #t #t) 2 2)))))
        (lambda ()
          (kernel:retract-module! 'kernel-test-hook)
          (for-each

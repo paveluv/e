@@ -11,8 +11,28 @@ Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,
 ` 3`, and so on if occupied; an explicitly requested name must be free.
 The identity is `(head "name")`, exposed as `head:ui-actor`. It is chosen
-before shared buffers or cursor marks are created. This build still runs
-one head in one process; daemon and attach modes are not implemented.
+before shared buffers or cursor marks are created. The interactive editor
+still runs one head in one process; interactive `--attach` is not implemented.
+
+## Daemon foundation
+
+`./e --daemon [--socket PATH]` starts a foreground base without a screen.
+The socket defaults to `$XDG_RUNTIME_DIR/e/base`, or `~/.e/base` when that
+environment variable is absent. `--socket=PATH` also works. The daemon does
+not take a head name or file argument. Run it under a supervisor or as a shell
+background job with its output redirected; SIGHUP leaves it running.
+SIGTERM or Ctrl-C stops it and its terminal processes. State is in memory
+for the life of the daemon; stopping it does not save a session to disk.
+
+This first implementation supports local read clients and actor mailbox
+delivery. Interactive attachment, editing through the connection and named
+screen restoration are still being built. The current protocol and Scheme
+client primitives are described in the development
+[wire contract](../dev/MULTIHEAD.md#implemented-wire-foundation-s11b).
+
+Only peers running as the same OS user connect. An existing socket path is
+never removed at startup, and a clean stop releases its path. After a crash,
+remove a stale socket explicitly after checking that no daemon still uses it.
 
 ## Configuration file
 
@@ -29,6 +49,17 @@ cp config.template.e config.e
 ```
 
 Uncomment only settings that should differ from defaults.
+
+`base-config.e`, also beside the loader and ignored by Git, configures the
+base services. It runs once at startup in both plain and daemon modes, before
+any head is imported. It sees base APIs such as `store:`, `policy:`, `vt:` and
+`reference:`. Keep key bindings, painting and other head settings in `config.e`.
+The daemon does not evaluate `config.e`; forms are never assigned a side by
+guessing what they call. Base configuration errors stop startup.
+
+`kernel:config-file` and `kernel:load-config!` accept an optional `base` or
+`head` symbol; the default remains `head`. Supported head-app reload reapplies
+head configuration. Changes to the base runtime require a restart.
 
 ## Loading and reloading
 
@@ -73,6 +104,6 @@ and precedence rules.
 
 ## Self-contained installations
 
-Each checkout reads only the `config.e`, `lib/`, `data/`, and compiled `eo/`
+Each checkout reads only the `config.e`, `base-config.e`, `lib/`, `data/`, and compiled `eo/`
 beside its own loader. A project can therefore vendor a customized e checkout
 without affecting a personal installation elsewhere.

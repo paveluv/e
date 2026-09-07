@@ -16,6 +16,8 @@
           terminal-output-port
           terminal-character-width
           canonical-file-path host-name terminal-name
+          listen-local accept-local connect-local close-local-listener!
+          connection-input connection-output close-connection! watch-daemon-signals!
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
           terminal-process-pid resize-terminal-process!
@@ -334,6 +336,145 @@
                (bytevector-copy! bytes 0 trimmed 0 n)
                (utf8->string trimmed))]
             [else (find (+ n 1))])))
+
+  ;;; Local sockets -----------------------------------------------------------
+
+  (define c-socket (and libc-loaded? (foreign-procedure "socket" (int int int) int)))
+  (define c-bind (and libc-loaded? (foreign-procedure "bind" (int u8* unsigned) int)))
+  (define c-listen (and libc-loaded? (foreign-procedure "listen" (int int) int)))
+  (define c-accept
+    (and libc-loaded? (foreign-procedure __collect_safe "accept" (int uptr uptr) int)))
+  (define c-connect
+    (and libc-loaded? (foreign-procedure __collect_safe "connect" (int u8* unsigned) int)))
+  (define c-shutdown (and libc-loaded? (foreign-procedure "shutdown" (int int) int)))
+  (define c-chmod (and libc-loaded? (foreign-procedure "chmod" (string unsigned) int)))
+  (define c-geteuid (and libc-loaded? (foreign-procedure "geteuid" () unsigned)))
+  (define c-getsockopt
+    (and libc-loaded? (foreign-procedure "getsockopt" (int int int u8* u8*) int)))
+  (define c-getpeereid
+    (and libc-loaded? (not (eq? os 'linux))
+         (foreign-procedure "getpeereid" (int u8* u8*) int)))
+  (define c-errno
+    (and libc-loaded?
+         (foreign-procedure (os-case "__errno_location" "__error" "__error") () uptr)))
+  (define c-fcntl
+    (and libc-loaded?
+         (or (guard (ex [else #f])
+               (eval '(foreign-procedure (__varargs_after 2) "fcntl" (int int int) int)))
+             (foreign-procedure "fcntl" (int int int) int))))
+
+  (define-record-type local-listener
+    (fields fd path lock (mutable closed)))
+  (define-record-type connection
+    (fields fd input output lock (mutable closed)))
+
+  (define (socket-check who result)
+    (when (< result 0)
+      (error who "local socket operation failed" (foreign-ref 'int (c-errno) 0)))
+    result)
+
+  (define (close-on-exec! fd)
+    (socket-check 'local-socket (c-fcntl fd 2 1))) ; F_SETFD, FD_CLOEXEC
+
+  (define (call-with-local-address path proc)
+    (unless (and (string? path) (> (string-length path) 0)
+                 (not (memv #\nul (string->list path))))
+      (error 'local-socket "expected a nonempty path without NUL" path))
+    (let* ([bytes (string->utf8 path)] [n (bytevector-length bytes)]
+           [size (+ n 3)] [address (make-bytevector size 0)])
+      (unless (< n (os-case 108 104 104))
+        (error 'local-socket "socket path is too long" path))
+      (if (eq? os 'linux)
+          (bytevector-u16-native-set! address 0 1) ; AF_UNIX
+          (begin (bytevector-u8-set! address 0 size) (bytevector-u8-set! address 1 1)))
+      (bytevector-copy! bytes 0 address 2 n)
+      ;; connect can block; collect-safe calls must not retain movable data.
+      (dynamic-wind (lambda () (lock-object address))
+        (lambda () (proc address size))
+        (lambda () (unlock-object address)))))
+
+  (define (same-user! fd)
+    ;; Local access belongs to this OS user. Directory/socket permissions
+    ;; alone differ across Unix systems; check peer credentials at both ends.
+    (let ([uid (make-bytevector 4 0)])
+      (if c-getpeereid
+          (socket-check 'local-socket (c-getpeereid fd uid (make-bytevector 4 0)))
+          (let ([credentials (make-bytevector 12 0)] [size (make-bytevector 4 0)])
+            (bytevector-u32-native-set! size 0 12)
+            (socket-check 'local-socket (c-getsockopt fd 1 17 credentials size)) ; SO_PEERCRED
+            (bytevector-copy! credentials 4 uid 0 4)))
+      (unless (= (bytevector-u32-native-ref uid 0) (c-geteuid))
+        (error 'local-socket "peer belongs to another OS user"))))
+
+  (define (connection-from-fd fd)
+    (let ([input #f] [output #f] [out-fd #f])
+      (guard (ex [else
+                  (if input (close-port input) (c-close fd))
+                  (if output (close-port output) (when out-fd (c-close out-fd)))
+                  (raise ex)])
+        (same-user! fd)
+        (close-on-exec! fd)
+        (set! input (open-fd-input-port fd 'block #f))
+        (set! out-fd (socket-check 'local-socket (c-dup fd)))
+        (close-on-exec! out-fd)
+        (set! output (open-fd-output-port out-fd 'none #f))
+        (make-connection fd input output (make-mutex) #f))))
+
+  (define (listen-local path)
+    (unless c-socket (error 'listen-local "local sockets are unavailable"))
+    (call-with-local-address path
+      (lambda (address size)
+        (let ([fd (socket-check 'listen-local (c-socket 1 1 0))] [bound? #f])
+          (guard (ex [else (c-close fd) (when bound? (delete-file path)) (raise ex)])
+            (close-on-exec! fd)
+            ;; Never unlink before binding: an existing endpoint or ordinary
+            ;; file belongs to its current owner, including after a crash.
+            (socket-check 'listen-local (c-bind fd address size))
+            (set! bound? #t)
+            (socket-check 'listen-local (c-chmod path #o600))
+            (socket-check 'listen-local (c-listen fd 32))
+            (make-local-listener fd (string-copy path) (make-mutex) #f))))))
+
+  (define (accept-local listener)
+    (let again ()
+      (if (local-listener-closed listener) #f
+          (let ([fd (c-accept (local-listener-fd listener) 0 0)])
+            (cond [(>= fd 0) (guard (ex [else (again)]) (connection-from-fd fd))]
+                  [(local-listener-closed listener) #f]
+                  [(= (foreign-ref 'int (c-errno) 0) 4) (again)] ; EINTR
+                  [else (socket-check 'accept-local fd)])))))
+
+  (define (connect-local path)
+    (unless c-socket (error 'connect-local "local sockets are unavailable"))
+    (call-with-local-address path
+      (lambda (address size)
+        (let ([fd (socket-check 'connect-local (c-socket 1 1 0))])
+          (guard (ex [else (c-close fd) (raise ex)])
+            (close-on-exec! fd)
+            (socket-check 'connect-local (c-connect fd address size)))
+          (connection-from-fd fd)))))
+
+  (define (close-connection! connection)
+    (with-mutex (connection-lock connection)
+      (unless (connection-closed connection)
+        (connection-closed-set! connection #t)
+        ;; Wake blocked reads/writes before closing their port descriptors.
+        (c-shutdown (connection-fd connection) 2)
+        (for-each (lambda (port) (guard (ex [else (void)]) (close-port port)))
+                  (list (connection-input connection) (connection-output connection))))))
+
+  (define (close-local-listener! listener)
+    (with-mutex (local-listener-lock listener)
+      (unless (local-listener-closed listener)
+        (local-listener-closed-set! listener #t)
+        (c-shutdown (local-listener-fd listener) 2)
+        (c-close (local-listener-fd listener))
+        (delete-file (local-listener-path listener)))))
+
+  (define (watch-daemon-signals! stop!)
+    (register-signal-handler 1 (lambda (signal) (void))) ; SIGHUP: keep the base
+    (register-signal-handler 15 (lambda (signal) (stop!)))
+    (keyboard-interrupt-handler stop!))
 
   (define (host-name)
     (and c-gethostname

@@ -104,8 +104,6 @@
     (keymap:bind-default! 'terminal "C-] C-y" terminal-yank!)
     (keymap:bind-default! 'terminal "S-PAGEUP" (lambda () (page-window-fraction! -1 1)))
     (keymap:bind-default! 'terminal "S-PAGEDOWN" (lambda () (page-window-fraction! 1 1)))
-    ;; Until M6 splits processes, quitting ./e ends the base as well.
-    (head:add-shutdown-hook! vt:close-all!)
     (doc:register!
       '(((terminal:open!!)
          (("procedure" . "(terminal:open!! [command])")) "void"

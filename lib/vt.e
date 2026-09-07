@@ -3266,7 +3266,7 @@
     (void))
 
   (define (close-all!)
-    ;; The combined in-process editor owns the base's process lifetime.
+    ;; Called by the base runtime owner, independent of head attachment.
     (for-each close-state! (instances)))
 
   (define (terminal-color-scheme! scheme . source)

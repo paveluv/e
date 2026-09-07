@@ -298,6 +298,7 @@
     (set! startup-page proc))
 
   (define (run)
+    (kernel:pin-modules! '("main"))
     (actor:call-as head:ui-actor run-head))
 
   (define (run-head)
@@ -311,7 +312,12 @@
                              (car failure) (kernel:condition-text (cdr failure)))])
             (display (format "e: ~a\n" msg) (current-error-port))
             (echo:set-text! msg)))
-        (reverse (kernel:load-modules!)))
+        (reverse
+          (kernel:load-modules!
+            '("blame" "c-mode" "describe" "echo" "edit" "eval" "git-view"
+              "glyph" "head" "keymap" "log-view" "markdown" "md-mode" "mode"
+              "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
+              "scheme-mode" "search" "style" "terminal" "tty"))))
       (load-config!)
       (if file
           (open-file! file)
@@ -319,9 +325,6 @@
             (guard (ex [else (void)]) (startup-page))
             ;; the greeting outlives the page's own load chatter
             (echo:set-text! (startup-greeting)))))
-    (unless (and (getenv "TERM") (not (string=? (getenv "TERM") "dumb")))
-      (display "e: an interactive terminal is required\n" (current-error-port))
-      (exit 1))
     ;; A stray SIGINT outside an evaluation must not drop into Chez's break
     ;; prompt underneath the editor's screen.
     (keyboard-interrupt-handler void)

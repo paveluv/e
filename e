@@ -1,6 +1,6 @@
 #!/usr/bin/env scheme-script
 ;; e -- loader for the e editor.
-;; Run:  ./e [--name NAME] [--] [file]
+;; Run: ./e [--name NAME] [--] [file], or ./e --daemon [--socket PATH].
 ;;
 ;; scheme-script is the interpreter name Chez's man page recommends for
 ;; scripts; Linux distributions and Homebrew install it under exactly
@@ -61,7 +61,17 @@
          (import (prefix (startup) startup:) (prefix (kernel) kernel:))
          (startup:call-with-options (command-line-arguments)
            (lambda ()
-             ;; A separate eval keeps head initialization after parsing.
+             (when (and (eq? (startup:mode) 'standalone)
+                        (or (not (getenv "TERM")) (string=? (getenv "TERM") "dumb")))
+               (display "e: an interactive terminal is required\n" (current-error-port))
+               (exit 1))
+             ;; Runtime ownership starts before any head can be imported.
              (eval '(begin
-                      (import (edit) (prefix (main) main:))
-                      (main:run)))))))
+                      (import (prefix (base) base:))
+                      (base:call-with-runtime
+                        (lambda ()
+                          (if (eq? (startup:mode) 'daemon)
+                              (base:run)
+                              (eval '(begin
+                                       (import (edit) (prefix (main) main:))
+                                       (main:run))))))))))))
