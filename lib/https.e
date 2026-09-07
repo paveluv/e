@@ -418,40 +418,105 @@
 
   ;;; HTTP ---------------------------------------------------------------
 
+  (define-record-type uri (fields scheme authority path query))
+
+  (define (uri-end text separators start end)
+    (let scan ([i start])
+      (if (or (= i end) (memv (string-ref text i) separators)) i (scan (+ i 1)))))
+
+  (define (parse-reference url)
+    ;; HTTP URI references share one grammar. Keep an absent query distinct
+    ;; from an empty one; fragments never belong to a fetch target.
+    (unless (and (string? url)
+                 (for-all (lambda (c)
+                            (let ([n (char->integer c)]) (and (> n 32) (not (<= 127 n 159)))))
+                          (string->list url)))
+      (error 'https "expected a URL without spaces or controls" url))
+    (let* ([end (uri-end url '(#\#) 0 (string-length url))]
+           [query-at (uri-end url '(#\?) 0 end)]
+           [colon (uri-end url '(#\: #\/) 0 query-at)]
+           [scheme (and (< colon query-at) (char=? (string-ref url colon) #\:)
+                        (string-downcase (substring url 0 colon)))]
+           [start (if scheme (+ colon 1) 0)]
+           [authority? (and (<= (+ start 2) query-at)
+                            (string=? (substring url start (+ start 2)) "//"))]
+           [path-at (if authority? (uri-end url '(#\/) (+ start 2) query-at) start)]
+           [authority (and authority? (substring url (+ start 2) path-at))])
+      (when (and scheme (not (and (member scheme '("http" "https")) authority)))
+        (error 'https "expected an http(s) URL" url))
+      (make-uri scheme authority (substring url path-at query-at)
+                (and (< query-at end) (substring url (+ query-at 1) end)))))
+
+  (define (query-suffix query) (if query (string-append "?" query) ""))
+
+  (define (normalize-path path)
+    ;; RFC 3986 section 5.2: resolve complete dot segments, preserving empty
+    ;; segments, trailing slashes and percent escapes. HTTP paths are rooted.
+    (if (string=? path "") ""
+        (let scan ([start 1] [parts '()])
+          (let* ([end (uri-end path '(#\/) start (string-length path))]
+                 [part (substring path start end)]
+                 [parts (cond [(string=? part ".") parts]
+                              [(string=? part "..") (if (pair? parts) (cdr parts) '())]
+                              [else (cons part parts)])])
+            (if (= end (string-length path))
+                (string-append "/" (string:join
+                                     (reverse (if (member part '("." "..")) (cons "" parts) parts)) "/"))
+                (scan (+ end 1) parts))))))
+
+  (define (resolve-url url location)
+    (let* ([base (parse-reference url)] [ref (parse-reference location)]
+           [replaces? (or (uri-scheme ref) (uri-authority ref))]
+           [path (uri-path ref)]
+           [same-path? (and (not replaces?) (string=? path ""))]
+           [path (cond [same-path? (uri-path base)]
+                       [(or replaces? (string:prefix? "/" path)) (normalize-path path)]
+                       [else
+                        (let* ([old (uri-path base)]
+                               [end (let scan ([i (string-length old)])
+                                      (if (or (zero? i) (char=? (string-ref old (- i 1)) #\/))
+                                          i (scan (- i 1))))])
+                          (normalize-path (string-append (if (zero? end) "/" (substring old 0 end)) path)))])])
+      (string-append (or (uri-scheme ref) (uri-scheme base)) "://"
+                     (if replaces? (uri-authority ref) (uri-authority base)) path
+                     (query-suffix (if same-path? (or (uri-query ref) (uri-query base)) (uri-query ref))))))
+
   (define (parse-url url)
-    ;; -> (values secure? host port path)
-    (define (split-scheme)
-      (cond [(string:prefix? "https://" url) (values #t 8 443)]
-            [(string:prefix? "http://" url) (values #f 7 80)]
-            [else (error 'https "expected an http(s) URL" url)]))
-    (let-values ([(secure? start default-port) (split-scheme)])
-      (let* ([slash (let scan ([i start])
-                      (cond [(= i (string-length url)) i]
-                            [(char=? (string-ref url i) #\/) i]
-                            [else (scan (+ i 1))]))]
-             [authority (substring url start slash)]
-             [path (if (= slash (string-length url))
-                       "/"
-                       (substring url slash (string-length url)))]
-             [colon (let scan ([i 0])
-                      (cond [(= i (string-length authority)) #f]
-                            [(char=? (string-ref authority i) #\:) i]
-                            [else (scan (+ i 1))]))])
-        (values secure?
-                (if colon (substring authority 0 colon) authority)
-                (if colon
-                    (string->number
-                      (substring authority (+ colon 1)
-                                 (string-length authority)))
-                    default-port)
-                path))))
+    ;; One authority supplies connection host/port and the HTTP Host field.
+    ;; Strip IPv6 brackets only for the connector; preserve explicit ports.
+    (let* ([ref (parse-reference url)] [authority (uri-authority ref)]
+           [secure? (equal? (uri-scheme ref) "https")])
+      (unless (and (uri-scheme ref) authority (> (string-length authority) 0))
+        (error 'https "expected an http(s) URL" url))
+      (let* ([n (string-length authority)] [bracket? (string:prefix? "[" authority)]
+             [end (if bracket? (+ 1 (uri-end authority '(#\]) 1 n))
+                      (uri-end authority '(#\:) 0 n))]
+             [host (and (<= end n) (substring authority (if bracket? 1 0) (if bracket? (- end 1) end)))]
+             [default (if secure? 443 80)]
+             [port (cond [(= end n) default]
+                         [(and (< end n) (char=? (string-ref authority end) #\:))
+                          (let ([digits (substring authority (+ end 1) n)])
+                            (if (string=? digits "") default
+                                (and (for-all (lambda (c) (char<=? #\0 c #\9)) (string->list digits))
+                                     (string->number digits))))]
+                         [else #f])])
+        (unless (and host (> (string-length host) 0) port (<= 0 port 65535)
+                     (for-all (lambda (c) (not (memv c '(#\@ #\[ #\] #\\)))) (string->list host)))
+          (error 'https "invalid HTTP authority" authority))
+        (values secure? host port
+                (string-append (if (string=? (uri-path ref) "") "/" (uri-path ref))
+                               (query-suffix (uri-query ref))) authority))))
 
   (define-record-type https-response
-    (fields status headers port channel)
-    (protocol (lambda (new) (lambda (s h p c) (new s h p c)))))
+    (fields status headers port))
 
   (define (https-close! response)
-    ((channel-close! (https-response-channel response))))
+    (close-port (https-response-port response)))
+
+  (define (call-with-body response consume)
+    (dynamic-wind void
+      (lambda () (consume (https-response-port response)))
+      (lambda () (https-close! response))))
 
   (define (header-ref headers name)
     (cond [(assoc name headers) => cdr] [else #f]))
@@ -577,12 +642,16 @@
               (bytevector-slice buffered n (bytevector-length buffered)))
             n)
           ((channel-read! channel) bv start count)))
+    (define (take-body! bv start count)
+      ;; Framed payload/framing bytes cannot end early. Only an unframed
+      ;; read-to-close body may use transport EOF as successful completion.
+      (let ([got (take! bv start count)])
+        (when (and (> count 0) (zero? got)) (error 'https "connection closed mid-body"))
+        got))
     (define (take-exactly! bv start count)
       (let loop ([start start] [count count])
         (when (> count 0)
-          (let ([got (take! bv start count)])
-            (when (zero? got)
-              (error 'https "connection closed mid-body"))
+          (let ([got (take-body! bv start count)])
             (loop (+ start got) (- count got))))))
     (define (read-framing-line)
       ;; a CRLF-terminated ASCII line (chunk sizes and trailers)
@@ -620,14 +689,14 @@
                         (set! done #t)
                         0)
                       (begin (set! remaining size)
-                             (let ([got (take! bv start
-                                               (min count remaining))])
+                             (let ([got (take-body! bv start
+                                          (min count remaining))])
                                (set! remaining (- remaining got))
                                (when (zero? remaining)
                                  (read-framing-line))   ; chunk's CRLF
                                got))))]
                [else
-                (let ([got (take! bv start (min count remaining))])
+                (let ([got (take-body! bv start (min count remaining))])
                   (set! remaining (- remaining got))
                   (when (and (zero? remaining) (> got 0))
                     (read-framing-line))
@@ -639,9 +708,7 @@
                 (lambda (bv start count)
                   (if (zero? remaining)
                       0
-                      (let ([got (take! bv start (min count remaining))])
-                        (when (and (zero? got) (> remaining 0))
-                          (error 'https "connection closed mid-body"))
+                      (let ([got (take-body! bv start (min count remaining))])
                         (set! remaining (- remaining got))
                         got)))))]
         [else take!]))   ; read to connection close
@@ -735,14 +802,13 @@
               (make-https-response
                 status headers
                 ;; no framing headers: curl already decoded the body
-                (body-port channel leftover '())
-                channel)))))))
+                (body-port channel leftover '()))))))))
 
   (define (https-request method url . options)
     ;; options: an optional header alist, then an optional body
     ;; (string or bytevector).  -> an https-response whose port streams
-    ;; the body; close it with https:close! (draining closes too).
-    (let-values ([(secure? host port path) (parse-url url)])
+    ;; the body; close it with https:close! or drain with response-text.
+    (let-values ([(secure? host port path authority) (parse-url url)])
       (let* ([headers (if (pair? options) (car options) '())]
              [body (and (pair? options) (pair? (cdr options))
                         (cadr options))]
@@ -750,12 +816,14 @@
                                [(string? body) (string->utf8 body)]
                                [else body])])
         (if (or (eq? (https-backend) 'curl)
-                (and secure? (not (tls-available?)) (curl-available)))
-            (curl-request method url headers body-bytes)
-            (native-request method secure? host port path
+                (and secure? (eq? (https-connector) tls-connect)
+                     (not (tls-available?)) (curl-available)))
+            (curl-request method (string-append (if secure? "https://" "http://") authority path)
+                          headers body-bytes)
+            (native-request method secure? host port path authority
                             headers body-bytes)))))
 
-  (define (native-request method secure? host port path headers body-bytes)
+  (define (native-request method secure? host port path authority headers body-bytes)
     (let ([channel (if secure?
                        ((https-connector) host port)
                        (tcp-connect host port))])
@@ -764,7 +832,7 @@
          (string->utf8
            (apply string-append
                   (format "~a ~a HTTP/1.1\r\n" method path)
-                  (format "Host: ~a\r\n" host)
+                  (format "Host: ~a\r\n" authority)
                   "Connection: close\r\n"
                   (append
                     (map (lambda (header)
@@ -780,69 +848,45 @@
           (let-values ([(status headers) (parse-response-head head)])
             (make-https-response
               status headers
-              (body-port channel leftover headers)
-              channel))))))
+              (body-port channel leftover headers)))))))
+
+  (define (body-text port)
+    (let loop ([parts '()])
+      (let ([chunk (get-bytevector-n port 32768)])
+        (if (eof-object? chunk)
+            (utf8->string (join-bytevectors (reverse parts)))
+            (loop (cons chunk parts))))))
 
   (define (https-response-text response)
-    ;; Drain the body as UTF-8 and close the connection.
-    (let ([port (https-response-port response)])
-      (let loop ([parts '()])
-        (let ([chunk (get-bytevector-n port 32768)])
-          (if (eof-object? chunk)
-              (begin (close-port port)
-                     (utf8->string (join-bytevectors (reverse parts))))
-              (loop (cons chunk parts)))))))
+    (call-with-body response body-text))
 
-  (define (https-get url)
-    ;; The body text of a 2xx response, following up to five redirects.
+  (define (call-with-get url consume)
+    ;; One redirect and lifetime rule for every GET consumer. Release a
+    ;; response before resolving its Location or opening the next transport.
     (let fetch ([url url] [hops 0])
       (when (> hops 5)
         (error 'https "too many redirects" url))
       (let* ([response (https-request 'GET url)]
-             [status (https-response-status response)])
-        (cond
-          [(and (memv status '(301 302 303 307 308))
-                (header-ref (https-response-headers response) "location"))
-           => (lambda (location)
-                (https-close! response)
-                (fetch (if (string:prefix? "http" location)
-                           location
-                           (let-values ([(secure? host port path)
-                                         (parse-url url)])
-                             (format "~a://~a:~a~a"
-                                     (if secure? "https" "http")
-                                     host port location)))
-                       (+ hops 1)))]
-          [(<= 200 status 299) (https-response-text response)]
-          [else
-           (https-close! response)
-           (error 'https (format "~a fetching ~a" status url))]))))
+             [status (https-response-status response)]
+             [location (and (memv status '(301 302 303 307 308))
+                            (header-ref (https-response-headers response) "location"))]
+             [result (call-with-body response
+                       (lambda (port)
+                         (cond [location #f]
+                               [(<= 200 status 299) (consume port)]
+                               [else (error 'https (format "~a fetching ~a" status url))])))])
+        (if location (fetch (resolve-url url location) (+ hops 1)) result))))
+
+  (define (https-get url) (call-with-get url body-text))
 
   (define (https-download url path)
-    ;; Fetch url into a file, following redirects like https:get.
-    (let fetch ([url url] [hops 0])
-      (when (> hops 5)
-        (error 'https "too many redirects" url))
-      (let* ([response (https-request 'GET url)]
-             [status (https-response-status response)])
-        (cond
-          [(and (memv status '(301 302 303 307 308))
-                (header-ref (https-response-headers response) "location"))
-           => (lambda (location)
-                (https-close! response)
-                (fetch location (+ hops 1)))]
-          [(<= 200 status 299)
-           (let ([in (https-response-port response)]
-                 [out (open-file-output-port
-                        path (file-options no-fail))])
-             (let loop ()
-               (let ([chunk (get-bytevector-n in 32768)])
-                 (unless (eof-object? chunk)
-                   (put-bytevector out chunk)
-                   (loop))))
-             (close-port out)
-             (close-port in)
-             path)]
-          [else
-           (https-close! response)
-           (error 'https (format "~a fetching ~a" status url))])))))
+    (call-with-get url
+      (lambda (in)
+        (let ([out (open-file-output-port path (file-options no-fail))])
+          (dynamic-wind void
+            (lambda ()
+              (let loop ()
+                (let ([chunk (get-bytevector-n in 32768)])
+                  (unless (eof-object? chunk) (put-bytevector out chunk) (loop))))
+              path)
+            (lambda () (close-port out))))))))
