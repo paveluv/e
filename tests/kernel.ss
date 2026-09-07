@@ -451,19 +451,23 @@
      (mkdir objects)
      (define (fixture-control name)
        (kernel:persistent-cell (list 'kernel-fixture name) (lambda () (lambda (version) (void)))))
-     (define (write-fixture name version)
+     (define (write-library name form)
        (call-with-output-file (string-append sources "/" name ".e")
-         (lambda (port)
-           (pretty-print
-             `(library (,(string->symbol name))
-                (export init! version)
-                (import (rnrs) (only (chezscheme) unbox) (prefix (kernel) kernel:))
-                (define (version) ',version)
-                (define (init!)
-                  ((unbox (kernel:persistent-cell '(kernel-fixture ,name)
-                            (lambda () (error 'fixture "missing control")))) version)))
-             port))
+         (lambda (port) (pretty-print form port))
          'replace))
+     (define (write-fixture name version)
+       (write-library name
+         `(library (,(string->symbol name))
+            (export init! version)
+            (import (rnrs) (only (chezscheme) unbox) (prefix (kernel) kernel:))
+            (define (version) ',version)
+            (define (init!)
+              ((unbox (kernel:persistent-cell '(kernel-fixture ,name)
+                        (lambda () (error 'fixture "missing control")))) version)))))
+     (define (write-reload-root version)
+       (write-library "reload-z"
+         `(library (reload-z) (export value) (import (rnrs))
+            (define (value) ,version))))
      (define fixture-registry (kernel:make-registry))
      (define family-registry (kernel:make-registry))
      (define fixture-created #f)
@@ -599,7 +603,26 @@
            (set! hook-control (lambda (name) (void)))
            (test:check 'config-retry-succeeds (kernel:load-config!) #t)
            (test:check 'config-retry-publishes-complete-replacement
-             (kernel:registry-items config-registry) '(new-config runtime))))
+             (kernel:registry-items config-registry) '(new-config runtime))
+
+           ;; Imported, uninvoked clients have no runtime metadata yet.
+           ;; Register the chain in reverse dependency order, then redefine
+           ;; its root before any client is used (the sandbox reload case).
+           (write-reload-root 1)
+           (for-each
+             (lambda (entry)
+               (write-library (symbol->string (car entry))
+                 `(library (,(car entry)) (export value)
+                    (import (rnrs) (prefix (,(cadr entry)) upstream:))
+                    (define (value) (upstream:value)))))
+             '((reload-m reload-z) (reload-a reload-m)))
+           (for-each kernel:load-module! '("reload-a" "reload-m" "reload-z"))
+           (test:check 'uninvoked-import-dependencies-are-visible
+             (kernel:module-requires? "reload-a" "reload-z") #t)
+           (write-reload-root 2)
+           (kernel:reload-module! "reload-z")
+           (test:check 'reload-orders-the-complete-import-graph
+             (eval '(list (reload-a:value) (reload-m:value) (reload-z:value))) '(2 2 2))))
        (lambda ()
          (kernel:retract-module! 'kernel-test-hook)
          (for-each

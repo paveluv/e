@@ -9,10 +9,19 @@ meanings.
 
 Describe opens a read-only `<describe>` view in a new tile below the current
 window, or reuses a window already showing it. Focus remains in the requesting
-window. Its data remains structured until rendering, so pages can update
-dynamically. If the described value is a command, the page lists every key
-currently bound to it; rebinding or unbinding the command updates an already
+window. The base keeps one read-only Markdown source, `*describe*`, visible
+to the requesting head; `<describe>` is its local rendered companion.
+The selected name survives module reload, and pages update dynamically.
+If the described value is a command, the page lists its current global keys;
+rebinding or unbinding the command updates an already
 visible page on redraw. `C-h k` uses the same behavior for `<help>`.
+
+`C-c v` in the view shows its Markdown source, which remains read-only.
+Killing the view keeps the source; describing another name reuses it.
+Killing the source also closes its view. Renaming either buffer preserves
+their relationship. A name with no documentation leaves the previous page
+alone; if a displayed entry is later removed, the page reports its absence
+and resumes displaying it when the documentation returns.
 
 The completion prompt uses shared semantic styling: a partial name is italic,
 a complete Scheme name is upright, and an e-specific name uses the editor
@@ -53,6 +62,13 @@ Code that needs documentation data can import `(reference)` under `reference:`.
 Its `lookup`, `entries`, and `browser-url` operations are also exported under
 `describe:`; `reference:fetch!` is the same operation as `describe:fetch-data!`.
 These queries include both the downloaded corpus and current `doc:` registrations.
+
+For a head integration, `reference:page!` takes a head actor, a name and a list
+of key annotations, returning the private source's store id or `#f` when the
+name has no documentation. `reference:page` returns `(id revision name)` for
+that head's current page, or `#f`. Passing `(id . revision)` as the fourth
+argument to `page!` refreshes an existing selection only if it is still
+current and retains its original private audience.
 
 ## Publishing module documentation
 

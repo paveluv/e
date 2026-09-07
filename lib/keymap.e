@@ -22,8 +22,7 @@
           set-context-escape! context-escape)
   (import (rnrs)
           (only (chezscheme)
-                format iota top-level-bound? top-level-value
-                hashtable-values)
+                format iota top-level-bound? top-level-value)
           (prefix (kernel) kernel:)
           (prefix (string) string:))
 
@@ -143,7 +142,8 @@
   (define (effective-bindings context)
     ;; One chosen entry per sequence.  Registry order handles newest-first;
     ;; a user entry replaces a previously seen default regardless of age.
-    (let ([chosen (make-hashtable equal-hash equal?)])
+    (let ([chosen (make-hashtable equal-hash equal?)]
+          [entries (kernel:registry-entries key-bindings)])
       (for-each
         (lambda (owned)
           (let ([b (cdr owned)])
@@ -154,8 +154,12 @@
                           (and (eq? (binding-kind (cdr old)) 'default)
                                (eq? (binding-kind b) 'user)))
                   (hashtable-set! chosen sequence owned))))))
-        (kernel:registry-entries key-bindings))
-      (vector->list (hashtable-values chosen))))
+        entries)
+      ;; Keep registry order (newest first), using wrappers from this one
+      ;; snapshot. Public registry reads return fresh ownership wrappers.
+      (filter (lambda (owned)
+                (eq? owned (hashtable-ref chosen (binding-sequence (cdr owned)) #f)))
+              entries)))
 
   (define key-binding
     (case-lambda
@@ -245,19 +249,12 @@
     ;; named sym. Bindings are read live, so overrides and module reloads are
     ;; reflected immediately.
     (guard (ex [else '()])
-      (if (top-level-bound? sym)
-          (let ([proc (top-level-value sym)])
+      (let ([proc (and (top-level-bound? sym) (top-level-value sym))])
+        (if (procedure? proc)
             (map (lambda (owned) (binding-spec (cdr owned)))
-                 (filter
-                   (lambda (owned)
-                     (let ([b (cdr owned)])
-                       (and (eq? (binding-context b) 'global)
-                            (eq? (binding-action b) proc)
-                            (eq? owned
-                                 (resolved-binding 'global
-                                                   (binding-sequence b))))))
-                   (kernel:registry-entries key-bindings))))
-          '())))
+                 (filter (lambda (owned) (eq? (binding-action (cdr owned)) proc))
+                         (effective-bindings 'global)))
+            '()))))
 
   (define (command-key sym)
     ;; The most recently registered key currently bound to sym, or #f.

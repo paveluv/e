@@ -13,105 +13,36 @@
           (prefix (prompt) prompt:) (prefix (mode) mode:)
           (prefix (string) string:) (prefix (paint) paint:)
           (prefix (head) head:) (prefix (style) style:)
-          (prefix (keymap) keymap:) (prefix (only (markdown) view-install!) markdown:))
+          (prefix (keymap) keymap:) (prefix (only (markdown) companion companion!) markdown:))
 
   ;;; Display -------------------------------------------------------------------
 
-  ;; Prose is not pre-wrapped: a paragraph stays one buffer line
-  ;; (markdown's soft-break rule -- newlines inside a paragraph are
-  ;; presentation, not content) and the window's word-boundary soft
-  ;; wrap lays it out at whatever width the window has.
-
-  (define (entry-lines entry)
-    (append
-      ;; the header block: each line carries markdown's hard break
-      ;; (two trailing spaces), so a renderer keeps them as lines
-      (map (lambda (l) (string-append l "  "))
-           (append
-             (map (lambda (form)
-                    (if (string:search (cdr form) "`" 0 (string-length (cdr form)))
-                        ;; a template holding a backtick (quasiquote's
-                        ;; abbreviations): double-tick delimiters
-                        (format "**~a**: `` ~a ``" (car form) (cdr form))
-                        (format "**~a**: `~a`" (car form) (cdr form))))
-                  (doc:forms entry))
-             (if (doc:returns entry)
-                 (list (format "returns: ~a" (doc:returns entry)))
-                 '())
-             (if (pair? (doc:libraries entry))
-                 (list (format "libraries: ~a"
-                               (string:join (doc:libraries entry) ", ")))
-                 '())
-             (list (format "source: ~a, ~a"
-                           (case (doc:source entry)
-                             [(tspl) "TSPL4"]
-                             [(csug) "Chez Scheme User's Guide"]
-                             [else (doc:source entry)])
-                           (doc:chapter entry)))
-             (if (doc:url entry)
-                 (list (format "url: ~a" (reference:browser-url entry)))
-                 '())))
-      (list "")
-      (string:lines (doc:description entry))))
-
-  (define described-name #f)
-  (define describe-buffer #f)
-
-  (define-record-type describe-page
-    (fields name entries keys))
-
-  (define (current-page name)
-    ;; The structured source of truth for one rendering. Both registered
-    ;; documentation and bindings are live and may change between redraws.
-    (make-describe-page name (reference:lookup name) (keymap:command-keys name)))
-
-  (define (page-lines page)
-    ;; Render a structured page as Markdown buffer lines.
-    (append
-      (if (pair? (describe-page-keys page))
-          (list (format "**keys**: ~a  "
-                        (string:join (describe-page-keys page) ", "))
-                "")
-          '())
-      (let loop ([entries (describe-page-entries page)] [acc '()])
-        (if (null? entries)
-            (reverse acc)
-            (loop (cdr entries)
-                  (append
-                    (reverse (entry-lines (car entries)))
-                    (if (null? acc)
-                        acc
-                        (cons "" (cons (make-string 72 #\-)
-                                       (cons "" acc))))))))))
-
   (define (refresh-describe!)
-    (when (and describe-buffer described-name)
-      ;; The page renders through the markdown viewer: markup becomes
-      ;; faces, links stay clickable with their targets hidden.
-      (markdown:view-install! describe-buffer
-                              (page-lines (current-page described-name)))))
-
-  (define (describe-view)
-    (unless (and describe-buffer (memq describe-buffer (buffer-list)))
-      (set! describe-buffer (head:register-view! "*describe*" refresh-describe!)))
-    describe-buffer)
+    (let* ([page (reference:page head:ui-actor)]
+           [source (and page (head:buffer-of-store-id (car page)))]
+           [view (and source (markdown:companion source))])
+      (when (and source (or (head:buffer-window-size source)
+                            (and view (head:buffer-window-size view))))
+        (let ([id (reference:page! head:ui-actor (caddr page)
+                    (keymap:command-keys (caddr page)) (cons (car page) (cadr page)))])
+          (when id (head:sync-foreign-edits! id))))))
 
   (define (describe! name)
-    ;; Pop up a *describe* buffer with the documentation for name (a
-    ;; symbol or its string); every matching entry is shown.
-    (let ([entries (reference:lookup name)])
-      (if (null? entries)
+    (let* ([name (if (string? name) (string->symbol name) name)]
+           [id (reference:page! head:ui-actor name (keymap:command-keys name))])
+      (if (not id)
           (set-message! (format "No documentation for ~a" name))
-          (let ([b (describe-view)])
-            (set! described-name
-              (if (string? name) (string->symbol name) name))
-            (refresh-describe!)
-            (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
-            (if (pop-up-or-reuse! b)
-                (set-message! "")
-                (set-message!
-                  (format "~a: see the <describe> buffer" name)))))
-      (void)))
+          (head:call-with-display-update
+            (lambda ()
+              (head:sync-foreign-edits! id)
+              (let ([source (head:adopt-store-buffer! id)])
+                (when source
+                  (let ([b (markdown:companion! source "*describe*")])
+                    (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
+                    (if (pop-up-or-reuse! b)
+                        (set-message! "")
+                        (set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))
+    (void))
 
   (define-syntax describe
     (syntax-rules ()
@@ -223,6 +154,8 @@
         (describe! (string->symbol (substring text start end))))))
 
   (define (init!)
+    ;; Rebind a head callback; selection itself belongs to the store page.
+    (head:add-pre-redraw-hook! refresh-describe!)
     (doc:register!
       '(((describe:show!) (("procedure" . "(describe:show! name)")) "void"
          ("(describe)") describe "Documentation commands" #f

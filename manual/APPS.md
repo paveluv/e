@@ -11,8 +11,9 @@ shared apps publish text, facts, and rendition through the store and surface.
 Head apps are local buffers: their generated text, modes, and presentation
 facts stay in this head.  They have no store id and do not appear in the
 store's buffer list or publish cursor marks.  This includes completions,
-buffer and git views, log renderings, and describe buffers. Terminal buffers
-are shared base apps: their live text is readable through `store:`.
+buffer and git views, log renderings, and describe's rendered companion.
+Describe's private Markdown source and terminal buffers belong to the base:
+their text is readable through `store:`.
 
 ## Registering an app
 
@@ -81,7 +82,8 @@ arbitrary callbacks, lock the head, or roll back changes on an exception.
 `surface:` attaches presentation data to a store buffer. The head renders
 visible surfaced buffers automatically, keeping their ordinary mode.
 Shared apps can also declare input capture and cursor following as described
-below. The terminal uses this shared API; describe still uses the local API.
+below. The terminal uses this surface API. Describe publishes ordinary
+Markdown source and uses a local companion for its presentation.
 The terminal emulator provides an owned
 [`emulator-frame`](TERMINAL.md#scheme-api) containing text and complete
 surface rows for publishers that need terminal output.

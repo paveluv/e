@@ -61,9 +61,13 @@
      (define events '())
      (define subscription
        (store:subscribe! #f (lambda (event) (set! events (cons event events)))))
+     (define companion (markdown:companion! source))
+     (define companion-keeps-focus (and (eq? (current-buffer) source) (equal? (point) '(2 . 1))))
      (markdown:view!)
      (define view (current-buffer))
-     (check 'view-is-a-companion (eq? view source) #f)
+     (check 'companion-is-independent-of-window-selection
+            (list (eq? view source) (eq? view companion) companion-keeps-focus
+                  (eq? (markdown:companion source) view)) '(#f #t #t #t))
      (check 'view-is-local (head:buffer-store-id view) #f)
      (check 'view-label-is-local (head:buffer-name view) "<markdown notes.md>")
      (check 'view-is-an-app (head:app-buffer? view) #t)

@@ -12,11 +12,13 @@
   '(begin
      (import (prefix (reference) reference:) (prefix (doc) doc:)
              (prefix (kernel) kernel:) (prefix (https) https:)
-             (prefix (log) log:) (prefix (test) test:))
+             (prefix (log) log:) (prefix (store) store:) (prefix (test) test:))
 
      (define root (format "/tmp/e-reference-~a" (get-process-id)))
      (define source (string-append (current-directory) "/lib/reference.e"))
      (define database (string-append root "/data/describe/describe.sdata"))
+     (define page-heads '((head "west λ") (head "east")))
+     (define page-ids '())
      (define (remove-tree! path)
        (if (file-directory? path)
            (begin
@@ -89,6 +91,74 @@
            (registered! "local documentation")
            (test:check 'registered-without-corpus
              (map doc:description (reference:lookup 's9-reference)) '("local documentation"))
+
+           ;; These are logical requester identities, with no head loaded.
+           ;; Privacy and source facts must already hold at the create event.
+           (let* ([created (test:recorder)]
+                  [token
+                   (store:subscribe! #f
+                     (lambda (event)
+                       (when (eq? (car event) 'create)
+                         (let ([id (cadr event)])
+                           (created
+                             (list (store:property id 'audience)
+                                   (map (lambda (key) (store:property id key))
+                                        '(mode read-only disposable modified))
+                                   (map (lambda (head) (store:visible? head id)) page-heads)))))))])
+             (set! page-ids
+               (fold-left (lambda (ids head)
+                            (append ids (list (reference:page! head "s9-reference" '("C-x")))))
+                          '() page-heads))
+             (store:unsubscribe! token)
+             (test:check 'private-markdown-facts-publish-with-content
+               (list (map store:buffer-name page-ids) (created))
+               '(("*describe*" "*describe*<2>")
+                 ((((head "west λ")) ("markdown" #t #t #f) (#t #f))
+                  (((head "east")) ("markdown" #t #t #f) (#f #t))))))
+           (test:check 'base-produces-markdown-source
+             (let-values ([(lines revision) (store:snapshot (car page-ids))])
+               (vector->list lines))
+             '("**keys**: C-x  " "" "**procedure**: `(s9-reference)`  "
+               "libraries: (fixture)  " "source: fixture, Module entry  " "" "local documentation"))
+           (let* ([head (car page-heads)] [id (car page-ids)]
+                  [events (test:recorder)] [token (store:subscribe! id events)])
+             (test:check 'same-or-missing-selection-leaves-the-page-alone
+               (list (reference:page! head 's9-reference '("C-x"))
+                     (reference:page! head 'missing '()) (reference:page head) (events))
+               (list id #f (list id 0 's9-reference) '()))
+             (store:unsubscribe! token)
+             (registered! "updated page")
+             (test:check 'refresh-publishes-live-documents-for-one-requester
+               (list (reference:page! head 's9-reference '("C-x") (cons id 0))
+                     (store:line id 6) (reference:page head)
+                     (store:line (cadr page-ids) 6) (store:revision (cadr page-ids)))
+               (list id "updated page" (list id 1 's9-reference) "local documentation" 0))
+             (for-each
+               (lambda (action)
+                 (let* ([id (reference:page! head 's9-reference '("C-x"))]
+                        [basis (cons id (store:revision id))])
+                   (if (eq? action 'hide) (store:set-property! head id 'audience '())
+                       (store:delete! head id))
+                   (test:check (list 'page-refresh-respects action)
+                     (list (reference:page! head 's9-reference '("C-x") basis)
+                           (reference:page head) (store:visible? head id))
+                     '(#f #f #f))))
+               '(hide delete)))
+           (let ([head (cadr page-heads)] [id (cadr page-ids)])
+             (store:drop-property! head id 'audience)
+             (test:check 'page-read-honors-default-audience-but-refresh-does-not-restore-it
+               (list (caddr (reference:page head))
+                     (reference:page! head 's9-reference '("C-x") (cons id (store:revision id)))
+                     (store:property id 'audience))
+               '(s9-reference #f #f))
+             (reference:page! head 's9-reference '("C-x"))
+             (registered! #f)
+             (reference:page! head 's9-reference '("C-x") (cons id (store:revision id)))
+             (test:check 'retracted-document-keeps-a-refreshable-selection
+               (list (store:line id 0) (caddr (reference:page head)))
+               '("No documentation for s9-reference" s9-reference))
+             (registered! "local documentation"))
+
            (log:set-presenter!
              (lambda (entry show?)
                (presented (list show? (length (reference:lookup 's9-alias))))))
@@ -159,10 +229,17 @@
                  (map doc:description (reference:entries (lambda (e) (eq? (doc:source e) 'fixture))))
                  (if description (list description) '())))
              '("updated documentation" #f))
-           (let ([before (map fields (reference:entries))])
+           (let ([before (list (map fields (reference:entries))
+                               (map reference:page page-heads))])
              (load source)
-             (test:check 'fresh-base-instance-reads-the-saved-corpus
-               (map fields (eval '(begin (import (prefix (reference) reference:)) (reference:entries))))
+             (test:check 'fresh-base-instance-recovers-corpus-and-selected-page
+               (let ([next (eval `(begin (import (prefix (reference) reference:))
+                                         (list (reference:entries) (map reference:page ',page-heads))))])
+                 (list (map fields (car next)) (cadr next)))
                before))))
-       (lambda () (log:set-presenter! #f) (registered! #f) (remove-tree! root)))
+       (lambda ()
+         (log:set-presenter! #f)
+         (registered! #f)
+         (for-each (lambda (id) (when (store:exists? id) (store:delete! '(app describe) id))) page-ids)
+         (remove-tree! root)))
      (test:finish! 'reference)))

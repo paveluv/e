@@ -81,6 +81,69 @@
            (store:unsubscribe! token)))
        '(create rename))
 
+     ;; Generated sources share the store's writer and lifecycle. Exercise
+     ;; the producer/key claim, silent repeats, conditional refresh and
+     ;; callback reentry without a separate app fixture or buffer registry.
+     (let* ([producer '(app publication-test)] [key (string-copy "page")]
+            [facts `((query . initial) (audience . (,alice)))]
+            [events (test:recorder)]
+            [token (store:subscribe! #f events)]
+            [ids (test:parallel 4 (lambda (i) (store:publish! producer key "published" '("body") facts)))]
+            [id (car ids)])
+       (check 'one-publication-under-contention
+              (list (for-all (lambda (other) (= other id)) ids)
+                    (store:publication producer "page") (store:revision id) (length (events)))
+              (list #t id 0 1))
+       (string-set! key 0 #\X)
+       (let ([identity (store:property id 'publication)])
+         (string-set! (cadr identity) 0 #\Y))
+       (store:rename! alice id "renamed publication")
+       (let ([before (events)])
+         (check 'publication-identity-and-repeat-are-stable
+                (list (store:publish! producer "page" "other label" '("body") facts)
+                      (store:publication producer "page") (store:buffer-name id)
+                      (store:revision id) (equal? (events) before))
+                (list id id "renamed publication" 0 #t)))
+       (check 'publication-identity-cannot-be-reassigned
+              (list (and (test:raises? (lambda () (store:set-property! alice id 'publication #f)))
+                         (test:raises? (lambda () (store:drop-property! alice id 'publication)))
+                         (test:raises? (lambda () (store:reset! alice id '("bad") '((publication . fake))))))
+                    (store:publication producer "page") (store:line id 0))
+              (list #t id "body"))
+       (check 'observed-absence-refuses-an-existing-source
+              (store:publish! producer "page" "bad" '("bad") facts #f) #f)
+       (for-each
+         (lambda (kind)
+           (let* ([id (store:publish! producer "page" "published" '("body") facts)]
+                  [basis (cons* id (store:revision id) facts)])
+             (case kind
+               [(text) (store:publish! producer "page" "published" '("new body") facts)]
+               [(query) (store:publish! producer "page" "published" '("body") '((query . newer)))]
+               [(fact) (store:set-property! alice id 'query 'newer)]
+               [(audience) (store:set-property! alice id 'audience '())]
+               [(delete) (store:delete! alice id)])
+             (let ([before (events)])
+               (check (list 'stale-publication kind)
+                      (list (store:publish! producer "page" "published" '("stale") facts basis)
+                            (equal? (events) before) (store:exists? id)
+                            (or (not (eq? kind 'query)) (= (store:revision id) (+ (cadr basis) 1))))
+                      (list #f #t (not (eq? kind 'delete)) #t)))))
+         '(text query fact audience delete))
+       (let* ([once #t]
+              [reentry
+               (store:subscribe! #f
+                 (lambda (event)
+                   (when (and once (eq? (car event) 'create))
+                     (set! once #f)
+                     (store:publish! producer "page" "published" '("nested") facts))))]
+              [id (store:publish! producer "page" "published" '("outer") facts #f)])
+         (check 'publication-callback-can-reenter
+                (list (store:publication producer "page") (store:line id 0) (store:revision id))
+                (list id "nested" 1))
+         (store:unsubscribe! reentry)
+         (store:delete! alice id))
+       (store:unsubscribe! token))
+
      ;; -- transactions -----------------------------------------------------
 
      (check 'edit-applies

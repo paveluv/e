@@ -19,7 +19,7 @@
 ;; (store:snapshot ...).
 
 (library (store)
-  (export create! delete! reset! rename!
+  (export create! delete! reset! rename! publication publish!
           buffer-list exists? visible? buffer-name find-named
           snapshot snapshot-since snapshot-state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
@@ -150,6 +150,8 @@
     (validate-properties updates)
     (when (assq 'modified updates)
       (error 'store "modified is derived from text and its baseline"))
+    (when (assq 'publication updates)
+      (error 'store "publication identity belongs to publish!"))
     updates)
 
   (define (validate-edit-context context)
@@ -229,16 +231,18 @@
           [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))])
       (transact! actor
         (lambda (actor)
-          (let* ([s (current-store)]
-                 [name (unique-name name #f)]
-                 [id (store-next-id s)])
-            (store-next-id-set! s (+ id 1))
-            (let ([b (make-buffer name text 0 '() '() '() '() #f #f)])
-              (install-properties! b updates)
-              (refresh-modified! b)
-              (hashtable-set! (store-buffers s) id b))
-            (enqueue-event! `(create ,id ,name ,actor))
-            id)))))
+          (create-buffer! actor name text updates)))))
+
+  (define (create-buffer! actor name text updates)
+    ;; Caller holds the store lock; creation and publication use one path.
+    (let* ([s (current-store)] [name (unique-name name #f)] [id (store-next-id s)])
+      (store-next-id-set! s (+ id 1))
+      (let ([b (make-buffer name text 0 '() '() '() '() #f #f)])
+        (install-properties! b updates)
+        (refresh-modified! b)
+        (hashtable-set! (store-buffers s) id b))
+      (enqueue-event! `(create ,id ,name ,actor))
+      id))
 
   (define (reset! actor id lines . facts)
     ;; Wholesale replacement: a new baseline, not an edit.  The delta
@@ -247,36 +251,78 @@
     ;; Related baseline facts may join the same transaction.  Loading
     ;; a file supplies base/trailing/stamp; ordinary edits use edit!.
     (unless (<= (length facts) 1) (error 'reset! "expected at most one fact batch" facts))
-    (let* ([text (text:normalize lines)]
-           [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))]
-           [new-revision
-            (transact! actor
-              (lambda (actor)
-                (let ([b (buffer-of 'reset! id)]
-                      [clamp (lambda (position)
-                               (let* ([line (min (car position)
-                                                 (- (vector-length text)
-                                                    1))]
-                                      [column
-                                       (min (cdr position)
-                                            (string-length
-                                              (vector-ref text line)))])
-                                 (cons line column)))])
-                  (buffer-text-set! b text)
-                  (install-properties! b updates)
-                  (refresh-modified! b)
-                  (buffer-revision-set! b (+ (buffer-revision b) 1))
-                  (buffer-deltas-set! b '())
-                  (buffer-undo-set! b '())
-                  (buffer-marks-set!
-                    b (map (lambda (entry)
-                             (cons (car entry)
-                                   (clamp-mark-value (cdr entry) clamp)))
-                           (buffer-marks b)))
-                  (enqueue-event! `(reset ,id ,(buffer-revision b) ,actor))
-                  (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
-                  (buffer-revision b))))])
-      new-revision))
+    (let ([text (text:normalize lines)]
+          [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))])
+      (transact! actor (lambda (actor) (reset-buffer! actor id text updates)))))
+
+  (define (reset-buffer! actor id text updates)
+    (let ([b (buffer-of 'reset! id)]
+          [clamp (lambda (position)
+                   (let* ([line (min (car position) (- (vector-length text) 1))]
+                          [column (min (cdr position) (string-length (vector-ref text line)))])
+                     (cons line column)))])
+      (buffer-text-set! b text)
+      (install-properties! b updates)
+      (refresh-modified! b)
+      (buffer-revision-set! b (+ (buffer-revision b) 1))
+      (buffer-deltas-set! b '())
+      (buffer-undo-set! b '())
+      (buffer-marks-set!
+        b (map (lambda (entry) (cons (car entry) (clamp-mark-value (cdr entry) clamp)))
+               (buffer-marks b)))
+      (enqueue-event! `(reset ,id ,(buffer-revision b) ,actor))
+      (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
+      (buffer-revision b)))
+
+  (define (publication-id identity)
+    (find (lambda (id) (equal? (property-value (buffer-of 'publication id) 'publication #f) identity))
+          (vector->list (hashtable-keys (store-buffers (current-store))))))
+
+  (define (publication actor key)
+    ;; One generated source per producer/key, independent of its label.
+    ;; Identity lives with the buffer, so deletion needs no second registry.
+    (let ([identity (list (own-actor actor) (datum:copy key))])
+      (locked (lambda () (publication-id identity)))))
+
+  (define (publish! actor key name lines facts . basis)
+    ;; Atomically create or replace a producer's source, returning its id.
+    ;; An optional (id revision fact ...) refuses stale refreshes, including
+    ;; changed fact preconditions; #f requires absence. Refusal returns #f.
+    ;; Identical text/facts emit nothing. Changed facts share the reset's
+    ;; revision even when text is identical, so query changes invalidate it.
+    (unless (and (<= (length basis) 1)
+                 (or (null? basis) (not (car basis))
+                     (let ([b (car basis)])
+                       (and (list? b) (>= (length b) 2)
+                            (integer? (car b)) (exact? (car b)) (> (car b) 0)
+                            (integer? (cadr b)) (exact? (cadr b)) (>= (cadr b) 0)
+                            (validate-properties (cddr b))))))
+      (error 'publish! "expected an optional (id revision fact ...) or #f" basis))
+    (let ([key (datum:copy key)] [name (own-name name)] [text (text:normalize lines)]
+          [updates (datum:copy (writable-properties facts))] [basis (datum:copy basis)])
+      (transact! actor
+        (lambda (actor)
+          (let* ([identity (list actor key)] [id (publication-id identity)]
+                 [b (and id (buffer-of 'publish! id))])
+            (cond
+              [(and (pair? basis)
+                    (not (if b
+                             (and (car basis) (= id (caar basis))
+                                  (= (buffer-revision b) (cadar basis))
+                                  (null? (changed-properties b (cddar basis))))
+                             (not (car basis))))) #f]
+              [(not b)
+               (create-buffer! actor name text (cons (cons 'publication identity) updates))]
+              [else
+               (let ([changed (changed-properties b updates)])
+                 (unless (and (null? changed) (equal? text (buffer-text b)))
+                   (reset-buffer! actor id text changed)))
+               id]))))))
+
+  (define (changed-properties b updates)
+    (filter (lambda (entry)
+              (not (equal? (property-value b (car entry) missing-property) (cdr entry))))
+            updates))
 
   (define (rename! actor id new-name)
     ;; -> the accepted name at this commit, before subscribers can rename
@@ -905,6 +951,7 @@
     (unless (symbol? key)
       (error 'drop-property! "expected a symbol key" key))
     (when (eq? key 'modified) (error 'drop-property! "modified is derived"))
+    (when (eq? key 'publication) (error 'drop-property! "publication identity belongs to publish!"))
     (transact! actor
       (lambda (actor)
         (let ([b (buffer-of 'drop-property! id)])

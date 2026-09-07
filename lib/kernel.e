@@ -23,7 +23,7 @@
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
                 make-thread-parameter format interaction-environment eval
-                library-exports library-requirements
+                library-exports library-requirements library-requirements-options
                 library-directories directory-list load sort
                 parameterize make-mutex with-mutex make-condition
                 condition-wait condition-signal condition-broadcast
@@ -551,7 +551,9 @@
               (hashtable-set! seen lib #t)
               (exists (lambda (req) (or (eq? (car req) t) (walk req)))
                       (guard (ex [else '()])
-                        (library-requirements lib))))))))
+                        ;; Import metadata exists even when lazy runtime
+                        ;; code has never been invoked (e.g. the sandbox).
+                        (library-requirements lib (library-requirements-options import)))))))))
 
   ;;; The user's configuration -------------------------------------------------
 
@@ -588,6 +590,20 @@
   (define (add-after-reload-hook! proc)
     (registry-add! after-reload-hooks proc))
 
+  (define (reload-order name)
+    ;; Capture the affected import graph before redefining any library, and
+    ;; load dependencies before their clients, independent of catalog order.
+    (let loop ([pending (cons name (filter (lambda (m)
+                                             (and (not (string=? m name)) (module-requires? m name)))
+                                           (loaded-modules)))]
+               [out '()])
+      (if (null? pending) (reverse out)
+          (let ([next (find (lambda (m)
+                              (not (exists (lambda (dependency) (module-requires? m dependency)) pending)))
+                            pending)])
+            (unless next (error 'reload-module! "cyclic module dependencies" pending))
+            (loop (remove next pending) (cons next out))))))
+
   (define (reload-module! name*)
     ;; Reload a module in place: redefine its library from the
     ;; (edited) source, likewise every loaded module built on it, then
@@ -613,14 +629,9 @@
                            name)))
           (unless (file-exists? source)
             (error 'reload-module! "no module source" source))
-          (load source)
+          (for-each (lambda (m) (load (module-source m))) (reload-order name))
           (unless (member name (loaded-modules))
             (record-module! name))
-          (for-each (lambda (m)
-                      (when (and (not (string=? m name))
-                                 (module-requires? m name))
-                        (load (module-source m))))
-                    (loaded-modules))
           (for-each (lambda (m) (retract-module! (string->symbol m)))
                     (loaded-modules))
           (for-each init-module! (loaded-modules))

@@ -964,6 +964,83 @@
                    result)))
             '((4 . 0) "Middle" (6 . 0) "# Middle"))
 
+     ;; One live describe page exercises the source/companion boundary and
+     ;; all three permitted reloads. Fresh commands resolve the new exports;
+     ;; retaining an old procedure inside this driver would test old code.
+     (check 'describe-page-retains-selection-and-refreshes-through-reload
+       (read-editor
+         '(let ([request-window (head:current)] [request-buffer (current-buffer)])
+            (define (show! name) ((top-level-value 'describe:show!) name))
+            (define (page) ((top-level-value 'reference:page) head:ui-actor))
+            (define (document! body)
+              (kernel:call-with-registration-update
+                (lambda ()
+                  (kernel:retract-module! 'wired-reference-fixture)
+                  (parameterize ([kernel:registering-module 'wired-reference-fixture])
+                    (doc:register!
+                      `(((markdown:view!) (("procedure" . "(markdown:view! fixture)"))
+                         #f ("(fixture)") fixture "Live reference" #f ,body)))
+                    (keymap:bind-default! "C-c F11" (top-level-value 'markdown:view!))
+                    (keymap:bind! "C-c F10" void)
+                    (keymap:bind-default! "C-c F10" (top-level-value 'markdown:view!))
+                    (keymap:bind! 'markdown "F12" (top-level-value 'markdown:view!))
+                    (keymap:bind-default! "C-c F11" (top-level-value 'markdown:view!))
+                    (keymap:bind! "C-c F12" (top-level-value 'markdown:view!))))))
+            (delete-other-windows!)
+            (show! 'describe:show!)
+            (let* ([id (car (page))] [source (head:buffer-of-store-id id)]
+                   [view (markdown:companion source)]
+                   [initial
+                    (list (eq? request-window (head:current)) (eq? request-buffer (current-buffer))
+                          (not (head:buffer-store-id view)) (head:buffer-name view)
+                          (mode:name-of source) (head:buffer-read-only source))])
+              (set-buffer-name! source "reference source")
+              (set-buffer-name! view "reference view")
+              (show! 'markdown:view!)
+              (let* ([reloads
+                      (fold-left
+                        (lambda (out module)
+                          (append out (list (let ([callback (head:app-refresh! (head:app-of view))])
+                                              (kernel:reload-module! module)
+                                              (document! (string-append "Refreshed " module))
+                                              (head:before-frame!)
+                                              (head:refresh-visible-views!)
+                                              (let ([revision (store:revision id)])
+                                                (head:before-frame!)
+                                                (head:before-frame!)
+                                                (list (= id (car (page))) (caddr (page))
+                                                  (eq? view (markdown:companion source))
+                                                  (not (eq? callback (head:app-refresh! (head:app-of view))))
+                                                  (and (member (string-append "Refreshed " module)
+                                                         (vector->list (head:buffer-lines view))) #t)
+                                                  (store:line id 0) (keymap:command-key 'markdown:view!)
+                                                  (= revision (store:revision id))))))))
+                        '() '("describe" "markdown" "reference"))]
+                     [labels (list (head:buffer-name source) (head:buffer-name view))]
+                     [unbound
+                      (begin
+                        (kernel:retract-module! 'wired-reference-fixture)
+                        (head:before-frame!)
+                        (list (keymap:command-keys 'markdown:view!) (store:line id 0)))])
+                (kill-buffer! view)
+                (delete-other-windows!)
+                (show! 'markdown:view!)
+                (let* ([replacement (markdown:companion source)]
+                       [keeps-source (and (= id (car (page))) (not (eq? view replacement)))])
+                  (kill-buffer! source)
+                  (head:before-frame!)
+                  (let ([retired (list (page) (store:exists? id)
+                                       (and (memq replacement (head:buffers)) #t))])
+                    (kernel:retract-module! 'wired-reference-fixture)
+                    (delete-other-windows!)
+                    (list initial reloads labels unbound keeps-source retired)))))))
+       '((#t #t #t "<describe>" "markdown" #t)
+         ((#t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
+          (#t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
+          (#t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t))
+         ("reference source" "<reference view>")
+         (() "**procedure**: `(markdown:view! [buffer])`  ") #t (#f #f #f)))
+
      (check 'reference-queries-share-one-base-after-head-reloads
        (read-editor
          '(list (eq? describe:lookup reference:lookup)

@@ -12,11 +12,12 @@
 ;; markdown:view! shows a local presentation of a source buffer;
 ;; markdown:edit! returns to that source without replacing its text.
 ;; Both try to keep the cursor on the matching content.  C-c v toggles
-;; in either mode.  markdown:view-install! renders into app views --
-;; the describe browser presents itself through it.
+;; in either mode. Apps can request a companion without changing focus;
+;; markdown:view-install! also renders literal input into local views.
 
 (library (markdown)
   (export init! (rename (markdown-view! view!)) (rename (markdown-edit! edit!))
+          (rename (source-companion companion) (source-view companion!))
           (rename (markdown-render render)) (rename (markdown-view-install! view-install!)) (rename (markdown-browser browser))
           (rename (markdown-view-max-width view-max-width)))
   (import (chezscheme) (except (edit) init!)
@@ -883,7 +884,7 @@
       (head:buffers)))
 
   (define (markdown-view-install! b lines)
-    ;; Literal input belongs to an existing local view, as in describe.
+    ;; Literal input belongs to an existing local view.
     ;; Rendering can never replace a shared buffer's source text.
     (unless (and (head:buffer? b) (not (head:buffer-store-id b)))
       (error 'markdown-view-install! "expected a local buffer" b))
@@ -900,25 +901,34 @@
     (mode:choose! b "markdown-view")
     b)
 
-  (define (source-view source)
+  (define (source-companion source)
+    (and (head:buffer? source)
+         (find (lambda (b) (eq? (render-input b) source)) (head:buffers))))
+
+  (define (source-view source . name)
     ;; A source record is the identity, never its mutable label.  The
     ;; relationship belongs only to the local companion, not the store.
-    (let ([b (or (find (lambda (b) (eq? (render-input b) source))
-                       (head:buffers))
+    ;; Apps can supply a preferred local label without selecting a window.
+    (unless (equal? (mode:name-of source) "markdown")
+      (error 'companion! "not a markdown buffer" source))
+    (unless (and (<= (length name) 1)
+                 (or (null? name) (and (string? (car name)) (> (string-length (car name)) 0))))
+      (error 'companion! "expected an optional buffer name" name))
+    (head:add-buffer! source)
+    (let ([b (or (source-companion source)
                  (head:new-local-buffer
-                   (format "*markdown ~a*" (head:buffer-name source))))])
+                   (if (pair? name) (car name) (format "*markdown ~a*" (head:buffer-name source)))))])
       (head:buffer-fact-set! b 'markdown-input source)
-      (attach-source-view! b)))
+      (attach-source-view! b)
+      (refresh-render! b)
+      b))
 
   (define (markdown-view! . b*)
     ;; Show a local companion in this window; other windows can keep
     ;; editing the original source at the same time.
     (let ([source (if (pair? b*) (car b*) (current-buffer))])
-      (unless (equal? (mode:name-of source) "markdown")
-        (error 'markdown-view! "not a markdown buffer" source))
       (head:call-with-display-update
         (lambda ()
-          (head:add-buffer! source)
           (let ([row (car (head:buffer-point source))]
                 [b (source-view source)])
             (show-buffer! b)

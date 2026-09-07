@@ -67,6 +67,8 @@ restyled with `style:set!` in config.e.
 ```scheme
 (markdown:view! [source])          ; show its local, read-only companion
 (markdown:edit! [view])            ; return to its live source
+(markdown:companion source)        ; existing companion, or #f
+(markdown:companion! source [name]) ; prepare a companion, keeping focus
 (markdown:view-install! buffer lines) ; render lines into an app view
 (markdown:render lines [width])    ; => lines styles links source-rows
 ```
@@ -74,12 +76,14 @@ restyled with `style:set!` in config.e.
 `markdown:view!` reuses a companion by source identity, including after
 either buffer is renamed. `markdown:edit!` returns to the live source
 without restoring an old snapshot or changing its read-only state.
+Apps such as describe use `markdown:companion!` to prepare a source's view
+without selecting a window. Its optional name is a preferred local label;
+later calls preserve the same companion, including a renamed one.
 `markdown:render` is the pure renderer
 (the automated suite pins it; `width` bounds tables, default 79), and
 `markdown:view-install!` renders literal lines into a local buffer;
 it refuses a shared buffer. These literal views have no source to
-return to with `markdown:edit!`. This is how the describe browser
-presents its pages. The `markdown:browser` parameter holds the web-link command,
+return to with `markdown:edit!`. The `markdown:browser` parameter holds the web-link command,
 and `markdown:view-max-width` the reading-width cap:
 
 ```scheme

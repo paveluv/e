@@ -20,7 +20,9 @@ system facilities.
 
 Documentation data lives in `reference` and the module-entry registry in `doc`.
 Use `reference:lookup` for queries that need no browser; `describe` adds the
-head's prompts, key annotations, and Markdown display.
+head's prompts, key annotations, and Markdown display. `reference:page!`
+publishes a private Markdown source per requesting head; the head uses the
+ordinary local Markdown companion to display it.
 
 Every library but `edit` is imported with its own prefix, and that is also how
 M-x sees it: `store:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only `edit`'s

@@ -12,7 +12,9 @@ it in their tab or window title.
 The initial `*scratch*` buffer is an ordinary shared, unvisited buffer.
 Local buffers belong to this head and have names in angle brackets:
 `<buffers>`, `<log>`, `<describe>`, `<completions>`, and merge reports.
-Shared buffers retain file names or names such as `*scratch*`. Shared names
+Shared buffers retain file names or names such as `*scratch*`. Describe's
+private `*describe*` source belongs to the base, while its rendered
+`<describe>` companion belongs to the head. Shared names
 are unique across the store, including buffers hidden from this head;
 collisions receive `<2>`, `<3>`, and so on, as in `notes<2>`. Local names
 keep their brackets when renamed; duplicate labels become `<name 2>`,

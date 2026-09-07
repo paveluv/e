@@ -6,16 +6,119 @@
 ;; operations and adds prompts, key annotations, and a Markdown viewer.
 
 (library (reference)
-  (export fetch! (rename (doc-lookup lookup) (doc-entries entries)
-                         (doc-browser-url browser-url)))
+  (export fetch! page page! (rename (doc-lookup lookup) (doc-entries entries)
+                              (doc-browser-url browser-url)))
   (import (chezscheme) (prefix (doc) doc:) (prefix (file) file:)
-          (prefix (https) https:) (prefix (log) log:))
+          (prefix (https) https:) (prefix (log) log:)
+          (prefix (actor) actor:) (prefix (store) store:)
+          (prefix (string) string:) (prefix (text) text:))
 
   (define (data-dir)
     (string-append (file:data-directory) "/describe"))
 
   (define (data-path)
     (string-append (data-dir) "/describe.sdata"))
+
+  ;;; Markdown source pages ----------------------------------------------
+
+  ;; The base produces Markdown source without wrapping it for a head.
+  ;; Selection and publication identity live with that source in the store;
+  ;; no head callback or second buffer directory survives a reload here.
+  (define producer '(app describe))
+
+  (define (check-head head)
+    (unless (and (actor:identity? head) (eq? (car head) 'head))
+      (error 'reference "expected a requesting head" head)))
+
+  (define (page head)
+    ;; -> (id revision selected-name), or #f if absent/hidden. This receipt
+    ;; can be the basis of a refresh, so it cannot replace a newer query or
+    ;; recreate a page deleted while its source was being computed.
+    (check-head head)
+    (let ([id (store:publication producer head)])
+      (and id
+           (guard (ex [else #f])
+             (let-values ([(lines revision facts) (store:snapshot-state id)])
+               (let ([audience (assq 'audience facts)])
+                 (and (actor:in-audience? head (if audience (cdr audience) 'all))
+                      (list id revision (cdr (assq 'reference-query facts))))))))))
+
+  (define (page! head name keys . basis)
+    ;; Keys are plain annotations supplied by the requesting head. Omit
+    ;; basis for an explicit selection; pass (id . revision) to refresh it.
+    (check-head head)
+    (unless (and (or (symbol? name) (string? name))
+                 (list? keys) (for-all string? keys)
+                 (<= (length basis) 1)
+                 (or (null? basis)
+                     (let ([b (car basis)])
+                       (and (pair? b) (integer? (car b)) (exact? (car b)) (> (car b) 0)
+                            (integer? (cdr b)) (exact? (cdr b)) (>= (cdr b) 0)))))
+      (error 'page! "expected a name, key strings and optional (id . revision)" name keys basis))
+    (let* ([name (if (string? name) (string->symbol name) name)]
+           [entries (doc-lookup name)])
+      (and (or (pair? entries) (pair? basis))
+           (let ([lines (if (pair? entries) (page-lines entries keys)
+                            (list (format "No documentation for ~a" name)))])
+             (apply store:publish! producer head "*describe*" lines
+               `((audience . (,head)) (reference-query . ,name)
+                 (mode . "markdown") (mode-auto . #f) (read-only . #t)
+                 (disposable . #t) (trailing . #t) (wrap . default)
+                 (base . ,(text:to-string (list->vector lines) #t)))
+               (if (null? basis) '()
+                   (list (list (caar basis) (cdar basis)
+                               (cons 'audience (list head)) (cons 'reference-query name)))))))))
+
+  (define (entry-lines entry)
+    (append
+      ;; the header block: each line carries markdown's hard break
+      ;; (two trailing spaces), so a renderer keeps them as lines
+      (map (lambda (l) (string-append l "  "))
+           (append
+             (map (lambda (form)
+                    (if (string:search (cdr form) "`" 0 (string-length (cdr form)))
+                        ;; a template holding a backtick (quasiquote's
+                        ;; abbreviations): double-tick delimiters
+                        (format "**~a**: `` ~a ``" (car form) (cdr form))
+                        (format "**~a**: `~a`" (car form) (cdr form))))
+                  (doc:forms entry))
+             (if (doc:returns entry)
+                 (list (format "returns: ~a" (doc:returns entry)))
+                 '())
+             (if (pair? (doc:libraries entry))
+                 (list (format "libraries: ~a"
+                               (string:join (doc:libraries entry) ", ")))
+                 '())
+             (list (format "source: ~a, ~a"
+                           (case (doc:source entry)
+                             [(tspl) "TSPL4"]
+                             [(csug) "Chez Scheme User's Guide"]
+                             [else (doc:source entry)])
+                           (doc:chapter entry)))
+             (if (doc:url entry)
+                 (list (format "url: ~a" (doc-browser-url entry)))
+                 '())))
+      (list "")
+      (string:lines (doc:description entry))))
+
+  (define (page-lines entries keys)
+    ;; Render a structured page as Markdown buffer lines.
+    (append
+      (if (pair? keys)
+          (list (format "**keys**: ~a  "
+                        (string:join keys ", "))
+                "")
+          '())
+      (let loop ([entries entries] [acc '()])
+        (if (null? entries)
+            (reverse acc)
+            (loop (cdr entries)
+                  (append
+                    (reverse (entry-lines (car entries)))
+                    (if (null? acc)
+                        acc
+                        (cons "" (cons (make-string 72 #\-)
+                                       (cons "" acc))))))))))
 
   ;;; HTML to text ---------------------------------------------------------------
 

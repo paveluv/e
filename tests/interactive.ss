@@ -254,6 +254,28 @@
      (send! "\x7;")
      (settle! 500)
 
+     ;; -- M3 exit: a private source and its rendered local companion ------
+     (send! "\x8;fmarkdown:view!\r") ; C-h f, then the documented name
+     (wait-for! 'describe-opens-a-rendered-page
+                (lambda () (and (find-cell "<describe>") (find-cell "procedure: (markdown:view!")))
+                5000)
+     (send!
+       (format "\x1b;xlist ~s (quote describe-source-check)\r"
+         '(let* ([page (reference:page head:ui-actor)] [id (car page)]
+                 [source (head:buffer-of-store-id id)] [view (markdown:companion source)])
+            (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
+                 (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
+                 (head:buffer-read-only source) (not (head:buffer-store-id view))
+                 (eq? source (head:buffer-fact view 'markdown-input #f))))))
+     (wait-for! 'describe-source-is-shared-and-private-to-the-requester
+                (lambda ()
+                  ;; M-x can wrap its result across terminal rows.
+                  (contains?
+                    (list->string
+                      (filter (lambda (c) (not (memv c '(#\space #\\))))
+                              (string->list (apply string-append (screen-lines)))))
+                    "(#tdescribe-source-check)")) 5000)
+
      (send! "\x18;\x3;")                ; C-x C-c
      (let loop ()                       ; block until the editor exits
        (let ([character (guard (ex [else (eof-object)])
