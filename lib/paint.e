@@ -150,7 +150,7 @@
             (let loop ([i from])
               (when (and (< i to) (< i (min (string-length shown) bound)))
                 (let ([ch (string-ref shown i)])
-                  (unless (< (char->integer ch) 32)
+                  (unless (or (< (char->integer ch) 32) (<= 127 (char->integer ch) 159))
                     (string-set! out (- i from) ch)))
                 (loop (+ i 1))))
             out)))
@@ -221,17 +221,7 @@
 
   ;;; Soft wrap -------------------------------------------------------------------
 
-  (define (compute-breaks s width)
-    (let ([n (string-length s)])
-      (let loop ([start 0] [acc '(0)])
-        (if (<= (- n start) width)
-            (list->vector (reverse acc))
-            (let* ([limit (+ start width)]
-                   [p (let find ([j limit])
-                        (cond [(<= j start) limit]
-                              [(char=? (string-ref s (- j 1)) #\space) j]
-                              [else (find (- j 1))]))])
-              (loop p (cons p acc)))))))
+  (define compute-breaks render:breaks)
 
   ;;; Hyperlinks -------------------------------------------------------------------
 
@@ -343,7 +333,7 @@
     ;; withdrawal restores the head's ordinary buffer/window wrap setting.
     (let* ([b (head:window-buffer w)] [choice (buffer-wrap-setting b)]
            [x (if (eq? choice 'default) (head:window-wrap w) choice)])
-      (and (not (head:buffer-rendition b)) (if (eq? x 'default) (wrap-lines) x))))
+      (and (not (render:header (head:buffer-rendition b))) (if (eq? x 'default) (wrap-lines) x))))
 
   (define (clean-wrap? w)
     (let ([x (buffer-wrap-setting (head:window-buffer w))])
@@ -638,31 +628,19 @@
             (if (< i n)
                 (let* ([line (vector-ref v i)]
                        [data (render:row frame i)]
-                       [content (if data (car data) line)]
                        [width (render:width frame i (string-length line))]
-                       [shown (let ([r (vector-ref info 1)])
-                                (or (and data (car data))
-                                    (and r (guard (ex [else #f])
-                                             (let ([t (r b i line)])
-                                               (and (or (and (string? t)
-                                                             (= (string-length t)
-                                                                (string-length line)))
-                                                        (and (vector? t)
-                                                             (= (vector-length t)
-                                                                (string-length line))
-                                                             (for-all string?
-                                                                      (vector->list t))))
-                                                    t))))
-                                    line))]
+                       [replacement (and (not data)
+                                         (let ([r (vector-ref info 1)])
+                                           (and r (guard (ex [else #f]) (r b i line)))))]
                        [wrapped? (and (>= i sticky) wrap?)]
                        [breaks (and wrapped? (line-breaks w line))]
                        [slice-left (if wrapped?
-                                       (segment-start breaks seg)
+                                       (render:column frame i (segment-start breaks seg))
                                        left)]
                        [bound (if (and wrapped?
                                        (< (+ seg 1)
                                           (vector-length breaks)))
-                                  (segment-start breaks (+ seg 1))
+                                  (render:column frame i (segment-start breaks (+ seg 1)))
                                   width)]
                        [edge (cond
                                [(and wrapped?
@@ -679,18 +657,19 @@
                        [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
                        [links (append (if data (caddr data) '())
                                       (cell-ranges frame i (text-hyperlinks b i line)))])
-                  (let ([row-styles
-                         (or (and data (cadr data))
-                             (let ([f (vector-ref info 2)])
-                               (and f (guard (ex [else #f]) (f b i line)))))])
+                  (let-values ([(shown row-styles)
+                                (if data (values (car data) (cadr data))
+                                    (render:present frame i line replacement
+                                      (or (let ([f (vector-ref info 2)])
+                                            (and f (guard (ex [else #f]) (f b i line))))
+                                          (styles-of line))))])
                     (paint! row content-x
                             (list i line shown span marks links slice-left
                                   mode-tag row-styles edge)
                             (lambda ()
-                              (display-editor-line content shown span marks links
+                              (display-editor-line shown shown span marks links
                                                    slice-left
-                                                   (or row-styles
-                                                       (styles-of line))
+                                                   row-styles
                                                    edge
                                                    content-width
                                                    bound))))
@@ -1348,6 +1327,7 @@
     ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
     (let* ([entry (assq w (window-layout))]
            [sticky (head:buffer-sticky-lines (head:window-buffer w))]
+           [frame (head:buffer-rendition (head:window-buffer w))]
            [x (+ (head:window-xoff w)
                  (if (eq? (head:window-scrollbar? w) 'left) 1 0)
                  (head:window-line-number-width w))]
@@ -1361,10 +1341,11 @@
                                 w (vector-ref
                                     (head:buffer-lines (head:window-buffer w)) prow))])
                   (+ x
-                     (- pcol (segment-start breaks (segment-of breaks pcol)))
+                     (- (render:column frame prow pcol)
+                        (render:column frame prow (segment-start breaks (segment-of breaks pcol))))
                      1)))
           (cons screen-row
-                (+ x (- (render:column (head:buffer-rendition (head:window-buffer w)) prow pcol)
+                (+ x (- (render:column frame prow pcol)
                         (head:window-left w)) 1)))))
 
   (define (place-cursor!)

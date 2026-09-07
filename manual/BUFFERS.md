@@ -289,6 +289,13 @@ off, truncated lines end in `$` and the window scrolls horizontally to follow
 point. `(wrap-lines #f)` changes the default, and `C-x t` toggles wrapping for
 one window.
 
+Wrapping, Up/Down, and paging measure screen cells, keeping the visual column
+across wide characters and combining sequences. Selections highlight whole
+displayed glyphs; clicking either cell of a wide glyph selects its start.
+Clipped glyph fragments display as blanks at pane edges. Tabs and other
+control characters occupy one blank cell. Buffer positions and the status
+column still count characters.
+
 Each split has independent point, scrolling, wrapping, and status. Splits form
 a tree, so either half may be split again in either direction: `C-x 2` divides
 only the current window into a stacked pair, and `C-x 3` divides only it into a

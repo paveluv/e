@@ -521,24 +521,42 @@
   (define goal-col 0)
   (define goal-pos #f)
 
+  (define (goal-position wrapped?)
+    ;; Equal row/column numbers alone do not identify a navigation context.
+    (let ([b (current-buffer)])
+      (list current-window b (caddr (head:edit-basis b))
+            (and wrapped? (paint:wrap-width current-window))
+            (render:header (head:buffer-rendition b)) point-row point-col)))
+
+  (define (visual-column w row col)
+    (let* ([b (head:window-buffer w)] [frame (head:buffer-rendition b)]
+           [breaks (and (paint:window-wrapped? w)
+                        (paint:line-breaks w (vector-ref (head:buffer-lines b) row)))])
+      (- (render:column frame row col)
+         (if breaks
+             (render:column frame row (paint:segment-start breaks (paint:segment-of breaks col))) 0))))
+
+  (define (column-at-cell w row breaks segment cell)
+    ;; Shared landing rule for vertical goals, paging, and wrapped clicks.
+    ;; A segment's final source character may be inside a combining cluster;
+    ;; clamp first, then snap to that cluster's leading character.
+    (let* ([b (head:window-buffer w)] [frame (head:buffer-rendition b)]
+           [length (string-length (vector-ref (head:buffer-lines b) row))]
+           [start (if breaks (paint:segment-start breaks segment) 0)]
+           [end (if breaks (paint:segment-close breaks segment length) length)]
+           [at (min end (render:character frame row (+ (render:column frame row start) cell)))])
+      (render:character frame row (render:column frame row at))))
+
   (define (move-vertical! delta)
     ;; By buffer lines -- or by visual rows in a soft-wrapping window,
     ;; where up and down walk a long line's segments (C-a and C-e
-    ;; still treat it as one line).  The goal column is visual when
-    ;; wrapped.
+    ;; still treat it as one line). The goal column is always in cells.
     (define wrapped? (paint:window-wrapped? current-window))
     (define (land! breaks k)
       ;; the goal column within segment k, clamped into it
-      (set! point-col
-        (min (+ (paint:segment-start breaks k) goal-col)
-             (paint:segment-close breaks k (string-length (current-line))))))
-    (unless (equal? goal-pos (cons point-row point-col))
-      (set! goal-col
-        (if wrapped?
-            (let ([breaks (paint:line-breaks current-window (current-line))])
-              (- point-col
-                 (paint:segment-start breaks (paint:segment-of breaks point-col))))
-            point-col)))
+      (set! point-col (column-at-cell current-window point-row breaks k goal-col)))
+    (unless (equal? goal-pos (goal-position wrapped?))
+      (set! goal-col (visual-column current-window point-row point-col)))
     (if wrapped?
         (let step ([n delta])
           (cond
@@ -567,8 +585,8 @@
              (step (- n 1))]))
         (begin
           (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
-          (set! point-col (min goal-col (string-length (current-line))))))
-    (set! goal-pos (cons point-row point-col)))
+          (set! point-col (column-at-cell current-window point-row #f 0 goal-col))))
+    (set! goal-pos (goal-position wrapped?)))
 
   (define (split-inserted-lines s)
     ;; Unlike split-lines, retain an empty final part: inserting "a\n"
@@ -1703,13 +1721,7 @@
            [sticky (min (head:buffer-sticky-lines (current-buffer)) (- n 1))]
            [height (paint:page-size)]
            [wrapped? (paint:window-wrapped? w)]
-           [visual-col (if wrapped?
-                           (let* ([line (vector-ref v point-row)]
-                                  [breaks (paint:line-breaks w line)])
-                             (- point-col
-                                (paint:segment-start breaks
-                                  (paint:segment-of breaks point-col))))
-                           point-col)])
+           [visual-col (visual-column w point-row point-col)])
       (define (offset-at target segment)
         (let loop ([row sticky] [offset 0])
           (if (>= row target)
@@ -1725,11 +1737,7 @@
       (define (column-at position)
         (let* ([row (car position)]
                [line (vector-ref v row)])
-          (if wrapped?
-              (let ([breaks (paint:line-breaks w line)] [seg (cdr position)])
-                (min (+ (paint:segment-start breaks seg) visual-col)
-                     (paint:segment-close breaks seg (string-length line))))
-              (min visual-col (string-length line)))))
+          (column-at-cell w row (and wrapped? (paint:line-breaks w line)) (cdr position) visual-col)))
       (define (land! top-offset point-offset)
         (let ([top (position-at top-offset)]
               [point (position-at point-offset)])
@@ -1999,9 +2007,7 @@
                       [breaks (paint:line-breaks w line)]
                       [segs (vector-length breaks)])
                  (if (< k segs)
-                     (cons i (min (+ (paint:segment-start breaks k) col)
-                                  (paint:segment-close breaks k
-                                                       (string-length line))))
+                     (cons i (column-at-cell w i breaks k col))
                      (loop (+ i 1) (- k segs))))))]
         [else
          (let ([row (+ (max sticky (head:window-top w)) (- k sticky))])

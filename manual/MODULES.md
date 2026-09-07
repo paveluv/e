@@ -194,6 +194,13 @@ Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives a
 snapshot vector of lines and returns per-row results, recomputed once per
 buffer revision.
 
+Styler vectors use source character positions. Every cell of a glyph uses its
+leading character's style. An optional display transform must preserve the
+source's character-to-cell geometry: return a same-length string, or a
+same-length vector of strings whose concatenation meets that contract.
+Incompatible substitutions fall back to source text, keeping cursor, mouse,
+selection, and wrapping consistent with what is displayed.
+
 ## Highlighting and formatting
 
 `paint:add-highlighter!` registers redraw-time ranges shaped as `(row start

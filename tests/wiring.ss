@@ -13,7 +13,8 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (terminal) terminal:) (prefix (test) test:))
+     (import (prefix (sys) sys:) (prefix (terminal) terminal:)
+             (prefix (string) string:) (prefix (test) test:))
 
      (define (check label actual expected)
        (guard (ex [else (error 'wiring-test (symbol->string label) actual expected
@@ -69,7 +70,9 @@
        (pump! 900)
        (guard (ex [else (error 'read-editor "probe did not return a datum" expression
                                (map screen-line '(20 21 22 23)))])
-         (call-with-input-file probe read)))
+         (let ([result (call-with-input-file probe read)])
+           (when (eof-object? result) (error 'read-editor "empty result" expression))
+           result)))
 
      (pump! 3000)
 
@@ -787,6 +790,86 @@
             (policy:revoke! s)
             (list (policy:session-owner s) (actor:current) result edit-result)))
        '((head "wired head λ") (head "wired head λ") (ok . "=> 3") (refused buffer)))
+
+     ;; M2 exit: the base's live transcript is readable by an actor, then
+     ;; its retired plain text and a real file share geometry in split panes.
+     (let ([child (string-append probe "-cells.ss")]
+           [path (string-append probe "-cells.txt")])
+       (call-with-output-file child
+         (lambda (port)
+           (for-each (lambda (form) (write form port) (newline port))
+             '((import (chezscheme))
+               (display "\x1b;[2J\x1b;[H界e\x301;Z\r\n")
+               (flush-output-port (current-output-port))
+               (get-line (current-input-port))))) 'replace)
+       (call-with-output-file path
+         (lambda (port)
+           (display "界e\x301;Z\n" port)
+           (display (make-string 19 #\a) port)
+           (display "界e\x301;xy\n" port)) 'replace)
+       (let* ([terminal-id
+               (read-editor
+                 `(begin (delete-other-windows!) (head:scrollbar #f)
+                         (terminal:open!! ,(string-append "exec scheme-script " child))
+                         (head:buffer-store-id (current-buffer))))]
+              [live
+               (read-editor
+                 '(let* ([name (head:buffer-name (current-buffer))]
+                         [text (sandbox:read-buffer name 0 1)]
+                         [ready (list name (head:buffer-fact (current-buffer) 'alive #f)
+                                      (and (string:search text "界éZ" 0 (string-length text)) #t))])
+                    (terminal:send! "\n") ready) "\x1d;")]
+              [split
+               (read-editor
+                 `(let ([terminal (head:buffer-of-store-id ,terminal-id)])
+                    (set-buffer-wrap! terminal #f)
+                    (split-window-right!) (other-window!) (visit-file! ,path)
+                    (set-buffer-wrap! (current-buffer) #f)
+                    (head:buffer-line-numbers-setting-set! (current-buffer) #f)
+                    (head:before-frame!)
+                    (list (head:buffer-fact terminal 'alive #t)
+                          (surface:snapshot ,terminal-id)
+                          (head:buffer-store-id (current-buffer))
+                          (map head:window-xoff (head:windows)))))]
+              [file-id (caddr split)] [offsets (cadddr split)])
+         (check 'live-terminal-has-readable-shared-text live '("*terminal*" #t #t))
+         (check 'terminal-death-withdraws-rendition (list (car split) (cadr split)) '(#f #f))
+         (check 'dead-terminal-and-file-render-their-glyphs-in-both-panes
+           (let* ([line (screen-line 0)] [n (string-length line)]
+                  [first (string:search line "界éZ" 0 n)])
+             (list first (and first (string:search line "界éZ" (+ first 1) n))))
+           (list 0 (- (cadr offsets) 1)))
+         (check 'plain-cursors-use-cells-in-both-panes
+           (read-editor
+             '(map (lambda (w) (paint:window-screen-position w 0 1)) (head:windows)))
+           (map (lambda (x) (cons 1 (+ x 3))) offsets))
+         (check 'plain-mouse-input-shares-file-and-dead-terminal-geometry
+           (let ([points '()])
+             (for-each
+               (lambda (offset)
+                 (for-each
+                   (lambda (cell)
+                     (let ([x (+ offset cell)])
+                       (send! (format "\x1b;[<0;~a;1M\x1b;[<0;~a;1m" x x))
+                       (pump! 200)
+                       (set! points (cons (read-editor '(point)) points)))) '(2 3))) offsets)
+             (reverse points))
+           '((0 . 0) (0 . 1) (0 . 0) (0 . 1)))
+         (let ([cell
+                (read-editor
+                  '(begin (set-buffer-wrap! (current-buffer) '(clean . 20))
+                          (goto-point! '(1 . 1))
+                          (paint:window-screen-position (selected-window) 1 19)))])
+           (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
+                          (+ (cdr cell) 1) (car cell) (+ (cdr cell) 1) (car cell)))
+           (pump! 200)
+           (check 'wrapped-mouse-cell-selects-the-whole-wide-glyph
+             (read-editor '(point)) '(1 . 19)))
+         (read-editor
+           `(begin (delete-other-windows!)
+                   (kill-buffer! (head:buffer-of-store-id ,file-id))
+                   (kill-buffer! (head:buffer-of-store-id ,terminal-id)) #t)))
+       (delete-file child) (delete-file path))
 
      ;; a seam module main links against refuses to reload in place: main
      ;; cannot follow, and two library instances would fork

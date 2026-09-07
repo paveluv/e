@@ -1,6 +1,6 @@
 #!/usr/bin/env scheme-script
 
-;; Surface projection, head adoption, and the real painter share one fixture.
+;; Plain/surface projection, head adoption, and the real painter share fixtures.
 (import (chezscheme))
 (library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
@@ -15,6 +15,59 @@
              (prefix (sys) sys:) (prefix (test) test:))
 
      (define author '(app render-test))
+     ;; Expected maps include EOF. The same table checks plain source,
+     ;; character styles, and both coordinate directions without one test
+     ;; fixture per script or glyph family.
+     (define plain-cases
+       '(("" "" () (0) (0))
+         ("abc" "abc" (0 1 2) (0 1 2 3) (0 1 2 3))
+         ("a\tb\x7f;\x9b;c" #("a" " " "b" " " " " "c") (0 1 2 3 4 5)
+          (0 1 2 3 4 5 6) (0 1 2 3 4 5 6))
+         ("界e\x301;Z" #("界" "" "e\x301;" "Z") (0 0 1 3) (0 2 2 3 4) (0 0 1 3 4))
+         ("\x301;x" #(" \x301;" "x") (0 1) (0 1 2) (0 1 2))
+         ("🇺🇸x" #("🇺🇸" "" "x") (0 0 2) (0 0 2 3) (0 0 2 3))
+         ("👩‍💻x" #("👩‍💻" "" "x") (0 0 3) (0 0 0 2 3) (0 0 3 4))
+         ("1️⃣x" #("1️⃣" "" "x") (0 0 3) (0 0 0 2 3) (0 0 3 4))
+         ("각x" #("각" "" "x") (0 0 3) (0 0 0 2 3) (0 0 3 4))))
+     (test:check 'plain-clusters-share-glyph-style-and-coordinate-geometry
+       (map
+         (lambda (case)
+           (let* ([text (car case)] [frame (render:prepare #f #f (vector text) 0 '((0 . 1)))]
+                  [width (render:width frame 0 (string-length text))])
+             (let-values ([(shown styles)
+                           (render:present frame 0 text #f (list->vector (iota (string-length text))))])
+               (list shown (vector->list styles)
+                     (map (lambda (i) (render:column frame 0 i)) (iota (+ (string-length text) 1)))
+                     (map (lambda (i) (render:character frame 0 i)) (iota (+ width 1)))))))
+         plain-cases) (map cdr plain-cases))
+     (test:check 'mode-substitutions-must-preserve-source-geometry
+       (map
+         (lambda (case)
+           (let* ([text (car case)] [frame (render:prepare #f #f (vector text) 0 '((0 . 1)))])
+             (let-values ([(shown styles) (render:present frame 0 text (cadr case) #f)])
+               (if (vector? shown) (apply string-append (vector->list shown)) shown))))
+         '(("ab" "àb") ("界e\x301;Z" "語a\x301;Y") ("界x" #("語" "y"))
+           ("ab" "界b") ("界x" #("a" "b")) ("ab" "a") ("ab" #("a" #f))))
+       '("àb" "語a\x301;Y" "語y" "ab" "界x" "ab" "ab"))
+     (test:check 'plain-clipping-and-selection-respect-neighboring-cells
+       (map
+         (lambda (case)
+           (let* ([text "界e\x301;Z"] [frame (render:prepare #f #f (vector text) 0 '((0 . 1)))]
+                  [port (open-output-string)] [mirror (terminal:make-emulator 2 16)])
+             (let-values ([(shown styles) (render:present frame 0 text #f '#(red blue ignored green))])
+               (parameterize ([sys:terminal-output-port port])
+                 (paint:display-editor-line shown shown
+                   (cons (render:column frame 0 2) (render:column frame 0 3 #t))
+                   '() '() (car case) styles #f (cadr case) 4)
+                 (display "|right" port)))
+             (terminal:emulator-feed! mirror (get-output-string port))
+             (let* ([expected (caddr case)] [selected (cadddr case)]
+                    [style (and selected
+                                (style:code (vector-ref (vector-ref (terminal:emulator-styles mirror) 0) selected)))])
+               (list (substring (vector-ref (terminal:emulator-screen mirror) 0) 0 (string-length expected))
+                     (and style (string:search style "44" 0 (string-length style)) #t)))))
+         '((0 1 " |right" #f) (0 3 "界é|right" 2) (1 3 " éZ|right" 1)))
+       '((" |right" #f) ("界é|right" #t) (" éZ|right" #t)))
      (define uri "https://wide.example")
      (define clusters '((clusters (1 . 2) (2 . 1) (1 . 1))))
      (define lines (make-vector 50 "abc"))
@@ -124,7 +177,7 @@
                         (publish (paired (number->string (+ 30 (mod i 8)))))))))
      (define (coherent-range-read?)
        (let ([frame (head:read-rendition b '((0 . 1) (49 . 50)))])
-         (or (not frame)
+         (or (not (render:header frame))
              (equal? (vector-ref (cadr (render:row frame 0)) 0)
                      (vector-ref (cadr (render:row frame 49)) 0)))))
      (define coherent? (for-all (lambda (i) (coherent-range-read?)) (iota 40)))
@@ -148,7 +201,8 @@
            (publish (list (grid 'red (list (cons 'clusters bad)))))
            (head:before-frame!)
            (not (header)))
-         '(((0 . 1) (4 . 3)) ((4 . 3)) ((4 . 4.0)) ((-1 . 2) (5 . 2)) malformed)) #t)
+         '(((0 . 1) (4 . 3)) ((4 . 3)) ((4 . 4.0)) ((-1 . 2) (5 . 2))
+           ((1 . 1) (2 . 2) (1 . 1)) malformed)) #t)
      (publish (list (grid 'red clusters)))
      (head:before-frame!)
 
@@ -227,8 +281,9 @@
      (surface:withdraw! id (car (surface:snapshot id)))
      (head:before-frame!)
      (test:check 'withdrawal-restores-ordinary-text
-       (list (head:buffer-rendition current) (paint:window-wrapped? w)
-             (paint:buffer-line-hyperlinks current 0)) '(#f #t ()))
+       (list (render:header (head:buffer-rendition current)) (paint:window-wrapped? w)
+             (paint:buffer-line-hyperlinks current 0)
+             (paint:window-screen-position w 0 1)) '(#f #t () (1 . 3)))
      (publish (list (grid 'green clusters)))
      (head:before-frame!)
      (store:delete! author id)

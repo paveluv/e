@@ -12,7 +12,8 @@
                   (terminal-emulator-unsupported emulator-unsupported) (terminal-color-scheme! color-scheme!)))
   (import (chezscheme) (prefix (kernel) kernel:) (prefix (string) string:)
           (prefix (datum) datum:) (prefix (sys) sys:) (prefix (actor) actor:)
-          (prefix (store) store:) (prefix (surface) surface:) (prefix (text) text:))
+          (prefix (store) store:) (prefix (surface) surface:) (prefix (text) text:)
+          (prefix (glyph) glyph:))
 
   (define-record-type terminal-state
     (nongenerative e-vt-terminal-state-v1)
@@ -416,7 +417,7 @@
         [(eqv? code 32) (values "\x3000;" "")]
         [(and code (<= #x21 code #x7e))
          (values (string (integer->char (+ code #xfee0))) "")]
-        [(>= (grapheme-cell-width cell) 2) (values cell "")]
+        [(>= (glyph:width cell) 2) (values cell "")]
         [else (values cell " ")])))
 
   (define (expanded-wide-row cells styles)
@@ -1090,17 +1091,6 @@
                             'Regional_Indicator)
                        1 0))))))
 
-  (define (grapheme-cell-width text)
-    (let ([width (fold-left
-                   (lambda (current character)
-                     (max current (sys:terminal-character-width character)))
-                   0 (string->list text))])
-      (if (or (>= (regional-indicator-count text) 2)
-              (exists (lambda (character) (memv character '(#\xfe0f #\x20e3)))
-                      (string->list text)))
-          (max 2 width)
-          width)))
-
   (define (put-character! state character)
     ;; VT autowrap is delayed until the next printable character. Cursor
     ;; motion and controls can therefore cancel a pending wrap at the margin.
@@ -1108,26 +1098,13 @@
       (let ([index (cell-owner-index line (- col 1))])
         (and index (vector-ref line index))))
     (define (cluster-extension? character line col)
-      (let* ([property (char-grapheme-break-property character)]
-             [previous (previous-cluster line col)]
-             [previous-property
-              (and previous (> (string-length previous) 0)
-                   (char-grapheme-break-property
-                     (string-ref previous (- (string-length previous) 1))))])
-        (or (memq property '(Extend ZWJ SpacingMark))
-          (eq? previous-property 'Prepend)
-          (and (eq? previous-property 'L)
-               (memq property '(L V LV LVT)))
-          (and (memq previous-property '(LV V))
-               (memq property '(V T)))
-          (and (memq previous-property '(LVT T)) (eq? property 'T))
-          (and (eq? (char-grapheme-break-property character)
-                    'Regional_Indicator)
-               previous (odd? (regional-indicator-count previous)))
+      (let ([previous (previous-cluster line col)])
+        (glyph:extends?
           (and previous (> (string-length previous) 0)
-               (char=? (string-ref previous
-                                   (- (string-length previous) 1))
-                       #\x200d)))))
+               (string-ref previous (- (string-length previous) 1)))
+          character
+          (if (and previous (eq? (char-grapheme-break-property character) 'Regional_Indicator))
+              (regional-indicator-count previous) 0))))
     (let* ([line (vector-ref (terminal-state-screen state)
                              (terminal-state-row state))]
            [width (sys:terminal-character-width character)])
@@ -1142,9 +1119,9 @@
               (let* ([old (vector-ref line col)]
                      [updated (string-normalize-nfc
                                 (string-append old (string character)))]
-                     [old-width (max 1 (grapheme-cell-width old))]
+                     [old-width (max 1 (glyph:width old))]
                      [new-width (min (terminal-state-cols state)
-                                     (max 1 (grapheme-cell-width updated)))]
+                                     (max 1 (glyph:width updated)))]
                      [extra (- new-width old-width)])
                 (vector-set! line col updated)
                 (when (and (> extra 0)
@@ -1689,10 +1666,10 @@
         (let ([cell (vector-ref cells col)])
           (cond [(string=? cell "")
                  (when (or (= col 0)
-                           (< (grapheme-cell-width
+                           (< (glyph:width
                                 (vector-ref cells (- col 1))) 2))
                    (vector-set! cells col " "))]
-                [(>= (grapheme-cell-width cell) 2)
+                [(>= (glyph:width cell) 2)
                  (if (= (+ col 1) cols)
                      (vector-set! cells col " ")
                      (begin

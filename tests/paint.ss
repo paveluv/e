@@ -138,12 +138,13 @@
 
      ;; -- soft-wrap breaks ----------------------------------------------------------
 
-     (check 'no-break-when-it-fits
-            (paint:compute-breaks "short" 10) '#(0))
-     (check 'breaks-at-spaces
-            (paint:compute-breaks "aaa bbb ccc" 5) '#(0 4 8))
-     (check 'hard-break-without-spaces
-            (paint:compute-breaks "aaaaaaaaaa" 4) '#(0 4 8))
+     (check 'wrap-breaks-measure-cells-and-preserve-whole-clusters
+       (map (lambda (case) (paint:compute-breaks (car case) (cadr case)))
+         '(("" 1) ("short" 10) ("aaa bbb ccc" 5) ("aaaaaaaaaa" 4)
+           ("界x界y" 3) ("ae\x301;bx" 2) ("界 界 x" 4) ("界x" 1)
+           ("e\x301;x" 1) ("🇺🇸x" 2) ("a\tb" 2)))
+       '(#(0) #(0) #(0 4 8) #(0 4 8) #(0 2) #(0 3) #(0 2) #(0 1)
+         #(0 2) #(0 2) #(0 2)))
 
      ;; -- hyperlink detection ---------------------------------------------------------
 

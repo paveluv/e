@@ -160,7 +160,9 @@ ledgers, and the terminal test notes.
 ## Limits
 
 Tabs and other control characters display as one space cell. Input is UTF-8,
-but e currently assumes every character occupies one terminal column.
+and buffer cursor, wrapping, selection, and mouse geometry account for wide
+characters and combining/emoji clusters. Widths use the host locale and the
+same glyph rules as the terminal emulator.
 
 ## Version history
 

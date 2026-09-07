@@ -853,16 +853,19 @@
     ;; Optional presentation fails closed when visibility cannot be read.
     ;; The next frame retries; a store outage must not stop the head pump.
     (guard (ex [else #f])
-      (and (buffer-rendition-raw b) (memq b the-buffers) (buffer-visible? b)
-           (buffer-rendition-raw b))))
+      (and (memq b the-buffers) (buffer-visible? b)
+           (or (buffer-rendition-raw b)
+               ;; Commands may ask for geometry immediately after an edit,
+               ;; before the next surface demand. Adopted text is sufficient.
+               (render:prepare #f #f (buffer-lines b) (content-revision b) '())))))
 
   (define (read-rendition b ranges . follow-height)
     ;; Explicit demand reads obey head visibility even through a retained
     ;; reference whose retirement notification has not reached the pump.
     (guard (ex [else #f])
-      (and (buffer-store-id b) (memq b the-buffers) (buffer-visible? b)
+      (and (memq b the-buffers) (buffer-visible? b)
            (render:prepare (buffer-rendition-raw b) (buffer-store-id b)
-                           (buffer-lines b) (buffer-store-rev b) ranges
+                           (buffer-lines b) (content-revision b) ranges
                            (if (null? follow-height) 0 (car follow-height))))))
 
   (define (refresh-buffer-rendition! b)

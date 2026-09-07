@@ -3,7 +3,7 @@
 ;; Navigation publishes a complete seat state before repaint callbacks,
 ;; including composed source/view toggles and reentrant window switches.
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 (eval
@@ -14,13 +14,9 @@
              (prefix (mode) mode:)
              (prefix (md-mode) md-mode:)
              (prefix (markdown) markdown:)
-             (prefix (paint) paint:))
+             (prefix (paint) paint:) (prefix (test) test:))
 
-     (define checks 0)
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'navigation-test (symbol->string label) actual expected)))
+     (define check test:check)
      (define (fresh name)
        (let ([b (head:new-local-buffer name)])
          (head:buffer-lines-set! b '#("alpha" "middle" "omega"))
@@ -154,4 +150,38 @@
              (check 'toggle-keeps-callback-position (point) '(1 . 2)))
            (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))))
        '(#f #t))
-     (format #t "~a navigation checks passed\n" checks)))
+     ;; Ordinary source positions remain characters; a vertical goal is in
+     ;; cells, survives short rows and wide-glyph interiors, and is also the
+     ;; column used by paging into rows outside the current rendition demand.
+     (head:buffer-lines-set! a '#("界ab" "a\x301;bcde" "x" "界ab"))
+     (show-buffer! a)
+     (head:window-wrap-set! w #f)
+     (goto-point! '(0 . 1))
+     (define (steps action arguments)
+       (reverse (fold-left (lambda (out argument) (cons (action argument) out)) '() arguments)))
+     (check 'vertical-goal-survives-short-rows-and-character-counts
+       (steps (lambda (delta) (move-vertical! delta) (point)) '(1 1 1 -1 -1 -1))
+       '((1 . 3) (2 . 1) (3 . 1) (2 . 1) (1 . 3) (0 . 1)))
+     (head:buffer-lines-set! a '#("ab界e\x301;xy"))
+     (head:window-width-set! w 4)
+     (head:window-wrap-set! w #t)
+     (goto-point! '(0 . 1))
+     (check 'wrapped-goal-snaps-to-whole-glyph-and-recovers
+       (steps (lambda (delta) (move-vertical! delta) (point)) '(1 1 -1 -1))
+       '((0 . 2) (0 . 6) (0 . 2) (0 . 1)))
+     (head:buffer-lines-set! a
+       (list->vector (map (lambda (i) (if (even? i) "abcd" "界abc")) (iota 30))))
+     (head:window-wrap-set! w #f)
+     (paint:set-screen-rows! 7)
+     (paint:set-screen-cols! 12)
+     (head:window-top-set! w 0)
+     (goto-point! '(0 . 2))
+     (check 'paging-keeps-cell-column-outside-the-demanded-rows
+       (steps (lambda (direction)
+                (page-window-fraction! direction 1)
+                (let ([p (point)])
+                  (list (car p) (cdr p)
+                    (cdr (paint:window-screen-position w (car p) (cdr p))))))
+              '(1 1 -1))
+       '((7 1 3) (12 2 3) (7 1 3)))
+     (test:finish! 'navigation)))

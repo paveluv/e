@@ -52,10 +52,11 @@
   (define-record-type mode
     (fields name extensions interpreters styles
             ;; optional display transform: (render buffer row line) ->
-            ;; a string of the SAME length, or a same-length vector containing
-            ;; one display string per logical cell. The latter permits a cell
-            ;; to contain a grapheme and represents a wide glyph's continuation
-            ;; with "". The buffer text is untouched and columns stay 1:1.
+            ;; a string of the SAME character length, or a same-length vector
+            ;; of strings whose concatenation meets that contract. Character
+            ;; to cell geometry must match the source (including clusters).
+            ;; Invalid substitutions paint source; character styles project
+            ;; to every cell of the leading character's glyph.
             render
             ;; optional buffer-aware styling: (row-styles buffer row
             ;; line) -> a styles vector, or #f for the plain styles

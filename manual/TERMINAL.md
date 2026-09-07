@@ -166,6 +166,11 @@ recorded soft-wrap boundaries while preserving explicit newlines, styles, and
 the logical cursor position. The primary screen also reflows while an
 alternate-screen application is active; the alternate screen itself remains a
 fixed application grid.
+
+After the child exits, its last text remains an ordinary read-only buffer.
+Wide and combining text retains the same cursor, selection, wrapping, and
+mouse geometry as file buffers, including in side-by-side panes.
+
 OSC 0, 1, and 2 title changes rename the shared buffer to the title wrapped in
 stars, such as `*bash*`; store name collisions receive a suffix such as
 `*bash*<2>`. An unchanged title does not overwrite a later user rename.
