@@ -1170,7 +1170,7 @@
     ;; line in the echo area -- progress redrawn in place rather than
     ;; stacked -- never a line from another component.  The log
     ;; records every step regardless.
-    (make-parameter #f))
+    log:progress)
 
   (define (present-log-entry! e)
     ;; Present an existing record in the echo area without logging it again.
@@ -1183,11 +1183,11 @@
       (when (pair? left)
         (let* ([e (car left)]
                [text (log:format-entry e)]
-               [styler (log:styler (cadr e))]
+               [styler (log:styler (log:component e))]
                [ghost (if (and (null? (cdr left)) (pair? tail))
                           (car tail)
                           "")])
-          (paint:echo-queue! (cadr e) text styler #f ghost)
+          (paint:echo-queue! (log:component e) text styler #f ghost)
           (loop (cdr left)))))
     (when (pair? entries) (paint:present-echo!)))
 
@@ -2870,15 +2870,16 @@
   ;; retracts and remakes it; what the loop and the seams ask of the
   ;; commands is installed here too.
   (define (init!)
-    ;; The head's side of every log:add! -- present the fresh record
-    ;; transiently in the echo area, styled by its component's styler.
-    ;; Visible log views catch up at the next redraw.
-    (log:set-presenter!
-      (lambda (e show?)
-        (when show?
-          (if (message-progress)
-              (paint:echo-append! (cadr e) (log:format-entry e)
-                                  (log:styler (cadr e)) #t)
+    ;; One module-owned subscriber per head. All records wake its shared
+    ;; history view; echo presentation belongs to the originating head.
+    ;; Presentation mode is captured with the record, not read on delivery.
+    (log:subscribe!
+      (lambda (e presentation)
+        (head:wake-main!)
+        (when (and presentation (equal? (log:actor e) head:ui-actor))
+          (if (eq? presentation 'progress)
+              (paint:echo-append! (log:component e) (log:format-entry e)
+                                  (log:styler (log:component e)) #t)
               (present-log-entry! e)))))
     ;; The file commands' formatters: their entries are (verb . path),
     ;; formatted "verb path", their histories the paths (see

@@ -206,7 +206,8 @@
 
      ;; Simulate the registry retraction performed during module reload.
      ;; Both log views must rebind, retain identity, and rebuild once.
-     (log:add! 'app-probe "before reload" #f)
+     (log:register-formatter! 'app-probe values (lambda (text) (make-vector (string-length text) 'string)))
+     (actor:call-as '(head "alice:\tλ") (lambda () (log:add! 'app-probe "before reload" #f)))
      (define all-log #f)
      (define filtered-log #f)
      (parameterize ([kernel:registering-module 'log-view-test])
@@ -217,6 +218,14 @@
      (set-buffer-name! filtered-log "renamed filtered log")
      (define old-all (head:buffer-lines all-log))
      (define old-filtered (head:buffer-lines filtered-log))
+     (check 'log-actor-prefix-is-separate-from-component-styling
+       (let* ([line (vector-ref old-filtered 0)]
+              [styles ((mode:styles (mode:find "log")) line)]
+              [prefix (- (string-length line) (string-length "before reload"))])
+         (list (for-all (lambda (i) (eq? (vector-ref styles i) 'comment)) (iota prefix))
+               (for-all (lambda (i) (eq? (vector-ref styles (+ prefix i)) 'string))
+                        (iota (string-length "before reload")))))
+       '(#t #t))
      (define log-count (log:length))
      (kernel:retract-module! 'log-view-test)
      (check 'log-registration-retracted (head:app-buffer? all-log) #f)

@@ -55,6 +55,7 @@
      (define release (test:gate))
      (define paused #f)
      (define presented (test:recorder))
+     (define log-token #f)
      (define (connect host port)
        (when paused
          (set! paused #f)
@@ -159,9 +160,10 @@
                '("No documentation for s9-reference" s9-reference))
              (registered! "local documentation"))
 
-           (log:set-presenter!
-             (lambda (entry show?)
-               (presented (list show? (length (reference:lookup 's9-alias))))))
+           (set! log-token
+             (log:subscribe!
+               (lambda (entry presentation)
+                 (presented (list presentation (length (reference:lookup 's9-alias)))))))
 
            ;; While a worker owns the fetch, readers retain complete state
            ;; and a second fetch is refused before it can open another file.
@@ -201,12 +203,12 @@
                ("https://www.scheme.com/tspl4/binding.html#./s9-reference"
                 "https://cisco.github.io/ChezScheme/csug10.0/binding.html#./s9-reference" #f)))
            (test:check 'fetch-progress-is-in-the-log
-             (let ([messages (reverse (map caddr (log:entries 'describe)))])
+             (let ([messages (reverse (map log:datum (log:entries 'describe)))])
                (list (length messages) (car messages) (list-ref messages 22) (list-ref messages 23)
                      (presented)))
              (list 24 "Fetching tspl4/binding.html (1/22)" "Extracting the reference corpus..."
                    "Describe database ready: 22 entries covering 2 names"
-                   (append (make-list 23 '(#f 0)) '((#t 22)))))
+                   (append (make-list 23 '(#f 0)) '((append 22)))))
 
            ;; A failed refresh closes its transport and releases ownership;
            ;; it must not replace the database or the already published index.
@@ -238,7 +240,7 @@
                  (list (map fields (car next)) (cadr next)))
                before))))
        (lambda ()
-         (log:set-presenter! #f)
+         (when log-token (log:unsubscribe! log-token))
          (registered! #f)
          (for-each (lambda (id) (when (store:exists? id) (store:delete! '(app describe) id))) page-ids)
          (remove-tree! root)))

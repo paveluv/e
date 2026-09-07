@@ -110,7 +110,7 @@
             ;; Keep this caller's exports before reload rebinds M-x's prefix.
             [send! vt:send!] [close! vt:close!]
             [phase 'initial] [coherent? #f] [complete? #f] [interfered? #f]
-            [events (test:recorder)] [retired (test:recorder)] [audit (test:recorder)])
+            [events (test:recorder)] [retired (test:recorder)] [audit (test:recorder)] [log-token #f])
        (define (transcript) (let-values ([(text revision) (store:snapshot id)]) text))
        (define (has? part)
          (exists (lambda (line) (contains? line part)) (vector->list (transcript))))
@@ -168,10 +168,11 @@
            (kernel:load-module! "terminal")
            (head:set-frame-hook! (lambda () (void)))
            (head:before-frame!)
-           (log:set-presenter!
-             (lambda (entry show?)
-               (when (and (eq? (cadr entry) 'store)
-                          (contains? (caddr entry) "(app terminal")) (audit show?))))
+           (set! log-token
+             (log:subscribe!
+               (lambda (entry presentation)
+                 (when (and (eq? (log:component entry) 'store)
+                            (contains? (log:datum entry) "(app terminal")) (audit presentation)))))
            (set! id (vt:open! first (format "exec scheme-script ~a" child) (current-directory) 3 24))
            (set! owner (store:property id 'app))
            (set! subscription
@@ -279,7 +280,7 @@
                    (exists (lambda (event) (eq? (car event) 'reset)) (events)))
              '(#t applied ((#f #f)) #f)))
          (lambda ()
-           (log:set-presenter! #f)
+           (when log-token (log:unsubscribe! log-token))
            (head:set-repaint-hook! paint:invalidate-screen-cache!)
            (head:set-frame-hook! paint:redraw!)
            (when subscription (store:unsubscribe! subscription))

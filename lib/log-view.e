@@ -2,10 +2,10 @@
 ;;
 ;; An e extension module: the library (log-view), loaded at startup by
 ;; the kernel, which calls init!.  The log library owns the records
-;; (log:add!) and the echo library their echo-area presentation; this
-;; module renders the records as buffers: *log* (every record, created
+;; (log:add!) and the command layer its echo-area presentation; this
+;; module renders the records as buffers: <log> (every record, created
 ;; at startup so it is always in the buffer list) and filtered views
-;; like *log eval*, one timestamped, component-prefixed row per line,
+;; like <log eval>, one timestamped, actor/component-prefixed row per line,
 ;; appended incrementally past a high-water mark.
 
 (library (log-view)
@@ -21,18 +21,20 @@
   (define (log-line-prefix e)
     ;; The view's row prefix; the stored time keeps nanoseconds, the
     ;; rendering shows seconds.
-    (let ([d (time-utc->date (car e))])
-      (format "~2,'0d:~2,'0d:~2,'0d ~a: "
-              (date-hour d) (date-minute d) (date-second d) (cadr e))))
+    (let* ([stamp (log:time e)]
+           [d (time-utc->date (make-time 'time-utc (mod stamp 1000000000) (div stamp 1000000000)))])
+      (format "~2,'0d:~2,'0d:~2,'0d ~s\t~a: "
+              (date-hour d) (date-minute d) (date-second d) (log:actor e) (log:component e))))
 
   (define (style-log-line s)
-    ;; The mode's styler: the timestamp and component prefix grey, the
+    ;; The mode's styler: the timestamp, actor and component prefix grey, the
     ;; text styled by the component's registered styler.
     (let* ([n (string-length s)]
            [styles (make-vector n 'comment)]
-           [sep (and (> n 9) (string:search s ": " 9 n))])
+           [start (and (> n 9) (string:search s "\t" 9 n))]
+           [sep (and start (string:search s ": " (+ start 1) n))])
       (when sep
-        (let* ([component (string->symbol (substring s 9 sep))]
+        (let* ([component (string->symbol (substring s (+ start 1) sep))]
                [styler (log:styler component)]
                [from (+ sep 2)]
                [inner (and styler
@@ -51,21 +53,21 @@
     ;; its component's formatter, one prefixed row per line, appended
     ;; past a high-water mark.
     (define (accept? e)
-      (or (null? components) (eq? (cadr e) (car components))))
+      (or (null? components) (eq? (log:component e) (car components))))
     (define b #f)
     (define rendered #f)
     (define (refresh!)
-      (let ([end (log:length)])
+      (let-values ([(records end) (log:snapshot (or rendered 0))])
         (when (or (not rendered) (< rendered end))
-          (let ([lines '()] [start (or rendered 0)])
-            (do ([i (- end 1) (- i 1)]) ((< i start))
-              (let ([e (log:record i)])
-                (when (accept? e)
-                  (set! lines
-                    (append (let ([prefix (log-line-prefix e)])
-                              (map (lambda (l) (string-append prefix l))
-                                   (string:lines (log:format-entry e))))
-                            lines)))))
+          (let ([lines
+                 (fold-left
+                   (lambda (lines e)
+                     (if (accept? e)
+                         (append (let ([prefix (log-line-prefix e)])
+                                   (map (lambda (l) (string-append prefix l))
+                                        (string:lines (log:format-entry e)))) lines)
+                         lines))
+                   '() records)])
             ;; A new registration rebuilds from the records, replacing
             ;; a previous rendering once; later refreshes only append.
             (if rendered

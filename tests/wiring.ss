@@ -202,7 +202,7 @@
      (check 'typing-after-sync-mirrors (mirror-agrees? 'after) #t)
 
      ;; the foreign edit is on the audit stream
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (cadr entry) (quote store))) (log:entries)) p)) (quote replace)\r"
+     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (log:component entry) (quote store))) (log:entries)) p)) (quote replace)\r"
                     probe))
      (pump! 900)
      (check 'foreign-edit-audited (call-with-input-file probe read) #t)
@@ -819,19 +819,45 @@
             (echo-has? "main links against store")
             #t)
 
-     (check 'log-view-reload-rebinds-without-duplicating-rows
+     (check 'shared-log-keeps-actors-local-presentation-and-reload-identity
             (read-editor
-              '(let ([b (head:find-tool-buffer "*log*")]
-                     [was (current-buffer)])
+              '(let ([b (head:find-tool-buffer "*log*")] [was (current-buffer)]
+                     [ids (list-sort < (store:buffer-list))] [component 'multihead-log])
+                 (define (messages)
+                   (map cadr (filter (lambda (entry) (eq? (car entry) component)) (echo:pending))))
+                 (define (message! text) (parameterize ([message-source component]) (set-message! text)))
+                 (define (filtered!) ((top-level-value 'log-view:buffer) component))
+                 (message! "m4-one")
+                 (parameterize ([message-progress #t]) (message! "m4-two"))
+                 (actor:call-as '(head "other logger") (lambda () (log:add! component "m4-other")))
+                 (log:add! component "m4-quiet" #f)
                  (show-buffer! b)
                  (head:refresh-visible-views!)
-                 (let ([old (head:buffer-lines b)])
+                 (let* ([old (head:buffer-lines b)] [filtered (filtered!)]
+                        [old-filtered (head:buffer-lines filtered)] [echo-before (messages)])
                    (kernel:reload-module! "log-view")
-                   (show-buffer! was)
-                   (list (eq? b (head:find-tool-buffer "*log*"))
-                         (head:app-buffer? b)
-                         (equal? old (head:buffer-lines b))))))
-            '(#t #t #t))
+                   (let ([rebound (list (eq? b (head:find-tool-buffer "*log*"))
+                                        (eq? filtered (filtered!)) (head:app-buffer? b)
+                                        (equal? old (head:buffer-lines b))
+                                        (equal? old-filtered (head:buffer-lines filtered)))])
+                     (message! "m4-after")
+                     (show-buffer! filtered)
+                     (head:refresh-visible-views!)
+                     (show-buffer! was)
+                     (list rebound echo-before (messages)
+                           (map log:actor (reverse (log:entries component)))
+                           (map (lambda (line) (substring line 9 (string-length line)))
+                                (vector->list (head:buffer-lines filtered)))
+                           (and (not (head:buffer-store-id b)) (not (head:buffer-store-id filtered))
+                                (equal? ids (list-sort < (store:buffer-list)))))))))
+            '((#t #t #t #t #t) ("m4-two") ("m4-two" "m4-after")
+              ((head "wired head λ") (head "wired head λ") (head "other logger")
+               (head "wired head λ") (head "wired head λ"))
+              ("(head \"wired head λ\")\tmultihead-log: m4-one"
+               "(head \"wired head λ\")\tmultihead-log: m4-two"
+               "(head \"other logger\")\tmultihead-log: m4-other"
+               "(head \"wired head λ\")\tmultihead-log: m4-quiet"
+               "(head \"wired head λ\")\tmultihead-log: m4-after") #t))
 
      ;; -- window numbers --------------------------------------------------
      ;; The first window is 0 and a split takes the smallest free number

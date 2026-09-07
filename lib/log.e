@@ -1,123 +1,134 @@
-;; log.e -- the structured log and audit stream: the library (log).
-;; State, not UI: pure infrastructure with no init!.
-;;
-;; The editor's syslog: structured records -- (time component datum),
-;; time with nanosecond precision -- indexed in a growable vector,
-;; appended by log! and by every message that passes through the echo
-;; area.  The records ride a persistent cell, so the log survives
-;; module reloads; presentation is the head's business, installed
-;; through set-presenter! (the command layer shows entries in the echo
-;; area; the log-view module renders the *log* view from the records
-;; themselves).
-;;
-;; Per-component presentation of structured entries: modules register
-;; a formatter (datum -> string) and optionally a styler (formatted
-;; text -> styles vector), used identically in the echo area and the
-;; *log* view.  The datum itself stays queriable -- eval logs
-;; (query . result) and its history reads only the queries.
-
+;; log.e -- the base's structured log. Records are owned plain snapshots:
+;; (utc-nanoseconds actor component datum), indexed in append order. Views
+;; and echo presentation subscribe; neither owns a second history.
 (library (log)
-  (export (rename (log! add!)) (rename (log-record record)) (rename (log-length length)) (rename (log-entries entries)) (rename (log-history history))
-          (rename (register-log-formatter! register-formatter!)) (rename (log-styler styler)) (rename (format-log-entry format-entry))
-          set-presenter!)
-  (import (rnrs)
-          (only (chezscheme) box unbox set-box! format current-time void)
-          (prefix (kernel) kernel:))
+  (export add! record length snapshot entries history
+          (rename (car time) (cadr actor) (caddr component) (cadddr datum))
+          register-formatter! styler format-entry subscribe! unsubscribe! progress)
+  (import (except (rnrs) length)
+          (only (chezscheme) unbox format current-time time-second time-nanosecond
+                make-mutex with-mutex void make-thread-parameter parameterize print-graph)
+          (prefix (kernel) kernel:) (prefix (actor) actor:) (prefix (datum) datum:))
 
-  ;;; The records ---------------------------------------------------------------
+  (define-record-type state
+    (nongenerative e-log-state-v2)
+    (fields lock subscriptions deliveries progress
+            (mutable records) (mutable count) (mutable serial)))
+  (define data
+    (unbox (kernel:persistent-cell 'log-store
+             (lambda () (make-state (make-mutex) (kernel:make-registry)
+                          (kernel:make-delivery-queue) (make-thread-parameter #f)
+                          (make-vector 64 #f) 0 0)))))
 
-  ;; (vector . count) in a persistent cell: reloading this module
-  ;; keeps every record.
-  (define log-cell
-    (kernel:persistent-cell 'log-store
-      (lambda () (cons (make-vector 64 #f) 0))))
+  (define progress (state-progress data))
+  (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
+  (define (length) (with-mutex (state-lock data) (state-count data)))
 
-  (define (log-record i) (vector-ref (car (unbox log-cell)) i))
-  (define (log-length) (cdr (unbox log-cell)))
+  (define (record i)
+    (datum:copy
+      (with-mutex (state-lock data)
+        (unless (and (natural? i) (< i (state-count data)))
+          (error 'record "index outside the log" i))
+        (vector-ref (state-records data) i))))
 
-  (define (append-record! e)
-    (let* ([store (unbox log-cell)]
-           [v (car store)]
-           [count (cdr store)]
-           [v (if (= count (vector-length v))
-                  (let ([bigger (make-vector (* 2 (vector-length v)) #f)])
-                    (do ([i 0 (+ i 1)]) ((= i count))
-                      (vector-set! bigger i (vector-ref v i)))
-                    bigger)
-                  v)])
-      (vector-set! v count e)
-      (set-box! log-cell (cons v (+ count 1)))))
+  (define snapshot
+    (case-lambda
+      [() (snapshot 0)]
+      [(start)
+       ;; Newest first from start through one captured count. Stored records
+       ;; never mutate, so deep copying can happen after releasing the writer.
+       (let-values ([(records end)
+                     (with-mutex (state-lock data)
+                       (let ([end (state-count data)] [v (state-records data)])
+                         (unless (and (natural? start) (<= start end))
+                           (error 'snapshot "start outside the log" start))
+                         (let loop ([i start] [out '()])
+                           (if (= i end) (values out end)
+                               (loop (+ i 1) (cons (vector-ref v i) out))))))])
+         (values (map datum:copy records) end))]))
 
-  ;;; Formatters ----------------------------------------------------------------
+  (define (own-datum value)
+    ;; Keep structured data queryable. An arbitrary runtime/cyclic result is
+    ;; its written representation at admission, never a retained live object.
+    (guard (ex [else (parameterize ([print-graph #t]) (format "~s" value))])
+      (datum:copy value)))
 
-  (define log-formatters (kernel:make-registry))
+  (define (subscribe! procedure)
+    ;; -> revocable token. procedure receives (entry presentation), where
+    ;; presentation is #f, append or progress. Registration has module lifetime.
+    (unless (procedure? procedure) (error 'subscribe! "expected a procedure" procedure))
+    (let ([token (with-mutex (state-lock data)
+                   (let ([n (+ (state-serial data) 1)]) (state-serial-set! data n) n))])
+      (kernel:registry-add! (state-subscriptions data) (cons token procedure))
+      token))
 
-  (define (register-log-formatter! component fmt . style)
-    (kernel:registry-add! log-formatters
-                          (list component fmt
-                                (and (pair? style) (car style)))))
+  (define (unsubscribe! token)
+    (kernel:registry-remove! (state-subscriptions data) (lambda (entry) (eqv? (car entry) token)))
+    (void))
 
-  (define (log-formatter component)
-    (kernel:registry-find log-formatters
-                          (lambda (x) (eq? (car x) component))))
+  (define (add! component datum . show)
+    ;; Attribution follows the work; registration is not required to log it.
+    (unless (symbol? component) (error 'add! "expected a component symbol" component))
+    (let* ([actor (or (actor:current) '(base e))]
+           [payload (own-datum datum)] [now (current-time 'time-utc)]
+           [entry (list (+ (* (time-second now) 1000000000) (time-nanosecond now))
+                        actor component payload)]
+           [progress? (and (progress) #t)]
+           [presentation (and (or (null? show) (car show)) (if progress? 'progress 'append))])
+      (with-mutex (state-lock data)
+        (let ([v (state-records data)] [n (state-count data)])
+          (when (= n (vector-length v))
+            (let ([bigger (make-vector (* 2 (vector-length v)) #f)])
+              (do ([i 0 (+ i 1)]) ((= i n)) (vector-set! bigger i (vector-ref v i)))
+              (set! v bigger)
+              (state-records-set! data v)))
+          (vector-set! v n entry)
+          (state-count-set! data (+ n 1))
+          (for-each
+            (lambda (subscriber)
+              (kernel:enqueue-delivery! (state-deliveries data)
+                (lambda ()
+                  (let ([current (kernel:registry-find (state-subscriptions data)
+                                   (lambda (candidate) (eqv? (car candidate) (car subscriber))))])
+                    (when current
+                      (actor:call-as actor
+                        (lambda ()
+                          (parameterize ([progress progress?])
+                            ((cdr current) (datum:copy entry) presentation)))))))))
+            (kernel:call-with-runtime-registrations
+              (lambda () (reverse (kernel:registry-items (state-subscriptions data))))))))
+      (kernel:drain-deliveries! (state-deliveries data))
+      (datum:copy entry)))
 
-  (define (log-styler component)
-    ;; The component's registered styler (formatted text -> styles
-    ;; vector), or #f -- views style their rows with it.
-    (let ([f (log-formatter component)]) (and f (caddr f))))
+  ;;; Component presentation ------------------------------------------------
 
-  (define (format-log-entry e)
-    ;; The entry's presentation text: its component's formatter, or the
-    ;; datum itself (a string as it is, anything else written).
-    (let ([f (log-formatter (cadr e))]
-          [d (caddr e)])
+  (define formatters (kernel:make-registry))
+  (define (register-formatter! component fmt . style)
+    (kernel:registry-add! formatters (list component fmt (and (pair? style) (car style)))))
+  (define (formatter component)
+    (kernel:registry-find formatters (lambda (x) (eq? (car x) component))))
+  (define (styler component)
+    (let ([f (formatter component)]) (and f (caddr f))))
+  (define (format-entry entry)
+    (let ([f (formatter (caddr entry))] [d (cadddr entry)])
       (guard (ex [else (format "~s" d)])
         (if f ((cadr f) d) (if (string? d) d (format "~s" d))))))
 
-  ;;; Appending -----------------------------------------------------------------
+  ;;; Queries ---------------------------------------------------------------
 
-  ;; The head's presenter, told about every appended entry as
-  ;; (present! entry show?).  In a persistent cell so it outlives a
-  ;; reload of this module; a presentation failure never loses the
-  ;; record.
-  (define presenter-cell
-    (kernel:persistent-cell 'log-presenter (lambda () #f)))
+  (define (entries . component)
+    (let-values ([(records end) (snapshot)])
+      (if (pair? component)
+          (filter (lambda (e) (eq? (caddr e) (car component))) records)
+          records)))
 
-  (define (set-presenter! present!) (set-box! presenter-cell present!))
-
-  (define (log! component datum . show)
-    ;; Append a structured record and hand it to the presenter --
-    ;; pass #f to log quietly.  -> the entry.
-    (let ([e (list (current-time) component datum)])
-      (append-record! e)
-      (let ([present! (unbox presenter-cell)])
-        (when present!
-          (guard (ex [else (void)])
-            (present! e (or (null? show) (car show))))))
-      e))
-
-  ;;; Queries -------------------------------------------------------------------
-
-  (define (log-entries . component)
-    ;; The records, newest first, each (time component datum) --
-    ;; filtered when a component is given.
-    (let loop ([i 0] [acc '()])
-      (if (= i (log-length))
-          (if (pair? component)
-              (filter (lambda (e) (eq? (cadr e) (car component))) acc)
-              acc)
-          (loop (+ i 1) (cons (log-record i) acc)))))
-
-  (define (log-history component . select)
-    ;; Command history off the log: a component's datums through select
-    ;; -- car for eval's (query . result), cdr for the file commands'
-    ;; (verb . path) -- newest first, non-strings dropped, consecutive
-    ;; repeats collapsed.
+  (define (history component . select)
+    ;; Select strings from owned data, newest first, collapsing consecutive
+    ;; repeats. Eval selects car from (query . result), file prompts cdr.
     (let ([sel (if (pair? select) (car select) (lambda (d) d))])
-      (let loop ([es (log-entries component)] [last #f])
-        (if (null? es)
-            '()
-            (let ([x (guard (ex [else #f]) (sel (caddr (car es))))])
+      (let loop ([es (entries component)] [last #f])
+        (if (null? es) '()
+            (let ([x (guard (ex [else #f]) (sel (cadddr (car es))))])
               (if (and (string? x) (not (equal? x last)))
                   (cons x (loop (cdr es) x))
                   (loop (cdr es) last))))))))
