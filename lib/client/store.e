@@ -1,7 +1,7 @@
 ;; Client implementation of the store seam. Only immutable text and owned
 ;; metadata are cached; the base admits all writes and computes all history.
 (library (store)
-  (export create! delete! discard! reset! rename! buffer-list exists? visible? buffer-name find-named
+  (export create! delete! discard! prepare-close reset! rename! buffer-list exists? visible? buffer-name find-named
           snapshot snapshot-state snapshot-since revision line-count line extract
           property properties set-property! set-properties!
           edit! edit-with-snapshot! history-step! undo-authors history blame marks set-marks!
@@ -42,6 +42,8 @@
   (define (required id)
     (or (cached id) (error 'store "no buffer" id)))
   (define (buffer-list) (client:request 'buffers))
+  (define (prepare-close)
+    (error 'prepare-close "an attached head does not own the base lifetime"))
   (define (exists? id) (and (cached id) #t))
   (define (buffer-name id) (string-copy (car (required id))))
   (define (find-named name)

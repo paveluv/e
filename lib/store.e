@@ -19,7 +19,7 @@
 ;; (store:snapshot ...).
 
 (library (store)
-  (export create! delete! discard! reset! rename! publication publish!
+  (export create! delete! discard! prepare-close reset! rename! publication publish!
           buffer-list exists? visible? buffer-name find-named
           snapshot snapshot-since snapshot-state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
@@ -62,6 +62,7 @@
     (fields lock
             buffers              ; id -> buffer
             (mutable next-id)
+            (mutable closing?)
             deliveries))         ; ordered callbacks, shared kernel mechanism
 
   (define the-store
@@ -69,7 +70,7 @@
       (lambda ()
         (make-store (make-mutex)
                     (make-eqv-hashtable)
-                    1 (kernel:make-delivery-queue)))))
+                    1 #f (kernel:make-delivery-queue)))))
 
   (define (current-store) (unbox the-store))
 
@@ -134,6 +135,12 @@
   (define (locked thunk)
     (with-mutex (store-lock (current-store)) (thunk)))
 
+  (define (ensure-open!)
+    (when (store-closing? (current-store))
+      (raise (condition (kernel:make-refusal)
+                        (make-who-condition 'store)
+                        (make-message-condition "Store is closing")))))
+
   (define (own-actor actor)
     (unless (actor:identity? actor) (error 'store "expected actor (kind name ...)" actor))
     (datum:copy actor))
@@ -143,7 +150,7 @@
     ;; after releasing it may this writer become the event drainer.
     (let ([actor (own-actor actor)])
       (call-with-values
-        (lambda () (locked (lambda () (thunk actor))))
+        (lambda () (locked (lambda () (ensure-open!) (thunk actor))))
         (lambda result
           (kernel:drain-deliveries! (store-deliveries (current-store)))
           (apply values result)))))
@@ -325,8 +332,43 @@
         (lambda (actor)
           (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
             (or (not b)
-                (and (= revision (buffer-revision b)) (equal? facts (property-data b))
+                (and (reviewed-state? b revision facts)
                      (begin (delete-buffer! actor id) #t))))))))
+
+  (define (reviewed-state? b revision facts)
+    (and (= revision (buffer-revision b)) (equal? facts (property-data b))))
+
+  (define (prepare-close)
+    ;; Standalone lifetime only: -> owned (id text revision facts) snapshots
+    ;; and an acceptance thunk. Review runs outside the writer. Acceptance
+    ;; rechecks every current non-disposable buffer, including hidden/new
+    ;; work, then closes writes under that same lock. Deletion and disposable
+    ;; output need no new consent. Reads and normal runtime cleanup continue.
+    (let ([reviewed (make-eqv-hashtable)])
+      (let ([states
+             (locked
+               (lambda ()
+                 (fold-left
+                   (lambda (states id)
+                     (let ([b (buffer-of 'prepare-close id)])
+                       (if (property-value b 'disposable #f) states
+                           (let ([state (list id (buffer-text b) (buffer-revision b) (property-data b))])
+                             (hashtable-set! reviewed id state)
+                             (cons state states)))))
+                   '() (vector->list (hashtable-keys (store-buffers (current-store)))))))])
+        ;; The caller may mutate returned facts without rewriting its consent.
+        (values (map (lambda (state)
+                       (list (car state) (cadr state) (caddr state) (datum:copy (cadddr state)))) states)
+          (lambda ()
+            (locked
+              (lambda ()
+                (and (for-all
+                       (lambda (id)
+                         (let ([b (buffer-of 'prepare-close id)] [state (hashtable-ref reviewed id #f)])
+                           (or (property-value b 'disposable #f)
+                               (and state (reviewed-state? b (caddr state) (cadddr state))))))
+                       (vector->list (hashtable-keys (store-buffers (current-store)))))
+                     (begin (store-closing?-set! (current-store) #t) #t)))))))))
 
   (define (buffer-list)
     (locked
@@ -878,6 +920,7 @@
           [drops (datum:copy drops)])
       (locked
         (lambda ()
+          (ensure-open!)
           (let ([b (buffer-of 'set-marks! id)])
             (if (and basis (not (= basis (buffer-revision b))))
                 (values 'stale (buffer-revision b))

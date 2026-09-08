@@ -89,9 +89,12 @@ The alphabetical traversal is stable: merely visiting a buffer does not move it
 in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.
 
-In plain `e`, `C-x C-c` exits immediately when every buffer is clean. Otherwise its focused
-question offers `yes`, `no`, and `view`; `view` opens `<buffers>` and moves focus
-there so modified rows can be inspected before deciding.
+In plain `e`, `C-x C-c` checks all shared buffers, including those hidden from
+this head, and local unsaved work. It exits if all are clean; otherwise it
+offers `yes`, `no`, and `view`; `view` opens this head's `<buffers>` list and
+moves focus there.
+If protected work changes during confirmation, e reviews it again before exiting.
+Disposable generated output can keep updating without requiring new confirmation.
 With `--attach`, this command detaches the head and protects only its local
 unsaved work. Shared text and terminal processes stay in the running daemon.
 
