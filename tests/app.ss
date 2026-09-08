@@ -283,9 +283,10 @@
      (check 'runtime-log-callback-is-rebound
             (eq? runtime-refresh (head:app-refresh! (head:app-of arrivals))) #f)
 
-     ;; Expiry removes complete formatted records, including multiline rows
-     ;; and gaps from other components. Hidden views can miss a whole ring.
+     ;; Views keep a recent window independently of the larger journal. Expiry
+     ;; removes complete multiline records and gaps from other components.
      (let ([formatted 0] [w (head:current)])
+       (log:retention 10000)
        (log:register-formatter! 'retention
          (lambda (datum) (set! formatted (+ formatted 1)) datum))
        (log:add! 'retention "expired\ntwo" #f)
@@ -302,8 +303,9 @@
          (head:refresh-visible-views!)
          (check 'filtered-expiry-keeps-surviving-text-and-positions-without-reformatting
            (list (vector-length (head:buffer-lines b)) (head:buffer-point b)
-                 (head:window-top w) (head:buffer-mark-row b) (head:buffer-mark-col b) formatted)
-           '(3 (0 . 5) 0 1 6 2))
+                 (head:window-top w) (head:buffer-mark-row b) (head:buffer-mark-col b) formatted
+                 (map log:datum (log:entries 'retention)))
+           '(3 (0 . 5) 0 1 6 2 ("kept\nthree\nlines" "expired\ntwo")))
          (show-buffer! all-log)
          (head:refresh-visible-views!)
          (check 'hidden-log-resyncs-to-the-retained-range-including-multiline-rows
@@ -322,7 +324,19 @@
            (list (vector-length (head:buffer-lines b))
                  (let ([line (vector-ref (head:buffer-lines b) 0)])
                    (substring line (- (string-length line) 8) (string-length line))))
-           '(1 "returned"))))
+           '(1 "returned"))
+         (show-buffer! all-log)
+         (head:refresh-visible-views!)
+         (let ([before (let-values ([(records end first) (log:snapshot 0 0)]) end)])
+           (log:retention 3)
+           (head:refresh-visible-views!)
+           (log:retention 4096)
+           (head:refresh-visible-views!)
+           (check 'retention-shrink-refreshes-without-an-append-and-grow-keeps-expiry
+             (list (vector-length (head:buffer-lines all-log))
+                   (let-values ([(records end first) (log:snapshot 0 0)])
+                     (list (= end before) (- end first))))
+             '(3 (#t 3))))))
 
      ;; Mouse routing needs the handler's focus decision, not only truth.
      (let* ([previous (current-buffer)] [result #f]

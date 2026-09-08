@@ -1,10 +1,11 @@
 ;; The head formats and presents records, but keeps no second log history.
 (library (journal)
-  (export add! snapshot subscribe! unsubscribe! progress)
+  (export add! snapshot retention subscribe! unsubscribe! progress)
   (import (chezscheme) (prefix (client) client:) (prefix (identity) identity:))
   (define progress (make-thread-parameter #f))
   (define (snapshot . args)
     (apply values (apply client:request 'log-snapshot (if (null? args) '(0) args))))
+  (define (retention . args) (apply client:request 'log-retention args))
   (define (add! component datum . show)
     (let ([entry (client:request 'log-add component datum
                    (and (or (null? show) (car show)) (if (progress) 'progress 'append)))])

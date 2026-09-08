@@ -38,14 +38,32 @@ concurrent or deferred delivery preserves the requested presentation.
 `<log>` is a dynamic, read-only view backed by structured records. It is always
 present in the buffer list. At the end of the buffer it tails new entries;
 elsewhere its viewport stays with the same text while records arrive. The base
-retains the newest **4,096 records** across all components. Views drop expired
-rows on refresh; points, marks and viewports in surviving text move with it,
+retains the newest **1,000,000 records** across all components by default.
+Log views render the most recent **4,096 records**, filtering within that
+window, so opening a head does not fetch or format the entire journal. Older
+retained records remain available to component queries and command histories.
+Views drop rows outside this window or the journal's retention on refresh;
+points, marks and viewports in surviving text move with it,
 and positions in expired text move to the start. Hidden views catch up when
 shown again. A multiline record expires as a whole.
 
 This is recent, in-memory history for the lifetime of the base. Restarting
 the base clears it. The limit counts records, not payload bytes or rendered
 lines; an individual record or formatter result can still be large.
+
+Set the shared retention in `base-config.e`:
+
+```scheme
+(log:retention 1000000)
+```
+
+`(log:retention)` returns the current limit. The setter accepts a positive
+exact integer that fits a vector size and returns the new limit. It takes
+effect immediately in the base; views observe it at their next refresh.
+Shrinking discards the oldest excess records. Growing preserves what remains
+and never restores evicted records. Append bookmarks remain valid across
+resizing. This is one shared setting, so an authorized attached head can also
+change it through M-x; put it in `base-config.e` to keep it across restarts.
 
 Filtered log views are created dynamically:
 
@@ -106,6 +124,8 @@ of presentation is separate from the base's operation order.
 
 - `(log:add! component datum [show?])` adds a record; the component is a
   symbol, and `show?` defaults to true. Passing `#f` logs quietly.
+- `(log:retention [count])` reads or changes the shared retention limit.
+  Attached setters require an all-buffer human head; readers may query it.
 - `(log:entries [component [count]])` returns owned records, newest first.
   `component` is a symbol or `#f` for all components. `count` is a nonnegative
   exact integer or `#f` for all retained matches. Filtering and limiting happen
@@ -123,6 +143,9 @@ of presentation is separate from the base's operation order.
   returns only the newest matches, while its end still covers the whole read.
   `(log:snapshot 0 0)` reads just the bounds without copying payloads.
   Formatting callbacks run after the snapshot; additions belong to the next read.
+  On attached connections, use bounded tail/component reads: a full journal
+  snapshot can exceed the wire's 16 MiB frame limit. Paged history browsing
+  is not implemented by the log view.
 - `log:history` derives values for interactive history.
 - `log:register-formatter!` installs component presentation.
 - `present-log-entry!` and `present-log-entries!` expose the shared echo

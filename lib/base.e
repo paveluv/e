@@ -169,6 +169,10 @@
       [(log-snapshot)
        (unless (<= 1 (length args) 3) (error 'wire "expected start, optional count and component"))
        (call-with-values (lambda () (apply log:snapshot args)) list)]
+      [(log-retention)
+       (unless (<= (length args) 1) (error 'wire "expected an optional record count"))
+       (unless (null? args) (control!))
+       (apply log:retention args)]
       [(log-add)
        (arity 3)
        (parameterize ([log:progress (eq? (caddr args) 'progress)])

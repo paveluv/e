@@ -65,10 +65,14 @@
         (dynamic-wind
           (lambda () (set! refreshing? #t))
           (lambda ()
-            (let-values ([(records end first) (log:snapshot (or rendered 0))])
-              (when (or (not rendered) (< rendered end))
-                (let expire ([kept sizes] [drop 0])
-                  (if (and (pair? kept) (< (caar kept) first))
+            ;; Keep attachment and refresh reads bounded independently of
+            ;; the journal's retention; old records remain queryable there.
+            (let-values ([(records end retained) (log:snapshot (or rendered 0) 4096)])
+              (let ([first (max retained (- end 4096))])
+                (when (or (not rendered) (< rendered end)
+                        (and (pair? sizes) (< (caar sizes) first)))
+                  (let expire ([kept sizes] [drop 0])
+                    (if (and (pair? kept) (< (caar kept) first))
                       (expire (cdr kept) (+ drop (cdar kept)))
                       (let format ([records records] [i (- end 1)] [lines '()] [added '()])
                         (cond
@@ -86,7 +90,7 @@
                                              (string:lines (log:format-entry e)))])
                              (format (cdr records) (- i 1) (append rows lines)
                                      (cons (cons i (length rows)) added)))]
-                          [else (format (cdr records) (- i 1) lines added)])))))))
+                          [else (format (cdr records) (- i 1) lines added)]))))))))
           (lambda () (set! refreshing? #f)))))
     (set! b (head:register-view! name refresh!))
     (head:buffer-fact-set! b 'log-filter components)

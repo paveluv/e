@@ -1,6 +1,6 @@
 ;; journal.e -- the base's log writer, history, and ordered delivery.
 (library (journal)
-  (export add! snapshot subscribe! unsubscribe! progress)
+  (export add! snapshot retention subscribe! unsubscribe! progress)
   (import (rnrs)
           (only (chezscheme) current-time time-second time-nanosecond
                 make-mutex with-mutex void make-thread-parameter parameterize)
@@ -12,10 +12,26 @@
   (define subscriptions (kernel:make-registry))
   (define deliveries (kernel:make-delivery-queue))
   (define progress (make-thread-parameter #f))
-  (define records (make-vector 4096 #f))
+  (define records (make-vector 1000000 #f))
   (define count 0)
+  ;; Growing the ring must not move this floor back over evicted entries.
+  (define first 0)
   (define serial 0)
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
+  (define retention
+    (case-lambda
+      [() (with-mutex lock (vector-length records))]
+      [(size)
+       (unless (and (fixnum? size) (> size 0))
+         (error 'retention "expected a positive exact record count" size))
+       (with-mutex lock
+         (unless (= size (vector-length records))
+           (let ([next (make-vector size #f)] [from (max first (- count size))])
+             (do ([i from (+ i 1)]) ((= i count))
+               (vector-set! next (mod i size) (vector-ref records (mod i (vector-length records)))))
+             (set! records next)
+             (set! first from)))
+         (vector-length records))]))
   (define snapshot
     (case-lambda
       [() (snapshot 0 #f #f)]
@@ -30,10 +46,10 @@
          (error 'snapshot "expected a start, optional count and component" start limit component))
        (let-values ([(selected end first)
                      (with-mutex lock
-                       (let ([first (max 0 (- count (vector-length records)))])
-                         (unless (<= start count) (error 'snapshot "start outside the log" start))
+                       (unless (<= start count) (error 'snapshot "start outside the log" start))
+                       (let ([from (max start first)])
                          (let loop ([i (- count 1)] [left limit] [out '()])
-                           (if (or (< i (max start first)) (eqv? left 0))
+                           (if (or (< i from) (eqv? left 0))
                                (values (reverse out) count first)
                                (let ([entry (vector-ref records (mod i (vector-length records)))])
                                  (if (or (not component) (eq? component (caddr entry)))
@@ -65,6 +81,7 @@
       (with-mutex lock
         (vector-set! records (mod count (vector-length records)) entry)
         (set! count (+ count 1))
+        (set! first (max first (- count (vector-length records))))
         (for-each
           (lambda (subscriber)
             (kernel:enqueue-delivery! deliveries

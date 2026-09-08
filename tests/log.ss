@@ -13,6 +13,8 @@
              (prefix (kernel) kernel:) (prefix (test) test:))
      (define (record-count)
        (let-values ([(records end first) (log:snapshot 0 0)]) end))
+     (test:check 'default-retention (log:retention) 1000000)
+     (log:retention 4096)
      (define head '(head "log test"))
      (define base (record-count))
      (define entry (actor:call-as head (lambda () (log:add! 'probe "hello" #f))))
@@ -44,8 +46,11 @@
                (lambda () (log:snapshot 0 -1)) (lambda () (log:snapshot 0 1.0))
                (lambda () (log:snapshot 0 1 "probe"))
                (lambda () (log:entries 'probe 1 'extra))
+               (lambda () (log:retention 0)) (lambda () (log:retention -1))
+               (lambda () (log:retention 1.0)) (lambda () (log:retention #f))
+               (lambda () (log:retention "2")) (lambda () (log:retention 2 3))
                (lambda () (log:subscribe! #f)) (lambda () (log:add! "component" 'bad))))
-       '(#t #t #t #t #t #t #t #t #t))
+       (make-list 15 #t))
 
      ;; Formatters and histories operate on owned data. A formatter can
      ;; still fail or log recursively without changing the canonical record.
@@ -129,6 +134,22 @@
        (log:add! 'lifetime 'retired #f)
        (test:check 'runtime-delivery-uses-committed-registrations-and-isolates-failures
          (heard) '((old during) (new after))))
+
+     (let* ([origin (record-count)] [fixed (call-with-values log:snapshot list)])
+       (define (state size)
+         (log:retention size)
+         (let-values ([(records end first) (log:snapshot)])
+           (list (map log:datum records) (- end origin) (- first origin) (log:retention))))
+       (test:check 'resize-preserves-bookmarks-and-does-not-resurrect-expired-records
+         (list (state 2) (state 5)
+               (begin
+                 (for-each (lambda (datum) (log:add! 'resize datum #f)) '(a b c d))
+                 (state 5))
+               (state 1) (state 4096)
+               (list (length (car fixed)) (- (cadr fixed) origin) (log:datum (caar fixed))))
+         (list '((retired after) 0 -2 2) '((retired after) 0 -2 5)
+               '((d c b a retired) 4 -1 5) '((d) 4 3 1) '((d) 4 3 4096)
+               (list origin 0 'retired))))
 
      ;; Hold delivery while writers cross the retention boundary. Readers see
      ;; one retained range; writers finish before the first callback is freed.

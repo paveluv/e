@@ -2,7 +2,7 @@
 ;; (utc-nanoseconds actor component datum), indexed in append order. Views
 ;; and echo presentation subscribe; neither owns a second history.
 (library (log)
-  (export add! snapshot entries history
+  (export add! snapshot retention entries history
           (rename (car time) (cadr actor) (caddr component) (cadddr datum))
           register-formatter! styler format-entry subscribe! unsubscribe! progress)
   (import (rnrs)
@@ -11,6 +11,7 @@
 
   (define progress journal:progress)
   (define snapshot journal:snapshot)
+  (define retention journal:retention)
   (define subscribe! journal:subscribe!)
   (define unsubscribe! journal:unsubscribe!)
 

@@ -92,6 +92,18 @@ service APIs; it does not evaluate `base-config.e`. The daemon does not evaluate
 `config.e`; forms are never assigned a side by
 guessing what they call. Base configuration errors stop startup.
 
+For example, the base retains one million log records by default. Configure
+that shared limit in `base-config.e`:
+
+```scheme
+(log:retention 1000000)
+```
+
+An authorized attached head can change it at runtime with the same call in
+M-x. Shrinking expires old records immediately; growing preserves the retained
+records and their append bookmarks. Local log views show a recent window
+independently of this limit; see [the log manual](LOG.md).
+
 `kernel:config-file` and `kernel:load-config!` accept an optional `base` or
 `head` symbol; the default remains `head`. Supported head-app reload reapplies
 head configuration. Changes to the base runtime require a restart.
