@@ -110,6 +110,7 @@
             ;; Keep this caller's exports before reload rebinds M-x's prefix.
             [send! vt:send!] [close! vt:close!]
             [phase 'initial] [coherent? #f] [complete? #f] [interfered? #f]
+            [gap-entered (test:gate)] [gap-release (test:gate)] [gap-result #f]
             [events (test:recorder)] [retired (test:recorder)])
        (define (transcript) (let-values ([(text revision) (store:snapshot id)]) text))
        (define (has? part)
@@ -122,6 +123,11 @@
        (define (wait-stage value) (test:await value (lambda () (equal? (stage) value))))
        (define (send from text size) (send! from id text size #f))
        (define (offer from size) (actor:send! owner (list 'request from id 'resize size)))
+       (define (head-view)
+         (let ([frame (head:buffer-rendition buffer)] [w (head:current)])
+           (list (head:buffer-lines buffer) (head:buffer-store-rev buffer)
+                 (render:header frame) (render:row frame (head:window-top w))
+                 (head:window-prow w) (head:window-pcol w) (head:window-top w))))
        (dynamic-wind
          (lambda ()
            (call-with-output-file child
@@ -142,6 +148,7 @@
                    (let loop ()
                      (let ([command (get-line (current-input-port))])
                        (case (string->symbol command)
+                         [(gap) (display "\x1b;[H\x1b;[31mGAP\x1b;[0m")]
                          [(alt)
                           (display "\x1b;[?1049h\x1b;[?25l\x1b;[6 q\x1b;[32m\x1b;]8;id=live;https://frame.example\x1b;\\界q\x301;NEW\x1b;]8;;\x1b;\\\x1b;[?1002h\x1b;[?1006h\x1b;]52;c;c2hhcmVk\x7;\x1b;]0;fixture\x7;")]
                          [(mouse)
@@ -174,6 +181,9 @@
              (store:subscribe! id
                (lambda (event)
                  (events event)
+                 (when (and (not (gap-entered)) (eq? (car event) 'edit) (has? "GAP"))
+                   (gap-entered #t)
+                   (test:await 'release-frame gap-release))
                  ;; A receipt is its commit, not the state after callouts.
                  ;; Race one final frame with a forced edit through the seam.
                  (when (and (not interfered?) (eq? (car event) 'edit) (has? "FINAL"))
@@ -206,6 +216,25 @@
                  (set! phase 'waiting)
                  (let ([header (render:header (head:buffer-rendition buffer))])
                    (set! coherent? (and header (= (cadr header) (head:buffer-store-rev buffer)))))
+                 (let ([before (head-view)])
+                   (send first "gap\n" '(3 24))
+                   (test:await 'text-before-rendition gap-entered)
+                   (head:before-frame!)
+                   (set! gap-result (list (> (store:revision id) (cadr before))
+                                          (equal? before (head-view))))
+                   (gap-release #t)
+                   (test:await 'rendition-after-text (lambda () (published? "GAP")))
+                   ;; Paint may refresh after a surface overtakes its source.
+                   ;; Only the next adoption can install that complete pair.
+                   (head:refresh-renditions!)
+                   (set! gap-result (append gap-result (list (equal? before (head-view)))))
+                   (head:before-frame!)
+                   (let ([after (head-view)])
+                     (set! gap-result
+                       (append gap-result
+                         (list (and (= (cadr after) (store:revision id))
+                                    (equal? (car after) (transcript))
+                                    (equal? (caddr after) (surface:snapshot id))))))))
                  (send first "alt\n" '(3 24))
                  (test:await 'producer-during-repaint (lambda () (published? "NEW")))
                  (head:before-frame!)
@@ -213,12 +242,12 @@
            (head:set-window-buffer! (head:current) buffer)
            (test:await 'shared-title (lambda () (string=? (store:buffer-name id) "*fixture*")))
            (test:check 'reentrant-adoption-uses-coherent-shared-rendition
-             (list coherent? complete? (head:app-of buffer)
+             (list coherent? complete? gap-result (head:app-of buffer)
                    (substring (store:line id 1) 0 6) (has? "history0")
                    (head:app-cursor-style buffer) (head:app-cursor-visible-in? (head:current))
                    (paint:buffer-line-hyperlinks buffer 1)
                    (store:property id 'clipboard) (store:buffer-name id))
-             `(#t #t #f "界q\x301;NEW" #t bar #f ((0 6 "https://frame.example" "live"))
+             `(#t #t (#t #t #t #t) #f "界q\x301;NEW" #t bar #f ((0 6 "https://frame.example" "live"))
                (1 ,first "shared") "*fixture*"))
            (head:set-repaint-hook! paint:invalidate-screen-cache!)
            (send first "mouse\n" '(3 24))
@@ -273,6 +302,7 @@
                    (exists (lambda (event) (eq? (car event) 'reset)) (events)))
              '(#t applied ((#f #f)) #f)))
          (lambda ()
+           (gap-release #t)
            (head:set-repaint-hook! paint:invalidate-screen-cache!)
            (head:set-frame-hook! paint:redraw!)
            (when subscription (store:unsubscribe! subscription))

@@ -143,8 +143,13 @@ lag. Inputs, returned metadata, and events have independent ownership.
 
 The head caches only rows needed around visible viewports and points, plus
 sticky rows. Missing or mismatched metadata, unsupported cluster maps, and
-unavailable reads fall back to ordinary text for that frame. Surface-only
-updates wake the head without forcing a full-screen repaint.
+unavailable reads fall back to ordinary text for optional decoration. A live
+app with `manages-viewport` requires its surface: after initial construction,
+the head retains its previous complete text, display and positions until a
+matching frame is available. Publish valid rendition to advance that view;
+the store's latest text remains readable independently. Clear `alive` or
+`manages-viewport` when returning to ordinary text. Surface-only updates wake
+the head to retry deferred adoption without forcing a full-screen repaint.
 `(head:buffer-rendition buffer)` returns its opaque prepared frame;
 `(head:read-rendition buffer ranges)` reads explicit `[from,to)` ranges
 given as `(from . to)` pairs without filling that cache. Both enforce current

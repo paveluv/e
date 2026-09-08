@@ -855,35 +855,54 @@
                (render:prepare #f #f (buffer-lines b) (content-revision b) '())))))
 
   (define (read-rendition b ranges . follow-height)
+    (read-source-rendition b (buffer-lines b) (content-revision b) ranges
+                           (if (null? follow-height) 0 (car follow-height))))
+
+  (define (read-source-rendition b text revision ranges follow-height)
     ;; Explicit demand reads obey head visibility even through a retained
     ;; reference whose retirement notification has not reached the pump.
     (guard (ex [else #f])
       (and (memq b the-buffers) (buffer-visible? b)
            (render:prepare (buffer-rendition-raw b) (buffer-store-id b)
-                           (buffer-lines b) (content-revision b) ranges
-                           (if (null? follow-height) 0 (car follow-height))))))
+                           text revision ranges follow-height))))
 
-  (define (refresh-buffer-rendition! b)
+  (define (prepare-buffer-rendition b text revision changes facts)
     ;; Fetch the current viewport and every row a viewport containing point
     ;; could expose. Geometry can then scroll against one prepared generation
-    ;; without reading another frame halfway through layout. Cache size stays
-    ;; bounded by window heights; store coordinates remain characters.
-    (let* ([old (buffer-rendition-raw b)]
-           [facts (app-facts b)]
-           [following (if (app-live? facts)
+    ;; without reading another frame halfway through layout. Project pending
+    ;; anchors before adoption, so a live grid's text and rendition can land
+    ;; together. Cache size stays bounded by window heights.
+    (define deltas (if changes (map caddr changes) '()))
+    (define (future-row row col)
+      (car (clamp-text-position text
+             (fold-left text:rebase-position (cons row col) deltas))))
+    (let* ([following (if (app-live? facts)
                           (filter (lambda (w) (and (eq? (window-buffer w) b) (follows-app? w))) the-windows)
                           '())]
            [ranges
             (fold-left
               (lambda (out w)
                 (if (eq? (window-buffer w) b)
-                    (let ([height (max 1 (window-size w))] [point (window-prow w)])
+                    (let ([height (max 1 (window-size w))]
+                          [point (future-row (window-prow w) (window-pcol w))]
+                          [top (future-row (window-top w) 0)])
                       (cons* (cons 0 (buffer-sticky-lines b))
-                             (cons (window-top w) (+ (window-top w) height))
+                             (cons top (+ top height))
                              (cons (- point height -1) (+ point height)) out))
                     out)) '() the-windows)]
-           [next (read-rendition b ranges
+           [next (read-source-rendition b text revision ranges
                    (fold-left (lambda (height w) (max height 1 (window-size w))) 0 following))])
+      (values next following)))
+
+  (define (app-grid? facts)
+    ;; An app owning the viewport needs its surface's geometry and cursor.
+    (and (app-live? facts) (app-fact facts 'manages-viewport #f)))
+
+  (define (rendition-ready? facts next)
+    (and next (or (not (app-grid? facts)) (render:header next))))
+
+  (define (install-buffer-rendition! b next following facts)
+    (let ([old (buffer-rendition-raw b)])
       (unless (eq? old next)
         (buffer-rendition-set! b next)
         ;; Row keys already describe the complete rendition. A cursor-only
@@ -893,6 +912,13 @@
       (let ([header (render:header next)])
         (when (and header (caddr header))
           (for-each (lambda (w) (follow-rendition! w next header facts)) following)))))
+
+  (define (refresh-buffer-rendition! b)
+    (let ([facts (app-facts b)])
+      (let-values ([(next following)
+                    (prepare-buffer-rendition b (buffer-lines b) (content-revision b) '() facts)])
+        (when (rendition-ready? facts next)
+          (install-buffer-rendition! b next following facts)))))
 
   (define (refresh-renditions!)
     (for-each refresh-buffer-rendition!
@@ -1264,6 +1290,11 @@
       (buffer-mark-row-set! b (car p))
       (buffer-mark-col-set! b (cdr p))))
 
+  ;; A live grid may have committed text before its matching surface. Keep
+  ;; one retry id, not the intermediate text or an event backlog. Surface
+  ;; publication wakes the pump even after its store notice was consumed.
+  (define deferred-store-ids '())
+
   (define (adopt-snapshot! b basis text revision changes placements)
     ;; All anchors use the same chain, including our own edits.  A command
     ;; can explicitly place an anchor in its accepted result, but never
@@ -1271,27 +1302,37 @@
     ;; A callback may already have adopted part or all of this snapshot.
     (let* ([old (buffer-store-rev b)]
            [advance? (> revision old)]
-           [complete? (and changes (<= basis old))])
+           [complete? (and changes (<= basis old))]
+           [deltas (and complete? (filter (lambda (entry) (> (car entry) old)) changes))]
+           [facts (app-facts b)])
       (when (>= revision old)
-        (when advance?
-          (when complete?
-            (for-each (lambda (entry)
-                        (when (> (car entry) old) (rebase-buffer-positions! b (caddr entry))))
-                      changes))
-          (adopt-text! b text revision
-                       (and complete? (filter (lambda (entry) (> (car entry) old)) changes))))
-        (apply-placements! b placements)
-        (clamp-buffer-positions! b)
-        (refresh-buffer-rendition! b)
-        ;; All head state is coherent before any callback can run.
-        ;; Adoption only reads shared truth; it never re-dirties a save.
-        (when advance?
-          (unless complete?
-            (invalidate-buffer-marks! (buffer-store-id b))
-            (log:add! 'store
-              (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
-                      (buffer-name b) old revision))
-            (request-repaint!))))))
+        (let-values ([(next following)
+                      (if (app-grid? facts)
+                          (prepare-buffer-rendition b text revision deltas facts)
+                          (values #f '()))])
+          (if (and (app-grid? facts) (not (rendition-ready? facts next)))
+              (let ([id (buffer-store-id b)])
+                (unless (memv id deferred-store-ids)
+                  (set! deferred-store-ids (cons id deferred-store-ids))))
+              (begin
+                (when advance?
+                  (when deltas
+                    (for-each (lambda (entry) (rebase-buffer-positions! b (caddr entry))) deltas))
+                  (adopt-text! b text revision deltas))
+                (apply-placements! b placements)
+                (clamp-buffer-positions! b)
+                (if (app-grid? facts)
+                    (install-buffer-rendition! b next following facts)
+                    (refresh-buffer-rendition! b))
+                ;; All head state is coherent before any callback can run.
+                ;; Adoption only reads shared truth; it never re-dirties a save.
+                (when advance?
+                  (unless complete?
+                    (invalidate-buffer-marks! (buffer-store-id b))
+                    (log:add! 'store
+                      (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
+                              (buffer-name b) old revision))
+                    (request-repaint!)))))))))
 
   (define (sync-store-buffer! b)
     ;; Event arrival is only a wakeup.  Reading text separately from
@@ -1308,10 +1349,11 @@
            [ids (append
                   (if pending (append initial-store-ids (map car pending))
                       (append (store:buffer-list) (filter values (map buffer-store-id the-buffers))))
-                  changed-ids)])
+                  changed-ids deferred-store-ids)])
       ;; Consume the initial inventory before callbacks, just like events.
       ;; Subsequent frames only visit buffers whose store state changed.
       (set! initial-store-ids '())
+      (set! deferred-store-ids '())
       (call-with-display-update
         (lambda ()
           ;; Reconcile each id once from current truth. Queued create/rename/
