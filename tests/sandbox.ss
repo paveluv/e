@@ -14,6 +14,7 @@
 (eval
   '(begin
      (import (prefix (store) store:)
+             (prefix (log) log:) (prefix (string) string:)
              (prefix (only (reference) lookup) reference:)
              (prefix (test) test:)
              (only (chezscheme) environment eval format))
@@ -21,11 +22,7 @@
      (define check test:check)
 
      (define (contains? text needle)
-       (let ([n (string-length text)] [m (string-length needle)])
-         (let scan ([i 0])
-           (cond [(> (+ i m) n) #f]
-                 [(string=? (substring text i (+ i m)) needle) #t]
-                 [else (scan (+ i 1))]))))
+       (and (string:search text needle 0 (string-length text)) #t))
 
      (define (unbound? form env)
        (guard (ex [else (undefined-violation? ex)])
@@ -94,6 +91,19 @@
                                     0 #\X)
                       tier)
             #t)
+
+     (do ([i 0 (+ i 1)]) ((= i 205)) (log:add! 'tail-probe (number->string i) #f))
+     (check 'log-tail-default-zero-count-and-cap
+       (map (lambda (args) (eval (cons 'log-tail args) tier)) '(() (0) (1) (200) (201)))
+       (map (lambda (n)
+              (if (zero? n) "the log is empty"
+                  (apply string-append
+                    (map (lambda (i) (format "~a\n" (+ i (- 205 n)))) (iota n)))))
+            '(20 0 1 200 200)))
+     (check 'log-tail-rejects-counts-that-bypass-the-limit-and-extra-arguments
+       (map (lambda (args) (test:raises? (lambda () (eval (cons 'log-tail args) tier))))
+            '((-1) (1/2) (1.0) (#f) (1 2)))
+       '(#t #t #t #t #t))
 
      ;; A cold corpus read may exhaust its engine fuel. Wind cleanup must
      ;; release its resources and leave no partial index for another reader;

@@ -6,8 +6,9 @@ The echo area shows this head's messages from the shared editor log. Each new en
 separate row prefixed with its component, so one command can report several
 events without overwriting earlier output. The area grows by shrinking windows
 to their configured minimum height. When it fills, older visible entries give
-way, but remain in the log. Other actors' records remain available in `<log>`
-without interrupting this head's echo area.
+way, but remain in the log until its retention limit expires them. Other
+actors' records are available in `<log>` without interrupting this head's
+echo area.
 
 The next keyboard event, mouse click, or wheel event settles the echo area back
 to its live line.
@@ -36,7 +37,15 @@ concurrent or deferred delivery preserves the requested presentation.
 
 `<log>` is a dynamic, read-only view backed by structured records. It is always
 present in the buffer list. At the end of the buffer it tails new entries;
-elsewhere its viewport remains still while records arrive.
+elsewhere its viewport stays with the same text while records arrive. The base
+retains the newest **4,096 records** across all components. Views drop expired
+rows on refresh; points, marks and viewports in surviving text move with it,
+and positions in expired text move to the start. Hidden views catch up when
+shown again. A multiline record expires as a whole.
+
+This is recent, in-memory history for the lifetime of the base. Restarting
+the base clears it. The limit counts records, not payload bytes or rendered
+lines; an individual record or formatter result can still be large.
 
 Filtered log views are created dynamically:
 
@@ -71,7 +80,10 @@ earlier record.
 `log:history` derives command histories from structured component records.
 File prompts use it to recall visited and saved paths; `M-x` uses eval records
 for expression history. History is therefore presentation-independent and
-does not scrape rendered text.
+does not scrape rendered text. Each history read considers the newest 200
+retained records of that component, selects strings, and collapses consecutive
+repeats. Other components do not consume that read allowance, but share the
+base's overall retention limit.
 
 Policy activity uses the same structured log, with no separate audit history:
 
@@ -94,12 +106,23 @@ of presentation is separate from the base's operation order.
 
 - `(log:add! component datum [show?])` adds a record; the component is a
   symbol, and `show?` defaults to true. Passing `#f` logs quietly.
-- `(log:entries [component])` returns owned records, newest first, optionally
-  filtered by component.
-- `(log:snapshot [start])` returns two values: records from `start` (default
-  zero), newest first, and the count captured with that snapshot. Use the
-  returned count as the next start for an incremental reader. Formatting
-  callbacks run after the snapshot, so additions belong to the next read.
+- `(log:entries [component [count]])` returns owned records, newest first.
+  `component` is a symbol or `#f` for all components. `count` is a nonnegative
+  exact integer or `#f` for all retained matches. Filtering and limiting happen
+  before copying records.
+- `(log:snapshot [start [count [component]]])` returns three values: owned
+  records, the captured end bookmark, and the oldest retained index. `start`
+  defaults to zero; count/component have the same meanings as above. Indexes
+  are absolute append positions within this base's lifetime. A start older
+  than the retention floor clamps to that floor; a future or invalid start
+  refuses. The floor is global even for a filtered read.
+- For incremental catch-up, omit the count limit and use the returned end as
+  the next start, even when there are no matching records. If `start` is below
+  the returned floor, older records have expired: rebuild from the retained
+  snapshot or discard those old rows. A count-limited read intentionally
+  returns only the newest matches, while its end still covers the whole read.
+  `(log:snapshot 0 0)` reads just the bounds without copying payloads.
+  Formatting callbacks run after the snapshot; additions belong to the next read.
 - `log:history` derives values for interactive history.
 - `log:register-formatter!` installs component presentation.
 - `present-log-entry!` and `present-log-entries!` expose the shared echo
@@ -119,6 +142,8 @@ originating actor and progress context. Concurrent and reentrant appends
 commit without waiting for an active callback. A failing subscriber cannot
 remove the record or stop another subscriber. Read a snapshot to catch up
 on history rather than expecting a new subscription to replay it.
+Eviction does not cancel an already queued subscription delivery. These
+retention bounds do not cap callback backlogs or snapshots held by readers.
 
 Errors that indicate an editor or extension failure are reported in both the
 echo area and log instead of being swallowed.

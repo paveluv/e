@@ -166,7 +166,9 @@
       [(pending) (arity 0) (actor:pending actor)]
       [(answer) (arity 2) (apply policy:session-answer! session args)]
       [(cancel) (arity 1) (policy:session-cancel! session (car args))]
-      [(log-snapshot) (arity 1) (call-with-values (lambda () (log:snapshot (car args))) list)]
+      [(log-snapshot)
+       (unless (<= 1 (length args) 3) (error 'wire "expected start, optional count and component"))
+       (call-with-values (lambda () (apply log:snapshot args)) list)]
       [(log-add)
        (arity 3)
        (parameterize ([log:progress (eq? (caddr args) 'progress)])

@@ -39,17 +39,19 @@
 
   ;;; Queries ---------------------------------------------------------------
 
-  (define (entries . component)
-    (let-values ([(records end) (snapshot)])
-      (if (pair? component)
-          (filter (lambda (e) (eq? (caddr e) (car component))) records)
-          records)))
+  (define entries
+    (case-lambda
+      [() (entries #f #f)]
+      [(component) (entries component #f)]
+      [(component count)
+       (let-values ([(records end first) (snapshot 0 count component)]) records)]))
 
   (define (history component . select)
     ;; Select strings from owned data, newest first, collapsing consecutive
-    ;; repeats. Eval selects car from (query . result), file prompts cdr.
+    ;; repeats among the newest 200 matching records. Eval selects car from
+    ;; (query . result), file prompts cdr. Unrelated payloads are never copied.
     (let ([sel (if (pair? select) (car select) (lambda (d) d))])
-      (let loop ([es (entries component)] [last #f])
+      (let loop ([es (entries component 200)] [last #f])
         (if (null? es) '()
             (let ([x (guard (ex [else #f]) (sel (cadddr (car es))))])
               (if (and (string? x) (not (equal? x last)))

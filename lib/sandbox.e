@@ -167,22 +167,22 @@
                               (store:revision id)))
                     (store:buffer-list))))))
 
-  (define (log-tail . count)
-    ;; The newest entries of *log* -- errors and messages land there.
-    ;; Default 20, at most 200.
-    (let* ([n (min (if (pair? count) (car count) 20) 200)]
-           [entries (let take ([entries (log:entries)] [n n])
-                      (if (or (= n 0) (null? entries))
-                          '()
-                          (cons (car entries)
-                                (take (cdr entries) (- n 1)))))])
-      (if (null? entries)
-          "the log is empty"
-          (apply string-append
-                 (map (lambda (entry)
-                        (string-append
-                          (clipped (log:format-entry entry) 500) "\n"))
-                      (reverse entries))))))
+  (define log-tail
+    (case-lambda
+      [() (log-tail 20)]
+      [(count)
+       ;; The newest entries of *log* -- errors and messages land there.
+       ;; Default 20, at most 200.
+       (unless (and (integer? count) (exact? count) (>= count 0))
+         (error 'log-tail "expected a nonnegative exact count" count))
+       (let ([entries (log:entries #f (min count 200))])
+         (if (null? entries)
+           "the log is empty"
+           (apply string-append
+                  (map (lambda (entry)
+                         (string-append
+                           (clipped (log:format-entry entry) 500) "\n"))
+                       (reverse entries)))))]))
 
   (define (describe-text name)
     ;; The documentation corpus, flattened: R6RS, Chez Scheme, and

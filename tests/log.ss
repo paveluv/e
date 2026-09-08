@@ -12,32 +12,40 @@
      (import (prefix (log) log:) (prefix (actor) actor:)
              (prefix (kernel) kernel:) (prefix (test) test:))
      (define (record-count)
-       (let-values ([(records end) (log:snapshot)]) end))
+       (let-values ([(records end first) (log:snapshot 0 0)]) end))
      (define head '(head "log test"))
      (define base (record-count))
      (define entry (actor:call-as head (lambda () (log:add! 'probe "hello" #f))))
-     (let-values ([(records end) (log:snapshot base)])
+     (let-values ([(records end first) (log:snapshot base)])
        (test:check 'owned-actor-record-and-snapshot
          (list (and (integer? (log:time entry)) (exact? (log:time entry)) (> (log:time entry) 0))
                (cdr entry) (= end (+ base 1))
-               (equal? records (list entry)) (eq? entry (car records)))
-         (list #t (list head 'probe "hello") #t #t #f)))
+               first (equal? records (list entry)) (eq? entry (car records)))
+         (list #t (list head 'probe "hello") #t 0 #t #f)))
      (log:add! 'other '(a . b) #f)
      (log:add! 'probe "again" #f)
      (test:check 'newest-first-component-queries-and-anonymous-base-work
        (list (map log:datum (log:entries 'probe))
              (map log:actor (log:entries 'other)))
        '(("again" "hello") ((base e))))
-     (test:check 'snapshot-captures-one-tail-and-count
-       (let-values ([(records end) (log:snapshot (+ base 1))])
-         (list (map log:datum records) end))
-       (list '("again" (a . b)) (+ base 3)))
+     (test:check 'snapshot-range-tail-filter-and-empty-reads-share-bounds
+       (map (lambda (args)
+              (let-values ([(records end first) (apply log:snapshot args)])
+                (list (map log:datum records) (- end base) first)))
+         (list (list (+ base 1)) (list base 1) (list base 2 'probe)
+               (list (+ base 1) #f 'probe) (list base 1 'missing)
+               (list base 0) (list (+ base 3))))
+       '((("again" (a . b)) 3 0) (("again") 3 0) (("again" "hello") 3 0)
+         (("again") 3 0) (() 3 0) (() 3 0) (() 3 0)))
      (test:check 'invalid-snapshots-and-subscriptions-refuse
        (map test:raises?
          (list (lambda () (log:snapshot -1)) (lambda () (log:snapshot 1.0))
                (lambda () (log:snapshot (+ (record-count) 1)))
+               (lambda () (log:snapshot 0 -1)) (lambda () (log:snapshot 0 1.0))
+               (lambda () (log:snapshot 0 1 "probe"))
+               (lambda () (log:entries 'probe 1 'extra))
                (lambda () (log:subscribe! #f)) (lambda () (log:add! "component" 'bad))))
-       '(#t #t #t #t #t))
+       '(#t #t #t #t #t #t #t #t #t))
 
      ;; Formatters and histories operate on owned data. A formatter can
      ;; still fail or log recursively without changing the canonical record.
@@ -79,7 +87,7 @@
          (bytevector-u8-set! (vector-ref payload 2) 0 8)
          (for-each change!
            (list returned (car (log:entries 'owned))
-                 (let-values ([(records end) (log:snapshot index)]) (car records))))
+                 (let-values ([(records end first) (log:snapshot index)]) (car records))))
          (log:register-formatter! 'owned
            (lambda (d) (string-set! (vector-ref d 0) 0 #\Z) (vector-ref d 0)))
          (log:format-entry (car (log:entries 'owned)))
@@ -122,12 +130,12 @@
        (test:check 'runtime-delivery-uses-committed-registrations-and-isolates-failures
          (heard) '((old during) (new after))))
 
-     ;; Hold delivery while writers cross growth boundaries. Readers see a
-     ;; committed prefix; writers complete before the first callback is freed.
+     ;; Hold delivery while writers cross the retention boundary. Readers see
+     ;; one retained range; writers finish before the first callback is freed.
      ;; A reentrant append follows that prefix, with its parent's context.
      (let* ([start (record-count)] [arrived (test:gate)] [release (test:gate)]
             [heard (test:recorder)] [revoked (test:recorder)] [late (test:recorder)]
-            [late-token #f] [fixed #f] [writer-count 4] [per-writer 80])
+            [late-token #f] [fixed #f] [writer-count 4] [per-writer 1100])
        (define (worker-actor i) (list 'agent (format "writer-~a" i)))
        (define (expected-mode datum)
          (cond [(eq? datum 'hold) 'progress] [(symbol? datum) 'append]
@@ -165,31 +173,36 @@
                                (log:add! 'concurrent (cons i j) (not (zero? (mod j 3))))))))
                        (let loop ([n 40])
                          (or (zero? n)
-                           (let-values ([(records end) (log:snapshot start)])
-                             (and (= (length records) (- end start))
+                           (let-values ([(records end first) (log:snapshot start)])
+                             (and (= (length records) (- end (max start first)))
+                                  (<= (length records) 4096)
                                   (for-all (lambda (e) (eq? (log:component e) 'concurrent)) records)
                                   (loop (- n 1)))))))))))
              '(#f #t #t #t #t #t))
            (set! fixed (call-with-values (lambda () (log:snapshot start)) list))
            (log:unsubscribe! removed-token)
            (set! late-token (log:subscribe! (lambda (e mode) (late (log:datum e)))))
-           ;; Old and fresh producer code share the writer, subscriptions,
-           ;; progress context and queue even while an old callback is active.
-           (load "lib/log.e")
-           (eval '(begin (import (prefix (log) reloaded-log:)) (reloaded-log:add! 'concurrent 'fresh))))
+           (log:add! 'concurrent 'fresh))
          (lambda () (release #t)))
        (finish)
-       (let-values ([(records end) (log:snapshot start)])
-         (let ([ordered (reverse records)] [delivered (heard)])
-           (test:check 'every-record-survives-concurrent-growth-once
-             (list (- end start)
+       (let-values ([(records end first) (log:snapshot start)])
+         (let* ([delivered (heard)] [ordered (map car delivered)])
+           (test:check 'eviction-preserves-bookmarks-and-every-admitted-delivery
+             (list (- end start) (- end first) (length records)
+                   (equal? (reverse records) (list-tail ordered (- (length ordered) 4096)))
                    (list-sort < (map (lambda (d) (+ (* (car d) per-writer) (cdr d)))
-                                     (filter pair? (map log:datum records)))))
-             (list (+ 3 (* writer-count per-writer)) (iota (* writer-count per-writer))))
+                                     (filter pair? (map log:datum ordered)))))
+             (list (+ 3 (* writer-count per-writer)) 4096 4096 #t
+                   (iota (* writer-count per-writer))))
            (test:check 'delivery-keeps-append-order-modes-and-originating-actors
-             delivered
-             (map (lambda (e) (list e (expected-mode (log:datum e)) (log:actor e))) ordered))
-           (test:check 'actor-attribution-survives-threads-reentry-and-redefinition
+             (list (equal? delivered
+                     (map (lambda (e) (list e (expected-mode (log:datum e)) (log:actor e))) ordered))
+                   (map (lambda (i)
+                          (map cdr (filter (lambda (d) (and (pair? d) (= (car d) i)))
+                                           (map log:datum ordered))))
+                        (iota writer-count)))
+             (list #t (make-list writer-count (iota per-writer))))
+           (test:check 'actor-attribution-survives-threads-and-reentry
              (for-all (lambda (e)
                         (equal? (log:actor e)
                           (case (log:datum e)
@@ -197,8 +210,19 @@
                             [else (worker-actor (car (log:datum e)))]))) ordered)
              #t)
            (test:check 'snapshots-do-not-grow-and-subscription-lifetimes-honor-the-commit
-             (list (length (car fixed)) (- (cadr fixed) start) (revoked) (late))
-             (list (+ 1 (* writer-count per-writer)) (+ 1 (* writer-count per-writer)) '() '(fresh nested)))))
+             (list (length (car fixed)) (- (cadr fixed) start) (- first (caddr fixed))
+                   (equal? (list-tail records 2) (list-head (car fixed) 4094))
+                   (revoked) (late))
+             (list 4096 (+ 1 (* writer-count per-writer)) 2 #t '() '(fresh nested)))))
        (for-each log:unsubscribe! (list first-token late-token)))
+
+     ;; Histories select before copying and cap matching records, so a noisy
+     ;; unrelated component does not consume the prompt's allowance.
+     (do ([i 0 (+ i 1)]) ((= i 205))
+       (log:add! 'history-cap (number->string i) #f)
+       (log:add! 'other i #f))
+     (test:check 'history-and-entry-limits-apply-to-matching-records
+       (list (log:history 'history-cap) (map log:datum (log:entries 'history-cap 2)))
+       (list (map (lambda (i) (number->string (- 204 i))) (iota 200)) '("204" "203")))
 
      (test:finish! 'log)))

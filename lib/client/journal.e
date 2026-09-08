@@ -3,10 +3,8 @@
   (export add! snapshot subscribe! unsubscribe! progress)
   (import (chezscheme) (prefix (client) client:) (prefix (identity) identity:))
   (define progress (make-thread-parameter #f))
-  (define snapshot
-    (case-lambda
-      [() (snapshot 0)]
-      [(start) (apply values (client:request 'log-snapshot start))]))
+  (define (snapshot . args)
+    (apply values (apply client:request 'log-snapshot (if (null? args) '(0) args))))
   (define (add! component datum . show)
     (let ([entry (client:request 'log-add component datum
                    (and (or (null? show) (car show)) (if (progress) 'progress 'append)))])

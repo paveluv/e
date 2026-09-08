@@ -70,6 +70,14 @@ assigning old coordinates after it returns can overwrite a newer refresh
 performed by a callback. Workers schedule head changes with
 `head:run-on-main!`.
 
+`(head:view-append! buffer lines [drop])` appends a line list and optionally
+drops that many old rows from the start. `drop` defaults to zero and must be
+an exact integer within the old row count. Windows whose point was at the
+old end follow the new end. Other points, marks and saved viewports move with
+surviving text; positions in dropped rows move to the start. Appending to an
+empty view replaces its placeholder row. Like replacement, this operation
+validates first and installs the complete local rendering before repaint.
+
 Use `(head:call-with-display-update thunk)` when a display operation also
 switches windows or places the cursor. Nested scopes defer repaint
 notification until the complete operation is installed. A repaint callback

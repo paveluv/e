@@ -2025,30 +2025,35 @@
               (filter (lambda (a) (memq (app-buffer a) the-buffers))
                       (registered-apps))))
 
-  (define (view-append! b lines)
-    ;; Append lines to view b: windows whose point was at the very end
-    ;; follow the tail; others hold their viewport still.
-    (when (pair? lines)
-      (let* ([v (buffer-lines b)]
-             [n (vector-length v)]
-             [virgin? (and (= n 1) (string=? (vector-ref v 0) ""))]
-             [tail? (lambda (w)
-                      (and (eq? (window-buffer w) b)
-                           (= (window-prow w) (- n 1))
-                           (= (window-pcol w)
-                              (string-length (vector-ref v (- n 1))))))]
-             [tails (filter tail? the-windows)])
-        (buffer-lines-set! b
-          (if virgin?
-              (list->vector lines)
-              (text:splice v n n lines)))
-        (let* ([nv (buffer-lines b)]
-               [last (- (vector-length nv) 1)])
-          (for-each (lambda (w)
-                      (window-prow-set! w last)
-                      (window-pcol-set! w
-                        (string-length (vector-ref nv last))))
-                    tails)))))
+  (define view-append!
+    (case-lambda
+      [(b lines) (view-append! b lines 0)]
+      [(b lines drop)
+       ;; Append while optionally expiring a prefix. Tail points follow the
+       ;; new end; surviving anchors keep their text, expired ones go to the
+       ;; start. Reuse replacement's one adoption before repaint can reenter.
+       (unless (and (buffer? b) (not (buffer-store-id b)))
+         (error 'view-append! "expected a local buffer" b))
+       (let* ([v (buffer-lines b)] [n (vector-length v)])
+         (unless (and (list? lines) (fixnum? drop) (<= 0 drop n))
+           (error 'view-append! "expected lines and a prefix length to drop" lines drop))
+         (when (or (pair? lines) (> drop 0))
+           (let* ([virgin? (and (= n 1) (string=? (vector-ref v 0) ""))]
+                  [tails (filter (lambda (w)
+                                   (and (eq? (window-buffer w) b)
+                                        (= (window-prow w) (- n 1))
+                                        (= (window-pcol w) (string-length (vector-ref v (- n 1))))))
+                                 the-windows)]
+                  [new (text:normalize (append (list-tail (vector->list v) (if virgin? 1 drop)) lines))]
+                  [last (- (vector-length new) 1)]
+                  [end (cons last (string-length (vector-ref new last)))])
+             (view-replace! b new '()
+               (map (lambda (entry)
+                      (cons (car entry)
+                        (cond [(memq (car entry) tails) end]
+                              [(< (cadr entry) drop) '(0 . 0)]
+                              [else (cons (- (cadr entry) drop) (cddr entry))])))
+                    (buffer-placements b))))))]))
 
   (define (view-replace! b lines . options)
     ;; Adopt a local rendering, optional facts, and numeric placements as

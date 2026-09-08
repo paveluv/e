@@ -56,24 +56,38 @@
       (or (null? components) (eq? (log:component e) (car components))))
     (define b #f)
     (define rendered #f)
+    ;; Only a rendering index, oldest first: (absolute record . row count).
+    ;; It lets multiline/filtered views drop exactly the rows that expired.
+    (define sizes '())
+    (define refreshing? #f)
     (define (refresh!)
-      (let-values ([(records end) (log:snapshot (or rendered 0))])
-        (when (or (not rendered) (< rendered end))
-          (let ([lines
-                 (fold-left
-                   (lambda (lines e)
-                     (if (accept? e)
-                         (append (let ([prefix (log-line-prefix e)])
-                                   (map (lambda (l) (string-append prefix l))
-                                        (string:lines (log:format-entry e)))) lines)
-                         lines))
-                   '() records)])
-            ;; A new registration rebuilds from the records, replacing
-            ;; a previous rendering once; later refreshes only append.
-            (if rendered
-                (head:view-append! b lines)
-                (head:view-replace! b lines))
-            (set! rendered end)))))
+      (unless refreshing?
+        (dynamic-wind
+          (lambda () (set! refreshing? #t))
+          (lambda ()
+            (let-values ([(records end first) (log:snapshot (or rendered 0))])
+              (when (or (not rendered) (< rendered end))
+                (let expire ([kept sizes] [drop 0])
+                  (if (and (pair? kept) (< (caar kept) first))
+                      (expire (cdr kept) (+ drop (cdar kept)))
+                      (let format ([records records] [i (- end 1)] [lines '()] [added '()])
+                        (cond
+                          [(null? records)
+                           (let ([append? rendered])
+                             ;; Publish the bookmark/index before repaint;
+                             ;; formatting may log, picked up next refresh.
+                             (set! rendered end)
+                             (set! sizes (append kept added))
+                             (if append? (head:view-append! b lines drop)
+                                 (head:view-replace! b lines)))]
+                          [(accept? (car records))
+                           (let* ([e (car records)] [prefix (log-line-prefix e)]
+                                  [rows (map (lambda (l) (string-append prefix l))
+                                             (string:lines (log:format-entry e)))])
+                             (format (cdr records) (- i 1) (append rows lines)
+                                     (cons (cons i (length rows)) added)))]
+                          [else (format (cdr records) (- i 1) lines added)])))))))
+          (lambda () (set! refreshing? #f)))))
     (set! b (head:register-view! name refresh!))
     (head:buffer-fact-set! b 'log-filter components)
     (mode:choose! b "log")
