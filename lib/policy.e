@@ -26,7 +26,8 @@
           (rename (policy-cap cap)) (rename (reader-policy reader))
           mint! session? session-actor session-owner sessions
           revoke! revoked?
-          session-eval! session-edit! session-undo! session-redo! session-history-step! session-ask!)
+          session-eval! session-edit! session-undo! session-redo! session-history-step!
+          session-send! session-ask! session-answer! session-cancel!)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
                 current-output-port
@@ -126,6 +127,7 @@
                  (begin
                    (set-box! (session-revoked s) #t)
                    (set! live-sessions (remq s live-sessions)) #t)))
+      (actor:cancel-owned! s)
       (audit! (list 'revoke (session-actor s))))
     #t)
 
@@ -266,15 +268,37 @@
     (let-values ([(status detail) (session-history-step! s id 'redo 'mine)])
       (values status (if (eq? status 'applied) (car detail) detail))))
 
-  (define (session-ask! s question choices reply!)
+  (define (session-send! s to message)
     (call-as-session s
       (lambda ()
-        ;; ask the session's owner -- the escalation path when the grant
-        ;; is not enough; -> the ticket, or #f
-        (if (revoked? s)
-            #f
-            (begin
-              (audit!
-                (list 'ask (session-actor s) (clipped question 200)))
-              (actor:ask! (session-actor s) (session-owner s)
-                          question choices reply!)))))))
+        ;; Application control uses trusted raw delivery. Peer mail has an
+        ;; envelope whose sender comes from the session, never its payload.
+        (unless (actor:identity? to) (error 'session-send! "expected a recipient identity"))
+        (and (not (revoked? s))
+             (actor:send! to (list 'message (session-actor s) message))))))
+
+  (define session-ask!
+    (case-lambda
+      [(s question choices reply!) (session-ask! s (session-owner s) question choices reply!)]
+      [(s to question choices reply!)
+       (call-as-session s
+         (lambda ()
+           (unless (procedure? reply!) (error 'session-ask! "expected a reply procedure"))
+           (and (not (revoked? s))
+             (let* ([to (datum:copy to)] [question (datum:copy question)]
+                    [ticket
+                     (actor:ask! (session-actor s) to question choices
+                       (lambda (answer) (unless (revoked? s) (reply! answer))) s)])
+               ;; An ask admitted before revocation can finish delivery, but
+               ;; must not leave a ticket created after revoke!'s cleanup.
+               (when (and ticket (revoked? s)) (actor:cancel! ticket s))
+               (audit! (list 'ask (session-actor s) to (clipped question 200)))
+               ticket))))]))
+
+  (define (session-answer! s ticket answer)
+    (call-as-session s
+      (lambda ()
+        (and (not (revoked? s)) (actor:answer! ticket answer (session-actor s))))))
+
+  (define (session-cancel! s ticket)
+    (and (not (revoked? s)) (actor:cancel! ticket s))))

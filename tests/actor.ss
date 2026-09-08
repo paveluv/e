@@ -64,6 +64,12 @@
                (map car (actor:pending human)) (actor:answer! ticket 'valid) reply)
          (list '((#t #t) (#t #t)) (list ticket) #t 'valid)))
 
+     (test:check 'malformed-questions-cannot-enter-the-pending-list
+       (map (lambda (args) (test:raises? (lambda () (apply actor:ask! (append args (list void))))))
+         (list (list agent human #t '()) (list agent human "Choices?" '(1))
+               (list #f human "Source?" '()) (list agent 'invalid "Target?" '())))
+       '(#t #t #t #t))
+
      ;; Directory records own their data. Admission and every read/callback
      ;; return independent snapshots, including nested capability metadata.
      (define identity (list 'head (string-copy "directory")))
@@ -147,18 +153,34 @@
      (define detach-watch (actor:subscribe! detach-events))
      (actor:detach! canonical)
      (actor:detach! canonical)
+     (define offline (actor:ask! agent canonical "New?" '() detach-replies))
      (define while-detached
        (list (actor:registered? canonical) (actor:send! canonical 'gone)
-             (actor:ask! agent canonical "New?" '() void) (map car (actor:pending canonical))))
+             (number? offline) (map car (actor:pending canonical))))
      (actor:register! canonical ignore-message)
      (test:check 'detach-and-reattach-keep-ticket-lifetime
        (list while-detached (map car (actor:pending canonical))
              (actor:answer! waiting 'yes) (actor:answer! waiting 'again)
+             (actor:answer! offline 'later) (actor:cancel! offline)
              (detach-replies) (detach-events))
-       (list (list #f #f #f (list waiting)) (list waiting) #t #f '(yes)
+       (list (list #f #f #t (list waiting offline)) (list waiting offline) #t #f #t #f '(yes later)
              (list (list (list 'detached canonical)) (list (list 'attached canonical)))))
      (actor:unsubscribe! detach-watch)
      (actor:detach! canonical)
+
+     (test:check 'only-committed-head-identities-receive-offline-questions
+       (map (lambda (commit?)
+              (let ([who (list 'head (if commit? "committed head" "aborted head"))])
+                (guard (ex [else (void)])
+                  (kernel:call-with-registration-update
+                    (lambda ()
+                      (actor:register! who void)
+                      (unless commit? (error 'fixture "abort first registration")))))
+                (actor:detach! who)
+                (let* ([ticket (actor:ask! agent who "Offline?" '() void)]
+                       [result (list (number? ticket) (length (actor:pending who)))])
+                  (when ticket (actor:cancel! ticket)) result))) '(#f #t))
+       '((#f 0) (#t 1)))
 
      ;; A paused observer must not block a writer or let the next commit
      ;; overtake it. Revocation skips queued work; a late observer starts
@@ -390,14 +412,17 @@
      (actor:cancel! nested)
      (test:check 'reply-question-can-be-cancelled (actor:pending stress) '())
 
-     (define broken '(head "failed-delivery"))
-     (actor:register! broken (lambda (message) (error 'delivery "failed")))
      (define kept (actor:ask! agent stress "Keep?" '() void))
-     (test:check 'failed-deliveries-return-false
-       (test:parallel 8 (lambda (index) (actor:ask! agent broken "Fail?" '() void)))
-       (make-list 8 #f))
-     (test:check 'failed-deliveries-leave-no-pending-questions (actor:pending broken) '())
-     (test:check 'failed-deliveries-preserve-other-targets (map car (actor:pending stress)) (list kept))
+     (test:check 'failed-wakes-retain-known-head-questions-and-refuse-unavailable-agents
+       (map (lambda (kind)
+              (let ([broken (list kind "failed-delivery")])
+                (actor:register! broken (lambda (message) (error 'delivery "failed")))
+                (let* ([tickets (test:parallel 8 (lambda (index) (actor:ask! agent broken "Fail?" '() void)))]
+                       [result (list (map number? tickets) (length (actor:pending broken))
+                                     (map car (actor:pending stress)))])
+                  (for-each actor:cancel! (map car (actor:pending broken)))
+                  (actor:detach! broken) result))) '(agent head))
+       (list (list (make-list 8 #f) 0 (list kept)) (list (make-list 8 #t) 8 (list kept))))
      (actor:cancel! kept)
      (define throwing (actor:ask! agent stress "Throw?" '() (lambda (answer) (error 'reply "failed"))))
      (test:check 'reply-failure-still-consumes-ticket (actor:answer! throwing "yes") #t)

@@ -1,6 +1,6 @@
 ;; base.e -- process lifetime and the local daemon. No head imports.
 (library (base)
-  (export call-with-runtime run connection-policy)
+  (export call-with-runtime run connection-policy connection-owner)
   (import (chezscheme)
           (prefix (kernel) kernel:) (prefix (startup) startup:)
           (prefix (sys) sys:) (prefix (wire) wire:)
@@ -21,6 +21,11 @@
       (lambda (actor)
         (if (eq? (car actor) 'head) (policy:make 'all 100000000 'any 8000)
             (policy:reader)))))
+
+  ;; Routing is independent of permission. An agent can ask its configured
+  ;; owner while the owner's head is absent; no connection supplies grants.
+  (define connection-owner
+    (make-parameter (lambda (actor) (and (eq? (car actor) 'head) actor))))
 
   (define (call-with-runtime thunk)
     ;; Pin before config can start active work. Plain e owns this same base
@@ -56,7 +61,7 @@
               [else (list kind id (caddr event))])])
       (actor:call-as actor (lambda () (log:add! 'store detail #f)))))
 
-  (define (request session control? operation args)
+  (define (request session control? operation args reply!)
     (define (arity n)
       (unless (= (length args) n) (error 'wire "wrong request arity" operation)))
     (define actor (policy:session-actor session))
@@ -146,10 +151,14 @@
       [(surface) (arity 1) (surface:snapshot (car args))]
       [(rows) (arity 4) (apply surface:rows args)]
       [(send) (control!) (arity 2) (apply actor:send! args)]
+      [(mail) (arity 2) (apply policy:session-send! session args)]
+      [(owner) (arity 0) (policy:session-owner session)]
+      [(ask)
+       (unless (<= 2 (length args) 3) (error 'wire "expected optional recipient, question and choices"))
+       (apply policy:session-ask! session (append args (list reply!)))]
       [(pending) (arity 0) (actor:pending actor)]
-      [(answer)
-       (arity 2)
-       (and (assv (car args) (actor:pending actor)) (apply actor:answer! args))]
+      [(answer) (arity 2) (apply policy:session-answer! session args)]
+      [(cancel) (arity 1) (policy:session-cancel! session (car args))]
       [(log-snapshot) (arity 1) (call-with-values (lambda () (log:snapshot (car args))) list)]
       [(log-add)
        (arity 3)
@@ -250,7 +259,7 @@
                 (error 'wire "expected (hello 1 (head-or-agent name))"))
               (let* ([p ((connection-policy) (datum:copy actor))]
                      [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo redo))])
-                (set! session (policy:mint! actor p (and (eq? (car actor) 'head) actor)))
+                (set! session (policy:mint! actor p ((connection-owner) (datum:copy actor))))
                 (set! control? (and (eq? (car actor) 'head) (eq? (policy:buffers p) 'any)))
                 ;; Queue hello before publishing; name refusal still revokes
                 ;; this connection's session without touching the old owner.
@@ -291,7 +300,12 @@
                                 [(watch watch-head)
                                  (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
                                  (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
-                                [else (request session control? (caddr message) (cdddr message))]))))
+                                [else
+                                 ;; Capture only the id, not the entire request.
+                                 ;; An answer may precede the ticket reply.
+                                 (let ([id (cadr message)])
+                                   (request session control? (caddr message) (cdddr message)
+                                     (lambda (answer) (post! (list 'event (list 'answer id answer))))))]))))
                         (loop)))))))))
         (lambda ()
           (close!)

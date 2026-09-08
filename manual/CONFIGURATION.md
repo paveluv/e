@@ -53,11 +53,13 @@ Existing registered tools reopen by identity. A missing or hidden source, or a
 local view without a restore provider, uses the startup buffer in that window.
 Arbitrary local buffer text and per-tool query settings are not saved. Very
 small terminals use the editor's usual layout fitting. Checkpoints last only
-while the daemon runs. Agent questions first asked while their owner is offline
-are still being built.
+while the daemon runs. Questions first asked while a known named head is
+offline wait for its next attachment; press `C-c a` to answer. An agent's
+disconnect withdraws its own unanswered questions.
 
 Scheme clients can read, edit, undo and redo according to their session's buffer
-permissions. The current messages and primitives are described in the development
+permissions, exchange attributed mail and ask other actors questions. Actual
+provider integrations are deferred. The current messages and primitives are described in the development
 [wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).
 
 Only peers running as the same OS user connect. An existing socket path is
@@ -111,6 +113,24 @@ buffer's current name and read-only flag. The resolver receives
 an owned identity; the hello carries no permissions. Each connection gets a
 new session and disconnect revokes it. The grants/fuel/cap fields concern
 session evaluation, which is not yet exposed through the wire.
+
+`base:connection-owner` independently chooses the actor an agent asks when it
+omits a recipient. Heads default to themselves; agents default to `#f` (no
+owner). To route the helper's questions to your named screen:
+
+```scheme
+(define default-connection-owner (base:connection-owner))
+(base:connection-owner
+  (lambda (actor)
+    (if (equal? actor '(agent "helper"))
+        '(head "desk")
+        (default-connection-owner actor))))
+```
+
+Attach `--name desk` once so the daemon knows that head. Later questions can
+wait while it is disconnected. Owner selection supplies no permissions, and
+an explicit question recipient does not change the configured owner. Each
+connection keeps the owner selected at admission.
 
 ## Loading and reloading
 

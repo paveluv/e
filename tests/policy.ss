@@ -195,15 +195,71 @@
      (actor:answer! ticket "no")
      (check 'answer-routes-back (unbox got) "no")
 
+     (let* ([peer '(agent "reviewer")]
+            [peer-mail (kernel:make-mailbox)]
+            [reviewer (policy:mint! peer (policy:reader) owner)])
+       (actor:register! peer (lambda (message) (kernel:mailbox-post! peer-mail message)))
+       (let* ([sent? (from-owner (lambda () (policy:session-send! s peer '(answer 1 forged))))]
+              [message (kernel:mailbox-receive! peer-mail)]
+              [reply #f]
+              [question (policy:session-ask! s peer "Review?" '() (lambda (value) (set! reply value)))]
+              [delivered (kernel:mailbox-receive! peer-mail)])
+         (check 'session-mail-and-questions-bind-the-sender-and-recipient
+           (list sent? message delivered
+                 (policy:session-answer! s question 'wrong-recipient)
+                 (policy:session-cancel! reviewer question)
+                 (policy:session-answer! reviewer question 'reviewed)
+                 (policy:session-cancel! s question) reply
+                 (test:raises? (lambda () (policy:session-ask! s "Bad callback?" '() #f))))
+           (list #t (list 'message agent '(answer 1 forged)) (list 'ask question agent "Review?" '())
+                 #f #f #t #f 'reviewed #t)))
+       (policy:revoke! reviewer)
+       (actor:detach! peer))
+
      ;; -- revocation ----------------------------------------------------
 
+     (define revoked-ticket
+       (policy:session-ask! s "Withdraw on revoke?" '() (lambda (answer) (set-box! got answer))))
+     (kernel:mailbox-receive! owner-mail)
+     (define sibling (policy:mint! agent (policy:reader) owner))
+     (define sibling-ticket (policy:session-ask! sibling "Keep this session?" '() void))
+     (kernel:mailbox-receive! owner-mail)
+     (define foreign-cancel (policy:session-cancel! sibling revoked-ticket))
      (check 'revoke (policy:revoke! s) #t)
+     (check 'revoke-withdraws-only-its-session-before-a-late-answer
+       (list foreign-cancel (map car (actor:pending owner))
+             (actor:answer! revoked-ticket "too late") (unbox got)
+             (policy:session-cancel! sibling sibling-ticket) (actor:pending owner))
+       (list #f (list sibling-ticket) #f "no" #t '()))
+     (policy:revoke! sibling)
      (check 'all-revoked-entry-points-refuse
        (list (car (policy:session-eval! s "(+ 1 2)"))
              (try-writes! s notes)
              (policy:session-ask! s "Anyone?" '() (lambda (a) a))
+             (policy:session-send! s owner 'forbidden)
+             (policy:session-answer! s sibling-ticket 'forbidden)
+             (policy:session-cancel! s revoked-ticket)
              (assoc agent (policy:sessions)))
-       '(refused ((refused revoked) (refused revoked) (refused revoked)) #f #f))
+       '(refused ((refused revoked) (refused revoked) (refused revoked)) #f #f #f #f #f))
+
+     ;; Revoke while delivery is already running. Its late answer cannot
+     ;; invoke a revoked continuation or leave a pending ticket behind.
+     (let* ([who '(agent "revocation race")]
+            [racing (policy:mint! who (policy:reader) owner)]
+            [ready (test:gate)] [release (test:gate)] [late #f] [reply #f])
+       (actor:register! who
+         (lambda (message)
+           (ready #t) (test:await 'release-question-delivery release)
+           (set! late (actor:answer! (cadr message) 'late))))
+       (let ([work (test:worker
+                     (lambda () (policy:session-ask! racing who "Already admitted?" '()
+                                  (lambda (answer) (set! reply answer)))))])
+         (test:await 'question-delivery-started ready)
+         (policy:revoke! racing)
+         (release #t)
+         (check 'revocation-during-question-delivery-keeps-no-continuation
+           (list (number? (work)) late reply (actor:pending who)) '(#t #f #f ())))
+       (actor:detach! who))
 
      ;; The implicit owner is the initiating actor, including a named head,
      ;; or #f for headless callers. The default audit trail stays persistent.

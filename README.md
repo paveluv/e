@@ -79,7 +79,9 @@ This branch supports [daemon attachment](manual/CONFIGURATION.md#daemon-and-atta
 `e --daemon` keeps shared buffers and terminals alive; `e --attach` opens a
 head on it, and `C-x C-c` detaches that head. Several screens can edit together.
 Reattaching with the same `--name` restores its layout, positions and kill text,
-including after an abrupt disconnect. Offline agent questions remain in progress.
+including after an abrupt disconnect. Scripted clients can cooperate while
+heads are absent and leave questions for a named head to answer on return.
+Actual agent provider integrations are deferred.
 
 On FreeBSD, where Chez installs a differently named script interpreter, run
 `chez-scheme --script e` or change the shebang as explained in the loader.

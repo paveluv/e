@@ -10,15 +10,15 @@
 ;; ticket, asynchronously; nobody's keyboard is stolen.
 ;;
 ;; Directory metadata and delivery share one owned registration. The
-;; pending-ask table has its own lifetime: open questions survive reloads
-;; and detach until explicitly answered or cancelled.
+;; pending-ask table has its own lifetime: known heads can receive questions
+;; while detached. Session-owned questions end with their asking session.
 
 (library (actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
           current call-as identity? audience? in-audience? send!
-          ask! answer! cancel! pending checkpoint checkpoint!)
+          ask! answer! cancel! cancel-owned! pending checkpoint checkpoint!)
   (import (rnrs)
-          (only (chezscheme) box unbox set-box! void make-mutex with-mutex
+          (only (chezscheme) void make-mutex with-mutex
                 current-time time-second parameterize)
           (prefix (kernel) kernel:)
           (prefix (datum) datum:) (prefix (identity) identity:))
@@ -29,6 +29,16 @@
     (fields identity attached-at capabilities delivery))
 
   (define registrations (kernel:make-registry registration-identity))
+
+  ;; A named head's identity and screen outlive its endpoint. Admit both
+  ;; registries in one update: failed/staged claims never create known heads.
+  (define-record-type head-state
+    (fields identity (mutable checkpoint)))
+  (define known-heads (kernel:make-registry head-state-identity))
+
+  (define (known-head actor)
+    (kernel:registry-find known-heads
+      (lambda (entry) (equal? (head-state-identity entry) actor))))
 
   (define identity? identity:valid?)
   (define audience? identity:audience?)
@@ -47,8 +57,14 @@
        (unless (procedure? deliver!)
          (error 'register! "expected a delivery procedure" deliver!))
        (let ([identity (datum:copy actor)] [capabilities (datum:copy capabilities)])
-         (kernel:registry-add! registrations
-           (make-registration identity (time-second (current-time 'time-utc)) capabilities deliver!))
+         (kernel:call-with-registration-update
+           (lambda ()
+             (kernel:registry-add! registrations
+               (make-registration identity (time-second (current-time 'time-utc)) capabilities deliver!))
+             (when (and (eq? (car identity) 'head) (= (length identity) 2)
+                        (string? (cadr identity)) (not (known-head identity)))
+               (parameterize ([kernel:registering-module #f])
+                 (kernel:registry-add! known-heads (make-head-state identity #f))))))
          (datum:copy identity))]))
 
   (define (registration-of actor)
@@ -106,61 +122,51 @@
 
   ;;; Ask and reply -----------------------------------------------------------
 
-  ;; A pending ask: #(ticket from to question choices reply!), held
+  ;; A pending ask: #(ticket from to question choices reply! owner), held
   ;; until answered or cancelled.  reply! is the asker's continuation;
-  ;; it runs on the answering actor's thread.
-
-  (define pending-asks (kernel:persistent-cell 'actors-pending
-                                               (lambda () '())))
-  (define ticket-counter (kernel:persistent-cell 'actors-tickets
-                                                 (lambda () 0)))
-  (define protocol-lock
-    ;; Keep the lock across reload alongside the existing cells, so old
-    ;; reply closures and a new module instance serialize the same state.
-    (unbox (kernel:persistent-cell 'actors-protocol-lock make-mutex)))
-
-  ;; One opaque screen checkpoint per name, independent of its endpoint.
-  ;; Only the head interprets this data; no buffer snapshots or callbacks.
-  ;; Actor is a pinned process root, so ordinary module state has its lifetime.
-  (define checkpoints '())
+  ;; it runs on the answering actor's thread. The optional opaque owner is
+  ;; a session key, not the recipient identity and never wire data.
+  ;; Actor is a pinned process root; all protocol state has its lifetime.
+  (define pending-asks '())
+  (define ticket-counter 0)
+  (define protocol-lock (make-mutex))
 
   (define (checkpoint actor)
-    (datum:copy
-      (with-mutex protocol-lock
-        (cond [(assoc actor checkpoints) => cdr] [else #f]))))
+    (let ([entry (known-head actor)])
+      (and entry (datum:copy (with-mutex protocol-lock (head-state-checkpoint entry))))))
 
   (define (checkpoint! actor state)
-    (unless (and (identity? actor) (= (length actor) 2)
-                 (eq? (car actor) 'head) (string? (cadr actor)) (registered? actor))
-      (error 'checkpoint! "expected an attached named head" actor))
-    (let ([actor (datum:copy actor)] [state (datum:copy state)])
+    (let ([entry (known-head actor)] [state (datum:copy state)])
+      (unless (and entry (registered? actor))
+        (error 'checkpoint! "expected an attached named head" actor))
       (with-mutex protocol-lock
-        (set! checkpoints
-          (cons (cons actor state)
-            (filter (lambda (entry) (not (equal? (car entry) actor))) checkpoints))))))
+        (head-state-checkpoint-set! entry state))))
 
-  (define (ask! from to question choices reply!)
-    ;; Pose a question; -> the ticket, or #f when the target actor is
-    ;; unreachable.  choices is a list of strings offered to the
-    ;; answerer (empty for free-form); reply! receives the answer.
-    (unless (procedure? reply!)
-      (error 'ask! "expected a reply procedure" reply!))
-    (let* ([from (datum:copy from)] [to (datum:copy to)]
-           [question (datum:copy question)] [choices (datum:copy choices)]
-           [ticket
-            (with-mutex protocol-lock
-              (let ([ticket (+ (unbox ticket-counter) 1)])
-                (set-box! ticket-counter ticket)
-                (set-box! pending-asks
-                          (append (unbox pending-asks)
-                                  (list (vector ticket from to question choices reply!))))
-                ticket))])
-      ;; Delivery may answer synchronously or ask again. Never call out
-      ;; while holding the protocol lock; a failed delivery only cancels
-      ;; its own ticket if it is still pending.
-      (if (send! to (list 'ask ticket from question choices))
-          ticket
-          (begin (cancel! ticket) #f))))
+  (define ask!
+    (case-lambda
+      [(from to question choices reply!) (ask! from to question choices reply! #f)]
+      [(from to question choices reply! owner)
+       ;; Unknown/unspecified targets refuse; a known named head retains
+       ;; the ticket even when delivery fails. Delivery is only its wakeup.
+       (let ([from (datum:copy from)] [to (datum:copy to)]
+             [question (datum:copy question)] [choices (datum:copy choices)])
+         (unless (and (identity? from) (or (not to) (identity? to))
+                      (string? question) (list? choices) (for-all string? choices)
+                      (procedure? reply!))
+           (error 'ask! "expected identities, question text, string choices and reply procedure"))
+         (and to
+           (let ([ticket
+                  (with-mutex protocol-lock
+                    (set! ticket-counter (+ ticket-counter 1))
+                    (set! pending-asks
+                      (append pending-asks (list (vector ticket-counter from to question choices reply! owner))))
+                    ticket-counter)])
+             ;; Delivery may answer synchronously or ask again. Never call out
+             ;; while holding the lock. Observe committed head identities only.
+             (if (or (send! to (list 'ask ticket from question choices))
+                   (kernel:call-with-runtime-registrations (lambda () (known-head to))))
+               ticket
+               (begin (cancel! ticket) #f)))))]))
 
   (define (pending to)
     ;; the questions awaiting an actor, oldest first:
@@ -174,35 +180,47 @@
                             acc)
                       acc))
                 '()
-                (with-mutex protocol-lock (unbox pending-asks))))
+                (with-mutex protocol-lock pending-asks)))
 
-  (define (take-ticket! ticket)
+  (define (take-ticket! ticket accepts?)
     ;; Answer and cancellation compete for one atomic consumption. The
     ;; winner receives the callback after releasing the lock.
     (with-mutex protocol-lock
       (let ([entry (find (lambda (entry)
-                           (eqv? (vector-ref entry 0) ticket))
-                         (unbox pending-asks))])
+                           (and (eqv? (vector-ref entry 0) ticket) (accepts? entry)))
+                         pending-asks)])
         (when entry
-          (set-box! pending-asks (remq entry (unbox pending-asks))))
+          (set! pending-asks (remq entry pending-asks)))
         entry)))
 
-  (define (answer! ticket answer)
+  (define answer!
     ;; Resolve an ask: the answer routes to the asker's reply
     ;; procedure (on this thread).  -> #t, or #f for a stale ticket.
     ;; Validate/copy before consuming the ticket: a malformed answer must
     ;; not discard a question, and the callback owns its mutable payload.
-    (let ([answer (datum:copy answer)])
-      (cond [(take-ticket! ticket)
-             => (lambda (entry)
-                  (guard (ex [else (void)])
-                    (kernel:call-with-runtime-registrations
-                      (lambda ()
-                        (call-as (vector-ref entry 1)
-                          (lambda () ((vector-ref entry 5) answer))))))
-                  #t)]
-        [else #f])))
+    (case-lambda
+      [(ticket answer) (answer! ticket answer #f)]
+      [(ticket answer to)
+       (let ([answer (datum:copy answer)] [to (datum:copy to)])
+         (cond [(take-ticket! ticket (lambda (entry) (or (not to) (equal? (vector-ref entry 2) to))))
+                => (lambda (entry)
+                     (guard (ex [else (void)])
+                       (kernel:call-with-runtime-registrations
+                         (lambda ()
+                           (call-as (vector-ref entry 1)
+                             (lambda () ((vector-ref entry 5) answer))))))
+                     #t)]
+           [else #f]))]))
 
-  (define (cancel! ticket)
-    ;; Withdraw a question nobody answered.
-    (and (take-ticket! ticket) #t)))
+  (define cancel!
+    ;; A session may withdraw only its own question; the trusted one-argument
+    ;; form keeps the in-process ticket API. Checks and consumption are atomic.
+    (case-lambda
+      [(ticket) (cancel! ticket #f)]
+      [(ticket owner)
+       (and (take-ticket! ticket (lambda (entry) (or (not owner) (eq? (vector-ref entry 6) owner)))) #t)]))
+
+  (define (cancel-owned! owner)
+    (unless owner (error 'cancel-owned! "expected a question owner"))
+    (with-mutex protocol-lock
+      (set! pending-asks (filter (lambda (entry) (not (eq? (vector-ref entry 6) owner))) pending-asks)))))

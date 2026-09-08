@@ -83,15 +83,23 @@ the oldest pending question when no other message or prompt occupies it.
 Press `C-c a` (`answer!!`) to answer; Tab offers any supplied choices.
 Cancelling the prompt leaves the question pending so you can return to it.
 If it was withdrawn while you were typing, the editor says so when you submit.
+Once a named head has attached, questions can also arrive while it is absent.
+They wait in the running daemon for that name to return. Disconnecting the
+asking agent cancels its unanswered questions; disconnecting your head does
+not stop the agent or discard its questions.
 
-Extensions use `actor:ask! from to question choices reply!` to send a
-question. It returns a ticket, or `#f` if delivery fails. `actor:pending to`
+Extensions in the base or combined editor use
+`actor:ask! from to question choices reply!` to send a
+question. It returns a ticket, or `#f` for an unknown/unspecified recipient or
+an unavailable agent. A known named head retains the ticket even if its wakeup
+cannot be delivered. `actor:pending to`
 lists pending questions in ticket order as `(ticket from question choices)`.
 `actor:answer! ticket answer` and `actor:cancel! ticket` return `#t` for
 the call that consumes the ticket and `#f` thereafter. Cancellation does
 not invoke the reply procedure.
 
-The protocol copies the question's actors, text, and choices on admission.
+The protocol copies and validates the question's actors, text, and list of
+string choices before admitting a ticket; an empty list allows free-form answers.
 Delivered questions and `pending` reads are independent snapshots; changing
 them cannot redirect a ticket or alter another reader's question. All
 `actor:send!` messages and `actor:answer!` payloads also copy mutable plain
@@ -133,9 +141,10 @@ queued deliveries. As with store notifications, a callback must not wait for
 a later event. Directory and presence data are independent snapshots.
 
 `actor:detach! who` removes the captured endpoint; repeating it is harmless.
-An already selected delivery may finish. Existing questions remain pending
-across detach/reload and are available on reattachment. Explicit answer or
-cancellation still consumes each ticket once.
+An already selected delivery may finish. A named head's identity is retained
+with its optional screen checkpoint only after registration commits. Questions
+remain available across head detach and head-app reload; all this state ends
+when the base stops. Explicit answer or cancellation consumes each ticket once.
 
 `actor:current` returns a copy of the executing actor's identity, or `#f`
 outside actor work. `actor:call-as who thunk` scopes that identity to the
@@ -159,8 +168,20 @@ with an empty writable-buffer list. Sessions have no edit-count limit;
 pairs. Policies and session metadata own their inputs and returned values.
 Concurrent session admission/removal uses one inventory; repeated revocation
 audits once. Operations admitted before revocation may finish, while later
-calls refuse. Session events go quietly to the shared log under component `policy`;
+calls refuse. Revocation also withdraws that session's unanswered questions;
+another session using the same actor identity retains its own tickets.
+Session events go quietly to the shared log under component `policy`;
 use `log:entries`/`log:datum` to query them and `log:subscribe!` to observe them.
+
+The base's `policy:session-send! session to datum` delivers `(message actor datum)`, with
+the sender supplied by the session. It returns `#f` if the session is revoked
+or delivery fails. `policy:session-ask! session [to] question choices reply!`
+asks the explicit recipient, or the session's configured owner when omitted.
+The reply procedure receives the answer as plain data; answering does not
+change the session's permissions. `policy:session-answer! session ticket value`
+answers only questions addressed to that actor. `policy:session-cancel! session
+ticket` withdraws only questions created by that exact session. Both return
+`#f` for a revoked session, a stale ticket or a different recipient/session.
 
 `policy:session-edit! session buffer-id basis span lines [context]` returns
 `(values 'applied (revision text-vector changes))` on success. This replaces

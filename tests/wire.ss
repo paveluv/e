@@ -87,12 +87,21 @@
                                (cons 'process-id (get-process-id))
                                (cons 'authority (list refused-core retained revoked)))))
          (store:create! '(base e) "private" '("a local audience") '((audience (head "desk λ"))))
+         (actor:register! '(agent "background")
+           (lambda (message)
+             (when (and (pair? message) (eq? (car message) 'ask))
+               (actor:answer! (cadr message) #f))))
          (define default-policy (base:connection-policy))
          (base:connection-policy
            (lambda (actor)
              (if (member actor '((agent "first") (agent "second")))
-                 (policy:make '() 10000 '("notes λ") 0)
+                 (policy:make '() 10000 '("notes λ" "attached text") 0)
                  (default-policy actor))))
+         (define default-owner (base:connection-owner))
+         (base:connection-owner
+           (lambda (actor)
+             (if (member actor '((agent "first") (agent "second")))
+                 '(head "screen A") (default-owner actor))))
          (define held-edit? #f)
          (define operation-audits '())
          (define app-presentations '())
@@ -132,10 +141,7 @@
                                (let send ([remaining 512] [message (make-string 8192 #\x)])
                                  (cond [(zero? remaining) (store:set-property! '(base e) notes 'mail-refused #f)]
                                    [(actor:send! (cadr event) message) (send (- remaining 1) message)]
-                                   [else (store:set-property! '(base e) notes 'mail-refused #t)])))
-                             (when (equal? name "screen A")
-                               (actor:ask! '(agent "background") (cadr event) "Ready to continue?" '("yes" "no")
-                                 (lambda (answer) (store:set-property! '(agent "background") notes 'head-answer answer))))))) batch)))
+                                   [else (store:set-property! '(base e) notes 'mail-refused #t)])))))) batch)))
          (vt:shell "/bin/sh")
          (vt:open! '(base e)
            ,(format "echo $$ > ~a; printf 'still here'; read answer" (quote-shell terminal-pid-file))
@@ -179,8 +185,9 @@
          (set! clients (cons connection clients)) connection))
      (define (hello connection actor)
        (exchange connection (list 'hello wire:version actor)))
-     (define (reply-value reply)
-       (unless (and (list? reply) (= (length reply) 4) (equal? (list-head reply 3) '(reply 7 ok)))
+     (define (reply-value reply . id)
+       (unless (and (list? reply) (= (length reply) 4)
+                    (equal? (list-head reply 3) (list 'reply (if (pair? id) (car id) 7) 'ok)))
          (error 'wire-test "request failed" last-request reply))
        (cadddr reply))
      (define (rpc connection operation . args)
@@ -343,10 +350,21 @@
                      '#("a local audience")))
              (test:await 'head-detached
                (lambda () (not (exists (lambda (entry) (eq? (caar entry) 'head)) (rpc agent 'actors)))))
-             (test:check 'agents-cannot-read-or-replace-head-checkpoints
+             (test:check 'agent-requests-check-authority-and-question-data
                (map (lambda (message) (list-head (exchange agent message) 3))
-                 '((request 1 checkpoint) (request 2 checkpoint stolen)))
-               '((reply 1 error) (reply 2 error)))
+                 '((request 1 checkpoint) (request 2 checkpoint stolen)
+                   (request 3 send (head "desk λ") raw-control)
+                   (request 4 ask (head "desk λ") #t ())
+                   (request 5 ask (head "desk λ") "Choices?" (1))
+                   (request 6 ask (agent "forged") (head "desk λ") "Source?" ())))
+               '((reply 1 error) (reply 2 error) (reply 3 error)
+                 (reply 4 error) (reply 5 error) (reply 6 error)))
+             (wire:send! (sys:connection-output agent)
+               '(request 70 ask (agent "background") "Immediate?" ()))
+             (test:check 'an-immediate-answer-precedes-its-ticket-reply-and-keeps-false-values
+               (list (receive-reply agent) (number? (reply-value (receive-reply agent) 70))
+                     (rpc agent 'owner) (rpc agent 'ask "No owner?" '()))
+               '((event (answer 70 #f)) #t #f #f))
              (let* ([first (connect)] [second (connect)]
                     [writers (list first second)] [actors '((agent "first") (agent "second"))])
                (test:check 'configured-agents-use-server-selected-permissions
@@ -554,13 +572,15 @@
                      (list (car (rpc head 'snapshot id))
                            (begin (head-read a '(redo!)) (car (rpc head 'snapshot id))))
                      '(#("shared text") #("shared text B")))
-                   (head-send! a "\x03;a")
-                   (head-wait 'base-question a (lambda () (head-sees? a "Ready to continue?")))
-                   (head-send! a "yes\r")
-                   (head-wait 'answer-reaches-the-base-agent a
-                     (lambda () (equal? (assq 'head-answer (caddr (rpc head 'snapshot 1))) '(head-answer . "yes"))))
-                   (test:check 'attached-questions-are-consumed-once-in-the-base
-                     (head-read a '(actor:pending head:ui-actor)) '())
+                   (let ([ticket (reply-value (exchange agent
+                                                '(request 71 ask (head "screen A") "Ready to continue?" ("yes" "no"))) 71)])
+                     (head-send! a "\x03;a")
+                     (head-wait 'base-question a (lambda () (head-sees? a "Ready to continue?")))
+                     (head-send! a "yes\r")
+                     (test:check 'attached-questions-route-to-the-requesting-client-once
+                       (list (receive-reply agent) (rpc agent 'cancel ticket)
+                             (head-read a '(actor:pending head:ui-actor)))
+                       '((event (answer 71 "yes")) #f ())))
 
                    (let ([path (string-append root "/saved.txt")])
                      (write-text path "shared text B\n")
@@ -637,7 +657,79 @@
                              (cdr (assq 'alive (caddr (rpc head 'snapshot terminal-id))))
                              (and (member '(head "screen B") (map car (rpc head 'actors))) #t))
                        '(#("shared text B") #t #t))
-                     (let ([again (start-head "screen A")])
+                     ;; Both real heads and the control head leave. Two
+                     ;; independent clients coordinate edits and questions;
+                     ;; only their connections own their outstanding requests.
+                     (let ([first (connect)] [second (connect)])
+                       (for-each (lambda (connection who) (hello connection who) (receive connection))
+                         (list first second) '((agent "first") (agent "second")))
+                       (head-send! b "\x1d;\x18;\x03;")
+                       (sys:close-connection! head)
+                       (test:await 'every-human-head-is-absent
+                         (lambda () (not (exists (lambda (entry) (eq? (caar entry) 'head)) (rpc agent 'actors)))))
+                       (let* ([basis (cadr (rpc first 'snapshot id))]
+                              [edited (rpc first 'edit id basis '(0 0 0 0) '("agent "))]
+                              [sent? (rpc first 'mail '(agent "second") (list 'review id (car (cadr edited))))]
+                              [message (receive-reply second)]
+                              [task (caddr (cadr message))]
+                              [reviewed (rpc second 'edit (cadr task) (caddr task) '(0 0 0 0) '("reviewed "))])
+                         (test:check 'scripted-agents-cooperate-with-every-head-absent
+                           (list (map (lambda (connection) (rpc connection 'owner)) (list first second))
+                                 (car edited) sent? (list-head (cadr message) 2) (car task)
+                                 (car reviewed) (car (rpc agent 'snapshot id))
+                                 (map cadr (rpc agent 'history id 2))
+                                 (cdr (assq 'alive (caddr (rpc agent 'snapshot terminal-id)))))
+                           '(((head "screen A") (head "screen A")) applied #t (message (agent "first")) review
+                             applied #("reviewed agent shared text B") ((agent "second") (agent "first")) #t)))
+                       (let ([ticket (reply-value (exchange second
+                                                    '(request 72 ask (agent "first") "Review complete?" ("yes"))) 72)])
+                         (test:check 'peer-questions-bind-the-answerer-and-the-cancelling-session
+                           (list (receive-reply first) (rpc second 'answer ticket "wrong")
+                                 (rpc first 'cancel ticket) (rpc first 'answer ticket "yes")
+                                 (receive-reply second) (rpc first 'answer ticket "again"))
+                           (list (list 'event (list 'ask ticket '(agent "second") "Review complete?" '("yes")))
+                                 #f #f #t '(event (answer 72 "yes")) #f)))
+                       ;; Restore the shared text through each agent's own
+                       ;; history, leaving the existing screen-resume checks
+                       ;; on their original text while retaining attribution.
+                       (rpc second 'undo id)
+                       (rpc first 'undo id)
+                       (let ([question (reply-value (exchange second '(request 73 ask "Continue agent work?" ("yes" "no"))) 73)]
+                             [abandoned (rpc first 'ask "Withdraw when I disconnect?" '())])
+                         (test:check 'offline-owner-questions-are-retained-without-queueing-ordinary-mail
+                           (list (number? question) (number? abandoned)
+                                 (rpc first 'cancel question)
+                                 (rpc first 'mail '(head "screen A") 'unreachable)
+                                 (rpc first 'ask '(head "never attached") "Unknown?" '()))
+                           '(#t #t #f #f #f))
+                         (sys:close-connection! first)
+                         (test:await 'departing-agent-revoked-and-detached
+                           (lambda () (not (assoc '(agent "first") (rpc second 'actors)))))
+                         (let ([replacement (connect)])
+                           (hello replacement '(agent "first")) (receive replacement)
+                           (test:check 'agent-name-reuse-cannot-revive-or-consume-outstanding-requests
+                             (list (rpc replacement 'cancel abandoned) (rpc replacement 'cancel question)
+                                   (rpc replacement 'answer question "forged")) '(#f #f #f))
+                           (sys:close-connection! replacement))
+                         (set! head (connect))
+                         (hello head '(head "desk λ")) (receive head)
+                         (set! b (start-head "screen B"))
+                         (head-wait 'other-screen-returns b (lambda () (head-sees? b "through base")))
+                         (set! a (start-head "screen A"))
+                         (head-wait 'owner-returns-to-offline-question a (lambda () (head-sees? a "through base")))
+                         (test:check 'returning-owner-sees-only-the-live-session-question
+                           (head-read a '(actor:pending head:ui-actor) "\x1d;")
+                           (list (list question '(agent "second") "Continue agent work?" '("yes" "no"))))
+                         (head-send! a "\x1d;\x03;a")
+                         (head-wait 'offline-question-prompt a (lambda () (head-sees? a "Continue agent work?")))
+                         (head-send! a "yes\r")
+                         (test:check 'reattached-human-answers-the-surviving-agent-once
+                           (list (receive-reply second) (rpc second 'cancel question)
+                                 (rpc head 'answer question "wrong head")
+                                 (head-read a '(actor:pending head:ui-actor) "\x1d;"))
+                           '((event (answer 73 "yes")) #f #f ())))
+                       (sys:close-connection! second))
+                     (let ([again a])
                        (head-wait 'real-head-reattaches again (lambda () (head-sees? again "through base")))
                        (test:check 'clean-reattach-restores-the-terminal-and-reuses-scratch
                          (list (head-read again '(list (head:buffer-store-id (current-buffer))
