@@ -933,20 +933,28 @@
     (let ([revision (+ (buffer-local-rev b) 1)])
       (adopt-text! b text revision (and delta (list (list revision ui-actor delta))))))
 
-  (define (store-reset! b new-lines . facts)
+  (define (store-reset! b new-lines . options)
     ;; Explicit baseline replacement (loading/rereading), never an
     ;; automatic response to a failed edit.  Failure leaves the cache
     ;; untouched; a later frame cannot write it back over shared text.
-    (unless (<= (length facts) 1) (error 'store-reset! "expected one fact batch" facts))
-    (let ([updates (store:validate-properties (if (pair? facts) (car facts) '()))])
+    ;; -> accepted revision, or #f when the optional (revision fact ...)
+    ;; review no longer matches. Local state is checked on its owning head.
+    (unless (<= (length options) 2) (error 'store-reset! "expected facts and optional reviewed state" options))
+    (let ([updates (store:validate-properties (if (pair? options) (car options) '()))]
+          [review (and (= (length options) 2) (cadr options))])
       (if (buffer-store-id b)
-          (begin
-            (store:reset! ui-actor (buffer-store-id b) new-lines updates)
-            (adopt-store! b))
+          (let ([accepted (apply store:reset! ui-actor (buffer-store-id b) new-lines options)])
+            (when accepted (adopt-store! b))
+            accepted)
           (let ([text (text:normalize new-lines)])
-            (adopt-local! b text #f)
-            (clamp-buffer-positions! b)
-            (buffer-facts-set! b updates)))))
+            (let-values ([(old revision facts) (buffer-state b)])
+              (and (or (not review)
+                       (and (memq b the-buffers) (equal? review (cons revision facts))))
+                   (begin
+                     (adopt-local! b text #f)
+                     (clamp-buffer-positions! b)
+                     (buffer-facts-set! b updates)
+                     (content-revision b))))))))
 
   (define (edit-basis b)
     ;; A proposal retains the text it was computed from, its owner, and

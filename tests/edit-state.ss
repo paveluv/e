@@ -127,6 +127,39 @@
      (store:redo! bot merged-id)
      (check 'redo-relative-to-new-disk-is-clean (store:property merged-id 'modified) #f)
 
+     ;; The head must not adopt or clean up a refused reset, including when
+     ;; its cache has not seen the racing edit. Local runtime facts stay local.
+     (for-each
+       (lambda (shared?)
+         (let* ([b (fresh (if shared? "reset-shared" "reset-local") shared?)]
+                [id (head:buffer-store-id b)])
+           (define (head-state)
+             (list (head:edit-basis b) (head:buffer-history b) (point)
+                   (head:buffer-marked b) (head:buffer-mark-row b) (head:buffer-mark-col b)))
+           (insert-text! "keep")
+           (head:buffer-marked-set! b #t)
+           (unless shared? (head:buffer-fact-set! b 'source (head:current)))
+           (check 'reviewed-reset-refusal-keeps-either-owner-and-head-state
+             (map
+               (lambda (change)
+                 (let-values ([(text revision facts) (head:buffer-state b)])
+                   (case change
+                     [(text) (if id (insert! id 0 "new ") (insert-text! "new "))]
+                     [(facts) (head:buffer-trailing-set! b #f)])
+                   (let* ([before (state b)] [view (head-state)]
+                          [accepted (head:store-reset! b '("lost") '((base . "lost"))
+                                                       (cons revision facts))])
+                     (list accepted (equal? before (state b)) (equal? view (head-state))))))
+               '(text facts))
+             '((#f #t #t) (#f #t #t)))
+           (let-values ([(text revision facts) (head:buffer-state b)])
+             (let ([accepted (head:store-reset! b '("disk") '((base . "disk\n") (trailing . #t))
+                               (cons revision facts))])
+               (check 'fresh-review-adopts-a-new-baseline-in-either-owner
+                 (list accepted (head:buffer-lines b) (point))
+                 (list (+ revision 1) '#("disk") '(0 . 4)))))))
+       '(#t #f))
+
      ;; Validate all inputs before either owner changes text or facts.
      (mode:register! "invalid-line-output" '() '() (lambda (line) #f))
      (register-formatter! "invalid-line-output" (lambda args '("embedded\nnewline")))

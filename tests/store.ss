@@ -43,25 +43,57 @@
             '("alpha" "bravo" "charlie"))
      (check 'fresh-revision (store:revision b) 0)
 
-     ;; One reviewed snapshot guards both text and fact races. The gate
-     ;; models a user deciding while another actor commits; refusal is inert.
-     (check 'discard-rechecks-the-reviewed-state-under-the-writer
-       (map
-         (lambda (change)
-           (let* ([id (store:create! alice "discard" '("reviewed"))]
-                  [reviewed (test:gate)]
-                  [writer (test:worker (lambda () (test:await 'reviewed reviewed) (change id) #t))])
-             (let-values ([(text revision facts) (store:snapshot-state id)])
-               (reviewed #t) (writer)
-               (let* ([accepted? (store:discard! alice id revision facts)]
-                      [still-here? (store:exists? id)])
-                 (when still-here? (store:delete! alice id))
-                 (list accepted? still-here?)))))
-         (list (lambda (id) (store:edit! bot id 0 (span 0 0 0 0) '("new ")))
-               (lambda (id) (store:set-property! bot id 'disposable #t))
-               (lambda (id) (store:delete! bot id))
-               (lambda (id) (void))))
-       '((#f #t) (#f #t) (#t #f) (#t #f)))
+     ;; One review/race table covers destructive decisions. A stale reset
+     ;; must preserve text, facts, history and marks and emit no notifications.
+     (for-each
+       (lambda (operation)
+         (check (list operation 'rechecks-the-reviewed-state-under-the-writer)
+           (map
+             (lambda (change)
+               (let* ([id (store:create! alice "reviewed" '("reviewed"))]
+                      [reviewed (test:gate)]
+                      [writer
+                       (test:worker
+                         (lambda ()
+                           (test:await 'reviewed reviewed)
+                           (case change
+                             [(text aba)
+                              (store:edit! bot id 1 (span 0 0 0 0) '("new "))
+                              (when (eq? change 'aba) (store:undo! bot id))]
+                             [(facts) (store:set-property! bot id 'read-only #t)]
+                             [(delete) (store:delete! bot id)]
+                             [(rename) (store:rename! bot id "renamed review")]
+                             [(marks) (store:set-mark! alice id 'point '(0 . 8))])
+                           #t))])
+                 (define (state)
+                   (and (store:exists? id)
+                        (list (call-with-values (lambda () (store:snapshot-state id)) list)
+                              (store:history id) (store:marks alice id))))
+                 (store:edit! alice id 0 (span 0 8 0 8) '("!"))
+                 (store:set-mark! alice id 'point '(0 . 9))
+                 (let-values ([(text revision facts) (store:snapshot-state id)])
+                   (reviewed #t) (writer)
+                   (let* ([before (state)] [events (test:recorder)] [token (store:subscribe! id events)]
+                          [accepted
+                           (if (eq? operation 'discard) (store:discard! alice id revision facts)
+                               (store:reset! alice id '("disk") '((base . "disk\n") (trailing . #t))
+                                             (cons revision facts)))]
+                          [still-here? (store:exists? id)]
+                          [intact?
+                           (cond [(not accepted) (and (equal? before (state)) (null? (events)))]
+                             [(eq? operation 'discard) (not still-here?)]
+                             [else (equal? (list accepted (store:revision id) (store:line id 0)
+                                                 (store:property id 'modified) (store:history id)
+                                                 (store:mark alice id 'point))
+                                           '(2 2 "disk" #f () (0 . 4)))])])
+                     (store:unsubscribe! token)
+                     (when still-here? (store:delete! alice id))
+                     (list (and accepted #t) still-here? intact?)))))
+             '(text facts delete unchanged rename marks aba))
+           (if (eq? operation 'discard)
+               '((#f #t #t) (#f #t #t) (#t #f #t) (#t #f #t) (#t #f #t) (#t #f #t) (#f #t #t))
+               '((#f #t #t) (#f #t #t) (#f #f #t) (#t #t #t) (#t #t #t) (#t #t #t) (#f #t #t)))))
+       '(discard reset))
 
      ;; Creation and rename arbitrate the same namespace under contention,
      ;; including hidden names, existing suffixes, self-renames and reuse.

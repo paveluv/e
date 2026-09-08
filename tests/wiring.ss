@@ -490,6 +490,47 @@
      (check 'live-merge-redo
             (read-editor '(begin (redo!) (head:buffer-lines (current-buffer))))
             '#("Abase" "same" "same2" "same3" "Gother"))
+     ;; Reread clears old head state only if its accepted revision is still
+     ;; current. A reset subscriber can adopt and edit before reset returns.
+     (for-each
+       (lambda (reenter?)
+         (read-editor
+           `(let* ([b (current-buffer)] [id (head:buffer-store-id b)] [seen #f] [armed? #t])
+              (define (view) (list (head:buffer-history b) (mark) (point)))
+              (insert-text! "old ")
+              (head:buffer-marked-set! b #t)
+              (parameterize ([kernel:registering-module 'wiring-reread])
+                (store:subscribe! id
+                  (lambda (event)
+                    (when (and ,reenter? armed? (eq? (car event) 'reset))
+                      (set! armed? #f)
+                      (guard (ex [else (set! seen (kernel:condition-text ex))])
+                        ;; This subscriber can run before the head's notice.
+                        (head:sync-foreign-edits! id)
+                        (goto-point! '(0 . 0))
+                        (insert-text! "later ")
+                        (head:buffer-mark-row-set! b 0)
+                        (head:buffer-mark-col-set! b 2)
+                        (head:buffer-marked-set! b #t)
+                        (set! seen (view)))))))
+              (set-top-level-value! 'reread-observation
+                (lambda ()
+                  (list (head:buffer-lines b) (head:buffer-base b) (head:buffer-modified b)
+                        (if ,reenter? (if (string? seen) seen (and seen (equal? seen (view))))
+                            (equal? (list (head:buffer-history b) (mark)) '(#(() ()) #f)))
+                        (length (store:history id)))))
+              #t))
+         (let ([disk (if reenter? "again\n" "reread\n")])
+           (call-with-output-file merge-path (lambda (p) (display disk p)) 'replace)
+           (send! (format "\x1b;xvisit-file! ~s\r" merge-path))
+           (pump! 500)
+           (send! "r")
+           (pump! 700)
+           (check 'reread-preserves-newer-reentrant-head-state
+             (read-editor '(begin (kernel:retract-module! 'wiring-reread) (reread-observation)))
+             (if reenter? (list '#("later again") disk #t #t 1)
+                 (list '#("reread") disk #f #t 0)))))
+       '(#f #t))
      (read-editor
        '(let* ([b (current-buffer)]
                [report (head:find-tool-buffer (format "*merge-~a*" (head:buffer-name b)))])

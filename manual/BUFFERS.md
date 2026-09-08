@@ -132,6 +132,9 @@ Reopening an already visited, externally changed file presents:
 
 The prompt keeps focus until one of its valid keys is pressed. Invalid keyboard
 or mouse input flashes only the echo area, without sound.
+If the buffer's text or facts change while reread is being reviewed, e cancels
+that reread and preserves the newer work and history. Reopen the file to
+review again. This applies in standalone and daemon/attach sessions.
 
 Saving an externally changed file offers `overwrite`, `merge`, or `cancel`.
 The disk comparison runs after pre-save hooks, so a hook's write is included
@@ -464,6 +467,13 @@ shared read-only state.
 newer than the window's cached text. `(head:store-reset! b lines facts)` and
 `(store:reset! actor id lines facts)` install a baseline and related facts
 together; facts are optional. An invalid input changes neither text nor facts.
+An optional final `(revision fact ...)`, built with `(cons revision facts)`
+from that state read, requires the complete reviewed state to still match.
+Both reset forms return the accepted revision, or `#f` if the review is stale
+or the source has disappeared. A refused reset does not change history,
+marks or the head cache. Omitting the review (or passing `#f`) keeps explicit
+unconditional replacement. A returned revision describes that reset's commit;
+callbacks can already have advanced the head/store beyond it.
 
 For shared text, `(store:snapshot id)` returns immutable lines and their
 revision.  `(store:snapshot-since id basis)` also returns a complete list

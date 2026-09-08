@@ -222,16 +222,24 @@
       (enqueue-event! `(create ,id ,name ,actor))
       id))
 
-  (define (reset! actor id lines . facts)
+  (define (reset! actor id lines . options)
     ;; Wholesale replacement: a new baseline, not an edit.  The delta
     ;; log and the undo history clear (a stale basis against a reset
     ;; refuses as basis-too-old), and marks clamp into the new text.
     ;; Related baseline facts may join the same transaction.  Loading
     ;; a file supplies base/trailing/stamp; ordinary edits use edit!.
-    (unless (<= (length facts) 1) (error 'reset! "expected at most one fact batch" facts))
+    ;; Optional (revision fact ...) review data must match the whole state
+    ;; under this same writer. A changed/deleted source returns #f, untouched.
+    (unless (<= (length options) 2) (error 'reset! "expected facts and optional reviewed state" options))
     (let ([text (text:normalize lines)]
-          [updates (datum:copy (writable-properties (if (pair? facts) (car facts) '())))])
-      (transact! actor (lambda (actor) (reset-buffer! actor id text updates)))))
+          [updates (datum:copy (writable-properties (if (pair? options) (car options) '())))]
+          [review (datum:copy (and (= (length options) 2) (cadr options)))])
+      (transact! actor
+        (lambda (actor)
+          (and (or (not review)
+                   (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
+                     (and b (reviewed-state? b review))))
+               (reset-buffer! actor id text updates))))))
 
   (define (reset-buffer! actor id text updates)
     (let ([b (buffer-of 'reset! id)]
@@ -332,11 +340,11 @@
         (lambda (actor)
           (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
             (or (not b)
-                (and (reviewed-state? b revision facts)
+                (and (reviewed-state? b (cons revision facts))
                      (begin (delete-buffer! actor id) #t))))))))
 
-  (define (reviewed-state? b revision facts)
-    (and (= revision (buffer-revision b)) (equal? facts (property-data b))))
+  (define (reviewed-state? b review)
+    (equal? review (cons (buffer-revision b) (property-data b))))
 
   (define (prepare-close)
     ;; Standalone lifetime only: -> owned (id text revision facts) snapshots
@@ -366,7 +374,7 @@
                        (lambda (id)
                          (let ([b (buffer-of 'prepare-close id)] [state (hashtable-ref reviewed id #f)])
                            (or (property-value b 'disposable #f)
-                               (and state (reviewed-state? b (caddr state) (cadddr state))))))
+                               (and state (reviewed-state? b (cons (caddr state) (cadddr state)))))))
                        (vector->list (hashtable-keys (store-buffers (current-store)))))
                      (begin (store-closing?-set! (current-store) #t) #t)))))))))
 
