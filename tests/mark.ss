@@ -198,4 +198,18 @@
      (check 'window-removal-keeps-unmanaged-actor-marks
             (store:marks head:ui-actor other-id) '((custom . (0 . 1))))
 
+     ;; A new process has no publication diff, but the same named actor
+     ;; still owns its old window/selection marks in the daemon.
+     (store:set-mark! head:ui-actor hid '(point . 900) '(0 . 0))
+     (store:set-mark! head:ui-actor other-id '(point . 901) '(0 . 0))
+     (store:set-mark! head:ui-actor other-id 'region (text:make-span 0 0 0 1))
+     (store:set-mark! bot other-id 'point '(0 . 2))
+     (head:resume!)
+     (head:before-frame!)
+     (check 'resume-reconciles-abandoned-window-and-region-names-across-buffers
+       (list (store:mark head:ui-actor hid '(point . 900))
+             (length (store:marks head:ui-actor hid))
+             (store:marks head:ui-actor other-id) (store:marks bot other-id))
+       '(#f 3 ((custom . (0 . 1))) ((point . (0 . 2)))))
+
      (test:finish! 'mark)))

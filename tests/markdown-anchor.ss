@@ -262,4 +262,22 @@
             (vector-ref (head:buffer-fact table-view 'markdown-rendering #f) 8)
             (caddr (head:edit-basis table)))
 
+     ;; A new companion has no row cache. Restore from the source revision,
+     ;; then refit at a different width through the ordinary anchor path.
+     (let ([old table-view] [first (head:window-index w1)] [second (head:window-index w2)])
+       (head:checkpoint!)
+       (head:forget-buffer! old)
+       (foreign! table (text:make-span 0 0 0 0) '("# Offline" "" ""))
+       (let ([revision (store:revision (head:buffer-store-id table))])
+         (check 'resume-rebuilds-the-source-companion (head:resume!) #t)
+         (set! table-view (markdown:companion table))
+         (set! w1 (head:window-numbered first))
+         (set! w2 (head:window-numbered second))
+         (head:window-width-set! w1 24)
+         (head:before-frame!)
+         (check 'resumed-companion-refits-with-all-source-anchors
+           (list (not (eq? old table-view)) (anchors table-view)
+                 (store:revision (head:buffer-store-id table)))
+           (list #t (expected "After table" "Tail" #f) revision))))
+
      (format #t "~a markdown anchor checks passed\n" checks)))

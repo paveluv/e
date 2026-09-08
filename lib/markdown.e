@@ -853,15 +853,8 @@
                           (cons (max 0 (min (car p) (- (vector-length lines) 1))) col)))]
                      [anchors
                       (if old
-                          (append
-                            (list (cons 'spot (anchor (head:buffer-spot-row b) (head:buffer-spot-col b)))
-                                  (cons 'spot-top (anchor (head:buffer-spot-top b) 0))
-                                  (cons 'mark (anchor (head:buffer-mark-row b) (head:buffer-mark-col b))))
-                            (apply append
-                              (map (lambda (w)
-                                     (list (cons w (anchor (head:window-prow w) (head:window-pcol w)))
-                                           (cons (cons 'top w) (anchor (head:window-top w) 0))))
-                                   (filter (lambda (w) (eq? (head:window-buffer w) b)) (head:windows)))))
+                          (map (lambda (entry) (cons (car entry) (anchor (cadr entry) (cddr entry))))
+                            (head:buffer-placements b))
                           '())])
                 (let-values ([(text styles links rows) (markdown-render (vector->list lines) width)])
                   (let ([r (vector (list->vector styles) (list->vector links) (list->vector rows)
@@ -895,6 +888,7 @@
     b)
 
   (define (attach-source-view! b)
+    (head:buffer-fact-set! b 'resume-kind 'markdown)
     (head:register-view! b (lambda () (refresh-render! b)))
     (mode:choose! b "markdown-view")
     b)
@@ -920,6 +914,29 @@
       (attach-source-view! b)
       (refresh-render! b)
       b))
+
+  (define (capture-resume b positions)
+    (let ([source (render-input b)] [r (rendering-of b)])
+      (if (and (head:buffer? source) (head:buffer-store-id source) r)
+          (values (list (head:buffer-store-id source) (rendering-revision r) (head:buffer-name b))
+            (map (lambda (entry) (cons (car entry) (cons (source-row-at r (cadr entry)) (cddr entry)))) positions))
+          (values #f positions))))
+
+  (define (restore-resume reference positions)
+    ;; Source row starts follow edits; view columns retain their separate
+    ;; meaning. Rendering at this head's width never becomes shared text.
+    (apply
+      (lambda (id revision name)
+        (let-values ([(source anchors)
+                      (head:resume-source id revision
+                        (map (lambda (entry) (cons (car entry) (cons (cadr entry) 0))) positions))])
+          (if (and source (equal? (mode:name-of source) "markdown"))
+              (let* ([b (source-view source name)] [r (rendering-of b)])
+                (values b
+                  (map (lambda (anchor position)
+                         (cons (car anchor) (cons (view-row-showing r (cadr anchor)) (cddr position))))
+                    anchors positions)))
+              (values #f positions)))) reference))
 
   (define (markdown-view! . b*)
     ;; Show a local companion in this window; other windows can keep
@@ -1052,6 +1069,7 @@
     (paint:add-highlighter! link-hint)
     (head:add-pre-redraw-hook! refit-views!)
     (head:add-buffer-kill-hook! forget-render!)
+    (head:register-resume! 'markdown capture-resume restore-resume)
     ;; Reconstruct callbacks and derived data from local inputs even
     ;; when runtime-created registrations survived module retraction.
     (for-each

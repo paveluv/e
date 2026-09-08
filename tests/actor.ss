@@ -404,4 +404,22 @@
      (test:check 'reply-failure-cannot-be-replayed (actor:answer! throwing "again") #f)
      (test:check 'no-stress-questions-remain (actor:pending stress) '())
 
+     (let* ([owner '(head "checkpoint")]
+            [state (vector (string-copy "kill text") (list 'layout))])
+       (actor:register! owner void)
+       (actor:checkpoint! owner state)
+       (string-set! (vector-ref state 0) 0 #\X)
+       (set-car! (vector-ref (actor:checkpoint owner) 1) 'changed)
+       (actor:detach! owner)
+       (test:check 'checkpoint-owns-input-and-reads-and-outlives-the-endpoint
+         (list (actor:checkpoint owner) (actor:checkpoint '(head "another"))
+               (test:raises? (lambda () (actor:checkpoint! owner 'obsolete))))
+         '(#("kill text" (layout)) #f #t))
+       (actor:register! owner void)
+       (test:check 'checkpoint-replacement-rejects-runtime-objects-before-mutation
+         (list (test:raises? (lambda () (actor:checkpoint! owner void)))
+               (actor:checkpoint owner)
+               (begin (actor:checkpoint! owner '(new layout)) (actor:checkpoint owner)))
+         '(#t #("kill text" (layout)) (new layout))))
+
      (test:finish! 'actor)))

@@ -63,6 +63,9 @@
     (define (control!)
       (unless (and control? (not (policy:revoked? session)))
         (error 'wire "operation requires an all-buffer head connection" operation)))
+    (define (head!)
+      (unless (and (eq? (car actor) 'head) (not (policy:revoked? session)))
+        (error 'wire "operation requires an active head connection" operation)))
     (case operation
       [(buffers actors)
        (arity 0)
@@ -119,7 +122,7 @@
          [(properties) (arity 2) (apply store:set-properties! actor args) #t])]
       [(marks)
        (arity 4)
-       (unless (eq? (car actor) 'head) (error 'wire "head marks require a head"))
+       (head!)
        (call-with-values
          (lambda ()
            (store:set-marks! actor (car args) (cadr args)
@@ -128,6 +131,18 @@
                       (if (and (pair? (cdr entry)) (eq? (cadr entry) 'span))
                           (text:datum->span (caddr entry)) (cdr entry)))) (caddr args))
              (cadddr args))) list)]
+      [(read-marks)
+       (head!) (arity 1)
+       (map (lambda (entry)
+              (cons (car entry) (if (text:span? (cdr entry))
+                                  (list 'span (text:span->datum (cdr entry))) (cdr entry))))
+         (store:marks actor (car args)))]
+      [(checkpoint)
+       (head!)
+       (case (length args)
+         [(0) (actor:checkpoint actor)]
+         [(1) (actor:checkpoint! actor (car args)) #t]
+         [else (error 'wire "expected an optional checkpoint")])]
       [(surface) (arity 1) (surface:snapshot (car args))]
       [(rows) (arity 4) (apply surface:rows args)]
       [(send) (control!) (arity 2) (apply actor:send! args)]

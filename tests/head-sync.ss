@@ -14,6 +14,7 @@
      (import (prefix (head) head:)
              (prefix (store) store:)
              (prefix (text) text:)
+             (prefix (actor) actor:)
              (prefix (kernel) kernel:)
              (prefix (test) test:))
 
@@ -377,5 +378,50 @@
                   (eq? (head:window-buffer w) last-visible)
                   (store:exists? (head:buffer-store-id last-visible)))
             '(#t #t #f #t))
+
+     ;; Resume follows the saved basis, not the fresh process's initial
+     ;; cache. The same table covers a complete chain, a reset and expiry.
+     (let ([b (head:new-buffer "resume positions")])
+       (head:set-buffers! (list b))
+       (head:set-layout-root! (head:current))
+       (head:set-window-buffer! (head:current) b)
+       (for-each
+         (lambda (kind expected)
+           (head:store-reset! b '("zero" "middle" "last"))
+           (let ([w (head:current)] [id (head:buffer-store-id b)])
+             (head:window-prow-set! w 1)
+             (head:window-pcol-set! w 3)
+             (head:window-top-set! w 1)
+             (head:buffer-mark-row-set! b 2)
+             (head:buffer-mark-col-set! b 2)
+             (head:buffer-marked-set! b #t)
+             (head:buffer-spot-row-set! b 2)
+             (head:buffer-spot-col-set! b 4)
+             (head:buffer-spot-top-set! b 1)
+             (head:set-kill-ring! (string-copy "saved kill"))
+             (head:checkpoint!)
+             (case kind
+               [(edit) (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("new" ""))]
+               [(reset) (store:reset! bot id '("x"))]
+               [(expired)
+                (do ([i 0 (+ i 1)]) ((= i 257))
+                  (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("x")))])
+             (head:window-prow-set! w 0)
+             (head:set-kill-ring! "lost")
+             (let ([truth (call-with-values (lambda () (store:snapshot-state id)) list)])
+               (check (list 'resume-from-saved-revision kind)
+                 (list (head:resume!)
+                       (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:kill-ring)
+                       (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
+                 (list #t expected #t "saved kill" #t)))))
+         '(edit reset expired)
+         '(((3 . 4) (2 . 0) (3 . 2) (2 . 3) (2 . 0))
+           ((0 . 1) (0 . 0) (0 . 1) (0 . 1) (0 . 0))
+           ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))))
+       ;; The unchanged-frame comparison owns its data too.
+       (string-set! (head:kill-ring) 0 #\X)
+       (head:checkpoint!)
+       (check 'mutating-live-kill-text-does-not-mutate-the-last-checkpoint
+         (caddr (actor:checkpoint head:ui-actor)) "Xaved kill"))
 
      (test:finish! 'head-sync)))

@@ -485,6 +485,20 @@ revisions in this API, `head:edit-basis`, and `head:buffer-state` are distinct
 from `head:buffer-revision`, which counts repaint changes. Run head reads and
 mutations on the main pump; workers schedule work with `head:run-on-main!`.
 
+Local views over shared sources can participate in named-screen restoration.
+Set their local `resume-kind` fact to a symbol and register
+`(head:register-resume! kind capture restore)` in the owning module's `init!`.
+`capture` receives the buffer and an alist of placements, returning two values:
+a plain descriptor list (or `#f` when unavailable) and projected placements.
+`restore` receives that descriptor and the saved placements, returning the
+rebuilt buffer (or `#f`) and its current placements. Placement keys are `spot`,
+`spot-top`, `mark`, a window number, or `(top . window-number)`; coordinates are
+`(row . column)`. Keep keys unchanged and serialize source/query intent only.
+`(head:resume-source id revision placements)` returns the current shared buffer
+and rebased/clamped source placements. Markdown uses this path for its source
+rows while retaining rendered columns separately. The head restores the layout
+and applies placements; providers do not select windows or publish shared text.
+
 `(store:set-marks! actor id basis updates drops)` publishes named positions
 and regions in one batch. Updates are an alist of names to `(row . column)`
 positions or text spans; drops is a list of names. A numeric basis must be

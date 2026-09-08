@@ -16,7 +16,7 @@
 (library (actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
           current call-as identity? audience? in-audience? send!
-          ask! answer! cancel! pending)
+          ask! answer! cancel! pending checkpoint checkpoint!)
   (import (rnrs)
           (only (chezscheme) box unbox set-box! void make-mutex with-mutex
                 current-time time-second parameterize)
@@ -118,6 +118,26 @@
     ;; Keep the lock across reload alongside the existing cells, so old
     ;; reply closures and a new module instance serialize the same state.
     (unbox (kernel:persistent-cell 'actors-protocol-lock make-mutex)))
+
+  ;; One opaque screen checkpoint per name, independent of its endpoint.
+  ;; Only the head interprets this data; no buffer snapshots or callbacks.
+  ;; Actor is a pinned process root, so ordinary module state has its lifetime.
+  (define checkpoints '())
+
+  (define (checkpoint actor)
+    (datum:copy
+      (with-mutex protocol-lock
+        (cond [(assoc actor checkpoints) => cdr] [else #f]))))
+
+  (define (checkpoint! actor state)
+    (unless (and (identity? actor) (= (length actor) 2)
+                 (eq? (car actor) 'head) (string? (cadr actor)) (registered? actor))
+      (error 'checkpoint! "expected an attached named head" actor))
+    (let ([actor (datum:copy actor)] [state (datum:copy state)])
+      (with-mutex protocol-lock
+        (set! checkpoints
+          (cons (cons actor state)
+            (filter (lambda (entry) (not (equal? (car entry) actor))) checkpoints))))))
 
   (define (ask! from to question choices reply!)
     ;; Pose a question; -> the ticket, or #f when the target actor is

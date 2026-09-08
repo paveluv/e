@@ -2,7 +2,7 @@
 ;; registration, delivery and open questions belong to the daemon.
 (library (actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
-          current call-as identity? audience? in-audience? send! pending answer!)
+          current call-as identity? audience? in-audience? send! pending answer! checkpoint checkpoint!)
   (import (chezscheme)
           (prefix (client) client:) (prefix (identity) identity:)
           (prefix (file) file:) (prefix (startup) startup:))
@@ -45,4 +45,9 @@
     (unless (equal? actor (client:identity)) (error 'pending "a head reads its own questions"))
     (client:request 'pending))
   (define (answer! ticket answer) (client:request 'answer ticket answer))
+  (define (own-checkpoint actor . state)
+    (unless (equal? actor (client:identity)) (error 'checkpoint "a head owns its own checkpoint"))
+    (apply client:request 'checkpoint state))
+  (define (checkpoint actor) (own-checkpoint actor))
+  (define (checkpoint! actor state) (own-checkpoint actor state) (void))
 )

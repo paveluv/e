@@ -79,6 +79,10 @@ without restoring an old snapshot or changing its read-only state.
 Apps such as describe use `markdown:companion!` to prepare a source's view
 without selecting a window. Its optional name is a preferred local label;
 later calls preserve the same companion, including a renamed one.
+Named daemon attachments rebuild companions from their shared source identity
+and revision, preserving the local label and following saved source-row anchors
+through edits and width changes. Literal views and companions of local-only
+sources have no daemon source to restore.
 `markdown:render` is the pure renderer
 (the automated suite pins it; `width` bounds tables, default 79), and
 `markdown:view-install!` renders literal lines into a local buffer;

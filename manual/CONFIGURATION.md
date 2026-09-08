@@ -40,9 +40,21 @@ attachment reports an error.
 
 `C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
 stay alive; local unsaved text still requires confirmation. A new attachment
-reads the current buffers and reuses shared scratch. Restoring a named head's
-layout, positions and kill text is still being built, as are agent questions
-first asked while their owner is offline.
+with the same `--name` restores its split layout, selected window and buffers,
+points, viewports, selection, window preferences and kill text. Use distinct
+names for independent screens. An explicit file argument opens in the restored
+selected window. Without a saved screen, normal startup configuration applies.
+
+The daemon retains the latest completed screen checkpoint, including after an
+abrupt SSH disconnect. Shared edits made while absent move the saved positions;
+after a reset or expired history, positions clamp to the current text. Markdown
+and describe companions rebuild from their shared sources at the new width.
+Existing registered tools reopen by identity. A missing or hidden source, or a
+local view without a restore provider, uses the startup buffer in that window.
+Arbitrary local buffer text and per-tool query settings are not saved. Very
+small terminals use the editor's usual layout fitting. Checkpoints last only
+while the daemon runs. Agent questions first asked while their owner is offline
+are still being built.
 
 Scheme clients can read, edit, undo and redo according to their session's buffer
 permissions. The current messages and primitives are described in the development

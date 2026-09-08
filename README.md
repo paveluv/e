@@ -78,7 +78,8 @@ optional `base-config.e`, and compiled `eo/` beside its own loader.
 This branch supports [daemon attachment](manual/CONFIGURATION.md#daemon-and-attachment):
 `e --daemon` keeps shared buffers and terminals alive; `e --attach` opens a
 head on it, and `C-x C-c` detaches that head. Several screens can edit together.
-Restoring a named screen's layout and offline agent questions remain in progress.
+Reattaching with the same `--name` restores its layout, positions and kill text,
+including after an abrupt disconnect. Offline agent questions remain in progress.
 
 On FreeBSD, where Chez installs a differently named script interpreter, run
 `chez-scheme --script e` or change the shebang as explained in the loader.

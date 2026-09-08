@@ -23,7 +23,7 @@
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'mode-test label actual expected)))
+         (error 'mode-test (symbol->string label) actual expected)))
 
      ;; -- registration and lookup -------------------------------------
 
@@ -65,6 +65,19 @@
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
      (mode:choose! plain #f)
      (check 'unchosen (mode:of plain) #f)
+
+     (check 'adoption-distinguishes-undetected-and-explicit-no-mode
+       (map (lambda (choice)
+              (let* ([id (store:create! '(agent mode-test) "mode adoption" '("text")
+                           (append '((file . "/nowhere/x.probe") (wrap . default))
+                             (if (eq? choice 'missing) '() (list (cons 'mode choice) '(mode-auto . #f)))))]
+                     [events '()]
+                     [token (store:subscribe! id (lambda (event) (set! events (cons event events))))]
+                     [b (head:adopt-store-buffer! id)])
+                (store:unsubscribe! token)
+                (list (mode:name-of b) (head:buffer-mode-auto b) (length events))))
+         '(missing #f "probe"))
+       '(("probe" #t 2) (#f #f 0) ("probe" #f 0)))
 
      ;; Observers see the mode and whether it was detected as one choice.
      (define atomic-mode (head:new-buffer "atomic.probe"))

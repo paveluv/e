@@ -314,12 +314,15 @@
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
               "scheme-mode" "search" "style" "terminal" "tty"))))
       (load-config!)
-      (if file
-          (open-file! file)
-          (when startup-page
-            (guard (ex [else (void)]) (startup-page))
-            ;; the greeting outlives the page's own load chatter
-            (echo:set-text! (startup-greeting)))))
+      ;; Config loads the local view providers before resolving their plain
+      ;; descriptors. An explicit file still opens in the restored selection.
+      (let ([resumed? (and (eq? (startup:mode) 'attach) (head:resume!))])
+        (if file
+            (open-file! file)
+            (when (and (not resumed?) startup-page)
+              (guard (ex [else (void)]) (startup-page))
+              ;; the greeting outlives the page's own load chatter
+              (echo:set-text! (startup-greeting))))))
     ;; A stray SIGINT outside an evaluation must not drop into Chez's break
     ;; prompt underneath the editor's screen.
     (keyboard-interrupt-handler void)
@@ -352,6 +355,7 @@
             (paint:window-layout)
             (head:before-frame!)
             (paint:redraw!)
+            (when (eq? (startup:mode) 'attach) (head:checkpoint!))
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
             ;; editor.
@@ -365,6 +369,8 @@
             (after-key!)
             (loop))))
       (lambda ()
+        (when (eq? (startup:mode) 'attach)
+          (guard (ex [else (void)]) (head:checkpoint!)))
         (head:run-shutdown-hooks!)
         (paint:set-screen-live! #f)
         (paint:reset-cursor-style!)

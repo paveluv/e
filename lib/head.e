@@ -82,6 +82,7 @@
           set-repaint-hook! set-adopt-hook! call-with-display-update buffer-point
           add-buffer-kill-hook! add-pre-redraw-hook!
           before-frame! add-shutdown-hook! run-shutdown-hooks!
+          checkpoint! resume! register-resume! resume-source buffer-placements
           registered-apps app-of app-buffer? detach-app! register-app!
           set-app-cursor-visible! set-app-manages-viewport!
           set-app-status-position! app-cursor-visible-in?
@@ -99,7 +100,7 @@
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme) keyboard-interrupt-handler
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
-                format remq cons* time-second current-time
+                format remq cons* iota time-second current-time
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
           (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
@@ -110,6 +111,7 @@
           (prefix (surface) surface:)
           (prefix (render) render:)
           (prefix (text) text:)
+          (prefix (datum) datum:)
           (prefix (actor) actor:)
           (prefix (log) log:))
 
@@ -412,7 +414,10 @@
   (define (frame!)
     ;; a frame on a wake: the store's news first, then the paint
     (before-frame!)
-    (frame-hook))
+    (frame-hook)
+    ;; Nested prompts can temporarily borrow windows. Only an outer pump
+    ;; frame checkpoints the screen the user will return to.
+    (when (and (in-main-pump) (eq? (startup:mode) 'attach)) (checkpoint!)))
 
   ;; The host's color scheme, learned from its DSR 997 reports (mode
   ;; 2031 subscribes to them at startup): #f until the host says, then
@@ -1041,6 +1046,18 @@
     (let ([row (max 0 (min (car p) (- (vector-length text) 1)))])
       (cons row (max 0 (min (cdr p) (string-length (vector-ref text row)))))))
 
+  (define (buffer-placements b)
+    ;; The same anchors travel through edits, derived refits and resume.
+    (append
+      (list (cons 'spot (cons (buffer-spot-row b) (buffer-spot-col b)))
+            (cons 'spot-top (cons (buffer-spot-top b) 0))
+            (cons 'mark (cons (buffer-mark-row b) (buffer-mark-col b))))
+      (apply append
+        (map (lambda (w)
+               (list (cons w (cons (window-prow w) (window-pcol w)))
+                     (cons (cons 'top w) (cons (window-top w) 0))))
+          (filter (lambda (w) (eq? (window-buffer w) b)) the-windows)))))
+
   (define (store-history! b direction scope)
     ;; Shared text always uses the store's attributed inverse journal.
     ;; A head snapshot is presentation state, never a source of shared
@@ -1139,7 +1156,10 @@
                             (add-buffer! b)
                             (refresh-buffer-rendition! b)
                             (unless (assq 'wrap facts) (buffer-fact-set! b 'wrap 'default))
-                            (unless (buffer-fact b 'mode #f) (adopt-hook b))
+                            ;; Explicit #f is a mode choice, not an absent
+                            ;; fact. Reattachment must not detect over it.
+                            (let ([missing (list 'missing-mode)])
+                              (when (eq? (buffer-fact b 'mode missing) missing) (adopt-hook b)))
                             (if (buffer-visible? b)
                                 (buffer-of-store-id id)
                                 (begin
@@ -1424,6 +1444,198 @@
       ;; request another frame rather than spinning publication in a loop.
       (for-each (lambda (b) (guard (ex [else (void)]) (sync-store-buffer! b))) resync)
       (unless (null? resync) (wake-main!))))
+
+
+  ;;; Named screen resume ------------------------------------------------------
+
+  ;; A checkpoint is (screen 1 kill-text selected-number layout buffers).
+  ;; Splits retain their ordinary orientation/weights; leaves retain a buffer
+  ;; slot and window preferences. A buffer entry is (reference numbers marked
+  ;; placements), where placements use window numbers instead of records.
+  ;; Shared references are (shared id revision); local views register a plain
+  ;; descriptor and project their coordinates without exporting their cache.
+  (define resume-registry (kernel:make-registry car))
+  (define last-checkpoint #f)
+
+  (define (register-resume! kind capture restore)
+    (unless (and (symbol? kind) (not (memq kind '(shared tool)))
+                 (procedure? capture) (procedure? restore))
+      (error 'register-resume! "expected a local view kind and two procedures"))
+    (kernel:registry-add! resume-registry (list kind capture restore)))
+
+  (define (resumer kind)
+    (kernel:registry-find resume-registry (lambda (entry) (eq? (car entry) kind))))
+
+  (define (capture-buffer b)
+    (let ([positions
+           (map (lambda (entry)
+                  (let ([place (car entry)])
+                    (cons (cond [(window? place) (window-index place)]
+                                [(placement-window place) => (lambda (w) (cons 'top (window-index w)))]
+                                [else place])
+                      (cdr entry))))
+             (buffer-placements b))])
+      (let-values ([(reference positions)
+                    (cond
+                      [(buffer-store-id b) => (lambda (id) (values (list 'shared id (buffer-store-rev b)) positions))]
+                      [(resumer (buffer-fact b 'resume-kind #f))
+                       => (lambda (entry)
+                            (let-values ([(reference positions) ((cadr entry) b positions)])
+                              (values (and reference (cons (car entry) reference)) positions)))]
+                      [(buffer-fact b 'tool-key #f)
+                       => (lambda (key) (values (list 'tool key (buffer-name b)) positions))]
+                      [else (values #f positions)])])
+        (list reference (buffer-line-numbers-setting b) (buffer-marked b) positions))))
+
+  (define (checkpoint!)
+    ;; No store reads here: every coordinate describes exactly the adopted
+    ;; text/view the head just painted. Unchanged wake frames send nothing.
+    (let* ([slots (map cons the-buffers (iota (length the-buffers)))]
+           [layout
+            (let capture ([node the-root])
+              (if (window? node)
+                  (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
+                    (window-topseg node) (window-left node) (window-wrap node) (window-following? node))
+                  (list 'split (layout-split-orientation node)
+                    (layout-split-first-weight node) (layout-split-second-weight node)
+                    (capture (layout-split-first node)) (capture (layout-split-second node)))))]
+           [state (list 'screen 1 the-kill-ring (window-index the-current) layout (map capture-buffer the-buffers))])
+      (unless (equal? state last-checkpoint)
+        (let ([state (datum:copy state)])
+          (actor:checkpoint! ui-actor state)
+          (set! last-checkpoint state)))))
+
+  (define (project-resume-positions positions lines changes)
+    (let ([deltas (if changes (map caddr changes) '())])
+      (map (lambda (entry)
+             (cons (car entry) (clamp-text-position lines (fold-left text:rebase-position (cdr entry) deltas))))
+        positions)))
+
+  (define (resume-source id basis positions)
+    ;; Local projections and ordinary shared buffers use one source path.
+    ;; Ask for the complete chain at the saved revision, adopt current truth,
+    ;; then account for any reentrant adoption before returning coordinates.
+    (let ([b (adopt-store-buffer! id)])
+      (if (not b) (values #f positions)
+          (let-values ([(lines revision changes) (store:snapshot-since id basis)])
+            (let ([positions (project-resume-positions positions lines changes)])
+              (adopt-snapshot! b basis lines revision changes '())
+              (let-values ([(lines revision changes) (snapshot-since b revision)])
+                (values b (project-resume-positions positions lines changes))))))))
+
+  (define (restore-buffer entry)
+    (apply
+      (lambda (reference numbers marked positions)
+        (unless (and (memq numbers '(default #t #f)) (boolean? marked))
+          (error 'resume! "invalid buffer preferences"))
+        (let-values ([(b positions)
+                      (if (not reference) (values #f positions)
+                          (guard (ex [else (values #f positions)])
+                            (case (car reference)
+                              [(shared) (apply resume-source (append (cdr reference) (list positions)))]
+                              [(tool)
+                               (let ([b (find-tool-buffer (cadr reference))])
+                                 (when b
+                                   (buffer-name-set! b (caddr reference))
+                                   (let ([app (app-of b)]) (when app ((app-refresh! app)))))
+                                 (values b positions))]
+                              [else
+                               (let ([entry (resumer (car reference))])
+                                 (if entry ((caddr entry) (cdr reference) positions) (values #f positions)))])))])
+          (vector b (and b (content-revision b)) numbers marked positions)))
+      entry))
+
+  (define (restore-screen! state)
+    (apply
+      (lambda (tag version kill selected layout entries)
+        (unless (and (eq? tag 'screen) (eqv? version 1) (string? kill))
+          (error 'resume! "unsupported screen checkpoint"))
+        (let* ([fallback (window-buffer the-current)]
+               [buffers (list->vector (map restore-buffer entries))]
+               [indices '()]
+               [natural? (lambda (n) (and (integer? n) (exact? n) (>= n 0)))]
+               [root
+                (let restore ([node layout])
+                  (case (car node)
+                    [(window)
+                     (apply
+                       (lambda (tag index slot topseg left wrap following?)
+                         (unless (and (for-all natural? (list index slot topseg left))
+                                      (< slot (vector-length buffers)) (not (memv index indices)) (boolean? following?))
+                           (error 'resume! "invalid window checkpoint"))
+                         (set! indices (cons index indices))
+                         (%make-window index (or (vector-ref (vector-ref buffers slot) 0) fallback)
+                           0 topseg left 0 0 1 0 80 wrap following?)) node)]
+                    [(split)
+                     (apply
+                       (lambda (tag orientation first-weight second-weight first second)
+                         (unless (and (memq orientation '(right below))
+                                      (for-all (lambda (n) (and (rational? n) (> n 0))) (list first-weight second-weight)))
+                           (error 'resume! "invalid split checkpoint"))
+                         (make-layout-split orientation (restore first) (restore second) first-weight second-weight)) node)]
+                    [else (error 'resume! "invalid layout checkpoint")]))]
+               [windows (layout-leaves root)]
+               [current (find (lambda (w) (eqv? (window-index w) selected)) windows)])
+          (unless current (error 'resume! "selected window is missing"))
+          ;; Validate and translate every placement before installing the tree.
+          (vector-for-each
+            (lambda (entry)
+              (let ([b (vector-ref entry 0)])
+                (when b
+                  (let ([positions
+                         (map (lambda (entry)
+                                (let* ([place (car entry)] [top? (pair? place)]
+                                       [index (if top? (cdr place) place)]
+                                       [w (and (natural? index)
+                                               (find (lambda (w) (= (window-index w) index)) windows))])
+                                  (cons (if w (if top? (cons 'top w) w) place) (cdr entry))))
+                           (vector-ref entry 4))])
+                    (check-placements! b positions)
+                    (let-values ([(lines revision changes) (snapshot-since b (vector-ref entry 1))])
+                      (vector-set! entry 4 (project-resume-positions positions lines changes))))))) buffers)
+          (set-layout-root! root)
+          (set-current! current)
+          (set-kill-ring! kill)
+          (let ([restored (filter values (map (lambda (entry) (vector-ref entry 0)) (vector->list buffers)))])
+            (set! the-buffers (append restored (filter (lambda (b) (not (memq b restored))) the-buffers))))
+          (vector-for-each
+            (lambda (entry)
+              (let ([b (vector-ref entry 0)])
+                (when b
+                  (buffer-line-numbers-setting-set! b (vector-ref entry 2))
+                  (buffer-marked-set! b (vector-ref entry 3))
+                  ;; apply-placements resets topseg for refits. Resume keeps
+                  ;; the saved segment; the painter clamps it for this width.
+                  (for-each (lambda (entry)
+                              (let* ([w (placement-window (car entry))] [seg (and w (window-topseg w))])
+                                (apply-placements! b (list entry))
+                                (when seg (window-topseg-set! w seg)))) (vector-ref entry 4))
+                  (clamp-buffer-positions! b)))) buffers)
+          (request-repaint!)
+          #t)) state))
+
+  (define (resume!)
+    ;; Recover the old publication's *names*, not its stale coordinates.
+    ;; The ordinary exact-revision diff removes abandoned windows/regions,
+    ;; including buffers no longer displayed, without touching custom marks.
+    (set! published-marks
+      (filter values
+        (map (lambda (id)
+               (guard (ex [else #f])
+                 (let ([names
+                        (filter (lambda (entry)
+                                  (let ([name (car entry)])
+                                    (or (memq name '(point region))
+                                        (and (pair? name) (memq (car name) '(point region))
+                                             (integer? (cdr name)) (exact? (cdr name)) (> (cdr name) 0)))))
+                          (store:marks ui-actor id))])
+                   (and (pair? names) (list id #f (map (lambda (entry) (cons (car entry) #f)) names))))))
+          (store:buffer-list))))
+    (let ([state (actor:checkpoint ui-actor)])
+      (set! last-checkpoint (datum:copy state))
+      (and state
+           (guard (ex [else (log:add! 'head (format "Screen checkpoint ignored: ~a" (kernel:condition-text ex))) #f])
+             (call-with-display-update (lambda () (restore-screen! state)))))))
 
 
   ;;; Apps and views ------------------------------------------------------------

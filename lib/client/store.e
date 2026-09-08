@@ -4,7 +4,7 @@
   (export create! delete! discard! reset! rename! buffer-list exists? visible? buffer-name find-named
           snapshot snapshot-state snapshot-since revision line-count line extract
           property properties set-property! set-properties!
-          edit! edit-with-snapshot! history-step! undo-authors history blame set-marks!
+          edit! edit-with-snapshot! history-step! undo-authors history blame marks set-marks!
           validate-properties validate-edit-context watch! unsubscribe!)
   (import (chezscheme)
           (prefix (client) client:) (prefix (kernel) kernel:)
@@ -121,4 +121,11 @@
                (cons (car entry) (if (text:span? (cdr entry))
                                    (list 'span (text:span->datum (cdr entry))) (cdr entry)))) updates)
         drops)))
+  (define (marks actor id)
+    (check-actor actor)
+    (map (lambda (entry)
+           (cons (car entry)
+             (if (and (pair? (cdr entry)) (eq? (cadr entry) 'span))
+                 (text:datum->span (caddr entry)) (cdr entry))))
+      (client:request 'read-marks id)))
 )

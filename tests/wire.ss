@@ -158,6 +158,7 @@
      (define output (test:recorder))
      (define clients '())
      (define heads '())
+     (define killed-heads '())
      (define stopped? #f)
      (define last-request #f)
      (define notices (test:recorder))
@@ -190,15 +191,16 @@
      ;; Drive the real editor in the daemon's installation. All heads use
      ;; the same object cache, which also exercises repeated client loading.
      (define probe (string-append root "/head-result"))
-     (define (start-head name)
-       (let* ([process (sys:spawn-terminal-process "/bin/sh"
+     (define (start-head name . width)
+       (let* ([columns (if (pair? width) (car width) 80)]
+              [process (sys:spawn-terminal-process "/bin/sh"
                          (format "exec scheme-script ~a --attach --socket ~a --name ~a"
                            (quote-shell (string-append root "/e"))
                            (quote-shell (string-append root "/unused/../socket λ")) (quote-shell name))
-                         root 24 80)]
+                         root 24 columns)]
               [head (vector process
                       (transcoded-port (sys:terminal-process-input process) (make-transcoder (utf-8-codec) 'none 'replace))
-                      (vt:make-emulator 24 80) "")])
+                      (vt:make-emulator 24 columns) "")])
          (set! heads (cons head heads)) head))
      (define (pump-head! head)
        (let drain ()
@@ -234,6 +236,20 @@
                (and (file-exists? probe)
                     (begin (set! result (call-with-input-file probe read)) (not (eof-object? result)))))))
          result))
+     (define (screen-state head)
+       (head-read head
+         '(list (let shape ([node (head:root)])
+                  (if (head:window? node) (head:window-index node)
+                      (list (head:layout-split-orientation node)
+                            (head:layout-split-first-weight node) (head:layout-split-second-weight node)
+                            (shape (head:layout-split-first node)) (shape (head:layout-split-second node)))))
+                (head:window-index (head:current)) (head:kill-ring)
+                (map (lambda (w)
+                       (let ([b (head:window-buffer w)])
+                         (list (or (head:buffer-store-id b) (head:buffer-name b))
+                               (buffer-line b (head:window-prow w)) (head:window-pcol w)
+                               (and (head:buffer-store-id b) (buffer-line b (head:window-top w)))
+                               (head:window-wrap w)))) (head:windows)))))
      (define (occurrences text part)
        (let loop ([from 0] [count 0])
          (cond [(string:search text part from (string-length text))
@@ -308,10 +324,11 @@
                    (request 7 edit 1 0 (0 0 0 0) ("x") (g "invalid" ((trailing . #t)) ((trailing . #f))))
                    (request 8 edit 1 0 (0 0 0 0) ("x") #f #f)
                    (request 9 redo 1 all) (request 10 snapshot 1 #f)
-                   (request 11 snapshot 1 -1) (request 12 watch extra) (request 13 actors)))
+                   (request 11 snapshot 1 -1) (request 12 watch extra)
+                   (request 13 checkpoint (head "another") stolen) (request 14 actors)))
                '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 error)
                  (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error)
-                 (reply 9 error) (reply 10 error) (reply 11 error) (reply 12 error) (reply 13 ok)))
+                 (reply 9 error) (reply 10 error) (reply 11 error) (reply 12 error) (reply 13 error) (reply 14 ok)))
              (test:check 'existing-endpoint-is-never-unlinked
                (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name 1))
                '(#t "notes λ"))
@@ -326,6 +343,10 @@
                      '#("a local audience")))
              (test:await 'head-detached
                (lambda () (not (exists (lambda (entry) (eq? (caar entry) 'head)) (rpc agent 'actors)))))
+             (test:check 'agents-cannot-read-or-replace-head-checkpoints
+               (map (lambda (message) (list-head (exchange agent message) 3))
+                 '((request 1 checkpoint) (request 2 checkpoint stolen)))
+               '((reply 1 error) (reply 2 error)))
              (let* ([first (connect)] [second (connect)]
                     [writers (list first second)] [actors '((agent "first") (agent "second"))])
                (test:check 'configured-agents-use-server-selected-permissions
@@ -606,6 +627,8 @@
                      (head-wait 'shared-terminal-surface b (lambda () (head-sees? b "attached terminal")))
                      (head-read a '(begin (terminal:send! "through base\n") #t) "\x1d;")
                      (head-wait 'shared-terminal-input b (lambda () (head-sees? b "through base")))
+                     (head-read a '(begin (delete-other-windows!) (head:set-kill-ring! "screen A kill") #t) "\x1d;")
+                     (head-read b '(begin (head:set-kill-ring! "screen B kill") #t) "\x1d;")
                      (head-send! a "\x1d;\x18;\x03;")
                      (head-wait 'real-head-detaches a
                        (lambda () (not (member '(head "screen A") (map car (rpc head 'actors))))))
@@ -615,10 +638,83 @@
                              (and (member '(head "screen B") (map car (rpc head 'actors))) #t))
                        '(#("shared text B") #t #t))
                      (let ([again (start-head "screen A")])
-                       (head-wait 'real-head-reattaches again (lambda () (head-sees? again "shared text B")))
-                       (test:check 'reattach-reuses-the-scratch-buffer
-                         (filter (lambda (name) (string:prefix? "*scratch*" name))
-                           (map (lambda (id) (rpc head 'name id)) (rpc head 'buffers))) '("*scratch*"))))
+                       (head-wait 'real-head-reattaches again (lambda () (head-sees? again "through base")))
+                       (test:check 'clean-reattach-restores-the-terminal-and-reuses-scratch
+                         (list (head-read again '(list (head:buffer-store-id (current-buffer))
+                                                       (length (head:windows)) (head:kill-ring)) "\x1d;")
+                               (filter (lambda (name) (string:prefix? "*scratch*" name))
+                                 (map (lambda (id) (rpc head 'name id)) (rpc head 'buffers))))
+                         (list (list terminal-id 1 "screen A kill") '("*scratch*")))
+                       (let ([plain (rpc head 'create "resume lines"
+                                      (map (lambda (n) (format "resume ~3,'0d" n)) (iota 80)))]
+                             [source (rpc head 'create "resume.md"
+                                       '("|alpha beta gamma delta epsilon|x|" "|-|-|" "|long entry|y|"
+                                         "" "# After table" "" "# Tail"))])
+                         (head-read again
+                           `(begin
+                              (show-buffer! (head:adopt-store-buffer! ,plain))
+                              (split-window-right!) (other-window!)
+                              (let ([source (head:adopt-store-buffer! ,source)])
+                                (mode:choose! source "markdown")
+                                (show-buffer! (markdown:companion! source "<resume view>")))
+                              (goto-point! (cons (let find ([row 0])
+                                                   (if (string=? (buffer-line (current-buffer) row) "After table")
+                                                     row (find (+ row 1)))) 2))
+                              (other-window!) (wrap! #f) (split-window!)
+                              (head:layout-split-first-weight-set! (head:root) 2)
+                              (head:layout-split-second-weight-set! (head:root) 3)
+                              (head:layout-split-first-weight-set! (head:layout-split-first (head:root)) 2)
+                              (head:layout-split-second-weight-set! (head:layout-split-first (head:root)) 1)
+                              (goto-point! '(25 . 3)) (head:window-top-set! (head:current) 20)
+                              (head:buffer-mark-row-set! (current-buffer) 26)
+                              (head:buffer-mark-col-set! (current-buffer) 4)
+                              (head:buffer-marked-set! (current-buffer) #t)
+                              (let ([other (head:window-numbered 2)])
+                                (head:window-prow-set! other 50) (head:window-pcol-set! other 4)
+                                (head:window-top-set! other 45)) #t) "\x1d;")
+                         (let ([before (screen-state again)])
+                           ;; Completion borrows the selected window. A wake
+                           ;; in that modal loop must not checkpoint its chrome.
+                           (head-send! again "\x1b;xhead:window-\t")
+                           (head-wait 'completions-before-loss again (lambda () (head-sees? again "<completions>")))
+                           (vector-set! again 3 "")
+                           (rpc head 'properties plain '((fixture-wake . #t)))
+                           (head-wait 'wake-inside-prompt again
+                             (lambda () (> (occurrences (vector-ref again 3) "\x1b;[?2026l") 0)))
+                           (unless (zero? (system (format "kill -KILL ~a" (sys:terminal-process-pid (vector-ref again 0)))))
+                             (error 'wire-head "could not terminate fixture head"))
+                           (set! killed-heads (cons again killed-heads))
+                           (test:await 'abrupt-head-loss
+                             (lambda () (not (member '(head "screen A") (map car (rpc head 'actors))))))
+                           (rpc head 'edit plain 0 '(0 0 0 0) '("offline" ""))
+                           (rpc head 'edit source (cadr (rpc head 'snapshot source)) '(0 0 0 0) '("# Offline" "" ""))
+                           (rpc head 'rename source "renamed resume.md")
+                           (let ([truth (map (lambda (id) (rpc head 'snapshot id)) (list plain source))]
+                                 [resumed (start-head "screen A" 52)])
+                             (head-wait 'screen-resumes-at-new-width resumed (lambda () (head-sees? resumed "resume 025")))
+                             (test:check 'abrupt-reattach-rebuilds-layout-and-local-source-anchors
+                               (list (screen-state resumed)
+                                     (map (lambda (id) (rpc head 'snapshot id)) (list plain source)))
+                               (list before truth))
+                             (test:check 'resumed-marks-replace-old-window-and-region-names
+                               (head-read resumed
+                                 `(let* ([marks (store:marks head:ui-actor ,plain)] [region (cdr (assq 'region marks))])
+                                    (list (length marks)
+                                          (text:span-start region) (text:span-end region))))
+                               '(5 (26 . 3) (27 . 4)))
+                             (head-send! resumed "\x18;\x03;")
+                             (head-wait 'detach-before-input-removal resumed
+                               (lambda () (not (member '(head "screen A") (map car (rpc head 'actors))))))
+                             (rpc head 'properties plain '((audience)))
+                             (rpc head 'delete source)
+                             (let ([fallback (start-head "screen A")])
+                               (head-wait 'missing-input-fallback fallback (lambda () (head-sees? fallback "shared text B")))
+                               (test:check 'missing-or-hidden-inputs-fall-back-without-disturbing-another-screen
+                                 (list (head-read fallback '(map (lambda (w) (head:buffer-store-id (head:window-buffer w)))
+                                                              (head:windows)))
+                                       (head-read b '(list (length (head:windows))
+                                                           (head:buffer-store-id (current-buffer)) (head:kill-ring)) "\x1d;"))
+                                 (list (make-list 3 id) (list 1 terminal-id "screen B kill")))))))))
                    ;; Pause only a head's UI while its socket reader keeps
                    ;; running. Both budgets must close that connection and
                    ;; leave the other screen and the daemon's PTYs usable.
@@ -649,7 +745,9 @@
              (stop!)
              (for-each (lambda (head)
                          (head-wait 'head-restores-terminal-after-disconnect head
-                           (lambda () (> (occurrences (vector-ref head 3) "\x1b;[?1049l") 0)))) heads)
+                           (lambda () (> (occurrences (vector-ref head 3) "\x1b;[?1049l") 0))))
+               ;; SIGKILL cannot run terminal cleanup; all cooperative exits can.
+               (filter (lambda (head) (not (memq head killed-heads))) heads))
              (test:check 'stop-closes-idle-clients-and-releases-the-path
                (list (eof-object? (receive idle)) (eof-object? (receive agent)) (file-exists? socket))
                '(#t #t #f)))
