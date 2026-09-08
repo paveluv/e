@@ -9,7 +9,7 @@
   '(begin
      (import (prefix (render) render:) (prefix (surface) surface:)
              (prefix (head) head:) (prefix (store) store:) (prefix (text) text:)
-             (prefix (paint) paint:) (prefix (terminal) terminal:)
+             (prefix (paint) paint:) (prefix (vt) vt:)
              (prefix (kernel) kernel:) (prefix (string) string:)
              (prefix (style) style:)
              (prefix (sys) sys:) (prefix (test) test:))
@@ -53,18 +53,18 @@
        (map
          (lambda (case)
            (let* ([text "界e\x301;Z"] [frame (render:prepare #f #f (vector text) 0 '((0 . 1)))]
-                  [port (open-output-string)] [mirror (terminal:make-emulator 2 16)])
+                  [port (open-output-string)] [mirror (vt:make-emulator 2 16)])
              (let-values ([(shown styles) (render:present frame 0 text #f '#(red blue ignored green))])
                (parameterize ([sys:terminal-output-port port])
                  (paint:display-editor-line shown shown
                    (cons (render:column frame 0 2) (render:column frame 0 3 #t))
                    '() '() (car case) styles #f (cadr case) 4)
                  (display "|right" port)))
-             (terminal:emulator-feed! mirror (get-output-string port))
+             (vt:emulator-feed! mirror (get-output-string port))
              (let* ([expected (caddr case)] [selected (cadddr case)]
                     [style (and selected
-                                (style:code (vector-ref (vector-ref (terminal:emulator-styles mirror) 0) selected)))])
-               (list (substring (vector-ref (terminal:emulator-screen mirror) 0) 0 (string-length expected))
+                                (style:code (vector-ref (vector-ref (vt:emulator-styles mirror) 0) selected)))])
+               (list (substring (vector-ref (vt:emulator-screen mirror) 0) 0 (string-length expected))
                      (and style (string:search style "44" 0 (string-length style)) #t)))))
          '((0 1 " |right" #f) (0 3 "界é|right" 2) (1 3 " éZ|right" 1)))
        '((" |right" #f) ("界é|right" #t) (" éZ|right" #t)))
@@ -219,15 +219,15 @@
      (head:buffer-mark-row-set! b 0)
      (head:buffer-mark-col-set! b 2)
      (head:buffer-marked-set! b #t)
-     (define mirror (terminal:make-emulator 8 12))
-     (terminal:emulator-feed! mirror (painted))
+     (define mirror (vt:make-emulator 8 12))
+     (vt:emulator-feed! mirror (painted))
      (test:check 'painter-emits-real-glyphs-at-cell-coordinates
-       (let ([selection (style:code (vector-ref (vector-ref (terminal:emulator-styles mirror) 0) 2))])
-         (list (substring (vector-ref (terminal:emulator-screen mirror) 0) 0 3)
+       (let ([selection (style:code (vector-ref (vector-ref (vt:emulator-styles mirror) 0) 2))])
+         (list (substring (vector-ref (vt:emulator-screen mirror) 0) 0 3)
                (and (string:search selection "44" 0 (string-length selection)) #t)))
        '("界éR" #t))
      (test:check 'painter-emits-surface-hyperlinks
-       (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) 1) (list uri "wide"))
+       (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1) (list uri "wide"))
      (test:check 'cursor-uses-the-same-cell-projection
        (paint:window-screen-position w 0 1) '(1 . 3))
      (head:buffer-marked-set! b #f)
@@ -296,11 +296,11 @@
      (test:check 'emulator-frames-render-through-the-surface-contract
        (map
          (lambda (case)
-           (let ([emulator (terminal:make-emulator 2 8)])
-             (terminal:emulator-feed! emulator (cdr case))
-             (let* ([frame (terminal:emulator-frame emulator)] [text (car frame)]
+           (let ([emulator (vt:make-emulator 2 8)])
+             (vt:emulator-feed! emulator (cdr case))
+             (let* ([frame (vt:emulator-frame emulator)] [text (car frame)]
                     [id (store:create! author "emulator-frame" text '((audience . ())))]
-                    [height (vector-length text)] [mirror (terminal:make-emulator (+ height 1) 8)]
+                    [height (vector-length text)] [mirror (vt:make-emulator (+ height 1) 8)]
                     [port (open-output-string)])
                (surface:publish! id #f 0 (cadr frame) (caddr frame) (cadddr frame))
                (let-values ([(text revision) (store:snapshot id)])
@@ -311,11 +311,11 @@
                          (paint:goto (+ i 1) 1)
                          (paint:display-editor-line (car row) (car row) #f '() (caddr row)
                            0 (cadr row) #f 8 8))))))
-               (terminal:emulator-feed! mirror (get-output-string port))
+               (vt:emulator-feed! mirror (get-output-string port))
                (store:delete! author id)
                (cons (car case)
                      (equal? (vector->list text)
-                       (map (lambda (i) (vector-ref (terminal:emulator-screen mirror) i)) (iota height)))))))
+                       (map (lambda (i) (vector-ref (vt:emulator-screen mirror) i)) (iota height)))))))
          '((clusters . "界q\x301;Z")
            (decorated . "\x1b;#6界A")
            (scrollback . "one\r\ntwo\r\nthree\r\nfour")

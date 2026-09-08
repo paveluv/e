@@ -1,6 +1,7 @@
 #!/usr/bin/env scheme-script
 ;; e -- loader for the e editor.
-;; Run: ./e [--name NAME] [--] [file], or ./e --daemon [--socket PATH].
+;; Run: ./e [--name NAME] [--] [file], ./e --daemon [--socket PATH],
+;; or ./e --attach [--socket PATH] [--name NAME] [--] [file].
 ;;
 ;; scheme-script is the interpreter name Chez's man page recommends for
 ;; scripts; Linux distributions and Homebrew install it under exactly
@@ -57,21 +58,35 @@
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
-(eval '(begin
+(eval `(begin
          (import (prefix (startup) startup:) (prefix (kernel) kernel:))
          (startup:call-with-options (command-line-arguments)
            (lambda ()
-             (when (and (eq? (startup:mode) 'standalone)
+             (when (and (not (eq? (startup:mode) 'daemon))
                         (or (not (getenv "TERM")) (string=? (getenv "TERM") "dumb")))
                (display "e: an interactive terminal is required\n" (current-error-port))
                (exit 1))
-             ;; Runtime ownership starts before any head can be imported.
-             (eval '(begin
-                      (import (prefix (base) base:))
-                      (base:call-with-runtime
-                        (lambda ()
-                          (if (eq? (startup:mode) 'daemon)
-                              (base:run)
-                              (eval '(begin
-                                       (import (edit) (prefix (main) main:))
-                                       (main:run))))))))))))
+             ;; Choose a service implementation before importing any head.
+             ;; Separate objects keep daemon and client library identities
+             ;; from overwriting one another in a shared installation.
+             (if (eq? (startup:mode) 'attach)
+                 (begin
+                   (library-directories
+                     ',(list (cons (string-append e-home "/lib/client") (string-append e-home "/eo/client"))
+                             (cons (string-append e-home "/lib") (string-append e-home "/eo/client"))))
+                   (eval '(begin
+                            (import (prefix (client) client:))
+                            (client:call-with-runtime
+                              (lambda ()
+                                (eval '(begin
+                                         (import (edit) (prefix (main) main:))
+                                         (main:run))))))))
+                 (eval '(begin
+                          (import (prefix (base) base:))
+                          (base:call-with-runtime
+                            (lambda ()
+                              (if (eq? (startup:mode) 'daemon)
+                                (base:run)
+                                (eval '(begin
+                                         (import (edit) (prefix (main) main:))
+                                         (main:run)))))))))))))

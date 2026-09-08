@@ -494,7 +494,10 @@
       (registry-add! module-catalog name)))
 
   (define (module-source name)
-    (format "~a/~a.e" (caar (library-directories)) name))
+    (let loop ([directories (library-directories)])
+      (let ([path (format "~a/~a.e" (caar directories) name)])
+        (if (or (file-exists? path) (null? (cdr directories))) path
+            (loop (cdr directories))))))
 
   (define (init-module! name)
     ;; Import the module's library into the editor's top level
@@ -563,8 +566,9 @@
     (case-lambda
       [() (config-file 'head)]
       [(side)
-       (string-append (caar (library-directories)) "/../"
-                      (symbol->string (config-owner side)) ".e")]))
+       (let ([source (module-source "kernel")])
+         (string-append (substring source 0 (- (string-length source) 8)) "../"
+                        (symbol->string (config-owner side)) ".e"))]))
 
   (define load-config!
     ;; The user's configuration: config.e, plain expressions evaluated

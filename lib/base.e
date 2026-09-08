@@ -7,11 +7,12 @@
           (prefix (store) store:) (prefix (actor) actor:)
           (prefix (policy) policy:) (prefix (text) text:) (prefix (datum) datum:)
           (prefix (log) log:)
-          (prefix (file) file:) (prefix (vt) vt:))
+          (prefix (file) file:) (prefix (vt) vt:)
+          (prefix (surface) surface:) (prefix (reference) reference:) (prefix (doc) doc:))
 
   (define modules
-    '("actor" "datum" "diff" "doc" "file" "git" "https" "log" "policy"
-      "reference" "sandbox" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
+    '("actor" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "policy"
+      "property" "reference" "sandbox" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -55,9 +56,13 @@
               [else (list kind id (caddr event))])])
       (actor:call-as actor (lambda () (log:add! 'store detail #f)))))
 
-  (define (request session operation args)
+  (define (request session control? operation args)
     (define (arity n)
       (unless (= (length args) n) (error 'wire "wrong request arity" operation)))
+    (define actor (policy:session-actor session))
+    (define (control!)
+      (unless (and control? (not (policy:revoked? session)))
+        (error 'wire "operation requires an all-buffer head connection" operation)))
     (case operation
       [(buffers actors)
        (arity 0)
@@ -75,6 +80,12 @@
        ;; exactly this text/facts snapshot and use the edit receipt's codec.
        (datum:copy (call-with-values (lambda () (apply store:snapshot-state args)) list)
          text:delta->datum)]
+      [(state)
+       (arity 2)
+       (and (store:exists? (car args))
+            (cons (store:buffer-name (car args))
+              (datum:copy (call-with-values (lambda () (apply store:snapshot-state args)) list)
+                text:delta->datum)))]
       [(edit)
        (unless (<= 4 (length args) 5) (error 'wire "expected buffer, basis, span, lines and optional context"))
        (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
@@ -88,12 +99,78 @@
       [(redo)
        (arity 1)
        (call-with-values (lambda () (policy:session-redo! session (car args))) list)]
+      [(history-step)
+       (arity 3)
+       (call-with-values (lambda () (apply policy:session-history-step! session args)) list)]
+      [(undo-authors) (arity 1) (store:undo-authors (car args))]
+      [(history blame)
+       (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional count"))
+       (if (eq? operation 'history) (apply store:history args)
+           (map (lambda (entry) (cons (text:span->datum (car entry)) (cdr entry)))
+             (apply store:blame args)))]
+      [(create reset rename delete discard properties)
+       (control!)
+       (case operation
+         [(create) (apply store:create! actor args)]
+         [(reset) (apply store:reset! actor args)]
+         [(rename) (arity 2) (apply store:rename! actor args)]
+         [(delete) (arity 1) (apply store:delete! actor args) #t]
+         [(discard) (arity 3) (apply store:discard! actor args)]
+         [(properties) (arity 2) (apply store:set-properties! actor args) #t])]
+      [(marks)
+       (arity 4)
+       (unless (eq? (car actor) 'head) (error 'wire "head marks require a head"))
+       (call-with-values
+         (lambda ()
+           (store:set-marks! actor (car args) (cadr args)
+             (map (lambda (entry)
+                    (cons (car entry)
+                      (if (and (pair? (cdr entry)) (eq? (cadr entry) 'span))
+                          (text:datum->span (caddr entry)) (cdr entry)))) (caddr args))
+             (cadddr args))) list)]
+      [(surface) (arity 1) (surface:snapshot (car args))]
+      [(rows) (arity 4) (apply surface:rows args)]
+      [(send) (control!) (arity 2) (apply actor:send! args)]
+      [(pending) (arity 0) (actor:pending actor)]
+      [(answer)
+       (arity 2)
+       (and (assv (car args) (actor:pending actor)) (apply actor:answer! args))]
+      [(log-snapshot) (arity 1) (call-with-values (lambda () (log:snapshot (car args))) list)]
+      [(log-add)
+       (arity 3)
+       (parameterize ([log:progress (eq? (caddr args) 'progress)])
+         (log:add! (car args) (cadr args) (and (caddr args) #t)))]
+      [(vt-open vt-send vt-close vt-color vt-option)
+       (control!)
+       (case operation
+         [(vt-open) (arity 5) (apply vt:open! actor args)]
+         [(vt-send) (arity 5) (apply vt:send! actor args) #t]
+         [(vt-close) (arity 1) (vt:close! (car args)) #t]
+         [(vt-color) (arity 1) (vt:color-scheme! (car args) actor) #t]
+         [(vt-option)
+          (unless (<= 1 (length args) 2) (error 'wire "expected option and optional value"))
+          (let ([option (case (car args) [(shell) vt:shell] [(scrollback) vt:scrollback]
+                          [else (error 'wire "unknown terminal option")])])
+            (if (null? (cdr args)) (option) (begin (option (cadr args)) #t)))])]
+      [(reference-fetch) (control!) (arity 0) (reference:fetch!) #t]
+      [(reference-page) (arity 0) (reference:page actor)]
+      [(reference-page!)
+       (control!) (arity 4)
+       (doc:call-with-entries (cadddr args)
+         (lambda () (apply reference:page! actor (car args) (cadr args) (caddr args))))]
+      [(reference-lookup)
+       (arity 2)
+       (doc:call-with-entries (cadr args) (lambda () (map doc:to-datum (reference:lookup (car args)))))]
+      [(reference-entries)
+       (arity 1)
+       (doc:call-with-entries (car args) (lambda () (map doc:to-datum (reference:entries))))]
+      [(reference-url) (arity 1) (reference:browser-url (doc:from-datum (car args)))]
       [else (error 'wire "unknown request" operation)]))
 
   (define (serve-connection connection)
     (let ([owner (list 'connection connection)] [out (kernel:make-mailbox)]
           [out-lock (make-mutex)] [queued-bytes 0] [queued-count 0] [closed? #f]
-          [writer #f] [session #f] [changes #f])
+          [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f])
       (define (close!)
         (when (with-mutex out-lock
                 (and (not closed?) (begin (set! closed? #t) #t)))
@@ -127,13 +204,28 @@
                 (set! changes take!)))))
         ;; Subscribe before inventory so a racing commit is in one or both.
         (sort < (store:buffer-list)))
+      (define (watch-head!)
+        (unless (eq? (car (policy:session-actor session)) 'head) (error 'wire "expected a head connection"))
+        (unless head-watch?
+          (parameterize ([kernel:registering-module owner])
+            (surface:subscribe! #f
+              (lambda (event)
+                ;; These are invalidations. A client may coalesce several
+                ;; generations, so no partial row list survives the seam.
+                (post! (list 'surface
+                         (list (cons (cadr event) (append (list-head event 4) '(all) (list-tail event 5))))))))
+            (actor:subscribe! (lambda (events) (post! '(presence))))
+            (log:subscribe! (lambda (entry presentation) (post! (list 'logged entry presentation)))))
+          (set! head-watch? #t))
+        (watch!))
       (dynamic-wind void
         (lambda ()
           (guard (ex [else
                       (unless writer
                         (guard (ignored [else (void)])
                           (wire:send! (sys:connection-output connection)
-                            (list 'error #f (kernel:condition-text ex)))))])
+                            (list 'error #f (if (kernel:registration-conflict? ex) 'name-in-use
+                                              (kernel:condition-text ex))))))])
             (let* ([hello (wire:receive (sys:connection-input connection))]
                    [actor (and (list? hello) (= (length hello) 3)
                                (eq? (car hello) 'hello) (equal? (cadr hello) wire:version)
@@ -144,6 +236,7 @@
               (let* ([p ((connection-policy) (datum:copy actor))]
                      [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo redo))])
                 (set! session (policy:mint! actor p (and (eq? (car actor) 'head) actor)))
+                (set! control? (and (eq? (car actor) 'head) (eq? (policy:buffers p) 'any)))
                 ;; Queue hello before publishing; name refusal still revokes
                 ;; this connection's session without touching the old owner.
                 (post! (list 'hello wire:version actor capabilities))
@@ -179,9 +272,11 @@
                         (post!
                           (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
                             (list 'reply (cadr message) 'ok
-                              (if (eq? (caddr message) 'watch)
-                                  (if (= (length message) 3) (watch!) (error 'wire "watch takes no arguments"))
-                                  (request session (caddr message) (cdddr message))))))
+                              (case (caddr message)
+                                [(watch watch-head)
+                                 (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
+                                 (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
+                                [else (request session control? (caddr message) (cdddr message))]))))
                         (loop)))))))))
         (lambda ()
           (close!)

@@ -62,7 +62,9 @@ in that form.
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
 
 Buffer-name completion is available with Tab in the prompts. Killing a modified
-buffer requires confirmation. Killing a buffer removes its app registration,
+buffer requires confirmation. If its shared text or facts change while the
+question is open, e reviews it again before deleting. A failed deletion reports
+the error and keeps the buffer. Killing a buffer removes its app registration,
 if any, and every window showing it changes to another live buffer. If the last
 buffer is killed, e creates a new `*scratch*` buffer.
 
@@ -87,9 +89,11 @@ The alphabetical traversal is stable: merely visiting a buffer does not move it
 in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.
 
-`C-x C-c` exits immediately when every buffer is clean. Otherwise its focused
+In plain `e`, `C-x C-c` exits immediately when every buffer is clean. Otherwise its focused
 question offers `yes`, `no`, and `view`; `view` opens `<buffers>` and moves focus
 there so modified rows can be inspected before deciding.
+With `--attach`, this command detaches the head and protects only its local
+unsaved work. Shared text and terminal processes stay in the running daemon.
 
 ## File buffers
 
@@ -127,6 +131,8 @@ The prompt keeps focus until one of its valid keys is pressed. Invalid keyboard
 or mouse input flashes only the echo area, without sound.
 
 Saving an externally changed file offers `overwrite`, `merge`, or `cancel`.
+The disk comparison runs after pre-save hooks, so a hook's write is included
+in that decision.
 Merge uses a three-way patience diff. Independent changes combine silently;
 collisions become `<<<<<<< buffer`, `=======`, and `>>>>>>> disk` regions.
 `M-n` moves to the next conflict, while `M-m` and `M-d` keep the buffer or disk

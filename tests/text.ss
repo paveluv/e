@@ -284,8 +284,9 @@
               '((0 0 0) (0 0 -1 0) (0 0 0 1.0) (0 0 0 x)))
          (map (lambda (d) (test:raises? (lambda () (text:datum->delta d))))
               '(((0 0 0 1) () ("x")) ((0 0 0 1) ("x") "y")
-                ((0 0 0 1) ("xx") ("y")) ((0 0 1 1) ("x") ("y")))))
-       '((#t #t #t #t) (#t #t #t #t)))
+                ((0 0 0 1) ("xx") ("y")) ((0 0 1 1) ("x") ("y"))
+                ((0 0 0 1) ("x") ("embedded\nnewline")) ((0 0 0 2) ("\nx") ("y")))))
+       '((#t #t #t #t) (#t #t #t #t #t #t)))
      (check 'double-inversion-recovers-delta
             (delta-data (text:invert-delta (text:invert-delta d)))
             (delta-data d))

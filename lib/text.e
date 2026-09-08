@@ -33,14 +33,20 @@
 
   ;;; Text boundaries ------------------------------------------------------
 
+  (define (line? value)
+    (and (string? value)
+         (let scan ([i 0])
+           (or (= i (string-length value))
+               (and (not (char=? (string-ref value i) #\newline)) (scan (+ i 1)))))))
+
   (define (normalize lines)
     ;; Own the vector while sharing immutable line strings.  Baselines
     ;; enter through this same boundary for local and shared buffers.
     (unless (or (vector? lines) (list? lines))
       (error 'normalize "expected a line vector or list" lines))
     (let ([items (if (vector? lines) (vector->list lines) lines)])
-      (unless (for-all string? items)
-        (error 'normalize "expected line strings" lines))
+      (unless (for-all line? items)
+        (error 'normalize "expected strings without embedded newlines" lines))
       (list->vector (if (null? items) '("") items))))
 
   (define (from-string s)
@@ -166,7 +172,7 @@
 
   (define (datum->delta value)
     (unless (and (list? value) (= (length value) 3)
-                 (for-all (lambda (lines) (and (list? lines) (pair? lines) (for-all string? lines)))
+                 (for-all (lambda (lines) (and (list? lines) (pair? lines) (for-all line? lines)))
                           (cdr value)))
       (error 'datum->delta "expected span, removed and inserted lines" value))
     (let* ([s (datum->span (car value))] [removed (datum:copy (cadr value))]
@@ -214,8 +220,8 @@
   (define (apply-edit text s replacement)
     ;; -> (values new-text delta)
     (unless (and (list? replacement) (pair? replacement)
-                 (for-all string? replacement))
-      (error 'apply-edit "replacement must be a non-empty string list"
+                 (for-all line? replacement))
+      (error 'apply-edit "replacement must be nonempty line strings without embedded newlines"
              replacement))
     (let* ([s (normalize-span s)]
            [start (span-start s)] [end (span-end s)])

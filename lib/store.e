@@ -19,7 +19,7 @@
 ;; (store:snapshot ...).
 
 (library (store)
-  (export create! delete! reset! rename! publication publish!
+  (export create! delete! discard! reset! rename! publication publish!
           buffer-list exists? visible? buffer-name find-named
           snapshot snapshot-since snapshot-state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
@@ -30,7 +30,7 @@
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq)
-          (prefix (text) text:)
+          (prefix (text) text:) (prefix (property) property:)
           (prefix (actor) actor:)
           (prefix (datum) datum:)
           (prefix (kernel) kernel:))
@@ -116,57 +116,9 @@
             (not (and (= (vector-length text) 1)
                       (string=? (vector-ref text 0) "")))))))
 
-  (define (validate-properties updates)
-    ;; A pure boundary shared with head-local facts.  Validate the whole
-    ;; batch before either owner can install any part of it.
-    (unless
-      (and (list? updates)
-           (let valid ([rest updates] [seen '()])
-             (or (null? rest)
-                 (let ([entry (car rest)])
-                   (and (pair? entry) (symbol? (car entry))
-                        (not (memq (car entry) seen))
-                        (case (car entry)
-                          [(base) (or (not (cdr entry)) (string? (cdr entry)))]
-                          [(trailing disposable alive manages-viewport) (boolean? (cdr entry))]
-                          [(app) (or (boolean? (cdr entry))
-                                     (and (actor:identity? (cdr entry)) (eq? (cadr entry) 'app)))]
-                          [(capture)
-                           (or (not (cdr entry)) (eq? (cdr entry) 'all)
-                               (and (list? (cdr entry))
-                                    (for-all string? (if (and (pair? (cdr entry)) (eq? (cadr entry) 'except))
-                                                         (cddr entry) (cdr entry)))))]
-                          [(status) (or (not (cdr entry)) (string? (cdr entry)))]
-                          [(sticky-lines) (and (integer? (cdr entry)) (exact? (cdr entry)) (>= (cdr entry) 0))]
-                          [(cursor-style) (memq (cdr entry) '(#f default block underline bar
-                                                              blinking-block blinking-underline blinking-bar))]
-                          [(audience) (actor:audience? (cdr entry))]
-                          [else #t])
-                        (valid (cdr rest) (cons (car entry) seen)))))))
-      (error 'validate-properties "expected unique symbol keys and valid fact values" updates))
-    updates)
-
-  (define (writable-properties updates)
-    (validate-properties updates)
-    (when (assq 'modified updates)
-      (error 'store "modified is derived from text and its baseline"))
-    (when (assq 'publication updates)
-      (error 'store "publication identity belongs to publish!"))
-    updates)
-
-  (define (validate-edit-context context)
-    ;; Undo facts travel with the inverse.  Commit facts describe external
-    ;; state (e.g. a disk baseline) and survive undo, but commit atomically
-    ;; with the text.  A key cannot appear in both sets.
-    (unless (or (not context)
-                (and (list? context) (memv (length context) '(2 3 4))
-                     (or (not (cadr context)) (string? (cadr context)))))
-      (error 'validate-edit-context "expected (key label [undo-facts [commit-facts]])" context))
-    (when (and context (>= (length context) 3))
-      (writable-properties
-        (append (validate-properties (caddr context))
-                (if (= (length context) 4) (validate-properties (cadddr context)) '()))))
-    context)
+  (define validate-properties property:validate)
+  (define writable-properties property:writable)
+  (define validate-edit-context property:edit-context)
 
   (define (install-properties! b updates)
     (buffer-properties-set! b
@@ -358,9 +310,23 @@
     (transact! actor
       (lambda (actor)
         (buffer-of 'delete! id)
-        (hashtable-delete! (store-buffers (current-store)) id)
-        (enqueue-event! `(delete ,id ,actor))))
+        (delete-buffer! actor id)))
     (void))
+
+  (define (delete-buffer! actor id)
+    (hashtable-delete! (store-buffers (current-store)) id)
+    (enqueue-event! `(delete ,id ,actor)))
+
+  (define (discard! actor id revision facts)
+    ;; The user's decision covers one reviewed text/fact snapshot. A later
+    ;; edit or fact change needs a fresh review; an already deleted id is done.
+    (let ([facts (datum:copy facts)])
+      (transact! actor
+        (lambda (actor)
+          (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
+            (or (not b)
+                (and (= revision (buffer-revision b)) (equal? facts (property-data b))
+                     (begin (delete-buffer! actor id) #t))))))))
 
   (define (buffer-list)
     (locked

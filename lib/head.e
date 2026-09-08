@@ -2018,7 +2018,9 @@
   ;; the seat begins as *scratch* in one window; views the modules above
   ;; register while loading join the list behind it
   (define seat-initialized
-    (let ([b (new-buffer "*scratch*")])
+    (let ([b (or (let ([id (store:find-named "*scratch*")])
+                   (and id (adopt-store-buffer! id)))
+                 (new-buffer "*scratch*"))])
       (set! the-buffers (cons b (remq b the-buffers)))
       (let ([w (make-window b 0 0 0 0 0 0 0 0 'default)])
         (set! the-windows (list w))

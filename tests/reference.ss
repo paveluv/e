@@ -81,6 +81,8 @@
      (dynamic-wind
        void
        (lambda ()
+         (call-with-output-file (string-append root "/lib/kernel.e")
+           (lambda (port) (display (call-with-input-file "lib/kernel.e" get-string-all) port)))
          (parameterize ([library-directories
                          (cons (cons (string-append root "/lib") (string-append root "/eo"))
                                (library-directories))])

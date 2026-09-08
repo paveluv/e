@@ -211,18 +211,13 @@
   (define config-reload-on-save (make-parameter #t))
 
   (define (module-name-of-path path)
-    ;; The module name a saved path denotes: a .e file directly in the
-    ;; editor's lib directory; #f for anything else -- main included,
-    ;; which cannot be reloaded.
-    (let ([full (file:canonical path)]
-          [lib (string-append (file:canonical (caar (library-directories)))
-                              "/")])
-      (and (string:prefix? lib full)
-           (string:suffix? ".e" full)
-           (let ([base (string:tail full (string-length lib))])
-             (and (not (string:search base "/" 0 (string-length base)))
-                  (not (member base '("kernel.e" "main.e")))
-                  (substring base 0 (- (string-length base) 2)))))))
+    ;; The module name a saved path denotes in the selected source roots;
+    ;; #f for other paths, including kernel/main, which cannot be reloaded.
+    (let* ([full (file:canonical path)] [base (file:base-name full)])
+      (and (string:suffix? ".e" base)
+           (not (member base '("kernel.e" "main.e")))
+           (let ([name (substring base 0 (- (string-length base) 2))])
+             (and (string=? full (file:canonical (kernel:module-source name))) name)))))
 
   (define (reload-on-save! path)
     ;; The post-save hook.  A reload that fails (a module saved mid-edit,

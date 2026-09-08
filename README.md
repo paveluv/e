@@ -75,9 +75,10 @@ $ ~/git/project/.e/e file.txt
 Each installation is self-contained. It uses the `lib/`, `config.e`, `data/`,
 optional `base-config.e`, and compiled `eo/` beside its own loader.
 
-This branch also has a [daemon foundation](manual/CONFIGURATION.md#daemon-foundation):
-`e --daemon` runs a base with local session reads, edits and undo. Interactive
-attachment and restoration of a named screen are still being implemented.
+This branch supports [daemon attachment](manual/CONFIGURATION.md#daemon-and-attachment):
+`e --daemon` keeps shared buffers and terminals alive; `e --attach` opens a
+head on it, and `C-x C-c` detaches that head. Several screens can edit together.
+Restoring a named screen's layout and offline agent questions remain in progress.
 
 On FreeBSD, where Chez installs a differently named script interpreter, run
 `chez-scheme --script e` or change the shebang as explained in the loader.

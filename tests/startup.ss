@@ -111,8 +111,9 @@
                 ("--name=a" "--name" "b") ("--bogus") ("one" "two")
                 ("--daemon" "--daemon") ("--daemon" "--name=desk") ("--daemon" "notes")
                 ("--socket=x") ("--daemon" "--socket") ("--daemon" "--socket=")
-                ("--daemon" "--socket=x" "--socket=y")))
-         (make-list 13 'rejected))
+                ("--daemon" "--socket=x" "--socket=y")
+                ("--attach" "--attach") ("--daemon" "--attach") ("--attach" "--daemon")))
+         (make-list 16 'rejected))
        (test:check 'daemon-options-are-scoped-and-own-the-socket-path
          (let ([path (string-copy "/tmp/base λ")])
            (list
@@ -121,9 +122,10 @@
                  (string-set! path 0 #\X)
                  (string-set! (startup:socket) 0 #\Y)
                  (list (startup:mode) (startup:socket) (options)
-                       (startup:call-with-options '("--daemon" "--socket=another") startup:socket))))
+                       (startup:call-with-options '("--attach" "--socket=another" "--name=desk" "notes")
+                         (lambda () (list (startup:mode) (startup:socket) (options)))))))
              (startup:mode)))
-         '((daemon "/tmp/base λ" (#f #f) "another") standalone))
+         '((daemon "/tmp/base λ" (#f #f) (attach "another" ("desk" "notes"))) standalone))
        (for-each
          (lambda (flag)
            (test:check (list 'help flag)

@@ -11,10 +11,10 @@ Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,
 ` 3`, and so on if occupied; an explicitly requested name must be free.
 The identity is `(head "name")`, exposed as `head:ui-actor`. It is chosen
-before shared buffers or cursor marks are created. The interactive editor
-still runs one head in one process; interactive `--attach` is not implemented.
+before shared buffers or cursor marks are created. Plain `e` keeps a base and
+one head in the same process. `--attach` connects a head to a running daemon.
 
-## Daemon foundation
+## Daemon and attachment
 
 `./e --daemon [--socket PATH]` starts a foreground base without a screen.
 The socket defaults to `$XDG_RUNTIME_DIR/e/base`, or `~/.e/base` when that
@@ -24,11 +24,28 @@ background job with its output redirected; SIGHUP leaves it running.
 SIGTERM or Ctrl-C stops it and its terminal processes. State is in memory
 for the life of the daemon; stopping it does not save a session to disk.
 
-Local clients can read, edit, undo and redo according to their session's buffer
-permissions, receive actor mail, and watch buffer changes. Catch-up snapshots
-can include matching facts and position changes. Interactive attachment and
-named screen restoration are still being built. The current protocol and Scheme
-client primitives are described in the development
+Start the daemon on the SSH host, then attach each screen to it:
+
+```sh
+./e --daemon >e-base.log 2>&1 &
+./e --attach --name desk
+```
+
+Use the same `--socket PATH` on both commands to choose another daemon.
+`./e --attach [--socket PATH] [--name NAME] [--] [file]` runs the usual editor:
+edits and undo are shared, while windows, prompts and local buffers belong to
+that screen. Terminal processes and describe sources belong to the base.
+File commands address the filesystem on that same host. If no base is running,
+attachment reports an error.
+
+`C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
+stay alive; local unsaved text still requires confirmation. A new attachment
+reads the current buffers and reuses shared scratch. Restoring a named head's
+layout, positions and kill text is still being built, as are agent questions
+first asked while their owner is offline.
+
+Scheme clients can read, edit, undo and redo according to their session's buffer
+permissions. The current messages and primitives are described in the development
 [wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).
 
 Only peers running as the same OS user connect. An existing socket path is
@@ -55,7 +72,9 @@ Uncomment only settings that should differ from defaults.
 base services. It runs once at startup in both plain and daemon modes, before
 any head is imported. It sees base APIs such as `store:`, `policy:`, `vt:` and
 `reference:`. Keep key bindings, painting and other head settings in `config.e`.
-The daemon does not evaluate `config.e`; forms are never assigned a side by
+An attached head evaluates `config.e` using client implementations of its
+service APIs; it does not evaluate `base-config.e`. The daemon does not evaluate
+`config.e`; forms are never assigned a side by
 guessing what they call. Base configuration errors stop startup.
 
 `kernel:config-file` and `kernel:load-config!` accept an optional `base` or

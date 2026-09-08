@@ -42,15 +42,16 @@
          (when (and (eq? mode 'daemon) (or name file))
            (error 'e "--daemon does not take a head name or file"))
          (when (and socket (eq? mode 'standalone))
-           (error 'e "--socket requires --daemon"))
+           (error 'e "--socket requires --daemon or --attach"))
          (list mode name file socket help?)]
         [(and flags? (string=? (car args) "--"))
          (loop (cdr args) mode name file socket help? #f)]
         [(and flags? (member (car args) '("-h" "--help")))
          (loop (cdr args) mode name file socket #t flags?)]
-        [(and flags? (string=? (car args) "--daemon"))
-         (unless (eq? mode 'standalone) (error 'e "--daemon may be supplied only once"))
-         (loop (cdr args) 'daemon name file socket help? flags?)]
+        [(and flags? (member (car args) '("--daemon" "--attach")))
+         (unless (eq? mode 'standalone) (error 'e "choose --daemon or --attach once"))
+         (loop (cdr args) (if (string=? (car args) "--daemon") 'daemon 'attach)
+               name file socket help? flags?)]
         [(and flags? (member (car args) '("--name" "--socket")))
          (when (null? (cdr args)) (error 'e "option requires a value" (car args)))
          (valued (if (string=? (car args) "--name") 'name 'socket) (cadr args) (cddr args))]
@@ -70,6 +71,7 @@
           (begin
             (display "Usage: e [--name NAME] [--] [file]\n")
             (display "       e --daemon [--socket PATH]\n")
+            (display "       e --attach [--socket PATH] [--name NAME] [--] [file]\n")
             (display "A tiny Emacs-like terminal editor.\n")
             (display "Head names default to user@host:tty (pid without a terminal).\n"))
           (parameterize ([options (list (car parsed) (cadr parsed) (caddr parsed) (cadddr parsed))])

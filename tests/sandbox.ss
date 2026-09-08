@@ -111,6 +111,8 @@
        (dynamic-wind
          void
          (lambda ()
+           (call-with-output-file (string-append root "/lib/kernel.e")
+             (lambda (port) (display (call-with-input-file "lib/kernel.e" get-string-all) port)))
            (call-with-output-file path
              (lambda (port)
                (write
@@ -132,6 +134,7 @@
          (lambda ()
            (set! expired #f)
            (delete-file path)
+           (delete-file (string-append root "/lib/kernel.e"))
            (for-each delete-directory
              (list data (string-append root "/data") (string-append root "/lib") root)))))
      (store:delete! '(head test) id)

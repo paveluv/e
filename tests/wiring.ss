@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (terminal) terminal:)
+     (import (prefix (sys) sys:) (prefix (vt) vt:)
              (prefix (string) string:) (prefix (test) test:))
 
      (define (check label actual expected)
@@ -24,7 +24,7 @@
      (define probe (format "/tmp/e-wiring-~a" (getenv "USER")))
 
      (putenv "SHELL" "/bin/sh")
-     (define mirror (terminal:make-emulator 24 100))
+     (define mirror (vt:make-emulator 24 100))
      (define process
        (sys:spawn-terminal-process "/bin/sh" "exec ./e --name 'wired head λ'"
                                    (current-directory) 24 100))
@@ -37,7 +37,7 @@
            (when (guard (ex [else #f]) (char-ready? from))
              (let ([c (guard (ex [else (eof-object)]) (get-char from))])
                (unless (eof-object? c)
-                 (terminal:emulator-feed! mirror (string c)) (drain)))))
+                 (vt:emulator-feed! mirror (string c)) (drain)))))
          (when (> left 0)
            (sleep (make-time 'time-duration 25000000 0))
            (loop (- left 1)))))
@@ -46,7 +46,7 @@
                        (string->utf8 text))
        (flush-output-port (sys:terminal-process-output process)))
      (define (screen-line n)
-       (vector-ref (terminal:emulator-screen mirror) n))
+       (vector-ref (vt:emulator-screen mirror) n))
      (define (screen-has? n needle)
        (let* ([line (screen-line n)]
               [len (string-length needle)])
@@ -1183,7 +1183,7 @@
             id)))
      (check 'surface-paints-real-shared-text-and-cell-links
        (list (screen-has? 0 "界éZ")
-             (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) 1))
+             (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1))
        '(#t ("https://surface.example" "wide")))
      (check 'surface-mouse-cells-map-to-source-characters
        (map (lambda (x)
@@ -1201,19 +1201,19 @@
                    #(("https://updated.example" #f) ("https://updated.example" #f) #f #f)
                    ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4)))) #t))
      (check 'surface-only-worker-wakes-idle-head
-       (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) 1)
+       (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1)
        '("https://updated.example" #f))
      (define surface-offsets
        (read-editor '(begin (split-window-right!) (map head:window-xoff (head:windows)))))
      (check 'surface-rendition-is-consistent-in-both-panes
-       (map (lambda (x) (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) (+ x 1)))
+       (map (lambda (x) (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) (+ x 1)))
             surface-offsets)
        '(("https://updated.example" #f) ("https://updated.example" #f)))
      (check 'surface-withdrawal-preserves-readable-source
        (read-editor `(begin (surface:withdraw! ,surface-id (car (surface:snapshot ,surface-id)))
                             (store:line ,surface-id 0))) "界e\x301;Z")
      (check 'surface-withdrawal-removes-links-from-both-panes
-       (map (lambda (x) (vector-ref (vector-ref (terminal:emulator-hyperlinks mirror) 0) (+ x 1)))
+       (map (lambda (x) (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) (+ x 1)))
             surface-offsets) '(#f #f))
      (read-editor `(begin (delete-other-windows!) (kill-buffer! (head:buffer-of-store-id ,surface-id)) #t))
 

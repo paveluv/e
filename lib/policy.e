@@ -26,7 +26,7 @@
           (rename (policy-cap cap)) (rename (reader-policy reader))
           mint! session? session-actor session-owner sessions
           revoke! revoked?
-          session-eval! session-edit! session-undo! session-redo! session-ask!)
+          session-eval! session-edit! session-undo! session-redo! session-history-step! session-ask!)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
                 current-output-port
@@ -232,9 +232,7 @@
                       (transact (session-actor s) (policy-buffers-raw (session-policy s)))])
           (audit! (list operation (session-actor s) id status
                         (if (eq? status 'applied) (car detail) detail)))
-          (values status
-            (if (not (eq? status 'applied)) detail
-                (if (eq? operation 'edit) (datum:copy detail text:delta->datum) (car detail)))))))
+          (values status (if (eq? status 'applied) (datum:copy detail text:delta->datum) detail)))))
 
   (define (session-edit! s id basis span lines . context)
     (call-as-session s
@@ -250,7 +248,7 @@
               (text:datum->span (text:span->datum span)) (datum:copy lines)
               (and (pair? context) (datum:copy (car context))) access))))))
 
-  (define (session-history! s id direction scope)
+  (define (session-history-step! s id direction scope)
     (call-as-session s
       (lambda ()
         (session-mutate! s direction id
@@ -259,11 +257,14 @@
   (define (session-undo! s id . scope)
     ;; Default mine, or all/(actor who), under the same buffer permission.
     (unless (<= (length scope) 1) (error 'session-undo! "expected one undo scope"))
-    (session-history! s id 'undo (if (pair? scope) (car scope) 'mine)))
+    (let-values ([(status detail)
+                  (session-history-step! s id 'undo (if (pair? scope) (car scope) 'mine))])
+      (values status (if (eq? status 'applied) (car detail) detail))))
 
   (define (session-redo! s id)
     ;; Redo belongs to the requester who undid, even for another author's edit.
-    (session-history! s id 'redo 'mine))
+    (let-values ([(status detail) (session-history-step! s id 'redo 'mine)])
+      (values status (if (eq? status 'applied) (car detail) detail))))
 
   (define (session-ask! s question choices reply!)
     (call-as-session s

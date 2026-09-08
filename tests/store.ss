@@ -43,6 +43,26 @@
             '("alpha" "bravo" "charlie"))
      (check 'fresh-revision (store:revision b) 0)
 
+     ;; One reviewed snapshot guards both text and fact races. The gate
+     ;; models a user deciding while another actor commits; refusal is inert.
+     (check 'discard-rechecks-the-reviewed-state-under-the-writer
+       (map
+         (lambda (change)
+           (let* ([id (store:create! alice "discard" '("reviewed"))]
+                  [reviewed (test:gate)]
+                  [writer (test:worker (lambda () (test:await 'reviewed reviewed) (change id) #t))])
+             (let-values ([(text revision facts) (store:snapshot-state id)])
+               (reviewed #t) (writer)
+               (let* ([accepted? (store:discard! alice id revision facts)]
+                      [still-here? (store:exists? id)])
+                 (when still-here? (store:delete! alice id))
+                 (list accepted? still-here?)))))
+         (list (lambda (id) (store:edit! bot id 0 (span 0 0 0 0) '("new ")))
+               (lambda (id) (store:set-property! bot id 'disposable #t))
+               (lambda (id) (store:delete! bot id))
+               (lambda (id) (void))))
+       '((#f #t) (#f #t) (#t #f) (#t #f)))
+
      ;; Creation and rename arbitrate the same namespace under contention,
      ;; including hidden names, existing suffixes, self-renames and reuse.
      (for-each

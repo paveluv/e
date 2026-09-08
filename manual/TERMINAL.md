@@ -232,7 +232,7 @@ Diagnostics include the identifying CSI parameters or protocol selector but
 omit arbitrary OSC and DCS payloads, which may contain private application
 data. Unknown control strings and character controls are reported as well.
 Headless emulators record the same signatures, readable through
-`terminal:emulator-unsupported`, so a test can assert that a sequence is
+`vt:emulator-unsupported`, so a test can assert that a sequence is
 either implemented or reported rather than silently dropped.
 
 ## Scheme API
@@ -263,23 +263,25 @@ The automated and optional `vttest` procedures are documented in the
 entirely owned by e and never depends on `vttest` or the host terminfo
 database.
 
-The same state machine can run without a PTY or editor buffer. This is useful
+The base's `vt` library also runs without a PTY or editor buffer. This is useful
 for tests, protocol experiments, and tools that need structured terminal
-output:
+output. Import it from the ordinary `lib` source root; an attached head's `vt`
+client exposes terminal service calls and does not contain the emulator:
 
 ```scheme
-(define vt (terminal:make-emulator 24 80))
-(terminal:emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
-(terminal:emulator-resize! vt 40 100)
-(terminal:emulator-frame vt)        ; owned coherent frame, or #f during mode 2026
-(terminal:emulator-screen vt)       ; copied vector of cell rows
-(terminal:emulator-styles vt)       ; copied vector of cell-style rows
-(terminal:emulator-hyperlinks vt)   ; copied vector of cell link metadata
-(terminal:emulator-state vt)        ; dimensions, cursor, and active modes
-(terminal:emulator-input vt "UP")   ; mode-aware key bytevector
-(terminal:emulator-mouse-input vt 0 20 8 #f) ; mode-aware mouse bytevector
-(terminal:emulator-replies vt)      ; DSR/DA and other protocol replies
-(terminal:emulator-unsupported vt)  ; reported unsupported-feature signatures
+(import (prefix (vt) vt:))
+(define vt (vt:make-emulator 24 80))
+(vt:emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
+(vt:emulator-resize! vt 40 100)
+(vt:emulator-frame vt)        ; owned coherent frame, or #f during mode 2026
+(vt:emulator-screen vt)       ; copied vector of cell rows
+(vt:emulator-styles vt)       ; copied vector of cell-style rows
+(vt:emulator-hyperlinks vt)   ; copied vector of cell link metadata
+(vt:emulator-state vt)        ; dimensions, cursor, and active modes
+(vt:emulator-input vt "UP")   ; mode-aware key bytevector
+(vt:emulator-mouse-input vt 0 20 8 #f) ; mode-aware mouse bytevector
+(vt:emulator-replies vt)      ; DSR/DA and other protocol replies
+(vt:emulator-unsupported vt)  ; reported unsupported-feature signatures
 ```
 
 Mouse coordinates are one-based. The numeric code uses the xterm button and
@@ -290,7 +292,7 @@ Style cells are `plain` or complete SGR parameter strings such as `"0;31"`;
 the leading reset prevents inheritance from the preceding cell. They do not
 allocate named faces. `emulator-state` includes the `cursor-style` symbol.
 
-`terminal:emulator-frame` reads text and presentation together:
+`vt:emulator-frame` reads text and presentation together:
 
 ```scheme
 ;; (text rows cursor size facts)
@@ -321,7 +323,7 @@ observe different updates. It returns `#f` during a child's mode 2026 hold,
 bounded to one second. Older inspection APIs continue reading parsed state
 during that hold. Reading a frame does not consume pending output.
 
-`terminal:emulator-feed!` currently accepts decoded Scheme text. The live PTY
+`vt:emulator-feed!` currently accepts decoded Scheme text. The live PTY
 reader performs UTF-8 decoding before feeding the same state machine.
 
 The OS-specific PTY creation, resize, cleanup, and process-group operations
@@ -334,6 +336,8 @@ provides commands, escape/paging bindings, and local clipboard/diagnostic
 presentation. The shared app adapter owns each window's following and input
 projection. Killing the store buffer closes its process even when no head is
 looking at it. In the current combined process, quitting e ends the base too.
+With `--attach`, quitting detaches the head; the terminal continues in the
+daemon and can be displayed from another head or the next attachment.
 
 Code that runs without a head can open and address the producer directly:
 

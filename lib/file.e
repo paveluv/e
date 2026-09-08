@@ -11,8 +11,9 @@
 ;; the disk disagrees with a buffer is the commands' decision; this
 ;; module only reads, compares, merges, and writes.
 ;;
-;; Over the wire the disk is the server's: a remote head asks for a
-;; save, and this module answers where the file is.  Exported names
+;; This iteration's attached heads run on the same SSH host and call
+;; this module directly; a future remote transport needs a file service.
+;; Exported names
 ;; drop the module stem: (file:read path), (file:lines text),
 ;; (file:write! path lines trailing?), (file:merge path base mine
 ;; disk).
@@ -136,7 +137,7 @@
     ;; the data directory next to lib, created on first use.  Each
     ;; concern takes a subdirectory -- the describe corpus lives in
     ;; data/describe.
-    (let ([dir (string-append (caar (library-directories)) "/../data")])
+    (let ([dir (string-append (directory-part (kernel:config-file)) "/data")])
       (unless (file-directory? dir) (mkdir dir))
       dir))
 

@@ -484,6 +484,11 @@
      (dynamic-wind
        void
        (lambda ()
+         ;; Configuration belongs beside the selected kernel source, even
+         ;; when an implementation overlay precedes that installation.
+         (call-with-output-file (string-append sources "/kernel.e")
+           (lambda (port)
+             (display (call-with-input-file (kernel:module-source "kernel") get-string-all) port)))
          (parameterize ([library-directories (cons (cons sources objects) (library-directories))])
            (write-fixture "kernel-child" 'child)
            (write-fixture "kernel-parent" 'parent)

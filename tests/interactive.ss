@@ -15,13 +15,13 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (terminal) terminal:))
+     (import (prefix (sys) sys:) (prefix (vt) vt:))
 
      ;; The nested terminal must run a predictable shell.
      (putenv "SHELL" "/bin/sh")
 
      (define checks 0)
-     (define mirror (terminal:make-emulator 24 80))
+     (define mirror (vt:make-emulator 24 80))
      (define process
        (sys:spawn-terminal-process "/bin/sh" "exec ./e" (current-directory) 24 80))
      (define from-editor
@@ -35,7 +35,7 @@
                             (get-char from-editor))])
            (unless (eof-object? character)
              (set! transcript (cons character transcript))
-             (terminal:emulator-feed! mirror (string character))
+             (vt:emulator-feed! mirror (string character))
              (drain!)))))
 
      (define (settle! milliseconds)
@@ -51,7 +51,7 @@
          (flush-output-port output)))
 
      (define (screen-lines)
-       (vector->list (terminal:emulator-screen mirror)))
+       (vector->list (vt:emulator-screen mirror)))
 
      (define (fail! label)
        (for-each (lambda (line) (display (format "|~a|\n" line)))
@@ -96,7 +96,7 @@
            [else (loop (cdr lines) (+ row 1))])))
 
      (define (style-at cell)
-       (vector-ref (vector-ref (terminal:emulator-styles mirror) (car cell))
+       (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell))
                    (cdr cell)))
 
      ;; -- start the editor and open a nested terminal ---------------------

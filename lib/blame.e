@@ -14,16 +14,16 @@
 ;;     reported in the echo area.
 ;;
 ;; The module holds no truth: overlays are derived from the store's
-;; subscription events, rebased through every edit like span marks,
-;; and dropped by resets.  All bookkeeping runs on the main thread
-;; (events marshal through head:run-on-main!), so there are no locks.
+;; adopted revision chain, rebased through every edit like span marks,
+;; and dropped by resets. All bookkeeping runs before paint on the main
+;; thread; a stalled head retains no independent raw-event backlog.
 
 (library (blame)
   (export init! (rename (blame-at-point! at-point!)) (rename (blame-tint-seconds tint-seconds)))
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
-                fork-thread sleep make-time current-time time-second)
+                fork-thread sleep make-time current-time time-second make-weak-eq-hashtable)
           (except (edit) init!)
           (prefix (paint) paint:)
           (prefix (head) head:)
@@ -48,6 +48,7 @@
   ;; (#(buffer-id span actor deadline) ...), newest first, main-thread
   ;; only.
   (define overlays (box '()))
+  (define observed (make-weak-eq-hashtable))
 
   (define (now-seconds) (time-second (current-time 'time-monotonic)))
 
@@ -57,32 +58,36 @@
               [end (text:rebase-position (text:span-end s) d 'stay)])
           (text:make-span (car start) (cdr start) (car end) (cdr end)))))
 
-  (define (note-event! event)
-    (case (car event)
-      [(edit)
-       (let ([id (cadr event)]
-             [actor (list-ref event 3)]
-             [d (list-ref event 4)])
-         ;; tints follow the text
-         (set-box! overlays
-                   (map (lambda (o)
-                          (if (eqv? (vector-ref o 0) id)
-                              (vector id
-                                      (rebase-lenient (vector-ref o 1) d)
-                                      (vector-ref o 2)
-                                      (vector-ref o 3))
-                              o))
-                        (unbox overlays)))
-         (when (and (not (equal? actor head:ui-actor))
-                    (> (blame-tint-seconds) 0))
-           (add-overlay! id actor d)))]
-      [(reset delete)
-       ;; a new baseline (or no buffer at all): nothing left to tint
-       (let ([id (cadr event)])
-         (set-box! overlays
-                   (filter (lambda (o) (not (eqv? (vector-ref o 0) id)))
-                           (unbox overlays))))]
-      [else (void)]))
+  (define (note-edit! id actor d)
+    ;; tints follow the text
+    (set-box! overlays
+              (map (lambda (o)
+                     (if (eqv? (vector-ref o 0) id)
+                         (vector id
+                                 (rebase-lenient (vector-ref o 1) d)
+                                 (vector-ref o 2)
+                                 (vector-ref o 3))
+                         o))
+                   (unbox overlays)))
+    (when (and (not (equal? actor head:ui-actor))
+               (> (blame-tint-seconds) 0))
+      (add-overlay! id actor d)))
+
+  (define (refresh!)
+    (let ([buffers (filter (lambda (b) (head:buffer-store-id b)) (head:buffers))])
+      (set-box! overlays
+        (filter (lambda (o)
+                  (exists (lambda (b) (eqv? (head:buffer-store-id b) (vector-ref o 0))) buffers))
+          (unbox overlays)))
+      (for-each
+        (lambda (b)
+          (let* ([id (head:buffer-store-id b)] [basis (hashtable-ref observed b #f)])
+            (let-values ([(text revision changes) (head:snapshot-since b basis)])
+              (hashtable-set! observed b revision)
+              (if changes
+                  (for-each (lambda (change) (note-edit! id (cadr change) (caddr change))) changes)
+                  (set-box! overlays
+                    (filter (lambda (o) (not (eqv? (vector-ref o 0) id))) (unbox overlays))))))) buffers)))
 
   (define (add-overlay! id actor d)
     (let* ([s (text:span-start (text:delta-span d))]
@@ -177,12 +182,7 @@
   ;;; Wiring ------------------------------------------------------------------
 
   (define (init!)
-    ;; the subscription is registry-owned like every registration:
-    ;; reloading this module retracts it before init! subscribes afresh
-    (store:subscribe!
-      #f
-      (lambda (event)
-        (head:run-on-main! (lambda () (note-event! event)))))
+    (head:add-pre-redraw-hook! refresh!)
     (paint:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e
     (style:set! 'blame-1 '((background 17)))   ; deep blue

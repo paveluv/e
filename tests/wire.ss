@@ -10,7 +10,7 @@
 (eval
   '(begin
      (import (prefix (wire) wire:) (prefix (sys) sys:) (prefix (test) test:)
-             (prefix (string) string:) (prefix (kernel) kernel:) (prefix (text) text:))
+             (prefix (string) string:) (prefix (kernel) kernel:) (prefix (text) text:) (prefix (vt) vt:))
 
      (define encoded wire:encode)
      (define (raw text)
@@ -51,6 +51,10 @@
      (copy-text "e" (string-append root "/e"))
      (for-each (lambda (name) (copy-text (string-append "lib/" name) (string-append sources "/" name)))
        (filter (lambda (name) (string:suffix? ".e" name)) (directory-list "lib")))
+     (mkdir (string-append sources "/client"))
+     (mkdir (string-append objects "/client"))
+     (for-each (lambda (name) (copy-text (string-append "lib/client/" name) (string-append sources "/client/" name)))
+       (directory-list "lib/client"))
      (write-text (string-append root "/config.e") "(error 'head-config \"daemon loaded head config\")\n")
      (write-forms (string-append root "/base-config.e")
        `((define footprint
@@ -128,7 +132,10 @@
                                (let send ([remaining 512] [message (make-string 8192 #\x)])
                                  (cond [(zero? remaining) (store:set-property! '(base e) notes 'mail-refused #f)]
                                    [(actor:send! (cadr event) message) (send (- remaining 1) message)]
-                                   [else (store:set-property! '(base e) notes 'mail-refused #t)])))))) batch)))
+                                   [else (store:set-property! '(base e) notes 'mail-refused #t)])))
+                             (when (equal? name "screen A")
+                               (actor:ask! '(agent "background") (cadr event) "Ready to continue?" '("yes" "no")
+                                 (lambda (answer) (store:set-property! '(agent "background") notes 'head-answer answer))))))) batch)))
          (vt:shell "/bin/sh")
          (vt:open! '(base e)
            ,(format "echo $$ > ~a; printf 'still here'; read answer" (quote-shell terminal-pid-file))
@@ -150,6 +157,7 @@
      (define ready (test:gate))
      (define output (test:recorder))
      (define clients '())
+     (define heads '())
      (define stopped? #f)
      (define last-request #f)
      (define notices (test:recorder))
@@ -178,6 +186,59 @@
        (reply-value (exchange connection (append (list 'request 7 operation) args))))
      (define (inventory connection)
        (cdr (assq 'sessions (caddr (rpc connection 'snapshot 1)))))
+
+     ;; Drive the real editor in the daemon's installation. All heads use
+     ;; the same object cache, which also exercises repeated client loading.
+     (define probe (string-append root "/head-result"))
+     (define (start-head name)
+       (let* ([process (sys:spawn-terminal-process "/bin/sh"
+                         (format "exec scheme-script ~a --attach --socket ~a --name ~a"
+                           (quote-shell (string-append root "/e"))
+                           (quote-shell (string-append root "/unused/../socket λ")) (quote-shell name))
+                         root 24 80)]
+              [head (vector process
+                      (transcoded-port (sys:terminal-process-input process) (make-transcoder (utf-8-codec) 'none 'replace))
+                      (vt:make-emulator 24 80) "")])
+         (set! heads (cons head heads)) head))
+     (define (pump-head! head)
+       (let drain ()
+         (when (guard (ex [else #f]) (char-ready? (vector-ref head 1)))
+           (let ([c (guard (ex [else (eof-object)]) (get-char (vector-ref head 1)))])
+             (unless (eof-object? c)
+               (vt:emulator-feed! (vector-ref head 2) (string c))
+               (let ([text (string-append (vector-ref head 3) (string c))])
+                 (vector-set! head 3 (if (> (string-length text) 32768) (string:tail text 16384) text)))
+               (drain))))))
+     (define (head-sees? head text)
+       (pump-head! head)
+       (exists (lambda (line) (string:search line text 0 (string-length line)))
+         (vector->list (vt:emulator-screen (vector-ref head 2)))))
+     (define (head-send! head text)
+       (put-bytevector (sys:terminal-process-output (vector-ref head 0)) (string->utf8 text))
+       (flush-output-port (sys:terminal-process-output (vector-ref head 0))))
+     (define (head-wait label head predicate)
+       (guard (ex [else (error 'wire-head (format "~a" label)
+                          (kernel:condition-text ex)
+                          (vector->list (vt:emulator-screen (vector-ref head 2)))
+                          (let ([text (vector-ref head 3)])
+                            (string:tail text (max 0 (- (string-length text) 1200)))))])
+         (test:await label (lambda () (pump-head! head) (predicate)))))
+     (define (head-read head expression . prefix)
+       (when (file-exists? probe) (delete-file probe))
+       (head-send! head (format "~a\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
+                          (if (pair? prefix) (car prefix) "") probe expression))
+       (let ([result (eof-object)])
+         (head-wait 'head-evaluation head
+           (lambda ()
+             (guard (ex [else #f])
+               (and (file-exists? probe)
+                    (begin (set! result (call-with-input-file probe read)) (not (eof-object? result)))))))
+         result))
+     (define (occurrences text part)
+       (let loop ([from 0] [count 0])
+         (cond [(string:search text part from (string-length text))
+                => (lambda (at) (loop (+ at (string-length part)) (+ count 1)))]
+           [else count])))
      (define (apply-changes lines changes)
        (fold-left
          (lambda (lines change)
@@ -414,8 +475,181 @@
                (test:check 'released-name-reads-producer-work-and-respects-read-only
                  (list (car (rpc head 'snapshot 1))
                        (rpc head 'edit 1 14 '(0 0 0 0) '("bad")) (rpc head 'undo 1) (rpc head 'redo 1))
-                 '(#("agent work while detached") (refused read-only) (refused read-only) (refused read-only))))
+                 '(#("agent work while detached") (refused read-only) (refused read-only) (refused read-only)))
+               (let ([id (rpc head 'create "attached text" '("shared text") '((trailing . #t)))])
+                 (write-forms (string-append root "/config.e")
+                   `((main:set-startup-page! #f)
+                     (show-buffer! (head:adopt-store-buffer! ,id))))
+                 (let* ([a (start-head "screen A")]
+                        [ready-a (head-wait 'first-real-head a (lambda () (head-sees? a "shared text")))]
+                        [b (start-head "screen B")])
+                   (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
+                   (test:check 'two-real-heads-use-client-services-and-local-tools
+                     (map (lambda (client)
+                            (head-read client
+                              '(list head:ui-actor (actor:current)
+                                     (head:buffer-name (head:find-tool-buffer "*log*"))
+                                     (kernel:module-source "store")
+                                     (kernel:module-requires? "main" "base")
+                                     (guard (ex [else #t]) (kernel:reload-module! "store") #f)))) (list a b))
+                     (map (lambda (name)
+                            (list (list 'head name) (list 'head name) "<log>"
+                                  (string-append sources "/client/store.e") #f #t)) '("screen A" "screen B")))
+                   (test:check 'client-log-delivery-stays-on-main-through-workers-reentry-and-retraction
+                     (head-read a
+                       '(let ([seen '()] [main-thread (get-thread-id)])
+                          (parameterize ([kernel:registering-module 'wire-log-observer])
+                            (log:subscribe!
+                              (lambda (entry presentation)
+                                (when (and (eq? (log:component entry) 'wire-log) (eq? (log:datum entry) 'first))
+                                  (log:add! 'wire-log 'second #f)
+                                  (error 'observer "test failure"))))
+                            (log:subscribe!
+                              (lambda (entry presentation)
+                                (when (eq? (log:component entry) 'wire-log)
+                                  (set! seen (cons (list (log:datum entry) (actor:current) presentation
+                                                     (= main-thread (get-thread-id))) seen))))))
+                          (thread-join (fork-thread (lambda () (log:add! 'wire-log 'worker #f))))
+                          (log:add! 'wire-log 'first #f)
+                          (kernel:retract-module! 'wire-log-observer)
+                          (log:add! 'wire-log 'after-retraction #f)
+                          (reverse seen)))
+                     '((worker (head "screen A") #f #t)
+                       (first (head "screen A") #f #t) (second (head "screen A") #f #t)))
+                   (head-send! a "A")
+                   (head-wait 'foreign-paint-without-a-key b (lambda () (head-sees? b "Ashared text")))
+                   (head-read b '(begin (goto-point! '(0 . 12)) #t))
+                   (head-send! b "\x1b;[200~ B\x1b;[201~")
+                   (head-wait 'second-writer a (lambda () (head-sees? a "Ashared text B")))
+                   (head-read a '(undo!))
+                   (head-wait 'undo-mine b (lambda () (head-sees? b "shared text B")))
+                   (test:check 'attached-history-keeps-other-actors-and-rich-receipts
+                     (list (car (rpc head 'snapshot id))
+                           (head-read a '(point))
+                           (map cadr (rpc head 'history id 3)))
+                     '(#("shared text B") (0 . 0) ((head "screen A") (head "screen B") (head "screen A"))))
+                   (head-read a '(undo! 'all))
+                   (test:check 'attached-explicit-other-actor-undo-and-requester-redo
+                     (list (car (rpc head 'snapshot id))
+                           (begin (head-read a '(redo!)) (car (rpc head 'snapshot id))))
+                     '(#("shared text") #("shared text B")))
+                   (head-send! a "\x03;a")
+                   (head-wait 'base-question a (lambda () (head-sees? a "Ready to continue?")))
+                   (head-send! a "yes\r")
+                   (head-wait 'answer-reaches-the-base-agent a
+                     (lambda () (equal? (assq 'head-answer (caddr (rpc head 'snapshot 1))) '(head-answer . "yes"))))
+                   (test:check 'attached-questions-are-consumed-once-in-the-base
+                     (head-read a '(actor:pending head:ui-actor)) '())
+
+                   (let ([path (string-append root "/saved.txt")])
+                     (write-text path "shared text B\n")
+                     (head-read a
+                       `(begin
+                          (head:buffer-facts-set! (current-buffer) '((file . ,path) (base . "shared text B\n")))
+                          (parameterize ([kernel:registering-module 'wire-save-hook])
+                            (file:add-pre-save-hook!
+                              (lambda (target)
+                                (when (string=? target ,path) (file:write! target '#("from hook") #t))))) #t))
+                     (head-send! a (format "\x1b;xsave-file! ~s\r" path))
+                     (head-wait 'pre-save-disk-write-is-reviewed a (lambda () (head-sees? a "changed on disk")))
+                     (head-send! a "c")
+                     (test:check 'cancel-keeps-a-pre-save-hooks-disk-write
+                       (list (head-read a '(begin (kernel:retract-module! 'wire-save-hook)
+                                             (head:buffer-facts-set! (current-buffer) '((file . #f) (base . #f))) #t))
+                             (call-with-input-file path get-string-all) (car (rpc head 'snapshot id)))
+                       '(#t "from hook\n" #("shared text B"))))
+
+                   (let ([doomed (rpc head 'create "kill review" '("work"))])
+                     (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,doomed)) #t))
+                     (head-send! a "\x18;k\r")
+                     (head-wait 'kill-review a (lambda () (head-sees? a "modified; kill anyway")))
+                     (rpc head 'edit doomed 0 '(0 4 0 4) '("!"))
+                     (rpc head 'rename doomed "kill review later")
+                     (head-wait 'kill-review-advanced a (lambda () (head-sees? a "work!")))
+                     (head-send! a "y")
+                     (head-wait 'kill-reviews-the-new-state a
+                       (lambda () (head-sees? a "Buffer kill review later modified")))
+                     (head-send! a "n")
+                     (test:check 'kill-confirmation-cannot-discard-a-racing-edit
+                       (list (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                             (car (rpc head 'snapshot doomed))) '(#t #("work!")))
+                     (rpc head 'delete doomed))
+
+                   (let ([scroll (rpc head 'create "scrolling"
+                                   (map (lambda (n) (format "row ~3,'0d" n)) (iota 80)))])
+                     (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,scroll))
+                                     (split-window-right!) #t))
+                     (head-wait 'split-before-scroll a (lambda () (head-sees? a "scrolling")))
+                     (vector-set! a 3 "")
+                     (head-send! a (apply string-append (make-list 30 "\x1b;[B")))
+                     (head-wait 'held-down-scroll a (lambda () (head-sees? a "row 030")))
+                     (let* ([frames (vector-ref a 3)] [opened (occurrences frames "\x1b;[?2026h")]
+                            [closed (occurrences frames "\x1b;[?2026l")])
+                       (test:check 'attached-split-scrolling-uses-balanced-2026
+                         (list (> opened 0) (= opened closed) (head-read a '(point))) '(#t #t (30 . 0))))
+                     (head-read a `(begin (delete-other-windows!)
+                                     (show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                     (rpc head 'delete scroll))
+                   (test:check 'attached-private-doc-source-and-local-rendering
+                     (head-read a
+                       '(begin (describe:show! 'describe:show!)
+                          (let* ([page (reference:page head:ui-actor)]
+                                 [source (head:buffer-of-store-id (car page))])
+                            (list (head:buffer-fact source 'audience #f)
+                                  (head:buffer-read-only source)
+                                  (not (head:buffer-store-id (markdown:companion source)))))))
+                     '(((head "screen A")) #t #t))
+                   (head-read a '(begin (terminal:open!! "printf 'attached terminal'; read answer; printf '\\n%s' \"$answer\"; read done") #t))
+                   (head-wait 'attached-terminal a (lambda () (head-sees? a "attached terminal")))
+                   (let ([terminal-id (head-read a '(head:buffer-store-id (current-buffer)) "\x1d;")])
+                     (head-read b `(begin (show-buffer! (head:adopt-store-buffer! ,terminal-id)) #t))
+                     (head-wait 'shared-terminal-surface b (lambda () (head-sees? b "attached terminal")))
+                     (head-read a '(begin (terminal:send! "through base\n") #t) "\x1d;")
+                     (head-wait 'shared-terminal-input b (lambda () (head-sees? b "through base")))
+                     (head-send! a "\x1d;\x18;\x03;")
+                     (head-wait 'real-head-detaches a
+                       (lambda () (not (member '(head "screen A") (map car (rpc head 'actors))))))
+                     (test:check 'detach-preserves-dirty-text-and-live-base-terminal
+                       (list (car (rpc head 'snapshot id))
+                             (cdr (assq 'alive (caddr (rpc head 'snapshot terminal-id))))
+                             (and (member '(head "screen B") (map car (rpc head 'actors))) #t))
+                       '(#("shared text B") #t #t))
+                     (let ([again (start-head "screen A")])
+                       (head-wait 'real-head-reattaches again (lambda () (head-sees? again "shared text B")))
+                       (test:check 'reattach-reuses-the-scratch-buffer
+                         (filter (lambda (name) (string:prefix? "*scratch*" name))
+                           (map (lambda (id) (rpc head 'name id)) (rpc head 'buffers))) '("*scratch*"))))
+                   ;; Pause only a head's UI while its socket reader keeps
+                   ;; running. Both budgets must close that connection and
+                   ;; leave the other screen and the daemon's PTYs usable.
+                   (for-each
+                     (lambda (case)
+                       (let* ([name (symbol->string (car case))] [who (list 'head name)]
+                              [slow (start-head name)] [held (string-append root "/head-held")]
+                              [release (string-append root "/head-release")])
+                         (head-wait 'pressure-head slow (lambda () (head-sees? slow "shared text B")))
+                         (for-each (lambda (path) (when (file-exists? path) (delete-file path))) (list held release))
+                         (head-send! slow
+                           (format "\x1b;x\x1b;[200~~begin (call-with-output-file ~s (lambda (p) (write #t p))) (let wait () (unless (file-exists? ~s) (sleep (make-time (quote time-duration) 5000000 0)) (wait)))\x1b;[201~~\r"
+                             held release))
+                         (head-wait 'ui-paused slow (lambda () (file-exists? held)))
+                         (dynamic-wind void
+                           (lambda ()
+                             (let send ([remaining (cadr case)] [payload (make-string (caddr case) #\x)])
+                               (when (and (> remaining 0) (rpc head 'send who payload)) (send (- remaining 1) payload)))
+                             (test:await 'overloaded-head-detached
+                               (lambda () (not (member who (map car (rpc head 'actors)))))))
+                           (lambda () (write-text release "continue")))
+                         (head-wait 'client-reports-inbox-overload slow
+                           (lambda () (> (occurrences (vector-ref slow 3) "pending input limit reached") 0)))
+                         (test:check (list 'attached-inbox-overload (car case))
+                           (list (and (member '(head "screen B") (map car (rpc head 'actors))) #t)
+                                 (cdr (assq 'alive (caddr (rpc head 'snapshot 3))))) '(#t #t))))
+                     '((inbox-count 512 8192) (inbox-bytes 24 2097152))))))
              (stop!)
+             (for-each (lambda (head)
+                         (head-wait 'head-restores-terminal-after-disconnect head
+                           (lambda () (> (occurrences (vector-ref head 3) "\x1b;[?1049l") 0)))) heads)
              (test:check 'stop-closes-idle-clients-and-releases-the-path
                (list (eof-object? (receive idle)) (eof-object? (receive agent)) (file-exists? socket))
                '(#t #t #f)))
@@ -432,11 +666,11 @@
            (write-text edit-release "continue")
            (guard (ex [else (void)]) (stop!))
            (for-each sys:close-connection! clients)
+           (for-each (lambda (head) (sys:close-terminal-process! (vector-ref head 0))) heads)
            (for-each close-port (list input from errors))
-           (for-each
-             (lambda (directory)
-               (for-each (lambda (name) (delete-file (string-append directory "/" name))) (directory-list directory))
-               (delete-directory directory)) (list objects sources))
-           (for-each (lambda (name) (delete-file (string-append root "/" name))) (directory-list root))
-           (delete-directory root))))
+           (let remove ([path root])
+             (if (file-directory? path)
+                 (begin (for-each (lambda (name) (remove (string-append path "/" name))) (directory-list path))
+                        (delete-directory path))
+                 (delete-file path))))))
      (test:finish! 'wire)))

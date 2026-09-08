@@ -99,7 +99,7 @@
   ;; from (sys).
   (import (chezscheme) (prefix (sys) sys:)
           (prefix (store) store:) (prefix (text) text:)
-          (prefix (kernel) kernel:) (prefix (actor) actor:)
+          (prefix (kernel) kernel:) (prefix (actor) actor:) (prefix (startup) startup:)
           (prefix (log) log:) (prefix (style) style:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
@@ -873,7 +873,7 @@
     (define path (file:visit-path path*))
     (define adopted? (not (equal? path file-name)))  ; saving under a new name
     (define b (head:window-buffer current-window))
-    (define disk (read-disk-for-save path))
+    (define disk #f)
     (define (write!)
       (guard (ex [else (parameterize ([message-source 'save-file!])
                          (set-message!
@@ -910,6 +910,7 @@
         (file:run-post-save-hooks! path)
         #t))
     (file:run-pre-save-hooks! path)
+    (set! disk (read-disk-for-save path))
     (cond
       [(and disk (not adopted?) (not (head:buffer-modified b))
             (head:buffer-base b) (string=? disk (head:buffer-base b)))
@@ -1065,14 +1066,17 @@
     ;; Generated tools explicitly opt into disposal; failed reads fail closed.
     (guard (ex [else #f])
       (let-values ([(text revision facts) (head:buffer-state b)])
-        (define (fact key fallback) (cond [(assq key facts) => cdr] [else fallback]))
-        (or (fact 'disposable #f)
-            (not (fact 'modified #f))
-            (let ([path (fact 'file #f)])
-              (if path
-                  (and (file-exists? path)
-                       (string=? (file:text text (fact 'trailing #t)) (file:read path)))
-                  (and (= (vector-length text) 1) (string=? (vector-ref text 0) ""))))))))
+        (state-clean? text facts))))
+
+  (define (state-clean? text facts)
+    (define (fact key fallback) (cond [(assq key facts) => cdr] [else fallback]))
+    (or (fact 'disposable #f)
+        (not (fact 'modified #f))
+        (let ([path (fact 'file #f)])
+          (if path
+              (and (file-exists? path)
+                   (string=? (file:text text (fact 'trailing #t)) (file:read path)))
+              (and (= (vector-length text) 1) (string=? (vector-ref text 0) ""))))))
 
   ;;; Buffer and window commands ---------------------------------------------
 
@@ -1241,11 +1245,20 @@
 
   (define (kill-buffer! b)
     (when (head:buffer-store-id b)
-      (guard (ex [else (void)])
-        (store:delete! head:ui-actor (head:buffer-store-id b))))
+      (store:delete! head:ui-actor (head:buffer-store-id b)))
+    (retire-buffer! b))
+
+  (define (retire-buffer! b)
     (head:forget-buffer! b)
     (parameterize ([message-source 'kill-buffer!])
       (set-message! (format "Killed ~a" (head:buffer-name b)))))
+
+  (define (discard-reviewed! b revision facts)
+    (let ([id (head:buffer-store-id b)])
+      (and (if id (store:discard! head:ui-actor id revision facts)
+               (let-values ([(text current current-facts) (head:buffer-state b)])
+                 (and (= revision current) (equal? facts current-facts))))
+           (begin (retire-buffer! b) #t))))
 
   (define (kill-buffer!!)
     (let* ([current (head:window-buffer current-window)]
@@ -1254,11 +1267,13 @@
                             complete-buffer-name)])
       (when s
         (let ([b (if (string=? s "") current (head:buffer-named s))])
-          (cond [(not b) (set! message (format "No buffer named ~a" s))]
-                [(or (buffer-clean? b)
-                     (prompt:confirm? (format "Buffer ~a modified; kill anyway?"
-                                        (head:buffer-name b))))
-                 (kill-buffer! b)])))))
+          (if (not b) (set! message (format "No buffer named ~a" s))
+              (let review ()
+                (let-values ([(text revision facts) (head:buffer-state b)])
+                  (when (or (state-clean? text facts)
+                            (prompt:confirm? (format "Buffer ~a modified; kill anyway?"
+                                               (head:buffer-name b))))
+                    (unless (discard-reviewed! b revision facts) (review))))))))))
 
   (define (next-window w)
     (let ([tail (cdr (memq w windows))])
@@ -1808,13 +1823,13 @@
 
   (define (prompt-kill-buffer!)
     ;; kill-buffer!!'s prompt-safe stand-in: no nested prompt, and a
-    ;; file-backed buffer with unsaved changes is refused with a note.
+    ;; buffer with protected unsaved changes is refused with a note.
     (let ([b (current-buffer)])
-      (if (and (head:buffer-file b) (not (buffer-clean? b)))
-          (format "  ~a has unsaved changes" (head:buffer-name b))
-          (guard (ex [else (string-append "  " (kernel:condition-text ex))])
-            (kill-buffer! b)
-            ""))))
+      (guard (ex [else (string-append "  " (kernel:condition-text ex))])
+        (let-values ([(text revision facts) (head:buffer-state b)])
+          (cond [(not (state-clean? text facts)) (format "  ~a has unsaved changes" (head:buffer-name b))]
+            [(discard-reviewed! b revision facts) ""]
+            [else "  Buffer changed; review it again"])))))
 
   (define (file-prompt-styler label)
     ;; Existence shown in the face, component-wise: the typed path's
@@ -1873,7 +1888,9 @@
       (when (and s (> (string-length s) 0)) (visit-file! s))))
 
   (define (quit!!)
-    (if (for-all buffer-clean? buffers)
+    (if (for-all (lambda (b)
+                   (or (and (eq? (startup:mode) 'attach) (head:buffer-store-id b))
+                       (buffer-clean? b))) buffers)
         (head:quit!)
         (let ([answer (prompt:key!
                         "Modified buffers exist; quit anyway? y)es, n)o, v)iew"

@@ -5,14 +5,7 @@
                         (terminal-yank! yank!) (terminal-close! close!)
                         (terminal-color-scheme! color-scheme!)
                         (vt:scrollback scrollback) (vt:shell shell)
-                        (terminal-forward-clipboard-to-kill-ring forward-clipboard-to-kill-ring)
-                        (vt:make-emulator make-emulator) (vt:emulator? emulator?)
-                        (vt:emulator-feed! emulator-feed!) (vt:emulator-resize! emulator-resize!)
-                        (vt:emulator-screen emulator-screen) (vt:emulator-frame emulator-frame)
-                        (vt:emulator-styles emulator-styles) (vt:emulator-hyperlinks emulator-hyperlinks)
-                        (vt:emulator-state emulator-state) (vt:emulator-input emulator-input)
-                        (vt:emulator-mouse-input emulator-mouse-input) (vt:emulator-replies emulator-replies)
-                        (vt:emulator-unsupported emulator-unsupported)))
+                        (terminal-forward-clipboard-to-kill-ring forward-clipboard-to-kill-ring)))
   (import (chezscheme) (except (edit) init!)
           (prefix (vt) vt:) (prefix (head) head:) (prefix (paint) paint:)
           (prefix (mode) mode:) (prefix (keymap) keymap:) (prefix (kernel) kernel:)
@@ -121,57 +114,9 @@
          (("parameter" . "(terminal:shell [path])")) "string"
          ("(terminal)") terminal "Terminal" #f
          "Get or set the shell used by terminal!!. It defaults to $SHELL, then /bin/sh.")
-        ((terminal:make-emulator)
-         (("procedure" . "(terminal:make-emulator rows columns)"))
-         "terminal-emulator" ("(terminal)") terminal "Terminal" #f
-         "Create a headless terminal emulator for tests and structured protocol processing.")
-        ((terminal:emulator-feed!)
-         (("procedure" . "(terminal:emulator-feed! emulator text)")) "void"
-         ("(terminal)") terminal "Terminal" #f
-         "Feed terminal output into a headless emulator.")
-        ((terminal:emulator-resize!)
-         (("procedure" . "(terminal:emulator-resize! emulator rows columns)"))
-         "void" ("(terminal)") terminal "Terminal" #f
-         "Resize a headless terminal emulator, reflowing primary-screen scrollback and preserving its logical cursor.")
-        ((terminal:emulator-screen)
-         (("procedure" . "(terminal:emulator-screen emulator)")) "vector"
-         ("(terminal)") terminal "Terminal" #f
-         "Return a copy of a headless emulator's visible cell rows.")
-        ((terminal:emulator-frame)
-         (("procedure" . "(terminal:emulator-frame emulator)")) "list or #f"
-         ("(terminal)") terminal "Terminal" #f
-         "Return one owned (text rows cursor size facts) snapshot for store/surface publication, including displayed scrollback and cluster geometry. Return #f during a child's bounded mode 2026 hold. Cursor and row coordinates refer to the returned text; facts include cursor-style.")
-        ((terminal:emulator-styles)
-         (("procedure" . "(terminal:emulator-styles emulator)")) "vector"
-         ("(terminal)") terminal "Terminal" #f
-         "Return copies of the style rows for a headless emulator's visible cells.")
-        ((terminal:emulator-hyperlinks)
-         (("procedure" . "(terminal:emulator-hyperlinks emulator)")) "vector"
-         ("(terminal)") terminal "Terminal" #f
-         "Return copies of the OSC 8 hyperlink metadata for a headless emulator's visible cells.")
-        ((terminal:emulator-state)
-         (("procedure" . "(terminal:emulator-state emulator)")) "alist"
-         ("(terminal)") terminal "Terminal" #f
-         "Return the cursor, dimensions, and active modes of a headless emulator.")
-        ((terminal:emulator-input)
-         (("procedure" . "(terminal:emulator-input emulator event)"))
-         "bytevector or #f" ("(terminal)") terminal "Terminal" #f
-         "Encode an editor key event according to a headless emulator's active modes.")
-        ((terminal:emulator-mouse-input)
-         (("procedure" . "(terminal:emulator-mouse-input emulator code x y release?)"))
-         "bytevector or #f" ("(terminal)") terminal "Terminal" #f
-         "Encode a mouse event according to a headless emulator's active tracking mode.")
-        ((terminal:emulator-replies)
-         (("procedure" . "(terminal:emulator-replies emulator)")) "list"
-         ("(terminal)") terminal "Terminal" #f
-         "Return protocol replies emitted by a headless emulator.")
         ((terminal:color-scheme!)
          (("procedure" . "(terminal:color-scheme! scheme)")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Record the host's color scheme (dark, light, or #f for unknown) and report the change to terminal children subscribed with private mode 2031. Wired to the host's own reports at startup.")
-        ((terminal:emulator-unsupported)
-         (("procedure" . "(terminal:emulator-unsupported emulator)")) "list"
-         ("(terminal)") terminal "Terminal" #f
-         "Return the unsupported-feature signatures a headless emulator has reported, sorted and deduplicated."))))
+         "Record the host's color scheme (dark, light, or #f for unknown) and report the change to terminal children subscribed with private mode 2031. Wired to the host's own reports at startup."))))
 
 ) ;; library (terminal)

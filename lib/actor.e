@@ -19,9 +19,9 @@
           ask! answer! cancel! pending)
   (import (rnrs)
           (only (chezscheme) box unbox set-box! void make-mutex with-mutex
-                current-time time-second make-thread-parameter parameterize)
+                current-time time-second parameterize)
           (prefix (kernel) kernel:)
-          (prefix (datum) datum:))
+          (prefix (datum) datum:) (prefix (identity) identity:))
 
   ;;; Registration ----------------------------------------------------------
 
@@ -30,25 +30,11 @@
 
   (define registrations (kernel:make-registry registration-identity))
 
-  (define (identity? actor)
-    (and (list? actor) (>= (length actor) 2) (symbol? (car actor))
-         (or (symbol? (cadr actor))
-             (and (string? (cadr actor)) (> (string-length (cadr actor)) 0)))))
-
-  (define (audience? audience)
-    (or (eq? audience 'all) (and (list? audience) (for-all identity? audience))))
-
-  (define (in-audience? actor audience)
-    (or (eq? audience 'all) (and (member actor audience) #t)))
-
-  ;; Attribution context, not a capability. Callbacks may run on another
-  ;; actor's thread; their identity follows the work, not that thread's head.
-  (define current-actor (make-thread-parameter #f))
-
-  (define (current) (datum:copy (current-actor)))
-
-  (define (call-as actor thunk)
-    (parameterize ([current-actor (datum:copy actor)]) (thunk)))
+  (define identity? identity:valid?)
+  (define audience? identity:audience?)
+  (define in-audience? identity:in-audience?)
+  (define current identity:current)
+  (define call-as identity:call-as)
 
   (define register!
     (case-lambda

@@ -15,6 +15,7 @@
              (prefix (store) store:)
              (prefix (text) text:)
              (prefix (file) file:)
+             (prefix (mode) mode:)
              (prefix (kernel) kernel:))
 
      (define checks 0)
@@ -127,6 +128,8 @@
      (check 'redo-relative-to-new-disk-is-clean (store:property merged-id 'modified) #f)
 
      ;; Validate all inputs before either owner changes text or facts.
+     (mode:register! "invalid-line-output" '() '() (lambda (line) #f))
+     (register-formatter! "invalid-line-output" (lambda args '("embedded\nnewline")))
      (for-each
        (lambda (shared?)
          (let ([b (fresh (if shared? "validate-shared" "validate-local") shared?)])
@@ -140,23 +143,26 @@
              (head:store-reset! b input)
              (vector-set! input 0 "caller mutation")
              (check 'baseline-owns-its-vector (head:buffer-lines b) '#("before")))
+           (mode:choose! b "invalid-line-output")
            (let ([before (state b)] [history (head:buffer-history b)])
-             (check 'bad-baseline-refuses
-                    (raises? (lambda () (head:store-reset! b '#("ok" 7)))) #t)
-             (check 'bad-reset-facts-refuse
-                    (raises? (lambda () (head:store-reset! b '("lost") '((trailing . 7))))) #t)
-             (check 'bad-fact-batch-refuses
-                    (raises? (lambda () (head:buffer-facts-set! b '((file . "changed") (7 . bad))))) #t)
-             (check 'bad-edit-context-refuses
-                    (raises? (lambda ()
-                               (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
-                                                 '(key "bad" ((trailing . #t) (trailing . #f)))))) #t)
-             (check 'facts-cannot-be-both-undoable-and-permanent
-                    (raises? (lambda ()
-                               (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
-                                                 '(key "bad" ((base . "a")) ((base . "b")))))) #t)
-             (check 'invalid-inputs-leave-text-revision-facts-alone (state b) before)
-             (check 'invalid-inputs-leave-history-alone (head:buffer-history b) history))))
+             (check 'invalid-inputs-refuse-before-changing-either-owner
+               (map
+                 (lambda (operation)
+                   (list (raises? operation) (equal? (state b) before)
+                         (equal? (head:buffer-history b) history)))
+                 (list
+                   (lambda () (head:store-reset! b '#("ok" 7)))
+                   (lambda () (head:store-reset! b '("lost") '((trailing . 7))))
+                   (lambda () (head:buffer-facts-set! b '((file . "changed") (7 . bad))))
+                   (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
+                                '(key "bad" ((trailing . #t) (trailing . #f)))))
+                   (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
+                                '(key "bad" ((base . "a")) ((base . "b")))))
+                   (lambda () (head:store-reset! b '("embedded\nnewline")))
+                   (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("embedded\nnewline")))
+                   (lambda () (buffer-append! b "embedded\nnewline"))
+                   (lambda () (store:create! bot "invalid-line-input" '("embedded\nnewline")))
+                   (lambda () (format-buffer!)))) (make-list 10 '(#t #t #t))))))
        '(#t #f))
 
      ;; The buffer still exists when the store rejects the fact write.
@@ -172,7 +178,9 @@
                 (raises? (lambda () (head:buffer-fact b 'file 'fallback))) #t)
          (check 'store-write-failure-propagates
                 (raises? (lambda () (head:buffer-file-set! b "lost"))) #t)
-         (check 'unavailable-shared-state-is-not-disposable (buffer-clean? b) #f))
+         (check 'unavailable-shared-state-is-not-disposable (buffer-clean? b) #f)
+         (check 'failed-deletion-does-not-retire-the-head-buffer
+           (list (raises? (lambda () (kill-buffer! b))) (and (memq b (head:buffers)) #t)) '(#t #t)))
        (lambda () (set-box! store-cell saved-store)))
      (check 'failure-recovery-keeps-shared-text (store:line id 0) "agent work!")
 

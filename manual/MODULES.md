@@ -5,12 +5,19 @@
 Everything in `lib/` is an R6RS library using the `.e` extension. `edit.e` is
 `(edit)`, `eval.e` is `(eval)`, and so on. The loader is only bootstrap: it
 locates the adjacent libraries and compiled-object directory and configures
-Chez. It admits options through `startup`, then enters the `base` runtime.
+Chez. It admits options through `startup`, then selects `base` or `client` runtime.
 Plain `e` subsequently imports the command layer (`edit`, bare -- the names
 M-x sees) and `main`, and runs `(main:run)`. `--daemon` runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
+
+`--attach` selects `lib/client/` ahead of `lib/` for service implementations,
+then imports the same `edit` and `main`. Its compiled objects live in
+`eo/client`; daemon and plain-editor objects stay in `eo`. Source lookup and
+reload follow the active implementation. Configuration and data remain beside
+the installation's common kernel source. Client libraries expose the operations
+used by head commands, not the base's producer and session-control APIs.
 
 The editor is layered seam modules -- `kernel`, `store`, `file`, `head`,
 `paint`, `prompt`, `mode`, `keymap`, ... -- with `main.e` running the loop on
@@ -53,7 +60,7 @@ An extension exports `init!`, which performs its registrations:
     (mode:register! "my" '(".my") '() my-styles)))
 ```
 
-`base` and `main` select their bundled modules explicitly. The kernel loads
+`base`, `client` and `main` select their bundled modules explicitly. The kernel loads
 that list and calls each `init!`; dependencies remain ordinary R6RS imports.
 Load additional extensions with `(kernel:load-module! "my-mode")` from the
 appropriate configuration file. A failed base initializer stops startup;
@@ -76,7 +83,8 @@ outside e can be picked up explicitly:
 `main:modules-reload-on-save` controls automatic source reload. The kernel,
 `main` (the loop), the base services (including policy, terminal runtime and
 reference corpus), and their transitive imports require a restart. Bootstrap
-declares these process roots with `kernel:pin-modules!`; refusal happens before
+declares these process roots with `kernel:pin-modules!`, including the attached
+connection and client seams; refusal happens before
 redefinition. A reload reinitializes only the affected module and its loaded
 importers. Unrelated owners keep their registrations and active work.
 
