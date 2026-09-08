@@ -201,11 +201,14 @@
      (pump! 400)
      (check 'typing-after-sync-mirrors (mirror-agrees? 'after) #t)
 
-     ;; the foreign edit is on the audit stream
-     (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (exists (lambda (entry) (eq? (log:component entry) (quote store))) (log:entries)) p)) (quote replace)\r"
-                    probe))
-     (pump! 900)
-     (check 'foreign-edit-audited (call-with-input-file probe read) #t)
+     ;; Adoption does not produce another operation audit. The base records
+     ;; this edit once, under its author even though M-x ran as this head.
+     (check 'foreign-edit-audited-once-under-its-author
+       (read-editor
+         '(map (lambda (entry) (list (log:actor entry) (car (log:datum entry))))
+            (filter (lambda (entry) (equal? (log:actor entry) '(agent tester)))
+              (log:entries 'store))))
+       '(((agent tester) edit)))
 
      ;; the human's cursor is a mark other actors can read
      (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (equal? (store:mark head:ui-actor (head:buffer-store-id (current-buffer)) (quote point)) (point)) p)) (quote replace)\r"
@@ -685,9 +688,8 @@
                 (screen-has? 23 "(agent rival) wrote this at revision"))
             #t)
 
-     ;; ui edits are audited too, coalesced: three keystrokes become
-     ;; one entry, flushed before the rival's interleaving operation
-     ;; so the record reads in true order
+     ;; UI summaries remain coalesced: adoption of the rival's new text
+     ;; flushes the three-keystroke burst with its own revision range.
      (send! "xyz")
      (pump! 300)
      (send! "\x1b;xlet ([id (head:buffer-store-id (current-buffer))]) (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 0 0 0) (list \"r\"))\r")

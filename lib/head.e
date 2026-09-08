@@ -1054,16 +1054,8 @@
                        (store:history-step! ui-actor (buffer-store-id b) direction scope 'any))])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
-           (flush-ui-audit! (buffer-store-id b))
-           (log:add! 'store
-             (history-audit-line ui-actor (buffer-name b) direction
-                                 (cadr detail) (caddr detail) (car detail))))
+           (flush-ui-audit! (buffer-store-id b)))
          (values status detail))]))
-
-  (define (history-audit-line requester name direction action author revision)
-    (format "~s ~a action ~a by ~s in ~s at revision ~a"
-            requester (if (eq? direction 'undo) "undid" "redid")
-            action author name revision))
 
   (define (new-buffer name)
     ;; Shared creation and notification adoption have one canonical record.
@@ -1181,34 +1173,13 @@
             (window-top-set! w (min (window-top w) last))))
         the-windows)))
 
-  ;; Foreign actors edit the (store) directly; their changes
-  ;; flow back into this seat's line caches before each frame.  The
-  ;; subscription callback runs on whichever thread edited, so it only
-  ;; queues the ordered events; the main loop does the adoption.
-  (define foreign-lock (make-mutex))
-  (define foreign-pending '())
+  ;; The store owns a bounded set of invalidations for this reader. The
+  ;; main loop adopts current truth, never retained notification payloads.
+  (define take-store-changes! #f)
 
-  (define (event-actor event)
-    ;; every store event names its actor last: (delete id actor) is
-    ;; the one three-element shape
-    (if (eq? (car event) 'delete) (caddr event) (list-ref event 3)))
-
-  (define (note-foreign-event local-actor event)
-    (when (and (memq (car event) '(edit reset property create rename delete))
-               ;; Commands adopt their own text receipts. Lifecycle always
-               ;; goes through the same path, regardless of its author.
-               (or (not (equal? (event-actor event) local-actor))
-                   (memq (car event) '(create rename delete))
-                   (and (eq? (car event) 'property) (eq? (caddr event) 'audience))))
-      (with-mutex foreign-lock
-        (set! foreign-pending (cons event foreign-pending)))
-      (wake-main!)))
-
-  ;; The ui's own side of the audit stream, coalesced: keystrokes are
-  ;; too many to log one by one, so consecutive ui edits to a buffer
-  ;; batch into one entry -- flushed before a foreign actor's
-  ;; operation on the same buffer (so the record reads in true
-  ;; order), when a burst goes stale, and at shutdown.
+  ;; Intentional UI summaries supplement the base's canonical audit. Their
+  ;; revision ranges describe the burst; flush on adoption of newer work,
+  ;; when a burst goes stale, and at shutdown.
   (define ui-audit-bursts '())  ; (id . #(name first-rev last-rev n time))
 
   (define (note-ui-edit! b revision)
@@ -1309,61 +1280,20 @@
     ;; replay a partial or out-of-order chain across a missing basis.
     (let ([basis (buffer-store-rev b)])
       (let-values ([(text revision changes) (store:snapshot-since (buffer-store-id b) basis)])
+        (when (> revision basis) (flush-ui-audit! (buffer-store-id b)))
         (adopt-snapshot! b basis text revision changes '()))))
 
   (define (sync-foreign-edits! . changed-ids)
-    (let* ([events (with-mutex foreign-lock
-                     (let ([pending foreign-pending])
-                       (set! foreign-pending '())
-                       (reverse pending)))]
-           [ids (append initial-store-ids (map cadr events) changed-ids)])
+    (let* ([pending (take-store-changes!)]
+           [ids (append
+                  (if pending (append initial-store-ids (map car pending))
+                      (append (store:buffer-list) (filter values (map buffer-store-id the-buffers))))
+                  changed-ids)])
       ;; Consume the initial inventory before callbacks, just like events.
       ;; Subsequent frames only visit buffers whose store state changed.
       (set! initial-store-ids '())
       (call-with-display-update
         (lambda ()
-          ;; the audit stream: every foreign operation is on the record --
-          ;; (log-view:buffer 'store) shows what other actors did
-          (for-each
-            (lambda (event)
-              (guard (ex [else (void)])
-                (let ([id (cadr event)] [actor (event-actor event)])
-                  ;; the modified flag flips on every edit: audit the
-                  ;; edits, not their bookkeeping shadow
-                  (unless (and (eq? (car event) 'property)
-                            (eq? (caddr event) 'modified))
-                    (flush-ui-audit! id)
-                    (log:add! 'store
-                      (case (car event)
-                        [(create)
-                         (format "~a created ~s" actor (caddr event))]
-                        [(rename)
-                         (format "~a renamed ~s to ~s" actor
-                           (let ([b (buffer-of-store-id id)])
-                             (if b (buffer-name b) id))
-                           (caddr event))]
-                        [(delete)
-                         (format "~a deleted ~s" actor
-                           (let ([b (buffer-of-store-id id)])
-                             (if b (buffer-name b) id)))]
-                        [(property)
-                         (format "~a set ~a of ~s"
-                           actor (caddr event)
-                           (store:buffer-name id))]
-                        [(edit)
-                         (if (> (length event) 5)
-                           (let ([origin (list-ref event 5)])
-                             (history-audit-line actor (store:buffer-name id)
-                                                 (car origin) (caddr origin)
-                                                 (cadr origin) (caddr event)))
-                           (format "~a edited ~s at ~a" actor (store:buffer-name id)
-                                   (text:span-start (text:delta-span (list-ref event 4)))))]
-                        [else
-                         (format "~a reset ~s" actor (store:buffer-name id))])
-                      ;; Background app output remains on the audit record.
-                      ;; Echoing it would resize the very viewport it feeds.
-                      (not (and (pair? actor) (eq? (car actor) 'app))))))))
-            events)
           ;; Reconcile each id once from current truth. Queued create/rename/
           ;; audience changes may already be superseded; hidden labels do not
           ;; displace local tools. Finish lifecycle, text and geometry before
@@ -1380,11 +1310,8 @@
                             (buffer-name-raw-set! b name)
                             (reserve-store-name! name)))
                         (sync-store-buffer! b)
-                        (when (or (memv id changed-ids)
-                                  (exists (lambda (event)
-                                            (and (eqv? (cadr event) id)
-                                              (memq (car event) '(create rename property))))
-                                    events))
+                        (when (or (not pending) (memv id changed-ids)
+                                  (cond [(assv id pending) => cdr] [else #f]))
                           (bump-buffer-revision! b)
                           (request-repaint!))))
                     (when b (forget-buffer! b))))))
@@ -2072,7 +1999,8 @@
                 (lambda ()
                   (let ([identity (actor:register! (list 'head name)
                                     (lambda (message) (wake-main!)) 'all)])
-                    (store:subscribe! #f (lambda (event) (note-foreign-event identity event)))
+                    (let-values ([(token take!) (store:watch! wake-main!)])
+                      (set! take-store-changes! take!))
                     ;; Surface events are wakeups. The head prepares current
                     ;; demanded rows on its pump, never on a publisher thread.
                     (surface:subscribe! #f (lambda (event) (wake-main!)))

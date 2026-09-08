@@ -24,8 +24,9 @@ background job with its output redirected; SIGHUP leaves it running.
 SIGTERM or Ctrl-C stops it and its terminal processes. State is in memory
 for the life of the daemon; stopping it does not save a session to disk.
 
-Local clients can read, edit and undo according to their session's buffer
-permissions, and receive actor mailbox delivery. Interactive attachment and
+Local clients can read, edit, undo and redo according to their session's buffer
+permissions, receive actor mail, and watch buffer changes. Catch-up snapshots
+can include matching facts and position changes. Interactive attachment and
 named screen restoration are still being built. The current protocol and Scheme
 client primitives are described in the development
 [wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).

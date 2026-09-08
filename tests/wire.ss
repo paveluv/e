@@ -12,9 +12,7 @@
      (import (prefix (wire) wire:) (prefix (sys) sys:) (prefix (test) test:)
              (prefix (string) string:) (prefix (kernel) kernel:) (prefix (text) text:))
 
-     (define (encoded value)
-       (let-values ([(port result) (open-bytevector-output-port)])
-         (wire:send! port value) (result)))
+     (define encoded wire:encode)
      (define (raw text)
        (let* ([bytes (string->utf8 text)] [out (make-bytevector (+ 4 (bytevector-length bytes)))])
          (bytevector-u32-set! out 0 (bytevector-length bytes) (endianness big))
@@ -38,6 +36,7 @@
      (define trigger (string-append root "/continue"))
      (define terminal-pid-file (string-append root "/terminal-pid"))
      (define inventory-file (string-append root "/sessions"))
+     (define audit-file (string-append root "/audit"))
      (define edit-held (string-append root "/edit-held"))
      (define edit-release (string-append root "/edit-release"))
      (define (quote-shell text)
@@ -91,8 +90,18 @@
                  (policy:make '() 10000 '("notes λ") 0)
                  (default-policy actor))))
          (define held-edit? #f)
+         (define operation-audits '())
+         (define app-presentations '())
          (log:subscribe!
            (lambda (record presentation)
+             (when (eq? (log:component record) 'store)
+               (let* ([event (log:datum record)] [app? (eq? (car (log:actor record)) 'app)]
+                      [operation? (and (pair? event) (memq (car event) '(edit reset)) (= (cadr event) notes))])
+                 (when app? (set! app-presentations (cons presentation app-presentations)))
+                 (when operation? (set! operation-audits (cons (list (log:actor record) event) operation-audits)))
+                 (when (or app? operation?)
+                   (call-with-output-file ,audit-file
+                     (lambda (out) (write (list (reverse operation-audits) app-presentations) out)) 'replace))))
              (when (eq? (log:component record) 'policy)
                (let ([event (log:datum record)])
                  (when (and (eq? (car event) 'edit) (equal? (cadr event) '(agent "first")) (not held-edit?))
@@ -108,7 +117,18 @@
            (lambda (batch)
              (for-each (lambda (event)
                          (when (and (eq? (car event) 'attached) (memq (caadr event) '(head agent)))
-                           (actor:send! (cadr event) '(from-base "welcome")))) batch)))
+                           (actor:send! (cadr event) '(from-base "welcome"))
+                           (let ([name (cadadr event)])
+                             (when (member name '("stalled count" "stalled bytes"))
+                               (store:set-property! '(base e) 2 'padding
+                                 (make-string (if (string=? name "stalled count") 8192 2097152) #\x)))
+                             ;; Publication may itself cause mail before the
+                             ;; writer starts. Refusal must reach the sender.
+                             (when (equal? name "stalled mail")
+                               (let send ([remaining 512] [message (make-string 8192 #\x)])
+                                 (cond [(zero? remaining) (store:set-property! '(base e) notes 'mail-refused #f)]
+                                   [(actor:send! (cadr event) message) (send (- remaining 1) message)]
+                                   [else (store:set-property! '(base e) notes 'mail-refused #t)])))))) batch)))
          (vt:shell "/bin/sh")
          (vt:open! '(base e)
            ,(format "echo $$ > ~a; printf 'still here'; read answer" (quote-shell terminal-pid-file))
@@ -132,13 +152,19 @@
      (define clients '())
      (define stopped? #f)
      (define last-request #f)
+     (define notices (test:recorder))
      (define (receive connection)
        (guard (ex [else (error 'wire-test "receive failed" last-request (kernel:condition-text ex))])
          ((test:worker (lambda () (wire:receive (sys:connection-input connection)))))))
      (define (exchange connection message)
        (set! last-request message)
        (wire:send! (sys:connection-output connection) message)
-       (receive connection))
+       (receive-reply connection))
+     (define (receive-reply connection)
+       (let ([message (receive connection)])
+         (if (and (pair? message) (eq? (car message) 'changed))
+             (begin (notices (cons connection (cadr message))) (receive-reply connection))
+             message)))
      (define (connect)
        (let ([connection (sys:connect-local socket)])
          (set! clients (cons connection clients)) connection))
@@ -152,6 +178,14 @@
        (reply-value (exchange connection (append (list 'request 7 operation) args))))
      (define (inventory connection)
        (cdr (assq 'sessions (caddr (rpc connection 'snapshot 1)))))
+     (define (apply-changes lines changes)
+       (fold-left
+         (lambda (lines change)
+           (let ([delta (text:datum->delta (caddr change))])
+             (unless (equal? (text:extract lines (text:delta-span delta)) (text:delta-removed delta))
+               (error 'wire-test "wrong removed text" change))
+             (let-values ([(next actual) (text:apply-edit lines (text:delta-span delta) (text:delta-inserted delta))]) next)))
+         lines changes))
 
      (let-values ([(input from errors pid) (open-process-ports command 'block (native-transcoder))])
        (define out-done
@@ -212,9 +246,11 @@
                    (request 6 undo 1 everyone)
                    (request 7 edit 1 0 (0 0 0 0) ("x") (g "invalid" ((trailing . #t)) ((trailing . #f))))
                    (request 8 edit 1 0 (0 0 0 0) ("x") #f #f)
-                   (request 9 redo 1 all) (request 10 actors)))
+                   (request 9 redo 1 all) (request 10 snapshot 1 #f)
+                   (request 11 snapshot 1 -1) (request 12 watch extra) (request 13 actors)))
                '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 error)
-                 (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error) (reply 9 error) (reply 10 ok)))
+                 (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error)
+                 (reply 9 error) (reply 10 error) (reply 11 error) (reply 12 error) (reply 13 ok)))
              (test:check 'existing-endpoint-is-never-unlinked
                (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name 1))
                '(#t "notes λ"))
@@ -232,8 +268,11 @@
              (let* ([first (connect)] [second (connect)]
                     [writers (list first second)] [actors '((agent "first") (agent "second"))])
                (test:check 'configured-agents-use-server-selected-permissions
-                 (map (lambda (connection actor) (list (hello connection actor) (receive connection))) writers actors)
-                 (map (lambda (actor) (list (list 'hello 1 actor '(read edit undo redo)) '(event (from-base "welcome")))) actors))
+                 (map (lambda (connection actor)
+                        (list (hello connection actor) (receive connection)
+                              (rpc connection 'watch) (rpc connection 'watch))) writers actors)
+                 (map (lambda (actor) (list (list 'hello 1 actor '(read edit undo redo))
+                                            '(event (from-base "welcome")) '(1 2 3) '(1 2 3))) actors))
                ;; Hold the first policy audit callback after commit. A second
                ;; actor commits before the first reply: its receipt must still
                ;; describe exactly its own accepted revision and anchor chain.
@@ -243,25 +282,31 @@
                (test:await 'first-edit-committed (lambda () (file-exists? edit-held)))
                (let ([second-result (rpc second 'edit 1 0 '(0 7 0 7) '("!") '((batch 1) "other actor"))])
                  (write-text edit-release "continue")
-                 (let ([results (list (reply-value (receive first)) second-result)])
+                 (let ([results (list (reply-value (receive-reply first)) second-result)])
                    (test:check 'authoritative-receipts-rebase-and-attribute-both-writers
                      (map
                        (lambda (result actor)
                          (let* ([receipt (cadr result)] [changes (caddr receipt)]
-                                [reconstructed
-                                 (fold-left
-                                   (lambda (lines change)
-                                     (let ([delta (text:datum->delta (caddr change))])
-                                       (unless (equal? (text:extract lines (text:delta-span delta)) (text:delta-removed delta))
-                                         (error 'wire-test "wrong removed text" change))
-                                       (let-values ([(next actual) (text:apply-edit lines (text:delta-span delta) (text:delta-inserted delta))]) next)))
-                                   '#("hello λ") changes)])
+                                [reconstructed (apply-changes '#("hello λ") changes)])
                            (list (car result) (car receipt) (cadr receipt)
                                  (equal? reconstructed (cadr receipt))
                                  (equal? (cadr (car (reverse changes))) actor)
                                  (map car changes))))
                        results actors)
                      '((applied 1 #("HELLO λ") #t #t (1)) (applied 2 #("HELLO λ!") #t #t (1 2))))))
+               (test:check 'watchers-adopt-one-text-facts-and-anchor-snapshot
+                 (map
+                   (lambda (connection)
+                     (let* ([state (rpc connection 'snapshot 1 0)] [chain (cadddr state)])
+                       (list (car state) (cadr state) (assq 'trailing (caddr state))
+                             (assq 'saved-stamp (caddr state))
+                             (apply-changes '#("hello λ") chain) (map cadr chain)
+                             (and (exists (lambda (notice)
+                                            (and (eq? (car notice) connection)
+                                                 (or (not (cdr notice)) (assv 1 (cdr notice))))) (notices)) #t))))
+                   writers)
+                 (make-list 2 '(#("HELLO λ!") 2 (trailing . #f) (saved-stamp . "observed")
+                                #("HELLO λ!") ((agent "first") (agent "second")) #t)))
                (test:check 'stale-and-permission-refusals-preserve-text
                  (list (rpc second 'edit 1 0 '(0 1 0 3) '("bad"))
                        (rpc agent 'edit 1 2 '(0 0 0 0) '("bad"))
@@ -300,6 +345,37 @@
                (for-each sys:close-connection! writers)
                (test:await 'connection-sessions-revoked
                  (lambda () (equal? (inventory agent) (list (list identity #f))))))
+             ;; Exercise both outbox bounds with a peer that sends requests
+             ;; but never reads replies. Other clients and the PTY stay live;
+             ;; overload must wake the blocked writer and revoke its session.
+             (test:check 'slow-readers-disconnect-without-blocking-other-clients
+               (map
+                 (lambda (scenario)
+                   (let* ([slow (connect)] [who (list 'agent (car scenario))])
+                     (hello slow who) (receive slow)
+                     (let ([sent (test:worker
+                                   (lambda ()
+                                     (guard (ex [else (void)])
+                                       (do ([i 0 (+ i 1)]) ((= i (cdr scenario)))
+                                         (wire:send! (sys:connection-output slow) (list 'request i 'snapshot 2))))))])
+                       (test:await 'overloaded-reader-detached
+                         (lambda () (not (assoc who (rpc agent 'actors)))))
+                       (sent))
+                     (sys:close-connection! slow)
+                     (list (not (assoc who (inventory agent)))
+                           (cdr (assq 'alive (caddr (rpc agent 'snapshot 3)))))))
+                 '(("stalled count" . 512) ("stalled bytes" . 32)))
+               '((#t #t) (#t #t)))
+             (let ([slow (connect)] [who '(agent "stalled mail")])
+               (wire:send! (sys:connection-output slow) (list 'hello wire:version who))
+               (test:await 'publication-mail-refused
+                 (lambda () (assq 'mail-refused (caddr (rpc agent 'snapshot 1)))))
+               (test:await 'publication-overload-detached
+                 (lambda () (not (assoc who (rpc agent 'actors)))))
+               (test:check 'publication-overload-refuses-delivery-and-cleans-up-before-writer-start
+                 (list (eof-object? (receive slow)) (not (assoc who (inventory agent)))
+                       (assq 'mail-refused (caddr (rpc agent 'snapshot 1))))
+                 '(#t #t (mail-refused . #t))))
              (write-text trigger "continue")
              (test:await 'background-agent
                (lambda () (equal? (car (rpc agent 'snapshot 1)) '#("agent work while detached"))))
@@ -308,6 +384,31 @@
              (signal! "HUP")
              (test:check 'hup-keeps-the-base-and-current-revision
                (car (rpc agent 'snapshot 1)) '#("agent work while detached"))
+             (test:check 'wire-catchup-distinguishes-current-and-missing-history
+               (map (lambda (basis)
+                      (let ([state (rpc agent 'snapshot 1 basis)])
+                        (list (car state) (cadr state) (assq 'read-only (caddr state)) (cadddr state))))
+                 '(14 13 15))
+               '((#("agent work while detached") 14 (read-only . #t) ())
+                 (#("agent work while detached") 14 (read-only . #t) #f)
+                 (#("agent work while detached") 14 (read-only . #t) #f)))
+             (let ([recorded #f])
+               ;; Text commits before callbacks complete. Wait for the audit
+               ;; prefix instead of racing a partially rewritten fixture file.
+               (test:await 'audit-through-background-reset
+                 (lambda ()
+                   (guard (ex [else #f])
+                     (set! recorded (call-with-input-file audit-file read))
+                     (= (length (car recorded)) 14))))
+               (let ([audits (car recorded)] [app (cadr recorded)])
+                 (test:check 'base-audits-once-under-the-author-and-keeps-app-output-quiet
+                   (list (map (lambda (entry) (caddr (cadr entry))) audits)
+                         (map car audits) (cadar audits) (cadr (car (reverse audits)))
+                         (and (pair? app) (for-all not app)))
+                   (list (map add1 (iota 14))
+                         (append '((agent "first") (agent "second")) (make-list 11 '(agent "first"))
+                           '((agent "background")))
+                         '(edit 1 1 (0 0 0 5)) '(reset 1 14) #t))))
              (let ([head (connect)])
                (hello head '(head "desk λ")) (receive head)
                (test:check 'released-name-reads-producer-work-and-respects-read-only

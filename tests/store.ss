@@ -698,12 +698,11 @@
 
      ;; A coherent snapshot includes every retained intervening delta,
      ;; even before a writer's notifications have finished delivery.
-     (let-values ([(text revision changes) (store:snapshot-since nested 0)])
-       (check 'incremental-snapshot-text text '#("yxabc"))
-       (check 'incremental-snapshot-revision revision 2)
-       (check 'incremental-snapshot-order (map car changes) '(1 2))
-       (check 'incremental-snapshot-attribution (map cadr changes) (list alice bot))
-       (check 'incremental-snapshot-deltas (for-all text:delta? (map caddr changes)) #t))
+     (let-values ([(text revision facts changes) (store:snapshot-state nested 0)])
+       (check 'incremental-snapshot-text-facts-and-chain
+         (list text revision (cdr (assq 'modified facts)) (map car changes)
+               (map cadr changes) (for-all text:delta? (map caddr changes)))
+         (list '#("yxabc") 2 #t '(1 2) (list alice bot) #t)))
      (let-values ([(text revision changes) (store:snapshot-since nested 2)])
        (check 'incremental-snapshot-already-current changes '()))
      (let-values ([(text revision changes) (store:snapshot-since nested 3)])
@@ -720,6 +719,33 @@
        (check 'incremental-snapshot-retained-boundary
               (list (length changes) (caar changes) (car (car (reverse changes))) revision)
               '(256 5 260 260)))
+
+     ;; Two lagging readers retain ids, not deltas. Taking or damaging one
+     ;; batch cannot clear another; overflow requests a fresh inventory.
+     (let ([left-wakes 0] [right-wakes 0])
+       (let-values ([(left take-left!) (store:watch! (lambda () (set! left-wakes (+ left-wakes 1))))]
+                    [(right take-right!) (store:watch! (lambda () (set! right-wakes (+ right-wakes 1))))])
+         (do ([i 0 (+ i 1)]) ((= i 3))
+           (store:edit! bot nested (store:revision nested) (span 0 0 0 0) '("x")))
+         (let ([batch (take-left!)])
+           (check 'watch-coalesces-text-and-wakes-once
+             (list batch left-wakes right-wakes) (list (list (cons nested #f)) 1 1))
+           (set-cdr! (car batch) 'damaged))
+         (check 'watch-readers-own-independent-batches (take-right!) (list (cons nested #f)))
+         (store:set-property! bot nested 'status "watch")
+         (store:edit! bot nested (store:revision nested) (span 0 0 0 0) '("x"))
+         (check 'watch-retains-fact-invalidation-across-later-text
+           (list (take-left!) (take-right!) (take-left!) left-wakes right-wakes)
+           (list (list (cons nested #t)) (list (cons nested #t)) '() 2 2))
+         (store:unsubscribe! left)
+         (do ([i 0 (+ i 1)]) ((= i 257))
+           (let ([id (store:create! bot "temporary" '(""))]) (store:delete! bot id)))
+         (let ([full (take-right!)])
+           (store:drop-property! bot nested 'status)
+           (check 'watch-overflow-resets-and-revocation-stops-delivery
+             (list full (take-left!) (take-right!) left-wakes right-wakes)
+             (list #f '() (list (cons nested #t)) 2 4)))
+         (store:unsubscribe! right)))
 
      ;; Registration applies to future commits; revocation also removes
      ;; callbacks queued behind a subscriber that is currently running.

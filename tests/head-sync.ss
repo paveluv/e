@@ -339,6 +339,31 @@
             (list (head:buffer-of-store-id private) cleanups (store:exists? private)) '(#f 1 #t))
      (head:set-adopt-hook! (lambda (source) (void)))
 
+     ;; A lifecycle burst can exceed the retained invalidation set. Rescan
+     ;; both current inventory and old head records, so deleted/hidden ids
+     ;; retire while newly visible sources and local tools keep their identity.
+     (let* ([deleted (head:new-buffer "overflow-deleted")]
+            [hidden (head:new-buffer "overflow-hidden")]
+            [fresh (store:create! bot "overflow-fresh" '("latest"))])
+       (head:before-frame!)
+       (let ([adopted (head:buffer-of-store-id fresh)])
+         (store:delete! bot (head:buffer-store-id deleted))
+         (store:set-property! bot (head:buffer-store-id hidden) 'audience '())
+         (do ([i 0 (+ i 1)]) ((= i 257))
+           (let ([id (store:create! bot "temporary" '(""))]) (store:delete! bot id)))
+         (store:rename! bot fresh "overflow-renamed")
+         (store:reset! bot fresh '("after overflow"))
+         (store:create! bot "overflow-new" '("created after overflow"))
+         (head:before-frame!)
+         (check 'overflow-adopts-current-inventory-and-retires-stale-records
+           (list (head:buffer-of-store-id (head:buffer-store-id deleted))
+                 (head:buffer-of-store-id (head:buffer-store-id hidden))
+                 (eq? adopted (head:buffer-of-store-id fresh))
+                 (head:buffer-name adopted) (head:buffer-lines adopted)
+                 (head:buffer-lines (head:buffer-of-store-id (store:find-named "overflow-new")))
+                 (eq? local-tool (head:find-tool-buffer "private")))
+           '(#f #f #t "overflow-renamed" #("after overflow") #("created after overflow") #t))))
+
      ;; With no visible alternative, retirement creates a fresh scratch
      ;; without stealing the hidden scratch's still-reserved store label.
      (define last-visible (head:new-buffer "*scratch*<last>"))

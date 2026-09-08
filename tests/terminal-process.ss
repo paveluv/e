@@ -11,7 +11,7 @@
      (import (prefix (sys) sys:) (prefix (vt) vt:)
              (prefix (head) head:) (prefix (paint) paint:) (prefix (render) render:)
              (prefix (actor) actor:) (prefix (store) store:) (prefix (surface) surface:)
-             (prefix (kernel) kernel:) (prefix (log) log:) (prefix (text) text:)
+             (prefix (kernel) kernel:) (prefix (text) text:)
              (prefix (test) test:))
 
      (define (check label true?)
@@ -110,7 +110,7 @@
             ;; Keep this caller's exports before reload rebinds M-x's prefix.
             [send! vt:send!] [close! vt:close!]
             [phase 'initial] [coherent? #f] [complete? #f] [interfered? #f]
-            [events (test:recorder)] [retired (test:recorder)] [audit (test:recorder)] [log-token #f])
+            [events (test:recorder)] [retired (test:recorder)])
        (define (transcript) (let-values ([(text revision) (store:snapshot id)]) text))
        (define (has? part)
          (exists (lambda (line) (contains? line part)) (vector->list (transcript))))
@@ -168,11 +168,6 @@
            (kernel:load-module! "terminal")
            (head:set-frame-hook! (lambda () (void)))
            (head:before-frame!)
-           (set! log-token
-             (log:subscribe!
-               (lambda (entry presentation)
-                 (when (and (eq? (log:component entry) 'store)
-                            (contains? (log:datum entry) "(app terminal")) (audit presentation)))))
            (set! id (vt:open! first (format "exec scheme-script ~a" child) (current-directory) 3 24))
            (set! owner (store:property id 'app))
            (set! subscription
@@ -225,8 +220,6 @@
                    (store:property id 'clipboard) (store:buffer-name id))
              `(#t #t #f "界q\x301;NEW" #t bar #f ((0 6 "https://frame.example" "live"))
                (1 ,first "shared") "*fixture*"))
-           (check 'background-app-audit-keeps-records-without-echo
-             (and (pair? (audit)) (for-all not (audit))))
            (head:set-repaint-hook! paint:invalidate-screen-cache!)
            (send first "mouse\n" '(3 24))
            (wait-stage 'mouse)
@@ -280,7 +273,6 @@
                    (exists (lambda (event) (eq? (car event) 'reset)) (events)))
              '(#t applied ((#f #f)) #f)))
          (lambda ()
-           (when log-token (log:unsubscribe! log-token))
            (head:set-repaint-hook! paint:invalidate-screen-cache!)
            (head:set-frame-hook! paint:redraw!)
            (when subscription (store:unsubscribe! subscription))

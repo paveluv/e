@@ -6,6 +6,7 @@
           (prefix (sys) sys:) (prefix (wire) wire:)
           (prefix (store) store:) (prefix (actor) actor:)
           (prefix (policy) policy:) (prefix (text) text:) (prefix (datum) datum:)
+          (prefix (log) log:)
           (prefix (file) file:) (prefix (vt) vt:))
 
   (define modules
@@ -24,16 +25,35 @@
     ;; Pin before config can start active work. Plain e owns this same base
     ;; lifetime; ending a head connection never enters this cleanup.
     (kernel:pin-modules! (cons "base" modules))
-    (dynamic-wind void
-      (lambda ()
-        (actor:call-as '(base e)
-          (lambda ()
-            (let ([failures (kernel:load-modules! modules)])
-              (unless (null? failures) (raise (cdar failures))))
-            (let ([result (kernel:load-config! 'base)])
-              (when (condition? result) (raise result)))))
-        (thunk))
-      vt:close-all!))
+    (let ([audit #f])
+      (dynamic-wind void
+        (lambda ()
+          ;; One producer for every head and for work while all heads are
+          ;; absent. Log small operation facts, never retained text/deltas.
+          (set! audit (store:subscribe! #f audit-store-event!))
+          (actor:call-as '(base e)
+            (lambda ()
+              (let ([failures (kernel:load-modules! modules)])
+                (unless (null? failures) (raise (cdar failures))))
+              (let ([result (kernel:load-config! 'base)])
+                (when (condition? result) (raise result)))))
+          (thunk))
+        (lambda ()
+          (dynamic-wind void vt:close-all!
+            (lambda () (when audit (store:unsubscribe! audit))))))))
+
+  (define (audit-store-event! event)
+    (let* ([kind (car event)] [id (cadr event)]
+           [actor (if (eq? kind 'delete) (caddr event) (cadddr event))]
+           [detail
+            (case kind
+              [(edit)
+               (append (list 'edit id (caddr event)
+                         (text:span->datum (text:delta-span (list-ref event 4))))
+                 (list-tail event 5))]
+              [(delete) (list 'delete id)]
+              [else (list kind id (caddr event))])])
+      (actor:call-as actor (lambda () (log:add! 'store detail #f)))))
 
   (define (request session operation args)
     (define (arity n)
@@ -43,13 +63,18 @@
        (arity 0)
        (if (eq? operation 'actors) (actor:attached)
            (sort < (store:buffer-list)))]
-      [(name snapshot)
+      [(name)
        (arity 1)
-       (let ([id (car args)])
-         ;; Audience is view routing, as in the store; it is not a read ACL.
-         (if (eq? operation 'name) (store:buffer-name id)
-             (let-values ([(lines revision facts) (store:snapshot-state id)])
-               (list lines revision facts))))]
+       (store:buffer-name (car args))]
+      [(snapshot)
+       (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional basis"))
+       (when (pair? (cdr args))
+         (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
+           (error 'wire "expected a nonnegative basis revision")))
+       ;; Audience is view routing, not a read ACL. Optional changes end at
+       ;; exactly this text/facts snapshot and use the edit receipt's codec.
+       (datum:copy (call-with-values (lambda () (apply store:snapshot-state args)) list)
+         text:delta->datum)]
       [(edit)
        (unless (<= 4 (length args) 5) (error 'wire "expected buffer, basis, span, lines and optional context"))
        (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
@@ -66,8 +91,42 @@
       [else (error 'wire "unknown request" operation)]))
 
   (define (serve-connection connection)
-    (let ([owner (list 'connection connection)] [out (kernel:make-mailbox)] [writer #f] [session #f])
-      (define (post! message) (kernel:mailbox-post! out message))
+    (let ([owner (list 'connection connection)] [out (kernel:make-mailbox)]
+          [out-lock (make-mutex)] [queued-bytes 0] [queued-count 0] [closed? #f]
+          [writer #f] [session #f] [changes #f])
+      (define (close!)
+        (when (with-mutex out-lock
+                (and (not closed?) (begin (set! closed? #t) #t)))
+          (sys:close-connection! connection)
+          (kernel:mailbox-post! out #f)))
+      (define (post! message)
+        (guard (ex [else (close!) (raise ex)])
+          (when (with-mutex out-lock closed?) (error 'wire "connection is closed"))
+          ;; #t is one coalesced watch wakeup; all other work is owned bytes.
+          ;; Count includes an in-flight write. A stalled peer cannot retain
+          ;; unlimited store versions, tiny mail envelopes or encoded replies.
+          (let* ([frame (if (eq? message #t) #t (wire:encode message))]
+                 [size (if (bytevector? frame) (bytevector-length frame) 0)])
+            (unless (with-mutex out-lock
+                      (and (not closed?) (< queued-count 256)
+                           (<= (+ queued-bytes size) #x2000000)
+                           (begin
+                             (set! queued-count (+ queued-count 1))
+                             (set! queued-bytes (+ queued-bytes size))
+                             (kernel:mailbox-post! out frame) #t)))
+              ;; Overload is a disconnect, never a silently dropped reply or
+              ;; actor message. Only invalidations may coalesce.
+              (error 'wire "pending output limit reached")))))
+      (define (watch!)
+        (unless changes
+          ;; Publish the take procedure before the writer can consume a wake.
+          ;; Store callbacks run outside its lock; post! takes only out-lock.
+          (with-mutex out-lock
+            (parameterize ([kernel:registering-module owner])
+              (let-values ([(token take!) (store:watch! (lambda () (post! #t)))])
+                (set! changes take!)))))
+        ;; Subscribe before inventory so a racing commit is in one or both.
+        (sort < (store:buffer-list)))
       (dynamic-wind void
         (lambda ()
           (guard (ex [else
@@ -93,11 +152,19 @@
               (set! writer
                 (fork-thread
                   (lambda ()
-                    (guard (ex [else (sys:close-connection! connection)])
+                    (guard (ex [else (close!)])
                       (let loop ()
-                        (let ([message (kernel:mailbox-receive! out)])
-                          (when message
-                            (wire:send! (sys:connection-output connection) message)
+                        (let ([item (kernel:mailbox-receive! out)])
+                          (when item
+                            (let ([frame
+                                   (if (bytevector? item) item
+                                       (wire:encode (list 'changed ((with-mutex out-lock changes)))))])
+                              (put-bytevector (sys:connection-output connection) frame)
+                              (flush-output-port (sys:connection-output connection)))
+                            (with-mutex out-lock
+                              (set! queued-count (- queued-count 1))
+                              (when (bytevector? item)
+                                (set! queued-bytes (- queued-bytes (bytevector-length item)))))
                             (loop))))))))
               (actor:call-as actor
                 (lambda ()
@@ -112,13 +179,14 @@
                         (post!
                           (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
                             (list 'reply (cadr message) 'ok
-                              (request session (caddr message) (cdddr message)))))
+                              (if (eq? (caddr message) 'watch)
+                                  (if (= (length message) 3) (watch!) (error 'wire "watch takes no arguments"))
+                                  (request session (caddr message) (cdddr message))))))
                         (loop)))))))))
         (lambda ()
+          (close!)
           (when session (policy:revoke! session))
           (kernel:retract-module! owner)
-          (sys:close-connection! connection)
-          (post! #f)
           (when writer (thread-join writer))))))
 
   (define (run)

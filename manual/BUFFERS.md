@@ -465,6 +465,11 @@ future.  Rebase positions only through a complete chain.  When the head
 must resync without one, it clamps positions into the new text and logs
 the lost history.
 
+`(store:snapshot-state id basis)` returns four values: text, revision,
+facts, and that same change chain, all from one read. Use this form when a
+client needs to adopt both metadata and positions. Omitting the basis (or
+passing `#f` in process) keeps the original three-value form.
+
 For derived views, `(head:snapshot-since b basis)` returns the same three
 values from this head's adopted text, for either a local or shared buffer.
 It does not pull a newer store snapshot. Pass the previous content revision,
@@ -574,3 +579,18 @@ observe future commits; revocation skips queued callbacks, while an
 already running callback may finish.  Exceptions do not stop delivery.
 Escaping a callback releases delivery ownership and drains queued work;
 resuming a continuation into completed delivery is an error.
+
+For readers that catch up from snapshots, `(store:watch! wake)` returns two
+values: an ordinary subscription token and a zero-argument `take!` procedure.
+`wake` runs outside the locks when pending work first appears. `take!` clears
+and returns the pending `(buffer-id . metadata?)` pairs; true means facts or
+lifecycle changed, false means only text changed. Taking one reader's batch
+does not affect another reader. Subscribe before reading the initial inventory.
+
+Repeated updates to an id coalesce. More than 256 pending ids collapse to
+`#f`, requesting a full inventory rescan, including previously adopted ids
+that may now be deleted or hidden. An empty list means no pending work.
+These are invalidations, not edit history: obtain the complete revision
+chain from a snapshot before moving positions. The head uses this path on
+its normal pump. Revoke with `store:unsubscribe!` or the registration owner's
+usual cleanup.

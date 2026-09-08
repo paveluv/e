@@ -1,6 +1,6 @@
 ;; wire.e -- length-prefixed plain data. No store, actor or display state.
 (library (wire)
-  (export version send! receive)
+  (export version encode send! receive)
   (import (rnrs)
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (datum) datum:))
@@ -12,20 +12,25 @@
     (unless (<= 1 size frame-limit)
       (error 'wire "frame must contain 1 through 16777216 bytes" size)))
 
-  (define (send! port value)
+  (define (encode value)
     (let* ([owned (datum:copy value)]
            [payload (string->utf8
                       (call-with-string-output-port
                         (lambda (out)
                           (parameterize ([print-length #f] [print-level #f] [print-graph #f])
                             (write owned out)))))]
-           [size (bytevector-length payload)] [header (make-bytevector 4)])
+           [size (bytevector-length payload)])
       (frame-size! size)
-      (bytevector-u32-set! header 0 size (endianness big))
-      ;; The connection owns serialization of complete frames.
-      (put-bytevector port header)
-      (put-bytevector port payload)
-      (flush-output-port port)))
+      (let ([frame (make-bytevector (+ size 4))])
+        (bytevector-u32-set! frame 0 size (endianness big))
+        (bytevector-copy! payload 0 frame 4 size)
+        frame)))
+
+  (define (send! port value)
+    ;; The connection owns serialization of complete frames. An outbox can
+    ;; retain encode's owned bytes and bound them without serializing twice.
+    (put-bytevector port (encode value))
+    (flush-output-port port))
 
   (define (receive port)
     (let ([header (get-bytevector-n port 4)])

@@ -81,6 +81,15 @@ Policy activity uses the same structured log, with no separate audit history:
 
 These events are recorded quietly and remain visible in `<log policy>`.
 
+The base records shared store operations once, including while all heads are
+absent. `<log store>` shows the operation's actor and compact data:
+`(create id name)`, `(rename id name)`, `(delete id)`, `(property id key)`,
+`(reset id revision)`, or `(edit id revision span [history-origin])`.
+Edit records omit text payloads; undo/redo keep their existing origin data.
+These records are quiet. Heads also contribute `ui: …` summaries with the
+revision range of a typing burst, and local resync diagnostics. Their time
+of presentation is separate from the base's operation order.
+
 ## API
 
 - `(log:add! component datum [show?])` adds a record; the component is a

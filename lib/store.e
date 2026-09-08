@@ -26,10 +26,10 @@
           set-mark! set-marks! mark drop-mark! marks
           set-property! set-properties! drop-property! property properties
           validate-properties validate-edit-context
-          subscribe! unsubscribe!)
+          subscribe! unsubscribe! watch!)
   (import (rnrs)
           (only (chezscheme)
-                box unbox set-box! make-mutex with-mutex format void remq)
+                box unbox set-box! set-cdr! make-mutex with-mutex format void remq)
           (prefix (text) text:)
           (prefix (actor) actor:)
           (prefix (datum) datum:)
@@ -402,12 +402,20 @@
         (let ([b (buffer-of 'snapshot id)])
           (values (buffer-text b) (buffer-revision b))))))
 
-  (define (snapshot-state id)
-    ;; Save/clean checks need text and its facts from the same read.
-    (locked
-      (lambda ()
-        (let ([b (buffer-of 'snapshot-state id)])
-          (values (buffer-text b) (buffer-revision b) (property-data b))))))
+  (define snapshot-state
+    (case-lambda
+      [(id) (snapshot-state id #f)]
+      [(id basis)
+       ;; Save/clean checks need text and facts from one read. A remote
+       ;; adopter also needs the matching anchor chain, not a later snapshot.
+       (locked
+         (lambda ()
+           (let ([b (buffer-of 'snapshot-state id)])
+             (if basis
+                 (let ([entries (entries-since b basis)])
+                   (values (buffer-text b) (buffer-revision b) (property-data b)
+                     (and entries (map change-data entries))))
+                 (values (buffer-text b) (buffer-revision b) (property-data b))))))]))
 
   (define (snapshot-since id basis)
     ;; -> (values text revision changes), from one read.  Changes are
@@ -1050,6 +1058,35 @@
         (kernel:registry-remove! subscriptions
                                  (lambda (entry) (equal? (car entry) token)))))
     (void))
+
+  (define (watch! wake)
+    ;; A reader needs invalidations, not a second retained edit history.
+    ;; Return the ordinary subscription token and a procedure that takes
+    ;; pending (id . facts-or-lifecycle?) pairs. #f means rescan inventory,
+    ;; including previously adopted ids that may now be deleted/hidden.
+    ;; At most 256 ids survive a stalled reader; repeated edits cost no space.
+    (unless (procedure? wake) (error 'watch! "expected a procedure" wake))
+    (let ([lock (make-mutex)] [pending '()])
+      (values
+        (subscribe! #f
+          (lambda (event)
+            (let ([notify?
+                   (with-mutex lock
+                     (let ([empty? (null? pending)] [id (cadr event)]
+                           [facts? (and (memq (car event) '(create rename delete property)) #t)])
+                       (when pending
+                         (let ([entry (assv id pending)])
+                           (cond [entry (when facts? (set-cdr! entry #t))]
+                             [(= (length pending) 256) (set! pending #f)]
+                             [else (set! pending (cons (cons id facts?) pending))])))
+                       empty?))])
+              ;; Never invoke a consumer under either writer lock.
+              (when notify? (wake)))))
+        (lambda ()
+          (with-mutex lock
+            (let ([out pending])
+              (set! pending '())
+              (and out (reverse out))))))))
 
   (define (enqueue-event! event)
     ;; Caller holds the mutation lock. Capture recipients at commit;
