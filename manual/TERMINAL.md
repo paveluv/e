@@ -13,6 +13,8 @@ e's current working directory for a file-less buffer). It defaults to
 `$SHELL`, falling back to `/bin/sh`. A second session is named
 `*terminal 2*`, and so on. These are shared buffers: their actual live text
 and scrollback are readable through `store:` while the process runs.
+Output keeps the program's colors without temporary edit-author highlights,
+including when several heads view the same terminal session.
 
 Set the shell in `config.e` when desired:
 

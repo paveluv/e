@@ -715,9 +715,9 @@
      (pump! 600)
      (check 'closed-window-point-dropped (count-window-points) 1)
 
-     ;; Named-head edits stay untinted; foreign ink gets a blame face.
+     ;; Own edits and app output stay untinted; collaborator ink gets a face.
      (read-editor '(begin (head:add-buffer! (head:new-buffer "blame-naming")) #t))
-     (check 'blame-tints-only-foreign-edits
+     (check 'blame-tints-collaborators-and-keeps-all-authors
        (map
          (lambda (actor-expression)
            (read-editor
@@ -725,16 +725,17 @@
                 (store:edit! ,actor-expression id (store:revision id)
                   (text:make-span 0 0 0 0) '("ink"))
                 #t))
-           ;; read-editor returns to the real pump, which delivers the
-           ;; blame subscriber's posted work before the next query.
+           ;; Return to the real pump so blame observes the adopted revision.
            (read-editor
-             '(let ([b (head:buffer-named "blame-naming")])
-                (length (filter (lambda (range)
+             `(let ([b (head:buffer-named "blame-naming")])
+                (list (map (lambda (range) (list (caddr range) (cadddr range)))
+                        (filter (lambda (range)
                                   (and (= (length range) 5) (eq? (car range) b)
                                        (memq (list-ref range 4) '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
-                                (paint:highlight-ranges))))))
-         '(head:ui-actor (quote (agent rival))))
-       '(0 1))
+                          (paint:highlight-ranges)))
+                      (equal? (cadar (store:blame (head:buffer-store-id b) 1)) ,actor-expression)))))
+         '(head:ui-actor (quote (head "rival")) (quote (app producer)) (quote (agent rival))))
+       '((() #t) (((0 3)) #t) (((3 6)) #t) (((6 9) (0 3)) #t)))
      (read-editor '(begin (kill-buffer! (head:buffer-named "blame-naming")) #t))
 
      ;; A rival's edit is attributed at point from the store's delta log.

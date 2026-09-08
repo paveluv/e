@@ -705,6 +705,19 @@
                      (head-wait 'shared-terminal-surface b (lambda () (head-sees? b "attached terminal")))
                      (head-read a '(begin (terminal:send! "through base\n") #t) "\x1d;")
                      (head-wait 'shared-terminal-input b (lambda () (head-sees? b "through base")))
+                     (test:check 'terminal-output-keeps-authorship-without-tints
+                       (map (lambda (screen)
+                              (head-read screen
+                                '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
+                                   (list
+                                     (exists (lambda (range)
+                                               (and (= (length range) 5) (eq? (car range) b)
+                                                    (memq (list-ref range 4)
+                                                      '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6)) #t))
+                                       (paint:highlight-ranges))
+                                     (equal? (cadar (store:blame id 1)) (head:buffer-fact b 'app #f))))
+                                "\x1d;")) (list a b))
+                       '((#f #t) (#f #t)))
                      (head-read a '(begin (delete-other-windows!) (head:set-kill-ring! "screen A kill") #t) "\x1d;")
                      (head-read b '(begin (head:set-kill-ring! "screen B kill") #t) "\x1d;")
                      (head-send! a "\x1d;\x18;\x03;")

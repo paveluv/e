@@ -9,6 +9,8 @@
 ;;     (agent claude 3) is always the same color) and fades after
 ;;     (blame:tint-seconds).  Foreign edits already appear without a
 ;;     keypress; now they appear identified.
+;;     App actors publish ordinary output without a tint; their authorship
+;;     remains available through the same attribution queries.
 ;;
 ;;   - (blame:at-point!): who recently wrote the text at point,
 ;;     reported in the echo area.
@@ -69,7 +71,9 @@
                                  (vector-ref o 3))
                          o))
                    (unbox overlays)))
-    (when (and (not (equal? actor head:ui-actor))
+    ;; App output still rebases existing tints above, without creating one.
+    (when (and (not (eq? (car actor) 'app))
+               (not (equal? actor head:ui-actor))
                (> (blame-tint-seconds) 0))
       (add-overlay! id actor d)))
 
@@ -199,4 +203,4 @@
         ((blame:tint-seconds)
          (("parameter" . "(blame:tint-seconds [seconds])")) "number"
          ("(blame)") blame "Blame" #f
-         "How long another actor's fresh edit stays tinted in that actor's color (default 8; 0 turns tinting off).")))))
+         "How long another actor's fresh edit stays tinted in that actor's color (default 8; 0 prevents new tints). App output does not create tints.")))))
