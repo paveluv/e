@@ -66,10 +66,10 @@
       (unless (= (length args) n) (error 'wire "wrong request arity" operation)))
     (define actor (policy:session-actor session))
     (define (control!)
-      (unless (and control? (not (policy:revoked? session)))
+      (unless control?
         (error 'wire "operation requires an all-buffer head connection" operation)))
     (define (head!)
-      (unless (and (eq? (car actor) 'head) (not (policy:revoked? session)))
+      (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (case operation
       [(buffers actors)
@@ -94,6 +94,13 @@
             (cons (store:buffer-name (car args))
               (datum:copy (call-with-values (lambda () (apply store:snapshot-state args)) list)
                 text:delta->datum)))]
+      [(eval) (arity 1) (policy:session-eval! session (car args))]
+      [(sessions) (control!) (arity 0) (policy:sessions)]
+      [(revoke)
+       (control!) (arity 1)
+       (unless (and (actor:identity? (car args)) (eq? (caar args) 'agent))
+         (error 'wire "expected an agent identity"))
+       (policy:revoke-actor! (car args))]
       [(edit)
        (unless (<= 4 (length args) 5) (error 'wire "expected buffer, basis, span, lines and optional context"))
        (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
@@ -259,7 +266,7 @@
                 (error 'wire "expected (hello 1 (head-or-agent name))"))
               (let* ([p ((connection-policy) (datum:copy actor))]
                      [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo redo))])
-                (set! session (policy:mint! actor p ((connection-owner) (datum:copy actor))))
+                (set! session (policy:mint! actor p ((connection-owner) (datum:copy actor)) close!))
                 (set! control? (and (eq? (car actor) 'head) (eq? (policy:buffers p) 'any)))
                 ;; Queue hello before publishing; name refusal still revokes
                 ;; this connection's session without touching the old owner.
@@ -293,6 +300,10 @@
                                      (integer? (cadr message)) (exact? (cadr message)) (>= (cadr message) 0)
                                      (symbol? (caddr message)))
                           (error 'wire "expected (request id operation argument ...)"))
+                        ;; Revocation closes even an idle connection. A frame
+                        ;; already read still needs the same admission check,
+                        ;; including reads and the subscription requests below.
+                        (when (policy:revoked? session) (error 'wire "the session is revoked"))
                         (post!
                           (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
                             (list 'reply (cadr message) 'ok

@@ -81,6 +81,8 @@ head on it, and `C-x C-c` detaches that head. Several screens can edit together.
 Reattaching with the same `--name` restores its layout, positions and kill text,
 including after an abrupt disconnect. Scripted clients can cooperate while
 heads are absent and leave questions for a named head to answer on return.
+They share the granted read-only evaluator; an attached human can inspect
+sessions and revoke an agent's connection.
 Actual agent provider integrations are deferred.
 
 On FreeBSD, where Chez installs a differently named script interpreter, run

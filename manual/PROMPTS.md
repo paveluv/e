@@ -153,7 +153,7 @@ thread; a newly forked worker inherits its parent's context. This attributes
 work; it grants no permissions. The editor's startup, configuration, and
 command loop run as `head:ui-actor`.
 
-`policy:mint! actor policy [owner]` defaults the escalation owner
+`policy:mint! actor policy [owner [close!]]` defaults the escalation owner
 to `actor:current`. Standalone callers can supply an owner explicitly or
 use `actor:call-as`; without either, the owner is `#f` and questions have
 no implicit recipient. Session work and its audit run as the session actor and
@@ -170,8 +170,27 @@ Concurrent session admission/removal uses one inventory; repeated revocation
 audits once. Operations admitted before revocation may finish, while later
 calls refuse. Revocation also withdraws that session's unanswered questions;
 another session using the same actor identity retains its own tickets.
+An optional zero-argument `close!` ties a connection to this lifetime. Revocation
+takes and clears that procedure with admission/inventory under one lock, then
+calls it outside the lock. It runs once; a failure is logged as `revoke-error`
+and does not stop the remaining cleanup. Trusted base callers can use
+`policy:revoke-actor! actor` to revoke the matching live sessions without their
+handles. It returns the number selected from one inventory snapshot; a
+concurrent or reentrant same-name replacement is outside that selection.
+Attached humans use the [session controls](CONFIGURATION.md#configuration-file).
 Session events go quietly to the shared log under component `policy`;
 use `log:entries`/`log:datum` to query them and `log:subscribe!` to observe them.
+
+`policy:session-eval! session expression` accepts source text or a Scheme datum.
+It returns `(status . text)`: `ok` for values and captured output, `unbound`
+for an unavailable binding, `error` for unreadable/empty input or an evaluation
+error, `fuel` for exhausted engine fuel, and `refused` for a revoked session.
+Literal `#f` is valid, including source `"#f"`. Multiple source forms use `begin`,
+which must be in the grant. Evaluation and result/condition formatting share
+the fuel allowance; cyclic results use Scheme graph notation. Formatted values,
+output and condition text share the preview cap, with `" ..."` appended when
+clipped. Fixed status explanations are not clipped. This is not a total-memory
+limit. The common connection's `eval` request uses this same evaluator.
 
 The base's `policy:session-send! session to datum` delivers `(message actor datum)`, with
 the sender supplied by the session. It returns `#f` if the session is revoked

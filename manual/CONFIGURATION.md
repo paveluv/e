@@ -57,8 +57,9 @@ while the daemon runs. Questions first asked while a known named head is
 offline wait for its next attachment; press `C-c a` to answer. An agent's
 disconnect withdraws its own unanswered questions.
 
-Scheme clients can read, edit, undo and redo according to their session's buffer
-permissions, exchange attributed mail and ask other actors questions. Actual
+Scheme clients can read, evaluate granted read-only expressions, edit, undo and
+redo according to their session's permissions, exchange attributed mail and ask
+other actors questions. You can revoke an agent from an attached head. Actual
 provider integrations are deferred. The current messages and primitives are described in the development
 [wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).
 
@@ -104,15 +105,18 @@ access; agents default to read-only sessions. For example, in `base-config.e`:
 (base:connection-policy
   (lambda (actor)
     (if (equal? actor '(agent "helper"))
-        (policy:make '() 10000 '("notes") 8000)
+        (policy:make '(+ buffer-text-line read-buffer) 100000 '("notes") 8000)
         (default-connection-policy actor))))
 ```
 
-This grants that named agent edits, undo and redo in `notes`, subject to the
-buffer's current name and read-only flag. The resolver receives
+This grants that named agent the listed read-only evaluation bindings and
+edits, undo and redo in `notes`, subject to the buffer's current name and
+read-only flag. Buffer write permissions do not restrict which buffers it can
+read. The resolver receives
 an owned identity; the hello carries no permissions. Each connection gets a
-new session and disconnect revokes it. The grants/fuel/cap fields concern
-session evaluation, which is not yet exposed through the wire.
+new session and disconnect revokes it. The `eval` request uses that session's
+grants, engine fuel and result preview cap. Fuel covers evaluation and result
+formatting; the cap clips displayed text and does not bound memory allocation.
 
 `base:connection-owner` independently chooses the actor an agent asks when it
 omits a recipient. Heads default to themselves; agents default to `#f` (no
@@ -131,6 +135,25 @@ Attach `--name desk` once so the daemon knows that head. Later questions can
 wait while it is disconnected. Owner selection supplies no permissions, and
 an explicit question recipient does not change the configured owner. Each
 connection keeps the owner selected at admission.
+
+From an attached head, use `M-x` to inspect sessions and revoke an agent:
+
+```scheme
+(client:request 'sessions)                 ; ((actor owner) ...)
+(client:request 'revoke '(agent "helper"))  ; normally 1, or 0 if absent
+```
+
+These controls require a head with all-buffer permission. Any such head can
+revoke an agent, regardless of where the agent routes its questions. The result
+counts sessions selected from the current inventory; private handles stay in
+the base. Revocation closes their connections and withdraws their unanswered
+questions. Already admitted operations may finish, including an edit whose
+reply is lost on close; inspect a fresh snapshot before continuing.
+
+Revocation applies to the selected sessions. A later connection receives a
+fresh session from base configuration, and cannot revive the old questions.
+It does not change future admission rules or undo completed edits; the usual
+undo scopes let you undo an agent's work.
 
 ## Loading and reloading
 

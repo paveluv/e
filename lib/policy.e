@@ -25,14 +25,14 @@
           (rename (policy-grants grants)) (rename (policy-fuel fuel)) (rename (policy-buffers buffers))
           (rename (policy-cap cap)) (rename (reader-policy reader))
           mint! session? session-actor session-owner sessions
-          revoke! revoked?
+          revoke! revoke-actor! revoked?
           session-eval! session-edit! session-undo! session-redo! session-history-step!
           session-send! session-ask! session-answer! session-cancel!)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
                 current-output-port
                 box unbox set-box! format environment eval
-                make-engine parameterize remq make-mutex with-mutex
+                make-engine parameterize print-graph remq make-mutex with-mutex void
                 open-string-input-port open-output-string
                 get-output-string)
           (prefix (store) store:)
@@ -75,7 +75,8 @@
             policy
             (immutable owner session-owner-raw) ; the actor asked when more is needed
             env                 ; the granted evaluation environment
-            revoked))           ; box
+            revoked             ; box
+            (mutable close)))   ; one-shot connection cleanup, outside the lock
 
   (define session-lock (make-mutex))
   (define live-sessions '())
@@ -106,15 +107,18 @@
   (define mint!
     ;; Mint a session for the actor under a policy. The optional owner is
     ;; consulted for anything beyond the grant (default: actor:current,
-    ;; or #f outside actor work).
+    ;; or #f outside actor work). A connection supplies its close procedure;
+    ;; revocation invokes it once without exposing that resource to callers.
     (case-lambda
       [(actor p) (mint! actor p (actor:current))]
-      [(actor p owner)
+      [(actor p owner) (mint! actor p owner void)]
+      [(actor p owner close!)
        (unless (policy? p) (error 'mint! "expected a policy" p))
        (unless (and (actor:identity? actor) (or (not owner) (actor:identity? owner)))
          (error 'mint! "expected actor and optional owner identities" actor owner))
+       (unless (procedure? close!) (error 'mint! "expected a close procedure"))
        (let ([s (mint (datum:copy actor) p (datum:copy owner)
-                  (grant-environment (policy-grants-raw p)) (box #f))])
+                  (grant-environment (policy-grants-raw p)) (box #f) close!)])
          (with-mutex session-lock (set! live-sessions (cons s live-sessions)))
          (audit! (list 'mint (session-actor s) (session-owner s)))
          s)]))
@@ -122,16 +126,32 @@
   (define (revoke! s)
     ;; Admission/inventory commit together; logging and all user callbacks
     ;; run outside this owner. An operation already admitted may finish.
-    (when (with-mutex session-lock
-            (and (not (revoked? s))
-                 (begin
-                   (set-box! (session-revoked s) #t)
-                   (set! live-sessions (remq s live-sessions)) #t)))
-      (actor:cancel-owned! s)
-      (audit! (list 'revoke (session-actor s))))
+    (let ([close!
+           (with-mutex session-lock
+             (and (not (revoked? s))
+                  (let ([close! (session-close s)])
+                    (set-box! (session-revoked s) #t)
+                    (session-close-set! s void)
+                    (set! live-sessions (remq s live-sessions)) close!)))])
+      (when close!
+        (actor:cancel-owned! s)
+        (guard (ex [else (audit! (list 'revoke-error (session-actor s) (kernel:condition-text ex)))])
+          (close!))
+        (audit! (list 'revoke (session-actor s)))))
     #t)
 
   (define (revoked? s) (unbox (session-revoked s)))
+
+  (define (revoke-actor! actor)
+    ;; Trusted control selects one inventory version. Reentrant cleanup or a
+    ;; concurrent reconnect cannot redirect this selection to a new session.
+    ;; Return the number selected; a racing disconnect may also revoke them.
+    (unless (actor:identity? actor) (error 'revoke-actor! "expected an actor identity"))
+    (let* ([actor (datum:copy actor)]
+           [selected (with-mutex session-lock
+                       (filter (lambda (s) (equal? actor (session-actor-raw s))) live-sessions))])
+      (for-each revoke! selected)
+      (length selected)))
 
   (define (sessions)
     ;; Capture one inventory version, then copy its immutable metadata.
@@ -146,9 +166,9 @@
       (let loop ([acc '()])
         (let ([datum (get-datum port)])
           (if (eof-object? datum)
-              (cond [(null? acc) #f]
-                    [(null? (cdr acc)) (car acc)]
-                    [else (cons 'begin (reverse acc))])
+              (cond [(null? acc) (values #f "an empty expression")]
+                    [(null? (cdr acc)) (values (car acc) #f)]
+                    [else (values (cons 'begin (reverse acc)) #f)])
               (loop (cons datum acc)))))))
 
   (define (session-eval! s text)
@@ -163,40 +183,19 @@
         (cond
           [(revoked? s) '(refused . "the session is revoked")]
           [else
-           (let ([form (guard (ex [else 'malformed])
-                         (if (string? text) (parse-expression text) text))])
-             (if (or (not form) (eq? form 'malformed))
-                 (cons 'error
-                       (if form "unreadable expression" "an empty expression"))
-                 (let ([outcome (fueled-eval form (session-env s)
-                                             (policy-fuel (session-policy s)))]
-                       [cap (policy-cap (session-policy s))])
-                   (let ([result
-                          (case (car outcome)
-                            [(ok)
-                             (cons 'ok
-                                   (clipped
-                                     (string-append
-                                       (format "=> ~a"
-                                               (values-text (cadr outcome)))
-                                       (if (string=? (caddr outcome) "")
-                                           ""
-                                           (string-append
-                                             "\noutput:\n" (caddr outcome))))
-                                     cap))]
-                            [(fuel)
-                             '(fuel . "the evaluation ran out of fuel (an infinite loop?)")]
-                            [else
-                             (let ([ex (cadr outcome)])
-                               (cons (if (undefined-violation? ex)
-                                         'unbound
-                                         'error)
-                                     (clipped (kernel:condition-text ex) cap)))])])
-                     (audit!
-                       (list 'eval (session-actor s)
-                             (clipped (format "~s" form) 200)
-                             (car result)))
-                     result))))]))))
+           (let-values ([(form failure)
+                         (guard (ex [else (values #f "unreadable expression")])
+                           (if (string? text) (parse-expression text) (values text #f)))])
+             (if failure
+                 (cons 'error failure)
+                 (let ([result (fueled-eval form (session-env s)
+                                            (policy-fuel (session-policy s))
+                                            (policy-cap (session-policy s)))])
+                   (audit!
+                     (list 'eval (session-actor s)
+                           (clipped (parameterize ([print-graph #t]) (format "~s" form)) 200)
+                           (car result)))
+                   result)))]))))
 
   (define (values-text vals)
     (if (null? vals)
@@ -206,23 +205,25 @@
                                     (format "~s" v)))
                    "" vals)))
 
-  (define (fueled-eval form env fuel)
-    ;; -> (ok vals printed) | (fuel) | (error condition)
+  (define (fueled-eval form env fuel cap)
+    ;; Evaluation and result/condition formatting share one allowance. The
+    ;; character cap is a preview bound, not a bound on transient allocation.
+    ;; Graph printing also keeps cyclic values from warning on daemon stderr.
     (let* ([sink (open-output-string)]
            [run (lambda ()
-                  (guard (ex [else (list 'error ex)])
-                    (list 'ok
-                          (parameterize ([current-output-port sink])
-                            (call-with-values
-                              (lambda () (eval form env))
-                              list)))))]
-           [outcome ((make-engine run)
-                     fuel
-                     (lambda (ticks value) value)
-                     (lambda (engine) (list 'fuel)))])
-      (if (eq? (car outcome) 'ok)
-          (list 'ok (cadr outcome) (get-output-string sink))
-          outcome)))
+                  (parameterize ([current-output-port sink] [print-graph #t])
+                    (guard (ex [else
+                                (cons (if (undefined-violation? ex) 'unbound 'error)
+                                      (clipped (kernel:condition-text ex) cap))])
+                      (let* ([vals (call-with-values (lambda () (eval form env)) list)]
+                             [printed (get-output-string sink)])
+                        (cons 'ok
+                              (clipped
+                                (string-append "=> " (values-text vals)
+                                  (if (string=? printed "") "" (string-append "\noutput:\n" printed))) cap))))))])
+      ((make-engine run) fuel
+       (lambda (ticks value) value)
+       (lambda (engine) '(fuel . "the evaluation ran out of fuel (an infinite loop?)")))))
 
   ;;; Attributed mutation ------------------------------------------------------
 

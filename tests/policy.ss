@@ -77,25 +77,30 @@
          ((* 2 3) (ok . "=> 6"))
          ("(display \"hi\") (+ 1 2)" (ok . "=> 3\noutput:\nhi"))
          ("(values 1 2)" (ok . "=> 1, 2"))
+         ("'#0=#(#0#)" (ok . "=> #0=#(#0#)"))
          ("(buffer-text-line \"notes\" 0)" (ok . "=> \"one\""))
-         ("" (error . "an empty expression"))))
+         (#f (ok . "=> #f"))
+         ("#f" (ok . "=> #f"))
+         ("" (error . "an empty expression"))
+         (" ; comment only\n" (error . "an empty expression"))
+         ("(" (error . "unreadable expression"))))
      (check 'evaluation-failures
        (map (lambda (form) (car (policy:session-eval! s form)))
-         '("(delete-file \"x\")" "(car '())"))
-       '(unbound error))
+         '("(delete-file \"x\")" "(car '())" malformed "malformed"))
+       '(unbound error unbound unbound))
 
      ;; a tiny fuel tank: the loop cannot hang anything
-     (define grants-input (list '+ 'car 'cons 'quote 'let 'lambda 'if))
+     (define grants-input (list '+ 'car 'cons 'quote 'let 'lambda 'if 'make-vector))
      (define narrow (policy:make grants-input 10000 '() 4000))
      (set-car! grants-input 'delete-file)
      (set-car! (policy:grants narrow) 'delete-file)
      (define winded (policy:mint! '(agent winded) narrow owner))
-     (check 'fuel-runs-out
-            (actor:call-as owner
-              (lambda ()
-                (let ([result (policy:session-eval! winded "(let loop () (loop))")])
-                  (list result (actor:current)))))
-            (list '(fuel . "the evaluation ran out of fuel (an infinite loop?)") owner))
+     (check 'evaluation-and-result-formatting-share-the-fuel
+       (map (lambda (form)
+              (actor:call-as owner
+                (lambda () (list (policy:session-eval! winded form) (actor:current)))))
+         '("(let loop () (loop))" "(make-vector 100000 #f)"))
+       (make-list 2 (list '(fuel . "the evaluation ran out of fuel (an infinite loop?)") owner)))
 
      ;; -- a narrowed grant subsets the sandbox -------------------------
 
@@ -261,6 +266,28 @@
            (list (number? (work)) late reply (actor:pending who)) '(#t #f #f ())))
        (actor:detach! who))
 
+     ;; Select private sessions from one inventory version. Cleanup can
+     ;; inspect that inventory, fail, or mint a same-name replacement; it
+     ;; still runs once and cannot pull the replacement into the selection.
+     (let* ([who '(agent "selected")]
+            [closed 0] [replacement #f]
+            [first (policy:mint! who (policy:reader) owner
+                     (lambda ()
+                       (set! closed (+ closed 1))
+                       (policy:sessions)
+                       (set! replacement (policy:mint! who (policy:reader) owner))))]
+            [second (policy:mint! who (policy:reader) owner
+                      (lambda () (set! closed (+ closed 1)) (error 'close "fixture failure")))]
+            [selected ((test:worker (lambda () (from-owner (lambda () (policy:revoke-actor! who))))))])
+       (policy:revoke! first)
+       (policy:revoke! second)
+       (check 'actor-revocation-keeps-handles-private-and-does-not-chase-replacements
+         (list selected closed (map policy:revoked? (list first second replacement))
+               (policy:session-eval! replacement #f)
+               (policy:revoke-actor! who) (policy:revoke-actor! who)
+               (test:raises? (lambda () (policy:revoke-actor! 'invalid))))
+         '(2 2 (#t #t #f) (ok . "=> #f") 1 0 #t)))
+
      ;; The implicit owner is the initiating actor, including a named head,
      ;; or #f for headless callers. The default audit trail stays persistent.
      (for-each
@@ -281,12 +308,12 @@
        (check 'one-quiet-owned-audit-stream
          (list (map (lambda (record) (list (log:datum record) #f)) (log:entries 'policy))
                (map (lambda (kind) (and (assq kind (map car events)) #t))
-                 '(mint eval edit undo redo ask revoke))
+                 '(mint eval edit undo redo ask revoke revoke-error))
                (for-all (lambda (record)
                           (let ([event (log:datum record)])
-                            (if (memq (car event) '(mint revoke)) #t
+                            (if (memq (car event) '(mint revoke revoke-error)) #t
                                 (equal? (log:actor record) (cadr event))))) (log:entries 'policy)))
-         (list events '(#t #t #t #t #t #t #t) #t)))
+         (list events '(#t #t #t #t #t #t #t #t) #t)))
      (log:unsubscribe! audit-subscription)
      (policy:revoke! winded)
      ;; Overlapping connection admission/teardown must retain every live

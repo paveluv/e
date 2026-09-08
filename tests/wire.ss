@@ -94,9 +94,10 @@
          (define default-policy (base:connection-policy))
          (base:connection-policy
            (lambda (actor)
-             (if (member actor '((agent "first") (agent "second")))
-                 (policy:make '() 10000 '("notes λ" "attached text") 0)
-                 (default-policy actor))))
+             (cond [(member actor '((agent "first") (agent "second")))
+                    (policy:make '(+ quote begin display let lambda make-vector) 10000 '("notes λ" "attached text") 16)]
+                   [(equal? actor '(head "read only")) (policy:reader)]
+                   [else (default-policy actor)])))
          (define default-owner (base:connection-owner))
          (base:connection-owner
            (lambda (actor)
@@ -332,10 +333,14 @@
                    (request 8 edit 1 0 (0 0 0 0) ("x") #f #f)
                    (request 9 redo 1 all) (request 10 snapshot 1 #f)
                    (request 11 snapshot 1 -1) (request 12 watch extra)
-                   (request 13 checkpoint (head "another") stolen) (request 14 actors)))
+                   (request 13 checkpoint (head "another") stolen)
+                   (request 14 eval) (request 15 eval #f (agent "forged"))
+                   (request 16 revoke (head "desk λ")) (request 17 revoke #f)
+                   (request 18 actors)))
                '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 error)
                  (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error)
-                 (reply 9 error) (reply 10 error) (reply 11 error) (reply 12 error) (reply 13 error) (reply 14 ok)))
+                 (reply 9 error) (reply 10 error) (reply 11 error) (reply 12 error) (reply 13 error)
+                 (reply 14 error) (reply 15 error) (reply 16 error) (reply 17 error) (reply 18 ok)))
              (test:check 'existing-endpoint-is-never-unlinked
                (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name 1))
                '(#t "notes λ"))
@@ -345,9 +350,23 @@
            (let ([idle (connect)] [agent (connect)] [identity '(agent "reader")])
              (test:check 'agent-uses-the-same-read-connection
                (list (hello agent identity) (receive agent) (rpc agent 'buffers)
-                     (car (rpc agent 'snapshot 2)))
+                     (car (rpc agent 'snapshot 2))
+                     (rpc agent 'eval "(buffer-text-line \"notes λ\" 0)") (rpc agent 'eval #f)
+                     (rpc agent 'eval "'#0=#(#0#)")
+                     (rpc agent 'eval "(") (car (rpc agent 'eval "(delete-file \"unused\")")))
                (list (list 'hello 1 identity '(read)) '(event (from-base "welcome")) '(1 2 3)
-                     '#("a local audience")))
+                     '#("a local audience") '(ok . "=> \"hello λ\"") '(ok . "=> #f")
+                     '(ok . "=> #0=#(#0#)")
+                     '(error . "unreadable expression") 'unbound))
+             (let ([limited (connect)])
+               (hello limited '(head "read only")) (receive limited)
+               (test:check 'session-control-requires-an-all-buffer-human-head
+                 (map (lambda (connection)
+                        (map (lambda (message) (list-head (exchange connection message) 3))
+                          '((request 1 sessions) (request 2 revoke (agent "reader")))))
+                   (list agent limited))
+                 '(((reply 1 error) (reply 2 error)) ((reply 1 error) (reply 2 error))))
+               (sys:close-connection! limited))
              (test:await 'head-detached
                (lambda () (not (exists (lambda (entry) (eq? (caar entry) 'head)) (rpc agent 'actors)))))
              (test:check 'agent-requests-check-authority-and-question-data
@@ -373,6 +392,16 @@
                               (rpc connection 'watch) (rpc connection 'watch))) writers actors)
                  (map (lambda (actor) (list (list 'hello 1 actor '(read edit undo redo))
                                             '(event (from-base "welcome")) '(1 2 3) '(1 2 3))) actors))
+               (test:check 'wire-evaluation-uses-the-configured-grants-fuel-and-preview-cap
+                 (list (rpc first 'eval "(+ 1 2)")
+                       (rpc first 'eval "(display \"hi\") (+ 1 2)")
+                       (rpc first 'eval "(quote \"abcdefghijklmnopqrstuvwxyz\")")
+                       (car (rpc first 'eval "(buffer-names)"))
+                       (car (rpc first 'eval "(let loop () (loop))"))
+                       (car (rpc first 'eval "(make-vector 100000 #f)"))
+                       (car (rpc second 'snapshot 1)))
+                 '((ok . "=> 3") (ok . "=> 3\noutput:\nhi") (ok . "=> \"abcdefghijkl ...")
+                   unbound fuel fuel #("hello λ")))
                ;; Hold the first policy audit callback after commit. A second
                ;; actor commits before the first reply: its receipt must still
                ;; describe exactly its own accepted revision and anchor chain.
@@ -728,7 +757,34 @@
                                  (rpc head 'answer question "wrong head")
                                  (head-read a '(actor:pending head:ui-actor) "\x1d;"))
                            '((event (answer 73 "yes")) #f #f ())))
-                       (sys:close-connection! second))
+                       ;; A real human head controls the existing session
+                       ;; inventory, including agents routed to another head.
+                       ;; Revocation wakes an idle reader and removes watches
+                       ;; through the ordinary connection cleanup.
+                       (let* ([question (rpc second 'ask "Withdraw on revoke?" '())]
+                              [watched (rpc second 'watch)]
+                              [selected
+                               (head-read b
+                                 '(list (assoc '(agent "second") (client:request 'sessions))
+                                        (client:request 'revoke '(agent "second"))) "\x1d;")])
+                         (test:await 'human-revocation-retracts-the-endpoint
+                           (lambda () (not (assoc '(agent "second") (rpc agent 'actors)))))
+                         (test:check 'human-revocation-closes-the-agent-and-preserves-other-clients
+                           (list selected (eof-object? (receive-reply second))
+                                 (head-read a `(list (actor:pending head:ui-actor)
+                                                     (actor:answer! ,question "too late")) "\x1d;")
+                                 (head-read b '(client:request 'revoke '(agent "second")) "\x1d;")
+                                 (rpc agent 'eval "(+ 1 2)") (car (rpc head 'snapshot id))
+                                 (cdr (assq 'alive (caddr (rpc head 'snapshot terminal-id)))))
+                           '((((agent "second") (head "screen A")) 1) #t (() #f) 0
+                             (ok . "=> 3") #("shared text B") #t))
+                         (let ([replacement (connect)])
+                           (hello replacement '(agent "second")) (receive replacement)
+                           (test:check 'explicit-revocation-does-not-change-future-admission
+                             (list (rpc replacement 'eval "(+ 1 2)")
+                                   (rpc replacement 'owner) (rpc replacement 'cancel question))
+                             '((ok . "=> 3") (head "screen A") #f))
+                           (sys:close-connection! replacement))))
                      (let ([again a])
                        (head-wait 'real-head-reattaches again (lambda () (head-sees? again "through base")))
                        (test:check 'clean-reattach-restores-the-terminal-and-reuses-scratch
