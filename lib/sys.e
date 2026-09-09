@@ -18,6 +18,7 @@
           canonical-file-path host-name terminal-name
           listen-local accept-local connect-local close-local-listener!
           connection-input connection-output close-connection! watch-daemon-signals!
+          open-process write-process! process-input process-result close-process!
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
           terminal-process-pid resize-terminal-process!
@@ -160,6 +161,10 @@
     (and libc-loaded?
          (guard (ex [else #f])
            (foreign-procedure "waitpid" (int u8* int) int))))
+  (define c-poll
+    (and libc-loaded?
+         (eval `(foreign-procedure __collect_safe "poll"
+                  (uptr ,(os-case 'uptr 'unsigned-int 'unsigned-int) int) int))))
   (define c-close-range
     (and libc-loaded?
          (guard (ex [else #f])
@@ -475,6 +480,177 @@
     (register-signal-handler 1 (lambda (signal) (void))) ; SIGHUP: keep the base
     (register-signal-handler 15 (lambda (signal) (stop!)))
     (keyboard-interrupt-handler stop!))
+
+  ;;; Foreground commands -----------------------------------------------------
+
+  ;; One caller owns a command, its ports and its completion. Service stderr
+  ;; alongside stdout/stdin rather than leaving reader threads behind on an
+  ;; escape. Only a poll blocks, with foreign memory and the collector released.
+  ;; Exec one quoted argument list; cancellation owns that PID, not the
+  ;; editor's process group or arbitrary children of other callers.
+  (define-record-type command-process
+    (fields to from errors pid buffer capture
+            (mutable code) (mutable input process-input set-process-input!)
+            (mutable prefix) (mutable closed) (mutable complaint)))
+
+  (define (open-process arguments)
+    (unless (and c-waitpid c-kill c-poll c-errno)
+      (error 'open-process "command processes are unavailable"))
+    (unless (and (list? arguments) (pair? arguments) (for-all string? arguments))
+      (error 'open-process "expected a nonempty argument list" arguments))
+    (with-interrupts-disabled
+      (let-values ([(to from errors pid)
+                    (open-process-ports
+                      (apply string-append "exec "
+                        (map (lambda (word)
+                               (string-append "'"
+                                 (apply string-append
+                                   (map (lambda (c) (if (char=? c #\') "'\\''" (string c)))
+                                        (string->list word))) "' ")) arguments))
+                      'none)])
+        (let ([process (make-command-process to from errors pid (make-bytevector 4096)
+                         (call-with-values open-bytevector-output-port cons) #f #f #f #f #f)])
+          (guard (ex [else (close-process! process) (raise ex)])
+            (for-each (lambda (port)
+                        (set-port-nonblocking! port #t)
+                        (close-on-exec! (port-file-descriptor port)))
+                      (list to from errors))
+            (set-process-input! process
+              (make-custom-binary-input-port "command output"
+                (lambda (bytes start count) (read-process! process bytes start count))
+                #f #f (lambda () (close-process! process))))
+            process)))))
+
+  (define (wait-process-io! process writing?)
+    (let* ([ports (filter (lambda (port) (not (port-closed? port)))
+                    (append (list (command-process-from process) (command-process-errors process))
+                            (if writing? (list (command-process-to process)) '())))]
+           [polls #f])
+      (dynamic-wind #t
+        (lambda () (set! polls (foreign-alloc (* 8 (length ports)))))
+        (lambda ()
+          (do ([ports ports (cdr ports)] [offset 0 (+ offset 8)]) ((null? ports))
+            (foreign-set! 'int polls offset (port-file-descriptor (car ports)))
+            (foreign-set! 'short polls (+ offset 4)
+              (if (eq? (car ports) (command-process-to process)) 4 1)) ; POLLOUT / POLLIN
+            (foreign-set! 'short polls (+ offset 6) 0))
+          (let again ()
+            (when (< (c-poll polls (length ports) -1) 0)
+              (if (= (foreign-ref 'int (c-errno) 0) 4) (again) ; EINTR
+                  (error 'process "poll failed" (foreign-ref 'int (c-errno) 0))))))
+        (lambda () (foreign-free polls)))))
+
+  (define (capture-process! process port sink)
+    ;; One available chunk per turn: a noisy stream cannot starve the other.
+    (if (port-closed? port) 0
+        (let* ([buffer (command-process-buffer process)]
+               [count (get-bytevector-some! port buffer 0 (bytevector-length buffer))])
+          (cond [(eof-object? count) (close-port port) 0]
+                [else (put-bytevector sink buffer 0 count) count]))))
+
+  (define (capture-process-errors! process)
+    (capture-process! process (command-process-errors process)
+                      (car (command-process-capture process))))
+
+  (define (write-process! process bytes)
+    ;; Submit one optional input body and then EOF. Keep early stdout while
+    ;; sending a large body, so even a program writing before reading can run.
+    (when (command-process-closed process) (error 'write-process! "command is closed"))
+    (let ([to (command-process-to process)])
+      (when (port-closed? to) (error 'write-process! "command input was already sent"))
+      (let-values ([(out take) (open-bytevector-output-port)])
+        (when bytes
+          (let loop ([start 0])
+            (when (< start (bytevector-length bytes))
+              (capture-process-errors! process)
+              (capture-process! process (command-process-from process) out)
+              (let ([count (put-bytevector-some to bytes start (- (bytevector-length bytes) start))])
+                (when (zero? count) (wait-process-io! process #t))
+                (loop (+ start count))))))
+        (command-process-prefix-set! process (open-bytevector-input-port (take)))
+        (close-port to))))
+
+  (define (poll-process! process)
+    ;; A returned status and its adoption are indivisible: never signal a PID
+    ;; after reaping it, including on engine expiry. Other owners' PIDs stay out.
+    (or (command-process-code process)
+        (with-interrupts-disabled
+          (let* ([status (make-bytevector 4)]
+                 [pid (command-process-pid process)] [result (c-waitpid pid status 1)])
+            (cond [(= result pid)
+                   (let* ([bits (bytevector-s32-native-ref status 0)]
+                          [signal (bitwise-and bits #x7f)]
+                          [code (if (zero? signal) (bitwise-and (bitwise-arithmetic-shift-right bits 8) #xff)
+                                    (- signal))])
+                     (command-process-code-set! process code)
+                     code)]
+                  [(zero? result) #f]
+                  [(= (foreign-ref 'int (c-errno) 0) 4) (poll-process! process)]
+                  [else
+                   (command-process-code-set! process 'unavailable)
+                   (error 'process "waitpid failed" (foreign-ref 'int (c-errno) 0))])))))
+
+  (define (finish-process! process)
+    (let wait ()
+      (let ([count (capture-process-errors! process)])
+        (unless (poll-process! process)
+          (when (zero? count) (sleep (make-time 'time-duration 10000000 0)))
+          (wait))))
+    (let drain ()
+      (when (> (capture-process-errors! process) 0) (drain)))
+    (close-port (command-process-errors process)))
+
+  (define (read-process! process bytes start count)
+    (when (command-process-closed process) (error 'process "command is closed"))
+    (cond
+      [(zero? count) 0]
+      [(command-process-prefix process)
+       => (lambda (prefix)
+            (let ([got (get-bytevector-n! prefix bytes start count)])
+              (if (not (eof-object? got)) got
+                  (begin (close-port prefix) (command-process-prefix-set! process #f)
+                         (read-process! process bytes start count)))))]
+      [else
+       (capture-process-errors! process)
+       (let* ([from (command-process-from process)]
+              [got (if (port-closed? from) (eof-object) (get-bytevector-some! from bytes start count))])
+         (cond [(eof-object? got) (close-port from) (finish-process! process) 0]
+               [(zero? got) (wait-process-io! process #f) (read-process! process bytes start count)]
+               [else got]))]))
+
+  (define (process-result process)
+    ;; Ask after output EOF or explicit close. Status matches Chez's system:
+    ;; an exit code, or the negated terminating signal.
+    (unless (integer? (command-process-code process))
+      (error 'process-result "command completion is unavailable"))
+    (unless (command-process-complaint process)
+      (command-process-complaint-set! process
+        (bytevector->string ((cdr (command-process-capture process)))
+                            (make-transcoder (utf-8-codec) 'none 'replace))))
+    (values (command-process-code process) (string-copy (command-process-complaint process))))
+
+  (define (close-process! process)
+    (with-interrupts-disabled
+      (unless (command-process-closed process)
+        (command-process-closed-set! process #t)
+        (dynamic-wind void
+          (lambda ()
+            (unless (poll-process! process)
+              (c-kill (command-process-pid process) 15)
+              (let wait ([attempts 8])
+                (unless (poll-process! process)
+                  (if (zero? attempts) (c-kill (command-process-pid process) 9)
+                      (begin (sleep (make-time 'time-duration 25000000 0))
+                             (wait (- attempts 1))))))
+              (let wait ()
+                (unless (poll-process! process)
+                  (sleep (make-time 'time-duration 1000000 0)) (wait)))))
+          (lambda ()
+            (guard (ex [else (void)]) (capture-process-errors! process))
+            (for-each (lambda (port) (when port (guard (ex [else (void)]) (close-port port))))
+              (list (command-process-to process) (command-process-from process)
+                    (command-process-errors process) (command-process-prefix process)
+                    (process-input process))))))))
 
   (define (host-name)
     (and c-gethostname

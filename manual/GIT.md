@@ -59,7 +59,9 @@ body through the `git:commit-*` accessors.
 A failed Git invocation raises `git:error?`. `git:error-code`,
 `git:error-command`, and `git:error-stderr` retain the exit status, argument
 list, and diagnostic text as structured condition fields. Arguments are shell
-quoted internally; callers never construct command strings.
+quoted internally; callers never construct command strings. The status comes
+from the child process; a terminating signal is represented by its negative
+number. Both successful and failed calls close their pipes and reap the child.
 
 The initial API is intentionally query-only. Future mutation commands such as
 stage, commit, or switch can reuse the same runner while keeping their effects

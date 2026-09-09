@@ -205,6 +205,17 @@ then calls `visit-file!`.
 raised normally; the command loop reports unexpected conditions in the echo
 area and log.
 
+Foreground commands use one `sys` owner. `sys:open-process` takes a nonempty
+list of argument strings; `sys:write-process!` sends one bytevector, or `#f`
+for no input, and closes stdin. Read the blocking binary `sys:process-input`
+port to EOF, then call `sys:process-result` for two values: exit status and
+stderr text. A terminating signal is returned as its negative number.
+The caller must close the command on every exit from its scope. Closing the
+input port or calling `sys:close-process!` closes its pipes, terminates a still
+running command and reaps its PID; repeated close is harmless. The owner drains
+stderr while transferring stdout/input, so large transfers need no separate
+reader threads. Keep each command under one caller's ownership.
+
 ## Modes
 
 Modes are registered by name, filename extensions, optional shebang

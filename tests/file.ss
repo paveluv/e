@@ -16,9 +16,9 @@
   '(begin
      (import (prefix (file) file:) (prefix (test) test:)
              (only (chezscheme)
-                   format getenv putenv current-directory directory-list
+                   format getenv putenv current-directory
                    delete-file delete-directory mkdir chmod get-mode
-                   file-exists? file-directory? time-second current-time
+                   file-exists? time-second current-time
                    random))
 
      (define check test:check)
@@ -146,16 +146,12 @@
      ;; Real helpers must also use that scope. Exhaust fuel during substantial
      ;; I/O, retaining continuations while observing descriptors where available.
      ;; Replacing a file must restore its original mode even after interruption.
-     (let ([large (make-vector 100000 "ordinary file data")]
-           [descriptors (cond [(file-directory? "/proc/self/fd") "/proc/self/fd"]
-                              [(file-directory? "/dev/fd") "/dev/fd"] [else #f])]
-           [expired '()])
-       (define (fd-count) (and descriptors (length (directory-list descriptors))))
+     (let ([large (make-vector 100000 "ordinary file data")] [expired '()])
        (for-each
          (lambda (kind)
            (file:write! (path "alpha") large #t)
            (chmod (path "alpha") #o751)
-           (let* ([before (fd-count)]
+           (let* ([before (test:fd-count)]
                   [result
                    ((make-engine
                       (lambda ()
@@ -165,7 +161,7 @@
                     (lambda (engine) (set! expired (cons engine expired)) 'fuel))])
              (check (list kind 'expired-file-io)
                (list result (and (pair? expired) (procedure? (car expired)))
-                     (equal? before (fd-count)) (logand (get-mode (path "alpha")) #o777))
+                     (equal? before (test:fd-count)) (logand (get-mode (path "alpha")) #o777))
                '(fuel #t #t #o751))))
          '(read write)))
 

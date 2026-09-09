@@ -79,7 +79,11 @@ certificate verification. Set `(https:backend 'curl)` in config.e to
 prefer it. With the default connector, the native backend falls back to
 curl when no TLS library can be found, so a system without libssl but with curl
 still works out of the box. Under curl the body always streams to
-process end: curl has already decoded the transfer framing.
+process end: curl has already decoded the transfer framing. Headers and body
+bytes become available as they arrive. Reading to completion checks curl's
+exit status; a truncated transfer raises even after valid response headers.
+Closing a response early cancels and reaps its curl process. Completed and
+failed requests also release the child and its pipes.
 
 ## Portability
 

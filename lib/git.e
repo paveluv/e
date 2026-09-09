@@ -21,6 +21,7 @@
           (rename (git-file-patch file-patch))
           (rename (git-error? error?)) (rename (git-error-code error-code)) (rename (git-error-command error-command)) (rename (git-error-stderr error-stderr)))
   (import (chezscheme)
+          (prefix (sys) sys:)
           (prefix (doc) doc:))
 
   (define-record-type git-repository-record
@@ -82,66 +83,23 @@
       (and (<= n (string-length text))
            (string=? prefix (substring text 0 n)))))
 
-  (define (shell-quote value)
-    (let ([s (if (string? value) value (format "~a" value))])
-      (string-append
-        "'"
-        (let loop ([i 0] [parts '()])
-          (if (= i (string-length s))
-              (apply string-append (reverse parts))
-              (loop (+ i 1)
-                    (cons (if (char=? (string-ref s i) #\') "'\\''"
-                              (string (string-ref s i)))
-                          parts))))
-        "'")))
-
-  (define (read-port port)
-    (let ([value (get-string-all port)])
-      (if (eof-object? value) "" value)))
-
-  (define failure-marker "__E_GIT_STATUS__=")
-
   (define (run-git directory arguments)
-    (let* ([words (map shell-quote
-                       (append (list "git" "-C" directory) arguments))]
-           [plain (apply string-append
-                         (let loop ([xs words])
-                           (if (null? xs) '()
-                               (cons (car xs)
-                                     (map (lambda (x) (string-append " " x))
-                                          (cdr xs))))))]
-           [command (format "~a || { code=$?; printf '\\n~a%s\\n' \"$code\" >&2; exit \"$code\"; }"
-                            plain failure-marker)])
-      (let-values ([(input output error pid)
-                    (open-process-ports command 'block (native-transcoder))])
-        (close-port input)
-        (let ([out (box "")] [err (box "")])
-          (let ([out-reader (fork-thread
-                              (lambda () (set-box! out (read-port output))))]
-                [err-reader (fork-thread
-                              (lambda () (set-box! err (read-port error))))])
-            (thread-join out-reader)
-            (thread-join err-reader)
-            (close-port output)
-            (close-port error)
-            (let* ([stderr (unbox err)]
-                   [failure (find-string stderr failure-marker)])
-              (if failure
-                  (let* ([start (+ failure (string-length failure-marker))]
-                         [end (let loop ([i start])
-                                (if (or (= i (string-length stderr))
-                                        (char=? (string-ref stderr i) #\newline))
-                                    i
-                                    (loop (+ i 1))))]
-                         [code (string->number (substring stderr start end))])
-                    (raise (condition
-                             (make-git-error (or code 1) arguments
-                                             (substring stderr 0 failure))
-                             (make-message-condition
-                               (format "git ~a failed (~a): ~a"
-                                       (car arguments) (or code 1)
-                                       (substring stderr 0 failure))))))
-                  (unbox out))))))))
+    (let ([process #f])
+      (dynamic-wind #t
+        (lambda ()
+          (when process (error 'git "command scope has ended"))
+          (set! process (sys:open-process (append (list "git" "-C" directory) arguments))))
+        (lambda ()
+          (sys:write-process! process #f)
+          (let ([out (get-bytevector-all (sys:process-input process))])
+            (let-values ([(code stderr) (sys:process-result process)])
+              (if (zero? code)
+                  (if (eof-object? out) "" (utf8->string out))
+                  (raise (condition
+                           (make-git-error code arguments stderr)
+                           (make-message-condition
+                             (format "git ~a failed (~a): ~a" (car arguments) code stderr))))))))
+        (lambda () (sys:close-process! process)))))
 
   (define (trim-newlines text)
     (let loop ([end (string-length text)])

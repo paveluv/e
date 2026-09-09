@@ -39,7 +39,7 @@
           (rename (https-connector connector)) (rename (https-timeout timeout)) (rename (https-backend backend))
           make-channel channel-read! channel-write! channel-close!
           tcp-connect tls-connect)
-  (import (chezscheme) (prefix (string) string:))
+  (import (chezscheme) (prefix (string) string:) (prefix (sys) sys:))
 
   ;;; Foreign library loading ---------------------------------------------
 
@@ -742,67 +742,44 @@
             (zero? (system "command -v curl >/dev/null 2>&1"))))
         known)))
 
-  (define (shell-quoted text)
-    (string-append
-      "'"
-      (apply string-append
-             (map (lambda (c) (if (char=? c #\') "'\\''" (string c)))
-                  (string->list text)))
-      "'"))
-
   (define (curl-request method url headers body-bytes)
     ;; The whole request through a curl subprocess: -i puts the status
     ;; line and headers on stdout ahead of the body, which curl has
     ;; already de-framed -- so the body reads to process end,
     ;; whatever the transfer encoding was.
-    (let-values ([(to from errors pid)
-                  (open-process-ports
-                    (apply string-append
-                           "exec curl -sS -i --max-time "
-                           (number->string (https-timeout))
-                           " -X " (symbol->string method)
-                           (append
-                             (map (lambda (header)
-                                    (string-append
-                                      " -H "
-                                      (shell-quoted
-                                        (format "~a: ~a" (car header)
-                                                (cdr header)))))
-                                  headers)
-                             (if body-bytes
-                                 '(" --data-binary @-")
-                                 '())
-                             (list " " (shell-quoted url))))
-                    'block)])
-      (when body-bytes (put-bytevector to body-bytes))
-      (close-port to)
-      (let ([channel
-             (make-channel
-               (lambda (bv start count)
-                 (let ([got (get-bytevector-n! from bv start count)])
-                   (if (eof-object? got) 0 got)))
-               (lambda (bv) (error 'https "the curl channel is read-only"))
-               (lambda ()
-                 (close-port from)
-                 (close-port errors)))])
-        (guard (ex [else
-                    (let ([complaint
-                           (guard (e2 [else ""])
-                             (let ([bytes (get-bytevector-all errors)])
-                               (if (eof-object? bytes)
-                                   ""
-                                   (utf8->string bytes))))])
-                      ((channel-close! channel))
-                      (if (string=? complaint "")
-                          (raise ex)
-                          (error 'https
-                                 (format "curl: ~a" (trim complaint)))))])
-          (let-values ([(head leftover) (read-until-blank-line channel)])
-            (let-values ([(status headers) (parse-response-head head)])
-              (make-https-response
-                status headers
-                ;; no framing headers: curl already decoded the body
-                (body-port channel leftover '()))))))))
+    (let ([process #f] [response #f])
+      (dynamic-wind #t
+        (lambda ()
+          (when process (error 'https "request scope has ended"))
+          (set! process
+            (sys:open-process
+              (append (list "curl" "-sS" "--no-buffer" "-i" "--max-time" (number->string (https-timeout))
+                            "-X" (symbol->string method))
+                      (apply append (map (lambda (header)
+                                           (list "-H" (format "~a: ~a" (car header) (cdr header)))) headers))
+                      (if body-bytes '("--data-binary" "@-") '()) (list url)))))
+        (lambda ()
+          (sys:write-process! process body-bytes)
+          (let ([channel
+                 (make-channel
+                   (lambda (bv start count)
+                     (let ([got (get-bytevector-some! (sys:process-input process) bv start count)])
+                       (if (eof-object? got)
+                           (let-values ([(code complaint) (sys:process-result process)])
+                             (unless (zero? code)
+                               (error 'https (format "curl failed (~a): ~a" code (trim complaint))))
+                             0)
+                           got)))
+                   (lambda (bv) (error 'https "the curl channel is read-only"))
+                   (lambda () (sys:close-process! process)))])
+            (let-values ([(head leftover) (read-until-blank-line channel)])
+              (let-values ([(status headers) (parse-response-head head)])
+                (set! response
+                  (make-https-response status headers (body-port channel leftover '())))
+                response))))
+        ;; Before handoff this scope owns the process; afterward its streamed
+        ;; body owns it. EOF checks completion as well as decoded payload bytes.
+        (lambda () (unless response (sys:close-process! process))))))
 
   (define (https-request method url . options)
     ;; options: an optional header alist, then an optional body

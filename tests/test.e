@@ -1,10 +1,10 @@
 ;; Shared assertions and bounded concurrency fixtures. Keep scenarios in
-;; their suites; this library only handles reporting and worker coordination.
+;; their suites; this library only handles reporting and resource observation.
 (library (test)
-  (export check finish! raises? await gate worker parallel recorder)
+  (export check finish! raises? await gate worker parallel recorder child-pids fd-count)
   (import (rnrs)
           (only (chezscheme) format fork-thread make-mutex with-mutex
-                sleep make-time iota))
+                sleep make-time iota file-directory? directory-list))
 
   (define checks 0)
 
@@ -15,6 +15,26 @@
 
   (define (finish! suite)
     (format #t "~a ~a checks passed\n" checks suite))
+
+  (define (fd-count)
+    (let ([directory (cond [(file-directory? "/proc/self/fd") "/proc/self/fd"]
+                           [(file-directory? "/dev/fd") "/dev/fd"] [else #f])])
+      (and directory (length (directory-list directory)))))
+
+  (define (child-pids)
+    ;; Observe in-process: tool invocations may have different PID namespaces.
+    ;; A task can disappear between listing and reading its children file.
+    (and (file-directory? "/proc/self/task")
+         (list-sort <
+           (apply append
+             (map (lambda (task)
+                    (guard (ex [(i/o-file-does-not-exist-error? ex) '()])
+                      (call-with-input-file (string-append "/proc/self/task/" task "/children")
+                        (lambda (port)
+                          (let loop ([out '()])
+                            (let ([pid (read port)])
+                              (if (eof-object? pid) out (loop (cons pid out)))))))))
+                  (directory-list "/proc/self/task"))))))
 
   (define raises?
     (case-lambda

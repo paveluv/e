@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (prefix (https) https:) (prefix (test) test:))
+     (import (prefix (https) https:) (prefix (sys) sys:) (prefix (test) test:))
 
      (define check test:check)
      (define native-tls-before (foreign-entry? "SSL_new"))
@@ -177,51 +177,67 @@
          "        c.sendall(b\"HTTP/1.1 307 Redirect\\r\\nLocation: ../plain\\r\\nContent-Length: 0\\r\\n\\r\\n\")\n"
          "    elif path == \"/eof\":\n"
          "        c.sendall(b\"HTTP/1.1 200 OK\\r\\n\\r\\nstreamed to eof\")\n"
+         "    elif path == \"/truncated\":\n"
+         "        c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nx\")\n"
+         "    elif path == \"/broken-head\":\n"
+         "        c.sendall(b\"malformed\\r\\n\\r\\n\")\n"
+         "    elif path == \"/slow\":\n"
+         "        c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Length: 10000\\r\\n\\r\\nx\")\n"
+         "        c.settimeout(3)\n"
+         "        try: c.recv(1)\n"
+         "        except (TimeoutError, ConnectionResetError): pass\n"
          "    else:\n"
          "        c.sendall(b\"HTTP/1.1 404 Not Found\\r\\nContent-Length: 9\\r\\n\\r\\nnot found\")\n"
          "    c.close()\n"))
 
-     (define-values (to-server from-server server-error server-pid)
-       (let ([path (format "/tmp/e-https-test-~a.py" (getenv "USER"))])
-         (call-with-output-file path
-           (lambda (port) (put-string port server-script))
-           'replace)
-         (open-process-ports (format "exec python3 ~a" path)
-                             'block (native-transcoder))))
-
-     (define server-port
-       (let ([line (get-line from-server)])
-         (unless (and (string? line)
-                      (> (string-length line) 6)
-                      (string=? (substring line 0 6) "READY "))
-           (error 'https-test "fixture server did not start" line))
-         (string->number (substring line 6 (string-length line)))))
-
-     (define (local path)
-       (format "http://127.0.0.1:~a~a" server-port path))
-
      ;; The same integration table exercises both consumers and backends.
-     ;; The server checks Host, and /redirect traverses two relative hops.
-     (for-each
-       (lambda (backend)
-         (parameterize ([https:backend backend])
+     ;; The fixture is itself an owned child; request cleanup must leave it
+     ;; available for later requests, and closing the fixture must reap it.
+     (let ([before (list (test:child-pids) (test:fd-count))] [server #f] [server-port #f])
+       (define (local path) (format "http://127.0.0.1:~a~a" server-port path))
+       (dynamic-wind #t
+         (lambda () (set! server (sys:open-process (list "python3" "-u" "-c" server-script))))
+         (lambda ()
+           (sys:write-process! server #f)
+           (let ([line (get-line (transcoded-port (sys:process-input server) (native-transcoder)))])
+             (unless (and (string? line) (> (string-length line) 6) (string=? (substring line 0 6) "READY "))
+               (error 'https-test "fixture server did not start" line))
+             (set! server-port (string->number (substring line 6 (string-length line)))))
            (for-each
-             (lambda (kind)
-               (check (list 'framing backend kind)
-                 (map (lambda (path) (fetch kind (local path))) '("/plain" "/chunked" "/eof" "/redirect"))
-                 '("hello world" "chunk one and chunk2" "streamed to eof" "hello world"))
-               (check (list 'error-status backend kind)
-                 (test:raises? (lambda () (fetch kind (local "/missing")))) #t))
-             '(get download))
-           (let ([response (https:request 'GET (local "/plain"))])
-             (check (list 'response backend)
-               (list (https:response-status response)
-                     (cdr (assoc "content-type" (https:response-headers response)))
-                     (https:response-text response))
-               '(200 "text/plain" "hello world")))))
-       '(native curl))
-
-     (system (format "kill ~a 2>/dev/null" server-pid))
+             (lambda (backend)
+               (let ([resources (list (test:child-pids) (test:fd-count))])
+                 (parameterize ([https:backend backend])
+                   (for-each
+                     (lambda (kind)
+                       (check (list 'framing backend kind)
+                         (map (lambda (path) (fetch kind (local path))) '("/plain" "/chunked" "/eof" "/redirect"))
+                         '("hello world" "chunk one and chunk2" "streamed to eof" "hello world"))
+                       (check (list 'response-errors backend kind)
+                         (map (lambda (path) (test:raises? (lambda () (fetch kind (local path)))))
+                              '("/missing" "/truncated" "/broken-head"))
+                         '(#t #t #t)))
+                     '(get download))
+                   (let ([response (https:request 'GET (local "/plain"))])
+                     (check (list 'response backend)
+                       (list (https:response-status response)
+                             (cdr (assoc "content-type" (https:response-headers response)))
+                             (https:response-text response))
+                       '(200 "text/plain" "hello world")))
+                   (let* ([start (current-time 'time-monotonic)]
+                          [response (https:request 'GET (local "/slow"))]
+                          [byte (get-u8 (https:response-port response))])
+                     (https:close! response)
+                     (https:close! response)
+                     (check (list 'stream-before-completion-and-close backend)
+                       (list (https:response-status response) byte
+                             (port-closed? (https:response-port response))
+                             (< (time-second (time-difference (current-time 'time-monotonic) start)) 1))
+                       '(200 120 #t #t))))
+                 (check (list 'requests-release-resources backend)
+                   (list (test:child-pids) (test:fd-count)) resources)))
+             '(native curl)))
+         (lambda () (sys:close-process! server)))
+       (check 'local-fixture-releases-resources (list (test:child-pids) (test:fd-count)) before))
 
      ;; -- the TLS connector, against live hosts ------------------------
 

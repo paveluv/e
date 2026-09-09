@@ -8,7 +8,7 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (vt) vt:)
+     (import (prefix (sys) sys:) (prefix (vt) vt:) (prefix (git) git:)
              (prefix (head) head:) (prefix (paint) paint:) (prefix (render) render:)
              (prefix (actor) actor:) (prefix (store) store:) (prefix (surface) surface:)
              (prefix (kernel) kernel:) (prefix (text) text:)
@@ -23,6 +23,91 @@
            (and (<= (+ at m) n)
                 (or (string=? (substring text at (+ at m)) part)
                     (loop (+ at 1)))))))
+
+     (define (with-command arguments bytes use)
+       (let ([process #f])
+         (dynamic-wind #t
+           (lambda ()
+             (when process (error 'command-test "scope has ended"))
+             (set! process (sys:open-process arguments)))
+           (lambda () (sys:write-process! process bytes) (use process))
+           (lambda () (sys:close-process! process)))))
+
+     ;; One unrelated command stays alive throughout the table and Git calls.
+     ;; Its final reply/status prove cleanup never killed or reaped its PID.
+     (let* ([before (list (test:child-pids) (test:fd-count))]
+            [other (sys:open-process '("/bin/sh" "-c" "printf ready; read value; printf %s \"$value\"; exit 23"))])
+       (dynamic-wind void
+         (lambda ()
+           (check 'other-command-ready
+             (equal? (get-bytevector-n (sys:process-input other) 5) (string->utf8 "ready")))
+           (let ([resources (list (test:child-pids) (test:fd-count))]
+                 [quoted "spaces ' and ; $() `literal`"]
+                 [zeros (make-bytevector 131072 0)]
+                 [body (make-bytevector 524288 120)])
+             (check 'command-completion
+               (for-all
+                 (lambda (row)
+                   (with-command (car row) (cadr row)
+                     (lambda (process)
+                       ;; Read EOF before asking for status; argument evaluation
+                       ;; order must not decide the resource protocol.
+                       (let ([output (get-bytevector-all (sys:process-input process))])
+                         (equal? (cons output (call-with-values (lambda () (sys:process-result process)) list))
+                                 (cddr row))))))
+                 (list
+                   (list (list "/bin/sh" "-c" "printf %s \"$1\"; printf %s \"$2\" >&2; exit 7" "fixture" quoted quoted)
+                         #f (string->utf8 quoted) 7 quoted)
+                   (list '("/bin/sh" "-c" "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2; exec cat")
+                         body (let ([expected (make-bytevector (+ (bytevector-length zeros) (bytevector-length body)) 120)])
+                                (bytevector-copy! zeros 0 expected 0 (bytevector-length zeros)) expected)
+                         0 (make-string 131072 #\nul))
+                   (list '("/bin/sh" "-c" "kill -TERM $$") #f (eof-object) -15 ""))))
+             (check 'command-scope-exits
+               (for-all
+                 (lambda (exit)
+                   (let* ([held #f] [expired #f] [start (current-time 'time-monotonic)]
+                          [outcome
+                           (guard (ex [(eq? ex 'command-error) 'raised])
+                             ((make-engine
+                                (lambda ()
+                                  (with-command '("/bin/sh" "-c" "trap '' TERM; printf ready; exec sleep 20") #f
+                                    (lambda (process)
+                                      (set! held process)
+                                      (get-bytevector-n (sys:process-input process) 5)
+                                      (case exit
+                                        [(close) (close-port (sys:process-input process)) 'closed]
+                                        [(raise) (raise 'command-error)]
+                                        [(fuel) (engine-block)])))))
+                              1000000 (lambda (ticks value) value)
+                              (lambda (engine) (set! expired engine) 'expired)))])
+                     (and (eq? outcome (case exit [(close) 'closed] [(raise) 'raised] [else 'expired]))
+                          (port-closed? (sys:process-input held))
+                          (= (time-second (time-difference (current-time 'time-monotonic) start)) 0)
+                          (equal? (call-with-values (lambda () (sys:process-result held)) list) '(-9 ""))
+                          (or (not expired)
+                              (test:raises?
+                                (lambda () (expired 1000000 (lambda args (void)) (lambda args (void))))
+                                (lambda (ex) (and (who-condition? ex) (eq? (condition-who ex) 'command-test))))))))
+                 '(close raise fuel)))
+             (do ([i 0 (+ i 1)]) ((= i 8))
+               (let ([repository (git:open ".")]) (git:current-branch repository) (git:status repository)))
+             (check 'git-error-keeps-real-status
+               (test:raises?
+                 (lambda () (git:open "/no/such/e-repository __E_GIT_STATUS__=1 '/missing"))
+                 (lambda (ex)
+                   (and (git:error? ex) (= (git:error-code ex) 128)
+                        (contains? (git:error-stderr ex) "__E_GIT_STATUS__=1 '")))))
+             (check 'commands-release-only-owned-resources
+               (equal? (list (test:child-pids) (test:fd-count)) resources)))
+           (sys:write-process! other (string->utf8 "still here\n"))
+           (let ([output (get-bytevector-all (sys:process-input other))])
+             (check 'other-command-retains-completion
+               (equal? (cons (utf8->string output) (call-with-values (lambda () (sys:process-result other)) list))
+                       '("still here" 23 "")))))
+         (lambda () (sys:close-process! other)))
+       (check 'command-table-releases-resources
+         (equal? (list (test:child-pids) (test:fd-count)) before)))
 
      (define (read-process process)
        (let ([input (transcoded-port
