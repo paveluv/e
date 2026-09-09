@@ -121,6 +121,10 @@ e preserves those newer facts. It reports that the destination was written
 but saving could not finish, and returns failure; it does not undo the disk
 write or run post-save hooks. Review the buffer and destination before retrying.
 
+Writes preserve existing file permissions, including after interruption.
+Permission restoration is best-effort; a failed or interrupted write can
+still leave partial contents on disk.
+
 ### External changes and rereading
 
 Each file buffer remembers the last disk contents it accepted. e checks at the

@@ -19,16 +19,16 @@
 ;; disk).
 
 (library (file)
-  (export read read-state stamp write!
+  (export read read-state stamp write! call-with-port
           lines ends-in-newline? text
           merge conflict-count
           directory-part base-name expand abbreviate absolute
           canonical visit-path complete data-directory
           add-pre-save-hook! add-post-save-hook!
           run-pre-save-hooks! run-post-save-hooks!)
-  ;; read, expand, and merge are Chez names too; importers always see
-  ;; these under the file: prefix
-  (import (except (chezscheme) read expand merge)
+  ;; These are Chez names too; importers always see this library's exports
+  ;; under the file: prefix.
+  (import (except (chezscheme) read expand merge call-with-port)
           (prefix (only (sys) canonical-file-path) sys:)
           (prefix (only (diff) merge3 merge-report-lines) diff:)
           (prefix (string) string:)
@@ -143,9 +143,27 @@
 
   ;;; Reading and writing ---------------------------------------------------------
 
+  (define (call-with-port path output? use)
+    ;; Chez's file combinators close only on normal return. Own the port
+    ;; across exceptions and engine expiry too; protect acquisition/release,
+    ;; while leaving the read/write body interruptible. Output replaces the
+    ;; file but restores its permissions, best-effort, even if closing raises.
+    ;; A closed scope cannot be resumed against a newly opened/truncated file.
+    (let ([port #f] [mode #f])
+      (dynamic-wind #t
+        (lambda ()
+          (when port (error 'file:call-with-port "file port scope has ended" path))
+          (when (and output? (file-exists? path))
+            (set! mode (guard (ex [else #f]) (get-mode path))))
+          (set! port (if output? (open-output-file path 'replace) (open-input-file path))))
+        (lambda () (use port))
+        (lambda ()
+          (dynamic-wind void (lambda () (close-port port))
+            (lambda () (when mode (guard (ex [else (void)]) (chmod path mode)))))))))
+
   (define (read path)
     ;; the file's whole text ("" when empty); raises when unreadable
-    (call-with-input-file path
+    (call-with-port path #f
       (lambda (p)
         (let ([s (get-string-all p)])
           (if (eof-object? s) "" s)))))
@@ -167,21 +185,16 @@
 
   (define (write! path v trailing?)
     ;; The line vector v as path's text, a newline after every line but
-    ;; the last unless trailing?.  Rewriting recreates the file:
-    ;; remember its permissions (the exec bit on a script, say) and put
-    ;; them back after -- best-effort, while a failed write raises.
-    (let ([mode (and (file-exists? path)
-                     (guard (ex [else #f]) (get-mode path)))]
-          [n (vector-length v)])
-      (call-with-output-file path
+    ;; the last unless trailing?. The port scope owns permission restoration;
+    ;; a failed or interrupted write can still leave partial contents.
+    (let ([n (vector-length v)])
+      (call-with-port path #t
         (lambda (p)
           (let loop ([i 0])
             (when (< i n)
               (display (vector-ref v i) p)
               (when (or (< i (- n 1)) trailing?) (newline p))
-              (loop (+ i 1)))))
-        'replace)
-      (when mode (guard (ex [else (void)]) (chmod path mode)))))
+              (loop (+ i 1))))))))
 
   ;;; Text and lines --------------------------------------------------------------
 

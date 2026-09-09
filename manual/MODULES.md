@@ -27,6 +27,13 @@ termios, ioctl, signals, PTYs, and other foreign procedures. Feature modules
 compose the command API and the seams and, when necessary, narrowly scoped
 system facilities.
 
+For file codecs, `(file:call-with-port path output? use)` opens a text port
+and passes it to `use`, preserving its return values. `#f` reads; `#t` replaces
+the file and preserves existing permissions, best-effort. The scope closes
+the port on return, exception or engine expiry. An expired scope cannot be
+resumed; start a fresh operation after reviewing any partial output. Both
+ordinary text I/O and the reference corpus use this scope.
+
 Documentation data lives in `reference` and the module-entry registry in `doc`.
 Use `reference:lookup` for queries that need no browser; `describe` adds the
 head's prompts, key annotations, and Markdown display. `reference:page!`

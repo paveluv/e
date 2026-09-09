@@ -8,25 +8,20 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo")))
+(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
 
 (eval
   '(begin
-     (import (prefix (file) file:)
+     (import (prefix (file) file:) (prefix (test) test:)
              (only (chezscheme)
                    format getenv putenv current-directory directory-list
                    delete-file delete-directory mkdir chmod get-mode
                    file-exists? file-directory? time-second current-time
                    random))
 
-     (define checks 0)
-
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'file-test label actual expected)))
+     (define check test:check)
 
      ;; -- the line algebra -----------------------------------------------
 
@@ -111,6 +106,69 @@
      (check 'visit-path-new-file
             (file:visit-path (string-append scratch "/dir/../new.txt")) (path "new.txt"))
 
+     ;; One table covers the shared port scope for text and corpus data.
+     ;; Keep both the port and any expired engine alive through the check;
+     ;; automatic collection must not conceal a missing close.
+     (for-each
+       (lambda (output?)
+         (check (list 'port-lifetime (if output? 'output 'input))
+           (map (lambda (exit)
+                  (let* ([port #f] [expired #f]
+                         [result
+                          (guard (ex [(eq? ex 'port-error) 'raised])
+                            ((make-engine
+                               (lambda ()
+                                 (file:call-with-port (path "alpha") output?
+                                   (lambda (p)
+                                     (set! port p)
+                                     (case exit
+                                       [(return) (values 'returned 'values)]
+                                       [(raise) (raise 'port-error)]
+                                       [(fuel) (engine-block)])))))
+                             100000 (lambda (ticks . values) values)
+                             (lambda (engine) (set! expired engine) 'fuel)))])
+                    (list result (port-closed? port) (procedure? expired)
+                          (if expired
+                              (begin
+                                ;; Retrying a closed scope must not reopen or
+                                ;; truncate the newer file before it refuses.
+                                (file:write! (path "alpha") '#("later") #f)
+                                (and (test:raises?
+                                       (lambda () (expired 100000 (lambda args (void)) (lambda args (void))))
+                                       (lambda (ex)
+                                         (and (who-condition? ex) (eq? (condition-who ex) 'file:call-with-port))))
+                                     (string=? (file:read (path "alpha")) "later")))
+                              #t))))
+                '(return raise fuel))
+           '(((returned values) #t #f #t) (raised #t #f #t) (fuel #t #t #t))))
+       '(#f #t))
+
+     ;; Real helpers must also use that scope. Exhaust fuel during substantial
+     ;; I/O, retaining continuations while observing descriptors where available.
+     ;; Replacing a file must restore its original mode even after interruption.
+     (let ([large (make-vector 100000 "ordinary file data")]
+           [descriptors (cond [(file-directory? "/proc/self/fd") "/proc/self/fd"]
+                              [(file-directory? "/dev/fd") "/dev/fd"] [else #f])]
+           [expired '()])
+       (define (fd-count) (and descriptors (length (directory-list descriptors))))
+       (for-each
+         (lambda (kind)
+           (file:write! (path "alpha") large #t)
+           (chmod (path "alpha") #o751)
+           (let* ([before (fd-count)]
+                  [result
+                   ((make-engine
+                      (lambda ()
+                        (if (eq? kind 'read) (file:read (path "alpha"))
+                            (file:write! (path "alpha") large #t))))
+                    10000 (lambda args 'finished)
+                    (lambda (engine) (set! expired (cons engine expired)) 'fuel))])
+             (check (list kind 'expired-file-io)
+               (list result (and (pair? expired) (procedure? (car expired)))
+                     (equal? before (fd-count)) (logand (get-mode (path "alpha")) #o777))
+               '(fuel #t #t #o751))))
+         '(read write)))
+
      ;; Pause a real read with its descriptor open, replace the pathname,
      ;; then finish reading the old inode. A new timestamp cannot certify it.
      (let ([old (apply string-append (make-list 100000 "ordinary line\n"))]
@@ -170,4 +228,4 @@
      (delete-directory scratch)
      (check 'scratch-removed (file-exists? scratch) #f)
 
-     (format #t "~a file checks passed\n" checks)))
+     (test:finish! 'file)))
