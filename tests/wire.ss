@@ -488,7 +488,8 @@
                (rpc first 'edit 1 12 '(0 0 0 0) '("") '(protect "protect" ((read-only . #t))))
                (let ([before (rpc agent 'snapshot 1)])
                  (test:check 'wire-clients-cannot-bypass-read-only-with-facts-or-history
-                   (list (rpc first 'edit 1 13 '(0 0 0 0) '("bad") '(escape "escape" ((read-only . #f))))
+                   (list (rpc first 'edit 1 13 '(0 0 0 0) '("bad")
+                           '(escape "escape" ((read-only . #f)) () (read-only)))
                          (rpc second 'edit 1 13 '(0 0 0 0) '("bad"))
                          (rpc first 'undo 1 'all) (rpc first 'redo 1)
                          (equal? before (rpc agent 'snapshot 1)))
@@ -639,6 +640,39 @@
                        (list (receive-reply agent) (rpc agent 'cancel ticket)
                              (head-read a '(actor:pending head:ui-actor)))
                        '((event (answer 71 "yes")) #f ())))
+
+                   ;; Exercise the actual head/client adapters as well as the
+                   ;; request envelope: a refused fact batch must stay false.
+                   (let ([target (rpc head 'create "guarded facts" '("keep")
+                                   '((base . "keep\n") (trailing . #t)))])
+                     (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,target)) #t))
+                     (rpc head 'properties target '((base . "other\n")))
+                     (let ([before (rpc head 'snapshot target)])
+                       (test:check 'attached-fact-and-merge-refusals-preserve-the-source
+                         (list
+                           (head-read a
+                             '(let ([b (current-buffer)])
+                                (list (head:buffer-facts-set! b '((base . "lost")) '((base . "keep\n")))
+                                      (guard (ex [else (kernel:refusal? ex)])
+                                        (head:store-edit! b (text:make-span 0 0 0 4) '("lost")
+                                          '(merge "merge" () ((base . "lost")) ((base . "keep\n"))))))))
+                           (rpc head 'edit target 0 '(0 0 0 4) '("lost")
+                             '(merge "merge" () ((base . "lost")) ((base . "keep\n"))))
+                           (equal? before (rpc head 'snapshot target)) (rpc head 'history target))
+                         '((#f #t) (stale property-changed) #t ())))
+                     (test:check 'attached-fresh-guards-commit-and-undo-keeps-the-baseline
+                       (head-read a
+                         '(let* ([b (current-buffer)]
+                                 [accepted (head:buffer-facts-set! b '((stamp . #f)) '((base . "other\n") stamp))])
+                            (head:store-edit! b (text:make-span 0 0 0 4) '("disk")
+                              '(merge "merge" ((trailing . #f)) ((base . "disk")) ((base . "other\n") (trailing . #t))))
+                            (let ([clean? (not (head:buffer-modified b))])
+                              (undo!)
+                              (list accepted clean? (head:buffer-lines b) (head:buffer-base b)
+                                    (head:buffer-trailing b) (head:buffer-modified b)))))
+                       '(#t #t #("keep") "disk" #t #t))
+                     (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                     (rpc head 'delete target))
 
                    (let ([path (string-append root "/saved.txt")])
                      (write-text path "shared text B\n")

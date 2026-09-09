@@ -116,6 +116,10 @@ Saving captures the current shared text, including edits that have not yet
 appeared in a window. If another edit arrives during the save, that newer
 work stays marked unsaved. Undoing back to the saved contents makes the
 shared buffer clean again, regardless of which actor requested undo.
+If another actor changes the buffer's file or baseline during the write,
+e preserves those newer facts. It reports that the destination was written
+but saving could not finish, and returns failure; it does not undo the disk
+write or run post-save hooks. Review the buffer and destination before retrying.
 
 ### External changes and rereading
 
@@ -456,7 +460,16 @@ the key with `head:find-tool-buffer`.
 `#f` remains `#f`, and store failures propagate. `head:buffer-facts-set!`
 accepts an alist and validates the whole batch before either owner changes
 any fact. The corresponding store call is `(store:set-properties! actor id
-facts)`. `base` is a string or `#f`; `trailing` and `disposable` are booleans.
+facts [expected])`. Both calls return `#t` on acceptance. Optional `expected`
+facts are checked by the same owner before publication: `(key . value)`
+requires that exact value, while a bare symbol requires that key to be absent.
+For example, `'((base . "old\n") stamp)` requires the old baseline and no stamp
+fact; an explicit `(stamp . #f)` would not match. Build this list from a coherent
+snapshot with `(property:select facts '(file base stamp))`. A mismatch or deleted
+buffer returns `#f` without mutation or notifications. Omission or `#f` is
+unguarded; an empty list still requires a live buffer. The predicate compares
+values, independently of text revisions and undo's property-version checks.
+`base` is a string or `#f`; `trailing` and `disposable` are booleans.
 Shared `modified` is derived and cannot be set or dropped. Generated output
 can set `disposable` to `#t`; registered apps and tool buffers do so already.
 The local modified flag remains available for private command history.
@@ -536,7 +549,7 @@ helpers do.
 
 `(store:edit! actor id basis span replacement [context])` applies an
 attributed edit or returns a stale refusal.  The optional context is
-`(group-key label [undo-facts [commit-facts]])`: the same non-false key groups that
+`(group-key label [undo-facts [commit-facts [expected]]])`: the same non-false key groups that
 actor's transactions in this buffer into one undo action.  Without a key,
 each call is an action.  Properties such as `((trailing . #t))` commit with
 the text and are included in its inverse.  Property versions are checked
@@ -544,6 +557,10 @@ on undo and redo, so a later write blocks restoration even if it returns
 to the same value.  Public property queries omit deleted properties.
 Optional commit facts are installed in the same transaction but survive
 undo, as a merge's disk baseline should. A key cannot appear in both lists.
+Optional expected facts use the same predicate as `set-properties!`. A mismatch
+or deleted source returns `(values 'stale 'property-changed)` before text,
+facts or history change; ordinary text rebasing still applies. The predicate
+does not become part of undo history. Shared inputs must be finite plain data.
 Labels and plain key structure are copied at admission and readback.
 Grouping retains `equal?` matching. Opaque runtime leaves in an in-process
 key retain their original identity; keep their equality stable while the

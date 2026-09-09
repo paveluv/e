@@ -108,6 +108,7 @@
           (prefix (startup) startup:)
           (prefix (tty) tty:)
           (prefix (store) store:)
+          (prefix (property) property:)
           (prefix (surface) surface:)
           (prefix (render) render:)
           (prefix (text) text:)
@@ -699,13 +700,24 @@
   (define (buffer-fact-set! b key value)
     (buffer-facts-set! b (list (cons key value))))
 
-  (define (buffer-facts-set! b updates)
+  (define (local-facts-match? b expected)
+    (or (not expected)
+        (and (memq b the-buffers)
+             (let-values ([(text revision facts) (buffer-state b)])
+               (property:matches? expected facts)))))
+
+  (define (buffer-facts-set! b updates . review)
     (store:validate-properties updates)
-    (let ([id (buffer-store-id b)])
+    (unless (<= (length review) 1) (error 'buffer-facts-set! "expected one fact review" review))
+    (let ([id (buffer-store-id b)]
+          [expected (property:validate-expected (and (pair? review) (car review)))])
       (if id
-          (store:set-properties! ui-actor id updates)
-          (for-each (lambda (entry) (hashtable-set! (buffer-local-facts b) (car entry) (cdr entry)))
-                    updates))))
+          (apply store:set-properties! ui-actor id updates review)
+          (and (local-facts-match? b expected)
+               (begin
+                 (for-each (lambda (entry) (hashtable-set! (buffer-local-facts b) (car entry) (cdr entry)))
+                           updates)
+                 #t)))))
 
   (define (buffer-state b)
     ;; Unlike the command basis, this is current shared truth for save
@@ -1020,6 +1032,7 @@
                     (note-ui-edit! b committed)))
                 (let ([reason (case info
                                 [(read-only) "the buffer is read-only"]
+                                [(property-changed) "the buffer's reviewed facts changed"]
                                 [(overlap) "another edit overlaps this change"]
                                 [else "the edit's revision is no longer available"])])
                   (guard (ex [else (void)]) (sync-store-buffer! b))
@@ -1031,13 +1044,16 @@
                                       (format "Edit not applied: ~a" reason)))))))
           (let* ([plan (force proposal)] [text (car plan)] [delta (cadr plan)]
                  [placed (project-placements delta '() '())])
+            (unless (local-facts-match? b (and context (= (length context) 5) (list-ref context 4)))
+              (raise (condition (kernel:make-refusal)
+                                (make-message-condition "Edit not applied: the buffer's reviewed facts changed"))))
             (rebase-buffer-positions! b delta)
             (adopt-local! b text delta)
             (apply-placements! b placed)
             (clamp-buffer-positions! b)
             (when (and context (>= (length context) 3))
               (buffer-facts-set! b
-                (append (caddr context) (if (= (length context) 4) (cadddr context) '()))))))))
+                (append (caddr context) (if (>= (length context) 4) (cadddr context) '()))))))))
 
   (define (placement-window place)
     (cond [(window? place) place]

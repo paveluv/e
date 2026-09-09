@@ -131,7 +131,7 @@
          [(rename) (arity 2) (apply store:rename! actor args)]
          [(delete) (arity 1) (apply store:delete! actor args) #t]
          [(discard) (arity 3) (apply store:discard! actor args)]
-         [(properties) (arity 2) (apply store:set-properties! actor args) #t])]
+         [(properties) (apply store:set-properties! actor args)])]
       [(marks)
        (arity 4)
        (head!)

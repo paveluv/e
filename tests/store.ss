@@ -13,6 +13,7 @@
 (eval
   '(begin
      (import (prefix (store) store:)
+             (prefix (property) property:)
              (prefix (text) text:)
              (prefix (kernel) kernel:)
              (prefix (test) test:)
@@ -43,8 +44,8 @@
             '("alpha" "bravo" "charlie"))
      (check 'fresh-revision (store:revision b) 0)
 
-     ;; One review/race table covers destructive decisions. A stale reset
-     ;; must preserve text, facts, history and marks and emit no notifications.
+     ;; One review/race table covers full-state and selected-fact decisions.
+     ;; Refusal preserves text, facts, history and marks, with no notifications.
      (for-each
        (lambda (operation)
          (check (list operation 'rechecks-the-reviewed-state-under-the-writer)
@@ -60,7 +61,7 @@
                              [(text aba)
                               (store:edit! bot id 1 (span 0 0 0 0) '("new "))
                               (when (eq? change 'aba) (store:undo! bot id))]
-                             [(facts) (store:set-property! bot id 'read-only #t)]
+                             [(facts) (store:set-property! bot id 'base "other\n")]
                              [(delete) (store:delete! bot id)]
                              [(rename) (store:rename! bot id "renamed review")]
                              [(marks) (store:set-mark! alice id 'point '(0 . 8))])
@@ -75,13 +76,33 @@
                    (reviewed #t) (writer)
                    (let* ([before (state)] [events (test:recorder)] [token (store:subscribe! id events)]
                           [accepted
-                           (if (eq? operation 'discard) (store:discard! alice id revision facts)
-                               (store:reset! alice id '("disk") '((base . "disk\n") (trailing . #t))
-                                             (cons revision facts)))]
+                           (case operation
+                             [(discard) (store:discard! alice id revision facts)]
+                             [(reset) (store:reset! alice id '("disk") '((base . "disk\n") (trailing . #t))
+                                                    (cons revision facts))]
+                             [(properties) (store:set-properties! alice id '((base . "disk\n"))
+                                             (property:select facts '(base read-only)))]
+                             [(edit)
+                              (let-values ([(status detail)
+                                            (store:edit! alice id revision (span 0 9 0 9) '("?")
+                                              (list 'merge "merge" '() '((base . "disk\n"))
+                                                (property:select facts '(base read-only))) 'any)])
+                                (and (eq? status 'applied) detail))])]
                           [still-here? (store:exists? id)]
                           [intact?
                            (cond [(not accepted) (and (equal? before (state)) (null? (events)))]
                              [(eq? operation 'discard) (not still-here?)]
+                             [(eq? operation 'properties)
+                              (and (equal? (list-head (car before) 2)
+                                           (list-head (car (state)) 2))
+                                   (equal? (cdr before) (cdr (state)))
+                                   (equal? (store:property id 'base) "disk\n")
+                                   (equal? (map car (events)) '(property)))]
+                             [(eq? operation 'edit)
+                              (equal? (list (store:line id 0) (store:revision id) (store:property id 'base)
+                                            (map car (events)))
+                                      (list (if (eq? change 'text) "new reviewed!?" "reviewed!?")
+                                            (+ (cadar before) 1) "disk\n" '(edit property)))]
                              [else (equal? (list accepted (store:revision id) (store:line id 0)
                                                  (store:property id 'modified) (store:history id)
                                                  (store:mark alice id 'point))
@@ -90,10 +111,20 @@
                      (when still-here? (store:delete! alice id))
                      (list (and accepted #t) still-here? intact?)))))
              '(text facts delete unchanged rename marks aba))
-           (if (eq? operation 'discard)
-               '((#f #t #t) (#f #t #t) (#t #f #t) (#t #f #t) (#t #f #t) (#t #f #t) (#f #t #t))
-               '((#f #t #t) (#f #t #t) (#f #f #t) (#t #t #t) (#t #t #t) (#t #t #t) (#f #t #t)))))
-       '(discard reset))
+           (case operation
+             [(discard) '((#f #t #t) (#f #t #t) (#t #f #t) (#t #f #t) (#t #f #t) (#t #f #t) (#f #t #t))]
+             [(reset) '((#f #t #t) (#f #t #t) (#f #f #t) (#t #t #t) (#t #t #t) (#t #t #t) (#f #t #t))]
+             [else '((#t #t #t) (#f #t #t) (#f #f #t) (#t #t #t) (#t #t #t) (#t #t #t) (#t #t #t))])))
+       '(discard reset properties edit))
+
+     (let* ([id (store:create! alice "conditional writers" '("old") '((base . "old\n")))]
+            [outcomes (test:parallel 2
+                        (lambda (n)
+                          (store:set-properties! bot id (list (cons 'base (format "writer ~a\n" n)))
+                                                 '((base . "old\n")))))])
+       (check 'only-one-writer-can-publish-against-the-same-baseline
+              (length (filter values outcomes)) 1)
+       (store:delete! alice id))
 
      ;; Creation and rename arbitrate the same namespace under contention,
      ;; including hidden names, existing suffixes, self-renames and reuse.
@@ -1059,7 +1090,9 @@
             (assq 'read-only (store:properties pb)) '(read-only . #f))
      (store:drop-property! bot pb 'read-only)
      (check 'property-dropped
-            (assq 'read-only (store:properties pb)) #f)
+            (list (assq 'read-only (store:properties pb))
+                  (store:set-properties! bot pb '() '((read-only . #f)))
+                  (store:set-properties! bot pb '() '(read-only))) '(#f #f #t))
      (store:reset! bot pb '("fresh"))
      (check 'property-survives-reset (store:property pb 'file) "/tmp/a.txt")
 
@@ -1121,7 +1154,9 @@
             (for-all (lambda (context)
                        (test:raises?
                          (lambda () (store:edit! (fresh-author) lb 0 (span 0 0 0 1) '("bad") context))))
-                     (list '(key 42) (list cycle "cyclic key"))) #t)
+                     (list '(key 42) (list cycle "cyclic key")
+                           (list 'key "cyclic expected fact" '() '() (list (cons 'metadata cycle)))
+                           (list 'key "runtime expected fact" '() '() (list (cons 'metadata void))))) #t)
      (check 'metadata-refusals-preserve-store-state-and-events
             (list (store:buffer-list) (call-with-values (lambda () (store:snapshot-state lb)) list)
                   (store:buffer-name lb) (store:history lb) (store:marks (fresh-author) lb)

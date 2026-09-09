@@ -13,8 +13,11 @@
      (import (except (edit) init!)
              (prefix (head) head:)
              (prefix (store) store:)
+             (prefix (property) property:)
              (prefix (text) text:)
              (prefix (file) file:)
+             (prefix (log) log:)
+             (prefix (string) string:)
              (prefix (mode) mode:)
              (prefix (kernel) kernel:))
 
@@ -23,7 +26,7 @@
      (define (check label actual expected)
        (set! checks (+ checks 1))
        (unless (equal? actual expected)
-         (error 'edit-state-test (symbol->string label) actual expected)))
+         (error 'edit-state-test (format "~s" label) actual expected)))
      (define (raises? thunk) (guard (ex [else #t]) (thunk) #f))
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer head:new-local-buffer) name)])
@@ -34,6 +37,13 @@
      (define (insert! id at replacement)
        (store:edit! bot id (store:revision id)
                     (text:make-span 0 at 0 at) (list replacement)))
+     (define (interrupt-during! change! thunk)
+       ;; Resume in place so the real file port keeps its normal unwind owner.
+       (let ([handler (timer-interrupt-handler)] [interrupted? #f])
+         (dynamic-wind
+           (lambda () (timer-interrupt-handler (lambda () (set! interrupted? #t) (change!))))
+           (lambda () (let ([result (thunk)]) (set-timer 0) (list interrupted? result)))
+           (lambda () (set-timer 0) (timer-interrupt-handler handler)))))
 
      ;; Store authors cannot bypass dirty state by avoiding command code.
      (define b (fresh "shared-state" #t))
@@ -116,7 +126,8 @@
      (define merged-id (head:buffer-store-id merged))
      (head:store-reset! merged '("mine") '((base . "old\n") (trailing . #t)))
      (store:edit! bot merged-id (store:revision merged-id) (text:make-span 0 0 0 4) '("disk")
-                  '(merge "merge" ((trailing . #f)) ((base . "disk") (stamp . 456) (stale . #f))))
+                  '(merge "merge" ((trailing . #f)) ((base . "disk") (stamp . 456) (stale . #f))
+                     ((base . "old\n") (trailing . #t))))
      (check 'merge-text-and-new-baseline-are-clean (store:property merged-id 'modified) #f)
      (store:undo! bot merged-id)
      (check 'undo-keeps-the-incorporated-disk-baseline
@@ -157,7 +168,23 @@
                                (cons revision facts))])
                (check 'fresh-review-adopts-a-new-baseline-in-either-owner
                  (list accepted (head:buffer-lines b) (point))
-                 (list (+ revision 1) '#("disk") '(0 . 4)))))))
+                 (list (+ revision 1) '#("disk") '(0 . 4)))))
+           ;; A fact predicate distinguishes absence from false or an empty
+           ;; value. Local runtime metadata need not become shared plain data.
+           (let ([expected (property:select (caddr (state b)) '(base missing))])
+             (head:buffer-fact-set! b 'missing #f)
+             (let ([before (state b)] [view (head-state)])
+               (check 'conditional-facts-and-edits-refuse-in-either-owner
+                 (list (head:buffer-facts-set! b '((base . "lost")) expected)
+                       (raises? (lambda ()
+                                  (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
+                                    (list 'merge "merge" '() '((base . "lost")) expected))))
+                       (equal? before (state b)) (equal? view (head-state)))
+                 '(#f #t #t #t)))
+             (head:buffer-fact-set! b 'missing '())
+             (check 'fresh-fact-review-publishes-in-either-owner
+               (head:buffer-facts-set! b '((stamp . 1))
+                 (property:select (caddr (state b)) '(base missing absent))) #t))))
        '(#t #f))
 
      ;; Validate all inputs before either owner changes text or facts.
@@ -187,15 +214,18 @@
                    (lambda () (head:store-reset! b '#("ok" 7)))
                    (lambda () (head:store-reset! b '("lost") '((trailing . 7))))
                    (lambda () (head:buffer-facts-set! b '((file . "changed") (7 . bad))))
+                   (lambda () (head:buffer-facts-set! b '((file . "changed")) '(base (base . #f))))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
                                 '(key "bad" ((trailing . #t) (trailing . #f)))))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
                                 '(key "bad" ((base . "a")) ((base . "b")))))
+                   (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
+                                '(key "bad" () () ((trailing . 7)))))
                    (lambda () (head:store-reset! b '("embedded\nnewline")))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("embedded\nnewline")))
                    (lambda () (buffer-append! b "embedded\nnewline"))
                    (lambda () (store:create! bot "invalid-line-input" '("embedded\nnewline")))
-                   (lambda () (format-buffer!)))) (make-list 10 '(#t #t #t))))))
+                   (lambda () (format-buffer!)))) (make-list 12 '(#t #t #t))))))
        '(#t #f))
 
      ;; The buffer still exists when the store rejects the fact write.
@@ -261,5 +291,75 @@
          (store:unsubscribe! save-token)
          (kernel:retract-module! 'state-save-hook)
          (when (file-exists? path) (delete-file path))))
+
+     ;; Interrupt a real save after its review but before fact publication.
+     ;; The written bytes survive refusal; newer text alone still permits save.
+     (for-each
+       (lambda (shared?)
+         (check (list 'in-flight-save shared?)
+           (map
+             (lambda (change)
+               (let* ([b (fresh "save in flight" shared?)] [before #f] [post-saves 0]
+                      [lines (make-vector 100000 "ordinary line")]
+                      [written (file:text lines #t)] [name (head:buffer-name b)])
+                 (head:store-reset! b lines (if shared? '() '((modified . #t))))
+                 (dynamic-wind
+                   (lambda ()
+                     (parameterize ([kernel:registering-module 'in-flight-save])
+                       (file:add-pre-save-hook! (lambda (target) (set-timer 10000)))
+                       (file:add-post-save-hook! (lambda (target) (set! post-saves (+ post-saves 1))))))
+                   (lambda ()
+                     (let ([result
+                            (interrupt-during!
+                              (lambda ()
+                                (case change
+                                  [(file) (head:buffer-facts-set! b
+                                            '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))]
+                                  [(protection) (head:buffer-facts-set! b '((read-only . #t) (disposable . #t)))]
+                                  [(trailing) (head:buffer-trailing-set! b #f)]
+                                  [(text) (if shared? (insert! (head:buffer-store-id b) 0 "later ")
+                                              (insert-text! "later "))])
+                                (set! before (state b)))
+                              (lambda () (save-file! path)))])
+                       (list result (string=? (file:read path) written) post-saves
+                             (if (memq change '(text trailing))
+                                 (and (equal? (head:buffer-base b) written) (head:buffer-modified b)
+                                      (if (eq? change 'text)
+                                          (equal? (vector-ref (car (state b)) 0) "later ordinary line")
+                                          (not (head:buffer-trailing b))))
+                                 (and (equal? before (state b)) (equal? name (head:buffer-name b))
+                                      (let ([message (log:datum (car (log:entries 'save-file! 1)))])
+                                        (and (string:prefix? (format "Wrote ~a, but could not finish saving:" path) message)
+                                             (string:suffix? "saved baseline was not updated." message))))))))
+                   (lambda ()
+                     (kernel:retract-module! 'in-flight-save)
+                     (when (file-exists? path) (delete-file path))))))
+             '(file protection text trailing))
+           '(((#t #f) #t 0 #t) ((#t #f) #t 0 #t) ((#t #t) #t 1 #t) ((#t #t) #t 1 #t))))
+       '(#t #f))
+
+     ;; Old disk readers cannot attach their stamp/status to newer file facts
+     ;; or replace a newer reader's observation of the same baseline.
+     (let ([disk (make-vector 100000 "ordinary line")])
+       (dynamic-wind
+         (lambda () (file:write! path disk #t))
+         (lambda ()
+           (check 'disk-observations-publish-only-against-their-captured-facts
+             (map
+               (lambda (operation)
+                 (let* ([b (fresh "disk observation" #t)]
+                        [updates (append '((stamp . 456) (stale . #t))
+                                   (if (eq? operation 'edit) '((file . "/tmp/retargeted.txt") (base . "new baseline\n")) '()))])
+                   (head:store-reset! b '("mine")
+                     (list (cons 'file path) (cons 'base (file:text disk #t)) '(stamp . #f) '(stale . #f)))
+                   (let ([result (interrupt-during!
+                                   (lambda () (head:buffer-facts-set! b updates))
+                                   (lambda ()
+                                     (set-timer 10000)
+                                     (if (eq? operation 'edit) (insert-text! "edited ") (visit-file! path))))])
+                     (list (car result) (property:matches? updates (caddr (state b)))))))
+               '(edit visit))
+             '((#t #t) (#t #t))))
+         (lambda () (when (file-exists? path) (delete-file path)))))
 
      (display checks) (display " edit state checks passed\n")))

@@ -126,11 +126,12 @@
       (fold-left (lambda (facts entry) (replace-property-cell facts (cons (car entry) (cdr entry))))
                  (buffer-properties b) updates)))
 
-  (define (property-data b)
+  (define (current-properties b)
     (cons (cons 'modified (buffer-modified b))
-          (map datum:copy
-               (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
-                       (buffer-properties b)))))
+          (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
+                  (buffer-properties b))))
+
+  (define (property-data b) (map datum:copy (current-properties b)))
 
   (define (locked thunk)
     (with-mutex (store-lock (current-store)) (thunk)))
@@ -344,7 +345,7 @@
                      (begin (delete-buffer! actor id) #t))))))))
 
   (define (reviewed-state? b review)
-    (equal? review (cons (buffer-revision b) (property-data b))))
+    (equal? review (cons (buffer-revision b) (current-properties b))))
 
   (define (prepare-close)
     ;; Standalone lifetime only: -> owned (id text revision facts) snapshots
@@ -581,7 +582,7 @@
     ;; or refuse.  -> (values 'applied revision)
     ;;             |  (values 'stale 'overlap)       edited meanwhile
     ;;             |  (values 'stale 'basis-too-old) log outgrown
-    ;; Optional context (key label [undo-facts [commit-facts]]) groups edits
+    ;; Optional context (key label [undo-facts [commit-facts [expected]]]) groups edits
     ;; and commits facts with the text. Optional write access follows it;
     ;; clients pass 'any or allowed names, producers omit it (#f).
     (let-values ([(status detail)
@@ -602,20 +603,24 @@
       (let* ([group-context (and context (datum:copy (list (car context) (cadr context)) values))]
              [properties (if (and context (>= (length context) 3))
                            (datum:copy (caddr context)) '())]
-             [commit-facts (if (and context (= (length context) 4))
+             [commit-facts (if (and context (>= (length context) 4))
                              (datum:copy (cadddr context)) '())]
+             [expected (and context (= (length context) 5) (datum:copy (list-ref context 4)))]
              [outcome
               (transact! actor
                 (lambda (actor)
                   (cond [(write-refusal id access) => (lambda (reason) (list 'refused reason))]
                     [else
-                     (let* ([b (buffer-of 'edit! id)]
-                            [since (entries-since b basis)]
+                     (let* ([b (if expected (hashtable-ref (store-buffers (current-store)) id #f)
+                                   (buffer-of 'edit! id))]
+                            [since (and b (entries-since b basis))]
                             [rebased (and since
                                        (rebase-through
                                          (text:normalize-span span)
                                          (map (lambda (entry) (vector-ref entry 2)) since)))])
                        (cond
+                         [(and expected (not (and b (property:matches? expected (current-properties b)))))
+                          (list 'stale 'property-changed)]
                          [(not since) (list 'stale 'basis-too-old)]
                          [(not rebased) (list 'stale 'overlap)]
                          [else
@@ -990,15 +995,22 @@
   (define (set-property! actor id key value)
     (set-properties! actor id (list (cons key value))))
 
-  (define (set-properties! actor id updates)
-    (let ([updates (datum:copy (writable-properties updates))])
+  (define (set-properties! actor id updates . review)
+    ;; Compare and publish under the writer, never across the caller's I/O.
+    ;; An empty review still requires a live buffer; #f is unguarded.
+    (unless (<= (length review) 1) (error 'set-properties! "expected one fact review" review))
+    (let ([updates (datum:copy (writable-properties updates))]
+          [expected (datum:copy (property:validate-expected (and (pair? review) (car review))))])
       (transact! actor
         (lambda (actor)
-          (let ([b (buffer-of 'set-properties! id)])
-            (install-properties! b updates)
-            (refresh-modified! b)
-            (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)))))
-    (void))
+          (let ([b (if expected (hashtable-ref (store-buffers (current-store)) id #f)
+                       (buffer-of 'set-properties! id))])
+            (and b (or (not expected) (property:matches? expected (current-properties b)))
+                 (begin
+                   (install-properties! b updates)
+                   (refresh-modified! b)
+                   (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
+                   #t)))))))
 
   (define (drop-property! actor id key)
     (unless (symbol? key)

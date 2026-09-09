@@ -99,6 +99,7 @@
   ;; from (sys).
   (import (chezscheme) (prefix (sys) sys:)
           (prefix (store) store:) (prefix (text) text:) (prefix (datum) datum:)
+          (prefix (property) property:)
           (prefix (kernel) kernel:) (prefix (actor) actor:) (prefix (startup) startup:)
           (prefix (log) log:) (prefix (style) style:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
@@ -307,13 +308,17 @@
     ;; mere touch passes silently.
     (let ([b (head:window-buffer current-window)])
       (when (and file-name (head:buffer-base b))
-        (let ([stamp (file:stamp file-name)])
-          (unless (and stamp (equal? stamp (head:buffer-stamp b)))
-            (let ([disk (guard (ex [else #f]) (read-disk file-name))])
-              (head:buffer-facts-set! b
-                (cons (cons 'stamp (and disk (cdr disk)))
-                      (if (and disk (string=? (car disk) (head:buffer-base b)))
-                          '() '((stale . #t)))))))))))
+        (let-values ([(text revision facts) (head:buffer-state b)])
+          (let ([path (cond [(assq 'file facts) => cdr] [else #f])]
+                [base (cond [(assq 'base facts) => cdr] [else #f])])
+            (when (and path base)
+              (let ([stamp (file:stamp path)])
+                (unless (and stamp (equal? stamp (cond [(assq 'stamp facts) => cdr] [else #f])))
+                  (let ([disk (guard (ex [else #f]) (read-disk path))])
+                    (head:buffer-facts-set! b
+                      (cons (cons 'stamp (and disk (cdr disk)))
+                            (if (and disk (string=? (car disk) base)) '() '((stale . #t))))
+                      (property:select facts '(file base stamp stale))))))))))))
 
   (define (check-editable!)
     ;; The same guard protects fresh edits and history restoration:
@@ -832,20 +837,23 @@
       (cond [(find (lambda (b) (equal? (head:buffer-file b) path)) buffers)
              => (lambda (b)
                   (show-buffer! b)
-                  (when (head:buffer-base b)
-                    ;; Reopening is explicit and uncommon, so compare content
-                    ;; every time. This catches preserved timestamps and a
-                    ;; stale buffer whose cached stamp was already refreshed.
-                    (let ([disk (guard (ex [else #f]) (read-disk path))])
-                      (cond
-                        [(and disk (string=? (car disk) (head:buffer-base b)))
-                         (head:buffer-facts-set! b
-                           (list (cons 'stamp (cdr disk)) '(stale . #f)))]
-                        [disk (reopen-changed-file! b path disk)]
-                        [else
-                         (parameterize ([message-source 'visit-file!])
-                           (set-message!
-                             (format "Cannot reread ~a" path)))]))))]
+                  (let-values ([(text revision facts) (head:buffer-state b)])
+                    (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
+                      (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
+                        ;; Reopening is explicit and uncommon, so compare content
+                        ;; every time. This catches preserved timestamps and a
+                        ;; stale buffer whose cached stamp was already refreshed.
+                        (let ([disk (guard (ex [else #f]) (read-disk path))])
+                          (cond
+                            [(and disk (string=? (car disk) base))
+                             (head:buffer-facts-set! b
+                               (list (cons 'stamp (cdr disk)) '(stale . #f))
+                               (property:select facts '(file base stamp stale)))]
+                            [disk (reopen-changed-file! b path disk (cons revision facts))]
+                            [else
+                             (parameterize ([message-source 'visit-file!])
+                               (set-message!
+                                 (format "Cannot reread ~a" path)))]))))))]
             [(file-buffer path) => show-buffer!])))
 
   (define (refuse-file! message)
@@ -868,11 +876,10 @@
       now))
 
   (define (file-review facts)
-    (map (lambda (key) (cons key (cond [(assq key facts) => cdr] [else #f])))
-         '(file base)))
+    (property:select facts '(file base)))
 
   (define (check-file-review! facts review)
-    (unless (equal? (file-review facts) review)
+    (unless (property:matches? review facts)
       (refuse-file! "Buffer's file or baseline changed; operation cancelled. Review the file again.")))
 
   (define (save-file! path*)
@@ -885,9 +892,12 @@
     (define adopted? #f)
     (define disk #f)
     (define (write! review)
+      (define written? #f)
       (guard (ex [else (parameterize ([message-source 'save-file!])
                          (set-message!
-                           (format "Save failed: ~a" (kernel:condition-text ex))))
+                           (if written?
+                               (format "Wrote ~a, but could not finish saving: ~a" path (kernel:condition-text ex))
+                               (format "Save failed: ~a" (kernel:condition-text ex)))))
                        #f])
         ;; Capture one coherent state after pre-save hooks.  The recorded
         ;; baseline is exactly what was written, even if a store subscriber
@@ -898,14 +908,17 @@
           (let* ([trailing (cond [(assq 'trailing facts) => cdr] [else #t])]
                  [written (file:text text trailing)])
             (file:write! path text trailing)
+            (set! written? #t)
             ;; A stat after writing could belong to another disk writer.
             ;; Invalidate the hint; the next edit verifies content again.
-            (head:buffer-facts-set! b
-              (append (list (cons 'file path) (cons 'base written)
-                            '(stamp . #f) '(stale . #f))
-                      (if adopted? '((read-only . #f) (disposable . #f)) '())
-                      (if (head:buffer-store-id b) '()
-                          (list (cons 'modified (not (string=? (buffer-text b) written)))))))))
+            (unless (head:buffer-facts-set! b
+                      (append (list (cons 'file path) (cons 'base written)
+                                '(stamp . #f) '(stale . #f))
+                        (if adopted? '((read-only . #f) (disposable . #f)) '())
+                        (if (head:buffer-store-id b) '()
+                          (list (cons 'modified (not (string=? (buffer-text b) written))))))
+                      (append review (if adopted? (property:select facts '(read-only disposable)) '())))
+              (refuse-file! "Buffer's file state changed; saved baseline was not updated."))))
         (head:buffer-name-set! b (file:base-name path))
         ;; re-detect the mode only when the name changed: a plain
         ;; re-save must not clobber a mode chosen by hand; adoption
@@ -925,9 +938,9 @@
         #t))
     (file:run-pre-save-hooks! path)
     (let-values ([(text revision facts) (head:buffer-state b)])
-      (let* ([review (file-review facts)] [base (cdr (assq 'base review))]
+      (let* ([review (file-review facts)] [base (cond [(assq 'base facts) => cdr] [else #f])]
              [modified (cond [(assq 'modified facts) => cdr] [else #f])])
-        (set! adopted? (not (equal? path (cdr (assq 'file review)))))
+        (set! adopted? (not (equal? path (cond [(assq 'file facts) => cdr] [else #f]))))
         (set! disk (read-disk path))
         (cond
           [(and disk (not adopted?) (not modified)
@@ -937,6 +950,9 @@
            #f]
           [(and disk (not adopted?)
              (not (and base (string=? (car disk) base))))
+           (unless (head:buffer-facts-set! b '((stale . #t))
+                     (property:select facts '(file base stamp stale)))
+             (refuse-file! "Buffer's file state changed; save cancelled. Review the file again."))
            (stale-save! b path disk review write!)]
           [(and disk adopted?)
            ;; saving under a new name onto an existing file
@@ -968,16 +984,18 @@
     ;; either way -- the external change is incorporated, so the next
     ;; save writes cleanly.  One undo entry.
     (let-values ([(text revision facts) (head:buffer-state b)])
-      (check-file-review! facts (list (cons 'file path) (assq 'base review)))
+      (check-file-review! facts review)
+      (check-file-review! facts (list (cons 'file path)))
       (let ([disk (review-disk! path disk)]
             [source (head:edit-basis b)] [wanted (point)])
         (let-values ([(merged merged-trailing conflicts report-lines)
-                      (file:merge path (cdr (assq 'base review))
-                        (buffer-text b) (car disk))])
+                      (file:merge path (cdr (assq 'base facts))
+                        (file:text (car source) (cond [(assq 'trailing facts) => cdr] [else #t])) (car disk))])
           (with-recorded-edit "merge from disk"
             (parameterize ([edit-source source] [edit-point wanted])
               (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing))
-                                     (list (cons 'base (car disk)) (cons 'stamp (cdr disk)) '(stale . #f))))
+                                     (list (cons 'base (car disk)) (cons 'stamp (cdr disk)) '(stale . #f))
+                                     (property:select facts '(file base trailing))))
             (changed!)
             (values conflicts (merge-report! b report-lines)))))))
 
@@ -1003,8 +1021,8 @@
                         "Buffer changed; reread cancelled. Reopen the file to review it again.")))
       (and accepted #t)))
 
-  (define (reopen-changed-file! b path disk)
-    (let-values ([(text revision facts) (head:buffer-state b)])
+  (define (reopen-changed-file! b path disk review)
+    (let ([facts (cdr review)])
       (let ask ()
         (let* ([k (prompt:key!
                     (format "~a changed on disk: m)erge, r)eread, c)ancel"
@@ -1030,7 +1048,7 @@
                              (keymap:command-hint
                                '(next-conflict! keep-mine! keep-disk!))))))
                #t)]
-            [(memv n '(114 82)) (reread-from-disk! b path disk (cons revision facts))] ; r
+            [(memv n '(114 82)) (reread-from-disk! b path disk review)] ; r
             [(or (not n) (memv n '(99 67 7 27)))                ; c, C-g, ESC
              (keyboard-quit!)
              #f]
@@ -1049,7 +1067,6 @@
     (> (buffer-conflict-count b) 0))
 
   (define (stale-save! b path disk review write!)
-    (head:buffer-stale-set! b #t)   ; worn until a write settles it
     (let ask ()
       (let* ([k (prompt:key!
                   (format "~a changed on disk: o)verwrite, m)erge, c)ancel"

@@ -208,10 +208,13 @@ the earlier revision-only result; take its first field for the revision.
 The receipt is owned plain data captured at the transaction, with each change
 represented as `(revision actor delta-datum)`; use `text:datum->delta` to
 reconstruct a delta. Stale/refused outcomes keep their existing meanings.
-Context is `#f` or `(key label [undo-facts [commit-facts]])`. Reuse a key for
+Context is `#f` or `(key label [undo-facts [commit-facts [expected]]])`. Reuse a key for
 the parts of one action in one buffer; keys belong to the session actor.
 Undo reverses text and undo facts together. Commit facts describe external
-state and survive undo/redo. The context contains plain data only. The session
+state and survive undo/redo. Expected facts are pairs for exact present values
+or symbols for absent keys; mismatch returns `(stale property-changed)` before
+mutation. They do not weaken the session's write permissions or enter history.
+The context contains plain data only. The session
 owns the submitted span, replacement lines and context as well as its receipt.
 `policy:session-undo! session buffer-id [scope]` defaults to `mine`, and accepts
 `all` or `(actor who)` under the same buffer grant. It returns an applied
