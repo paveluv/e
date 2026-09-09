@@ -19,7 +19,7 @@
 ;; disk).
 
 (library (file)
-  (export read stamp write!
+  (export read read-state stamp write!
           lines ends-in-newline? text
           merge conflict-count
           directory-part base-name expand abbreviate absolute
@@ -156,6 +156,14 @@
       (and (file-exists? path)
            (let ([t (file-modification-time path)])
              (cons (time-second t) (time-nanosecond t))))))
+
+  (define (read-state path)
+    ;; (text . stamp), with #f for an uncertain stamp. Only cache an mtime
+    ;; observed on both sides of the read; a later stamp must not certify
+    ;; earlier bytes. This is a cache hint, not an atomic filesystem snapshot:
+    ;; explicit file decisions still compare contents, including after prompts.
+    (let* ([before (stamp path)] [content (read path)])
+      (cons content (and before (equal? before (stamp path)) before))))
 
   (define (write! path v trailing?)
     ;; The line vector v as path's text, a newline after every line but

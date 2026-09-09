@@ -90,7 +90,8 @@
      (check 'write-keeps-permissions (logand (get-mode (path "alphabet")) #o777) #o755)
      (check 'rewrite-read (file:read (path "alphabet")) "y\n")
 
-     (check 'stamp-shape (pair? (file:stamp (path "alpha"))) #t)
+     (check 'read-state-pairs-the-content-with-its-observed-stamp
+            (file:read-state (path "alpha")) (cons "one\ntwo\n" (file:stamp (path "alpha"))))
      (check 'stamp-absent (file:stamp (path "nope")) #f)
      (check 'read-absent-raises
             (guard (ex [else 'raised]) (file:read (path "nope"))) 'raised)
@@ -109,6 +110,32 @@
             (file:visit-path (string-append scratch "/./alpha")) (path "alpha"))
      (check 'visit-path-new-file
             (file:visit-path (string-append scratch "/dir/../new.txt")) (path "new.txt"))
+
+     ;; Pause a real read with its descriptor open, replace the pathname,
+     ;; then finish reading the old inode. A new timestamp cannot certify it.
+     (let ([old (apply string-append (make-list 100000 "ordinary line\n"))]
+           [handler (timer-interrupt-handler)] [interrupted? #f])
+       (file:write! (path "alpha") (file:lines old) #t)
+       (let ([before (file:stamp (path "alpha"))])
+         (dynamic-wind void
+           (lambda ()
+             ;; Interrupt in place, keeping the port's ordinary unwind owner.
+             (timer-interrupt-handler
+               (lambda ()
+                 (set! interrupted? #t)
+                 ;; Wait for an observable change, even on coarse clocks.
+                 (let change ([tries 100])
+                   (sleep (make-time 'time-duration 20000000 0))
+                   (file:write! (path "alpha") '#("later") #t)
+                   (when (equal? before (file:stamp (path "alpha")))
+                     (when (zero? tries) (error 'file-test "timestamp did not advance"))
+                     (change (- tries 1))))))
+             (set-timer 10000)
+             (let ([result (file:read-state (path "alpha"))])
+               (set-timer 0)
+               (check 'changed-during-read-keeps-content-with-an-unknown-stamp
+                 (list interrupted? (string=? old (car result)) (cdr result)) '(#t #t #f))))
+           (lambda () (set-timer 0) (timer-interrupt-handler handler)))))
 
      ;; -- merging -------------------------------------------------------------
 

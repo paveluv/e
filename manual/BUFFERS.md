@@ -138,7 +138,13 @@ review again. This applies in standalone and daemon/attach sessions.
 
 Saving an externally changed file offers `overwrite`, `merge`, or `cancel`.
 The disk comparison runs after pre-save hooks, so a hook's write is included
-in that decision.
+in that decision. e rechecks the disk contents after a file prompt. Changes
+to those contents or the buffer's file/baseline cancel the choice; run the
+command again to review the new state. A timestamp change with identical
+contents is accepted. These checks also apply when saving over an existing
+file under a new name. A merged buffer is reported as saved only after its
+write succeeds; a failed write leaves the merged text available for review.
+
 Merge uses a three-way patience diff. Independent changes combine silently;
 collisions become `<<<<<<< buffer`, `=======`, and `>>>>>>> disk` regions.
 `M-n` moves to the next conflict, while `M-m` and `M-d` keep the buffer or disk

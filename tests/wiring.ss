@@ -490,6 +490,49 @@
      (check 'live-merge-redo
             (read-editor '(begin (redo!) (head:buffer-lines (current-buffer))))
             '#("Abase" "same" "same2" "same3" "Gother"))
+     ;; The merge can publish callbacks before its following save. Recheck
+     ;; disk/file facts there, and propagate a failed write instead of claiming
+     ;; "Merged and saved". Keep success and failure on the same real path.
+     (for-each
+       (lambda (effect)
+         (call-with-output-file merge-path
+           (lambda (p) (display "base\nsame\nsame2\nsame3\nother\n" p)) 'replace)
+         (read-editor
+           `(let* ([b (current-buffer)] [id (head:buffer-store-id b)] [armed? #t])
+              (head:store-reset! b '#("base" "same" "same2" "same3" "other")
+                '((base . "base\nsame\nsame2\nsame3\nother\n") (trailing . #t)))
+              (goto-point! '(0 . 0)) (insert-text! "A")
+              (parameterize ([kernel:registering-module 'wiring-save-review])
+                (store:subscribe! id
+                  (lambda (event)
+                    (when (and armed? (eq? (car event) 'edit))
+                      (set! armed? #f)
+                      (case ',effect
+                        [(disk) (file:write! ,merge-path '#("later") #t)]
+                        [(unreadable) (delete-file ,merge-path) (mkdir ,merge-path)]
+                        [(base) (store:set-property! '(agent save-review) id 'base "foreign baseline\n")])))))
+              #t))
+         (call-with-output-file merge-path
+           (lambda (p) (display "base\nsame\nsame2\nsame3\nGother\n" p)) 'replace)
+         (send! (format "\x1b;xset-top-level-value! 'save-review-result (save-file! ~s)\r" merge-path))
+         (pump! 500)
+         (send! "m")
+         (pump! 700)
+         (check 'merge-save-rechecks-after-callbacks-and-reports-the-write-result
+           (read-editor
+             `(begin (kernel:retract-module! 'wiring-save-review)
+                (let ([b (current-buffer)])
+                  (list (top-level-value 'save-review-result)
+                        (head:buffer-lines b) (head:buffer-base b) (head:buffer-modified b)
+                        (if (file-directory? ,merge-path) 'directory (file:read ,merge-path))))))
+           (list (eq? effect 'ok) '#("Abase" "same" "same2" "same3" "Gother")
+             (case effect [(ok) "Abase\nsame\nsame2\nsame3\nGother\n"]
+               [(base) "foreign baseline\n"] [else "base\nsame\nsame2\nsame3\nGother\n"])
+             (not (eq? effect 'ok))
+             (case effect [(ok) "Abase\nsame\nsame2\nsame3\nGother\n"]
+               [(disk) "later\n"] [(unreadable) 'directory] [else "base\nsame\nsame2\nsame3\nGother\n"])))
+         (when (eq? effect 'unreadable) (delete-directory merge-path)))
+       '(ok disk unreadable base))
      ;; Reread clears old head state only if its accepted revision is still
      ;; current. A reset subscriber can adopt and edit before reset returns.
      (for-each

@@ -657,46 +657,81 @@
                                              (head:buffer-facts-set! (current-buffer) '((file . #f) (base . #f))) #t))
                              (call-with-input-file path get-string-all) (car (rpc head 'snapshot id)))
                        '(#t "from hook\n" #("shared text B")))
-                     ;; Keep the real prompt open while another connection
-                     ;; changes text or facts, then retry from a fresh review.
+                     ;; Each destructive choice reviews both the disk and its
+                     ;; source. Keep the real prompt open through the change;
+                     ;; rejected choices preserve text, facts and head history.
                      (for-each
-                       (lambda (change)
-                         (write-text path "disk\n")
-                         (let ([target (rpc head 'create "reread review" '("keep")
-                                         `((file . ,path) (base . "base\n") (trailing . #t)))])
-                           (head-read a
-                             `(begin (show-buffer! (head:adopt-store-buffer! ,target))
-                                     (insert-text! "mine ")
-                                     (head:buffer-marked-set! (current-buffer) #t) #t))
-                           (head-send! a (format "\x1b;xvisit-file! ~s\r" path))
-                           (head-wait 'reread-review a (lambda () (head-sees? a "changed on disk")))
-                           (if (eq? change 'text)
-                               (rpc head 'edit target (cadr (rpc head 'snapshot target)) '(0 0 0 0) '("new "))
-                               (rpc head 'properties target '((trailing . #f))))
-                           (let ([before (rpc head 'snapshot target)] [history (rpc head 'history target)])
-                             (head-send! a "r")
-                             (head-wait 'reread-cancelled a (lambda () (head-sees? a "reread cancelled")))
-                             (test:check (list change 'reread-preserves-changed-work-and-head-state)
-                               (list (equal? before (rpc head 'snapshot target))
-                                     (equal? history (rpc head 'history target))
-                                     (head-read a '(let ([b (current-buffer)])
-                                                     (list (head:buffer-marked b)
-                                                           (pair? (vector-ref (head:buffer-history b) 0)))))
-                                     (call-with-input-file path get-string-all))
-                               '(#t #t (#t #t) "disk\n")))
-                           (head-send! a (format "\x1b;xvisit-file! ~s\r" path))
-                           (head-wait 'reread-reviewed-again a (lambda () (head-sees? a "changed on disk")))
-                           (head-send! a "r")
-                           (test:check 'fresh-reread-adopts-the-disk-and-clears-only-accepted-history
+                       (lambda (scenario)
+                         (let ([command (car scenario)] [answer (cadr scenario)] [change (caddr scenario)])
+                           (write-text path "disk\n")
+                           (let ([target (rpc head 'create "file review" '("keep")
+                                           `((file . ,(and (not (eq? command 'save-as)) path))
+                                             (base . "base\n") (trailing . #t)))])
                              (head-read a
-                               '(let ([b (current-buffer)])
-                                  (list (head:buffer-lines b) (head:buffer-modified b)
+                               `(begin (show-buffer! (head:adopt-store-buffer! ,target))
+                                       (insert-text! "mine ")
+                                       (head:buffer-marked-set! (current-buffer) #t) #t))
+                             (head-send! a (format "\x1b;x~a ~s\r"
+                                             (if (eq? command 'save-as) 'save-file! command) path))
+                             (head-wait 'file-review a
+                               (lambda () (head-sees? a (if (eq? command 'save-as) "exists; overwrite?" "changed on disk"))))
+                             (case change
+                               [(text) (rpc head 'edit target (cadr (rpc head 'snapshot target)) '(0 0 0 0) '("new "))]
+                               [(facts) (rpc head 'properties target '((trailing . #f)))]
+                               [(file) (rpc head 'properties target `((file . ,(string-append path ".other"))))]
+                               [(base) (rpc head 'properties target '((base . "new baseline\n")))]
+                               [(disk) (write-text path "later\n")]
+                               [(deleted) (delete-file path)]
+                               [(unreadable) (delete-file path) (mkdir path)])
+                             (let ([before (rpc head 'snapshot target)] [history (rpc head 'history target)])
+                               (head-send! a answer)
+                               (head-wait 'file-choice-cancelled a
+                                 (lambda () (head-sees? a (if (eq? change 'unreadable) "Cannot verify" "cancelled"))))
+                               (test:check (list scenario 'file-review-preserves-newer-work)
+                                 (list (equal? before (rpc head 'snapshot target))
+                                   (equal? history (rpc head 'history target))
+                                   (head-read a '(let ([b (current-buffer)])
+                                                   (list (head:buffer-marked b)
+                                                         (pair? (vector-ref (head:buffer-history b) 0)))))
+                                   (cond [(file-directory? path) 'directory]
+                                         [(file-exists? path) (call-with-input-file path get-string-all)]
+                                         [else #f]))
+                                 (list #t #t '(#t #t)
+                                   (case change [(disk) "later\n"] [(deleted) #f] [(unreadable) 'directory]
+                                     [else "disk\n"]))))
+                             (when (eq? change 'unreadable) (delete-directory path))
+                             (when (and (eq? change 'disk) (member answer '("o" "y")))
+                               (head-send! a (format "\x1b;xsave-file! ~s\r" path))
+                               (head-wait 'new-overwrite-review a
+                                 (lambda () (head-sees? a (if (eq? command 'save-as) "exists; overwrite?" "changed on disk"))))
+                               ;; Identical bytes with a new stamp still have consent.
+                               (write-text path "later\n")
+                               (head-send! a answer)
+                               (test:check 'fresh-overwrite-accepts-unchanged-content-and-invalidates-the-stamp
+                                 (list (head-read a
+                                         '(let ([b (current-buffer)])
+                                            (list (head:buffer-base b) (head:buffer-modified b) (head:buffer-stamp b))))
+                                       (call-with-input-file path get-string-all))
+                                 '(("mine keep\n" #f #f) "mine keep\n")))
+                             (when (memq change '(text facts))
+                               (head-send! a (format "\x1b;xvisit-file! ~s\r" path))
+                               (head-wait 'reread-reviewed-again a (lambda () (head-sees? a "changed on disk")))
+                               (head-send! a "r")
+                               (test:check 'fresh-reread-adopts-the-disk-and-clears-only-accepted-history
+                                 (head-read a
+                                   '(let ([b (current-buffer)])
+                                      (list (head:buffer-lines b) (head:buffer-modified b)
                                         (head:buffer-marked b) (head:buffer-history b)
                                         (store:history (head:buffer-store-id b)))))
-                             '(#("disk") #f #f #(() ()) ()))
-                           (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
-                           (rpc head 'delete target)))
-                       '(text facts)))
+                                 '(#("disk") #f #f #(() ()) ())))
+                             (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                             (rpc head 'delete target))))
+                       '((visit-file! "r" text) (visit-file! "r" facts)
+                         (visit-file! "r" disk) (visit-file! "m" disk)
+                         (save-file! "o" disk) (save-file! "o" deleted)
+                         (save-file! "o" unreadable) (save-file! "o" file)
+                         (save-file! "m" base) (save-file! "m" disk)
+                         (save-as "y" disk) (save-as "y" file))))
 
                    (let ([doomed (rpc head 'create "kill review" '("work"))])
                      (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,doomed)) #t))
