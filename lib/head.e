@@ -57,7 +57,7 @@
           min-window-lines
           windows set-windows! root set-root! current set-current!
           dividers set-dividers!
-          read-key-event run-on-main! wake-main! in-main-pump
+          read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
           run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
           quit! quitting? last-command set-last-command!
           current-keys set-current-keys! escaped-buffer set-escaped-buffer!
@@ -100,7 +100,7 @@
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme) keyboard-interrupt-handler
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
-                format remq cons* iota time-second current-time
+                format remq cons* iota time-second current-time time? time-type time<? copy-time
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
           (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
@@ -365,6 +365,17 @@
   (define mailbox (kernel:make-mailbox))
   (define deferred '())          ; thunks posted during a nested pump
 
+  ;; Main-thread presentation state: each frame derives its next deadline
+  ;; anew. Providers request only still-live work from their pre-redraw hook,
+  ;; so expiry, eviction and module replacement need no alarm cancellation.
+  (define frame-deadline #f)
+
+  (define (request-frame-at! deadline)
+    (unless (and (time? deadline) (eq? (time-type deadline) 'time-monotonic))
+      (error 'request-frame-at! "expected a monotonic deadline" deadline))
+    (when (or (not frame-deadline) (time<? deadline frame-deadline))
+      (set! frame-deadline (copy-time deadline))))
+
   (define (run-on-main! thunk)
     ;; run thunk on the main thread: immediately when the main loop is
     ;; the one pumping the mailbox, otherwise at the top of its loop
@@ -413,7 +424,7 @@
   (define (set-mouse-handler! proc) (set! mouse-handler proc))
 
   (define (frame!)
-    ;; a frame on a wake: the store's news first, then the paint
+    ;; a frame on a wake or deadline: the store's news first, then the paint
     (before-frame!)
     (frame-hook)
     ;; Nested prompts can temporarily borrow windows. Only an outer pump
@@ -484,8 +495,11 @@
       [() (read-key-event #t)]
       [(handle-mouse?)
        (let pump ()
-         (let ([message (kernel:mailbox-receive! mailbox)])
-           (case (car message)
+         (let ([message (kernel:mailbox-receive! mailbox frame-deadline)])
+           (case (and message (car message))
+             [(#f)
+              (frame!)
+              (pump)]
              [(key)
               (let ([event (cdr message)])
                 (cond
@@ -1733,6 +1747,7 @@
   (define (before-frame!)
     ;; Adopt the store's news before the layers above refresh their
     ;; views.  A frame never writes an old shared cache back to the store.
+    (set! frame-deadline #f)
     (sync-foreign-edits!)
     (refresh-renditions!)
     (flush-ui-audit! 'stale)

@@ -25,7 +25,7 @@
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
-                fork-thread sleep make-time current-time time-second make-weak-eq-hashtable)
+                make-time current-time add-duration time<? make-weak-eq-hashtable)
           (except (edit) init!)
           (prefix (paint) paint:)
           (prefix (head) head:)
@@ -52,7 +52,10 @@
   (define overlays (box '()))
   (define observed (make-weak-eq-hashtable))
 
-  (define (now-seconds) (time-second (current-time 'time-monotonic)))
+  (define (expires-at)
+    (let-values ([(seconds nanos)
+                  (div-and-mod (exact (round (* (blame-tint-seconds) 1000000000))) 1000000000)])
+      (add-duration (current-time 'time-monotonic) (make-time 'time-duration nanos seconds))))
 
   (define (rebase-lenient s d)
     (or (text:rebase-span s d)
@@ -78,10 +81,12 @@
       (add-overlay! id actor d)))
 
   (define (refresh!)
-    (let ([buffers (filter (lambda (b) (head:buffer-store-id b)) (head:buffers))])
+    (let ([buffers (filter (lambda (b) (head:buffer-store-id b)) (head:buffers))]
+          [now (current-time 'time-monotonic)])
       (set-box! overlays
         (filter (lambda (o)
-                  (exists (lambda (b) (eqv? (head:buffer-store-id b) (vector-ref o 0))) buffers))
+                  (and (time<? now (vector-ref o 3))
+                       (exists (lambda (b) (eqv? (head:buffer-store-id b) (vector-ref o 0))) buffers)))
           (unbox overlays)))
       (for-each
         (lambda (b)
@@ -91,7 +96,8 @@
               (if changes
                   (for-each (lambda (change) (note-edit! id (cadr change) (caddr change))) changes)
                   (set-box! overlays
-                    (filter (lambda (o) (not (eqv? (vector-ref o 0) id))) (unbox overlays))))))) buffers)))
+                    (filter (lambda (o) (not (eqv? (vector-ref o 0) id))) (unbox overlays))))))) buffers)
+      (for-each (lambda (o) (head:request-frame-at! (vector-ref o 3))) (unbox overlays))))
 
   (define (add-overlay! id actor d)
     (let* ([s (text:span-start (text:delta-span d))]
@@ -99,16 +105,8 @@
            [span (text:make-span (car s) (cdr s) (car e) (cdr e))])
       (unless (text:span-empty? span)   ; a pure deletion leaves no ink
         (set-box! overlays
-                  (capped id (cons (vector id span actor
-                                           (+ (now-seconds)
-                                              (blame-tint-seconds)))
-                                   (unbox overlays))))
-        ;; wake a frame after the tint should fade; wakes coalesce
-        (fork-thread
-          (lambda ()
-            (sleep (make-time 'time-duration 100000000
-                              (blame-tint-seconds)))
-            (head:wake-main!))))))
+                  (capped id (cons (vector id span actor (expires-at))
+                                   (unbox overlays)))))))
 
   (define (capped id entries)
     ;; keep the newest per-buffer-cap overlays of one buffer
@@ -148,10 +146,9 @@
           (buffer-list)))
 
   (define (blame-highlights)
-    (let* ([now (now-seconds)]
-           [live (filter (lambda (o) (< now (vector-ref o 3)))
+    (let* ([now (current-time 'time-monotonic)]
+           [live (filter (lambda (o) (time<? now (vector-ref o 3)))
                          (unbox overlays))])
-      (set-box! overlays live)
       (fold-left
         (lambda (acc o)
           (let ([b (buffer-of-id (vector-ref o 0))])

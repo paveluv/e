@@ -17,7 +17,7 @@
              (prefix (string) string:) (prefix (test) test:))
 
      (define (check label actual expected)
-       (guard (ex [else (error 'wiring-test (symbol->string label) actual expected
+       (guard (ex [else (error 'wiring-test (format "~s" label) actual expected
                                (map screen-line '(20 21 22 23)))])
          (test:check label actual expected)))
 
@@ -816,27 +816,87 @@
      (check 'closed-window-point-dropped (count-window-points) 1)
 
      ;; Own edits and app output stay untinted; collaborator ink gets a face.
-     (read-editor '(begin (head:add-buffer! (head:new-buffer "blame-naming")) #t))
+     (define blame-return-name
+       (read-editor '(begin (head:add-buffer! (head:new-buffer "blame-naming"))
+                            (head:buffer-name (current-buffer)))))
+     (define (read-blame . forms)
+       (read-editor
+         `(let* ([b (head:buffer-named "blame-naming")] [id (head:buffer-store-id b)])
+            (define (ranges)
+              (map (lambda (range) (list (caddr range) (cadddr range)))
+                (filter (lambda (range)
+                          (and (= (length range) 5) (eq? (car range) b)
+                               (memq (list-ref range 4) '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
+                  (paint:highlight-ranges))))
+            ,@forms)))
      (check 'blame-tints-collaborators-and-keeps-all-authors
        (map
          (lambda (actor-expression)
-           (read-editor
-             `(let ([id (head:buffer-store-id (head:buffer-named "blame-naming"))])
-                (store:edit! ,actor-expression id (store:revision id)
-                  (text:make-span 0 0 0 0) '("ink"))
-                #t))
+           (read-blame
+             `(store:edit! ,actor-expression id (store:revision id)
+                (text:make-span 0 0 0 0) '("ink")) #t)
            ;; Return to the real pump so blame observes the adopted revision.
-           (read-editor
-             `(let ([b (head:buffer-named "blame-naming")])
-                (list (map (lambda (range) (list (caddr range) (cadddr range)))
-                        (filter (lambda (range)
-                                  (and (= (length range) 5) (eq? (car range) b)
-                                       (memq (list-ref range 4) '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
-                          (paint:highlight-ranges)))
-                      (equal? (cadar (store:blame (head:buffer-store-id b) 1)) ,actor-expression)))))
+           (read-blame
+             `(list (ranges) (equal? (cadar (store:blame id 1)) ,actor-expression))))
          '(head:ui-actor (quote (head "rival")) (quote (app producer)) (quote (agent rival))))
        '((() #t) (((0 3)) #t) (((3 6)) #t) (((6 9) (0 3)) #t)))
-     (read-editor '(begin (kill-buffer! (head:buffer-named "blame-naming")) #t))
+
+     ;; The overlay cap must bound all fade work, including after reset,
+     ;; retirement and a supported reload. Avoid counting Chez's GC helpers
+     ;; as editor workers during this small burst; count native tasks on Linux.
+     (check 'blame-burst-keeps-only-newest-ink-without-workers
+       (map
+         (lambda (ending)
+           (read-blame
+             '(blame:tint-seconds 8)
+             '(head:store-reset! b '(""))
+             '(head:before-frame!)
+             `(parameterize ([collect-trip-bytes (* 128 1024 1024)])
+                (let* ([count (lambda () (and (file-directory? "/proc/self/task")
+                                           (length (directory-list "/proc/self/task"))))]
+                       [before (count)])
+                  (do ([i 0 (+ i 1)]) ((= i 160))
+                    (store:edit! '(agent burst) id (store:revision id)
+                      (text:make-span 0 0 0 0) '("x")))
+                  (head:before-frame!)
+                  (let ([ink (ranges)] [bounded? (or (not before) (<= (count) before))])
+                    (case ',ending
+                      [(reset) (store:reset! '(agent burst) id '(""))]
+                      [(retire) (store:set-property! head:ui-actor id 'audience '())]
+                      [(reload) (kernel:reload-module! "blame")])
+                    (head:before-frame!)
+                    (let ([cleared (ranges)])
+                      (when (eq? ',ending 'retire)
+                        (store:set-property! head:ui-actor id 'audience 'all))
+                      (list ink bounded? cleared)))))))
+         '(reset retire reload))
+       (make-list 3 '(((7 8) (6 7) (5 6) (4 5) (3 4) (2 3) (1 2) (0 1)) #t ())))
+
+     ;; Observe the terminal's painted cells without injecting a key after
+     ;; expiry. Fractional durations work in the outer loop and an open prompt.
+     (define (blame-screen-style word)
+       (let ([col (string:search (screen-line 0) word 0 100)])
+         (and col (vector-ref (vector-ref (vt:emulator-styles mirror) 0) col))))
+     (for-each
+       (lambda (nested?)
+         (read-blame '(head:store-reset! b '("base")) '(show-buffer! b) '(goto-point! '(0 . 0)) #t)
+         (let ([plain (blame-screen-style "base")])
+           (read-blame '(blame:tint-seconds 3/2)
+             '(store:edit! '(agent fade) id (store:revision id) (text:make-span 0 0 0 4) '("ink!")) #t)
+           (let ([tinted (blame-screen-style "ink!")])
+             (when nested? (send! "\x1b;x") (pump! 100))
+             (let ([echo (map screen-line '(22 23))])
+               (pump! 900)
+               (check (list 'blame-fades-on-idle-screen nested?)
+                 (list (and plain tinted (not (equal? plain tinted)))
+                       (equal? (blame-screen-style "ink!") plain)
+                       (equal? (map screen-line '(22 23)) echo))
+                 '(#t #t #t)))
+             (when nested? (send! "\x7;") (pump! 100)))))
+       '(#f #t))
+     (read-editor `(begin (blame:tint-seconds 8)
+                          (show-buffer! (head:buffer-named ,blame-return-name))
+                          (kill-buffer! (head:buffer-named "blame-naming")) #t))
 
      ;; A rival's edit is attributed at point from the store's delta log.
      (send! "\x1b;xlet ([id (head:buffer-store-id (current-buffer))]) (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 0 0 2) (list \"BL\"))\r")

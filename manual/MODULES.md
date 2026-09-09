@@ -34,6 +34,15 @@ the port on return, exception or engine expiry. An expired scope cannot be
 resumed; start a fresh operation after reviewing any partial output. Both
 ordinary text I/O and the reference corpus use this scope.
 
+For time-dependent presentation, a `head:add-pre-redraw-hook!` callback can
+call `(head:request-frame-at! deadline)` with a Chez monotonic time. The head
+copies the earliest request and wakes its input wait at that time, including
+inside a prompt. Each frame clears the request before running the hooks:
+renew only deadlines still needed by live state. Blame uses this for tint
+expiry, so removing an overlay or reloading its module leaves no timer worker.
+This is a main-thread presentation API; background changes still notify the
+head through `head:wake-main!` or `head:run-on-main!`.
+
 Documentation data lives in `reference` and the module-entry registry in `doc`.
 Use `reference:lookup` for queries that need no browser; `describe` adds the
 head's prompts, key annotations, and Markdown display. `reference:page!`

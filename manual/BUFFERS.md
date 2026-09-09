@@ -207,6 +207,21 @@ the base64 payload and owns the clipboard; e never invokes a graphical
 clipboard command on the remote host. Not every terminal supports clipboard
 writes; in particular, GNOME Terminal currently ignores them.
 
+## Recent edit attribution
+
+Another head's or agent's new text is briefly tinted in an actor-specific
+color. Your own edits and app output, including terminal screens, create no
+tints. Up to eight recent spans per buffer remain highlighted; each disappears
+at its deadline, including while idle or answering a prompt. The color is
+temporary presentation: edits take effect immediately and attribution/history
+does not disappear with the tint.
+
+`(blame:tint-seconds 8)` sets the lifetime in seconds; fractional values work.
+Zero prevents new tints, while existing ones keep their deadlines.
+`M-x blame:at-point!` reports recent authorship from the retained edit log.
+An existing collaborator tint can still include your text inserted inside
+its range; this overlap behavior is a known limitation.
+
 ## Line numbers
 
 `C-x l` toggles line numbers for the current buffer. The setting belongs to the
