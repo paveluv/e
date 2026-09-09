@@ -713,58 +713,112 @@
       (open-fd-output-port (c-dup (port-file-descriptor port))
                            'block (native-transcoder))))
 
-  (define (stream-lines fd emit!)
-    (let ([p (open-fd-input-port fd 'block (native-transcoder))])
-      (let loop ()
-        (let ([line (get-line p)])
-          (unless (eof-object? line)
-            (emit! line)
-            (loop))))
-      (close-port p)))
+  (define-record-type capture-stream
+    (fields target standard emit
+            (mutable pipe) (mutable saved) (mutable input) (mutable output)
+            (mutable reader) (mutable failure)))
+
+  (define (read-capture! stream)
+    (define (failed! ex)
+      (unless (capture-stream-failure stream)
+        (capture-stream-failure-set! stream (list ex))))
+    (dynamic-wind #t void
+      (lambda ()
+        (guard (ex [else (failed! ex)])
+          (let loop ()
+            (let ([line (get-line (capture-stream-input stream))])
+              (unless (eof-object? line)
+                ;; A failed callback stops delivery, but keep draining so the
+                ;; producer can finish. The owner reports the failure after join.
+                (unless (capture-stream-failure stream)
+                  (guard (ex [else (failed! ex)]) ((capture-stream-emit stream) line)))
+                (loop))))))
+      (lambda ()
+        (guard (ex [else (failed! ex)]) (close-port (capture-stream-input stream))))))
 
   (define (call-with-streamed-output stdout! stderr! thunk)
     ;; Run thunk with Scheme's current ports and the process-level stdout and
     ;; stderr descriptors connected to pipes. Reader threads emit each line
     ;; as it arrives, including output inherited by child processes.
-    (let ([out-pipe (make-pipe)] [err-pipe (make-pipe)])
-      (unless (and out-pipe err-pipe c-dup c-dup2 c-close)
-        (error 'call-with-streamed-output "output capture is unavailable"))
-      (let* ([saved-out (c-dup 1)]
-             [saved-err (c-dup 2)]
-             [out (open-fd-output-port (c-dup (cdr out-pipe)) 'line
-                                       (native-transcoder))]
-             [err (open-fd-output-port (c-dup (cdr err-pipe)) 'line
-                                       (native-transcoder))]
-             [out-reader (fork-thread
-                           (lambda () (stream-lines (car out-pipe) stdout!)))]
-             [err-reader (fork-thread
-                           (lambda () (stream-lines (car err-pipe) stderr!)))]
-             [value #f])
-        (dynamic-wind
-          (lambda ()
-            (flush-output-port (standard-output-port))
-            (flush-output-port (standard-error-port))
-            (c-dup2 (cdr out-pipe) 1)
-            (c-dup2 (cdr err-pipe) 2))
-          (lambda ()
-            (set! value
-              (parameterize ([current-output-port out]
-                             [current-error-port err])
-                (thunk))))
-          (lambda ()
-            (flush-output-port out)
-            (flush-output-port err)
-            (close-port out)
-            (close-port err)
-            (c-dup2 saved-out 1)
-            (c-dup2 saved-err 2)
-            (c-close saved-out)
-            (c-close saved-err)
-            (c-close (cdr out-pipe))
-            (c-close (cdr err-pipe))))
-        (thread-join out-reader)
-        (thread-join err-reader)
-        value)))
+    (unless (and c-pipe c-dup c-dup2 c-close)
+      (error 'call-with-streamed-output "output capture is unavailable"))
+    (let ([streams (map (lambda (target standard emit)
+                          (make-capture-stream target standard emit #f #f #f #f #f #f))
+                        '(1 2) (list (standard-output-port) (standard-error-port)) (list stdout! stderr!))]
+          [ended? #f] [failure #f] [interrupted #f])
+      (define (attempt thunk)
+        (guard (ex [else (unless failure (set! failure (list ex)))]) (thunk)))
+      (define (descriptor result)
+        (when (< result 0) (error 'call-with-streamed-output "descriptor operation failed"))
+        result)
+      (define (start! stream)
+        (capture-stream-pipe-set! stream (or (make-pipe) (error 'call-with-streamed-output "pipe failed")))
+        (capture-stream-saved-set! stream (descriptor (c-dup (capture-stream-target stream))))
+        (for-each close-on-exec!
+          (list (car (capture-stream-pipe stream)) (cdr (capture-stream-pipe stream)) (capture-stream-saved stream)))
+        (capture-stream-input-set! stream
+          (open-fd-input-port (car (capture-stream-pipe stream)) 'block (native-transcoder)))
+        (capture-stream-output-set! stream
+          (open-fd-output-port (cdr (capture-stream-pipe stream)) 'line (native-transcoder)))
+        (capture-stream-reader-set! stream (fork-thread (lambda () (read-capture! stream)))))
+      (define (release!)
+        ;; Release all writers and restore both descriptors before either join.
+        ;; A callback may still use the caller's ports until that join finishes.
+        (for-each
+          (lambda (stream)
+            (attempt (lambda ()
+                       (unless (port-closed? (capture-stream-standard stream))
+                         (flush-output-port (capture-stream-standard stream)))))
+            (attempt (lambda ()
+                       (cond [(capture-stream-output stream) => close-port]
+                             [(capture-stream-pipe stream) => (lambda (pipe) (c-close (cdr pipe)))]))))
+          streams)
+        (for-each
+          (lambda (stream)
+            (when (capture-stream-saved stream)
+              (attempt (lambda () (descriptor (c-dup2 (capture-stream-saved stream) (capture-stream-target stream)))))
+              (c-close (capture-stream-saved stream))))
+          streams)
+        (for-each
+          (lambda (stream)
+            (attempt (lambda ()
+                       (cond [(capture-stream-reader stream) => thread-join]
+                             [(capture-stream-input stream) => close-port]
+                             [(capture-stream-pipe stream) => (lambda (pipe) (c-close (car pipe)))]))))
+          streams))
+      (define (finish!)
+        (set! ended? #t)
+        ;; Waiting with all interrupts disabled blocks collection needed by
+        ;; readers. Defer cancellation, then release this winder's disable count
+        ;; while flushing/joining. Restore it before returning to the winder.
+        (let ([keyboard (keyboard-interrupt-handler)] [timer (timer-interrupt-handler)])
+          (define (defer! handler) (unless interrupted (set! interrupted handler)))
+          (parameterize ([keyboard-interrupt-handler (lambda () (defer! keyboard))]
+                         [timer-interrupt-handler (lambda () (defer! timer))])
+            (dynamic-wind enable-interrupts release! disable-interrupts))))
+      (call-with-values
+        (lambda ()
+          (dynamic-wind #t
+            (lambda ()
+              (when ended? (error 'call-with-streamed-output "capture scope has ended"))
+              (guard (ex [else (finish!) (raise ex)])
+                (for-each start! streams)
+                (for-each (lambda (stream)
+                            (flush-output-port (capture-stream-standard stream))
+                            (descriptor (c-dup2 (cdr (capture-stream-pipe stream)) (capture-stream-target stream))))
+                          streams)))
+            (lambda ()
+              (parameterize ([current-output-port (capture-stream-output (car streams))]
+                             [current-error-port (capture-stream-output (cadr streams))])
+                (thunk)))
+            finish!))
+        (lambda results
+          ;; Escapes retain their original cause. Report worker/cleanup errors
+          ;; on normal return only, after all captured resources are released.
+          (let ([failure (or failure (exists capture-stream-failure streams))])
+            (when failure (raise (car failure))))
+          (when interrupted (interrupted))
+          (apply values results)))))
 
   (define winsize-ioctl
     ;; ioctl is variadic, and on ARM64 macOS variadic C functions use a

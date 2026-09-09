@@ -21,6 +21,71 @@
        ;; Chez invokes libraries lazily; a reference must stay in the scope.
        (eval '(begin (import (prefix (head) head:)) head:ui-actor)))
 
+     ;; One lifecycle driver for both streams, including a caller-owned port
+     ;; that must remain usable until every callback and capture reader ends.
+     (define (capture-case exit failing)
+       (let* ([entered (list (test:gate) (test:gate))] [release (test:gate)]
+              [leaving (test:gate)] [returned (test:gate)] [records (test:recorder)]
+              [destination (open-output-string)] [held '()] [expired #f]
+              [before (test:fd-count)]
+              [tail (if failing (make-string 131072 #\x) "tail λ")])
+         (define (emit label ready)
+           (lambda (line)
+             (when (string=? line "live")
+               (ready #t)
+               (test:await 'release release)
+               ;; Joining readers must still let their collection complete.
+               (when (eq? label 'out) (collect-rendezvous)))
+             (records (list label line (not (port-closed? destination))))
+             (when (eq? label failing) (raise #f))))
+         (let ([join
+                (test:worker
+                  (lambda ()
+                    (let* ([out (current-output-port)] [err (current-error-port)]
+                           [result
+                            (guard (ex [(eq? ex 'capture-error) 'raised] [(eq? ex #f) 'callback-error])
+                              (dynamic-wind void
+                                (lambda ()
+                                  ((make-engine
+                                     (lambda ()
+                                       (sys:call-with-streamed-output
+                                         (emit 'out (car entered)) (emit 'err (cadr entered))
+                                         (lambda ()
+                                           (set! held (list (current-output-port) (current-error-port)))
+                                           (for-each (lambda (port) (put-string port "live\n") (flush-output-port port)) held)
+                                           (test:await 'entered (lambda () (for-all (lambda (ready) (ready)) entered)))
+                                           (leaving #t)
+                                           (for-each (lambda (port) (put-string port tail)) held)
+                                           (case exit
+                                             [(return) (values 'returned 'values)]
+                                             [(raise) (raise 'capture-error)]
+                                             [(close) (for-each close-port held) (raise 'capture-error)]
+                                             [(fuel) (engine-block)])))))
+                                   1000000 (lambda (ticks . results) results)
+                                   (lambda (engine) (set! expired engine) 'expired)))
+                                (lambda () (close-port destination))))]
+                           [reentry-refused?
+                            (or (not expired)
+                                (test:raises?
+                                  (lambda () (expired 1000000 (lambda args (void)) (lambda args (void))))
+                                  (lambda (ex)
+                                    (and (who-condition? ex) (eq? (condition-who ex) 'call-with-streamed-output)))))])
+                      (returned
+                        (list result (for-all port-closed? held) reentry-refused?
+                              (and (eq? out (current-output-port)) (eq? err (current-error-port))))))))])
+           (test:await 'leaving leaving)
+           (sleep (make-time 'time-duration 100000000 0))
+           (let ([returned-early? (and (returned) #t)])
+             (release #t)
+             (join)
+             (list (list exit failing) (returned) returned-early?
+                   (for-all caddr (records))
+                   (map (lambda (label)
+                          (equal? (map cadr (filter (lambda (record) (eq? (car record) label)) (records)))
+                                  (if (eq? label failing) '("live") (list "live" tail))))
+                        '(out err))
+                   (equal? before (test:fd-count)))))))
+
      (define (claim-fixture kind)
        (let* ([explicit? (memq kind '(named conflict))]
               [seed (if explicit? "writing desk λ" (startup:default-name))]
@@ -93,6 +158,15 @@
                        '(0 . 0)))))))
 
      (define (suite)
+       (test:check 'capture-lifetime
+         (map (lambda (row) (apply capture-case row))
+              '((return #f) (raise #f) (fuel #f) (close #f) (return out) (raise err)))
+         '(((return #f) ((returned values) #t #t #t) #f #t (#t #t) #t)
+           ((raise #f) (raised #t #t #t) #f #t (#t #t) #t)
+           ((fuel #f) (expired #t #t #t) #f #t (#t #t) #t)
+           ((close #f) (raised #t #t #t) #f #t (#t #t) #t)
+           ((return out) (callback-error #t #t #t) #f #t (#t #t) #t)
+           ((raise err) (raised #t #t #t) #f #t (#t #t) #t)))
        (for-each
          (lambda (entry)
            (test:check (car entry)

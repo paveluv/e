@@ -152,6 +152,10 @@ preserves the timing of long-running commands. A final unterminated line is
 emitted when evaluation closes the stream. stdout, stderr, and the evaluation
 result remain separate records.
 
+Captured output finishes draining before the command returns, including after
+an evaluation error or `C-g`. Explicitly closing the captured output or error
+port does not prevent the editor from restoring its output normally.
+
 Examples:
 
 ```scheme

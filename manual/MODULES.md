@@ -216,6 +216,17 @@ running command and reaps its PID; repeated close is harmless. The owner drains
 stderr while transferring stdout/input, so large transfers need no separate
 reader threads. Keep each command under one caller's ownership.
 
+`sys:call-with-streamed-output stdout! stderr! thunk` captures Scheme and
+process stdout/stderr, delivering complete lines and the final partial line
+to its two reader callbacks. It returns all the thunk's values. Both readers
+finish and descriptors are restored before it returns or an escape reaches
+the caller, so callbacks may borrow resources from the caller's surrounding
+scope. A failed callback stops receiving lines, but its stream is drained;
+the failure is raised after normal body completion. An escaping body error
+takes precedence. An ended capture cannot be resumed through a continuation.
+Keep captures serialized because process descriptors are shared, and send
+callback output to a separate port so it does not feed back into capture.
+
 ## Modes
 
 Modes are registered by name, filename extensions, optional shebang
