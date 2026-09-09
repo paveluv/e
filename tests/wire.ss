@@ -800,13 +800,31 @@
                      (rpc head 'delete scroll))
                    (test:check 'attached-private-doc-source-and-local-rendering
                      (head-read a
-                       '(begin (describe:show! 'describe:show!)
+                       '(let* ([names (list 'attached-document)] [body (string-copy "Original head documentation")]
+                               [data (list names '(("procedure" . "(attached-document)"))
+                                       #f '() 'fixture "Attached" #f body)])
+                          (parameterize ([kernel:registering-module 'attached-document])
+                            (doc:register! (list data)))
+                          (set-car! names 'changed-document)
+                          (string-set! body 0 #\X)
+                          (describe:show! 'attached-document)
                           (let* ([page (reference:page head:ui-actor)]
-                                 [source (head:buffer-of-store-id (car page))])
+                                 [source (head:buffer-of-store-id (car page))]
+                                 [entry (car (reference:lookup 'attached-document))])
+                            (string-set! (doc:description entry) 0 #\Y)
                             (list (head:buffer-fact source 'audience #f)
                                   (head:buffer-read-only source)
-                                  (not (head:buffer-store-id (markdown:companion source)))))))
-                     '(((head "screen A")) #t #t))
+                                  (not (head:buffer-store-id (markdown:companion source)))
+                                  (doc:description entry)
+                                  (and (member "Original head documentation" (vector->list (head:buffer-lines source))) #t)))))
+                     '(((head "screen A")) #t #t "Original head documentation" #t))
+                   (test:check 'attached-document-scope-and-retraction
+                     (list (head-read b '(reference:lookup 'attached-document))
+                           (head-read a
+                             '(begin (kernel:retract-module! 'attached-document)
+                                (describe:show! 'describe:show!)
+                                (reference:lookup 'attached-document))))
+                     '(() ()))
                    (head-read a '(begin (terminal:open!! "printf 'attached terminal'; read answer; printf '\\n%s' \"$answer\"; read done") #t))
                    (head-wait 'attached-terminal a (lambda () (head-sees? a "attached terminal")))
                    (let ([terminal-id (head-read a '(head:buffer-store-id (current-buffer)) "\x1d;")])

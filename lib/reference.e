@@ -553,7 +553,7 @@
   (define fetching? #f)
 
   (define (index-data data)
-    (let ([entries (map (lambda (entry) (apply doc:make entry)) data)]
+    (let ([entries (map doc:from-datum data)]
           [by-name (make-eq-hashtable)])
       (for-each
         (lambda (entry)

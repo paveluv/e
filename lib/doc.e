@@ -10,11 +10,8 @@
 ;; entries), (doc:entries), (doc:forms e).
 
 (library (doc)
-  (export (rename (make-doc-entry make) (doc-entry? entry?)
-                  (doc-names names) (doc-forms forms) (doc-returns returns)
-                  (doc-libraries libraries) (doc-source source)
-                  (doc-chapter chapter) (doc-url url)
-                  (doc-description description))
+  (export (rename (make-doc-entry make) (doc-entry? entry?))
+          names forms returns libraries source chapter url description
           register! entries to-datum from-datum call-with-entries)
   (import (rnrs) (only (chezscheme) void make-thread-parameter parameterize)
           (prefix (kernel) kernel:) (prefix (datum) datum:))
@@ -27,16 +24,29 @@
             (immutable source doc-source)         ; tspl or csug
             (immutable chapter doc-chapter)       ; chapter title
             (immutable url doc-url)               ; page anchor
-            (immutable description doc-description)))  ; markdown
+            (immutable description doc-description))   ; markdown
+    ;; Own every mutable field once at construction, whether the record came
+    ;; from a module, the corpus, a request or a direct constructor call.
+    (protocol (lambda (new) (lambda fields (apply new (datum:copy fields))))))
 
-  (define (entry-datum->doc-entry entry)
+  ;; Records can be shared across queries and indexes; their contents cannot
+  ;; escape through either a field accessor or the plain-data codec.
+  (define (names entry) (datum:copy (doc-names entry)))
+  (define (forms entry) (datum:copy (doc-forms entry)))
+  (define (returns entry) (datum:copy (doc-returns entry)))
+  (define (libraries entry) (datum:copy (doc-libraries entry)))
+  (define (source entry) (datum:copy (doc-source entry)))
+  (define (chapter entry) (datum:copy (doc-chapter entry)))
+  (define (url entry) (datum:copy (doc-url entry)))
+  (define (description entry) (datum:copy (doc-description entry)))
+
+  (define (from-datum entry)
     (unless (and (list? entry) (= (length entry) 8))
-      (error 'doc:register!
+      (error 'doc:from-datum
              "expected (names forms returns libraries source chapter url description)"
              entry))
     (apply make-doc-entry entry))
 
-  (define (from-datum entry) (entry-datum->doc-entry (datum:copy entry)))
   (define (to-datum entry)
     (datum:copy
       (list (doc-names entry) (doc-forms entry) (doc-returns entry) (doc-libraries entry)
@@ -57,11 +67,12 @@
     ;; Publish module documentation in the eight-field format of
     ;; describe.sdata -- (names forms returns libraries source chapter
     ;; url description) per entry -- validated here.
-    (kernel:registry-add! descriptions (map entry-datum->doc-entry entries))
+    (kernel:registry-add! descriptions (map from-datum entries))
     (void))
 
   (define (entries)
-    ;; every registered entry, oldest batch first
-    (append (apply append (reverse (kernel:registry-items descriptions))) (query-entries)))
+    ;; Every registered entry, oldest batch first. The final empty tail makes
+    ;; append copy every batch's spine, including the temporary query entries.
+    (apply append (append (reverse (kernel:registry-items descriptions)) (list (query-entries) '()))))
 
 ) ;; library (doc)

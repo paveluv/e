@@ -11,6 +11,7 @@
 (eval
   '(begin
      (import (prefix (reference) reference:) (prefix (doc) doc:)
+             (prefix (datum) datum:)
              (prefix (kernel) kernel:) (prefix (https) https:)
              (prefix (log) log:) (prefix (store) store:) (prefix (test) test:))
 
@@ -30,6 +31,13 @@
        (map (lambda (get) (get entry))
             (list doc:names doc:forms doc:returns doc:libraries
                   doc:source doc:chapter doc:url doc:description)))
+     (define (damage! data)
+       (cond [(pair? data) (damage! (car data)) (damage! (cdr data)) (set-car! data 'damaged)]
+             [(and (string? data) (> (string-length data) 0)) (string-set! data 0 #\X)]))
+     (define (owned-reads? entry expected)
+       (damage! (fields entry))
+       (damage! (doc:to-datum entry))
+       (equal? (fields entry) expected))
      (define (registered! description)
        (kernel:call-with-registration-update
          (lambda ()
@@ -94,6 +102,72 @@
            (registered! "local documentation")
            (test:check 'registered-without-corpus
              (map doc:description (reference:lookup 's9-reference)) '("local documentation"))
+
+           ;; One nested-alias table covers every admission and every field,
+           ;; with real registry/query readers where the record is published.
+           (let* ([expected '((owned-name owned-alias) (("procedure" . "(owned-name value)"))
+                              "a result" ("(fixture)") "fixture source" "Chapter" "chapter#anchor" "Original prose")]
+                  [replacement (doc:from-datum '((replacement) () #f () fixture "" #f ""))])
+             (for-each
+               (lambda (kind)
+                 (let ([input (datum:copy expected)])
+                   (define (inspect entry)
+                     (damage! input)
+                     (let* ([input-owned? (equal? (fields entry) expected)]
+                            [reads-owned? (owned-reads? entry expected)])
+                       (append (list input-owned? reads-owned?)
+                         (if (memq kind '(registered scoped))
+                             (let ([before (map fields (reference:entries))])
+                               ;; Mutation of any returned list, including its
+                               ;; final scoped tail, cannot rewrite the next query.
+                               (for-each
+                                 (lambda (entries)
+                                   (let walk ([entries entries])
+                                     (unless (null? entries)
+                                       (set-car! entries replacement)
+                                       (walk (cdr entries)))))
+                                 (list (doc:entries) (reference:entries) (reference:lookup 'owned-name)))
+                               (list (and (equal? before (map fields (reference:entries)))
+                                          (equal? (map fields (reference:lookup 'owned-alias)) (list expected)))))
+                             '()))))
+                   (dynamic-wind void
+                     (lambda ()
+                       (test:check (list kind 'owns-document-data)
+                         (case kind
+                           [(make) (inspect (apply doc:make input))]
+                           [(datum) (inspect (doc:from-datum input))]
+                           [(registered)
+                            (parameterize ([kernel:registering-module 'reference-ownership])
+                              (doc:register! (list input)))
+                            (inspect (car (reference:lookup 'owned-name)))]
+                           [(scoped)
+                            (doc:call-with-entries (list input)
+                              (lambda () (inspect (car (reference:lookup 'owned-name)))))])
+                         (if (memq kind '(registered scoped)) '(#t #t #t) '(#t #t))))
+                     (lambda () (kernel:retract-module! 'reference-ownership)))))
+               '(make datum registered scoped))
+             (let ([before (map fields (reference:entries))] [cycle (list 'cycle)])
+               (set-cdr! cycle cycle)
+               (test:check 'invalid-document-batches-do-not-publish-their-valid-prefix
+                 (map (lambda (bad)
+                        (list (test:raises? (lambda () (doc:register! (list expected bad))))
+                              (equal? before (map fields (reference:entries)))))
+                      (list '(too short) (append (list-head expected 7) (list cycle))
+                            (append (list-head expected 7) (list void))))
+                 (make-list 3 '(#t #t)))
+               (test:check 'scoped-documents-restore-on-exit-and-do-not-escape
+                 (list (test:raises?
+                         (lambda ()
+                           (doc:call-with-entries (list expected)
+                             (lambda ()
+                               (doc:call-with-entries '() void)
+                               (unless (= (length (reference:lookup 'owned-name)) 1)
+                                 (error 'reference-test "outer query was lost"))
+                               (raise 'query-done))))
+                         (lambda (ex) (eq? ex 'query-done)))
+                       (equal? before (map fields (reference:entries)))
+                       (reference:lookup 'owned-name))
+                 '(#t #t ()))))
 
            ;; These are logical requester identities, with no head loaded.
            ;; Privacy and source facts must already hold at the create event.
@@ -196,7 +270,10 @@
              (list (append (make-list 8 'tspl) (make-list 14 'csug) '(fixture)) #t '(fixture) 22))
            (test:check 'extraction-and-browser-links
              (let* ([entries (reference:lookup 's9-reference)] [first (car entries)])
-               (list (fields first)
+               (list (let ([expected (fields first)])
+                       ;; Corpus entries use the same immutable record and
+                       ;; accessor contract as module and request documents.
+                       (and (owned-reads? first expected) (fields first)))
                      (map reference:browser-url (list first (list-ref entries 8) (car (reverse entries))))))
              '(((s9-reference s9-alias)
                 (("procedure" . "(s9-reference value)") ("procedure" . "(s9-alias value)"))

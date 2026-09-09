@@ -53,6 +53,10 @@ collection, optionally filtered by a predicate. The entry accessors
 `doc:chapter`, `doc:url`, `doc:description`) expose each field, allowing the
 manual to be queried by ordinary Scheme code.
 
+Entry records are immutable. Query result lists, accessor results and
+`doc:to-datum` results are owned snapshots: changing their lists or strings
+does not change later queries or the entry itself.
+
 ```scheme
 (describe:this eq-hashtable-ref)
 (reference:lookup 'lambda)
@@ -82,6 +86,12 @@ Modules add entries with `doc:register!`. Each entry has this shape:
 Registrations belong to the calling module. Reloading retracts its previous
 entries and installs the new collection transactionally, just like modes and
 key bindings. A URL may be `#f`.
+
+`doc:make` takes the eight fields as arguments; `doc:from-datum` takes one
+entry list. Both own their input data, as does `doc:register!`. Inputs must
+be finite plain data; cycles and runtime objects such as procedures are
+rejected. A bad registration batch publishes no entries. Update documentation
+through module registration or reload; changing a retained input has no effect.
 
 The `(edit)` module uses this mechanism for commands such as `replace!!` and
 `replace-all!`. Registered forms also drive the grey parameter suggestion in
