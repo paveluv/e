@@ -35,22 +35,94 @@
 
      ;; One transport fixture observes public calls, wire bytes, and ownership.
      ;; An open predecessor at connect time or a duplicate close is observable.
-     (define (captured replies thunk)
+     (define (captured replies thunk . hooks)
        (let ([opened 0] [closed 0] [connections '()] [requests '()])
+         (define (step! stage in) (unless (null? hooks) ((car hooks) stage in)))
          (define (connect host port)
            (set! connections (cons (list host port (- opened closed)) connections))
            (set! opened (+ opened 1))
            (let ([in (open-bytevector-input-port (string->utf8 (car replies)))])
              (set! replies (cdr replies))
+             (step! 'connect in)
              (https:make-channel
                (lambda (bv start count)
+                 (step! (if (zero? (port-position in)) 'headers 'body) in)
                  (let ([n (get-bytevector-n! in bv start count)]) (if (eof-object? n) 0 n)))
-               (lambda (bv) (set! requests (cons (utf8->string bv) requests)))
-               (lambda () (set! closed (+ closed 1)) (close-port in)))))
+               (lambda (bv) (step! 'write in) (set! requests (cons (utf8->string bv) requests)))
+               (lambda () (set! closed (+ closed 1)) (close-port in) (step! 'close in)))))
          (let ([outcome (guard (ex [else 'raised])
                           (parameterize ([https:backend 'native] [https:connector connect])
                             (thunk)))])
            (list outcome (reverse connections) (reverse requests) closed))))
+
+     ;; Reuse the transport fixture for every consumer/lifetime boundary.
+     ;; Keep ports and expired engines live so collection cannot hide a leak.
+     (define (lifetime-case kind action stage fail-close?)
+       (let ([held #f] [input #f] [expired #f] [steps 0] [before (test:fd-count)]
+             [payload (make-string 8192 #\x)])
+         (define (step! at in)
+           (set! steps (+ steps 1))
+           (when (eq? at 'connect)
+             (set! input in)
+             (set! held (open-file-input-port "/dev/null")))
+           (when (eq? at stage)
+             (case action
+               [(raise) (raise 'body-error)]
+               [(fuel) (engine-block)]
+               [(timer)
+                (set-timer 1)
+                ;; Interruptible cleanup would escape before closing held.
+                (let loop ([n 100]) (unless (zero? n) (loop (- n 1))))]))
+           (when (eq? at 'close)
+             (close-port held)
+             (when fail-close? (raise #f))))
+         (let* ([captured-result
+                 (captured
+                   (list (string-append "HTTP/1.1 200 OK\r\nContent-Length: 8192\r\n\r\n" payload))
+                   (lambda ()
+                     (guard (ex [(eq? ex 'body-error) 'body-error] [(eq? ex #f) 'close-error])
+                       ((make-engine
+                          (lambda ()
+                            (let ([result (case kind
+                                            [(get) (https:get base)]
+                                            [(download) (https:download base destination)]
+                                            [(response) (https:response-text (https:request 'GET base))])])
+                              (if (eq? kind 'download) (string=? result destination) (string=? result payload)))))
+                        1000000 (lambda (ticks result) result)
+                        (lambda (engine) (set! expired engine) 'expired))))
+                   step!)]
+                [steps-before steps]
+                [closed? (and (port-closed? held) (port-closed? input))]
+                [released? (equal? before (test:fd-count))])
+           (when (eq? kind 'download)
+             (call-with-output-file destination (lambda (port) (display "newer" port)) 'replace))
+           (let ([resume-ok?
+                  (or (not expired)
+                      (guard (ex [(and (who-condition? ex) (eq? (condition-who ex) 'https)) #t])
+                        (let ([result (expired 1000000 (lambda (ticks result) result) (lambda (engine) 'expired))])
+                          ;; A timer deferred through close may expire after
+                          ;; the scope ends; resuming then only returns its value.
+                          (and (eq? action 'timer) (eq? result #t)))))])
+             (let ([intact? (or (not (eq? kind 'download))
+                              (string=? (call-with-input-file destination get-string-all) "newer"))])
+               (when (file-exists? destination) (delete-file destination))
+               (list (car captured-result) (cadddr captured-result) closed? released?
+                     resume-ok? (= steps steps-before) intact?))))))
+
+     (for-each
+       (lambda (kind)
+         (check (list 'request-lifetime kind)
+           (map (lambda (row) (apply lifetime-case kind row))
+                '((return #f #f) (raise write #f) (fuel headers #f) (fuel body #f)
+                  (timer close #f) (return #f #t) (raise body #t)))
+           '((#t 1 #t #t #t #t #t)
+             (body-error 1 #t #t #t #t #t)
+             (expired 1 #t #t #t #t #t)
+             (expired 1 #t #t #t #t #t)
+             (expired 1 #t #t #t #t #t)
+             (close-error 1 #t #t #t #t #t)
+             (body-error 1 #t #t #t #t #t))))
+       '(get download response))
 
      ;; Each consumer traverses the same table; the expected destination is
      ;; independent of the resolver and includes the actual HTTP Host field.

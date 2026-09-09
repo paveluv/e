@@ -513,8 +513,26 @@
   (define (https-close! response)
     (close-port (https-response-port response)))
 
+  (define (call-with-scope start! use finish!)
+    ;; Only acquisition/release is critical. The body may block or exhaust
+    ;; its engine; cleanup must finish without replacing that original escape.
+    (let ([ended? #f] [failure #f])
+      (call-with-values
+        (lambda ()
+          (dynamic-wind #t
+            (lambda ()
+              (when ended? (error 'https "HTTP scope has ended"))
+              (start!))
+            use
+            (lambda ()
+              (set! ended? #t)
+              (guard (ex [else (set! failure (list ex))]) (finish!)))))
+        (lambda results
+          (when failure (raise (car failure)))
+          (apply values results)))))
+
   (define (call-with-body response consume)
-    (dynamic-wind void
+    (call-with-scope void
       (lambda () (consume (https-response-port response)))
       (lambda () (https-close! response))))
 
@@ -742,90 +760,85 @@
             (zero? (system "command -v curl >/dev/null 2>&1"))))
         known)))
 
-  (define (curl-request method url headers body-bytes)
-    ;; The whole request through a curl subprocess: -i puts the status
-    ;; line and headers on stdout ahead of the body, which curl has
-    ;; already de-framed -- so the body reads to process end,
-    ;; whatever the transfer encoding was.
-    (let ([process #f] [response #f])
-      (dynamic-wind #t
-        (lambda ()
-          (when process (error 'https "request scope has ended"))
-          (set! process
-            (sys:open-process
-              (append (list "curl" "-sS" "--no-buffer" "-i" "--max-time" (number->string (https-timeout))
-                            "-X" (symbol->string method))
-                      (apply append (map (lambda (header)
-                                           (list "-H" (format "~a: ~a" (car header) (cdr header)))) headers))
-                      (if body-bytes '("--data-binary" "@-") '()) (list url)))))
-        (lambda ()
-          (sys:write-process! process body-bytes)
-          (let ([channel
-                 (make-channel
-                   (lambda (bv start count)
-                     (let ([got (get-bytevector-some! (sys:process-input process) bv start count)])
-                       (if (eof-object? got)
-                           (let-values ([(code complaint) (sys:process-result process)])
-                             (unless (zero? code)
-                               (error 'https (format "curl failed (~a): ~a" code (trim complaint))))
-                             0)
-                           got)))
-                   (lambda (bv) (error 'https "the curl channel is read-only"))
-                   (lambda () (sys:close-process! process)))])
-            (let-values ([(head leftover) (read-until-blank-line channel)])
-              (let-values ([(status headers) (parse-response-head head)])
-                (set! response
-                  (make-https-response status headers (body-port channel leftover '())))
-                response))))
-        ;; Before handoff this scope owns the process; afterward its streamed
-        ;; body owns it. EOF checks completion as well as decoded payload bytes.
-        (lambda () (unless response (sys:close-process! process))))))
+  (define (open-curl method url headers body-bytes)
+    (sys:open-process
+      (append (list "curl" "-sS" "--no-buffer" "-i" "--max-time" (number->string (https-timeout))
+                    "-X" (symbol->string method))
+              (apply append (map (lambda (header)
+                                   (list "-H" (format "~a: ~a" (car header) (cdr header)))) headers))
+              (if body-bytes '("--data-binary" "@-") '()) (list url))))
+
+  (define (curl-channel process)
+    ;; Curl supplies headers and an already de-framed body. EOF also checks
+    ;; process completion, so truncated transfers cannot report success.
+    (make-channel
+      (lambda (bv start count)
+        (let ([got (get-bytevector-some! (sys:process-input process) bv start count)])
+          (if (eof-object? got)
+              (let-values ([(code complaint) (sys:process-result process)])
+                (unless (zero? code)
+                  (error 'https (format "curl failed (~a): ~a" code (trim complaint))))
+                0)
+              got)))
+      (lambda (bv) (error 'https "the curl channel is read-only"))
+      (lambda () (sys:close-process! process))))
 
   (define (https-request method url . options)
+    (apply call-with-request method url #f options))
+
+  (define (call-with-request method url consume . options)
     ;; options: an optional header alist, then an optional body
-    ;; (string or bytevector).  -> an https-response whose port streams
-    ;; the body; close it with https:close! or drain with response-text.
+    ;; (string or bytevector). A consumer stays inside the request's owner;
+    ;; only the public streaming request transfers its live body to a caller.
     (let-values ([(secure? host port path authority) (parse-url url)])
       (let* ([headers (if (pair? options) (car options) '())]
              [body (and (pair? options) (pair? (cdr options))
                         (cadr options))]
              [body-bytes (cond [(not body) #f]
                                [(string? body) (string->utf8 body)]
-                               [else body])])
-        (if (or (eq? (https-backend) 'curl)
-                (and secure? (eq? (https-connector) tls-connect)
-                     (not (tls-available?)) (curl-available)))
-            (curl-request method (string-append (if secure? "https://" "http://") authority path)
-                          headers body-bytes)
-            (native-request method secure? host port path authority
-                            headers body-bytes)))))
+                               [else body])]
+             [curl? (or (eq? (https-backend) 'curl)
+                        (and secure? (eq? (https-connector) tls-connect)
+                             (not (tls-available?)) (curl-available)))]
+             [process #f] [channel #f] [response #f] [transferred? #f])
+        (call-with-scope
+          (lambda ()
+            (when curl?
+              (set! process (open-curl method (string-append (if secure? "https://" "http://") authority path)
+                                       headers body-bytes))))
+          (lambda ()
+            (set! channel (if curl? (curl-channel process)
+                            ((if secure? (https-connector) tcp-connect) host port)))
+            (if curl? (sys:write-process! process body-bytes)
+                (write-request channel method path authority headers body-bytes))
+            (let-values ([(head leftover) (read-until-blank-line channel)])
+              (let-values ([(status headers) (parse-response-head head)])
+                (set! response (make-https-response status headers (body-port channel leftover (if curl? '() headers))))
+                (if consume (consume response)
+                    (begin (set! transferred? #t) response)))))
+          (lambda ()
+            (unless transferred?
+              (cond [response (https-close! response)]
+                    [channel ((channel-close! channel))]
+                    [process (sys:close-process! process)])))))))
 
-  (define (native-request method secure? host port path authority headers body-bytes)
-    (let ([channel (if secure?
-                       ((https-connector) host port)
-                       (tcp-connect host port))])
-      (guard (ex [else ((channel-close! channel)) (raise ex)])
-        ((channel-write! channel)
-         (string->utf8
-           (apply string-append
-                  (format "~a ~a HTTP/1.1\r\n" method path)
-                  (format "Host: ~a\r\n" authority)
-                  "Connection: close\r\n"
-                  (append
-                    (map (lambda (header)
-                           (format "~a: ~a\r\n" (car header) (cdr header)))
-                         headers)
-                    (if body-bytes
-                        (list (format "Content-Length: ~a\r\n"
-                                      (bytevector-length body-bytes)))
-                        '())
-                    '("\r\n")))))
-        (when body-bytes ((channel-write! channel) body-bytes))
-        (let-values ([(head leftover) (read-until-blank-line channel)])
-          (let-values ([(status headers) (parse-response-head head)])
-            (make-https-response
-              status headers
-              (body-port channel leftover headers)))))))
+  (define (write-request channel method path authority headers body-bytes)
+    ((channel-write! channel)
+     (string->utf8
+       (apply string-append
+              (format "~a ~a HTTP/1.1\r\n" method path)
+              (format "Host: ~a\r\n" authority)
+              "Connection: close\r\n"
+              (append
+                (map (lambda (header)
+                       (format "~a: ~a\r\n" (car header) (cdr header)))
+                     headers)
+                (if body-bytes
+                    (list (format "Content-Length: ~a\r\n"
+                                  (bytevector-length body-bytes)))
+                    '())
+                '("\r\n")))))
+    (when body-bytes ((channel-write! channel) body-bytes)))
 
   (define (body-text port)
     (let loop ([parts '()])
@@ -843,15 +856,16 @@
     (let fetch ([url url] [hops 0])
       (when (> hops 5)
         (error 'https "too many redirects" url))
-      (let* ([response (https-request 'GET url)]
-             [status (https-response-status response)]
-             [location (and (memv status '(301 302 303 307 308))
-                            (header-ref (https-response-headers response) "location"))]
-             [result (call-with-body response
-                       (lambda (port)
-                         (cond [location #f]
-                               [(<= 200 status 299) (consume port)]
-                               [else (error 'https (format "~a fetching ~a" status url))])))])
+      (let-values ([(location result)
+                    (call-with-request 'GET url
+                      (lambda (response)
+                        (let* ([status (https-response-status response)]
+                               [location (and (memv status '(301 302 303 307 308))
+                                              (header-ref (https-response-headers response) "location"))])
+                          (values location
+                            (cond [location #f]
+                                  [(<= 200 status 299) (consume (https-response-port response))]
+                                  [else (error 'https (format "~a fetching ~a" status url))])))))])
         (if location (fetch (resolve-url url location) (+ hops 1)) result))))
 
   (define (https-get url) (call-with-get url body-text))
@@ -859,8 +873,9 @@
   (define (https-download url path)
     (call-with-get url
       (lambda (in)
-        (let ([out (open-file-output-port path (file-options no-fail))])
-          (dynamic-wind void
+        (let ([out #f])
+          (call-with-scope
+            (lambda () (set! out (open-file-output-port path (file-options no-fail))))
             (lambda ()
               (let loop ()
                 (let ([chunk (get-bytevector-n in 32768)])

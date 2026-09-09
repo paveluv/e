@@ -35,11 +35,18 @@ The native `Host` header preserves the URL's authority, including explicit
 ports and IPv6 brackets. Invalid ports, URL user information, spaces, and
 control characters are rejected before connecting.
 
-`get`, `download`, and `response-text` close their response on success or
-failure. `close!` also closes the response's body port and may be called
+`get`, `download`, and `response-text` close their response on success,
+failure, or engine escape. Cleanup finishes before an interruption reaches
+the caller; a cleanup error does not replace an already escaping body error.
+`close!` also closes the response's body port and may be called
 again. When reading `response-port` directly, close it or call `close!`
 when finished. A failed download closes the destination port; its partially
 written file may remain.
+
+Resuming a saved continuation cannot reenter an ended scope. Review any
+partial output before starting a fresh operation.
+GET and download consume the response inside its request scope; connection,
+request writing and body reads remain interruptible.
 
 ## The transport abstraction
 
