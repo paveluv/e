@@ -364,17 +364,10 @@
                           (loop))))))))
             (format #t "e: listening on ~a\n" path)
             (flush-output-port (current-output-port))
-            ;; This pump does not evaluate code. Force an interrupt check on
-            ;; each wake: idle Scheme can otherwise take many timed waits to
-            ;; spend Chez's ordinary call counter and deliver an OS signal.
-            (parameterize ([timer-interrupt-handler void])
-              (let wait ()
-                (set-timer 1)
-                (let* ([now (current-time 'time-monotonic)]
-                       [deadline (make-time 'time-monotonic (time-nanosecond now) (+ 1 (time-second now)))]
-                       [message (kernel:mailbox-receive! control deadline)])
-                  (cond [(not message) (wait)]
-                    [(condition? message) (raise message)])))))
+            ;; The control owner services OS signals while idle, through the
+            ;; same mailbox wait as a head. No separate timer or polling loop.
+            (let ([message (kernel:mailbox-receive! control #f #t)])
+              (when (condition? message) (raise message))))
           (lambda ()
             (let ([active (with-mutex lock (set! stopping? #t) connections)])
               (sys:close-local-listener! listener)

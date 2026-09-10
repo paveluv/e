@@ -795,6 +795,31 @@
                             [closed (occurrences frames "\x1b;[?2026l")])
                        (test:check 'attached-split-scrolling-uses-balanced-2026
                          (list (> opened 0) (= opened closed) (head-read a '(point))) '(#t #t (30 . 0))))
+                     ;; The attached head also services resize while idle.
+                     ;; Observe geometry from its real painter before sending
+                     ;; any more input; the other head keeps its own dimensions.
+                     (head-read a
+                       '(let ([owner (get-thread-id)])
+                          (parameterize ([kernel:registering-module 'wire-resize])
+                            (paint:add-status-hint!
+                              (lambda ()
+                                (format "~ax~a/~a" (paint:screen-rows) (paint:screen-cols)
+                                  (= owner (get-thread-id)))))) #t))
+                     (vector-set! a 3 "")
+                     (vt:emulator-resize! (vector-ref a 2) 18 120)
+                     (sys:resize-terminal-process! (vector-ref a 0) 18 120)
+                     (head-wait 'attached-idle-resize a
+                       (lambda ()
+                         (and (head-sees? a "18x120/#t")
+                              (let ([frames (vector-ref a 3)])
+                                (and (> (occurrences frames "\x1b;[?2026h") 0)
+                                     (= (occurrences frames "\x1b;[?2026h")
+                                        (occurrences frames "\x1b;[?2026l")))))))
+                     (test:check 'attached-resize-keeps-the-other-head-size
+                       (head-read b '(list (paint:screen-rows) (paint:screen-cols))) '(24 80))
+                     (head-read a '(begin (kernel:retract-module! 'wire-resize) #t))
+                     (vt:emulator-resize! (vector-ref a 2) 24 80)
+                     (sys:resize-terminal-process! (vector-ref a 0) 24 80)
                      (head-read a `(begin (delete-other-windows!)
                                      (show-buffer! (head:adopt-store-buffer! ,id)) #t))
                      (rpc head 'delete scroll))

@@ -823,7 +823,8 @@
 
   ;; C-l also forces a size refresh in case resize events are unavailable.
   (define sigwinch-registered
-    (sys:watch-terminal-resize! (lambda () (set! size-dirty? #t))))
+    (sys:watch-terminal-resize!
+      (lambda () (set! size-dirty? #t) (head:wake-main!))))
 
   (define (env-number name fallback)
     (let* ([s (getenv name)]

@@ -495,7 +495,7 @@
       [() (read-key-event #t)]
       [(handle-mouse?)
        (let pump ()
-         (let ([message (kernel:mailbox-receive! mailbox frame-deadline)])
+         (let ([message (kernel:mailbox-receive! mailbox frame-deadline #t)])
            (case (and message (car message))
              [(#f)
               (frame!)

@@ -44,6 +44,10 @@ the window focused when the prompt is accepted is the command's target
 that resolve to any other command are consumed without effect so their
 tail keys cannot leak into the input.
 
+Resizing your terminal refreshes the layout without another keypress, even
+while a prompt is open. Your input stays intact. Each attached head uses its
+own terminal dimensions.
+
 ## Multiline input
 
 Prompts that enable multiline input accept Meta+Return to insert a newline.

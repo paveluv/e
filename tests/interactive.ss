@@ -103,6 +103,31 @@
      (wait-for! 'editor-starts
                 (lambda () (find-cell "*scratch*")) 30000)
 
+     ;; Resize while idle and inside a populated prompt. A terminal mirror
+     ;; can reflow old cells on its own, so require actual frame output too.
+     (send! "\x7;")
+     (settle! 150)
+     (for-each
+       (lambda (case)
+         (let ([prompt? (car case)] [rows (cadr case)] [cols (caddr case)])
+           (when prompt? (send! "\x1b;xresize-input") (settle! 150))
+           (set! transcript '())
+           (vt:emulator-resize! mirror rows cols)
+           (sys:resize-terminal-process! process rows cols)
+           (wait-for! (list 'idle-resize-refreshes-the-screen prompt?)
+             (lambda ()
+               (let ([buffer (find-cell "*scratch*")] [close (find-cell "[×]")])
+                 (and (contains? (list->string (reverse transcript)) "\x1b;[?2026h")
+                      buffer close (= (car buffer) (- rows 2)) (= (cdr close) (- cols 3))
+                      (or (not prompt?) (find-cell "M-x (resize-input"))))) 3000)))
+       '((#f 18 70) (#t 24 80)))
+     (settle! 200)
+     (set! transcript '())
+     (settle! 350)
+     (check 'idle-signal-checks-do-not-paint (null? transcript))
+     (send! "\x7;")
+     (settle! 150)
+
      ;; Invalid single-key input flashes the echo area, then restores the
      ;; question while its nested pump remains idle. Inspect the transcript
      ;; too: the brief flash can start and end between two polling passes.

@@ -17,19 +17,58 @@
 
      (define test-lock (make-mutex))
 
-     ;; Timed receives retain FIFO and later messages after a timeout.
-     (let ([mail (kernel:make-mailbox)] [entered (test:gate)])
-       (define (after ns) (add-duration (current-time 'time-monotonic) (make-time 'time-duration ns 0)))
-       (kernel:mailbox-post! mail 'first)
-       (kernel:mailbox-post! mail 'second)
-       (let* ([first (kernel:mailbox-receive! mail (current-time 'time-monotonic))]
-              [second (kernel:mailbox-receive! mail)]
-              [expired (kernel:mailbox-receive! mail (after 1000000))]
-              [waiting (test:worker (lambda () (entered #t) (kernel:mailbox-receive! mail (after 900000000))))])
-         (test:await 'receiving entered)
-         (kernel:mailbox-post! mail 'awake)
-         (test:check 'mailbox-deadline-keeps-queue-and-wake-semantics
-           (list first second expired (waiting)) '(first second #f awake))))
+     ;; Both wait modes retain FIFO, real deadlines and the caller's fuel.
+     (for-each
+       (lambda (signals?)
+         (let ([mail (kernel:make-mailbox)] [entered (test:gate)] [received 0])
+           (define (after ns) (add-duration (current-time 'time-monotonic) (make-time 'time-duration ns 0)))
+           (kernel:mailbox-post! mail 'first)
+           (kernel:mailbox-post! mail 'second)
+           (let* ([first (kernel:mailbox-receive! mail (current-time 'time-monotonic) signals?)]
+                  [second (kernel:mailbox-receive! mail #f signals?)]
+                  [expired (kernel:mailbox-receive! mail (after 1000000) signals?)]
+                  [waiting (test:worker
+                             (lambda () (entered #t) (kernel:mailbox-receive! mail (after 900000000) signals?)))])
+             (test:await 'receiving entered)
+             (kernel:mailbox-post! mail 'awake)
+             (let ([awake (waiting)])
+               (do ([i 0 (+ i 1)]) ((= i 100)) (kernel:mailbox-post! mail i))
+               (let ([budget
+                      ((make-engine
+                         (lambda ()
+                           (do ([i 0 (+ i 1)]) ((= i 100) 'finished)
+                             (kernel:mailbox-receive! mail #f signals?)
+                             (set! received (+ received 1)))))
+                       300 (lambda values 'completed) (lambda (_) 'expired))])
+                 (test:check (list 'mailbox-queue-deadline-wake-and-fuel signals?)
+                   (list first second expired awake budget (< 0 received 100))
+                   '(first second #f awake expired #t)))))))
+       '(#f #t))
+
+     ;; A timer models a Scheme signal callback posting during dequeue.
+     ;; Reversal must not discard its newer tail; sweep call boundaries in
+     ;; one scenario, including paths that finish before the interrupt fires.
+     (let ([mismatches '()] [delivered? #f])
+       (do ([fuel 1 (+ fuel 1)]) ((> fuel 200))
+         (let ([mail (kernel:make-mailbox)] [called? #f])
+           (kernel:mailbox-post! mail 'first)
+           (kernel:mailbox-post! mail 'second)
+           (let ([first
+                  (parameterize ([timer-interrupt-handler
+                                  (lambda ()
+                                    (set! called? #t)
+                                    (kernel:mailbox-post! mail 'signal))])
+                    (set-timer fuel)
+                    (let ([result (kernel:mailbox-receive! mail #f #t)])
+                      (set-timer 0)
+                      result))])
+             (let* ([second (kernel:mailbox-receive! mail (current-time 'time-monotonic))]
+                    [signal (kernel:mailbox-receive! mail (current-time 'time-monotonic))])
+               (when called? (set! delivered? #t))
+               (unless (equal? (list first second signal) (list 'first 'second (and called? 'signal)))
+                 (set! mismatches (cons (list fuel first second signal called?) mismatches)))))))
+       (test:check 'mailbox-keeps-signal-posts-during-dequeue
+         (list delivered? mismatches) '(#t ())))
 
      ;; Hold predicate selection while another thread retracts an owner
      ;; and adds an unrelated registration. Removal must only consume its

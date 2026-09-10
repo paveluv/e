@@ -27,6 +27,7 @@
                 library-directories load
                 parameterize make-mutex with-mutex make-condition
                 condition-wait condition-signal condition-broadcast
+                with-interrupts-disabled make-time
                 current-time time? time-type time<? time-difference
                 get-thread-id box? display-condition void))
 
@@ -63,33 +64,59 @@
 
   (define (mailbox-post! mb message)
     (with-mutex (mailbox-lock mb)
-      (mailbox-tail-set! mb (cons message (mailbox-tail mb)))
+      (with-interrupts-disabled
+        (mailbox-tail-set! mb (cons message (mailbox-tail mb))))
       (condition-signal (mailbox-signal mb))))
 
-  (define (mailbox-receive! mb . timeout)
-    ;; Strictly FIFO. An optional monotonic deadline returns #f on timeout;
-    ;; recheck both the queue and deadline after every condition wake.
-    (let ([deadline (and (pair? timeout) (car timeout))])
-      (unless (or (not deadline) (and (time? deadline) (eq? (time-type deadline) 'time-monotonic)))
-        (error 'mailbox-receive! "expected a monotonic deadline or #f" deadline))
-      (with-mutex (mailbox-lock mb)
-        (let wait ()
-          (cond
-            [(pair? (mailbox-head mb))
-             (let ([message (car (mailbox-head mb))])
-               (mailbox-head-set! mb (cdr (mailbox-head mb)))
-               message)]
-            [(pair? (mailbox-tail mb))
-             (mailbox-head-set! mb (reverse (mailbox-tail mb)))
-             (mailbox-tail-set! mb '())
-             (wait)]
-            [else
-             (let ([now (current-time 'time-monotonic)])
-               (and (or (not deadline) (time<? now deadline))
-                 (begin
-                   (condition-wait (mailbox-signal mb) (mailbox-lock mb)
-                                   (and deadline (time-difference deadline now)))
-                   (wait))))])))))
+  (define signal-check-interval (make-time 'time-duration 100000000 0))
+
+  (define mailbox-receive!
+    ;; Strictly FIFO. A monotonic deadline returns #f on timeout. Signal
+    ;; owners can opt into bounded waits and an interrupt check outside the
+    ;; mailbox lock. These checks neither return a timeout nor replace an
+    ;; evaluation's timer; only actual messages/deadlines reach the caller.
+    (case-lambda
+      [(mb) (mailbox-receive! mb #f #f)]
+      [(mb deadline) (mailbox-receive! mb deadline #f)]
+      [(mb deadline service-signals?)
+       (unless (or (not deadline) (and (time? deadline) (eq? (time-type deadline) 'time-monotonic)))
+         (error 'mailbox-receive! "expected a monotonic deadline or #f" deadline))
+       (unless (boolean? service-signals?)
+         (error 'mailbox-receive! "expected a signal-service flag" service-signals?))
+       (let wait ()
+         (when service-signals? (with-interrupts-disabled (void)))
+         (let-values ([(again? message)
+                       (with-mutex (mailbox-lock mb)
+                         (let receive ()
+                           (cond
+                             [(pair? (mailbox-head mb))
+                              (with-interrupts-disabled
+                                (let ([message (car (mailbox-head mb))])
+                                  (mailbox-head-set! mb (cdr (mailbox-head mb)))
+                                  (values #f message)))]
+                             [(pair? (mailbox-tail mb))
+                              ;; A signal can post while reverse allocates.
+                              ;; Publish only if that tail is still current;
+                              ;; keep reversal interruptible and the two writes
+                              ;; indivisible, including for a same-thread post.
+                              (let* ([tail (mailbox-tail mb)] [front (reverse tail)])
+                                (with-interrupts-disabled
+                                  (when (eq? tail (mailbox-tail mb))
+                                    (mailbox-head-set! mb front)
+                                    (mailbox-tail-set! mb '()))))
+                              (receive)]
+                             [else
+                              (let* ([now (current-time 'time-monotonic)]
+                                     [remaining (and deadline (time-difference deadline now))])
+                                (if (and deadline (not (time<? now deadline)))
+                                  (values #f #f)
+                                  (begin
+                                    (condition-wait (mailbox-signal mb) (mailbox-lock mb)
+                                      (if (and service-signals?
+                                               (or (not remaining) (time<? signal-check-interval remaining)))
+                                          signal-check-interval remaining))
+                                    (values #t #f))))])))])
+           (if again? (wait) message)))]))
 
   ;;; Ordered delivery -----------------------------------------------------
 
