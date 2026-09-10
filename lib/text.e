@@ -253,9 +253,11 @@
             (vector-set! new-text start-line last-piece)
             (begin
               (vector-set! new-text start-line first-piece)
-              (do ([k 1 (+ k 1)]) ((= k (- pieces 1)))
-                (vector-set! new-text (+ start-line k)
-                             (list-ref replacement k)))
+              ;; walk the middle pieces once: a paste of N lines costs N steps
+              (let middle ([k 1] [rest (cdr replacement)])
+                (when (< k (- pieces 1))
+                  (vector-set! new-text (+ start-line k) (car rest))
+                  (middle (+ k 1) (cdr rest))))
               (vector-set! new-text (+ start-line (- pieces 1))
                            last-piece)))
         ;; untouched tail

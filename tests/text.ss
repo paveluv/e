@@ -382,4 +382,27 @@
                                                    '()))))
             '(rejected rejected rejected))
 
+     ;; -- cost ---------------------------------------------------------------
+
+     ;; A multi-line paste walks its lines once. The quadratic version took
+     ;; 770 ms for 40,000 lines; the bound leaves room for a loaded machine.
+     (define (elapsed-ms thunk)
+       (let ([start (current-time 'time-monotonic)])
+         (thunk)
+         (let ([end (current-time 'time-monotonic)])
+           (+ (* 1000 (- (time-second end) (time-second start)))
+              (div (- (time-nanosecond end) (time-nanosecond start)) 1000000)))))
+     (define big-paste (map (lambda (i) (string-append "line " (number->string i))) (iota 40000)))
+     (check 'multi-line-insertion-is-linear
+            (let ([ms (elapsed-ms
+                        (lambda ()
+                          (let-values ([(result delta) (text:apply-edit base (span 1 3 1 3) big-paste)])
+                            (unless (and (= (vector-length result) (+ 4 39999))
+                                         (equal? (vector-ref result 1) "chaline 0")
+                                         (equal? (vector-ref result 20000) "line 19999")
+                                         (equal? (vector-ref result 40000) "line 39999rlie"))
+                              (error 'text-test "wrong paste result")))))])
+              (< ms 200))
+            #t)
+
      (test:finish! 'text)))
