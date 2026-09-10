@@ -68,9 +68,18 @@ pipe, or a test double are all just procedures returning a
 `https:make-channel`. A supplied connector does not initialize the default
 TLS implementation or trigger its automatic curl fallback.
 
+The native connector releases partial socket/TLS setup on failure or engine
+escape, and transfers the completed channel into the requesting HTTP scope
+before it can be interrupted. Wrapping a native connector preserves that
+handoff. A custom transport owns its partial setup until it returns a channel.
+`https:tcp-connect` and `https:tls-connect` can also be called directly with
+`(host port)`; the caller then owns the returned channel and must invoke its
+close procedure when finished. Native channel close is idempotent, and reads
+or writes after close raise an error.
+
 ## Threading
 
-Blocking foreign calls (DNS, connect, TLS reads and writes) are
+Blocking foreign calls (DNS, connect, TLS I/O, shutdown and trust-store loading) are
 declared `__collect_safe`, so a stalled peer parks only its own
 thread -- the collector, and with it the rest of the editor, keeps
 running. Bytes cross the FFI through foreign buffers for the same

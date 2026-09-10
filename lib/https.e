@@ -138,20 +138,25 @@
 
   ;;; Foreign memory helpers ----------------------------------------------
 
-  (define (foreign-zeroed size)
-    (let ([pointer (foreign-alloc size)])
-      (do ([i 0 (+ i 1)]) ((= i size) pointer)
-        (foreign-set! 'unsigned-8 pointer i 0))))
+  (define (call-with-foreign buffers use)
+    ;; Own each allocation before copying, which may exhaust an engine.
+    ;; The copies remain immovable throughout collect-safe foreign calls.
+    (let ([pointers '()])
+      (call-with-scope void
+        (lambda ()
+          (apply use
+            (map (lambda (bytes)
+                   (let ([pointer
+                          (with-interrupts-disabled
+                            (let ([pointer (foreign-alloc (bytevector-length bytes))])
+                              (set! pointers (cons pointer pointers))
+                              pointer))])
+                     (copy-to-foreign! bytes 0 (bytevector-length bytes) pointer)
+                     pointer))
+                 buffers)))
+        (lambda () (for-each foreign-free pointers)))))
 
-  (define (foreign-string text)
-    ;; A NUL-terminated UTF-8 copy the collector will never move.
-    (let* ([bytes (string->utf8 text)]
-           [n (bytevector-length bytes)]
-           [pointer (foreign-alloc (+ n 1))])
-      (do ([i 0 (+ i 1)]) ((= i n))
-        (foreign-set! 'unsigned-8 pointer i (bytevector-u8-ref bytes i)))
-      (foreign-set! 'unsigned-8 pointer n 0)
-      pointer))
+  (define (cstring text) (string->utf8 (string-append text "\x0;")))
 
   (define (foreign-cstring pointer)
     (let loop ([i 0] [acc '()])
@@ -216,56 +221,48 @@
 
   (define (set-socket-timeouts! fd seconds)
     ;; SO_RCVTIMEO/SO_SNDTIMEO with a struct timeval (two longs).
-    (let ([time (foreign-zeroed 16)])
-      (foreign-set! 'long time 0 seconds)
-      (c-setsockopt fd sol-socket so-rcvtimeo time 16)
-      (c-setsockopt fd sol-socket so-sndtimeo time 16)
-      (foreign-free time))
+    (call-with-foreign (list (make-bytevector 16 0))
+      (lambda (time)
+        (foreign-set! 'long time 0 seconds)
+        (c-setsockopt fd sol-socket so-rcvtimeo time 16)
+        (c-setsockopt fd sol-socket so-sndtimeo time 16)))
     ;; and a write to a peer-closed connection must error, not raise
     ;; SIGPIPE: SO_NOSIGPIPE where it exists (macOS #x1022, FreeBSD
     ;; #x800); Linux writes report EPIPE to blocked signals anyway
     (let ([option (case os [(macos) #x1022] [(freebsd) #x800] [else #f])])
       (when option
-        (let ([on (foreign-zeroed 4)])
-          (foreign-set! 'int on 0 1)
-          (c-setsockopt fd sol-socket option on 4)
-          (foreign-free on)))))
+        (call-with-foreign (list (make-bytevector 4 0))
+          (lambda (on)
+            (foreign-set! 'int on 0 1)
+            (c-setsockopt fd sol-socket option on 4))))))
 
-  (define (connect-socket host port)
-    ;; -> a connected stream socket fd, trying each resolved address.
-    (let ([host* (foreign-string host)]
-          [port* (foreign-string (number->string port))]
-          [hints (foreign-zeroed 48)]
-          [result* (foreign-zeroed 8)])
-      (foreign-set! 'int hints 8 1)   ; ai_socktype = SOCK_STREAM
-      (let ([status (c-getaddrinfo host* port* hints result*)])
-        (foreign-free host*)
-        (foreign-free port*)
-        (foreign-free hints)
-        (unless (zero? status)
-          (foreign-free result*)
-          (error 'https
-                 (format "cannot resolve ~a: ~a"
-                         host (foreign-cstring (c-gai-strerror status)))))
-        (let* ([first (foreign-ref 'void* result* 0)]
-               [fd (let try ([info first])
-                     (if (not info)
-                         #f
-                         (let ([fd (c-socket (addrinfo-family info) 1 0)])
-                           (if (< fd 0)
-                               (try (addrinfo-next info))
-                               (if (zero? (c-connect
-                                            fd (addrinfo-addr info)
-                                            (addrinfo-addrlen info)))
-                                   fd
-                                   (begin (c-close fd)
-                                          (try (addrinfo-next info))))))))])
-          (c-freeaddrinfo first)
-          (foreign-free result*)
-          (unless fd
-            (error 'https (format "cannot connect to ~a:~a" host port)))
-          (set-socket-timeouts! fd (https-timeout))
-          fd))))
+  (define (connect-socket host port open!)
+    ;; The native channel owns every socket opened while trying addresses.
+    ;; DNS writes its result into owned memory, even if expiry follows the
+    ;; foreign return before Scheme has read that pointer.
+    (call-with-foreign
+      (list (cstring host) (cstring (number->string port))
+            (make-bytevector 48 0) (make-bytevector 8 0))
+      (lambda (host* port* hints result*)
+        (foreign-set! 'int hints 8 1)   ; ai_socktype = SOCK_STREAM
+        (call-with-scope void
+          (lambda ()
+            (let ([status (c-getaddrinfo host* port* hints result*)])
+              (unless (zero? status)
+                (error 'https
+                       (format "cannot resolve ~a: ~a"
+                               host (foreign-cstring (c-gai-strerror status)))))
+              (let try ([info (foreign-ref 'void* result* 0)])
+                (unless (and info (not (zero? info)))
+                  (error 'https (format "cannot connect to ~a:~a" host port)))
+                (let ([fd (open! (addrinfo-family info))])
+                  (if (and (>= fd 0)
+                           (zero? (c-connect fd (addrinfo-addr info) (addrinfo-addrlen info))))
+                      (set-socket-timeouts! fd (https-timeout))
+                      (try (addrinfo-next info)))))))
+          (lambda ()
+            (let ([first (foreign-ref 'void* result* 0)])
+              (unless (zero? first) (c-freeaddrinfo first))))))))
 
   ;;; Channels ---------------------------------------------------------------
 
@@ -277,55 +274,22 @@
 
   (define transfer-buffer-size 32768)
 
-  (define (channel-over-fd fd read-raw write-raw cleanup!)
-    ;; Bytes cross the FFI through foreign buffers: the reader may be
-    ;; parked in a blocking call while the collector runs.
-    (let ([in-buffer (foreign-alloc transfer-buffer-size)]
-          [out-buffer (foreign-alloc transfer-buffer-size)]
-          [open #t])
-      (make-channel
-        (lambda (bv start count)
-          (let* ([limit (min count transfer-buffer-size)]
-                 [got (read-raw in-buffer limit)])
-            (copy-from-foreign! in-buffer bv start got)
-            got))
-        (lambda (bv)
-          (let send ([start 0])
-            (let ([left (- (bytevector-length bv) start)])
-              (when (> left 0)
-                (let ([count (min left transfer-buffer-size)])
-                  (copy-to-foreign! bv start count out-buffer)
-                  (let ([sent (write-raw out-buffer count)])
-                    (unless (> sent 0)
-                      (error 'https "connection closed while writing"))
-                    (send (+ start sent))))))))
-        (lambda ()
-          (when open
-            (set! open #f)
-            (cleanup!)
-            (c-close fd)
-            (foreign-free in-buffer)
-            (foreign-free out-buffer))))))
+  ;; Native setup can block before returning a channel. Install its result
+  ;; in the active request atomically, including through connector wrappers.
+  (define adopt-channel! (make-parameter values))
 
   (define (tcp-connect host port)
-    ;; A plain byte stream -- http://, and the substrate under TLS.
-    (let ([fd (connect-socket host port)])
-      (channel-over-fd
-        fd
-        (lambda (buffer limit)
-          (let ([got (c-read fd buffer limit)])
-            (if (< got 0)
-                (error 'https "read failed (timeout or reset)")
-                got)))
-        (lambda (buffer count) (c-write fd buffer count))
-        void)))
+    (native-connect host port #f))
+
+  (define (tls-connect host port)
+    (native-connect host port #t))
 
   ;;; TLS (libssl) -----------------------------------------------------------
 
   (define-foreign ssl-client-method tls-loaded "TLS_client_method" () uptr)
   (define-foreign ssl-ctx-new tls-loaded "SSL_CTX_new" (uptr) uptr)
   (define-foreign ssl-ctx-free tls-loaded "SSL_CTX_free" (uptr) void)
-  (define-foreign ssl-ctx-set-default-verify-paths tls-loaded
+  (define-foreign-blocking ssl-ctx-set-default-verify-paths tls-loaded
     "SSL_CTX_set_default_verify_paths" (uptr) int)
   (define-foreign ssl-ctx-set-verify tls-loaded "SSL_CTX_set_verify"
     (uptr int uptr) void)
@@ -339,7 +303,7 @@
     (uptr) long)
   (define-foreign x509-verify-error-string tls-loaded
     "X509_verify_cert_error_string" (long) uptr)
-  (define-foreign ssl-shutdown tls-loaded "SSL_shutdown" (uptr) int)
+  (define-foreign-blocking ssl-shutdown tls-loaded "SSL_shutdown" (uptr) int)
   (define-foreign-blocking ssl-connect-call tls-loaded "SSL_connect"
     (uptr) int)
   (define-foreign-blocking ssl-read tls-loaded "SSL_read" (uptr uptr int) int)
@@ -350,58 +314,84 @@
   (define ssl-ctrl-set-tlsext-hostname 55)
   (define ssl-error-zero-return 6)
 
-  (define (tls-connect host port)
-    ;; The default secure connector: verified TLS to host, as a channel.
-    (let* ([fd (connect-socket host port)]
-           [ctx (ssl-ctx-new (ssl-client-method))])
-      (when (zero? ctx)
-        (c-close fd)
-        (error 'https "SSL_CTX_new failed"))
-      (ssl-ctx-set-default-verify-paths ctx)
-      (ssl-ctx-set-verify ctx ssl-verify-peer 0)
-      (let ([ssl (ssl-new ctx)])
-        (when (zero? ssl)
-          (ssl-ctx-free ctx)
-          (c-close fd)
-          (error 'https "SSL_new failed"))
-        (let ([name (foreign-string host)])
-          (ssl-ctrl ssl ssl-ctrl-set-tlsext-hostname 0 name)   ; SNI
-          (foreign-free name))
-        (unless (= 1 (ssl-set1-host ssl host))
-          (error 'https "SSL_set1_host failed"))
-        (ssl-set-fd ssl fd)
-        (unless (= 1 (ssl-connect-call ssl))
-          (let ([verify (ssl-get-verify-result ssl)]
-                [finish (lambda () (ssl-free ssl) (ssl-ctx-free ctx)
-                          (c-close fd))])
-            (if (zero? verify)
-                (begin (finish)
-                       (error 'https
-                              (format "TLS handshake with ~a failed" host)))
-                (begin (finish)
-                       (error 'https
-                              (format "certificate for ~a rejected: ~a"
-                                      host
-                                      (foreign-cstring
-                                        (x509-verify-error-string
-                                          verify))))))))
-        (channel-over-fd
-          fd
-          (lambda (buffer limit)
-            (let ([got (ssl-read ssl buffer limit)])
-              (if (> got 0)
-                  got
-                  (let ([status (ssl-get-error ssl got)])
-                    (if (= status ssl-error-zero-return)
-                        0
-                        (error 'https
-                               (format "TLS read failed (status ~a)"
-                                       status)))))))
-          (lambda (buffer count) (ssl-write ssl buffer count))
-          (lambda ()
-            (guard (ex [else (void)]) (ssl-shutdown ssl))
-            (ssl-free ssl)
-            (ssl-ctx-free ctx))))))
+  (define (native-connect host port secure?)
+    ;; One owner covers partial setup and the live channel.
+    (let ([fd -1] [ctx 0] [ssl 0] [ready? #f] [transferred? #f]
+          [in-buffer #f] [out-buffer #f] [open? #t])
+      (define (close!)
+        (with-interrupts-disabled
+          (when open?
+            (set! open? #f)
+            (unless (zero? ssl)
+              (when ready? (guard (ex [else (void)]) (ssl-shutdown ssl)))
+              (ssl-free ssl))
+            (unless (zero? ctx) (ssl-ctx-free ctx))
+            (when (>= fd 0) (c-close fd))
+            (when in-buffer (foreign-free in-buffer))
+            (when out-buffer (foreign-free out-buffer)))))
+      (define (check-open!)
+        (unless open? (error 'https "connection is closed")))
+      (define (read! bv start count)
+        (check-open!)
+        (let* ([limit (min count transfer-buffer-size)]
+               [got (if secure? (ssl-read ssl in-buffer limit) (c-read fd in-buffer limit))]
+               [n (cond [(> got 0) got]
+                        [secure?
+                         (let ([status (ssl-get-error ssl got)])
+                           (if (= status ssl-error-zero-return) 0
+                               (error 'https (format "TLS read failed (status ~a)" status))))]
+                        [(zero? got) 0]
+                        [else (error 'https "read failed (timeout or reset)")])])
+          (copy-from-foreign! in-buffer bv start n)
+          n))
+      (define (write! bv)
+        (check-open!)
+        (let send ([start 0])
+          (let ([left (- (bytevector-length bv) start)])
+            (when (> left 0)
+              (let ([count (min left transfer-buffer-size)])
+                (copy-to-foreign! bv start count out-buffer)
+                (let ([sent (if secure? (ssl-write ssl out-buffer count) (c-write fd out-buffer count))])
+                  (unless (> sent 0) (error 'https "connection closed while writing"))
+                  (send (+ start sent))))))))
+      (call-with-scope void
+        (lambda ()
+          (connect-socket host port
+            (lambda (family)
+              (with-interrupts-disabled
+                (when (>= fd 0) (c-close fd) (set! fd -1))
+                (set! fd (c-socket family 1 0))
+                fd)))
+          (when secure?
+            (let ([method (ssl-client-method)])
+              (with-interrupts-disabled (set! ctx (ssl-ctx-new method))))
+            (when (zero? ctx) (error 'https "SSL_CTX_new failed"))
+            (unless (= 1 (ssl-ctx-set-default-verify-paths ctx))
+              (error 'https "cannot load the default TLS trust store"))
+            (ssl-ctx-set-verify ctx ssl-verify-peer 0)
+            (with-interrupts-disabled (set! ssl (ssl-new ctx)))
+            (when (zero? ssl) (error 'https "SSL_new failed"))
+            (call-with-foreign (list (cstring host))
+              (lambda (name)
+                (unless (= 1 (ssl-ctrl ssl ssl-ctrl-set-tlsext-hostname 0 name))
+                  (error 'https "cannot set TLS server name"))))
+            (unless (= 1 (ssl-set1-host ssl host)) (error 'https "SSL_set1_host failed"))
+            (unless (= 1 (ssl-set-fd ssl fd)) (error 'https "SSL_set_fd failed"))
+            (unless (= 1 (ssl-connect-call ssl))
+              (let ([verify (ssl-get-verify-result ssl)])
+                (error 'https
+                       (if (zero? verify) (format "TLS handshake with ~a failed" host)
+                           (format "certificate for ~a rejected: ~a" host
+                                   (foreign-cstring (x509-verify-error-string verify)))))))
+            (set! ready? #t))
+          (with-interrupts-disabled
+            (set! in-buffer (foreign-alloc transfer-buffer-size))
+            (set! out-buffer (foreign-alloc transfer-buffer-size))
+            (let ([channel (make-channel read! write! close!)])
+              ((adopt-channel!) channel)
+              (set! transferred? #t)
+              channel)))
+        (lambda () (unless transferred? (close!))))))
 
   (define (tls-available?)
     (guard (ex [else #f]) (tls-loaded) #t))
@@ -807,8 +797,9 @@
               (set! process (open-curl method (string-append (if secure? "https://" "http://") authority path)
                                        headers body-bytes))))
           (lambda ()
-            (set! channel (if curl? (curl-channel process)
-                            ((if secure? (https-connector) tcp-connect) host port)))
+            (parameterize ([adopt-channel! (lambda (opened) (set! channel opened))])
+              (set! channel (if curl? (curl-channel process)
+                              ((if secure? (https-connector) tcp-connect) host port))))
             (if curl? (sys:write-process! process body-bytes)
                 (write-request channel method path authority headers body-bytes))
             (let-values ([(head leftover) (read-until-blank-line channel)])

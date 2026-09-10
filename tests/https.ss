@@ -229,38 +229,68 @@
          "print(\"READY\", s.getsockname()[1], flush=True)\n"
          "while True:\n"
          "    c, _ = s.accept()\n"
-         "    req = b\"\"\n"
-         "    while b\"\\r\\n\\r\\n\" not in req:\n"
-         "        d = c.recv(4096)\n"
-         "        if not d: break\n"
-         "        req += d\n"
-         "    parts = req.split(b\"\\r\\n\", 1)[0].decode().split()\n"
-         "    path = parts[1] if len(parts) > 1 else \"/\"\n"
-         "    authority = b\"\\r\\nHost: 127.0.0.1:\" + str(s.getsockname()[1]).encode() + b\"\\r\\n\"\n"
-         "    if authority not in req:\n"
-         "        c.sendall(b\"HTTP/1.1 400 Bad Host\\r\\nContent-Length: 0\\r\\n\\r\\n\")\n"
-         "    elif path == \"/plain\":\n"
-         "        c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nContent-Length: 11\\r\\n\\r\\nhello world\")\n"
-         "    elif path == \"/chunked\":\n"
-         "        c.sendall(b\"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n6\\r\\nchunk \\r\\n3\\r\\none\\r\\nB\\r\\n and chunk2\\r\\n0\\r\\n\\r\\n\")\n"
-         "    elif path == \"/redirect\":\n"
-         "        c.sendall(b\"HTTP/1.1 302 Found\\r\\nLocation: nested/redirect\\r\\nContent-Length: 0\\r\\n\\r\\n\")\n"
-         "    elif path == \"/nested/redirect\":\n"
-         "        c.sendall(b\"HTTP/1.1 307 Redirect\\r\\nLocation: ../plain\\r\\nContent-Length: 0\\r\\n\\r\\n\")\n"
-         "    elif path == \"/eof\":\n"
-         "        c.sendall(b\"HTTP/1.1 200 OK\\r\\n\\r\\nstreamed to eof\")\n"
-         "    elif path == \"/truncated\":\n"
-         "        c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nx\")\n"
-         "    elif path == \"/broken-head\":\n"
-         "        c.sendall(b\"malformed\\r\\n\\r\\n\")\n"
-         "    elif path == \"/slow\":\n"
-         "        c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Length: 10000\\r\\n\\r\\nx\")\n"
+         "    try:\n"
          "        c.settimeout(3)\n"
-         "        try: c.recv(1)\n"
-         "        except (TimeoutError, ConnectionResetError): pass\n"
-         "    else:\n"
-         "        c.sendall(b\"HTTP/1.1 404 Not Found\\r\\nContent-Length: 9\\r\\n\\r\\nnot found\")\n"
-         "    c.close()\n"))
+         "        req = b\"\"\n"
+         "        while b\"\\r\\n\\r\\n\" not in req:\n"
+         "            d = c.recv(4096)\n"
+         "            if not d: break\n"
+         "            req += d\n"
+         "            if req.startswith(b\"\\x16\"): break  # reject TLS on this plain endpoint\n"
+         "        if not req: continue\n"
+         "        parts = req.split(b\"\\r\\n\", 1)[0].decode(errors=\"replace\").split()\n"
+         "        path = parts[1] if len(parts) > 1 else \"/\"\n"
+         "        authority = b\"\\r\\nHost: 127.0.0.1:\" + str(s.getsockname()[1]).encode() + b\"\\r\\n\"\n"
+         "        if authority not in req:\n"
+         "            c.sendall(b\"HTTP/1.1 400 Bad Host\\r\\nContent-Length: 0\\r\\n\\r\\n\")\n"
+         "        elif path == \"/plain\":\n"
+         "            c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nContent-Length: 11\\r\\n\\r\\nhello world\")\n"
+         "        elif path == \"/chunked\":\n"
+         "            c.sendall(b\"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n6\\r\\nchunk \\r\\n3\\r\\none\\r\\nB\\r\\n and chunk2\\r\\n0\\r\\n\\r\\n\")\n"
+         "        elif path == \"/redirect\":\n"
+         "            c.sendall(b\"HTTP/1.1 302 Found\\r\\nLocation: nested/redirect\\r\\nContent-Length: 0\\r\\n\\r\\n\")\n"
+         "        elif path == \"/nested/redirect\":\n"
+         "            c.sendall(b\"HTTP/1.1 307 Redirect\\r\\nLocation: ../plain\\r\\nContent-Length: 0\\r\\n\\r\\n\")\n"
+         "        elif path == \"/eof\":\n"
+         "            c.sendall(b\"HTTP/1.1 200 OK\\r\\n\\r\\nstreamed to eof\")\n"
+         "        elif path == \"/truncated\":\n"
+         "            c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nx\")\n"
+         "        elif path == \"/broken-head\":\n"
+         "            c.sendall(b\"malformed\\r\\n\\r\\n\")\n"
+         "        elif path == \"/slow\":\n"
+         "            c.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Length: 10000\\r\\n\\r\\nx\")\n"
+         "            c.recv(1)\n"
+         "        else:\n"
+         "            c.sendall(b\"HTTP/1.1 404 Not Found\\r\\nContent-Length: 9\\r\\n\\r\\nnot found\")\n"
+         "    except OSError: pass  # cancellation may close at any protocol stage\n"
+         "    finally: c.close()\n"))
+
+     ;; Observe real native resources across setup, channel handoff and use.
+     ;; Keep every expired engine until after the resource check, then resume:
+     ;; pre-scope expiry may finish normally; ended scopes must refuse reuse.
+     (define (native-lifetime thunk expected)
+       (let ([before (test:fd-count)] [held '()])
+         (define (run engine fuel)
+           (guard (ex [(and (who-condition? ex) (eq? (condition-who ex) 'https))
+                       (condition-message ex)])
+             (engine fuel (lambda (ticks result) result)
+               (lambda (engine) (set! held (cons engine held)) 'expired))))
+         (define (observe! result)
+           (unless (or (eq? result 'expired) (equal? result expected)
+                       (equal? result "HTTP scope has ended"))
+             (error 'https-test "unexpected native outcome" result expected))
+           (let ([after (test:fd-count)])
+             ;; Stop before leaked connections can clog the fixture, or a
+             ;; stale continuation can resume against released native memory.
+             (unless (equal? before after)
+               (error 'https-test "native descriptors changed" before after))))
+         (let ([completed (run (make-engine thunk) 1000000)])
+           (observe! completed)
+           (do ([fuel 1 (+ fuel 1)]) ((> fuel 1500))
+             (observe! (run (make-engine thunk) fuel)))
+           (let ([expired? (not (null? held))])
+             (for-each (lambda (engine) (observe! (run engine 1000000))) held)
+             (list (equal? completed expected) expired?)))))
 
      ;; The same integration table exercises both consumers and backends.
      ;; The fixture is itself an owned child; request cleanup must leave it
@@ -275,6 +305,32 @@
              (unless (and (string? line) (> (string-length line) 6) (string=? (substring line 0 6) "READY "))
                (error 'https-test "fixture server did not start" line))
              (set! server-port (string->number (substring line 6 (string-length line)))))
+           (check 'public-native-channel
+             (let* ([before (test:fd-count)] [channel (https:tcp-connect "127.0.0.1" server-port)])
+               ((https:channel-close! channel))
+               ((https:channel-close! channel))
+               (list (equal? before (test:fd-count))
+                     (test:raises? (lambda () ((https:channel-read! channel) #vu8() 0 0)))
+                     (test:raises? (lambda () ((https:channel-write! channel) #vu8())))))
+             '(#t #t #t))
+           (for-each
+             (lambda (kind)
+               (check (list 'native-connector-lifetime kind)
+                 (native-lifetime
+                   (lambda ()
+                     (case kind
+                       [(refused) (https:tcp-connect "127.0.0.1" 0)]
+                       [(tls) (https:tls-connect "127.0.0.1" server-port)]
+                       [(custom-tcp)
+                        (parameterize ([https:connector (lambda (host port) (https:tcp-connect host port))])
+                          (https:get (format "https://127.0.0.1:~a/plain" server-port)))]
+                       [else (https:get (local "/plain"))]))
+                   (case kind
+                     [(refused) "cannot connect to 127.0.0.1:0"]
+                     [(tls) "TLS handshake with 127.0.0.1 failed"]
+                     [else "hello world"]))
+                 '(#t #t)))
+             '(refused get custom-tcp tls))
            (for-each
              (lambda (backend)
                (let ([resources (list (test:child-pids) (test:fd-count))])
