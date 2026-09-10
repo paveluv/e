@@ -96,14 +96,17 @@
        ;; slot is #f whenever the complete chain since the basis is included.
        ;; One holding the facts too (facts) gets only the computed modified
        ;; flag; stored facts change through events it already receives.
-       (let* ([state (store:state (car args) (cadr args))]
-              [mode (and (= (length args) 3) (caddr args))]
-              [delta? (and state mode (= (length state) 5) (list-ref state 4))])
+       (let* ([mode (and (= (length args) 3) (caddr args))]
+              [complete? (lambda (state) (and state (= (length state) 5) (list-ref state 4)))]
+              [state (let ([selected (store:state (car args) (cadr args)
+                                       (if (eq? mode 'facts) '(modified) #t))])
+                       ;; A broken chain needs the whole state after all.
+                       (if (and (eq? mode 'facts) (not (complete? selected)))
+                           (store:state (car args) (cadr args))
+                           selected))])
          (datum:copy
-           (if delta?
-               (list (car state) #f (caddr state)
-                 (if (eq? mode 'facts) (list (assq 'modified (cadddr state))) (cadddr state))
-                 (list-ref state 4))
+           (if (and mode (complete? state))
+               (list (car state) #f (caddr state) (cadddr state) (list-ref state 4))
                state)
            text:delta->datum))]
       [(eval) (arity 1) (policy:session-eval! session (car args))]
@@ -119,17 +122,19 @@
        (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
          (error 'wire "expected a nonnegative basis revision"))
        ;; The receipt's chain runs from the basis through the accepted edit.
-       ;; A client holding text at the basis asks to omit the text slot.
-       (let-values ([(status detail)
-                     (apply policy:session-edit! session (car args) (cadr args)
-                       (text:datum->span (caddr args)) (cadddr args)
-                       (if (>= (length args) 5) (list (list-ref args 4)) '()))])
-         (list status
-           (if (and (eq? status 'applied) (= (length args) 6) (list-ref args 5))
-               ;; The only fact an edit changes by itself rides along, so the
-               ;; client's facts stay current without another read.
-               (list (car detail) #f (caddr detail) (store:property (car args) 'modified #f))
-               detail)))]
+       ;; A client holding text at the basis asks to omit the text slot; the
+       ;; policy then never copies the text it would drop.
+       (let* ([delta? (and (= (length args) 6) (list-ref args 5))]
+              [context (if (>= (length args) 5) (list-ref args 4) #f)])
+         (let-values ([(status detail)
+                       (policy:session-edit! session (car args) (cadr args)
+                         (text:datum->span (caddr args)) (cadddr args) context delta?)])
+           (list status
+             (if (and (eq? status 'applied) delta?)
+                 ;; The only fact an edit changes by itself rides along, so the
+                 ;; client's facts stay current without another read.
+                 (list (car detail) #f (caddr detail) (store:property (car args) 'modified #f))
+                 detail))))]
       [(undo)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional undo scope"))
        (call-with-values (lambda () (apply policy:session-undo! session args)) list)]

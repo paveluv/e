@@ -449,23 +449,34 @@
       [(id basis)
        (locked (lambda () (snapshot-values (buffer-of 'snapshot-state id) basis)))]))
 
-  (define (state id basis)
+  (define state
     ;; Remote adoption needs existence/name and the snapshot from one read.
     ;; Own mutable metadata here; the caller serializes after unlocking.
-    (locked
-      (lambda ()
-        (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
-          (and b (cons (string-copy (buffer-label b))
-                   (call-with-values (lambda () (snapshot-values b basis)) list)))))))
+    ;; The optional selector names the facts wanted: #t for all, or a list
+    ;; of keys, so a reader that holds the facts pays only for the
+    ;; computed ones instead of a copy of the file baseline per read.
+    (case-lambda
+      [(id basis) (state id basis #t)]
+      [(id basis facts)
+       (locked
+         (lambda ()
+           (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
+             (and b (cons (string-copy (buffer-label b))
+                      (call-with-values (lambda () (snapshot-values b basis facts)) list))))))]))
 
-  (define (snapshot-values b basis)
+  (define (snapshot-values b basis . selector)
     ;; Caller holds the lock. Text/facts and the optional anchor chain must
     ;; describe the same commit, including when notifications are pending.
-    (if basis
-        (let ([entries (entries-since b basis)])
-          (values (buffer-text b) (buffer-revision b) (property-data b)
-            (and entries (map change-data entries))))
-        (values (buffer-text b) (buffer-revision b) (property-data b))))
+    (let ([facts (if (or (null? selector) (eq? (car selector) #t))
+                     (property-data b)
+                     (map datum:copy
+                          (filter (lambda (cell) (memq (car cell) (car selector)))
+                                  (current-properties b))))])
+      (if basis
+          (let ([entries (entries-since b basis)])
+            (values (buffer-text b) (buffer-revision b) facts
+              (and entries (map change-data entries))))
+          (values (buffer-text b) (buffer-revision b) facts))))
 
   (define (snapshot-since id basis)
     ;; -> (values text revision changes), from one read.  Changes are

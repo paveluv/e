@@ -237,19 +237,28 @@
                         (if (eq? status 'applied) (car detail) detail)))
           (values status (if (eq? status 'applied) (datum:copy detail text:delta->datum) detail)))))
 
-  (define (session-edit! s id basis span lines . context)
+  (define (session-edit! s id basis span lines . options)
     (call-as-session s
       (lambda ()
         ;; One owned plain receipt (revision text changes), ending at this
         ;; commit. Optional grouping/undo/commit facts use the store context.
         ;; Own the span/lines too: the pure store shares immutable inputs.
         ;; The connection never supplies write access; the session owns it.
-        (unless (<= (length context) 1) (error 'session-edit! "expected one edit context"))
-        (session-mutate! s 'edit id
-          (lambda (actor access)
-            (store:edit-with-snapshot! actor id basis
-              (text:datum->span (text:span->datum span)) (datum:copy lines)
-              (and (pair? context) (datum:copy (car context))) access))))))
+        ;; A true delta flag after the context drops the receipt's text before
+        ;; the ownership copy: a caller holding the text never pays for it.
+        (unless (<= (length options) 2) (error 'session-edit! "expected an edit context and delta flag"))
+        (let ([context (and (pair? options) (car options))]
+              [delta? (and (= (length options) 2) (cadr options))])
+          (session-mutate! s 'edit id
+            (lambda (actor access)
+              (let-values ([(status detail)
+                            (store:edit-with-snapshot! actor id basis
+                              (text:datum->span (text:span->datum span)) (datum:copy lines)
+                              (and context (datum:copy context)) access)])
+                (values status
+                  (if (and delta? (eq? status 'applied))
+                      (list (car detail) #f (caddr detail))
+                      detail)))))))))
 
   (define (session-history-step! s id direction scope)
     (call-as-session s

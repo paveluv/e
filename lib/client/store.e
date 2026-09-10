@@ -141,26 +141,32 @@
   (define (visible? actor id)
     (and (exists? id) (identity:in-audience? actor (property id 'audience 'all))))
 
+  (define (capture id basis)
+    ;; -> (label text revision facts changes): explicit captures (file
+    ;; checks and adoption) contact the authority. A catch-up from a basis
+    ;; the fresh cache still covers is already coherent: the chain is
+    ;; complete until a notice says otherwise. Facts are shared here;
+    ;; readers that hand them out copy them.
+    (let* ([old (entry id)]
+           [chain (and basis old (not (hashtable-contains? stale id))
+                       (<= basis (caddr old)) (chain-since id basis (caddr old)))])
+      (if chain
+          (append old (list chain))
+          (or (read-state id basis) (error 'snapshot-state "no buffer" id)))))
   (define snapshot-state
     (case-lambda
       [(id) (snapshot-state id #f)]
       [(id basis)
-       ;; Explicit captures (file checks and adoption) contact the
-       ;; authority. A catch-up from a basis the fresh cache still covers is
-       ;; already coherent: the chain is complete until a notice says otherwise.
-       (let* ([old (entry id)]
-              [chain (and basis old (not (hashtable-contains? stale id))
-                          (<= basis (caddr old)) (chain-since id basis (caddr old)))])
-         (if chain
-             (values (cadr old) (caddr old) (datum:copy (cadddr old)) chain)
-             (let ([state (or (read-state id basis) (error 'snapshot-state "no buffer" id))])
-               (if basis
-                   (values (cadr state) (caddr state) (datum:copy (cadddr state)) (list-ref state 4))
-                   (values (cadr state) (caddr state) (datum:copy (cadddr state)))))))]))
+       (let ([state (capture id basis)])
+         (if basis
+             (values (cadr state) (caddr state) (datum:copy (cadddr state)) (list-ref state 4))
+             (values (cadr state) (caddr state) (datum:copy (cadddr state)))))]))
   (define (snapshot id)
-    (let-values ([(text revision facts) (snapshot-state id)]) (values text revision)))
+    (let ([state (capture id #f)]) (values (cadr state) (caddr state))))
   (define (snapshot-since id basis)
-    (let-values ([(text revision facts changes) (snapshot-state id basis)]) (values text revision changes)))
+    ;; The per-frame catch-up: no facts copy, which would include a file
+    ;; baseline the size of the buffer.
+    (let ([state (capture id basis)]) (values (cadr state) (caddr state) (list-ref state 4))))
   (define (revision id) (caddr (required id)))
   (define (line-count id) (vector-length (cadr (required id))))
   (define (line id row) (vector-ref (cadr (required id)) row))
