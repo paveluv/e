@@ -257,7 +257,8 @@
                           (vector->list (vt:emulator-screen (vector-ref head 2)))
                           (let ([text (vector-ref head 3)])
                             (string:tail text (max 0 (- (string-length text) 1200)))))])
-         (test:await label (lambda () (pump-head! head) (predicate)))))
+         ;; Every live PTY needs a reader, even while another head is active.
+         (test:await label (lambda () (for-each pump-head! heads) (predicate)))))
      (define (head-read head expression . prefix)
        (when (file-exists? probe) (delete-file probe))
        (head-send! head (format "~a\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
@@ -921,6 +922,42 @@
                          (save-file! "o" unreadable) (save-file! "o" file)
                          (save-file! "m" base) (save-file! "m" disk)
                          (save-as "y" disk) (save-as "y" file))))
+
+                   ;; No common ancestor exists when a newly visited path
+                   ;; appears on disk before first save. Keep both valid exits.
+                   (for-each
+                     (lambda (baseline)
+                       (let* ([path (string-append root "/missing-save.txt")]
+                              [target (head-read a
+                                        `(begin (visit-file! ,path) (insert-text! "mine")
+                                           (when (not ',baseline) (head:buffer-base-set! (current-buffer) #f))
+                                           (head:buffer-store-id (current-buffer))))])
+                         (write-text path "disk\n")
+                         (head-send! a (format "\x1b;xsave-file! ~s\r" path))
+                         (head-wait 'no-merge-ancestor a (lambda () (head-sees? a "no saved baseline")))
+                         (let* ([choices? (not (head-sees? a "merge"))]
+                                [before (rpc head 'snapshot target)] [history (rpc head 'history target)]
+                                [cancelled
+                                 (begin
+                                   (head-read a '#t "mc")
+                                   (list (equal? before (rpc head 'snapshot target))
+                                         (equal? history (rpc head 'history target))
+                                         (call-with-input-file path get-string-all)))])
+                           (head-send! a (format "\x1b;xsave-file! ~s\r" path))
+                           (head-wait 'review-no-ancestor-again a (lambda () (head-sees? a "no saved baseline")))
+                           (head-send! a "o")
+                           (test:check (list baseline 'missing-ancestor-keeps-cancel-and-overwrite)
+                             (list choices? cancelled
+                                   (head-read a '(let ([b (current-buffer)])
+                                                   (list (head:buffer-lines b) (head:buffer-base b)
+                                                         (head:buffer-modified b))))
+                                   (equal? history (rpc head 'history target))
+                                   (call-with-input-file path get-string-all))
+                             '(#t (#t #t "disk\n") (#("mine") "mine\n" #f) #t "mine\n")))
+                         (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                         (rpc head 'delete target)
+                         (delete-file path)))
+                     '(absent #f))
 
                    (let ([doomed (rpc head 'create "kill review" '("work"))])
                      (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,doomed)) #t))

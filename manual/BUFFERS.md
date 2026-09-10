@@ -149,6 +149,10 @@ that reread and preserves the newer work and history. Reopen the file to
 review again. This applies in standalone and daemon/attach sessions.
 
 Saving an externally changed file offers `overwrite`, `merge`, or `cancel`.
+If the file did not exist when visited and appeared before the first save,
+there is no saved merge baseline: the prompt offers `overwrite` or `cancel`.
+An explicitly unset baseline follows the same rule; a loaded empty file has
+a valid empty baseline and can be merged.
 The disk comparison runs after pre-save hooks, so a hook's write is included
 in that decision. e rechecks the disk contents after a file prompt. Changes
 to those contents or the buffer's file/baseline cancel the choice; run the

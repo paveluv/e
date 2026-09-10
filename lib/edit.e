@@ -984,6 +984,8 @@
     (let-values ([(text revision facts) (head:buffer-state b)])
       (check-file-review! facts review)
       (check-file-review! facts (list (cons 'file path)))
+      (unless (cond [(assq 'base facts) => cdr] [else #f])
+        (refuse-file! "Cannot merge: this buffer has no saved disk baseline."))
       (let ([disk (review-disk! path disk)]
             [source (head:edit-basis b)] [wanted (point)])
         (let-values ([(merged merged-trailing conflicts report-lines)
@@ -1065,11 +1067,14 @@
     (> (buffer-conflict-count b) 0))
 
   (define (stale-save! b path disk review write!)
+    (define merge?
+      (exists (lambda (entry) (and (pair? entry) (eq? (car entry) 'base) (cdr entry))) review))
     (let ask ()
       (let* ([k (prompt:key!
-                  (format "~a changed on disk: o)verwrite, m)erge, c)ancel"
-                          (file:base-name path))
-                  "omc")]
+                  (format "~a changed on disk: ~a" (file:base-name path)
+                    (if merge? "o)verwrite, m)erge, c)ancel"
+                        "no saved baseline; o)verwrite, c)ancel"))
+                  (if merge? "omc" "oc"))]
              [n (and k (char->integer k))])
         (cond
           [(memv n '(111 79)) (write! review)]                ; o
