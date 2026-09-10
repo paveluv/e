@@ -15,6 +15,7 @@
      (import (prefix (paint) paint:)
              (prefix (style) style:)
              (prefix (head) head:)
+             (prefix (echo) echo:)
              (prefix (kernel) kernel:)
              (prefix (test) test:)
              (prefix (only (sys) terminal-output-port) sys:)
@@ -242,5 +243,76 @@
      (kernel:retract-module! 'paint-escape-test)
      (check 'unwound-frame-forces-repaint
             (contains? (painted paint:redraw!) (current-top-line)) #t)
+
+     ;; A bell uses the ordinary nested input pump for both frames. Retrigger
+     ;; it at the old expiry, before painting, including a burst of bad keys.
+     ;; One watchdog bounds the fixture; it never paints or changes UI state.
+     (define (flashing? frame)
+       (contains? frame (string-append "\x1b;[7m" (make-string 80 #\space) "\x1b;[0m")))
+     (call/cc
+       (lambda (done)
+         (head:run-on-main! (lambda () (done #t)))
+         (parameterize ([head:in-main-pump #t]) (head:read-key-event))))
+     (echo:set-text! "Question survives the bell")
+     (let ([frames '()] [prepared 0] [owner (get-thread-id)]
+           [painters (test:recorder)] [timed-out? (test:gate)])
+       (parameterize ([kernel:registering-module 'paint-bell-test])
+         (paint:add-highlighter! (lambda () (painters (get-thread-id)) '()))
+         (head:add-pre-redraw-hook!
+           (lambda ()
+             (set! prepared (+ prepared 1))
+             (when (= prepared 2)
+               (do ([i 0 (+ i 1)]) ((= i 100)) (paint:visual-bell!))))))
+       (let ([stop (test:worker
+                     (lambda ()
+                       (sleep (make-time 'time-duration 0 1))
+                       (timed-out? #t)
+                       (head:wake-main!)))])
+         (dynamic-wind
+           (lambda () (paint:set-screen-live! #t))
+           (lambda ()
+             (let ([result
+                    (call/cc
+                      (lambda (done)
+                        (head:set-frame-hook!
+                          (lambda ()
+                            (when (timed-out?) (done 'timed-out))
+                            (let ([frame (painted paint:redraw!)])
+                              (set! frames (cons frame frames))
+                              (unless (flashing? frame) (done 'expired)))))
+                        (paint:visual-bell!)
+                        (head:read-key-event #f)))])
+               (check 'bell-retrigger-and-expiry-share-the-owning-pump
+                 (list result (map flashing? (reverse frames)) prepared (painters))
+                 (list 'expired '(#t #t #t #f) 4 (make-list 4 owner)))
+               (check 'bell-frames-restore-the-question-with-synchronized-output
+                 (list (map sync-events frames) (echo:text)
+                   (contains? (car frames) "Question survives the bell"))
+                 (list (make-list 4 '(begin end)) "Question survives the bell" #t))))
+           (lambda ()
+             (paint:set-screen-live! #f)
+             (head:set-frame-hook! void)
+             (kernel:retract-module! 'paint-bell-test)
+             (stop)))))
+
+     ;; Arming never writes to a captured display. An inactive screen ignores
+     ;; it; retirement discards it; even a direct frame expires an overdue bell.
+     (check 'bell-lifetime-without-an-input-pump
+       (map
+         (lambda (state)
+           (paint:set-screen-live! (not (eq? state 'inactive)))
+           (let ([old-display (open-output-string)])
+             (parameterize ([sys:terminal-output-port old-display]) (paint:visual-bell!))
+             (when (eq? state 'retired)
+               (paint:set-screen-live! #f)
+               (paint:set-screen-live! #t))
+             (let ([frame (and (not (eq? state 'expired)) (painted paint:redraw!))])
+               (sleep (make-time 'time-duration 75000000 0))
+               (let ([frame (or frame (painted paint:redraw!))])
+                 (paint:set-screen-live! #f)
+                 (list (get-output-string old-display) (flashing? frame)
+                   (sync-events frame) (contains? frame "Question survives the bell"))))))
+         '(inactive retired expired))
+       (make-list 3 '("" #f (begin end) #t)))
 
      (test:finish! 'paint)))

@@ -366,8 +366,8 @@
   (define deferred '())          ; thunks posted during a nested pump
 
   ;; Main-thread presentation state: each frame derives its next deadline
-  ;; anew. Providers request only still-live work from their pre-redraw hook,
-  ;; so expiry, eviction and module replacement need no alarm cancellation.
+  ;; anew. Providers request only still-live work while preparing or painting
+  ;; a frame, so expiry, eviction and replacement need no alarm cancellation.
   (define frame-deadline #f)
 
   (define (request-frame-at! deadline)

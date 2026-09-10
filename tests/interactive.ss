@@ -102,6 +102,24 @@
      ;; -- start the editor and open a nested terminal ---------------------
      (wait-for! 'editor-starts
                 (lambda () (find-cell "*scratch*")) 30000)
+
+     ;; Invalid single-key input flashes the echo area, then restores the
+     ;; question while its nested pump remains idle. Inspect the transcript
+     ;; too: the brief flash can start and end between two polling passes.
+     (send! "\x1b;xlist (prompt:key! \"Bell check: y)es or n)o\" \"yn\") (quote bell-answer)\r")
+     (wait-for! 'single-key-question-opens
+       (lambda () (find-cell "Bell check: yes or no")) 5000)
+     (set! transcript '())
+     (send! "x")
+     (wait-for! 'invalid-question-key-flashes-and-restores-without-input
+       (lambda ()
+         (and (contains? (list->string (reverse transcript))
+                (string-append "\x1b;[7m" (make-string 80 #\space) "\x1b;[0m"))
+              (find-cell "Bell check: yes or no"))) 5000)
+     (send! "n")
+     (wait-for! 'bell-leaves-the-question-answerable
+       (lambda () (find-cell "(#\\n bell-answer)")) 5000)
+
      (send! "\x3;t")                    ; C-c t
      (wait-for! 'nested-terminal-opens
                 (lambda () (find-cell "capturing input")) 10000)

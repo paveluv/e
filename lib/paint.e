@@ -45,8 +45,8 @@
           (only (chezscheme)
                 box void format make-parameter make-weak-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! remq getenv
-                make-mutex with-mutex unbox set-box! parameterize
-                fork-thread sleep make-time)
+                make-mutex with-mutex unbox set-box!
+                current-time add-duration make-time time<?)
           (prefix (only (sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:)
           (prefix (style) style:)
           (prefix (string) string:)
@@ -800,13 +800,17 @@
   (define (screen-cols) cols)
   (define (set-screen-cols! n) (set! cols n))
   (define (mark-size-dirty!) (set! size-dirty? #t))
-  (define (set-screen-live! on?) (set! the-screen-live? on?))
+  (define (set-screen-live! on?)
+    (set! the-screen-live? on?)
+    (unless on?
+      (set! visual-bell-deadline #f)
+      (invalidate-screen-cache!)))
   (define (screen-live?) the-screen-live?)
   (define (reset-cursor-style!)
     ;; on the way out: the terminal's default cursor, unless it already shows
     (unless (string=? cursor-style-shown "\x1b;[0 q")
       (ansi "\x1b;[0 q")))
-  (define the-visual-bell-active? #f)
+  (define visual-bell-deadline #f)
   (define (current-lines) (head:buffer-lines (head:window-buffer (head:current))))
 
   ;;; Terminal size ---------------------------------------------------------
@@ -1297,7 +1301,7 @@
           (max 0 (min (echo:scroll) (- total (max live 1))))))))
 
   (define (paint-visual-bell!)
-    (when the-visual-bell-active?
+    (when visual-bell-deadline
       (let loop ([row (- rows (echo:height))])
         (when (< row rows)
           (goto (+ row 1) 1)
@@ -1395,14 +1399,19 @@
 
   ;;; The frame -----------------------------------------------------------------------
 
-  ;; A frame is one indivisible transaction on the terminal -- the
-  ;; cache and the output happen under the redraw lock, since PTY
-  ;; readers and the bell's timer request frames while the main thread
-  ;; waits for input.  Anyone else who writes to the terminal (the
-  ;; clipboard's OSC 52) takes the lock too.
+  ;; The head's pump owns painting. The redraw lock keeps its cache and
+  ;; output together with other terminal writes (the clipboard's OSC 52).
   (define redraw-lock (make-mutex))
 
   (define (paint-frame!)
+    ;; Refresh here so direct prompt frames share the same bell lifetime.
+    ;; The head derives its next wait from the live work in each frame.
+    (when visual-bell-deadline
+      (if (time<? (current-time 'time-monotonic) visual-bell-deadline)
+          (head:request-frame-at! visual-bell-deadline)
+          (begin
+            (set! visual-bell-deadline #f)
+            (invalidate-screen-cache!))))
     (terminal-size!)
     (update-echo-geometry!)
     ;; window geometry is otherwise set while painting, one frame
@@ -1472,31 +1481,12 @@
       (update-terminal-title!)
       (redraw-frame!)))
 
-  (define visual-bell-generation 0)
-
   (define (visual-bell!)
-    ;; Arm an overlay but let the caller's ordinary frame paint it. A PTY
-    ;; reader invokes this between decoding output and its scheduled redraw;
-    ;; starting a nested frame here would stop it at BEL before the diagnostic
-    ;; bytes which commonly follow.
+    ;; Main-thread presentation state: a retrigger replaces the deadline.
+    ;; Request the first frame too; an invalid prompt key otherwise goes
+    ;; straight back to waiting. Expiry uses that same pump, without a worker.
     (when the-screen-live?
-      (let ([display (sys:terminal-output-port)]
-            [generation
-             (with-mutex redraw-lock
-               (set! visual-bell-generation (+ visual-bell-generation 1))
-               (set! the-visual-bell-active? #t)
-               visual-bell-generation)])
-        (fork-thread
-          (lambda ()
-            (sleep (make-time 'time-duration 50000000 0))
-            (when the-screen-live?
-              (parameterize ([sys:terminal-output-port display])
-                (with-mutex redraw-lock
-                  ;; A newer bell owns the deadline and must not be cleared by
-                  ;; an older animation's expiry.
-                  (when (= generation visual-bell-generation)
-                    (set! the-visual-bell-active? #f)
-                    (invalidate-screen-cache!)
-                    (update-terminal-title!)
-                    (redraw-frame!))))))))))
+      (set! visual-bell-deadline
+        (add-duration (current-time 'time-monotonic) (make-time 'time-duration 50000000 0)))
+      (head:wake-main!)))
 )

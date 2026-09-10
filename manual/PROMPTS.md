@@ -18,6 +18,11 @@ Prompt input supports the familiar bindings:
 | `C-g`, Escape | Cancel |
 | Return | Accept |
 
+Single-key questions, such as yes/no choices, briefly flash the echo area
+when a key is not one of the allowed answers. The question returns after
+about 50 ms without another keypress; repeated invalid keys extend the flash.
+The question stays active until you answer or cancel it.
+
 Prompt input wider than the screen wraps onto continuation rows marked with
 `\`. Continuations align beneath the prompt text. The echo area grows by
 shrinking windows to their configured minimum; after eight prompt rows, the
