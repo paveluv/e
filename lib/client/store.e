@@ -1,5 +1,8 @@
 ;; Client implementation of the store seam. Only immutable text and owned
 ;; metadata are cached; the base admits all writes and computes all history.
+;; A change notice marks an entry stale; the next read asks the base for the
+;; chain since the cached revision and applies it, so ordinary edits cost a
+;; delta on the wire, never the buffer's text.
 (library (store)
   (export create! visit! delete! discard! prepare-close reset! rename! buffer-list exists? visible? buffer-name find-named find-file
           snapshot snapshot-state snapshot-since revision line-count line extract
@@ -13,15 +16,27 @@
 
   (define validate-properties property:validate)
   (define validate-edit-context property:edit-context)
+  ;; id -> (label text revision facts), or #f for a buffer known to be absent
   (define cache (make-eqv-hashtable))
+  ;; ids whose cached entry may lag the base: text (edits only, so only the
+  ;; computed modified flag among the facts) or facts (anything)
+  (define stale (make-eqv-hashtable))
   (define watching? #f)
 
-  (define (forget! pending)
-    (if pending (for-each (lambda (entry) (hashtable-delete! cache (car entry))) pending)
-        (hashtable-clear! cache)))
+  (define (entry id) (and (hashtable-contains? cache id) (hashtable-ref cache id #f)))
+  (define (stale! id level)
+    (when (and (hashtable-contains? cache id)
+               (not (eq? (hashtable-ref stale id #f) 'facts)))
+      (hashtable-set! stale id level)))
+  (define (mark-stale! pending)
+    ;; A batch names changed ids, each flagged when its facts or lifecycle
+    ;; changed; #f means anything may have changed.
+    (if pending
+        (for-each (lambda (change) (stale! (car change) (if (cdr change) 'facts 'text))) pending)
+        (vector-for-each (lambda (id) (stale! id 'facts)) (hashtable-keys cache))))
   (define invalidation
     (kernel:call-with-runtime-registrations
-      (lambda () (client:subscribe! 'changed forget!))))
+      (lambda () (client:subscribe! 'changed mark-stale!))))
 
   (define (watch! wake)
     (client:set-wake! wake)
@@ -31,16 +46,56 @@
 
   (define (decode-changes changes)
     (and changes
-         (map (lambda (entry) (list (car entry) (cadr entry) (text:datum->delta (caddr entry)))) changes)))
+         (map (lambda (change) (list (car change) (cadr change) (text:datum->delta (caddr change)))) changes)))
+
+  (define (apply-chain text have changes)
+    ;; The chain is contiguous and ends at the base's current text; entries
+    ;; the cache already holds are skipped.
+    (fold-left (lambda (text change)
+                 (if (> (car change) have)
+                     (let-values ([(next delta)
+                                   (text:apply-edit text (text:delta-span (caddr change))
+                                                    (text:delta-inserted (caddr change)))])
+                       next)
+                     text))
+               text changes))
 
   (define (read-state id basis)
-    (let ([state (client:request 'state id basis)])
-      (hashtable-set! cache id (and state (list-head state 4)))
-      state))
+    ;; Refresh the cache from the authority and return
+    ;; (label text revision facts changes) or #f. Changes are the decoded
+    ;; chain since the caller's basis, #f when it is not continuous.
+    ;; With cached text the request starts at the cached revision (or the
+    ;; caller's earlier basis) and asks for a delta reply; with cached facts
+    ;; too, only the modified flag comes back and merges into them.
+    (let* ([old (entry id)]
+           [have (and old (caddr old))]
+           [ask (cond [(not have) basis] [(not basis) have] [else (min have basis)])]
+           [mode (and have (if (eq? (hashtable-ref stale id 'text) 'facts) #t 'facts))]
+           [state (client:request 'state id ask mode)])
+      (hashtable-delete! stale id)
+      (cond
+        [(not state) (hashtable-set! cache id #f) #f]
+        [else
+         (let* ([changes (and ask (decode-changes (list-ref state 4)))]
+                [text (or (cadr state) (apply-chain (cadr old) have changes))]
+                [revision (caddr state)]
+                [facts (if (and (eq? mode 'facts) (not (cadr state)))
+                           (append (cadddr state)
+                                   (remp (lambda (fact) (assq (car fact) (cadddr state))) (cadddr old)))
+                           (cadddr state))])
+           (hashtable-set! cache id (list (car state) text revision facts))
+           (list (car state) text revision facts
+                 (and basis changes (<= basis revision)
+                      (filter (lambda (change) (> (car change) basis)) changes))))])))
   (define (cached id)
-    (if (hashtable-contains? cache id) (hashtable-ref cache id #f) (read-state id #f)))
+    (if (and (hashtable-contains? cache id) (not (hashtable-contains? stale id)))
+        (hashtable-ref cache id #f)
+        (and (read-state id #f) (hashtable-ref cache id #f))))
   (define (required id)
     (or (cached id) (error 'store "no buffer" id)))
+  (define (forget! id)
+    (hashtable-delete! cache id)
+    (hashtable-delete! stale id))
   (define (buffer-list) (client:request 'buffers))
   (define (prepare-close)
     (error 'prepare-close "an attached head does not own the base lifetime"))
@@ -50,14 +105,14 @@
     (find (lambda (id) (equal? (buffer-name id) name)) (buffer-list)))
   (define (find-file path)
     (let ([id (client:request 'find-file path)])
-      (when id (hashtable-delete! cache id))
+      (when id (forget! id))
       id))
   (define (properties id) (datum:copy (cadddr (required id))))
   (define property
     (case-lambda
       [(id key) (property id key #f)]
       [(id key fallback)
-       (cond [(assq key (cadddr (required id))) => (lambda (entry) (datum:copy (cdr entry)))]
+       (cond [(assq key (cadddr (required id))) => (lambda (fact) (datum:copy (cdr fact)))]
          [else fallback])]))
   (define (visible? actor id)
     (and (exists? id) (identity:in-audience? actor (property id 'audience 'all))))
@@ -70,8 +125,7 @@
        ;; authority. Repeated facts in painting use the invalidated cache.
        (let ([state (or (read-state id basis) (error 'snapshot-state "no buffer" id))])
          (if basis
-             (values (cadr state) (caddr state) (datum:copy (cadddr state))
-               (decode-changes (list-ref state 4)))
+             (values (cadr state) (caddr state) (datum:copy (cadddr state)) (list-ref state 4))
              (values (cadr state) (caddr state) (datum:copy (cadddr state)))))]))
   (define (snapshot id)
     (let-values ([(text revision facts) (snapshot-state id)]) (values text revision)))
@@ -87,14 +141,15 @@
   (define (mutate actor id operation args)
     (check-actor actor)
     (let ([result (apply client:request operation id args)])
-      (hashtable-delete! cache id) result))
+      (stale! id 'facts)
+      result))
   (define (create! actor name lines . facts)
     (check-actor actor)
     (apply client:request 'create name lines facts))
   (define (visit! actor name lines facts)
     (check-actor actor)
     (let ([result (client:request 'visit name lines facts)])
-      (hashtable-delete! cache (car result))
+      (forget! (car result))
       (apply values result)))
   (define (delete! actor id) (mutate actor id 'delete '()) (void))
   (define (discard! actor id revision facts) (mutate actor id 'discard (list revision facts)))
@@ -106,14 +161,29 @@
   (define (set-property! actor id key value) (set-properties! actor id (list (cons key value))))
 
   (define (edit-with-snapshot! actor id basis span replacement . options)
+    ;; Ask for a delta receipt when the cache holds text at or past the
+    ;; basis, then advance the cached text through the receipt's chain.
+    ;; The cache stays stale for facts the commit may have changed.
     (unless (<= (length options) 2) (error 'edit! "expected context and write access"))
+    (check-actor actor)
     (let* ([context (and (pair? options) (car options))]
-           [result (mutate actor id 'edit
-                     (list basis (text:span->datum span) replacement context))]
+           [old (entry id)]
+           [have (and old (caddr old))]
+           [delta? (and have (>= have basis))]
+           [result (apply client:request 'edit id basis (text:span->datum span) replacement context
+                     (if delta? '(#t) '()))]
            [status (car result)] [detail (cadr result)])
+      (stale! id (if (and context (>= (length context) 3)
+                          (or (pair? (caddr context)) (and (>= (length context) 4) (pair? (cadddr context)))))
+                     'facts 'text))
       (values status
         (if (eq? status 'applied)
-            (list (car detail) (cadr detail) (decode-changes (caddr detail))) detail))))
+            (let* ([revision (car detail)]
+                   [changes (decode-changes (caddr detail))]
+                   [text (or (cadr detail) (apply-chain (cadr old) have changes))])
+              (when old (hashtable-set! cache id (list (car old) text revision (cadddr old))))
+              (list revision text changes))
+            detail))))
   (define (edit! actor id basis span replacement . options)
     (let-values ([(status detail) (apply edit-with-snapshot! actor id basis span replacement options)])
       (values status (if (eq? status 'applied) (car detail) detail))))

@@ -378,7 +378,8 @@
                    (request 4 edit 1 0 (0 0 -1 0) ("x")) (request 5 edit 1 0.5 (0 0 0 0) ("x"))
                    (request 6 undo 1 everyone)
                    (request 7 edit 1 0 (0 0 0 0) ("x") (g "invalid" ((trailing . #t)) ((trailing . #f))))
-                   (request 8 edit 1 0 (0 0 0 0) ("x") #f #f)
+                   (request 8 edit 1 0 (0 0 0 0) ("x") #f #f #f)
+                   (request 8 edit 1 0 (0 0 0 0) ("x") #f delta)
                    (request 9 redo 1 all) (request 10 snapshot 1 #f)
                    (request 11 snapshot 1 -1) (request 12 watch extra)
                    (request 13 checkpoint (head "another") stolen)
@@ -393,7 +394,7 @@
                    (request 28 find-file #f) (request 29 visit "file" ("seed") ())
                    (request 30 visit "file" ("seed") ((file . #f)))))
                '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 error)
-                 (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error)
+                 (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error) (reply 8 error)
                  (reply 9 error) (reply 10 error) (reply 11 error) (reply 12 error) (reply 13 error)
                  (reply 14 error) (reply 15 error) (reply 16 error) (reply 17 error)
                  (reply 18 error) (reply 19 error) (reply 20 error) (reply 21 error)
@@ -505,6 +506,15 @@
                    writers)
                  (make-list 2 '(#("HELLO λ!") 2 (trailing . #f) (saved-stamp . "observed")
                                 #("HELLO λ!") ((agent "first") (agent "second")) #t)))
+               (test:check 'wire-delta-replies-omit-text-only-with-a-complete-chain
+                 (let ([delta (rpc (car writers) 'state 1 0 #t)]
+                       [plain (rpc (car writers) 'state 1 0)]
+                       [future (rpc (car writers) 'state 1 5 #t)])
+                   (list (cadr delta) (apply-changes '#("hello λ") (list-ref delta 4)) (caddr delta)
+                         (cadr plain) (cadr future) (list-ref future 4)
+                         (map car (cadddr (rpc (car writers) 'state 1 2 'facts)))
+                         (and (assq 'trailing (cadddr delta)) #t)))
+                 '(#f #("HELLO λ!") 2 #("HELLO λ!") #("HELLO λ!") #f (modified) #t))
                (test:check 'stale-and-permission-refusals-preserve-text
                  (list (rpc second 'edit 1 0 '(0 1 0 3) '("bad"))
                        (rpc agent 'edit 1 2 '(0 0 0 0) '("bad"))
@@ -644,6 +654,15 @@
                    (test:check 'wire-state-keeps-name-and-facts-coherent-through-deletion
                      (list results (rpc head 'state target #f)) '((#f #f) #f)))
                  (sys:close-connection! writer))
+               (let ([id (rpc head 'create "delta receipt" '("ab"))])
+                 (test:check 'wire-edit-receipts-omit-text-on-request
+                   (let ([full (rpc head 'edit id 0 '(0 1 0 1) '("X"))]
+                         [delta (rpc head 'edit id 1 '(0 3 0 3) '("Y") #f #t)])
+                     (list (car full) (cadr (cadr full)) (car delta) (cadr (cadr delta))
+                           (apply-changes '#("ab") (append (caddr (cadr full)) (caddr (cadr delta))))
+                           (car (rpc head 'snapshot id))))
+                   '(applied #("aXb") applied #f #("aXbY") #("aXbY")))
+                 (rpc head 'delete id))
                (let ([id (rpc head 'create "attached text" '("shared text") '((trailing . #t)))])
                  (write-forms (string-append root "/config.e")
                    `((main:set-startup-page! #f)

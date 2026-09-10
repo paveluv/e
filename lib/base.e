@@ -90,8 +90,22 @@
        (datum:copy (call-with-values (lambda () (apply store:snapshot-state args)) list)
          text:delta->datum)]
       [(state)
-       (arity 2)
-       (datum:copy (apply store:state args) text:delta->datum)]
+       (unless (and (<= 2 (length args) 3) (or (= (length args) 2) (memq (caddr args) '(#f #t facts))))
+         (error 'wire "expected buffer, basis and optional delta flag"))
+       ;; A client holding text at the basis asks for a delta reply: the text
+       ;; slot is #f whenever the complete chain since the basis is included.
+       ;; One holding the facts too (facts) gets only the computed modified
+       ;; flag; stored facts change through events it already receives.
+       (let* ([state (store:state (car args) (cadr args))]
+              [mode (and (= (length args) 3) (caddr args))]
+              [delta? (and state mode (= (length state) 5) (list-ref state 4))])
+         (datum:copy
+           (if delta?
+               (list (car state) #f (caddr state)
+                 (if (eq? mode 'facts) (list (assq 'modified (cadddr state))) (cadddr state))
+                 (list-ref state 4))
+               state)
+           text:delta->datum))]
       [(eval) (arity 1) (policy:session-eval! session (car args))]
       [(sessions) (control!) (arity 0) (policy:sessions)]
       [(revoke)
@@ -100,12 +114,20 @@
          (error 'wire "expected an agent identity"))
        (policy:revoke-actor! (car args))]
       [(edit)
-       (unless (<= 4 (length args) 5) (error 'wire "expected buffer, basis, span, lines and optional context"))
+       (unless (and (<= 4 (length args) 6) (or (< (length args) 6) (boolean? (list-ref args 5))))
+         (error 'wire "expected buffer, basis, span, lines, optional context and delta flag"))
        (unless (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))
          (error 'wire "expected a nonnegative basis revision"))
-       (call-with-values
-         (lambda () (apply policy:session-edit! session (car args) (cadr args)
-                      (text:datum->span (caddr args)) (cadddr args) (list-tail args 4))) list)]
+       ;; The receipt's chain runs from the basis through the accepted edit.
+       ;; A client holding text at the basis asks to omit the text slot.
+       (let-values ([(status detail)
+                     (apply policy:session-edit! session (car args) (cadr args)
+                       (text:datum->span (caddr args)) (cadddr args)
+                       (if (>= (length args) 5) (list (list-ref args 4)) '()))])
+         (list status
+           (if (and (eq? status 'applied) (= (length args) 6) (list-ref args 5))
+               (list (car detail) #f (caddr detail))
+               detail)))]
       [(undo)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional undo scope"))
        (call-with-values (lambda () (apply policy:session-undo! session args)) list)]
