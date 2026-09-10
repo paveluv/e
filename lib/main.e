@@ -355,6 +355,9 @@
           (unless (head:quitting?)
             (head:run-deferred!)
             (paint:redraw!)
+            ;; This head's own key may have changed the screen: publish
+            ;; at once. Wake frames (foreign edits) checkpoint at most once
+            ;; a second, from the frame hook.
             (when (eq? (startup:mode) 'attach) (head:checkpoint!))
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the

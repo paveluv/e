@@ -126,7 +126,9 @@
                        (if (>= (length args) 5) (list (list-ref args 4)) '()))])
          (list status
            (if (and (eq? status 'applied) (= (length args) 6) (list-ref args 5))
-               (list (car detail) #f (caddr detail))
+               ;; The only fact an edit changes by itself rides along, so the
+               ;; client's facts stay current without another read.
+               (list (car detail) #f (caddr detail) (store:property (car args) 'modified #f))
                detail)))]
       [(undo)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional undo scope"))

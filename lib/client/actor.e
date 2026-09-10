@@ -5,19 +5,26 @@
           current call-as identity? audience? in-audience? send! pending answer! checkpoint checkpoint!)
   (import (chezscheme)
           (prefix (client) client:) (prefix (identity) identity:)
-          (prefix (file) file:) (prefix (startup) startup:))
+          (prefix (file) file:) (prefix (startup) startup:) (prefix (datum) datum:))
   (define current identity:current)
   (define call-as identity:call-as)
   (define identity? identity:valid?)
   (define audience? identity:audience?)
   (define in-audience? identity:in-audience?)
+  ;; The head's open questions, read once per change: every delivered event
+  ;; (a question, a pending notice, an answer) may have changed them.
+  (define pending-known? #f)
+  (define pending-questions '())
+  (define (forget-pending!) (set! pending-known? #f))
   (define register!
     (case-lambda
       [(actor deliver!) (register! actor deliver! #f)]
       [(actor deliver! capabilities)
        (let ([identity (client:claim! actor (file:canonical (file:expand (startup:socket))))])
          (client:subscribe! 'event
-           (lambda (message) (call-as identity (lambda () (deliver! message)))))
+           (lambda (message)
+             (forget-pending!)
+             (call-as identity (lambda () (deliver! message)))))
          identity)]))
   (define (attached) (client:request 'actors))
   (define (describe actor) (find (lambda (entry) (equal? (car entry) actor)) (attached)))
@@ -43,8 +50,13 @@
   (define (send! to message) (client:request 'send to message))
   (define (pending actor)
     (unless (equal? actor (client:identity)) (error 'pending "a head reads its own questions"))
-    (client:request 'pending))
-  (define (answer! ticket answer) (client:request 'answer ticket answer))
+    (unless pending-known?
+      (set! pending-questions (client:request 'pending))
+      (set! pending-known? #t))
+    (datum:copy pending-questions))
+  (define (answer! ticket answer)
+    (forget-pending!)
+    (client:request 'answer ticket answer))
   (define (own-checkpoint actor . state)
     (unless (equal? actor (client:identity)) (error 'checkpoint "a head owns its own checkpoint"))
     (apply client:request 'checkpoint state))

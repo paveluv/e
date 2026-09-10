@@ -100,7 +100,8 @@
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme) keyboard-interrupt-handler
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
-                format remq cons* iota time-second current-time time? time-type time<? copy-time
+                format remq cons* iota time-second current-time time? time-type time<? time<=? copy-time
+                make-time add-duration
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
           (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
@@ -428,7 +429,7 @@
     (frame-hook)
     ;; Nested prompts can temporarily borrow windows. Only an outer pump
     ;; frame checkpoints the screen the user will return to.
-    (when (and (in-main-pump) (eq? (startup:mode) 'attach)) (checkpoint!)))
+    (when (and (in-main-pump) (eq? (startup:mode) 'attach)) (checkpoint! 'idle)))
 
   ;; The host's color scheme, learned from its DSR 997 reports (mode
   ;; 2031 subscribes to them at startup): #f until the host says, then
@@ -1370,7 +1371,8 @@
               (begin
                 (when advance?
                   (when deltas
-                    (for-each (lambda (entry) (rebase-buffer-positions! b (caddr entry))) deltas))
+                    (for-each (lambda (entry) (rebase-buffer-positions! b (caddr entry))) deltas)
+                    (rebase-published-marks! (buffer-store-id b) deltas revision))
                   (adopt-text! b text revision deltas))
                 (apply-placements! b placements)
                 (clamp-buffer-positions! b)
@@ -1467,6 +1469,29 @@
       (map (lambda (group)
              (if (eqv? (car group) id) (list id #f (caddr group)) group))
            published-marks)))
+
+  (define (rebase-published-marks! id changes revision)
+    ;; Carry acknowledged marks across an adopted chain the way the
+    ;; positions moved: a cursor that did not move relative to the text
+    ;; then needs no republication for the new revision.  The store
+    ;; rebased its copies through the same deltas; a clamp or an actual
+    ;; move still shows up as a difference and republishes.
+    (define (carry value delta)
+      (if (pair? (car value))
+          (cons (text:rebase-position (car value) delta)
+                (text:rebase-position (cdr value) delta))
+          (text:rebase-position value delta)))
+    (set! published-marks
+      (map (lambda (group)
+             (if (and (eqv? (car group) id) (cadr group))
+                 (list id revision
+                   (map (lambda (entry)
+                          (cons (car entry)
+                            (fold-left (lambda (value change) (carry value (caddr change)))
+                                       (cdr entry) changes)))
+                     (caddr group)))
+                 group))
+        published-marks)))
 
   (define (acknowledge-marks! id group)
     (let ([kept (remp (lambda (entry) (eqv? (car entry) id)) published-marks)])
@@ -1582,7 +1607,16 @@
                       [else (values #f positions)])])
         (list reference (buffer-line-numbers-setting b) (buffer-marked b) positions))))
 
-  (define (checkpoint!)
+  ;; An idle checkpoint (a wake frame: foreign edits moved this head's
+  ;; positions) goes at most once a second: resume projects the saved
+  ;; positions across later edits anyway, and a foreign burst must not
+  ;; publish this head's whole screen per keystroke. A changed state
+  ;; inside the interval requests a frame at its end. The main loop's
+  ;; own checkpoints, after this head's keys and at detach, go at once.
+  (define checkpoint-sent-at #f)
+  (define checkpoint-interval (make-time 'time-duration 0 1))
+
+  (define (checkpoint! . mode)
     ;; No store reads here: every coordinate describes exactly the adopted
     ;; text/view the head just painted. Unchanged wake frames send nothing.
     (let* ([slots (map cons the-buffers (iota (length the-buffers)))]
@@ -1596,9 +1630,19 @@
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
            [state (list 'screen 1 the-kill-ring (window-index the-current) layout (map capture-buffer the-buffers))])
       (unless (equal? state last-checkpoint)
-        (let ([state (datum:copy state)])
-          (actor:checkpoint! ui-actor state)
-          (set! last-checkpoint state)))))
+        (let ([now (current-time 'time-monotonic)]
+              [due (and checkpoint-sent-at (add-duration checkpoint-sent-at checkpoint-interval))])
+          (if (or (not (memq 'idle mode)) (not due) (time<=? due now))
+              (let ([state (datum:copy state)])
+                ;; Kill text travels only when it changed; the base keeps the
+                ;; last one it received under the kept marker.
+                (actor:checkpoint! ui-actor
+                  (if (and last-checkpoint (equal? (caddr state) (caddr last-checkpoint)))
+                      (cons* 'screen 1 'kept (cdddr state))
+                      state))
+                (set! last-checkpoint state)
+                (set! checkpoint-sent-at now))
+              (request-frame-at! due))))))
 
   (define (project-resume-positions positions lines changes)
     (let ([deltas (if changes (map caddr changes) '())])

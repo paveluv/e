@@ -136,11 +136,21 @@
       (and entry (datum:copy (with-mutex protocol-lock (head-state-checkpoint entry))))))
 
   (define (checkpoint! actor state)
+    ;; A screen checkpoint whose kill slot is the symbol kept keeps the
+    ;; kill text of the retained checkpoint: heads send that text only
+    ;; when it changes.
     (let ([entry (known-head actor)] [state (datum:copy state)])
       (unless (and entry (registered? actor))
         (error 'checkpoint! "expected an attached named head" actor))
       (with-mutex protocol-lock
-        (head-state-checkpoint-set! entry state))))
+        (head-state-checkpoint-set! entry
+          (if (and (list? state) (>= (length state) 3) (eq? (caddr state) 'kept))
+              (let ([previous (head-state-checkpoint entry)])
+                (cons* (car state) (cadr state)
+                       (if (and (list? previous) (>= (length previous) 3) (string? (caddr previous)))
+                           (caddr previous) "")
+                       (cdddr state)))
+              state)))))
 
   (define ask!
     (case-lambda

@@ -1,5 +1,6 @@
-;; Demand only the rows a head renders. Headers are invalidated by either
-;; text/fact or surface publication; generations still guard every range.
+;; Demand only the rows a head renders. Headers are invalidated by surface
+;; publication and withdrawal; generations still guard every range, and a
+;; text commit that outruns its surface renders plainly until the notice.
 (library (surface)
   (export snapshot rows subscribe! unsubscribe!)
   (import (chezscheme) (prefix (client) client:) (prefix (kernel) kernel:) (prefix (datum) datum:))
@@ -9,9 +10,7 @@
         (hashtable-clear! headers)))
   (define invalidations
     (kernel:call-with-runtime-registrations
-      (lambda ()
-        (client:subscribe! 'changed invalidate!)
-        (client:subscribe! 'surface invalidate!))))
+      (lambda () (client:subscribe! 'surface invalidate!))))
   (define (snapshot id)
     (unless (hashtable-contains? headers id)
       (hashtable-set! headers id (client:request 'surface id)))

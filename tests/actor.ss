@@ -451,6 +451,15 @@
          (list (test:raises? (lambda () (actor:checkpoint! owner void)))
                (actor:checkpoint owner)
                (begin (actor:checkpoint! owner '(new layout)) (actor:checkpoint owner)))
-         '(#t #("kill text" (layout)) (new layout))))
+         '(#t #("kill text" (layout)) (new layout)))
+       ;; A screen checkpoint keeps the retained kill text under the kept
+       ;; marker; without a retained string the slot becomes empty.
+       (test:check 'screen-checkpoints-keep-unchanged-kill-text
+         (list (begin (actor:checkpoint! owner '(screen 1 kept 0 (layout) ())) (actor:checkpoint owner))
+               (begin (actor:checkpoint! owner '(screen 1 "killed" 0 (layout) ())) (actor:checkpoint owner))
+               (begin (actor:checkpoint! owner '(screen 1 kept 1 (layout) ())) (actor:checkpoint owner))
+               (begin (actor:checkpoint! owner '(screen 1 "" 1 (layout) ())) (actor:checkpoint owner)))
+         '((screen 1 "" 0 (layout) ()) (screen 1 "killed" 0 (layout) ())
+           (screen 1 "killed" 1 (layout) ()) (screen 1 "" 1 (layout) ()))))
 
      (test:finish! 'actor)))
