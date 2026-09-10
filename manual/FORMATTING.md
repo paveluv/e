@@ -77,12 +77,20 @@ The same pure `(scheme-format)` library drives `tools/scheme-format`:
 
 ```sh
 tools/scheme-format file.e
-tools/scheme-format -i file.e
+tools/scheme-format -i library.sls tests.ss tool.sps
 tools/scheme-format --intrusive --width 100 -i file.e
 ```
 
 Without files it reads standard input and writes standard output. Supplying
 `--width` also enables intrusive mode.
+
+File extensions are unrestricted. A leading Unix shebang is preserved,
+including on the extensionless `e` loader. Scheme reader directives such as
+`#!r6rs` remain in the body checked for datum equality. Empty input stays empty.
+Standard output contains only formatted source unless `-i` is used; that mode
+prints the names of changed files and preserves their permissions. Compilation
+progress messages are suppressed. A read or formatting error identifies the
+input on standard error, exits unsuccessfully and leaves that file untouched.
 
 ## Formatter API
 
@@ -95,4 +103,3 @@ Modes register indentation and formatting independently:
 
 This keeps the editing commands generic while allowing language modules to own
 their layout policy.
-

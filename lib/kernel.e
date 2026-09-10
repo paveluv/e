@@ -14,7 +14,7 @@
           module-source loaded-modules
           init-module! load-module! load-modules! module-requires? pin-modules!
           reload-module! add-after-reload-hook!
-          config-file load-config!
+          installation-directory config-file load-config!
           make-read-only-error read-only-error? make-refusal refusal?
           make-mailbox mailbox-post! mailbox-receive!
           make-delivery-queue enqueue-delivery! drain-deliveries!
@@ -22,14 +22,15 @@
   (import (rnrs)
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
-                make-thread-parameter format interaction-environment eval
+                make-parameter make-thread-parameter current-directory format interaction-environment eval
                 library-exports library-requirements library-requirements-options
                 library-directories load
                 parameterize make-mutex with-mutex make-condition
                 condition-wait condition-signal condition-broadcast
                 with-interrupts-disabled make-time
                 current-time time? time-type time<? time-difference
-                get-thread-id box? display-condition void))
+                get-thread-id box? display-condition void)
+          (prefix (path) path:))
 
   ;;; Conditions --------------------------------------------------------------
 
@@ -583,6 +584,11 @@
 
   ;;; The user's configuration -------------------------------------------------
 
+  ;; Bootstrap sets the installation explicitly, independently of source
+  ;; lookup and runtime overlays. Direct library users default to their
+  ;; initial working directory; capture an absolute name when it is set.
+  (define installation-directory (make-parameter (current-directory) path:canonical))
+
   (define (config-owner side)
     (case side
       [(head) 'config]
@@ -593,8 +599,8 @@
     (case-lambda
       [() (config-file 'head)]
       [(side)
-       (let ([source (module-source "kernel")])
-         (string-append (substring source 0 (- (string-length source) 8)) "../"
+       (path:canonical
+         (string-append (installation-directory) "/"
                         (symbol->string (config-owner side)) ".e"))]))
 
   (define load-config!

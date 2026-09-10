@@ -4,9 +4,8 @@
 ;; and a head only acknowledges publication at the intended revision.
 
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 
 (eval
   '(begin

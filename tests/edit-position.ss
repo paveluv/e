@@ -4,9 +4,8 @@
 ;; including reentrant notifications and callbacks computing a proposal.
 
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 
 (eval
   '(begin

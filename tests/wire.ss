@@ -3,9 +3,8 @@
 ;; One protocol fixture: framing, a real headless bootstrap, concurrent
 ;; connections and cleanup. The daemon gets an isolated installation/config.
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 
 (eval
   '(begin

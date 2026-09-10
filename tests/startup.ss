@@ -3,9 +3,30 @@
 ;; Early options and first head initialization need no terminal. Reinvoke
 ;; this fixture for each claim: an R6RS library initializes once per image.
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(define roots-runtime
+  (and (pair? (command-line-arguments))
+       (case (string->symbol (car (command-line-arguments)))
+         [(roots-base) 'base] [(roots-client) 'client] [else #f])))
+(test-roots! (or roots-runtime 'base))
+
+;; Resolve real libraries before any head is imported; metadata is enough
+;; to distinguish the owner and attached implementations without a socket.
+(when roots-runtime
+  (eval
+    `(begin
+       (import (prefix (store) store:) (prefix (kernel) kernel:))
+       (unless
+         (and (string=? (kernel:installation-directory) (current-directory))
+              (string=? (kernel:module-source "store")
+                ,(if (eq? roots-runtime 'client) "lib/client/store.e" "lib/store.e"))
+              (for-all (lambda (root)
+                         (string=? (cdr root) ,(if (eq? roots-runtime 'client) "eo/client" "eo")))
+                       (library-directories))
+              (equal? (and (memq 'publish! (library-exports '(store))) #t)
+                      ,(eq? roots-runtime 'base)))
+         (error 'startup "test roots selected the wrong runtime" ',roots-runtime))))
+  (exit 0))
 
 (eval
   '(begin
@@ -238,9 +259,9 @@
            ("./e one two" #f "at most one file")))
        (for-each
          (lambda (kind)
-           (test:check (list 'fresh-head kind)
+           (test:check (list 'fresh-process kind)
              (system (format "scheme-script tests/startup.ss ~a" kind)) 0))
-         '(named default suffix conflict))
+         '(named default suffix conflict roots-base roots-client))
        (test:finish! 'startup))
 
      (if (null? (command-line-arguments))

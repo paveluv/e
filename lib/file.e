@@ -109,10 +109,10 @@
 
   (define (data-directory)
     ;; Where commands and apps keep built or fetched data, out of git:
-    ;; the data directory next to lib, created on first use.  Each
+    ;; the installation's data directory, created on first use. Each
     ;; concern takes a subdirectory -- the describe corpus lives in
     ;; data/describe.
-    (let ([dir (string-append (directory-part (kernel:config-file)) "/data")])
+    (let ([dir (path:canonical (string-append (kernel:installation-directory) "/data"))])
       (unless (file-directory? dir) (mkdir dir))
       dir))
 

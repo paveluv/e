@@ -4,9 +4,8 @@
 ;; memory transport cover the pipeline without a head or network access.
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 
 (eval
   '(begin
@@ -84,16 +83,10 @@
        (parameterize ([https:backend 'native] [https:connector connect]) (reference:fetch!)))
 
      (mkdir root)
-     (mkdir (string-append root "/lib"))
-     (mkdir (string-append root "/eo"))
      (dynamic-wind
        void
        (lambda ()
-         (call-with-output-file (string-append root "/lib/kernel.e")
-           (lambda (port) (display (call-with-input-file "lib/kernel.e" get-string-all) port)))
-         (parameterize ([library-directories
-                         (cons (cons (string-append root "/lib") (string-append root "/eo"))
-                               (library-directories))])
+         (parameterize ([kernel:installation-directory root])
            (test:check 'reference-has-no-head-dependencies
              (map (lambda (name) (kernel:module-requires? "reference" name))
                   '("edit" "head" "paint" "prompt" "markdown" "describe"))

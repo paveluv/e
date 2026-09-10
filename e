@@ -35,7 +35,7 @@
 (define (directory-part path)
   (let loop ([i (- (string-length path) 1)])
     (cond [(< i 0) "."]
-          [(char=? (string-ref path i) #\/) (substring path 0 i)]
+          [(char=? (string-ref path i) #\/) (substring path 0 (max 1 i))]
           [else (loop (- i 1))])))
 
 (define e-home
@@ -60,6 +60,7 @@
 
 (eval `(begin
          (import (prefix (startup) startup:) (prefix (kernel) kernel:))
+         (kernel:installation-directory ,e-home)
          (startup:call-with-options (command-line-arguments)
            (lambda ()
              (when (and (not (eq? (startup:mode) 'daemon))

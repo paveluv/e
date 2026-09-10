@@ -15,6 +15,8 @@
 ;; formatted text prints to stdout.  A result that does not read
 ;; back as the very same data -- it cannot, short of a bug -- is
 ;; refused and the file left untouched.
+;; A leading Unix shebang is preserved; Scheme reader directives stay
+;; in the body checked for datum equality. File extensions are unrestricted.
 ;;
 ;; The engine is the (scheme-format) library in the e editor's lib
 ;; directory next to this tool's; the two share compiled objects.
@@ -25,7 +27,7 @@
 (define (directory-part path)
   (let loop ([i (- (string-length path) 1)])
     (cond [(< i 0) "."]
-          [(char=? (string-ref path i) #\/) (substring path 0 i)]
+          [(char=? (string-ref path i) #\/) (substring path 0 (max 1 i))]
           [else (loop (- i 1))])))
 
 (define e-home
@@ -45,6 +47,10 @@
   (list (cons (string-append e-home "/lib") (string-append e-home "/eo"))))
 (library-extensions (cons '(".e" . ".eo") (library-extensions)))
 (compile-imported-libraries #t)
+(compile-file-message #f)
+
+(define (read-text port)
+  (let ([text (get-string-all port)]) (if (eof-object? text) "" text)))
 
 (define (split-lines s)
   (let ([p (open-string-input-port s)])
@@ -58,15 +64,34 @@
       (let ([x (read p)])
         (if (eof-object? x) (reverse acc) (loop (cons x acc)))))))
 
+(define (shebang-end text)
+  ;; An interpreter path after #!, allowing its optional whitespace.
+  ;; #!r6rs, #!fold-case and other reader directives are Scheme data syntax.
+  (let ([n (string-length text)])
+    (and (>= n 3) (string=? (substring text 0 2) "#!")
+         (let scan ([i 2])
+           (and (< i n)
+                (if (memv (string-ref text i) '(#\space #\tab))
+                    (scan (+ i 1))
+                    (char=? (string-ref text i) #\/))))
+         (let scan ([i 2])
+           (if (or (= i n) (char=? (string-ref text i) #\newline)) i
+               (scan (+ i 1)))))))
+
 (define (format-text text format-lines)
-  (let* ([v (list->vector (split-lines text))]
+  (let* ([header-end (shebang-end text)]
+         [header (if header-end (string-append (substring text 0 header-end) "\n") "")]
+         [body (if header-end
+                   (substring text (min (+ header-end 1) (string-length text)) (string-length text))
+                   text)]
+         [v (list->vector (split-lines body))]
          [n (vector-length v)]
          [out (if (zero? n) '() (format-lines v 0 (- n 1)))]
          [new (apply string-append
                      (map (lambda (l) (string-append l "\n")) out))])
-    (unless (equal? (read-data text) (read-data new))
+    (unless (equal? (read-data body) (read-data new))
       (error 'scheme-format "the result does not read back as the same data"))
-    new))
+    (string-append header new)))
 
 (define (usage)
   (display "usage: scheme-format [-i] [--intrusive] [--width columns] [file ...]\n"
@@ -95,7 +120,13 @@
           [else (loop (cdr args) in-place? intrusive? width
                       (cons (car args) files))])))
 
-(define (run format-lines intrusive width-parameter)
+(define (run format-lines intrusive width-parameter condition-text)
+  (define (checked source use)
+    (guard (ex [else
+                (display (format "scheme-format: ~a: ~a\n" source (condition-text ex))
+                         (current-error-port))
+                (exit 1)])
+      (use)))
   (let-values ([(in-place? intrusive? width files)
                 (options (command-line-arguments))])
     (intrusive intrusive?)
@@ -105,31 +136,32 @@
        (when in-place?
          (usage)
          (exit 1))
-       (display (format-text (get-string-all (current-input-port))
-                             format-lines))]
+       (checked "stdin"
+         (lambda () (display (format-text (read-text (current-input-port)) format-lines))))]
       [else
        (for-each
          (lambda (path)
-           (let* ([text (call-with-input-file path get-string-all)]
-                  [new (guard (ex [else
-                                   (display (format "scheme-format: ~a: ~a\n"
-                                                    path (condition-message ex))
-                                            (current-error-port))
-                                   (exit 1)])
-                         (format-text text format-lines))])
-             (cond
-               [(not in-place?) (display new)]
-               [(string=? new text) (void)]
-               [else
-                (let ([mode (guard (ex [else #f]) (get-mode path))])
-                  (call-with-output-file path
-                    (lambda (p) (put-string p new))
-                    'replace)
-                  (when mode (guard (ex [else (void)]) (chmod path mode)))
-                  (display path) (newline))])))
+           (checked path
+             (lambda ()
+               (let* ([text (call-with-input-file path read-text)]
+                      [new (format-text text format-lines)])
+                 (cond
+                   [(not in-place?) (display new)]
+                   [(string=? new text) (void)]
+                   [else
+                    (let ([mode (guard (ex [else #f]) (get-mode path))])
+                      (call-with-output-file path
+                        (lambda (p) (put-string p new))
+                        'replace)
+                      (when mode (guard (ex [else (void)]) (chmod path mode)))
+                      (display path) (newline))])))))
          files)])))
 
-(eval '(import (prefix (scheme-format) scheme-format:)) (interaction-environment))
+(eval `(begin
+         (import (prefix (scheme-format) scheme-format:) (prefix (kernel) kernel:))
+         (kernel:installation-directory ,e-home))
+  (interaction-environment))
 (run (eval 'scheme-format:lines (interaction-environment))
      (eval 'scheme-format:intrusive (interaction-environment))
-     (eval 'scheme-format:width (interaction-environment)))
+     (eval 'scheme-format:width (interaction-environment))
+     (eval 'kernel:condition-text (interaction-environment)))

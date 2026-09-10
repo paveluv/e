@@ -21,7 +21,10 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (string) string:) (prefix (vt) vt:))
+     (import (prefix (sys) sys:) (prefix (string) string:) (prefix (vt) vt:)
+             (prefix (kernel) kernel:))
+
+     (kernel:installation-directory (current-directory))
 
      (define here (cd))
      (define root (format "/tmp/e-bench-~a" (get-process-id)))

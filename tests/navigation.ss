@@ -3,9 +3,8 @@
 ;; Navigation publishes a complete seat state before repaint callbacks,
 ;; including composed source/view toggles and reentrant window switches.
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 (eval
   '(begin
      (import (except (edit) init!)

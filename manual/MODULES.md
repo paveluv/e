@@ -15,8 +15,13 @@ disconnect owns only that connection and its actor registration.
 `--attach` selects `lib/client/` ahead of `lib/` for service implementations,
 then imports the same `edit` and `main`. Its compiled objects live in
 `eo/client`; daemon and plain-editor objects stay in `eo`. Source lookup and
-reload follow the active implementation. Configuration and data remain beside
-the installation's common kernel source. Client libraries expose the operations
+reload follow the active implementation. The loader sets
+`kernel:installation-directory` to its own directory; `config.e`,
+`base-config.e` and `data/` are located there independently of source roots.
+Direct library users can set this parameter before starting their runtime.
+It defaults to the working directory at kernel initialization and normalizes
+each assigned path to an absolute textual path, so a later directory change
+does not redirect configuration or data. Client libraries expose the operations
 used by head commands, not the base's producer and session-control APIs.
 
 The editor is layered seam modules -- `kernel`, `store`, `file`, `head`,

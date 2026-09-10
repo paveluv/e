@@ -7,13 +7,13 @@
 
 (import (chezscheme))
 
-(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 
 (eval
   '(begin
      (import (prefix (store) store:)
+             (prefix (kernel) kernel:)
              (prefix (log) log:) (prefix (string) string:)
              (prefix (only (reference) lookup) reference:)
              (prefix (test) test:)
@@ -116,13 +116,10 @@
                                [(file-directory? "/dev/fd") "/dev/fd"] [else #f])]
             [expired #f]
             [describe-text (eval 'describe-text tier)])
-       (for-each mkdir (list root (string-append root "/lib")
-                             (string-append root "/data") data))
+       (for-each mkdir (list root (string-append root "/data") data))
        (dynamic-wind
          void
          (lambda ()
-           (call-with-output-file (string-append root "/lib/kernel.e")
-             (lambda (port) (display (call-with-input-file "lib/kernel.e" get-string-all) port)))
            (call-with-output-file path
              (lambda (port)
                (write
@@ -131,8 +128,7 @@
                               '(("procedure" . "(fuel-reference)"))
                               #f '() 'fixture "Fuel" #f "bounded reference"))
                       (iota 10000)) port)))
-           (parameterize ([library-directories
-                           (cons (cons (string-append root "/lib") "eo") (library-directories))])
+           (parameterize ([kernel:installation-directory root])
              (let ([before (and descriptors (length (directory-list descriptors)))])
                ((make-engine (lambda () (describe-text 'fuel-reference))) 10000
                 (lambda (ticks value) (void)) (lambda (engine) (set! expired engine)))
@@ -144,8 +140,7 @@
          (lambda ()
            (set! expired #f)
            (delete-file path)
-           (delete-file (string-append root "/lib/kernel.e"))
            (for-each delete-directory
-             (list data (string-append root "/data") (string-append root "/lib") root)))))
+             (list data (string-append root "/data") root)))))
      (store:delete! '(head test) id)
      (test:finish! 'sandbox)))

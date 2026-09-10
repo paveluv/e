@@ -3,9 +3,8 @@
 ;; The shared log: owned records, actor context, coherent snapshots and
 ;; ordered delivery. Reuse the same records for formatting/history checks.
 (import (chezscheme))
-(library-directories (list (cons "lib" "eo") (cons "tests" "eo")))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 
 (eval
   '(begin
