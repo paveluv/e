@@ -316,11 +316,14 @@
     ;; again. The returned string and each notification own their data.
     (let ([name (own-name new-name)])
       (transact! actor
-        (lambda (actor)
-          (let* ([b (buffer-of 'rename! id)] [name (unique-name name id)])
-            (buffer-label-set! b name)
-            (enqueue-event! `(rename ,id ,name ,actor))
-            (string-copy name))))))
+        (lambda (actor) (rename-buffer! actor id name)))))
+
+  (define (rename-buffer! actor id name)
+    ;; The same name allocator serves renames and atomic fact/name batches.
+    (let* ([b (buffer-of 'rename! id)] [name (unique-name name id)])
+      (buffer-label-set! b name)
+      (enqueue-event! `(rename ,id ,name ,actor))
+      (string-copy name)))
 
   (define (delete! actor id)
     (transact! actor
@@ -995,20 +998,24 @@
   (define (set-property! actor id key value)
     (set-properties! actor id (list (cons key value))))
 
-  (define (set-properties! actor id updates . review)
+  (define (set-properties! actor id updates . options)
     ;; Compare and publish under the writer, never across the caller's I/O.
     ;; An empty review still requires a live buffer; #f is unguarded.
-    (unless (<= (length review) 1) (error 'set-properties! "expected one fact review" review))
+    ;; An optional name joins the facts before any subscriber can run.
+    (unless (<= (length options) 2) (error 'set-properties! "expected fact review and optional name" options))
     (let ([updates (datum:copy (writable-properties updates))]
-          [expected (datum:copy (property:validate-expected (and (pair? review) (car review))))])
+          [expected (datum:copy (property:validate-expected (and (pair? options) (car options))))]
+          [name (and (= (length options) 2) (own-name (cadr options)))])
       (transact! actor
         (lambda (actor)
           (let ([b (if expected (hashtable-ref (store-buffers (current-store)) id #f)
                        (buffer-of 'set-properties! id))])
             (and b (or (not expected) (property:matches? expected (current-properties b)))
                  (begin
-                   (install-properties! b updates)
-                   (refresh-modified! b)
+                   (unless (null? updates)
+                     (install-properties! b updates)
+                     (refresh-modified! b))
+                   (when name (rename-buffer! actor id name))
                    (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
                    #t)))))))
 

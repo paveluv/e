@@ -107,6 +107,20 @@
              (if (member actor '((agent "first") (agent "second")))
                  '(head "screen A") (default-owner actor))))
          (define held-edit? #f)
+         ;; A save's accepted metadata may invoke a subscriber before the
+         ;; reply crosses the socket. Capture the whole adoption, then retarget.
+         (store:subscribe! #f
+           (lambda (event)
+             (when (and (eq? (car event) 'property) (eq? (caddr event) 'file))
+               (let* ([id (cadr event)] [target (store:property id 'save-retarget #f)])
+                 (when target
+                   (let ([seen (cons (store:buffer-name id)
+                                 (map (lambda (key) (store:property id key))
+                                   '(file base mode mode-auto read-only disposable modified)))])
+                     (store:set-properties! '(base e) id
+                       `((save-retarget . #f) (save-observation . ,seen)
+                         (file . ,target) (base . "new baseline\n") (mode . "scheme") (mode-auto . #f)))
+                     (store:rename! '(base e) id "retargeted.ss")))))))
          (define operation-audits '())
          (define app-presentations '())
          (log:subscribe!
@@ -725,25 +739,48 @@
                          (list
                            (head-read a
                              '(let ([b (current-buffer)])
-                                (list (head:buffer-facts-set! b '((base . "lost")) '((base . "keep\n")))
+                                (list (head:buffer-facts-set! b '((base . "lost")) '((base . "keep\n")) "lost name")
                                       (guard (ex [else (kernel:refusal? ex)])
                                         (head:store-edit! b (text:make-span 0 0 0 4) '("lost")
                                           '(merge "merge" () ((base . "lost")) ((base . "keep\n"))))))))
                            (rpc head 'edit target 0 '(0 0 0 4) '("lost")
                              '(merge "merge" () ((base . "lost")) ((base . "keep\n"))))
-                           (equal? before (rpc head 'snapshot target)) (rpc head 'history target))
-                         '((#f #t) (stale property-changed) #t ())))
+                           (equal? before (rpc head 'snapshot target)) (rpc head 'history target)
+                           (rpc head 'name target))
+                         '((#f #t) (stale property-changed) #t () "guarded facts")))
                      (test:check 'attached-fresh-guards-commit-and-undo-keeps-the-baseline
                        (head-read a
                          '(let* ([b (current-buffer)]
-                                 [accepted (head:buffer-facts-set! b '((stamp . #f)) '((base . "other\n") stamp))])
+                                 [accepted (head:buffer-facts-set! b '((stamp . #f)) '((base . "other\n") stamp) "accepted facts")])
                             (head:store-edit! b (text:make-span 0 0 0 4) '("disk")
                               '(merge "merge" ((trailing . #f)) ((base . "disk")) ((base . "other\n") (trailing . #t))))
                             (let ([clean? (not (head:buffer-modified b))])
                               (undo!)
                               (list accepted clean? (head:buffer-lines b) (head:buffer-base b)
-                                    (head:buffer-trailing b) (head:buffer-modified b)))))
-                       '(#t #t #("keep") "disk" #t #t))
+                                    (head:buffer-trailing b) (head:buffer-modified b) (head:buffer-name b)))))
+                       '(#t #t #("keep") "disk" #t #t "accepted facts"))
+                     (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                     (rpc head 'delete target))
+
+                   (let* ([path (string-append root "/adoption.txt")]
+                          [retarget (string-append root "/retargeted.ss")]
+                          [target (rpc head 'create "before adoption" '("written")
+                                    `((save-retarget . ,retarget) (read-only . #t) (disposable . #t)))])
+                     (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,target)) #t))
+                     (test:check 'attached-save-publishes-adoption-together-and-keeps-newer-callback-choices
+                       (list (head-read a `(save-file! ,path)) (call-with-input-file path get-string-all)
+                             (map (lambda (screen)
+                                    (head-read screen
+                                      `(begin (head:before-frame!)
+                                         (let ([b (head:buffer-of-store-id ,target)])
+                                           (list (head:buffer-name b) (head:buffer-file b) (head:buffer-base b)
+                                                 (mode:name-of b) (head:buffer-mode-auto b)
+                                                 (head:buffer-lines b) (head:buffer-modified b)))))) (list a b))
+                             (cdr (assq 'save-observation (caddr (rpc head 'snapshot target))))
+                             (file-exists? retarget))
+                       (list #t "written\n"
+                             (make-list 2 (list "retargeted.ss" retarget "new baseline\n" "scheme" #f '#("written") #t))
+                             (list "adoption.txt" path "written\n" #f #t #f #f #f) #f))
                      (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
                      (rpc head 'delete target))
 

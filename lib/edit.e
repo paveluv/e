@@ -906,7 +906,8 @@
           (check-file-review! facts review)
           (review-disk! path disk)
           (let* ([trailing (cond [(assq 'trailing facts) => cdr] [else #t])]
-                 [written (file:text text trailing)])
+                 [written (file:text text trailing)]
+                 [detected (and adopted? (mode:detect path (vector-ref text 0)))])
             (file:write! path text trailing)
             (set! written? #t)
             ;; A stat after writing could belong to another disk writer.
@@ -914,17 +915,16 @@
             (unless (head:buffer-facts-set! b
                       (append (list (cons 'file path) (cons 'base written)
                                 '(stamp . #f) '(stale . #f))
-                        (if adopted? '((read-only . #f) (disposable . #f)) '())
+                        (if adopted?
+                            `((read-only . #f) (disposable . #f)
+                              (mode . ,(and detected (mode:name detected))) (mode-auto . #t)) '())
                         (if (head:buffer-store-id b) '()
                           (list (cons 'modified (not (string=? (buffer-text b) written))))))
-                      (append review (if adopted? (property:select facts '(read-only disposable)) '())))
+                      (append review (if adopted? (property:select facts '(read-only disposable mode mode-auto)) '()))
+                      (file:base-name path))
               (refuse-file! "Buffer's file state changed; saved baseline was not updated."))))
-        (head:buffer-name-set! b (file:base-name path))
-        ;; re-detect the mode only when the name changed: a plain
-        ;; re-save must not clobber a mode chosen by hand; adoption
-        ;; also lifts read-only -- the buffer visits an ordinary
-        ;; file now, whatever protected its previous life
-        (when adopted? (mode:assign! b))
+        ;; File facts, label and adopted mode commit together. No follow-up
+        ;; write may overwrite a subscriber's newer choice. Re-save keeps mode.
         ;; a conflicted merge reports its details once resolved --
         ;; saved with no markers left; the resolution preceded the
         ;; write, so its record does too

@@ -33,7 +33,11 @@
          (show-buffer! b)
          (goto-point! '(0 . 0))
          b))
-     (define (state b) (call-with-values (lambda () (head:buffer-state b)) list))
+     (define (state b)
+       (let-values ([(text revision facts) (head:buffer-state b)])
+         (list text revision
+               (list-sort (lambda (a b) (string<? (symbol->string (car a)) (symbol->string (car b)))) facts)
+               (head:buffer-name b))))
      (define (insert! id at replacement)
        (store:edit! bot id (store:revision id)
                     (text:make-span 0 at 0 at) (list replacement)))
@@ -175,7 +179,7 @@
              (head:buffer-fact-set! b 'missing #f)
              (let ([before (state b)] [view (head-state)])
                (check 'conditional-facts-and-edits-refuse-in-either-owner
-                 (list (head:buffer-facts-set! b '((base . "lost")) expected)
+                 (list (head:buffer-facts-set! b '((base . "lost")) expected "lost name")
                        (raises? (lambda ()
                                   (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
                                     (list 'merge "merge" '() '((base . "lost")) expected))))
@@ -183,8 +187,11 @@
                  '(#f #t #t #t)))
              (head:buffer-fact-set! b 'missing '())
              (check 'fresh-fact-review-publishes-in-either-owner
-               (head:buffer-facts-set! b '((stamp . 1))
-                 (property:select (caddr (state b)) '(base missing absent))) #t))))
+               (list (head:buffer-facts-set! b '((stamp . 1))
+                       (property:select (caddr (state b)) '(base missing absent))
+                       "accepted facts")
+                     (head:buffer-name b))
+               (list #t (if shared? "accepted facts" "<accepted facts>"))))))
        '(#t #f))
 
      ;; Validate all inputs before either owner changes text or facts.
@@ -215,6 +222,7 @@
                    (lambda () (head:store-reset! b '("lost") '((trailing . 7))))
                    (lambda () (head:buffer-facts-set! b '((file . "changed") (7 . bad))))
                    (lambda () (head:buffer-facts-set! b '((file . "changed")) '(base (base . #f))))
+                   (lambda () (head:buffer-facts-set! b '((file . "changed")) #f ""))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
                                 '(key "bad" ((trailing . #t) (trailing . #f)))))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
@@ -225,7 +233,7 @@
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("embedded\nnewline")))
                    (lambda () (buffer-append! b "embedded\nnewline"))
                    (lambda () (store:create! bot "invalid-line-input" '("embedded\nnewline")))
-                   (lambda () (format-buffer!)))) (make-list 12 '(#t #t #t))))))
+                   (lambda () (format-buffer!)))) (make-list 13 '(#t #t #t))))))
        '(#t #f))
 
      ;; The buffer still exists when the store rejects the fact write.
@@ -247,38 +255,67 @@
        (lambda () (set-box! store-cell saved-store)))
      (check 'failure-recovery-keeps-shared-text (store:line id 0) "agent work!")
 
-     ;; A save subscriber edits and pumps a frame before save returns.
-     ;; The file/base must keep the captured write while new text stays dirty.
+     ;; Saving publishes the file, label and detected mode before callbacks.
+     ;; A subscriber can then edit or choose newer metadata, and pump a frame;
+     ;; neither first save nor re-save may overwrite that newer state on return.
      (define path (format "/tmp/e-state-~a-~a.txt" (time-second (current-time)) (random 1000000)))
      (define saved (fresh "save-state" #t))
      (define saved-id (head:buffer-store-id saved))
-     (insert-text! "written")
-     (define save-observations '())
-     (define save-token
-       (store:subscribe! saved-id
-         (lambda (event)
-           (when (and (eq? (car event) 'property) (eq? (caddr event) 'file))
-             (set! save-observations
-               (list (store:property saved-id 'base) (store:property saved-id 'stale)
-                     (store:property saved-id 'modified)))
-             (insert! saved-id 7 "-later")
-             (head:before-frame!)))))
+     (mode:register! "save-state" '(".txt") '() (lambda (line) #f))
      (dynamic-wind
-       (lambda () (void))
+       void
        (lambda ()
-         (check 'raced-save-completes (save-file! path) #t)
-         (check 'save-observer-sees-complete-saved-state save-observations '("written\n" #f #f))
-         (check 'file-contains-exact-captured-write (file:read path) "written\n")
-         (check 'base-is-exactly-what-was-written (head:buffer-base saved) "written\n")
-         (head:before-frame!)
-         (check 'racing-text-survives-save (head:buffer-lines saved) '#("written-later"))
-         (check 'racing-edit-remains-dirty (head:buffer-modified saved) #t)
-         (check 'racing-edit-remains-protected (buffer-clean? saved) #f)
-         (store:unsubscribe! save-token)
-         (head:before-frame!)
-         (check 'second-save-completes (save-file! path) #t)
-         (check 'second-save-writes-later-text (file:read path) "written-later\n")
-         (check 'second-save-clears-dirty-state (head:buffer-modified saved) #f)
+         (for-each
+           (lambda (scenario)
+             (let ([effect (car scenario)] [adopt? (cadr scenario)] [armed? #t] [seen #f] [observed #f])
+               (define (current)
+                 (list (state saved) (store:history saved-id) (head:buffer-history saved) (point) (mark)))
+               (when (file-exists? path) (delete-file path))
+               (unless adopt? (file:write! path '#("before") #t))
+               (head:store-reset! saved '#("")
+                 `((file . ,(and (not adopt?) path)) (base . ,(and (not adopt?) "before\n"))
+                   (trailing . #t) (read-only . #f)))
+               (insert-text! "written")
+               (head:buffer-facts-set! saved '((read-only . #t) (disposable . #t) (stale . #t)))
+               (head:buffer-name-set! saved "before save")
+               (mode:choose! saved "invalid-line-output")
+               (let ([token
+                      (store:subscribe! saved-id
+                        (lambda (event)
+                          (when (and armed? (eq? (car event) 'property) (eq? (caddr event) 'file))
+                            (set! armed? #f)
+                            (set! observed
+                              (cons (store:buffer-name saved-id)
+                                (map (lambda (key) (store:property saved-id key))
+                                  '(file base mode mode-auto read-only disposable stale modified))))
+                            (case effect
+                              [(text) (insert! saved-id 7 "-later")]
+                              [(retarget) (head:buffer-facts-set! saved
+                                            '((file . "/tmp/retargeted.ss") (base . "new baseline\n")))])
+                            (when (memq effect '(name retarget)) (head:buffer-name-set! saved "callback name"))
+                            (when (memq effect '(mode retarget)) (mode:choose! saved "invalid-line-output"))
+                            (head:before-frame!)
+                            (set! seen (current)))))])
+                 (dynamic-wind void
+                   (lambda ()
+                     (check (list scenario 'save-adoption-and-newer-callback-state)
+                       (list (save-file! path) observed (file:read path)
+                             (and seen (equal? seen (current)))
+                             (head:buffer-lines saved) (head:buffer-modified saved)
+                             (buffer-clean? saved))
+                       (let ([dirty? (and (memq effect '(text retarget)) #t)])
+                         (list #t (list (file:base-name path) path "written\n"
+                                        (if adopt? "save-state" "invalid-line-output") adopt?
+                                        (not adopt?) (not adopt?) #f #f)
+                               "written\n" #t (if (eq? effect 'text) '#("written-later") '#("written"))
+                               dirty? (or (not adopt?) (not dirty?))))))
+                   (lambda () (store:unsubscribe! token))))))
+           '((name #f) (mode #f) (name #t) (mode #t) (retarget #t) (text #t)))
+         (mode:choose! saved "invalid-line-output")
+         (check 'second-save-writes-later-text-and-keeps-manual-mode
+           (list (save-file! path) (file:read path) (head:buffer-modified saved)
+                 (mode:name-of saved) (head:buffer-mode-auto saved))
+           '(#t "written-later\n" #f "invalid-line-output" #f))
          ;; Pre-save edits need not have reached the head's cached text.
          (parameterize ([kernel:registering-module 'state-save-hook])
            (file:add-pre-save-hook!
@@ -288,7 +325,6 @@
          (head:before-frame!)
          (check 'late-head-adoption-keeps-save-clean (head:buffer-modified saved) #f))
        (lambda ()
-         (store:unsubscribe! save-token)
          (kernel:retract-module! 'state-save-hook)
          (when (file-exists? path) (delete-file path))))
 
@@ -316,6 +352,7 @@
                                   [(file) (head:buffer-facts-set! b
                                             '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))]
                                   [(protection) (head:buffer-facts-set! b '((read-only . #t) (disposable . #t)))]
+                                  [(mode) (mode:choose! b "invalid-line-output")]
                                   [(trailing) (head:buffer-trailing-set! b #f)]
                                   [(text) (if shared? (insert! (head:buffer-store-id b) 0 "later ")
                                               (insert-text! "later "))])
@@ -334,8 +371,9 @@
                    (lambda ()
                      (kernel:retract-module! 'in-flight-save)
                      (when (file-exists? path) (delete-file path))))))
-             '(file protection text trailing))
-           '(((#t #f) #t 0 #t) ((#t #f) #t 0 #t) ((#t #t) #t 1 #t) ((#t #t) #t 1 #t))))
+             '(file protection mode text trailing))
+           '(((#t #f) #t 0 #t) ((#t #f) #t 0 #t) ((#t #f) #t 0 #t)
+             ((#t #t) #t 1 #t) ((#t #t) #t 1 #t))))
        '(#t #f))
 
      ;; Old disk readers cannot attach their stamp/status to newer file facts

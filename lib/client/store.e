@@ -92,8 +92,8 @@
   (define (reset! actor id lines . options)
     (mutate actor id 'reset (cons lines options)))
   (define (rename! actor id name) (mutate actor id 'rename (list name)))
-  (define (set-properties! actor id updates . review)
-    (mutate actor id 'properties (cons updates review)))
+  (define (set-properties! actor id updates . options)
+    (mutate actor id 'properties (cons updates options)))
   (define (set-property! actor id key value) (set-properties! actor id (list (cons key value))))
 
   (define (edit-with-snapshot! actor id basis span replacement . options)

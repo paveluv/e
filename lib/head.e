@@ -719,18 +719,29 @@
              (let-values ([(text revision facts) (buffer-state b)])
                (property:matches? expected facts)))))
 
-  (define (buffer-facts-set! b updates . review)
+  (define (buffer-facts-set! b updates . options)
     (store:validate-properties updates)
-    (unless (<= (length review) 1) (error 'buffer-facts-set! "expected one fact review" review))
+    (unless (<= (length options) 2) (error 'buffer-facts-set! "expected fact review and optional name" options))
     (let ([id (buffer-store-id b)]
-          [expected (property:validate-expected (and (pair? review) (car review)))])
+          [expected (property:validate-expected (and (pair? options) (car options)))]
+          [name (and (= (length options) 2) (cadr options))])
+      (when (and (= (length options) 2)
+                 (not (and (string? name) (> (string-length name) 0))))
+        (error 'buffer-facts-set! "expected a nonempty name" name))
       (if id
-          (apply store:set-properties! ui-actor id updates review)
-          (and (local-facts-match? b expected)
+          (and (apply store:set-properties! ui-actor id updates options)
                (begin
-                 (for-each (lambda (entry) (hashtable-set! (buffer-local-facts b) (car entry) (cdr entry)))
-                           updates)
-                 #t)))))
+                 ;; Subscribers can rename, hide, delete or readmit this id.
+                 ;; Reconcile current truth instead of installing a stale ack.
+                 (when name (sync-foreign-edits! id))
+                 #t))
+          (let ([name (and name (unique-local-name (string-copy name) b))])
+            (and (local-facts-match? b expected)
+                 (begin
+                   (for-each (lambda (entry) (hashtable-set! (buffer-local-facts b) (car entry) (cdr entry)))
+                             updates)
+                   (when name (buffer-name-raw-set! b name))
+                   #t))))))
 
   (define (buffer-state b)
     ;; Unlike the command basis, this is current shared truth for save
@@ -775,15 +786,8 @@
   (define (buffer-name-set! b name)
     (unless (and (buffer? b) (string? name) (> (string-length name) 0))
       (error 'buffer-name-set! "expected a buffer and nonempty name" b name))
-    (if (buffer-store-id b)
-        (begin
-          (ensure-buffer-visible! b)
-          (store:rename! ui-actor (buffer-store-id b) name)
-          ;; A subscriber can rename, hide, delete, or readmit this id before
-          ;; rename! returns. Reconcile current truth, even if delivery is
-          ;; still queued behind another callback; never install a stale ack.
-          (sync-foreign-edits! (buffer-store-id b)))
-        (buffer-name-raw-set! b (unique-local-name (string-copy name) b))))
+    (when (buffer-store-id b) (ensure-buffer-visible! b))
+    (buffer-facts-set! b '() #f name))
 
   (define (unique-local-name base self)
     ;; Local labels only compete with content visible to this head,

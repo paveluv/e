@@ -69,7 +69,7 @@
                  (define (state)
                    (and (store:exists? id)
                         (list (call-with-values (lambda () (store:snapshot-state id)) list)
-                              (store:history id) (store:marks alice id))))
+                              (store:history id) (store:marks alice id) (store:buffer-name id))))
                  (store:edit! alice id 0 (span 0 8 0 8) '("!"))
                  (store:set-mark! alice id 'point '(0 . 9))
                  (let-values ([(text revision facts) (store:snapshot-state id)])
@@ -82,6 +82,8 @@
                                                     (cons revision facts))]
                              [(properties) (store:set-properties! alice id '((base . "disk\n"))
                                              (property:select facts '(base read-only)))]
+                             [(named-properties) (store:set-properties! alice id '((base . "disk\n"))
+                                                   (property:select facts '(base read-only)) "accepted facts")]
                              [(edit)
                               (let-values ([(status detail)
                                             (store:edit! alice id revision (span 0 9 0 9) '("?")
@@ -92,12 +94,15 @@
                           [intact?
                            (cond [(not accepted) (and (equal? before (state)) (null? (events)))]
                              [(eq? operation 'discard) (not still-here?)]
-                             [(eq? operation 'properties)
+                             [(memq operation '(properties named-properties))
                               (and (equal? (list-head (car before) 2)
                                            (list-head (car (state)) 2))
-                                   (equal? (cdr before) (cdr (state)))
+                                   (equal? (list-head (cdr before) 2) (list-head (cdr (state)) 2))
+                                   (equal? (store:buffer-name id)
+                                     (if (eq? operation 'named-properties) "accepted facts" (cadddr before)))
                                    (equal? (store:property id 'base) "disk\n")
-                                   (equal? (map car (events)) '(property)))]
+                                   (equal? (map car (events))
+                                     (if (eq? operation 'named-properties) '(rename property) '(property))))]
                              [(eq? operation 'edit)
                               (equal? (list (store:line id 0) (store:revision id) (store:property id 'base)
                                             (map car (events)))
@@ -115,7 +120,7 @@
              [(discard) '((#f #t #t) (#f #t #t) (#t #f #t) (#t #f #t) (#t #f #t) (#t #f #t) (#f #t #t))]
              [(reset) '((#f #t #t) (#f #t #t) (#f #f #t) (#t #t #t) (#t #t #t) (#t #t #t) (#f #t #t))]
              [else '((#t #t #t) (#f #t #t) (#f #f #t) (#t #t #t) (#t #t #t) (#t #t #t) (#t #t #t))])))
-       '(discard reset properties edit))
+       '(discard reset properties named-properties edit))
 
      (let* ([id (store:create! alice "conditional writers" '("old") '((base . "old\n")))]
             [outcomes (test:parallel 2
@@ -140,7 +145,10 @@
                    (lambda (index)
                      (let* ([name (string-copy base)]
                             [id (store:create! bot (if (eq? kind 'create) name "rename-seed") '(""))]
-                            [accepted (if (eq? kind 'rename) (store:rename! bot id name) (store:buffer-name id))])
+                            [accepted (cond [(eq? kind 'create) (store:buffer-name id)]
+                                        [(even? index) (store:rename! bot id name)]
+                                        [else (store:set-properties! bot id (list (cons 'claim index)) #f name)
+                                              (store:buffer-name id)])])
                        (string-set! name 0 #\X)
                        (string-set! accepted 0 #\Y)
                        id)))]
@@ -155,9 +163,11 @@
            (check 'invalid-names-refuse-before-mutation
                   (for-all (lambda (bad)
                              (and (test:raises? (lambda () (store:create! bot bad '(""))))
-                                  (test:raises? (lambda () (store:rename! bot (car ids) bad)))))
+                                  (test:raises? (lambda () (store:rename! bot (car ids) bad)))
+                                  (test:raises? (lambda () (store:set-properties! bot (car ids) '((base . "lost")) #f bad)))))
                            '("" #f 42)) #t)
-           (check 'failed-rename-keeps-label (store:buffer-name (car ids)) name)
+           (check 'failed-rename-keeps-label-and-facts
+             (list (store:buffer-name (car ids)) (store:property (car ids) 'base)) (list name #f))
            (store:delete! alice (car ids))
            (check 'deletion-releases-the-first-free-name
                   (store:buffer-name (store:create! bot base '(""))) name)

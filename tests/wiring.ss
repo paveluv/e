@@ -501,7 +501,7 @@
            `(let* ([b (current-buffer)] [id (head:buffer-store-id b)] [armed? #t] [seen #f])
               (define (state)
                 (list (call-with-values (lambda () (head:buffer-state b)) list)
-                      (store:history id) (head:buffer-history b) (point) (mark)))
+                      (store:history id) (head:buffer-history b) (point) (mark) (head:buffer-name b)))
               (head:store-reset! b '#("base" "same" "same2" "same3" "other")
                 '((base . "base\nsame\nsame2\nsame3\nother\n") (trailing . #t)))
               (goto-point! '(0 . 0)) (insert-text! "A")
@@ -510,14 +510,17 @@
                 (store:subscribe! id
                   (lambda (event)
                     (when (and armed?
-                               (if (memq ',effect '(during-base during-trailing))
-                                   (and (eq? (car event) 'property) (eq? (caddr event) 'stamp))
-                                   (eq? (car event) 'edit)))
+                               (case ',effect
+                                 [(during-base during-trailing)
+                                  (and (eq? (car event) 'property) (eq? (caddr event) 'stamp))]
+                                 [(after-save) (and (eq? (car event) 'property) (eq? (caddr event) 'file))]
+                                 [else (eq? (car event) 'edit)]))
                       (set! armed? #f)
                       (case ',effect
                         [(disk) (file:write! ,merge-path '#("later") #t)]
                         [(unreadable) (delete-file ,merge-path) (mkdir ,merge-path)]
                         [(base during-base) (store:set-property! '(agent save-review) id 'base "foreign baseline\n")]
+                        [(after-save) (head:buffer-name-set! b "callback name") (mode:choose! b "scheme")]
                         [(during-trailing) (store:set-property! '(agent save-review) id 'trailing #f)])
                       (set! seen (state))))))
               (set-top-level-value! 'save-review-unchanged? (lambda () (and seen (equal? seen (state)))))
@@ -528,27 +531,27 @@
          (pump! 500)
          (send! "m")
          (pump! 700)
-         (check 'merge-save-rechecks-after-callbacks-and-reports-the-write-result
+         (check (list effect 'merge-save-rechecks-after-callbacks-and-reports-the-write-result)
            (read-editor
              `(begin (kernel:retract-module! 'wiring-save-review)
                 (let ([b (current-buffer)])
                   (list (top-level-value 'save-review-result)
                         (head:buffer-lines b) (head:buffer-base b) (head:buffer-modified b)
                         (if (file-directory? ,merge-path) 'directory (file:read ,merge-path))
-                        (if (memq ',effect '(during-base during-trailing)) (save-review-unchanged?) #t)))))
-           (list (if (memq effect '(during-base during-trailing)) 'refused (eq? effect 'ok))
+                        (if (memq ',effect '(during-base during-trailing after-save)) (save-review-unchanged?) #t)))))
+           (list (if (memq effect '(during-base during-trailing)) 'refused (and (memq effect '(ok after-save)) #t))
              (if (memq effect '(during-base during-trailing)) '#("Abase" "same" "same2" "same3" "other")
                  '#("Abase" "same" "same2" "same3" "Gother"))
-             (case effect [(ok) "Abase\nsame\nsame2\nsame3\nGother\n"]
+             (case effect [(ok after-save) "Abase\nsame\nsame2\nsame3\nGother\n"]
                [(base during-base) "foreign baseline\n"]
                [(during-trailing) "base\nsame\nsame2\nsame3\nother\n"]
                [else "base\nsame\nsame2\nsame3\nGother\n"])
-             (not (eq? effect 'ok))
-             (case effect [(ok) "Abase\nsame\nsame2\nsame3\nGother\n"]
+             (not (memq effect '(ok after-save)))
+             (case effect [(ok after-save) "Abase\nsame\nsame2\nsame3\nGother\n"]
                [(disk) "later\n"] [(unreadable) 'directory] [else "base\nsame\nsame2\nsame3\nGother\n"])
              #t))
          (when (eq? effect 'unreadable) (delete-directory merge-path)))
-       '(ok disk unreadable base during-base during-trailing))
+       '(ok after-save disk unreadable base during-base during-trailing))
      ;; Reread clears old head state only if its accepted revision is still
      ;; current. A reset subscriber can adopt and edit before reset returns.
      (for-each

@@ -102,7 +102,10 @@ unsaved work. Shared text and terminal processes stay in the running daemon.
 
 `C-x C-f` visits a path, `C-x C-s` saves, and `C-x C-w` saves under a new path.
 An unnamed buffer asks for a path when first saved. Saving as makes the buffer
-visit the chosen file and updates its mode from the new name.
+visit the chosen file and updates its mode from the new name. File facts,
+the buffer label and its detected mode publish together. A callback's later
+rename, mode choice or file retarget survives the save returning. An ordinary
+re-save preserves a manually chosen mode.
 
 Visited paths are canonicalized. Relative paths, `.` and `..`, and symbolic-link
 aliases of one existing file resolve to the same buffer. Visiting an already
@@ -117,6 +120,7 @@ appeared in a window. If another edit arrives during the save, that newer
 work stays marked unsaved. Undoing back to the saved contents makes the
 shared buffer clean again, regardless of which actor requested undo.
 If another actor changes the buffer's file or baseline during the write,
+or changes its mode while saving under a new path,
 e preserves those newer facts. It reports that the destination was written
 but saving could not finish, and returns failure; it does not undo the disk
 write or run post-save hooks. Review the buffer and destination before retrying.
@@ -479,7 +483,8 @@ the key with `head:find-tool-buffer`.
 `#f` remains `#f`, and store failures propagate. `head:buffer-facts-set!`
 accepts an alist and validates the whole batch before either owner changes
 any fact. The corresponding store call is `(store:set-properties! actor id
-facts [expected])`. Both calls return `#t` on acceptance. Optional `expected`
+facts [expected [name]])`; the head call takes the same optional arguments
+after its fact alist. Both calls return `#t` on acceptance. Optional `expected`
 facts are checked by the same owner before publication: `(key . value)`
 requires that exact value, while a bare symbol requires that key to be absent.
 For example, `'((base . "old\n") stamp)` requires the old baseline and no stamp
@@ -488,6 +493,14 @@ snapshot with `(property:select facts '(file base stamp))`. A mismatch or delete
 buffer returns `#f` without mutation or notifications. Omission or `#f` is
 unguarded; an empty list still requires a live buffer. The predicate compares
 values, independently of text revisions and undo's property-version checks.
+An optional nonempty `name` commits with the facts, using the ordinary name
+allocator and local `<name>` convention. Pass `#f` for `expected` to combine
+an unconditional fact update and rename. A stale review refuses both; all
+accepted fields are installed before any notification. The head reconciles
+the current name after subscribers return, preserving their newer choices.
+For detection without mutation, `(mode:detect path first-line)` returns a
+registered mode record or `#f`. Its `mode:name` can join a larger fact batch;
+save uses this to detect outside the store's mutation lock.
 `base` is a string or `#f`; `trailing` and `disposable` are booleans.
 Shared `modified` is derived and cannot be set or dropped. Generated output
 can set `disposable` to `#t`; registered apps and tool buffers do so already.

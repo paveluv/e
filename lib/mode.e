@@ -23,7 +23,7 @@
                   (mode-row-styles row-styles)
                   (register-mode! register!)
                   (add-mode-extension! add-extension!)
-                  (find-mode find) (assign-mode! assign!)
+                  (find-mode find) (detect-mode detect) (assign-mode! assign!)
                   (set-buffer-mode! choose!) (mode-of of)
                   (buffer-mode-name name-of)
                   (buffer-line-styles line-styles)
