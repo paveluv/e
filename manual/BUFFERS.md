@@ -418,6 +418,18 @@ Opening a file publishes its loaded text, disk baseline, path and detected
 mode together at revision 0. A create subscriber's later edits, undo history
 and mode choices survive opening. A missing file starts empty with its path
 and detected mode, and acquires a disk baseline on its first successful save.
+Overlapping visits, including a callback reopening the same path, reuse the
+same shared buffer and preserve edits made before the first visit returns.
+
+For extension code, `(store:find-file canonical-path)` looks up the shared
+buffer's id or returns `#f`. `(store:visit! actor name lines facts)` requires
+a canonical `file` fact and returns two values: id and whether it was created.
+Lookup and creation happen together; a reused buffer keeps all its existing
+state. Prepare disk text and initial facts before calling it.
+`(head:visit-file! name lines facts)` uses the same head defaults as
+`head:new-buffer` and returns the adopted buffer plus that creation flag.
+The ordinary `visit-file!` command also performs the usual disk-change review
+when it reuses a buffer. Local file buffers remain local to their head.
 
 `(store:create! actor name lines [facts])` returns a store id. The optional
 fact alist publishes atomically with the content, before the create event.

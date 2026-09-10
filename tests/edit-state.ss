@@ -281,9 +281,12 @@
                                (let-values ([(text revision facts) (store:snapshot-state id)])
                                  (list text revision
                                    (property:select facts '(file base stamp trailing mode mode-auto wrap modified)))))
-                             (set! opened (head:adopt-store-buffer! id))
+                             (set! opened
+                               (if (eq? effect 'revisit)
+                                   (begin (visit-file! target) (current-buffer))
+                                   (head:adopt-store-buffer! id)))
                              (case effect
-                               [(edit) (insert! id 0 "agent ")]
+                               [(edit revisit) (insert! id 0 "agent ")]
                                [(metadata) (head:buffer-facts-set! opened
                                              `((file . ,(string-append target ".other")) (base . "new baseline\n")
                                                (mode . "invalid-line-output") (mode-auto . #f)) #f "callback file")])
@@ -302,9 +305,10 @@
                            (eq? opened (current-buffer)) kept?
                            (equal? (reverse events)
                              (case effect [(edit) '(create edit)]
+                               [(revisit) (if content '(create property property edit) '(create edit))]
                                [(metadata) '(create rename property property property property)] [else '(create)]))
                            (equal? (and (file-exists? target) (file:read target)) content)
-                           (if (eq? effect 'edit)
+                           (if (memq effect '(edit revisit))
                                (begin (store:undo! bot id) (head:before-frame!)
                                       (and (equal? (head:buffer-lines opened) lines) (not (head:buffer-modified opened))))
                                #t))))
@@ -318,8 +322,10 @@
            (#f ".state" #("") #t "visit-state" edit)
            ("disk" ".state" #("disk") #f "visit-state" metadata)
            (#f ".state" #("") #t "visit-state" metadata)
+           ("disk\n" ".state" #("disk") #t "visit-state" revisit)
+           (#f ".state" #("") #t "visit-state" revisit)
            ("" "" #("") #f #f none)))
-       (make-list 6 '(#t #t #t #t #t #t)))
+       (make-list 8 '(#t #t #t #t #t #t)))
 
      ;; Saving publishes the file, label and detected mode before callbacks.
      ;; A subscriber can then edit or choose newer metadata, and pump a frame;

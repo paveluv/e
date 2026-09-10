@@ -79,6 +79,7 @@
       [(name)
        (arity 1)
        (store:buffer-name (car args))]
+      [(find-file) (arity 1) (store:find-file (car args))]
       [(snapshot)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional basis"))
        (when (pair? (cdr args))
@@ -123,10 +124,11 @@
        (if (eq? operation 'history) (apply store:history args)
            (map (lambda (entry) (cons (text:span->datum (car entry)) (cdr entry)))
              (apply store:blame args)))]
-      [(create reset rename delete discard properties)
+      [(create visit reset rename delete discard properties)
        (control!)
        (case operation
          [(create) (apply store:create! actor args)]
+         [(visit) (call-with-values (lambda () (apply store:visit! actor args)) list)]
          [(reset) (apply store:reset! actor args)]
          [(rename) (arity 2) (apply store:rename! actor args)]
          [(delete) (arity 1) (apply store:delete! actor args) #t]

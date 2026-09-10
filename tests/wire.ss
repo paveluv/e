@@ -39,6 +39,8 @@
      (define audit-file (string-append root "/audit"))
      (define edit-held (string-append root "/edit-held"))
      (define edit-release (string-append root "/edit-release"))
+     (define open-held (string-append root "/open-held"))
+     (define open-release (string-append root "/open-release"))
      (define (quote-shell text)
        (string-append "'" (apply string-append
                             (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
@@ -111,6 +113,15 @@
          ;; socket. Observe creation, or retarget an accepted save.
          (store:subscribe! #f
            (lambda (event)
+             (when (and (eq? (car event) 'create) (string:prefix? "shared-visit-" (caddr event)))
+               (let ([id (cadr event)] [who '(agent "file opening")])
+                 (store:edit! who id 0 (text:make-span 0 0 0 0) '("callback "))
+                 (store:set-properties! who id '((mode . "scheme") (mode-auto . #f)))
+                 (call-with-output-file ,open-held (lambda (out) (display "ready" out)) 'replace)
+                 (let wait ([left 1000])
+                   (unless (file-exists? ,open-release)
+                     (when (zero? left) (error 'wire-test "file opening barrier timed out"))
+                     (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1))))))
              (when (and (eq? (car event) 'create) (string:prefix? "wire-open-" (caddr event)))
                (let ([id (cadr event)] [who '(agent "opening")])
                  (store:set-properties! who id
@@ -378,14 +389,16 @@
                    (request 22 log-snapshot 0 1 #f extra)
                    (request 23 log-retention 0) (request 24 log-retention -1)
                    (request 25 log-retention 1.0) (request 26 log-retention 4 5)
-                   (request 27 actors)))
+                   (request 27 actors)
+                   (request 28 find-file #f) (request 29 visit "file" ("seed") ())
+                   (request 30 visit "file" ("seed") ((file . #f)))))
                '((reply 1 error) (reply 2 error) (reply 3 error) (reply 4 error)
                  (reply 5 error) (reply 6 error) (reply 7 error) (reply 8 error)
                  (reply 9 error) (reply 10 error) (reply 11 error) (reply 12 error) (reply 13 error)
                  (reply 14 error) (reply 15 error) (reply 16 error) (reply 17 error)
                  (reply 18 error) (reply 19 error) (reply 20 error) (reply 21 error)
                  (reply 22 error) (reply 23 error) (reply 24 error) (reply 25 error)
-                 (reply 26 error) (reply 27 ok)))
+                 (reply 26 error) (reply 27 ok) (reply 28 error) (reply 29 error) (reply 30 error)))
              (test:check 'existing-endpoint-is-never-unlinked
                (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name 1))
                '(#t "notes λ"))
@@ -806,6 +819,48 @@
                                (list (if existing? '#("disk") '#("")) #f #f)))
                            (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
                            (rpc head 'delete target))))
+                     '(#t #f))
+
+                   ;; Hold A's create reply while B visits the same canonical
+                   ;; path and edits it. A stale candidate also crosses the wire.
+                   (for-each
+                     (lambda (existing?)
+                       (let* ([name (if existing? "shared-visit-existing.txt" "shared-visit-missing.txt")]
+                              [path (string-append root "/" name)])
+                         (when existing? (write-text path "disk\n"))
+                         (head-send! a (format "\x1b;xvisit-file! ~s\r" path))
+                         (head-wait 'first-visit-published a (lambda () (file-exists? open-held)))
+                         (let* ([target (rpc head 'find-file path)]
+                                [second (head-read b
+                                          `(begin (visit-file! ,(string-append root "/./" name))
+                                             (insert-text! "B ") (head:buffer-store-id (current-buffer))))]
+                                [before (rpc head 'snapshot target)] [history (rpc head 'history target)]
+                                [reused (rpc head 'visit "stale candidate" '("lost")
+                                          (list (cons 'file path) '(base . "lost\n") '(mode . #f)))]
+                                [kept? (and (equal? reused (list target #f))
+                                            (equal? before (rpc head 'snapshot target))
+                                            (equal? history (rpc head 'history target)))])
+                           (write-text open-release "continue")
+                           (test:check (list existing? 'overlapping-head-visits-share-current-work)
+                             (list (= target second) kept?
+                                   (map (lambda (screen)
+                                          (head-read screen
+                                            '(begin (head:before-frame!)
+                                               (let ([b (current-buffer)])
+                                                 (list (head:buffer-store-id b) (head:buffer-lines b)
+                                                       (head:buffer-base b) (mode:name-of b)
+                                                       (head:buffer-mode-auto b)
+                                                       (length (store:history (head:buffer-store-id b)))))))) (list a b))
+                                   (and (file-exists? path) (call-with-input-file path get-string-all)))
+                             (list #t #t
+                                   (make-list 2 (list target (if existing? '#("B callback disk") '#("B callback "))
+                                                      (and existing? "disk\n") "scheme" #f 2))
+                                   (and existing? "disk\n")))
+                           (for-each (lambda (screen) (head-read screen `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t)))
+                             (list a b))
+                           (rpc head 'delete target))
+                         (when existing? (delete-file path))
+                         (delete-file open-held) (delete-file open-release)))
                      '(#t #f))
 
                    (let* ([path (string-append root "/adoption.txt")]

@@ -19,8 +19,8 @@
 ;; (store:snapshot ...).
 
 (library (store)
-  (export create! delete! discard! prepare-close reset! rename! publication publish!
-          buffer-list exists? visible? buffer-name find-named
+  (export create! visit! delete! discard! prepare-close reset! rename! publication publish!
+          buffer-list exists? visible? buffer-name find-named find-file
           snapshot snapshot-since snapshot-state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
           set-mark! set-marks! mark drop-mark! marks
@@ -222,6 +222,27 @@
         (hashtable-set! (store-buffers s) id b))
       (enqueue-event! `(create ,id ,name ,actor))
       id))
+
+  (define (file-id path)
+    ;; Caller holds the store lock. Paths are canonicalized before admission;
+    ;; identity lives in the file fact, so retarget/delete need no index upkeep.
+    (unless (and (string? path) (> (string-length path) 0))
+      (error 'find-file "expected a nonempty canonical file path" path))
+    (find (lambda (id) (equal? (property-value (buffer-of 'find-file id) 'file #f) path))
+          (vector->list (hashtable-keys (store-buffers (current-store))))))
+
+  (define (find-file path) (locked (lambda () (file-id path))))
+
+  (define (visit! actor name lines facts)
+    ;; -> (values id created?): concurrent visitors share the first publication.
+    ;; Reuse never changes its name/text/facts/history or emits another event.
+    (let ([name (own-name name)] [text (text:normalize lines)]
+          [updates (datum:copy (writable-properties facts))])
+      (transact! actor
+        (lambda (actor)
+          (let ([id (file-id (cond [(assq 'file updates) => cdr] [else #f]))])
+            (if id (values id #f)
+                (values (create-buffer! actor name text updates) #t)))))))
 
   (define (reset! actor id lines . options)
     ;; Wholesale replacement: a new baseline, not an edit.  The delta

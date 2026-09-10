@@ -471,6 +471,8 @@
                         (let ([id (cadr event)])
                           (set! observed (list (store:line id 0) (store:property id 'file)
                                            (store:property id 'mode) (store:property id 'mode-auto)))
+                          (visit-file! ,merge-path)
+                          (set! observed (cons (= id (head:buffer-store-id (current-buffer))) observed))
                           (store:edit! who id 0 (text:make-span 0 0 0 0) '("later "))
                           (store:set-properties! who id '((mode . "scheme") (mode-auto . #f)))
                           (head:before-frame!)))))])
@@ -482,7 +484,7 @@
               (goto-point! '(0 . 0)) (insert-text! "A")
               (set-buffer-name! (fresh-buffer (format "*merge-~a*" (head:buffer-name b))) "review merge")
               result)))
-       (list (list "base" merge-path #f #t) '#("later base" "same" "same2" "same3" "other")
+       (list (list #t "base" merge-path #f #t) '#("later base" "same" "same2" "same3" "other")
              "base\nsame\nsame2\nsame3\nother\n" "scheme" #f 1))
      (call-with-output-file merge-path
        (lambda (p) (display "base\nsame\nsame2\nsame3\nGother\n" p)) 'replace)

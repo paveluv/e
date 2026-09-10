@@ -1,7 +1,7 @@
 ;; Client implementation of the store seam. Only immutable text and owned
 ;; metadata are cached; the base admits all writes and computes all history.
 (library (store)
-  (export create! delete! discard! prepare-close reset! rename! buffer-list exists? visible? buffer-name find-named
+  (export create! visit! delete! discard! prepare-close reset! rename! buffer-list exists? visible? buffer-name find-named find-file
           snapshot snapshot-state snapshot-since revision line-count line extract
           property properties set-property! set-properties!
           edit! edit-with-snapshot! history-step! undo-authors history blame marks set-marks!
@@ -48,6 +48,10 @@
   (define (buffer-name id) (string-copy (car (required id))))
   (define (find-named name)
     (find (lambda (id) (equal? (buffer-name id) name)) (buffer-list)))
+  (define (find-file path)
+    (let ([id (client:request 'find-file path)])
+      (when id (hashtable-delete! cache id))
+      id))
   (define (properties id) (datum:copy (cadddr (required id))))
   (define property
     (case-lambda
@@ -87,6 +91,11 @@
   (define (create! actor name lines . facts)
     (check-actor actor)
     (apply client:request 'create name lines facts))
+  (define (visit! actor name lines facts)
+    (check-actor actor)
+    (let ([result (client:request 'visit name lines facts)])
+      (hashtable-delete! cache (car result))
+      (apply values result)))
   (define (delete! actor id) (mutate actor id 'delete '()) (void))
   (define (discard! actor id revision facts) (mutate actor id 'discard (list revision facts)))
   (define (reset! actor id lines . options)

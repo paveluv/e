@@ -809,50 +809,57 @@
     b)
 
   (define (file-buffer path)
-    ;; A fresh buffer visiting path; #f (with a message) when it cannot be read.
+    ;; -> (values buffer created?). Consult shared identity before reading
+    ;; disk; admission rechecks it under the writer if another visitor wins.
     (guard (ex [else (parameterize ([message-source 'visit-file!])
                        (set-message! (format "Cannot open ~a: ~a"
                                              path (kernel:condition-text ex))))
-                     #f])
-      (let* ([disk (and (file-exists? path) (file:read-state path))]
-             [lines (file:lines (if disk (car disk) ""))]
-             [detected (mode:detect path (vector-ref lines 0))]
-             [b (head:new-buffer (file:base-name path) lines
-                  (append (list (cons 'file path) (cons 'mode (and detected (mode:name detected))))
-                    (if disk
-                        (list (cons 'trailing (file:ends-in-newline? (car disk)))
-                              (cons 'base (car disk)) (cons 'stamp (cdr disk))) '())))])
-        ;; Create observers already saw the loaded text/file/mode. Their later
-        ;; edits or choices must not be followed by an initializing reset/write.
-        (log:add! 'visit-file! (cons (if disk "Loaded" "New file:") path))
-        b)))
+                     (values #f #f)])
+      (cond [(store:find-file path)
+             => (lambda (id)
+                  (values (or (head:adopt-store-buffer! id)
+                              (error 'visit-file! "buffer visiting this file is not visible" path)) #f))]
+        [else
+         (let* ([disk (and (file-exists? path) (file:read-state path))]
+                [lines (file:lines (if disk (car disk) ""))]
+                [detected (mode:detect path (vector-ref lines 0))])
+           (let-values ([(b created?)
+                         (head:visit-file! (file:base-name path) lines
+                           (append (list (cons 'file path) (cons 'mode (and detected (mode:name detected))))
+                             (if disk
+                                 (list (cons 'trailing (file:ends-in-newline? (car disk)))
+                                       (cons 'base (car disk)) (cons 'stamp (cdr disk))) '())))])
+             ;; Creation already published the baseline before callbacks.
+             (when created? (log:add! 'visit-file! (cons (if disk "Loaded" "New file:") path)))
+             (values b created?)))])))
 
   (define (visit-file! path)
     ;; Switch to the buffer visiting path, creating it if necessary.
     ;; Reopening a buffer whose file changed on disk meanwhile raises
     ;; a buffer-only dialog: merge, reread, cancel.  Reopening never writes.
     (let ([path (file:visit-path path)])
-      (cond [(find (lambda (b) (equal? (head:buffer-file b) path)) buffers)
-             => (lambda (b)
-                  (show-buffer! b)
-                  (let-values ([(text revision facts) (head:buffer-state b)])
-                    (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
-                      (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
-                        ;; Reopening is explicit and uncommon, so compare content
-                        ;; every time. This catches preserved timestamps and a
-                        ;; stale buffer whose cached stamp was already refreshed.
-                        (let ([disk (guard (ex [else #f]) (read-disk path))])
-                          (cond
-                            [(and disk (string=? (car disk) base))
-                             (head:buffer-facts-set! b
-                               (list (cons 'stamp (cdr disk)) '(stale . #f))
-                               (property:select facts '(file base stamp stale)))]
-                            [disk (reopen-changed-file! b path disk (cons revision facts))]
-                            [else
-                             (parameterize ([message-source 'visit-file!])
-                               (set-message!
-                                 (format "Cannot reread ~a" path)))]))))))]
-            [(file-buffer path) => show-buffer!])))
+      (let-values ([(b created?)
+                    (cond [(find (lambda (b) (and (not (head:buffer-store-id b))
+                                                  (equal? (head:buffer-file b) path))) buffers)
+                           => (lambda (b) (values b #f))]
+                      [else (file-buffer path)])])
+        (when b
+          (show-buffer! b)
+          (unless created?
+            (let-values ([(text revision facts) (head:buffer-state b)])
+              (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
+                (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
+                  ;; Reopening compares content even if a stamp is unchanged.
+                  (let ([disk (guard (ex [else #f]) (read-disk path))])
+                    (cond
+                      [(and disk (string=? (car disk) base))
+                       (head:buffer-facts-set! b
+                         (list (cons 'stamp (cdr disk)) '(stale . #f))
+                         (property:select facts '(file base stamp stale)))]
+                      [disk (reopen-changed-file! b path disk (cons revision facts))]
+                      [else
+                       (parameterize ([message-source 'visit-file!])
+                         (set-message! (format "Cannot reread ~a" path)))]))))))))))
 
   (define (refuse-file! message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))

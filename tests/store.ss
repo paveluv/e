@@ -1011,7 +1011,7 @@
          (set-cdr! (assq 'audience facts) 'all)))
      (for-each
        (lambda (kind)
-         (let* ([id (and (not (eq? kind 'create)) (store:create! alice "fact-owner" '("old")))]
+         (let* ([id (and (not (memq kind '(create visit))) (store:create! alice "fact-owner" '("old")))]
                 [events (test:recorder)]
                 [creation #f]
                 [token (store:subscribe! #f
@@ -1023,6 +1023,10 @@
                 [admit! (lambda (facts)
                           (case kind
                             [(create) (store:create! alice "fact-owner" '("seed") facts)]
+                            [(visit)
+                             (let-values ([(id created?)
+                                           (store:visit! alice "fact-owner" '("seed")
+                                             (cons '(file . "/tmp/owned-visit.txt") facts))]) id)]
                             [(set) (store:set-properties! alice id facts) id]
                             [(reset) (store:reset! alice id '("seed") facts) id]
                             [(edit)
@@ -1062,7 +1066,7 @@
                           (store:property id 'base) (store:property id 'modified))
                     (list '((head "desk")) '#(("value" . #vu8(1 2))) #t #f #t #t "seed\n"
                           (eq? kind 'set)))
-             (when (eq? kind 'create)
+             (when (memq kind '(create visit))
                (check 'initial-facts-publish-with-one-create
                       (list (map car notifications) (assq 'audience creation)
                             (assq 'metadata creation) (assq 'modified creation))
@@ -1079,7 +1083,45 @@
                       '(((head "desk")) #(("value" . #vu8(1 2))))))
              (store:unsubscribe! token)
              (store:delete! alice id))))
-       '(create set reset edit))
+       '(create visit set reset edit))
+
+     ;; The shared writer owns file identity, including the lookup/create gap.
+     ;; Reuse preserves later work; retarget/delete naturally release the path.
+     (let* ([path "/tmp/contended-visit.txt"] [events (test:recorder)]
+            [token (store:subscribe! #f events)]
+            [results (test:parallel 8
+                       (lambda (worker)
+                         (call-with-values
+                           (lambda () (store:visit! (list 'head (number->string worker)) "visit" '("seed")
+                                        (list (cons 'file path) '(base . "seed\n") '(trailing . #t)))) list)))]
+            [id (caar results)]
+            [one? (and (for-all (lambda (result) (= id (car result))) results)
+                       (= 1 (length (filter cadr results)))
+                       (equal? '(create) (map car (events))))])
+       (store:edit! alice id 0 (span 0 0 0 0) '("later "))
+       (store:set-properties! alice id '((mode . "manual") (mode-auto . #f) (read-only . #t) (audience))
+         #f "kept name")
+       (store:set-mark! alice id 'point '(0 . 2))
+       (let* ([before (list (call-with-values (lambda () (store:snapshot-state id)) list)
+                            (store:history id) (store:marks alice id) (store:buffer-name id) (events))]
+              [reused (call-with-values
+                        (lambda () (store:visit! bot "lost name" '("lost")
+                                     (list (cons 'file path) '(base . "lost\n")))) list)]
+              [kept? (equal? before (list (call-with-values (lambda () (store:snapshot-state id)) list)
+                                          (store:history id) (store:marks alice id) (store:buffer-name id) (events)))]
+              [invalid? (for-all (lambda (thunk) (test:raises? thunk))
+                          (list (lambda () (store:visit! alice "visit" '("lost") '()))
+                                (lambda () (store:visit! alice "visit" '("lost") '((file . #f))))
+                                (lambda () (store:visit! alice "visit" '("bad\nline") (list (cons 'file path))))))])
+         (store:set-property! alice id 'file "/tmp/retargeted-visit.txt")
+         (let-values ([(next created?) (store:visit! bot "next visit" '("") (list (cons 'file path)))])
+           (store:delete! alice next)
+           (check 'file-visitors-share-admission-and-preserve-existing-work
+             (list one? reused kept? invalid? created? (not (= id next))
+                   (store:find-file path) (store:find-file "/tmp/retargeted-visit.txt"))
+             (list #t (list id #f) #t #t #t #t #f id))))
+       (store:unsubscribe! token)
+       (store:delete! alice id))
 
      (define pb (store:create! alice "propped" '("x")))
      (store:set-property! alice pb 'file "/tmp/a.txt")

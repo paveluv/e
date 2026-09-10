@@ -74,7 +74,7 @@
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
           adopt-store!
-          edit-basis snapshot-since store-reset! store-edit! store-history! new-buffer new-local-buffer
+          edit-basis snapshot-since store-reset! store-edit! store-history! new-buffer new-local-buffer visit-file!
           add-buffer! tool-buffer find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
@@ -1145,14 +1145,20 @@
     (case-lambda
       [(name) (new-buffer name '("") '())]
       [(name lines facts)
-       ;; Publish initial content and caller facts before create callbacks.
-       ;; Fill only absent defaults; reentrant adoption keeps one record.
-       (store:validate-properties facts)
-       (let ([id (store:create! ui-actor name lines
-                   (append facts
-                     (remp (lambda (entry) (assq (car entry) facts)) initial-buffer-facts)))])
-         (or (adopt-store-buffer! id)
-             (error 'new-buffer "created buffer is no longer visible" id)))]))
+       (require-store-buffer! (store:create! ui-actor name lines (complete-buffer-facts facts)))]))
+
+  (define (visit-file! name lines facts)
+    (let-values ([(id created?) (store:visit! ui-actor name lines (complete-buffer-facts facts))])
+      (values (require-store-buffer! id) created?)))
+
+  (define (complete-buffer-facts facts)
+    ;; Publish initial content and caller facts before callbacks. Fill only
+    ;; absent defaults; both constructors share canonical reentrant adoption.
+    (store:validate-properties facts)
+    (append facts (remp (lambda (entry) (assq (car entry) facts)) initial-buffer-facts)))
+
+  (define (require-store-buffer! id)
+    (or (adopt-store-buffer! id) (error 'head "buffer is no longer visible" id)))
 
   (define (new-local-buffer name)
     ;; Local construction has no shared lifecycle. Its caller decides when
