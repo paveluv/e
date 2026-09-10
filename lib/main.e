@@ -354,8 +354,6 @@
         (let loop ()
           (unless (head:quitting?)
             (head:run-deferred!)
-            (paint:window-layout)
-            (head:before-frame!)
             (paint:redraw!)
             (when (eq? (startup:mode) 'attach) (head:checkpoint!))
             ;; A command that raises (a read-only buffer, a bug in an

@@ -461,6 +461,7 @@
                    (lambda (done)
                      (head:set-frame-hook!
                        (lambda ()
+                         (head:before-frame!)
                          (if (finished?) (done #t)
                              (begin
                                (set! frames (+ frames 1))

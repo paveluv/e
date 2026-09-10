@@ -414,8 +414,8 @@
       (set! deferred '())
       (for-each run-posted! runs)))
 
-  ;; The two hooks: the frame hook paints a frame (the painter's,
-  ;; above); the mouse handler applies a report -- (handler handle? c b
+  ;; The two hooks: the frame hook prepares and paints a frame (the
+  ;; painter's, above); the mouse handler applies a report -- (handler handle? c b
   ;; x y) -> an event string or #f (the commands', above).
   (define frame-hook void)
   (define mouse-handler (lambda (handle? c b x y) #f))
@@ -424,8 +424,7 @@
   (define (set-mouse-handler! proc) (set! mouse-handler proc))
 
   (define (frame!)
-    ;; a frame on a wake or deadline: the store's news first, then the paint
-    (before-frame!)
+    ;; Wakes and deadlines use the same preparation as direct redraws.
     (frame-hook)
     ;; Nested prompts can temporarily borrow windows. Only an outer pump
     ;; frame checkpoints the screen the user will return to.
@@ -1747,6 +1746,7 @@
   (define (before-frame!)
     ;; Adopt the store's news before the layers above refresh their
     ;; views.  A frame never writes an old shared cache back to the store.
+    ;; The painter supplies current terminal geometry before this fence.
     (set! frame-deadline #f)
     (sync-foreign-edits!)
     (refresh-renditions!)

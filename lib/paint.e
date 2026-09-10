@@ -1413,7 +1413,6 @@
           (begin
             (set! visual-bell-deadline #f)
             (invalidate-screen-cache!))))
-    (terminal-size!)
     (update-echo-geometry!)
     ;; window geometry is otherwise set while painting, one frame
     ;; stale from here -- refresh views against the current layout
@@ -1477,8 +1476,13 @@
           (flush-output-port (sys:terminal-output-port))))))
 
   (define (redraw!)
-    ;; a whole frame, title included, as one transaction
+    ;; Every entry, including direct prompt redraws, prepares against current
+    ;; geometry. Hooks can present messages and reenter, so finish them before
+    ;; opening this frame's synchronized update.
     (with-mutex redraw-lock
+      (terminal-size!)
+      (window-layout)
+      (head:before-frame!)
       (update-terminal-title!)
       (redraw-frame!)))
 

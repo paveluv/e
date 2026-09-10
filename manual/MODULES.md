@@ -43,6 +43,14 @@ expiry, so removing an overlay or reloading its module leaves no timer worker.
 This is a main-thread presentation API; background changes still notify the
 head through `head:wake-main!` or `head:run-on-main!`.
 
+`paint:redraw!` refreshes terminal size and window tiling before running that
+head preparation, including direct redraws during a prompt. Hooks can read
+`paint:screen-cols` and window widths for the current frame. A hook that
+presents a message may reenter redraw; publish its state before calling out.
+Preparation finishes before the frame's synchronized terminal update begins.
+An alternative `head:set-frame-hook!` callback owns the complete frame,
+including `head:before-frame!` after establishing geometry.
+
 Documentation data lives in `reference` and the module-entry registry in `doc`.
 Use `reference:lookup` for queries that need no browser; `describe` adds the
 head's prompts, key annotations, and Markdown display. `reference:page!`

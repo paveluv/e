@@ -837,25 +837,31 @@
                        (test:check 'attached-split-scrolling-uses-balanced-2026
                          (list (> opened 0) (= opened closed) (head-read a '(point))) '(#t #t (30 . 0))))
                      ;; The attached head also services resize while idle.
-                     ;; Observe geometry from its real painter before sending
-                     ;; any more input; the other head keeps its own dimensions.
+                     ;; Observe geometry and the pending question's new width
+                     ;; before any more input; the other head keeps its size.
                      (head-read a
                        '(let ([owner (get-thread-id)])
                           (parameterize ([kernel:registering-module 'wire-resize])
                             (paint:add-status-hint!
                               (lambda ()
                                 (format "~ax~a/~a" (paint:screen-rows) (paint:screen-cols)
-                                  (= owner (get-thread-id)))))) #t))
-                     (vector-set! a 3 "")
-                     (vt:emulator-resize! (vector-ref a 2) 18 120)
-                     (sys:resize-terminal-process! (vector-ref a 0) 18 120)
-                     (head-wait 'attached-idle-resize a
-                       (lambda ()
-                         (and (head-sees? a "18x120/#t")
-                              (let ([frames (vector-ref a 3)])
-                                (and (> (occurrences frames "\x1b;[?2026h") 0)
-                                     (= (occurrences frames "\x1b;[?2026h")
-                                        (occurrences frames "\x1b;[?2026l")))))))
+                                  (= owner (get-thread-id))))))
+                          (echo:settle!) #t))
+                     (let* ([question "This pending question expands to the new terminal width before another key."]
+                            [ticket (rpc agent 'ask '(head "screen A") question '())])
+                       (head-wait 'attached-resize-question-starts-elided a
+                         (lambda () (and (head-sees? a "This pending que") (not (head-sees? a question)))))
+                       (vector-set! a 3 "")
+                       (vt:emulator-resize! (vector-ref a 2) 18 120)
+                       (sys:resize-terminal-process! (vector-ref a 0) 18 120)
+                       (head-wait 'attached-idle-resize-refits-question a
+                         (lambda ()
+                           (and (head-sees? a "18x120/#t") (head-sees? a question)
+                                (let ([frames (vector-ref a 3)])
+                                  (and (> (occurrences frames "\x1b;[?2026h") 0)
+                                       (= (occurrences frames "\x1b;[?2026h")
+                                          (occurrences frames "\x1b;[?2026l")))))))
+                       (rpc agent 'cancel ticket))
                      (test:check 'attached-resize-keeps-the-other-head-size
                        (head-read b '(list (paint:screen-rows) (paint:screen-cols))) '(24 80))
                      (head-read a '(begin (kernel:retract-module! 'wire-resize) #t))

@@ -90,8 +90,9 @@ describe page for the Scheme symbol under or immediately before point.
 An agent or another actor can leave a question for you. The echo area shows
 the oldest pending question when no other message or prompt occupies it.
 The indicator updates while idle as questions arrive or are withdrawn,
-advancing to the next question or clearing when none remain. Other messages
-and anything you are typing into a prompt stay intact.
+advancing to the next question or clearing when none remain. It also refits
+immediately when you resize the terminal. Other messages and anything you are
+typing into a prompt stay intact.
 Press `C-c a` (`answer!!`) to answer; Tab offers any supplied choices.
 Cancelling the prompt leaves the question pending so you can return to it.
 If it was withdrawn while you were typing, the editor says so when you submit.

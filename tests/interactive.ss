@@ -103,10 +103,17 @@
      (wait-for! 'editor-starts
                 (lambda () (find-cell "*scratch*")) 30000)
 
-     ;; Resize while idle and inside a populated prompt. A terminal mirror
-     ;; can reflow old cells on its own, so require actual frame output too.
-     (send! "\x7;")
+     ;; Resize while idle and inside a populated prompt. The pending question
+     ;; must use the new width in that frame, before another key. A terminal
+     ;; mirror can reflow old cells itself, so require actual frame output too.
+     (define resize-question
+       "This pending question expands to the new terminal width before another key.")
+     (send! (format "\x1b;xactor:ask! '(agent resize) head:ui-actor ~s '() void\r" resize-question))
+     (settle! 200)
+     (send! "\x1;")                    ; C-a settles the evaluation's echo log
      (settle! 150)
+     (wait-for! 'resize-question-starts-elided
+       (lambda () (and (find-cell "(agent resize) asks:") (not (find-cell resize-question)))) 3000)
      (for-each
        (lambda (case)
          (let ([prompt? (car case)] [rows (cadr case)] [cols (caddr case)])
@@ -119,13 +126,15 @@
                (let ([buffer (find-cell "*scratch*")] [close (find-cell "[×]")])
                  (and (contains? (list->string (reverse transcript)) "\x1b;[?2026h")
                       buffer close (= (car buffer) (- rows 2)) (= (cdr close) (- cols 3))
-                      (or (not prompt?) (find-cell "M-x (resize-input"))))) 3000)))
-       '((#f 18 70) (#t 24 80)))
+                      (if prompt? (find-cell "M-x (resize-input")
+                          (find-cell resize-question))))) 3000)))
+       '((#f 18 160) (#t 24 80)))
      (settle! 200)
      (set! transcript '())
      (settle! 350)
      (check 'idle-signal-checks-do-not-paint (null? transcript))
      (send! "\x7;")
+     (send! "\x1b;xfor-each actor:cancel! (map car (actor:pending head:ui-actor))\r")
      (settle! 150)
 
      ;; Invalid single-key input flashes the echo area, then restores the

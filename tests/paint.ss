@@ -206,7 +206,27 @@
      (painted paint:redraw!)
      (paint:set-screen-rows! 24)
      (paint:set-screen-cols! 80)
-     (check 'frame-is-synchronized (sync-events (painted paint:redraw!)) '(begin end))
+     ;; A preparation hook may present a notice, causing a direct redraw.
+     ;; Both frames prepare at the current width; their synchronized updates
+     ;; must not nest, since the inner end would release the outer update.
+     (let ([prepared '()])
+       (parameterize ([kernel:registering-module 'paint-prepare-test])
+         (head:add-pre-redraw-hook!
+           (lambda ()
+             (set! prepared (cons (list (paint:screen-cols) (head:window-width (head:current))) prepared))
+             (when (null? (cdr prepared))
+               (paint:show-message! "Prepared\nmessage" #f)))))
+       (dynamic-wind
+         (lambda () (paint:set-screen-live! #t))
+         (lambda ()
+           (let ([frame (painted paint:redraw!)])
+             (check 'frame-prepares-before-synchronized-paint
+               (list prepared (sync-events frame) (contains? frame "Prepared") (contains? frame "message"))
+               '(((80 80) (80 80)) (begin end begin end) #t #t))))
+         (lambda ()
+           (paint:set-screen-live! #f)
+           (kernel:retract-module! 'paint-prepare-test)
+           (echo:settle!))))
      (define top-before (head:window-top (head:current)))
      (define scrolling
        (let loop ([row 0] [frames '()])
