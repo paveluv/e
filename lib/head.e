@@ -1141,12 +1141,18 @@
            (flush-ui-audit! (buffer-store-id b)))
          (values status detail))]))
 
-  (define (new-buffer name)
-    ;; Shared creation and notification adoption have one canonical record.
-    ;; A subscriber may reenter a frame before create! returns its id.
-    (let ([id (store:create! ui-actor name '("") initial-buffer-facts)])
-      (or (adopt-store-buffer! id)
-          (error 'new-buffer "created buffer is no longer visible" id))))
+  (define new-buffer
+    (case-lambda
+      [(name) (new-buffer name '("") '())]
+      [(name lines facts)
+       ;; Publish initial content and caller facts before create callbacks.
+       ;; Fill only absent defaults; reentrant adoption keeps one record.
+       (store:validate-properties facts)
+       (let ([id (store:create! ui-actor name lines
+                   (append facts
+                     (remp (lambda (entry) (assq (car entry) facts)) initial-buffer-facts)))])
+         (or (adopt-store-buffer! id)
+             (error 'new-buffer "created buffer is no longer visible" id)))]))
 
   (define (new-local-buffer name)
     ;; Local construction has no shared lifecycle. Its caller decides when

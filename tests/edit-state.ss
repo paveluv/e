@@ -255,10 +255,75 @@
        (lambda () (set-box! store-cell saved-store)))
      (check 'failure-recovery-keeps-shared-text (store:line id 0) "agent work!")
 
+     ;; A file is born with its complete content/facts. Create subscribers
+     ;; see that baseline, then edit or retarget it before visit returns.
+     (define path (format "/tmp/e-state-~a-~a.txt" (time-second (current-time)) (random 1000000)))
+     (mode:register! "visit-state" '(".state") '("statesh") (lambda (line) #f))
+     (check 'file-opening-publishes-once-and-keeps-callback-work
+       (map
+         (lambda (scenario)
+           (let* ([content (car scenario)] [target (string-append path (cadr scenario))]
+                  [lines (caddr scenario)] [trailing (cadddr scenario)]
+                  [mode (list-ref scenario 4)] [effect (list-ref scenario 5)]
+                  [id #f] [opened #f] [observed #f] [seen #f] [events '()])
+             (define (current) (list (state opened) (store:history id)))
+             (when content (call-with-output-file target (lambda (p) (display content p)) 'replace))
+             (let* ([stamp (and content (file:stamp target))]
+                    [token
+                     (store:subscribe! #f
+                       (lambda (event)
+                         (when (and (eq? (car event) 'create) (string=? (caddr event) (file:base-name target)))
+                           (set! id (cadr event)))
+                         (when (eqv? (cadr event) id)
+                           (set! events (cons (car event) events))
+                           (when (eq? (car event) 'create)
+                             (set! observed
+                               (let-values ([(text revision facts) (store:snapshot-state id)])
+                                 (list text revision
+                                   (property:select facts '(file base stamp trailing mode mode-auto wrap modified)))))
+                             (set! opened (head:adopt-store-buffer! id))
+                             (case effect
+                               [(edit) (insert! id 0 "agent ")]
+                               [(metadata) (head:buffer-facts-set! opened
+                                             `((file . ,(string-append target ".other")) (base . "new baseline\n")
+                                               (mode . "invalid-line-output") (mode-auto . #f)) #f "callback file")])
+                             (head:before-frame!)
+                             (set! seen (current))))))])
+               (dynamic-wind void
+                 (lambda ()
+                   (visit-file! target)
+                   (head:before-frame!)
+                   (let ([kept? (and seen (equal? seen (current)))])
+                     (list (equal? observed
+                             (list lines 0
+                               (list (cons 'file target) (if content (cons 'base content) 'base)
+                                     (if content (cons 'stamp stamp) 'stamp) (cons 'trailing trailing)
+                                     (cons 'mode mode) '(mode-auto . #t) '(wrap . default) '(modified . #f))))
+                           (eq? opened (current-buffer)) kept?
+                           (equal? (reverse events)
+                             (case effect [(edit) '(create edit)]
+                               [(metadata) '(create rename property property property property)] [else '(create)]))
+                           (equal? (and (file-exists? target) (file:read target)) content)
+                           (if (eq? effect 'edit)
+                               (begin (store:undo! bot id) (head:before-frame!)
+                                      (and (equal? (head:buffer-lines opened) lines) (not (head:buffer-modified opened))))
+                               #t))))
+                 (lambda ()
+                   (store:unsubscribe! token)
+                   (when id (store:delete! bot id))
+                   (head:before-frame!)
+                   (when (file-exists? target) (delete-file target)))))))
+         '(("disk\n" ".state" #("disk") #t "visit-state" edit)
+           ("#!/usr/bin/env statesh\nλ text" "" #("#!/usr/bin/env statesh" "λ text") #f "visit-state" edit)
+           (#f ".state" #("") #t "visit-state" edit)
+           ("disk" ".state" #("disk") #f "visit-state" metadata)
+           (#f ".state" #("") #t "visit-state" metadata)
+           ("" "" #("") #f #f none)))
+       (make-list 6 '(#t #t #t #t #t #t)))
+
      ;; Saving publishes the file, label and detected mode before callbacks.
      ;; A subscriber can then edit or choose newer metadata, and pump a frame;
      ;; neither first save nor re-save may overwrite that newer state on return.
-     (define path (format "/tmp/e-state-~a-~a.txt" (time-second (current-time)) (random 1000000)))
      (define saved (fresh "save-state" #t))
      (define saved-id (head:buffer-store-id saved))
      (mode:register! "save-state" '(".txt") '() (lambda (line) #f))

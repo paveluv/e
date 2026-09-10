@@ -236,29 +236,40 @@
      ;; gets a record or displaces a local label; later transitions adopt
      ;; current content and retire only this head's state.
      (define created-during-callback #f)
+     (define creation-state #f)
      (define creation-token
        (store:subscribe! #f
          (lambda (event)
            (when (string=? (store:buffer-name (cadr event)) "reentrant construction")
              (case (car event)
                [(create)
-                (store:reset! bot (cadr event) '("subscriber content"))
+                (set! creation-state
+                  (list (call-with-values (lambda () (store:snapshot (cadr event))) list)
+                        (map (lambda (key) (store:property (cadr event) key 'missing))
+                          '(base trailing mode mode-auto wrap modified))))
+                (store:edit! bot (cadr event) 0 (text:make-span 0 7 0 7) '(" subscriber"))
                 (head:adopt-store-buffer! (cadr event))]
-               ;; All subscribers finish create before this reset callback;
+               ;; All subscribers finish create before this edit callback;
                ;; the head has queued creation, but create! has not returned.
-               [(reset)
+               [(edit)
                 (head:before-frame!)
                 (set! created-during-callback (head:buffer-of-store-id (cadr event)))])))))
-     (define constructed (head:new-buffer "reentrant construction"))
+     (define initial-lines (vector "initial"))
+     (define initial-facts
+       (list (cons 'base (string-copy "initial")) '(trailing . #f) '(mode . #f) '(mode-auto . #f) '(wrap . #f)))
+     (define constructed (head:new-buffer "reentrant construction" initial-lines initial-facts))
      (store:unsubscribe! creation-token)
+     (vector-set! initial-lines 0 "lost")
+     (string-set! (cdar initial-facts) 0 #\X)
      (head:add-buffer! constructed)
-     (check 'shared-construction-reuses-reentrant-adoption
-            (list (eq? constructed created-during-callback)
+     (check 'shared-construction-publishes-owned-inputs-and-reuses-reentrant-adoption
+            (list creation-state (eq? constructed created-during-callback)
                   (head:buffer-lines constructed)
+                  (head:buffer-base constructed) (length (store:history (head:buffer-store-id constructed)))
                   (length (filter (lambda (b) (eqv? (head:buffer-store-id b)
                                                     (head:buffer-store-id constructed)))
                                   (head:buffers))))
-            '(#t #("subscriber content") 1))
+            '(((#("initial") 0) ("initial" #f #f #f #f #f)) #t #("initial subscriber") "initial" 1 1))
      (define other '(head "other"))
      (define private
        (store:create! head:ui-actor "<private>" '("seed")

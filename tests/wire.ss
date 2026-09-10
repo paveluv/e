@@ -107,10 +107,17 @@
              (if (member actor '((agent "first") (agent "second")))
                  '(head "screen A") (default-owner actor))))
          (define held-edit? #f)
-         ;; A save's accepted metadata may invoke a subscriber before the
-         ;; reply crosses the socket. Capture the whole adoption, then retarget.
+         ;; File publication invokes subscribers before the reply crosses the
+         ;; socket. Observe creation, or retarget an accepted save.
          (store:subscribe! #f
            (lambda (event)
+             (when (and (eq? (car event) 'create) (string:prefix? "wire-open-" (caddr event)))
+               (let ([id (cadr event)] [who '(agent "opening")])
+                 (store:set-properties! who id
+                   (list (cons 'open-observation
+                           (call-with-values (lambda () (store:snapshot-state id)) list))
+                         '(mode . "scheme") '(mode-auto . #f)))
+                 (store:edit! who id 0 (text:make-span 0 0 0 0) '("agent "))))
              (when (and (eq? (car event) 'property) (eq? (caddr event) 'file))
                (let* ([id (cadr event)] [target (store:property id 'save-retarget #f)])
                  (when target
@@ -761,6 +768,44 @@
                        '(#t #t #("keep") "disk" #t #t "accepted facts"))
                      (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
                      (rpc head 'delete target))
+
+                   (for-each
+                     (lambda (existing?)
+                       (let ([path (string-append root (if existing? "/wire-open-existing.txt" "/wire-open-missing.txt"))])
+                         (when existing? (write-text path "disk\n"))
+                         (let ([target (head-read a
+                                         `(begin (visit-file! ,path) (head:buffer-store-id (current-buffer))))])
+                           (test:check (list existing? 'attached-file-opening-keeps-create-callback-work)
+                             (let* ([screens
+                                     (map (lambda (screen)
+                                            (head-read screen
+                                              `(begin (head:before-frame!)
+                                                 (let* ([b (head:buffer-of-store-id ,target)]
+                                                        [seen (head:buffer-fact b 'open-observation #f)])
+                                                   (list (car seen) (cadr seen)
+                                                     (map (lambda (key) (or (assq key (caddr seen)) key))
+                                                       '(file base trailing mode mode-auto wrap modified))
+                                                     (head:buffer-lines b) (mode:name-of b) (head:buffer-mode-auto b)
+                                                     (head:buffer-base b) (head:buffer-modified b)))))) (list a b))]
+                                    [authors (map cadr (rpc head 'history target))]
+                                    [disk (and (file-exists? path) (call-with-input-file path get-string-all))])
+                               (rpc head 'undo target 'all)
+                               (let ([state (rpc head 'snapshot target)])
+                                 (list screens authors disk
+                                       (list (car state) (cdr (assq 'modified (caddr state)))
+                                             (cdr (assq 'mode-auto (caddr state)))))))
+                             (list
+                               (make-list 2
+                                 (list (if existing? '#("disk") '#("")) 0
+                                       (list (cons 'file path) (if existing? '(base . "disk\n") 'base)
+                                             '(trailing . #t) '(mode . #f) '(mode-auto . #t) '(wrap . default) '(modified . #f))
+                                       (if existing? '#("agent disk") '#("agent ")) "scheme" #f
+                                       (and existing? "disk\n") #t))
+                               '((agent "opening")) (and existing? "disk\n")
+                               (list (if existing? '#("disk") '#("")) #f #f)))
+                           (head-read a `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                           (rpc head 'delete target))))
+                     '(#t #f))
 
                    (let* ([path (string-append root "/adoption.txt")]
                           [retarget (string-append root "/retargeted.ss")]

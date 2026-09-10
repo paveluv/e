@@ -810,24 +810,22 @@
 
   (define (file-buffer path)
     ;; A fresh buffer visiting path; #f (with a message) when it cannot be read.
-    (if (file-exists? path)
-        (guard (ex [else (parameterize ([message-source 'visit-file!])
-                           (set-message! (format "Cannot open ~a: ~a"
-                                                 path (kernel:condition-text ex))))
-                         #f])
-          (let* ([disk (file:read-state path)] [content (car disk)]
-                 [b (head:new-buffer (file:base-name path))])
-            (head:store-reset! b (file:lines content)
-              (list (cons 'trailing (file:ends-in-newline? content))
-                    (cons 'file path) (cons 'base content) (cons 'stamp (cdr disk))))
-            (mode:assign! b)
-            (log:add! 'visit-file! (cons "Loaded" path))
-            b))
-        (let ([b (head:new-buffer (file:base-name path))])
-          (head:buffer-file-set! b path)
-          (mode:assign! b)
-          (log:add! 'visit-file! (cons "New file:" path))
-          b)))
+    (guard (ex [else (parameterize ([message-source 'visit-file!])
+                       (set-message! (format "Cannot open ~a: ~a"
+                                             path (kernel:condition-text ex))))
+                     #f])
+      (let* ([disk (and (file-exists? path) (file:read-state path))]
+             [lines (file:lines (if disk (car disk) ""))]
+             [detected (mode:detect path (vector-ref lines 0))]
+             [b (head:new-buffer (file:base-name path) lines
+                  (append (list (cons 'file path) (cons 'mode (and detected (mode:name detected))))
+                    (if disk
+                        (list (cons 'trailing (file:ends-in-newline? (car disk)))
+                              (cons 'base (car disk)) (cons 'stamp (cdr disk))) '())))])
+        ;; Create observers already saw the loaded text/file/mode. Their later
+        ;; edits or choices must not be followed by an initializing reset/write.
+        (log:add! 'visit-file! (cons (if disk "Loaded" "New file:") path))
+        b)))
 
   (define (visit-file! path)
     ;; Switch to the buffer visiting path, creating it if necessary.

@@ -395,15 +395,25 @@ entries. `focus-window-up!`, `focus-window-down!`, `focus-window-left!`, and
 use `head:view-replace!` and `head:view-append!` for generated content. Run
 `M-x (describe:show!!)` for live signatures and registered command documentation.
 
-`(head:new-buffer name)` creates a buffer in the shared store and adopts
-its canonical record into this head's buffer list.
+`(head:new-buffer name)` creates a shared buffer with one empty line and
+adopts its canonical record into this head's buffer list. Use
+`(head:new-buffer name lines facts)` to publish initial text and a fact alist
+together, before create subscribers run. Missing `trailing`, `mode-auto`
+and `wrap` facts default to `#t`, `#t` and `default`; explicit `#f` values
+are preserved. As with other text inputs, the line container is copied and
+its strings must be treated as immutable. Fact values are copied.
 `(head:new-local-buffer name)` creates a buffer belonging only to this
-head, with no store id; its caller decides when to add it to the list.
-Both start with one empty line; use `show-buffer!` or `display-buffer!`
+head, with one empty line and no store id; its caller decides when to add
+it to the list. Use `show-buffer!` or `display-buffer!`
 to display the result in a window. The same text, mode, and fact accessors
 work on either kind. A local buffer's facts and generated text stay in the head and
 produce no store notifications; local points and selections are not
 published to other actors.
+
+Opening a file publishes its loaded text, disk baseline, path and detected
+mode together at revision 0. A create subscriber's later edits, undo history
+and mode choices survive opening. A missing file starts empty with its path
+and detected mode, and acquires a disk baseline on its first successful save.
 
 `(store:create! actor name lines [facts])` returns a store id. The optional
 fact alist publishes atomically with the content, before the create event.
