@@ -16,8 +16,8 @@
 ;;     reported in the echo area.
 ;;
 ;; The module holds no truth: overlays are derived from the store's
-;; adopted revision chain, rebased through every edit like span marks,
-;; and dropped by resets. All bookkeeping runs before paint on the main
+;; adopted revision chain, rebased while their content survives, and dropped
+;; by intersecting edits or resets. All bookkeeping runs before paint on the main
 ;; thread; a stalled head retains no independent raw-event backlog.
 
 (library (blame)
@@ -57,23 +57,19 @@
                   (div-and-mod (exact (round (* (blame-tint-seconds) 1000000000))) 1000000000)])
       (add-duration (current-time 'time-monotonic) (make-time 'time-duration nanos seconds))))
 
-  (define (rebase-lenient s d)
-    (or (text:rebase-span s d)
-        (let ([start (text:rebase-position (text:span-start s) d)]
-              [end (text:rebase-position (text:span-end s) d 'stay)])
-          (text:make-span (car start) (cdr start) (car end) (cdr end)))))
-
   (define (note-edit! id actor d)
-    ;; tints follow the text
+    ;; Every author follows the same span-survival rule. An intersecting
+    ;; edit invalidates the old tint before any new ink receives its own.
     (set-box! overlays
-              (map (lambda (o)
-                     (if (eqv? (vector-ref o 0) id)
-                         (vector id
-                                 (rebase-lenient (vector-ref o 1) d)
-                                 (vector-ref o 2)
-                                 (vector-ref o 3))
-                         o))
-                   (unbox overlays)))
+      (fold-right
+        (lambda (o kept)
+          (if (eqv? (vector-ref o 0) id)
+              (let ([span (text:rebase-span (vector-ref o 1) d)])
+                (if span
+                    (cons (vector id span (vector-ref o 2) (vector-ref o 3)) kept)
+                    kept))
+              (cons o kept)))
+        '() (unbox overlays)))
     ;; App output still rebases existing tints above, without creating one.
     (when (and (not (eq? (car actor) 'app))
                (not (equal? actor head:ui-actor))
@@ -200,4 +196,4 @@
         ((blame:tint-seconds)
          (("parameter" . "(blame:tint-seconds [seconds])")) "number"
          ("(blame)") blame "Blame" #f
-         "How long another actor's fresh edit stays tinted in that actor's color (default 8; 0 prevents new tints). App output does not create tints.")))))
+         "How long another actor's fresh edit stays tinted in that actor's color (default 8; 0 prevents new tints). An edit intersecting the tinted span removes it sooner. App output does not create tints.")))))

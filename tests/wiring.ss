@@ -815,7 +815,8 @@
      (pump! 600)
      (check 'closed-window-point-dropped (count-window-points) 1)
 
-     ;; Own edits and app output stay untinted; collaborator ink gets a face.
+     ;; Tints follow surviving content. An overlap drops only that tint;
+     ;; own/app edits add none, while new collaborator ink gets its own range.
      (define blame-return-name
        (read-editor '(begin (head:add-buffer! (head:new-buffer "blame-naming"))
                             (head:buffer-name (current-buffer)))))
@@ -823,23 +824,39 @@
        (read-editor
          `(let* ([b (head:buffer-named "blame-naming")] [id (head:buffer-store-id b)])
             (define (ranges)
-              (map (lambda (range) (list (caddr range) (cadddr range)))
+              (map (lambda (range) (list (cadr range) (caddr range) (cadddr range)))
                 (filter (lambda (range)
                           (and (= (length range) 5) (eq? (car range) b)
                                (memq (list-ref range 4) '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
                   (paint:highlight-ranges))))
             ,@forms)))
-     (check 'blame-tints-collaborators-and-keeps-all-authors
+     (check 'blame-keeps-surviving-ink-and-all-authors
        (map
-         (lambda (actor-expression)
+         (lambda (example)
            (read-blame
-             `(store:edit! ,actor-expression id (store:revision id)
-                (text:make-span 0 0 0 0) '("ink")) #t)
+             '(head:store-reset! b '("abcd" "base"))
+             '(head:before-frame!)
+             '(store:edit! '(agent seed) id (store:revision id) (text:make-span 0 1 0 1) '("INK"))
+             '(store:edit! '(agent seed) id (store:revision id) (text:make-span 1 0 1 0) '("KEPT"))
+             '(head:before-frame!)
+             `(store:edit! ,(car example) id (store:revision id)
+                (text:make-span ,@(cadr example)) ',(caddr example)) #t)
            ;; Return to the real pump so blame observes the adopted revision.
            (read-blame
-             `(list (ranges) (equal? (cadar (store:blame id 1)) ,actor-expression))))
-         '(head:ui-actor (quote (head "rival")) (quote (app producer)) (quote (agent rival))))
-       '((() #t) (((0 3)) #t) (((3 6)) #t) (((6 9) (0 3)) #t)))
+             `(list (ranges) (equal? (cadar (store:blame id 1)) ,(car example)))))
+         '((head:ui-actor (0 2 0 2) ("X"))       ; inside
+           (head:ui-actor (0 1 0 1) ("X"))       ; left boundary
+           (head:ui-actor (0 4 0 4) ("X"))       ; right boundary
+           (head:ui-actor (0 0 0 0) ("" "x"))   ; before, changing rows/columns
+           (head:ui-actor (1 7 1 7) ("X"))       ; after both ranges
+           (head:ui-actor (0 0 0 2) ("X"))       ; partial replacement
+           (head:ui-actor (0 2 0 3) (""))        ; deletion inside
+           ((quote (app producer)) (0 2 0 2) ("X"))
+           ((quote (head "rival")) (0 2 0 2) ("X"))
+           ((quote (agent rival)) (0 2 0 2) ("X"))))
+       '((((1 0 4)) #t) (((0 2 5) (1 0 4)) #t) (((0 1 4) (1 0 4)) #t)
+         (((1 2 5) (2 0 4)) #t) (((0 1 4) (1 0 4)) #t) (((1 0 4)) #t)
+         (((1 0 4)) #t) (((1 0 4)) #t) (((1 0 4) (0 2 3)) #t) (((1 0 4) (0 2 3)) #t)))
 
      ;; The overlay cap must bound all fade work, including after reset,
      ;; retirement and a supported reload. Avoid counting Chez's GC helpers
@@ -870,7 +887,7 @@
                         (store:set-property! head:ui-actor id 'audience 'all))
                       (list ink bounded? cleared)))))))
          '(reset retire reload))
-       (make-list 3 '(((7 8) (6 7) (5 6) (4 5) (3 4) (2 3) (1 2) (0 1)) #t ())))
+       (make-list 3 '(((0 7 8) (0 6 7) (0 5 6) (0 4 5) (0 3 4) (0 2 3) (0 1 2) (0 0 1)) #t ())))
 
      ;; Observe the terminal's painted cells without injecting a key after
      ;; expiry. Fractional durations work in the outer loop and an open prompt.

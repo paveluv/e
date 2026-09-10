@@ -248,6 +248,17 @@
                (and (file-exists? probe)
                     (begin (set! result (call-with-input-file probe read)) (not (eof-object? result)))))))
          result))
+     (define (head-blame head . prefix)
+       (apply head-read head
+         '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
+            (list
+              (map (lambda (range) (list (cadr range) (caddr range) (cadddr range)))
+                (filter (lambda (range)
+                          (and (= (length range) 5) (eq? (car range) b)
+                               (memq (list-ref range 4)
+                                 '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
+                  (paint:highlight-ranges)))
+              (cadar (store:blame id 1)))) prefix))
      (define (screen-state head)
        (head-read head
          '(list (let shape ([node (head:root)])
@@ -632,6 +643,27 @@
                      (list (car (rpc head 'snapshot id))
                            (begin (head-read a '(redo!)) (car (rpc head 'snapshot id))))
                      '(#("shared text") #("shared text B")))
+                   (let ([ink (rpc head 'create "tint overlap" '("base"))])
+                     (for-each
+                       (lambda (screen)
+                         (head-read screen `(begin (show-buffer! (head:adopt-store-buffer! ,ink)) #t)))
+                       (list a b))
+                     (head-send! b "\x1b;[200~FOREIGN\x1b;[201~")
+                     (head-wait 'foreign-ink a (lambda () (head-sees? a "FOREIGNbase")))
+                     (let ([before (map head-blame (list a b))])
+                       (head-read a '(begin (goto-point! '(0 . 3)) #t))
+                       (head-send! a "X")
+                       (head-wait 'own-ink-inside-foreign-range b (lambda () (head-sees? b "FORXEIGNbase")))
+                       (test:check 'attached-tints-follow-the-author-after-overlap
+                         (list before (map head-blame (list a b)) (car (rpc head 'snapshot ink)))
+                         '(((((0 0 7)) (head "screen B")) (() (head "screen B")))
+                           ((() (head "screen A")) (((0 3 4)) (head "screen A")))
+                           #("FORXEIGNbase"))))
+                     (for-each
+                       (lambda (screen)
+                         (head-read screen `(begin (show-buffer! (head:adopt-store-buffer! ,id)) #t)))
+                       (list a b))
+                     (rpc head 'delete ink))
                    (let ([ticket (reply-value (exchange agent
                                                 '(request 71 ask (head "screen A") "Ready to continue?" ("yes" "no"))) 71)])
                      (head-send! a "\x03;a")
@@ -905,18 +937,8 @@
                      (head-read a '(begin (terminal:send! "through base\n") #t) "\x1d;")
                      (head-wait 'shared-terminal-input b (lambda () (head-sees? b "through base")))
                      (test:check 'terminal-output-keeps-authorship-without-tints
-                       (map (lambda (screen)
-                              (head-read screen
-                                '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
-                                   (list
-                                     (exists (lambda (range)
-                                               (and (= (length range) 5) (eq? (car range) b)
-                                                    (memq (list-ref range 4)
-                                                      '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6)) #t))
-                                       (paint:highlight-ranges))
-                                     (equal? (cadar (store:blame id 1)) (head:buffer-fact b 'app #f))))
-                                "\x1d;")) (list a b))
-                       '((#f #t) (#f #t)))
+                       (map (lambda (screen) (head-blame screen "\x1d;")) (list a b))
+                       (make-list 2 (list '() (cdr (assq 'app (caddr (rpc head 'snapshot terminal-id)))))))
                      (head-read a '(begin (delete-other-windows!) (head:set-kill-ring! "screen A kill") #t) "\x1d;")
                      (head-read b '(begin (head:set-kill-ring! "screen B kill") #t) "\x1d;")
                      (head-send! a "\x1d;\x18;\x03;")

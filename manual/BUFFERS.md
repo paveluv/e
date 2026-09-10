@@ -211,16 +211,16 @@ writes; in particular, GNOME Terminal currently ignores them.
 
 Another head's or agent's new text is briefly tinted in an actor-specific
 color. Your own edits and app output, including terminal screens, create no
-tints. Up to eight recent spans per buffer remain highlighted; each disappears
-at its deadline, including while idle or answering a prompt. The color is
+tints. An edit inside or overlapping a tinted span removes that whole tint;
+other spans move with their original text. Typing at either edge keeps your
+new text outside the tint. Up to eight recent spans per buffer remain
+highlighted; each expires even while idle or answering a prompt. The color is
 temporary presentation: edits take effect immediately and attribution/history
 does not disappear with the tint.
 
 `(blame:tint-seconds 8)` sets the lifetime in seconds; fractional values work.
 Zero prevents new tints, while existing ones keep their deadlines.
 `M-x blame:at-point!` reports recent authorship from the retained edit log.
-An existing collaborator tint can still include your text inserted inside
-its range; this overlap behavior is a known limitation.
 
 ## Line numbers
 
