@@ -91,10 +91,7 @@
          text:delta->datum)]
       [(state)
        (arity 2)
-       (and (store:exists? (car args))
-            (cons (store:buffer-name (car args))
-              (datum:copy (call-with-values (lambda () (apply store:snapshot-state args)) list)
-                text:delta->datum)))]
+       (datum:copy (apply store:state args) text:delta->datum)]
       [(eval) (arity 1) (policy:session-eval! session (car args))]
       [(sessions) (control!) (arity 0) (policy:sessions)]
       [(revoke)

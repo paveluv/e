@@ -614,6 +614,36 @@
                  (list (car (rpc head 'snapshot 1))
                        (rpc head 'edit 1 14 '(0 0 0 0) '("bad")) (rpc head 'undo 1) (rpc head 'redo 1))
                  '(#("agent work while detached") (refused read-only) (refused read-only) (refused read-only)))
+               ;; Separate connection threads race named fact batches against
+               ;; state reads. Bounded bursts keep writes contending without
+               ;; filling the outbox. Each whole worker has one timeout.
+               (let* ([writer (connect)]
+                      [target (rpc head 'create "epoch-0" '("text") '((epoch . 0)))])
+                 (hello writer '(head "state writer")) (receive writer)
+                 (let ([results
+                        (test:parallel 2
+                          (lambda (index)
+                            (let ([connection (if (zero? index) writer head)] [mismatch #f]
+                                  [width (if (zero? index) 32 1)] [batches (if (zero? index) 64 2000)])
+                              (do ([batch 0 (+ batch 1)]) ((= batch batches))
+                                (do ([offset 0 (+ offset 1)]) ((= offset width))
+                                  (let ([n (+ (* batch width) offset 1)])
+                                    (wire:send! (sys:connection-output connection)
+                                      (if (zero? index)
+                                          `(request 7 properties ,target ((epoch . ,n)) #f ,(format "epoch-~a" n))
+                                          `(request 7 state ,target #f)))))
+                                (do ([offset 0 (+ offset 1)]) ((= offset width))
+                                  (let ([result (reply-value (wire:receive (sys:connection-input connection)))])
+                                    (unless (if (zero? index) (eq? result #t)
+                                                (or (not result)
+                                                    (equal? (car result)
+                                                      (format "epoch-~a" (cdr (assq 'epoch (cadddr result)))))))
+                                      (unless mismatch (set! mismatch result))))))
+                              (when (zero? index) (rpc writer 'delete target))
+                              mismatch)))])
+                   (test:check 'wire-state-keeps-name-and-facts-coherent-through-deletion
+                     (list results (rpc head 'state target #f)) '((#f #f) #f)))
+                 (sys:close-connection! writer))
                (let ([id (rpc head 'create "attached text" '("shared text") '((trailing . #t)))])
                  (write-forms (string-append root "/config.e")
                    `((main:set-startup-page! #f)

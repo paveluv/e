@@ -21,7 +21,7 @@
 (library (store)
   (export create! visit! delete! discard! prepare-close reset! rename! publication publish!
           buffer-list exists? visible? buffer-name find-named find-file
-          snapshot snapshot-since snapshot-state revision line-count line extract
+          snapshot snapshot-since snapshot-state state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
           set-mark! set-marks! mark drop-mark! marks
           set-property! set-properties! drop-property! property properties
@@ -447,16 +447,25 @@
     (case-lambda
       [(id) (snapshot-state id #f)]
       [(id basis)
-       ;; Save/clean checks need text and facts from one read. A remote
-       ;; adopter also needs the matching anchor chain, not a later snapshot.
-       (locked
-         (lambda ()
-           (let ([b (buffer-of 'snapshot-state id)])
-             (if basis
-                 (let ([entries (entries-since b basis)])
-                   (values (buffer-text b) (buffer-revision b) (property-data b)
-                     (and entries (map change-data entries))))
-                 (values (buffer-text b) (buffer-revision b) (property-data b))))))]))
+       (locked (lambda () (snapshot-values (buffer-of 'snapshot-state id) basis)))]))
+
+  (define (state id basis)
+    ;; Remote adoption needs existence/name and the snapshot from one read.
+    ;; Own mutable metadata here; the caller serializes after unlocking.
+    (locked
+      (lambda ()
+        (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
+          (and b (cons (string-copy (buffer-label b))
+                   (call-with-values (lambda () (snapshot-values b basis)) list)))))))
+
+  (define (snapshot-values b basis)
+    ;; Caller holds the lock. Text/facts and the optional anchor chain must
+    ;; describe the same commit, including when notifications are pending.
+    (if basis
+        (let ([entries (entries-since b basis)])
+          (values (buffer-text b) (buffer-revision b) (property-data b)
+            (and entries (map change-data entries))))
+        (values (buffer-text b) (buffer-revision b) (property-data b))))
 
   (define (snapshot-since id basis)
     ;; -> (values text revision changes), from one read.  Changes are

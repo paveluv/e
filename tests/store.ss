@@ -792,10 +792,11 @@
      ;; A coherent snapshot includes every retained intervening delta,
      ;; even before a writer's notifications have finished delivery.
      (let-values ([(text revision facts changes) (store:snapshot-state nested 0)])
-       (check 'incremental-snapshot-text-facts-and-chain
+       (check 'incremental-state-name-text-facts-and-chain
          (list text revision (cdr (assq 'modified facts)) (map car changes)
-               (map cadr changes) (for-all text:delta? (map caddr changes)))
-         (list '#("yxabc") 2 #t '(1 2) (list alice bot) #t)))
+               (map cadr changes) (for-all text:delta? (map caddr changes))
+               (equal? (store:state nested 0) (cons "rename-twice" (list text revision facts changes))))
+         (list '#("yxabc") 2 #t '(1 2) (list alice bot) #t #t)))
      (let-values ([(text revision changes) (store:snapshot-since nested 2)])
        (check 'incremental-snapshot-already-current changes '()))
      (let-values ([(text revision changes) (store:snapshot-since nested 3)])
@@ -940,6 +941,28 @@
              (append-line! actor (format "~a-~a" (cadr actor) i))))))
      (check 'all-racing-appends-landed (store:line-count race) 51)
 
+     ;; A named state read must observe the same commit's name and facts,
+     ;; or absence if deletion wins. Separate individually locked reads race.
+     (let* ([id (store:create! alice "epoch-0" '("text") '((epoch . 0)))]
+            [results
+             (test:parallel 2
+               (lambda (index)
+                 (if (zero? index)
+                     (begin
+                       (do ([n 1 (+ n 1)]) ((> n 20000))
+                         (store:set-properties! bot id (list (cons 'epoch n)) #f (format "epoch-~a" n)))
+                       (store:delete! bot id) #t)
+                     (let ([mismatch #f])
+                       (do ([n 0 (+ n 1)]) ((= n 20000))
+                         (let ([state (store:state id #f)])
+                           (when state
+                             (let ([epoch (cdr (assq 'epoch (cadddr state)))])
+                               (unless (equal? (car state) (format "epoch-~a" epoch))
+                                 (unless mismatch (set! mismatch (list (car state) epoch))))))))
+                       mismatch))))])
+       (check 'named-state-remains-coherent-through-concurrent-writes-and-deletion
+         (list results (store:state id #f) (store:state id 0)) '((#t #f) #f #f)))
+
      ;; -- persistence across reload -------------------------------------------
 
      ;; the store cell survives: asking again returns the same box
@@ -1057,15 +1080,17 @@
              (string-set! commit 0 #\X)
              (damage-facts! (store:properties id))
              (let-values ([(text revision facts) (store:snapshot-state id)]) (damage-facts! facts))
+             (let ([state (store:state id #f)])
+               (damage-facts! (cadddr state)) (string-set! (car state) 0 #\X))
              (string-set! (cadar (store:property id 'audience)) 0 #\Y)
              (vector-set! (store:property id 'metadata) 0 'changed)
              (check 'facts-own-admission-and-every-read
                     (list (store:property id 'audience) (store:property id 'metadata)
                           (store:visible? '(head "desk") id) (store:visible? alice id)
                           (eq? (store:property id 'absent void) void) (equal? (events) notifications)
-                          (store:property id 'base) (store:property id 'modified))
+                          (store:property id 'base) (store:property id 'modified) (store:buffer-name id))
                     (list '((head "desk")) '#(("value" . #vu8(1 2))) #t #f #t #t "seed\n"
-                          (eq? kind 'set)))
+                          (eq? kind 'set) "fact-owner"))
              (when (memq kind '(create visit))
                (check 'initial-facts-publish-with-one-create
                       (list (map car notifications) (assq 'audience creation)

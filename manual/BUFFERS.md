@@ -566,6 +566,12 @@ facts, and that same change chain, all from one read. Use this form when a
 client needs to adopt both metadata and positions. Omitting the basis (or
 passing `#f` in process) keeps the original three-value form.
 
+In the base, `(store:state id basis)` returns `#f` for an absent buffer, or
+`(name text revision facts [changes])` from one read. Pass `#f` for no chain,
+or a revision to include it. Names and facts are owned copies; text remains
+an immutable snapshot. This supplies the daemon's existing `state` request,
+so concurrent rename/deletion cannot split the name from the snapshot.
+
 For derived views, `(head:snapshot-since b basis)` returns the same three
 values from this head's adopted text, for either a local or shared buffer.
 It does not pull a newer store snapshot. Pass the previous content revision,
