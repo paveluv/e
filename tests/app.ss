@@ -20,7 +20,7 @@
              (prefix (test) test:)
              (prefix (actor) actor:) (prefix (surface) surface:) (prefix (render) render:)
              (prefix (paint) paint:) (prefix (mode) mode:) (prefix (keymap) keymap:)
-             (prefix (main) main:)
+             (prefix (dispatch) dispatch:)
              (prefix (git-view) git-view:)
              (prefix (log-view) log-view:))
 
@@ -434,10 +434,10 @@
            (mode:choose! b "adapter-test")
            (keymap:bind-default! 'adapter-test "UP" (lambda () (set! ran? #t)))
            (keymap:set-context-escape! 'adapter-test "C-]")
-           (main:dispatch-key! "UP")
+           (dispatch:key! "UP")
            (check 'mode-command-wins-and-pauses-following
              (list ran? (head:app-following? w) (- (length (received 'input)) before)) '(#t #f 0))
-           (main:dispatch-key! "x")
+           (dispatch:key! "x")
            (check 'captured-key-resumes-following (head:app-following? w) #t)
            (head:set-escaped-buffer! b)
            (check 'escape-keeps-input-and-cursor-local

@@ -1,6 +1,6 @@
 ;; keymap.e -- key syntax and the binding tables: the library
 ;; (keymap).  Pure infrastructure with no init!;
-;; dispatch lives in (main).
+;; dispatch lives in (dispatch).
 ;;
 ;; Every keyboard binding, including the command layer's defaults,
 ;; lives in one kernel registry.  An item is (context sequence action

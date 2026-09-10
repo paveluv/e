@@ -680,7 +680,7 @@
      ;; keystroke, retain the rival's edit, and leave head history intact.
      (define before-conflict-history
        (read-editor '(map length (vector->list (head:buffer-history (current-buffer))))))
-     (send! "\x1b;xlet ([id (head:buffer-store-id (current-buffer))]) (main:dispatch-key! \"M-<\") (main:dispatch-key! \"C-f\") (main:dispatch-key! \"C-f\") (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (main:dispatch-key! \"z\")\r")
+     (send! "\x1b;xlet ([id (head:buffer-store-id (current-buffer))]) (dispatch:key! \"M-<\") (dispatch:key! \"C-f\") (dispatch:key! \"C-f\") (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 1 0 5) (list \"RIV\")) (dispatch:key! \"z\")\r")
      (pump! 900)
      (check 'conflict-is-reported
             (or (screen-has? 22 "not applied:") (screen-has? 23 "not applied:")) #t)

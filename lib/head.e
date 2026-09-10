@@ -9,10 +9,10 @@
 ;; scheduling pump (the mailbox, wakes, posted thunks, the input
 ;; reader), the store client, the app registry, and the seat's
 ;; per-user state (kill ring, paste text, the last command).  Key
-;; dispatch and the loop's body live in (main), painting in (paint),
-;; the commands in (edit); the command layer still reaches the seat's
-;; state through identifier-syntax facades, and two hooks reach up
-;; from the pump: the frame and the mouse.
+;; dispatch lives in (dispatch), the loop's body in (main), painting in
+;; (paint), the commands in (edit); the command layer still reaches the seat's
+;; state through identifier-syntax facades. Hooks connect the pump and
+;; loop to painting, mouse handling, and the reloadable commands.
 
 (library (head)
   (export buffer make-buffer buffer?
@@ -59,6 +59,8 @@
           dividers set-dividers!
           read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
           run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
+          set-file-opener! set-quit-command! set-after-key!
+          open-file! quit-command! after-key!
           quit! quitting? last-command set-last-command!
           current-keys set-current-keys! escaped-buffer set-escaped-buffer!
           dispatch-app-event! app-event-position app-event-buffer-position app-event-button
@@ -415,7 +417,7 @@
       (set! deferred '())
       (for-each run-posted! runs)))
 
-  ;; The two hooks: the frame hook prepares and paints a frame (the
+  ;; The pump's hooks: the frame hook prepares and paints a frame (the
   ;; painter's, above); the mouse handler applies a report -- (handler handle? c b
   ;; x y) -> an event string or #f (the commands', above).
   (define frame-hook void)
@@ -423,6 +425,22 @@
 
   (define (set-frame-hook! proc) (set! frame-hook proc))
   (define (set-mouse-handler! proc) (set! mouse-handler proc))
+
+  ;; What the loop asks of the commands, installed by them: how to open
+  ;; the file argument, how to quit (the modified-buffers check), and
+  ;; what runs after every key. The command layer reloads; the loop
+  ;; does not, so these calls always use the latest installed hooks.
+  (define file-opener (lambda (path) (void)))
+  (define quit-command (lambda () (quit!)))
+  (define after-key-hook void)
+
+  (define (set-file-opener! proc) (set! file-opener proc))
+  (define (set-quit-command! proc) (set! quit-command proc))
+  (define (set-after-key! proc) (set! after-key-hook proc))
+
+  (define (open-file! path) (file-opener path))
+  (define (quit-command!) (quit-command))
+  (define (after-key!) (after-key-hook))
 
   (define (frame!)
     ;; Wakes and deadlines use the same preparation as direct redraws.

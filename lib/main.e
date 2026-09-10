@@ -2,157 +2,30 @@
 ;;
 ;; Startup (the modules, config.e, the file argument or a welcome
 ;; page), the seat's loop -- a frame, a key, a command -- and
-;; shutdown, plus key dispatch: a key sequence resolves through the
-;; current mode's context, then the global map, and an unbound
-;; character through the SELF-INSERT binding; the current buffer's app
-;; handler has first refusal of the keys its mode context leaves
-;; unbound.  The dispatcher records the command it
-;; ran (head:last-command) and the keys that ran it
-;; (head:current-keys), so commands that chain -- kills, typed runs --
-;; ask the head instead of the dispatcher keeping flags for them.
+;; shutdown. Key dispatch lives in (dispatch); the loop reaches the
+;; reloadable commands through hooks held by (head).
 ;; Another actor's pending question is presented before each frame.
 ;;
 ;; Like the kernel, main is never reloaded: it is what everything else
 ;; runs under.  (main:run) is the whole program.
 
 (library (main)
-  (export run set-startup-page! (rename (handle-key! dispatch-key!))
-          load-config! modules-reload-on-save config-reload-on-save
-          set-file-opener! set-quit-command! set-after-key!)
+  (export run set-startup-page! load-config!
+          modules-reload-on-save config-reload-on-save)
   (import (chezscheme) (prefix (sys) sys:)
           (prefix (file) file:)
           (prefix (kernel) kernel:)
           (prefix (startup) startup:)
           (prefix (head) head:)
+          (prefix (dispatch) dispatch:)
           (prefix (paint) paint:)
           (prefix (echo) echo:)
           (prefix (prompt) prompt:)
-          (prefix (keymap) keymap:)
           (prefix (tty) tty:)
           (prefix (mode) mode:)
           (prefix (actor) actor:)
           (prefix (log) log:)
           (prefix (string) string:))
-
-  ;;; Key dispatch ---------------------------------------------------------------------
-
-  (define (run-key-action! action)
-    ;; Run a resolved binding's action and remember it as the last
-    ;; command (an error still counts); an unbound key, or a context
-    ;; action leaking into the global map, is reported and remembered
-    ;; as no command at all.
-    (cond [(procedure? action)
-           (head:follow-app! (head:current) #f)
-           (dynamic-wind void action
-             (lambda () (head:set-last-command! action)))]
-          [(not action)
-           (head:set-last-command! #f)
-           (echo:set-text! "Key is unbound")]
-          [else
-           (head:set-last-command! #f)
-           (error 'dispatch-key! "context action used globally" action)]))
-
-  (define (dispatch-sequence! first)
-    ;; Resolve a key sequence: the buffer's mode context first, then the
-    ;; global map.  A context may name an escape prefix
-    ;; (keymap:set-context-escape!): a sequence it starts and the
-    ;; context does not bind resolves, minus the prefix, in the global
-    ;; map -- how a captured app's user runs one complete global
-    ;; command.
-    (let* ([buffer (head:window-buffer (head:current))]
-           [mode-context (mode:key-context buffer)]
-           [escape (and mode-context (keymap:context-escape mode-context))])
-      (define (resolve!)
-        (let loop ([sequence (list first)])
-          (let* ([in-context (and mode-context
-                               (keymap:resolved-binding mode-context sequence))]
-                 [context-prefix? (and mode-context
-                                    (keymap:binding-prefix? mode-context sequence))]
-                 [escaped (and escape (not in-context) (not context-prefix?)
-                            (pair? (cdr sequence))
-                            (string=? (car sequence) escape)
-                            (cdr sequence))]
-                 [global (or escaped sequence)]
-                 [hit (or in-context (keymap:resolved-binding 'global global))]
-                 ;; Declaring an escape makes it a prefix on its own; an app
-                 ;; need not bind a dummy escaped command to keep it open.
-                 [prefix? (or context-prefix?
-                              (and escape (not in-context) (null? (cdr sequence))
-                                   (string=? first escape))
-                              (keymap:binding-prefix? 'global global))])
-            (cond
-              [prefix?
-               (echo:set-text! (string-append (keymap:sequence-text sequence) "-"))
-               (echo:set-pending! '())
-               (paint:redraw!)
-               (let ([next (head:read-key-event)])
-                 (if (eof-object? next)
-                   (head:quit!)
-                   (loop (append sequence (list next)))))]
-              [hit
-               ;; A prefix is only a waiting indicator. Once its complete binding
-               ;; is known, remove it before the command runs; commands that have
-               ;; something useful to report will publish their own message.
-               (when (> (length sequence) 1) (echo:settle!))
-               (head:set-current-keys! sequence)
-               (run-key-action! (keymap:binding-action (cdr hit)))]
-              [(and (= (length sequence) 1)
-                 (tty:key-event-character first)
-                 (keymap:resolved-binding 'global '("SELF-INSERT")))
-               ;; an unbound character inserts itself: the command bound to
-               ;; SELF-INSERT reads the key from head:current-keys
-               => (lambda (hit)
-                    (head:set-current-keys! sequence)
-                    (run-key-action! (keymap:binding-action (cdr hit))))]
-              [else
-               (head:set-last-command! #f)
-               (echo:set-text!
-                 (format "~a is undefined" (keymap:sequence-text sequence)))]))))
-      (if (and escape (string=? first escape))
-          ;; the escape suspends the app's capture until the command it
-          ;; introduces has run -- prefixes and synchronous prompts
-          ;; included -- and the seat shows the buffer as escaped
-          ;; throughout, for its status hint and cursor
-          (let ([outer (head:escaped-buffer)])
-            (dynamic-wind
-              (lambda () (head:set-escaped-buffer! buffer))
-              resolve!
-              (lambda () (head:set-escaped-buffer! outer))))
-          (resolve!))))
-
-  (define (context-claims? event)
-    ;; Whether the current buffer's mode context binds event, starts a
-    ;; binding with it, or names it as the escape.  Such a key belongs
-    ;; to the keymaps even inside a capturing app: the app's handler
-    ;; sees only the keys its context leaves unbound, so a terminal
-    ;; cannot swallow the C-] that is meant to get out of it.
-    (let ([context (mode:key-context (head:window-buffer (head:current)))])
-      (and context
-           (let ([sequence (list event)])
-             (or (keymap:resolved-binding context sequence)
-                 (keymap:binding-prefix? context sequence)
-                 (equal? event (keymap:context-escape context))))
-           #t)))
-
-  (define (handle-key! input)
-    ;; One key from the pump: a character or an event string, eof
-    ;; when the terminal is gone.  The current buffer's app has first
-    ;; refusal of every key its mode context leaves unbound; what it
-    ;; declines, and what the context claims, goes through the keymaps.
-    (let ([event (cond [(eof-object? input) input]
-                       [(char? input) (tty:character-event input)]
-                       [else input])])
-      (cond
-        [(eof-object? event) (head:quit!)]
-        [(string=? event "MOUSE-HANDLED")
-         (echo:settle!)
-         (void)]
-        [else
-         (echo:settle!)
-         (if (and (not (context-claims? event))
-                  (head:dispatch-app-event! event))
-             (head:set-last-command! #f)
-             (dispatch-sequence! event))])))
 
   ;;; Another actor's question --------------------------------------------------------
 
@@ -249,18 +122,6 @@
 
   (define ask-presented (head:add-pre-redraw-hook! present-pending-ask!))
 
-  ;; What the loop asks of the commands, installed by them: how to open
-  ;; the file argument, how to quit (the modified-buffers check), and
-  ;; what runs after every key.  The command layer reloads; the loop
-  ;; does not, so it holds no direct reference into it.
-  (define open-file! (lambda (path) (void)))
-  (define quit-command (lambda () (head:quit!)))
-  (define after-key! void)
-
-  (define (set-file-opener! proc) (set! open-file! proc))
-  (define (set-quit-command! proc) (set! quit-command proc))
-  (define (set-after-key! proc) (set! after-key! proc))
-
   (define (startup-greeting)
     (let* ([date (current-date)]
            [hour (date-hour date)]
@@ -311,7 +172,7 @@
             (echo:set-text! msg)))
         (reverse
           (kernel:load-modules!
-            '("blame" "c-mode" "describe" "echo" "edit" "eval" "git-view"
+            '("blame" "c-mode" "describe" "dispatch" "echo" "edit" "eval" "git-view"
               "glyph" "head" "keymap" "log-view" "markdown" "md-mode" "mode"
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
               "scheme-mode" "search" "style" "terminal" "tty"))))
@@ -320,7 +181,7 @@
       ;; descriptors. An explicit file still opens in the restored selection.
       (let ([resumed? (and (eq? (startup:mode) 'attach) (head:resume!))])
         (if file
-            (open-file! file)
+            (head:open-file! file)
             (when (and (not resumed?) startup-page)
               (guard (ex [else (void)]) (startup-page))
               ;; the greeting outlives the page's own load chatter
@@ -332,7 +193,7 @@
     ;; the process past the modified-buffers check: they run the
     ;; editor's quit and unwind the evaluation instead.
     (let ([safe-quit (lambda args
-                       (quit-command)
+                       (head:quit-command!)
                        (raise (head:make-interrupted)))])
       (exit-handler safe-quit)
       (abort-handler safe-quit)
@@ -367,9 +228,9 @@
                        [(kernel:refusal? ex)
                         (echo:set-text! (condition-message ex))]
                        [else (log:add! 'error (kernel:condition-text ex))])
-              (handle-key! (parameterize ([head:in-main-pump #t])
-                             (head:read-key-event))))
-            (after-key!)
+              (dispatch:key! (parameterize ([head:in-main-pump #t])
+                               (head:read-key-event))))
+            (head:after-key!)
             (loop))))
       (lambda ()
         (when (eq? (startup:mode) 'attach)

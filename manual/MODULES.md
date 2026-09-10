@@ -27,6 +27,13 @@ termios, ioctl, signals, PTYs, and other foreign procedures. Feature modules
 compose the command API and the seams and, when necessary, narrowly scoped
 system facilities.
 
+`dispatch:key!` handles a key through the current app and keymaps; modal
+readers such as incremental search use the same dispatcher as the main loop.
+The command layer installs the loop's file opener, quit command and after-key
+hook through `head:set-file-opener!`, `head:set-quit-command!` and
+`head:set-after-key!`. Commands and apps can use these head libraries without
+importing the runtime entrypoint `(main)`.
+
 For file codecs, `(file:call-with-port path output? use)` opens a text port
 and passes it to `use`, preserving its return values. `#f` reads; `#t` replaces
 the file and preserves existing permissions, best-effort. The scope closes

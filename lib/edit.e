@@ -13,7 +13,7 @@
 ;; Hot-reloadable like any module: its registrations (bindings, hooks,
 ;; formatters, descriptions) are made in init!, owned by edit, so a
 ;; reload retracts and remakes them; the loop in (main) reaches the
-;; layer only through setters it installs there.  Internals -- all
+;; layer through hooks it installs in (head).  Internals -- all
 ;; mutable state included -- are invisible outside the library; the
 ;; exports are the editor's public command API.
 ;;
@@ -107,7 +107,7 @@
           (prefix (paint) paint:) (prefix (string) string:)
           (prefix (render) render:)
           (prefix (mode) mode:) (prefix (file) file:)
-          (prefix (prompt) prompt:) (prefix (main) main:)
+          (prefix (prompt) prompt:)
           (prefix (doc) doc:))
 
   ;; The bindings Chez itself provides, so that the editor's public API
@@ -3018,8 +3018,8 @@
                       other-window! split-window! split-window-right!
                       delete-window! delete-other-windows!))
       (prompt:allow! kill-buffer!! prompt-kill-buffer!))
-    ;; The seat's loop and key dispatch live in (main); the mouse report
-    ;; handler is the commands' and is installed here.
+    ;; The pump lives in (head); its mouse report handler is the
+    ;; commands' and is installed here.
     (head:set-mouse-handler! apply-mouse-event!)
     ;; The layer's default bindings are data, like every module's.
     (begin
@@ -3066,13 +3066,13 @@
           ("TAB" complete) ("S-TAB" alternate-complete)
           ("M-." inspect) ("M-RET" newline) ("PASTE" paste)))
       #t)
-    ;; what the loop in (main) asks of the commands: how to open the file
+    ;; The loop's hooks live in (head): how to open the file
     ;; argument, how to quit (the modified-buffers check), and what runs
     ;; after every key
     (begin
-      (main:set-file-opener! visit-file!)
-      (main:set-quit-command! quit!!)
-      (main:set-after-key! clamp-point!))
+      (head:set-file-opener! visit-file!)
+      (head:set-quit-command! quit!!)
+      (head:set-after-key! clamp-point!))
 
     (mode:register! "buffers" '() '() buffers-styles)
     (doc:register!
