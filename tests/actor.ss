@@ -22,10 +22,15 @@
      (define human-mail (kernel:make-mailbox))
      (define agent-mail (kernel:make-mailbox))
      (define delivery-context #f)
+     (define pending-notices (test:recorder))
      (actor:register! human
        (lambda (m)
          (set! delivery-context (actor:current))
-         (kernel:mailbox-post! human-mail m)))
+         (if (equal? m '(pending))
+           ;; A different thread must be able to read the committed table;
+           ;; a same-thread read would also pass under Chez's recursive lock.
+           (pending-notices ((test:worker (lambda () (map car (actor:pending human))))))
+           (kernel:mailbox-post! human-mail m))))
      (actor:register! agent (lambda (m) (kernel:mailbox-post! agent-mail m)))
 
      (test:check 'registered
@@ -305,22 +310,21 @@
        (list (actor:pending human)
              (actor:call-as human
                (lambda () (list (actor:answer! ticket "yes") (actor:current))))
-             (unbox answer-box) (actor:pending human) (actor:answer! ticket "again") (actor:current))
+             (unbox answer-box) (actor:pending human) (actor:answer! ticket "again") (actor:current)
+             (car (reverse (pending-notices))))
        (list (list (list ticket agent "Proceed?" '("yes" "no")))
-             (list #t human) (list "yes" agent) '() #f #f))
+             (list #t human) (list "yes" agent) '() #f #f '()))
 
      ;; -- ordering and cancellation --------------------------------------
 
      (define t1 (actor:ask! agent human "First?" '() (lambda (a) a)))
      (define t2 (actor:ask! agent human "Second?" '() (lambda (a) a)))
-     (test:check 'oldest-first
-       (map caddr (actor:pending human))
-       '("First?" "Second?"))
-     (test:check 'cancel-withdraws (actor:cancel! t1) #t)
-     (test:check 'cancel-leaves-the-rest
-       (map caddr (actor:pending human))
-       '("Second?"))
-     (actor:cancel! t2)
+     (define removal-offset (length (pending-notices)))
+     (test:check 'cancellation-keeps-order-and-notifies-only-successful-removal
+       (list (map caddr (actor:pending human)) (actor:cancel! t1)
+             (map caddr (actor:pending human)) (actor:cancel! t1) (actor:cancel! t2)
+             (list-tail (pending-notices) removal-offset))
+       (list '("First?" "Second?") #t '("Second?") #f #t (list (list t2) '())))
 
      ;; -- unreachable actors ----------------------------------------------
 
@@ -398,7 +402,9 @@
      ;; Delivery can synchronously answer; its reply can inspect pending
      ;; state and ask another question. Neither callback runs under the lock.
      (define synchronous '(head "synchronous"))
-     (actor:register! synchronous (lambda (message) (actor:answer! (cadr message) "immediate")))
+     (actor:register! synchronous
+       (lambda (message)
+         (when (eq? (car message) 'ask) (actor:answer! (cadr message) "immediate"))))
      (define nested #f)
      (define response #f)
      (test:parallel 1

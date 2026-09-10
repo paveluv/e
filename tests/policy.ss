@@ -33,8 +33,12 @@
                (unless (equal? (actor:current) owner) (error 'policy-test "caller actor leaked"))
                (apply values results))))))
      (define owner-mail (kernel:make-mailbox))
+     (define pending-notices (test:recorder))
      (actor:register! owner
-                      (lambda (m) (kernel:mailbox-post! owner-mail m)))
+       (lambda (m)
+         (if (equal? m '(pending))
+           (pending-notices ((test:worker (lambda () (map car (actor:pending owner))))))
+           (kernel:mailbox-post! owner-mail m))))
      (define agent '(agent "helper" 1))
      (define notes (store:create! owner "notes" '("one" "two")))
      (define secret (store:create! owner "secret" '("hidden")))
@@ -223,19 +227,24 @@
 
      ;; -- revocation ----------------------------------------------------
 
-     (define revoked-ticket
-       (policy:session-ask! s "Withdraw on revoke?" '() (lambda (answer) (set-box! got answer))))
-     (kernel:mailbox-receive! owner-mail)
+     (define revoked-tickets
+       (map (lambda (question)
+              (let ([ticket (policy:session-ask! s question '() (lambda (answer) (set-box! got answer)))])
+                (kernel:mailbox-receive! owner-mail) ticket))
+         '("Withdraw on revoke?" "Withdraw together?")))
+     (define revoked-ticket (car revoked-tickets))
      (define sibling (policy:mint! agent (policy:reader) owner))
      (define sibling-ticket (policy:session-ask! sibling "Keep this session?" '() void))
      (kernel:mailbox-receive! owner-mail)
+     (define removal-offset (length (pending-notices)))
      (define foreign-cancel (policy:session-cancel! sibling revoked-ticket))
      (check 'revoke (policy:revoke! s) #t)
      (check 'revoke-withdraws-only-its-session-before-a-late-answer
        (list foreign-cancel (map car (actor:pending owner))
              (actor:answer! revoked-ticket "too late") (unbox got)
-             (policy:session-cancel! sibling sibling-ticket) (actor:pending owner))
-       (list #f (list sibling-ticket) #f "no" #t '()))
+             (policy:session-cancel! sibling sibling-ticket) (actor:pending owner)
+             (list-tail (pending-notices) removal-offset))
+       (list #f (list sibling-ticket) #f "no" #t '() (list (list sibling-ticket) '())))
      (policy:revoke! sibling)
      (check 'all-revoked-entry-points-refuse
        (list (car (policy:session-eval! s "(+ 1 2)"))
@@ -254,8 +263,9 @@
             [ready (test:gate)] [release (test:gate)] [late #f] [reply #f])
        (actor:register! who
          (lambda (message)
-           (ready #t) (test:await 'release-question-delivery release)
-           (set! late (actor:answer! (cadr message) 'late))))
+           (when (eq? (car message) 'ask)
+             (ready #t) (test:await 'release-question-delivery release)
+             (set! late (actor:answer! (cadr message) 'late)))))
        (let ([work (test:worker
                      (lambda () (policy:session-ask! racing who "Already admitted?" '()
                                   (lambda (answer) (set! reply answer)))))])

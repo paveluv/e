@@ -25,6 +25,19 @@
 
      (define check test:check)
 
+     ;; Text ownership survives only a deliberately retained live line.
+     ;; Reusing the same string through an ordinary setter is a new message.
+     (check 'echo-text-ownership-follows-every-replacement
+       (map (lambda (replace!)
+              (echo:set-text! "Indicator" 'ask)
+              (replace!)
+              (list (echo:text) (echo:text-owner)))
+         (list (lambda () (echo:set-text! (echo:text)))
+               (lambda () (echo:queue! 'test "log" #f #f "" #f))
+               (lambda () (echo:queue! 'test "log" #f #f "" #t))
+               echo:settle!))
+       '(("Indicator" #f) ("" #f) ("Indicator" ask) ("" #f)))
+
      (define (contains? text needle)
        (let ([n (string-length text)] [m (string-length needle)])
          (let scan ([i 0])

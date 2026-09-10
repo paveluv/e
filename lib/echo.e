@@ -14,7 +14,7 @@
 ;; how wide the terminal is.
 
 (library (echo)
-  (export text set-text! ghost set-ghost! styles set-styles!
+  (export text text-owner set-text! ghost set-ghost! styles set-styles!
           pending set-pending! cursor set-cursor!
           indent set-indent! input-end set-input-end!
           height set-height! scroll set-scroll!
@@ -30,6 +30,7 @@
   ;; and plain module state is as durable as a persistent cell.
 
   (define the-text "")       ; the live message
+  (define the-text-owner #f) ; optional identity for a refreshable indicator
   (define the-ghost "")      ; grey suggestion drawn after it
   (define the-styles #f)     ; (text . styler) for the current message
   (define the-pending '())   ; transient-log lines (component text styler ghost)
@@ -42,7 +43,13 @@
   (define the-live-height 1) ; rows of the live line inside the-height
 
   (define (text) the-text)
-  (define (set-text! s) (set! the-text s))
+  (define (text-owner) the-text-owner)
+  (define set-text!
+    ;; Ordinary messages always replace an indicator's ownership, even if
+    ;; their text is identical. Queueing and settling use the same boundary.
+    (case-lambda
+      [(s) (set-text! s #f)]
+      [(s owner) (set! the-text s) (set! the-text-owner owner)]))
   (define (ghost) the-ghost)
   (define (set-ghost! s) (set! the-ghost s))
   (define (styles) the-styles)
@@ -84,7 +91,7 @@
                     rev)])
       (set! the-pending (reverse (cons entry rev))))
     (unless keep-live?
-      (set! the-text "")
+      (set-text! "")
       (set! the-ghost "")
       (set! the-styles #f)
       (set! the-indent #f)
@@ -92,7 +99,7 @@
 
   (define (settle!)
     ;; the next keystroke: transient lines and the message give way
-    (set! the-text "")
+    (set-text! "")
     (set! the-pending '()))
 
   ;;; Geometry -------------------------------------------------------------------

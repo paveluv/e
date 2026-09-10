@@ -160,18 +160,20 @@
   ;; question waits in the echo area as an unlogged indicator until
   ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
   (define (present-pending-ask!)
-    (let ([asks (actor:pending head:ui-actor)])
-      (when (and (pair? asks)
-                 (not (prompt:active?))
-                 (string=? (echo:text) ""))
-        (let ([ask (car asks)])
-          (echo:set-text!
-            (string:elide (format "~a asks: ~a -- C-c a answers~a"
-                            (cadr ask) (caddr ask)
-                            (if (> (length asks) 1)
-                              (format " (~a waiting)" (length asks))
-                              ""))
-              (paint:screen-cols)))))))
+    (when (and (not (prompt:active?))
+               (or (eq? (echo:text-owner) 'ask) (string=? (echo:text) "")))
+      (let ([asks (actor:pending head:ui-actor)])
+        (if (null? asks)
+          (echo:set-text! "")
+          (let ([ask (car asks)])
+            (echo:set-text!
+              (string:elide (format "~a asks: ~a -- C-c a answers~a"
+                              (cadr ask) (caddr ask)
+                              (if (> (length asks) 1)
+                                (format " (~a waiting)" (length asks))
+                                ""))
+                (paint:screen-cols))
+              'ask))))))
 
 
   ;;; Configuration and reloads -----------------------------------------------------

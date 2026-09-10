@@ -182,16 +182,28 @@
                 '()
                 (with-mutex protocol-lock pending-asks)))
 
+  (define (notify-pending! entries)
+    ;; One invalidation per recipient after an atomic removal. The pending
+    ;; table is authoritative even if another mutation notifies first.
+    (for-each (lambda (to) (send! to '(pending)))
+      (fold-left (lambda (recipients entry)
+                   (let ([to (vector-ref entry 2)])
+                     (if (member to recipients) recipients (cons to recipients))))
+        '() entries)))
+
   (define (take-ticket! ticket accepts?)
     ;; Answer and cancellation compete for one atomic consumption. The
     ;; winner receives the callback after releasing the lock.
-    (with-mutex protocol-lock
-      (let ([entry (find (lambda (entry)
-                           (and (eqv? (vector-ref entry 0) ticket) (accepts? entry)))
-                         pending-asks)])
-        (when entry
-          (set! pending-asks (remq entry pending-asks)))
-        entry)))
+    (let ([entry
+           (with-mutex protocol-lock
+             (let ([entry (find (lambda (entry)
+                                  (and (eqv? (vector-ref entry 0) ticket) (accepts? entry)))
+                                pending-asks)])
+               (when entry
+                 (set! pending-asks (remq entry pending-asks)))
+               entry))])
+      (when entry (notify-pending! (list entry)))
+      entry))
 
   (define answer!
     ;; Resolve an ask: the answer routes to the asker's reply
@@ -222,5 +234,8 @@
 
   (define (cancel-owned! owner)
     (unless owner (error 'cancel-owned! "expected a question owner"))
-    (with-mutex protocol-lock
-      (set! pending-asks (filter (lambda (entry) (not (eq? (vector-ref entry 6) owner))) pending-asks)))))
+    (notify-pending!
+      (with-mutex protocol-lock
+        (let-values ([(removed kept) (partition (lambda (entry) (eq? (vector-ref entry 6) owner)) pending-asks)])
+          (set! pending-asks kept)
+          removed)))))

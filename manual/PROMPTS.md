@@ -89,6 +89,9 @@ describe page for the Scheme symbol under or immediately before point.
 
 An agent or another actor can leave a question for you. The echo area shows
 the oldest pending question when no other message or prompt occupies it.
+The indicator updates while idle as questions arrive or are withdrawn,
+advancing to the next question or clearing when none remain. Other messages
+and anything you are typing into a prompt stay intact.
 Press `C-c a` (`answer!!`) to answer; Tab offers any supplied choices.
 Cancelling the prompt leaves the question pending so you can return to it.
 If it was withdrawn while you were typing, the editor says so when you submit.
@@ -106,6 +109,13 @@ lists pending questions in ticket order as `(ticket from question choices)`.
 `actor:answer! ticket answer` and `actor:cancel! ticket` return `#t` for
 the call that consumes the ticket and `#f` thereafter. Cancellation does
 not invoke the reply procedure.
+
+Recipients receive `(ask ticket from question choices)` when a question is
+created, and `(pending)` when questions are removed by an answer, cancellation
+or session revocation. Treat these as notifications to re-read `actor:pending`;
+the table is authoritative even if notifications from concurrent changes
+arrive out of order. Revoking several questions sends one notification per
+recipient, after removing the whole batch.
 
 The protocol copies and validates the question's actors, text, and list of
 string choices before admitting a ticket; an empty list allows free-form answers.

@@ -181,9 +181,10 @@
        (receive-reply connection))
      (define (receive-reply connection)
        (let ([message (receive connection)])
-         (if (and (pair? message) (eq? (car message) 'changed))
-             (begin (notices (cons connection (cadr message))) (receive-reply connection))
-             message)))
+         (cond [(and (pair? message) (eq? (car message) 'changed))
+                (notices (cons connection (cadr message))) (receive-reply connection)]
+           [(equal? message '(event (pending))) (receive-reply connection)]
+           [else message])))
      (define (connect)
        (let ([connection (sys:connect-local socket)])
          (set! clients (cons connection clients)) connection))
@@ -641,6 +642,46 @@
                              (head-read a '(actor:pending head:ui-actor)))
                        '((event (answer 71 "yes")) #f ())))
 
+                   ;; Questions refresh their own indicator as the pending
+                   ;; table changes. Withdrawal must also leave another echo
+                   ;; message or an active answer prompt in control.
+                   (test:check 'question-withdrawal-refreshes-only-its-idle-indicator
+                     (map
+                       (lambda (state)
+                         (head-read a '(begin (echo:settle!) #t))
+                         (let* ([first (rpc agent 'ask '(head "screen A") "First question?" '())]
+                                [shown (head-wait 'first-question-indicator a
+                                         (lambda () (head-sees? a "First question?")))]
+                                [second (rpc agent 'ask '(head "screen A") "Second question?" '())])
+                           (head-wait 'question-count-refreshes a
+                             (lambda () (and (head-sees? a "First question?") (head-sees? a "(2 waiting)"))))
+                           (rpc agent 'cancel first)
+                           (head-wait 'oldest-question-refreshes a
+                             (lambda () (and (head-sees? a "Second question?") (not (head-sees? a "(2 waiting)")))))
+                           (case state
+                             [(message)
+                              (head-read a '(begin (echo:set-text! "Keep this message") #t))
+                              (head-wait 'unrelated-echo a (lambda () (head-sees? a "Keep this message")))]
+                             [(prompt)
+                              (head-send! a "\x03;adraft")
+                              (head-wait 'answer-being-written a (lambda () (head-sees? a "[...] draft")))])
+                           (pump-head! a)
+                           (vector-set! a 3 "")
+                           (rpc agent 'cancel second)
+                           (head-wait (list 'withdrawal-frame state) a
+                             (lambda ()
+                               (and (> (occurrences (vector-ref a 3) "\x1b;[?2026l") 0)
+                                    (case state
+                                      [(idle) (not (head-sees? a "Second question?"))]
+                                      [(message) (head-sees? a "Keep this message")]
+                                      [(prompt) (head-sees? a "[...] draft")]))))
+                           (when (eq? state 'prompt)
+                             (head-send! a "\r")
+                             (head-wait 'withdrawn-answer a (lambda () (head-sees? a "That question was withdrawn"))))
+                           (head-read a '(actor:pending head:ui-actor))))
+                       '(idle message prompt))
+                     '(() () ()))
+
                    ;; Exercise the actual head/client adapters as well as the
                    ;; request envelope: a refused fact batch must stay false.
                    (let ([target (rpc head 'create "guarded facts" '("keep")
@@ -955,14 +996,19 @@
                        ;; inventory, including agents routed to another head.
                        ;; Revocation wakes an idle reader and removes watches
                        ;; through the ordinary connection cleanup.
+                       (head-read a '(begin (echo:settle!) #t) "\x1d;")
                        (let* ([question (rpc second 'ask "Withdraw on revoke?" '())]
                               [watched (rpc second 'watch)]
+                              [shown (head-wait 'question-before-revocation a
+                                       (lambda () (head-sees? a "Withdraw on revoke?")))]
                               [selected
                                (head-read b
                                  '(list (assoc '(agent "second") (client:request 'sessions))
                                         (client:request 'revoke '(agent "second"))) "\x1d;")])
                          (test:await 'human-revocation-retracts-the-endpoint
                            (lambda () (not (assoc '(agent "second") (rpc agent 'actors)))))
+                         (head-wait 'revoked-question-disappears-while-idle a
+                           (lambda () (not (head-sees? a "Withdraw on revoke?"))))
                          (test:check 'human-revocation-closes-the-agent-and-preserves-other-clients
                            (list selected (eof-object? (receive-reply second))
                                  (head-read a `(list (actor:pending head:ui-actor)
