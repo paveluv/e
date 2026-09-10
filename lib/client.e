@@ -184,7 +184,7 @@
         (kernel:drain-deliveries! deliveries))))
 
   (define (call-with-runtime thunk)
-    (let ([modules '("actor" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log"
+    (let ([modules '("actor" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
                      "property" "reference" "startup" "store" "string" "surface" "sys" "text" "vt" "wire")])
       (kernel:pin-modules! (cons "client" modules))
       (dynamic-wind void

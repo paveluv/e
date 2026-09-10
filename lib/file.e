@@ -1,9 +1,8 @@
 ;; file.e -- the disk: the library (file).
 ;;
-;; Everything the editor does with the file system, below the seams
-;; and free of buffers and screens: path algebra (directory and base
-;; parts, ~ expansion and abbreviation, textual canonicalization, the
-;; stable identity of a visited file), reading, modification stamps,
+;; Disk services, free of buffers and screens: path algebra (directory
+;; and base parts, shared (path) expansion/canonicalization, abbreviation,
+;; the stable identity of a visited file), reading, modification stamps,
 ;; permission-preserving writes, the line/trailing-newline algebra a
 ;; file's text and a buffer's line vector convert through, the
 ;; three-way merge of base, buffer, and disk, and completion over a
@@ -22,8 +21,9 @@
   (export read read-state stamp write! call-with-port
           lines ends-in-newline? text
           merge conflict-count
-          directory-part base-name expand abbreviate absolute
-          canonical visit-path complete data-directory
+          directory-part base-name abbreviate absolute
+          (rename (path:expand expand) (path:canonical canonical))
+          visit-path complete data-directory
           add-pre-save-hook! add-post-save-hook!
           run-pre-save-hooks! run-post-save-hooks!)
   ;; These are Chez names too; importers always see this library's exports
@@ -31,6 +31,7 @@
   (import (except (chezscheme) read expand merge call-with-port)
           (prefix (only (sys) canonical-file-path) sys:)
           (prefix (only (diff) merge3 merge-report-lines) diff:)
+          (prefix (path) path:)
           (prefix (string) string:)
           (prefix (text) text:)
           (prefix (log) log:)
@@ -49,16 +50,8 @@
     (let ([dir (directory-part path)])
       (if dir (string:tail path (string-length dir)) path)))
 
-  (define (expand path)
-    ;; Expand a leading ~ to the home directory.
-    (let ([home (getenv "HOME")])
-      (cond [(not home) path]
-            [(string=? path "~") home]
-            [(string:prefix? "~/" path) (string-append home (string:tail path 1))]
-            [else path])))
-
   (define (abbreviate path)
-    ;; The inverse of expand, for display: home becomes ~.
+    ;; The inverse of path:expand, for display: home becomes ~.
     (let ([home (getenv "HOME")])
       (if (and home (string:prefix? (string-append home "/") path))
           (string-append "~" (string:tail path (string-length home)))
@@ -71,29 +64,11 @@
         path
         (string-append (current-directory) "/" path)))
 
-  (define (canonical path*)
-    ;; path made absolute, with ".", "..", and empty segments resolved
-    ;; textually (symbolic links are not chased) -- enough to recognize
-    ;; the editor's own files whichever way they are named.
-    (let* ([path (if (string:prefix? "/" path*)
-                     path*
-                     (string-append (current-directory) "/" path*))]
-           [n (string-length path)])
-      (let loop ([i 0] [start 0] [stack '()])
-        (define (push seg)
-          (cond [(or (string=? seg "") (string=? seg ".")) stack]
-                [(string=? seg "..") (if (pair? stack) (cdr stack) stack)]
-                [else (cons seg stack)]))
-        (cond [(> i n) (string-append "/" (string:join (reverse stack) "/"))]
-              [(or (= i n) (char=? (string-ref path i) #\/))
-               (loop (+ i 1) (+ i 1) (push (substring path start i)))]
-              [else (loop (+ i 1) start stack)]))))
-
   (define (visit-path path)
     ;; One stable identity for visited files. Existing paths chase symbolic
     ;; links; for a new file, chase its existing parent and retain the final
     ;; component. Textual normalization is the portable fallback.
-    (let* ([full (canonical (expand path))]
+    (let* ([full (path:canonical (path:expand path))]
            [real (sys:canonical-file-path full)])
       (or real
           (let* ([dir (or (directory-part full) "/")]
@@ -116,13 +91,13 @@
       (let* ([dir (or (directory-part s) "")]
              [part (string:tail s (string-length dir))]
              [listing (directory-list
-                        (expand
+                        (path:expand
                           (cond [(string=? dir "") "."]
                                 [(string=? dir "/") "/"]
                                 [else (substring dir 0 (- (string-length dir) 1))])))])
         (map (lambda (name)
                (let ([full (string-append dir name)])
-                 (if (file-directory? (expand full))
+                 (if (file-directory? (path:expand full))
                      (string-append full "/")
                      full)))
              (sort string<?

@@ -34,6 +34,13 @@ hook through `head:set-file-opener!`, `head:set-quit-command!` and
 `head:set-after-key!`. Commands and apps can use these head libraries without
 importing the runtime entrypoint `(main)`.
 
+`path:expand` expands leading `~` and `~/`; `path:canonical` makes a name
+absolute and resolves dot components and repeated separators textually.
+Combine them as `(path:canonical (path:expand name))`. These operations do
+not require the path to exist or chase symbolic links. The `file:expand`
+and `file:canonical` names remain aliases of the shared procedures;
+`file:visit-path` additionally resolves filesystem identity for visited files.
+
 For file codecs, `(file:call-with-port path output? use)` opens a text port
 and passes it to `use`, preserving its return values. `#f` reads; `#t` replaces
 the file and preserves existing permissions, best-effort. The scope closes

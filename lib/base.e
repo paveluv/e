@@ -11,7 +11,7 @@
           (prefix (surface) surface:) (prefix (reference) reference:) (prefix (doc) doc:))
 
   (define modules
-    '("actor" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "policy"
+    '("actor" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
       "property" "reference" "sandbox" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
