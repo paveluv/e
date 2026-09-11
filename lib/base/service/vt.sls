@@ -3568,7 +3568,7 @@
         (set! id (store:create! owner (if (= serial 1) "*terminal*" (format "*terminal ~a*" serial))
                    (make-vector rows (make-string cols #\space))
                    `((app . ,owner) (alive . #f) (capture . #f) (status . "starting")
-                     (read-only . #t) (disposable . #t) (mode . "terminal")
+                     (read-only . #t) (disposable . #t) (mode . "terminal") (directory . ,directory)
                      (wrap . #f) (scrollbar . #f) (manages-viewport . #t))))
         (set! state (blank-terminal-state owner id process rows cols #t))
         (terminal-state-controller-set! state (datum:copy from))

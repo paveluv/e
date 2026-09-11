@@ -50,11 +50,14 @@
   (define (history component . select)
     ;; Select strings from owned data, newest first, collapsing consecutive
     ;; repeats among the newest 200 matching records. Eval selects car from
-    ;; (query . result), file prompts cdr. Unrelated payloads are never copied.
-    (let ([sel (if (pair? select) (car select) (lambda (d) d))])
-      (let loop ([es (entries component 200)] [last #f])
-        (if (null? es) '()
+    ;; (query . result), file prompts cdr. An optional actor limits history
+    ;; to that head's choices before capping/copying, without another store.
+    (let ([sel (if (pair? select) (car select) (lambda (d) d))]
+          [who (and (pair? select) (pair? (cdr select)) (cadr select))])
+      (let-values ([(records end first) (snapshot 0 200 component who)])
+        (let loop ([es records] [last #f])
+          (if (null? es) '()
             (let ([x (guard (ex [else #f]) (sel (cadddr (car es))))])
               (if (and (string? x) (not (equal? x last)))
                   (cons x (loop (cdr es) x))
-                  (loop (cdr es) last))))))))
+                  (loop (cdr es) last)))))))))

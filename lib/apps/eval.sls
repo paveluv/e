@@ -36,17 +36,20 @@
 
   ;;; Symbol completion -------------------------------------------------------
 
+  (define (symbol-start s)
+    (let loop ([i (- (string-length s) 1)])
+      (cond [(< i 0) 0]
+            [(memv (string-ref s i)
+                   '(#\space #\newline #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,))
+             (+ i 1)]
+            [else (loop (- i 1))])))
+
   (define (complete-symbol-where s keep? empty-ok?)
     ;; Complete the trailing symbol token of s against the bindings of
     ;; the editor's top level that satisfy keep?.  An empty token
     ;; completes to everything kept when empty-ok? -- the pop-up pages
     ;; a list as large as the whole environment.
-    (let* ([start (let loop ([i (- (string-length s) 1)])
-                    (cond [(< i 0) 0]
-                          [(memv (string-ref s i)
-                                 '(#\space #\newline #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,))
-                           (+ i 1)]
-                          [else (loop (- i 1))]))]
+    (let* ([start (symbol-start s)]
            [head (substring s 0 start)]
            [part (string:tail s start)])
       (if (and (string=? part "") (not empty-ok?))
@@ -457,7 +460,8 @@
     ;; own top level.  The expression is logged (component eval, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let ([s (parameterize ([prompt:ghost signature-ghost]
+    (let ([s (parameterize ([prompt:completion-label (lambda (s) (string:tail s (symbol-start s)))]
+                            [prompt:ghost signature-ghost]
                             [prompt:multiline indent-scheme-insertion]
                             [prompt:edge-motion mx-edge-motion]
                             [prompt:reindent reindent-scheme-input]

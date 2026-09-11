@@ -425,8 +425,9 @@
                  (list (map cadddr (car tail)) (> (caddr tail) 0) (- (cadr tail) (caddr tail))
                        (car bounds)
                        (map cadddr (car (rpc agent 'log-snapshot (cadr bounds) #f 'wire-retained)))
+                       (map cadddr (car (rpc agent 'log-snapshot 0 2 'wire-retained identity)))
                        (car (rpc agent 'log-snapshot 0 10 'missing-component)))
-                 '((5001 5000) #t 5000 () (after-bookmark) ())))
+                 '((5001 5000) #t 5000 () (after-bookmark) (after-bookmark) ())))
              (let ([limited (connect)])
                (hello limited '(head "read only")) (receive limited)
                (test:check 'session-control-requires-an-all-buffer-human-head
@@ -1346,7 +1347,10 @@
                            ;; Completion borrows the selected window. A wake
                            ;; in that modal loop must not checkpoint its chrome.
                            (head-send! again "\x1b;xhead:window-\t")
-                           (head-wait 'completions-before-loss again (lambda () (head-sees? again "<completions>")))
+                           ;; Narrow status lines prioritize the page count;
+                           ;; observe a candidate rather than the view label.
+                           (head-wait 'completions-before-loss again
+                             (lambda () (head-sees? again "head:window-buffer")))
                            (vector-set! again 3 "")
                            (rpc head 'properties plain '((fixture-wake . #t)))
                            (head-wait 'wake-inside-prompt again

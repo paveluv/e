@@ -12,7 +12,7 @@ Prompt input supports the familiar bindings:
 |---|---|
 | `C-a`, `C-e`, Home, End | Move to an input or visual-line boundary |
 | `C-b`, `C-f`, Left, Right | Move by one character |
-| Up, Down | Move through visual lines, then history |
+| Up, Down | Browse history in window prompts; move through visual lines, then history in the echo area |
 | `C-k`, `C-y` | Use the shared kill ring |
 | Tab | Complete |
 | `C-g`, Escape | Cancel |
@@ -38,11 +38,13 @@ prompt runs, under whatever keys they are bound to: events resolve
 through the live global keymap, so rebound or newly bound chords work in
 every prompt as well. Only self-inserting characters always stay with
 the input. The mouse works too: clicks focus windows and the status-bar
-controls split and close as usual. None of this cancels the prompt, and
-the window focused when the prompt is accepted is the command's target
--- the file opens there, the evaluation runs against that buffer. Chords
+controls split and close as usual. An echo-area prompt keeps running, and
+the window focused when it is accepted is the command's target: an
+evaluation runs against that buffer. Chords
 that resolve to any other command are consumed without effect so their
-tail keys cannot leak into the input.
+tail keys cannot leak into the input. A [prompt in the
+window](#prompts-in-the-window) differs in one respect: it belongs to its
+window, so focusing another window cancels it.
 
 Resizing your terminal refreshes the layout without another keypress, even
 while a prompt is open. Your input stays intact. Each attached head uses its
@@ -59,13 +61,50 @@ At line boundaries, the first `C-a` or `C-e` moves within the current visual
 line; a repeated command moves to the beginning or end of the complete input.
 The repetition is command-based rather than inferred from the cursor position.
 
+## Prompts in the window
+
+`C-x C-f` and `C-x b` read their input in the current window instead of the
+echo area. Each invocation creates a temporary local view named after the
+command, `<find-file>` or `<switch-to-buffer>`. The input sits at the bottom
+of the window, with the same editing keys, styles, suggestions and text
+cursor as an echo-area prompt. Clicking the input moves its insertion point.
+
+Long input wraps above the bottom row. Tab lists candidates above the input;
+repeated Tab pages through them. Every input change, including history
+recall, clears the old candidates. Up and Down browse history. Clicking a
+candidate fills the input with its complete value; Enter accepts it. The
+status line shows key hints or a page count as space permits. In small panes,
+the input clips around the cursor to leave a candidate row visible. A pane
+with only one text row asks you to enlarge it to see matches.
+
+Acceptance shows the result in the invoking window. `C-g` or Escape restores
+its previous buffer and position. Focusing another window, closing the
+prompt's window, or killing its temporary buffer also ends the interaction.
+An explicit buffer choice in a side `<buffers>` panel takes effect and ends
+the prompt. Any split copies of the temporary view are restored too; the
+temporary buffer disappears when the interaction ends.
+
+For find-file, changing focus keeps the unfinished path and cursor for the
+next invocation in that window. Explicit cancellation discards this draft.
+Drafts last only in the current head process; reconnecting restores the
+last editing screen, without a pending prompt. File-open errors keep the
+path editable; see [File buffers](BUFFERS.md#file-buffers). The echo area
+keeps showing messages while a window prompt is active.
+
+Any prompt can use the window: `(prompt:in-window #t)` in `config.e` makes
+every `prompt:read!` take the current window. The two buffer commands always
+do. A nested prompt uses the echo area. Its own completion view may borrow
+the window temporarily, then returns to the outer prompt and its input.
+
 ## Completion
 
-Tab extends input to the longest common prefix. If nothing can be added, a
-second Tab shows `<completions>` in the current window -- the one the prompt
-was invoked from. Repeated Tab cycles through pages when the
-list is taller than the window. When the prompt finishes the window gets its
-buffer back, point and viewport intact; the split tree never changes.
+Tab extends input to the longest common prefix. When an ambiguous prefix
+cannot be extended, Tab shows `<completions>` in the currently focused window
+or, for a window prompt, candidates above its input. Repeated Tab cycles
+through pages when the list is taller than the available space. Clicking a
+candidate fills the input without opening it or moving focus away from the
+prompt. Finishing or dismissing the list restores the borrowed window's
+buffer, point and viewport; completion does not change the split layout.
 
 Completion candidates use a shared semantic style:
 
@@ -74,7 +113,10 @@ Completion candidates use a shared semantic style:
 - a distinguished editor-defined value uses the editor face.
 
 File prompts apply the same mechanism component by component: the existing
-path prefix is upright and the nonexistent remainder is italic.
+path prefix is upright and the nonexistent remainder is italic. File labels
+show literal basenames, including spaces and punctuation; directories end
+in `/`. Labels too wide for the pane end in `…`; clicking them still fills
+the complete path. Dotfiles appear when the final component starts with `.`.
 
 ## Suggestions and inspection
 
@@ -107,10 +149,21 @@ directory and agent sessions -- is documented in
 
 ## Prompt API
 
-`prompt:read!` accepts completion, initial input, and history. Presentation can be
-customized with `paint:prompt-styler`, `paint:completion-styler`, `prompt:completion-highlight`,
+`prompt:read!` accepts a label followed by optional completion, initial input,
+history box, alternate completion and input normalization procedures.
+Presentation can be customized with `paint:prompt-styler`, `paint:completion-styler`,
+`prompt:completion-label`, `prompt:completion-highlight`,
 `prompt:ghost`, `prompt:inspector`, `prompt:multiline`, `prompt:edge-motion`,
 and `prompt:reindent`.
+
+`prompt:completion-label` maps a full candidate to its displayed label;
+the default preserves the value. `prompt:validate` is `#f` or a procedure
+called on normalized input when Enter is pressed. It returns `#f` to accept
+or a short explanation to keep editing. `prompt:draft` is `#f` or a box
+containing `#f` or `(input . cursor)`; the prompt starts from that draft and
+updates it as input changes. The caller decides when to retain it. Validation
+and draft ownership are local to each invocation; nested reads do not inherit
+those two options.
 
 Use `paint:show-prompt-message!` when a non-`prompt:read!` interaction should retain the
 same styled label and wrapped layout.

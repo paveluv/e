@@ -99,9 +99,11 @@ earlier record.
 File prompts use it to recall visited and saved paths; `M-x` uses eval records
 for expression history. History is therefore presentation-independent and
 does not scrape rendered text. Each history read considers the newest 200
-retained records of that component, selects strings, and collapses consecutive
-repeats. Other components do not consume that read allowance, but share the
-base's overall retention limit.
+retained records of that component and, when supplied, actor. It selects
+strings and collapses consecutive repeats. Other components and excluded
+actors do not consume that read allowance, but share the base's overall
+retention limit. Find-file uses this head's visits and removes older repeats
+so each path appears once; successful revisits become recent again.
 
 Policy activity uses the same structured log, with no separate audit history:
 
@@ -130,9 +132,11 @@ of presentation is separate from the base's operation order.
   `component` is a symbol or `#f` for all components. `count` is a nonnegative
   exact integer or `#f` for all retained matches. Filtering and limiting happen
   before copying records.
-- `(log:snapshot [start [count [component]]])` returns three values: owned
+- `(log:snapshot [start [count [component [actor]]]])` returns three values: owned
   records, the captured end bookmark, and the oldest retained index. `start`
-  defaults to zero; count/component have the same meanings as above. Indexes
+  defaults to zero; count/component have the same meanings as above. An
+  optional actor identity filters before limiting and copying; `#f` includes
+  every actor. Indexes
   are absolute append positions within this base's lifetime. A start older
   than the retention floor clamps to that floor; a future or invalid start
   refuses. The floor is global even for a filtered read.
@@ -146,7 +150,8 @@ of presentation is separate from the base's operation order.
   On attached connections, use bounded tail/component reads: a full journal
   snapshot can exceed the wire's 16 MiB frame limit. The log view does not
   page through older history.
-- `log:history` derives values for interactive history.
+- `(log:history component [selector [actor]])` derives strings for interactive
+  history. The selector receives each record's datum and defaults to identity.
 - `log:register-formatter!` installs component presentation.
 - `present-log-entry!` and `present-log-entries!` expose the shared echo
   presentation path.

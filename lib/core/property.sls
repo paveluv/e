@@ -27,7 +27,7 @@
                                                          (cddr entry) (cdr entry)))))]
                           [(status) (or (not (cdr entry)) (string? (cdr entry)))]
                           [(sticky-lines) (and (integer? (cdr entry)) (exact? (cdr entry)) (>= (cdr entry) 0))]
-                          [(cursor-style) (memq (cdr entry) '(#f default block underline bar
+                          [(cursor-style) (memq (cdr entry) '(#f default text block underline bar
                                                               blinking-block blinking-underline blinking-bar))]
                           [(audience) (identity:audience? (cdr entry))]
                           [else #t])

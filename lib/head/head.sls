@@ -2028,6 +2028,8 @@
       b))
 
   (define (set-app-status-position! b position)
+    ;; A coordinate pair projects a source position; a string supplies
+    ;; operation details in place of generated buffer coordinates/mode.
     (let ([a (app-of b)])
       (unless a (error 'set-app-status-position! "not an app buffer" b))
       (unless (or (not position) (procedure? position))
@@ -2085,8 +2087,10 @@
         (unless (memq wrap '(default #t #f))
           (error 'set-app-presentation!
                  "wrap must be default, #t, or #f" wrap))
+        ;; text is the editor's own shape for editable text, for an app
+        ;; whose rows are typed into although the buffer is read-only
         (unless (memq cursor-style
-                      '(default block underline bar
+                      '(default text block underline bar
                                 blinking-block blinking-underline blinking-bar))
           (error 'set-app-presentation!
                  "invalid cursor style"

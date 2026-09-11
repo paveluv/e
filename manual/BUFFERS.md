@@ -43,7 +43,9 @@ vertical line, `0▏`, then the state marker:
 | `[]` | dynamic app or view buffer |
 
 The status line also shows the buffer name, one-based line and column, detected
-mode, remaining merge-conflict count, and applicable command hints.
+mode, remaining merge-conflict count, and applicable command hints. Temporary
+interactions such as find-file use that space for operation hints and page
+counts instead of generated-buffer coordinates.
 
 Windows are numbered from 0. A new window takes the smallest number no window
 holds, so a closed window's number goes to the next window created and the
@@ -61,6 +63,8 @@ in that form.
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
 
+`C-x b` and `C-x C-f` prompt in the current window rather than the echo area;
+see [prompts in the window](PROMPTS.md#prompts-in-the-window).
 Buffer-name completion is available with Tab in the prompts. Killing a modified
 buffer requires confirmation. If its shared text or facts change while the
 question is open, e reviews it again before deleting. A failed deletion reports
@@ -101,6 +105,21 @@ unsaved work. Shared text and terminal processes stay in the running daemon.
 ## File buffers
 
 `C-x C-f` visits a path, `C-x C-s` saves, and `C-x C-w` saves under a new path.
+Find-file offers the current file's directory, a terminal's launch directory,
+or the head's working directory for other buffers. Clearing the offered path
+and typing a relative name still uses that starting directory. Absolute paths
+and `~/` select their own location; Tab on `~` extends it to `~/`. A terminal's
+default does not track subsequent shell `cd` commands.
+
+Enter on a directory keeps the path open with a trailing `/`; Tab completes
+its contents. A read error or missing parent directory leaves the input and
+cursor available for correction. A new filename in an existing directory
+creates an empty buffer; the file is written only when saved. Up and Down
+browse this head's successful visits, most recent first, including revisits
+to existing buffers. Each path appears once. That history comes from the
+daemon's retained journal and remains available to the same named head when
+it reattaches.
+
 An unnamed buffer asks for a path when first saved. Saving as makes the buffer
 visit the chosen file and updates its mode from the new name. File facts,
 the buffer label and its detected mode publish together. A callback's later

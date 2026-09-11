@@ -17,7 +17,7 @@
 
      (define (check label actual expected)
        (guard (ex [else (error 'wiring-test (format "~s" label) actual expected
-                               (map screen-line '(20 21 22 23)))])
+                               (vector->list (vt:emulator-screen mirror)))])
          (test:check label actual expected)))
 
      (define probe (format "/tmp/e-wiring-~a" (getenv "USER")))
@@ -65,7 +65,7 @@
 
      (define (read-editor expression . prefix)
        (when (file-exists? probe) (delete-file probe))
-       (send! (format "~a\x1b;xcall-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\r"
+       (send! (format "~a\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
                       (if (null? prefix) "" (car prefix)) probe expression))
        (pump! 900)
        (guard (ex [else (error 'read-editor "probe did not return a datum" expression
@@ -89,8 +89,8 @@
      (check 'local-tools-have-local-labels
             (read-editor
               '(map (lambda (key) (head:buffer-name (head:find-tool-buffer key)))
-                    '("*buffers*" "*log*" "*completions*")))
-            '("<buffers>" "<log>" "<completions>"))
+                    '("*buffers*" "*log*")))
+            '("<buffers>" "<log>"))
      (check 'buffer-list-refresh-never-mutates-store
             (read-editor
               '(let ([before (list-sort < (store:buffer-list))]
@@ -193,6 +193,206 @@
        (list fits overflows (panel-bar))
        '(#f right #f))
      (read-editor `(begin (show-buffer! (buffer ,(car panel))) (delete-other-windows!) #t))
+
+     ;; One file tree exercises completion, recovery and the temporary
+     ;; view's lifetime through the real keyboard/mouse path. Probe transport
+     ;; is pasted so lengthy setup expressions do not test per-key repainting.
+     (define (find-cell needle)
+       (let loop ([r 0])
+         (and (< r (vector-length (vt:emulator-screen mirror)))
+              (let ([c (string:search (screen-line r) needle 0 (string-length (screen-line r)))])
+                (if c (cons r c) (loop (+ r 1)))))))
+     (define (visible? needle) (and (find-cell needle) #t))
+     (define (press! keys) (send! keys) (pump! 250))
+     (define (prompt-input! text)
+       (press! (string-append "\x01;\x0b;\x1b;[200~" text "\x1b;[201~")))
+     (define (find-file! text)
+       (press! "\x18;\x06;")
+       (when text (prompt-input! text)))
+     (define (click! cell)
+       (unless cell (error 'click! "text not on screen" (vector->list (vt:emulator-screen mirror))))
+       (press! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
+                 (+ (cdr cell) 1) (+ (car cell) 1) (+ (cdr cell) 1) (+ (car cell) 1))))
+     (define (resize! rows cols)
+       (vt:emulator-resize! mirror rows cols)
+       (sys:resize-terminal-process! process rows cols)
+       (pump! 300))
+     (define before-prompt (read-editor '(head:buffer-name (current-buffer))))
+     (define prompt-dir (format "/tmp/e-find-file-~a-~a" (getenv "USER") (random 1000000)))
+     (define (prompt-path name) (string-append prompt-dir "/" name))
+     (define clicked-name "a long 日本語 space (name).txt")
+     (mkdir prompt-dir)
+     (for-each (lambda (name) (mkdir (prompt-path name))) '("alpha" "beta" "many"))
+     (define prompt-files
+       (append '("alpha/apple.txt" "alpha/atlas.txt" "beta/brick.txt"
+                 "another name.txt" "日本語.txt" ".hidden" "locked.txt")
+         (list clicked-name)
+         (map (lambda (i) (format "many/sample-~2,'0d.txt" i)) (iota 18))))
+     (for-each (lambda (name)
+                 (call-with-output-file (prompt-path name) (lambda (p) (display "one\ntwo\n" p))))
+               prompt-files)
+     (chmod (prompt-path "locked.txt") #o000)
+     (define file-state
+       (read-editor
+         `(begin
+            (visit-file! ,(prompt-path "alpha/apple.txt"))
+            (visit-file! ,(prompt-path "beta/brick.txt"))
+            (visit-file! ,(prompt-path "alpha/apple.txt"))
+            (goto-point! '(1 . 2)) (insert-text! "!")
+            (actor:call-as '(head "other file visitor")
+              (lambda () (log:add! 'visit-file! '("Visited" . "/other-head-only") #f)))
+            (list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer))))))
+     (find-file! (prompt-path "alpha/a"))
+     (let ([cell (find-cell "Find file: ")])
+       (check 'find-file-prompt-sits-on-the-windows-bottom-row
+         (list (and cell (screen-has? (+ (car cell) 1) "<find-file>"))
+               (and cell (< (car cell) 22)))
+         '(#t #t)))
+     (press! "\t")
+     (check 'find-file-candidates-sit-above-input-with-operation-hints
+       (list (< (car (find-cell "atlas.txt")) (car (find-cell "Find file: ")))
+             (visible? "2 matches") (visible? "↑↓: history")) '(#t #t #t))
+     (press! "\x1b;[A")
+     (let ([revisit (and (visible? (prompt-path "alpha/apple.txt")) (not (visible? "atlas.txt")))])
+       (press! "\x1b;[A")
+       (let ([older (visible? (prompt-path "beta/brick.txt"))])
+         (press! "\x1b;[B\x1b;[B")
+         (check 'history-follows-this-heads-recent-visits-and-clears-stale-choices
+           (list revisit older (visible? (prompt-path "alpha/a")) (visible? "atlas.txt"))
+           '(#t #t #t #f))))
+     (prompt-input! (prompt-path "alpha/../alpha/apple.txt"))
+     (press! "\r")
+     (check 'reopening-an-alias-preserves-buffer-text-and-point
+       (read-editor '(list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer))))
+       file-state)
+
+     (find-file! (prompt-path ""))
+     (press! "\t")
+     (check 'file-labels-keep-spaces-punctuation-and-wide-characters
+       (map visible? (list "another name.txt" clicked-name "日本語.txt" ".hidden")) '(#t #t #t #f))
+     (resize! 6 24)
+     (let ([truncated (visible? "…")])
+       (click! (find-cell "a long"))
+       (resize! 24 100)
+       (check 'clicking-a-truncated-candidate-fills-its-full-path
+         (list truncated (visible? (prompt-path clicked-name)) (visible? "another name.txt")) '(#t #t #f)))
+     (press! "\r")
+     (check 'accepting-a-clicked-file-opens-the-exact-name
+       (read-editor '(head:buffer-file (current-buffer))) (prompt-path clicked-name))
+     (find-file! "ab界def")
+     (let ([cell (find-cell "ab界def")]) (click! (cons (car cell) (+ (cdr cell) 4))))
+     (press! "!")
+     (check 'clicking-the-path-uses-cell-to-character-coordinates (visible? "ab界!def") #t)
+     (press! "\x07;")
+
+     (find-file! (prompt-path "alpha"))
+     (press! "\r")
+     (check 'directory-enter-keeps-the-path-ready-for-descent
+       (list (visible? (prompt-path "alpha/")) (visible? "Directory; Tab")) '(#t #t))
+     (press! "\t\t")
+     (check 'directory-remains-completable (visible? "atlas.txt") #t)
+     (for-each
+       (lambda (case)
+         (let ([path (prompt-path (car case))])
+           (prompt-input! path)
+           (press! "\x01;\x06;\r") ; reject with point inside the unchanged input
+           (let ([explained (visible? (cdr case))])
+             (press! "!")
+             (check 'failed-open-retains-editable-input-and-cursor
+               (list explained (visible? (string:insert path 1 "!")) (visible? "<find-file>")) '(#t #t #t)))))
+       '(("locked.txt" . "Permission denied") ("missing/new.txt" . "Parent directory does not exist")))
+     (prompt-input! "fresh.txt")
+     (press! "\r")
+     (check 'correcting-a-path-creates-a-buffer-in-the-starting-directory-without-writing
+       (list (read-editor '(head:buffer-file (current-buffer))) (file-exists? (prompt-path "fresh.txt"))
+             (read-editor `(head:buffer-named "new.txt")))
+       (list (prompt-path "fresh.txt") #f #f))
+
+     ;; Cancellation, killing, focus loss and closing all release every copy
+     ;; of the borrowed view, without changing the hidden document's point.
+     (for-each
+       (lambda (keys)
+         (read-editor '(begin (show-buffer! (buffer "apple.txt")) (goto-point! '(1 . 3)) #t))
+         (find-file! "focus-draft")
+         (press! keys)
+         (check 'prompt-lifetime-preserves-document-and-leaves-no-stale-apps
+           (read-editor
+             '(list (head:buffer-name (current-buffer))
+                    (for-all (lambda (w) (string=? (head:buffer-name (head:window-buffer w)) "apple.txt"))
+                             (head:windows))
+                    (head:buffer-named "<find-file>") (head:buffer-named "<completions>")
+                    (log:entries 'error) (point) (buffer-text (current-buffer))))
+           (list "apple.txt" #t #f #f '() '(1 . 3) (caddr file-state)))
+         (when (string=? keys "\x18;3\x18;o")
+           (press! "\x18;o")
+           (find-file! #f)
+           (check 'focus-loss-restores-the-window-draft (visible? "focus-draft") #t)
+           (press! "\x07;")
+           (find-file! #f)
+           (check 'explicit-cancel-discards-the-draft (visible? "focus-draft") #f)
+           (press! "\x07;"))
+         (read-editor '(begin (delete-other-windows!) #t)))
+       '("\x07;" "\x18;k" "\x18;3\x18;o" "\x18;3\x18;0"))
+     (read-editor '(begin (split-window-right!) (other-window!) (list-buffers!) (other-window!) #t))
+     (find-file! "panel-draft")
+     (click! (find-cell clicked-name))
+     (check 'an-explicit-buffer-panel-choice-wins-over-prompt-restoration
+       (read-editor '(list (head:buffer-name (current-buffer)) (head:buffer-named "<find-file>")
+                           (log:entries 'error))) (list clicked-name #f '()))
+     (read-editor '(begin (delete-other-windows!) #t))
+
+     (press! (string-append "\x1b;x\x1b;[200~"
+               "parameterize ([prompt:inspector (lambda (s pos) (prompt:read! \"Nested: \" (lambda (s) '(\"inner-one\" \"inner-two\")) \"inner-\"))]) (find-file!!)"
+               "\x1b;[201~\r"))
+     (prompt-input! "outer-draft")
+     (press! "\x1b;.\t")
+     (check 'nested-prompt-has-its-own-echo-input-and-completion-view
+       (list (visible? "Nested: inner-") (visible? "inner-two") (visible? "<completions>")) '(#t #t #t))
+     (click! (find-cell "inner-two"))
+     (press! "\r")
+     (check 'nested-acceptance-resumes-the-outer-input-without-file-validation
+       (list (visible? "Find file: outer-draft") (visible? "<find-file>") (visible? "Nested:")) '(#t #t #f))
+     (press! "\x07;")
+
+     (resize! 3 24)
+     (find-file! (prompt-path "many/../many/../many/../many/"))
+     (press! "\t\t")
+     (let ([smallest (visible? "Enlarge pane")])
+       (resize! 6 24)
+       (let ([first (and (visible? "sample-00.txt") (visible? "1/18"))])
+         (press! "\t")
+         (check 'tiny-pane-explains-its-limit-then-keeps-visible-candidates-and-pages
+           (list smallest first (visible? "sample-01.txt") (visible? "2/18")) '(#t #t #t #t))))
+     (resize! 24 100)
+     (click! (find-cell "sample-17.txt"))
+     (press! "\r")
+     (check 'resizing-reflows-completion-and-retains-full-candidate-values
+       (read-editor '(head:buffer-file (current-buffer))) (prompt-path "many/sample-17.txt"))
+     (let ([terminal
+            (read-editor '(begin (terminal:open!! "exec /bin/cat") (head:buffer-name (current-buffer))))])
+       (press! "\x1d;\x18;\x06;")
+       (check 'find-file-from-a-terminal-offers-its-launch-directory
+         (visible? (string-append "Find file: " (prompt-path "many/"))) #t)
+       (press! "\x07;terminal-still-alive\r")
+       (check 'cancelling-find-file-resumes-terminal-input
+         (list (visible? "terminal-still-alive") (visible? "capturing input")) '(#t #t))
+       (read-editor `(begin (terminal:close!) (kill-buffer! (buffer ,terminal)) #t) "\x1d;"))
+     (check 'prompt-scenarios-finish-without-errors-or-transient-views
+       (read-editor
+         `(begin
+            (for-each (lambda (b)
+                        (when (and (head:buffer-file b) (string:prefix? ,prompt-dir (head:buffer-file b)))
+                          (kill-buffer! b))) (buffer-list))
+            (show-buffer! (buffer ,before-prompt))
+            ;; The close-owner case deliberately retires window 0. Restore
+            ;; that fixture identity for the older scenarios below.
+            (unless (= (head:window-index (selected-window)) 0)
+              (split-window-right!) (other-window!) (delete-other-windows!))
+            (list (head:buffer-named "<find-file>") (head:buffer-named "<completions>") (log:entries 'error))))
+       '(#f #f ()))
+     (for-each (lambda (name) (delete-file (prompt-path name))) prompt-files)
+     (for-each (lambda (name) (delete-directory (prompt-path name))) '("alpha" "beta" "many"))
+     (delete-directory prompt-dir)
 
      ;; A direct store edit of the otherwise empty scratch buffer is
      ;; unsaved work.  Even read-only protection cannot make it disposable.
@@ -1462,7 +1662,7 @@
                (read-editor
                  '(let* ([name (head:buffer-name (current-buffer))]
                          [text (sandbox:read-buffer name 0 1)]
-                         [ready (list name (head:buffer-fact (current-buffer) 'alive #f)
+                         [ready (list (head:buffer-fact (current-buffer) 'alive #f)
                                       (and (string:search text "界éZ" 0 (string-length text)) #t))])
                     (terminal:send! "\n") ready) "\x1d;")]
               [split
@@ -1478,7 +1678,7 @@
                           (head:buffer-store-id (current-buffer))
                           (map head:window-xoff (head:windows)))))]
               [file-id (caddr split)] [offsets (cadddr split)])
-         (check 'live-terminal-has-readable-shared-text live '("*terminal*" #t #t))
+         (check 'live-terminal-has-readable-shared-text live '(#t #t))
          (check 'terminal-death-withdraws-rendition (list (car split) (cadr split)) '(#f #f))
          (check 'dead-terminal-and-file-render-their-glyphs-in-both-panes
            (let* ([line (screen-line 0)] [n (string-length line)]

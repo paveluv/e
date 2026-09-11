@@ -260,14 +260,17 @@
                 (lambda ()
                   (contains? (list->string (reverse transcript)) "\x1b;[5 q"))
                 5000)
-     ;; -- window navigation inside a prompt ------------------------------
-     ;; Split, start find-file, move focus right mid-prompt, accept: the
-     ;; file must open in the newly focused right-hand window.
+     ;; -- window navigation and a window prompt --------------------------
+     ;; Split, start find-file, move focus right: the prompt, which lives
+     ;; in its window, cancels as focus leaves.  Find the file again from
+     ;; the right-hand window: it opens there.
      (send! "\x18;3")                   ; C-x 3
      (settle! 500)
      (send! "\x18;\x6;")                ; C-x C-f
      (settle! 500)
-     (send! "\x1b;[1;3C")               ; M-RIGHT, prompt keeps running
+     (send! "\x1b;[1;3C")               ; M-RIGHT cancels the window prompt
+     (settle! 500)
+     (send! "\x18;\x6;")                ; C-x C-f, now in the right window
      (settle! 500)
      (send! "README.md\r")
      (wait-for! 'prompt-navigation-targets-focused-window
@@ -284,7 +287,7 @@
      ;; -- completions borrow the window and give it back ------------------
      ;; M-x, a partial name, TAB: the <completions> view takes the window
      ;; and lists the candidates; C-g hands the window's buffer back.  A
-     ;; second prompt reuses the same view.
+     ;; second prompt creates its own view.
      (send! "\x1b;x")                   ; M-x
      (settle! 500)
      (send! "split-w\t\t")
@@ -300,7 +303,7 @@
      (send! "\x1b;x")
      (settle! 500)
      (send! "split-w\t\t")
-     (wait-for! 'completions-view-reused
+     (wait-for! 'completions-view-opens-again
                 (lambda () (find-cell "split-window!")) 5000)
      (send! "\x7;")
      (settle! 500)

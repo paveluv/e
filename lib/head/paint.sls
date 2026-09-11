@@ -683,29 +683,29 @@
       ;; the left one-eighth block: single width, in every monospace
       ;; font's block range) so the gap falls after the line, not before
       (let* ([number (format "~a\x258F;" (head:window-index w))]
-             [head-prefix
-              (format "~a~a~a  "
-                      number
-                      (cond [(head:buffer-stale b) "!!"]
-                            [(head:view-buffer? b) "[]"]
-                            [(head:buffer-read-only b) "%%"]
-                            [(head:buffer-modified b) "**"]
-                            [else "--"])
-                      editor-name)]
-             [name (head:buffer-name b)]
              [app-position
               (let* ([a (head:app-of b)]
                      [position (and a (head:app-status-position a))])
                 (and position
                      (guard (ex [else #f]) (position b))))]
+             [head-prefix
+              (if (string? app-position) number
+                (format "~a~a~a  "
+                        number
+                        (cond [(head:buffer-stale b) "!!"]
+                          [(head:view-buffer? b) "[]"]
+                          [(head:buffer-read-only b) "%%"]
+                          [(head:buffer-modified b) "**"]
+                          [else "--"])
+                        editor-name))]
+             [name (if (string? app-position) "" (head:buffer-name b))]
              [status-row (if (pair? app-position)
                              (car app-position) (head:window-prow w))]
              [status-col (if (pair? app-position)
                              (cdr app-position) (head:window-pcol w))]
-             [head (format "~a~a  L~a C~a"
-                           head-prefix name
-                           (+ status-row 1) (+ status-col 1))]
-             [mode-text (if mode-tag (format "  (~a)" mode-tag) "")]
+             [head (if (string? app-position) (string-append head-prefix app-position)
+                       (format "~a~a  L~a C~a" head-prefix name (+ status-row 1) (+ status-col 1)))]
+             [mode-text (if (and mode-tag (not (string? app-position))) (format "  (~a)" mode-tag) "")]
              [hint-values
               (let ([app-status (head:app-status b current?)])
                 (append (if (and app-status (not (string=? app-status "")))
@@ -720,7 +720,7 @@
                 0 (string->list hint-text))]
              [status (format "~a~a~a " head mode-text hint-text)]
              [window-buttons " [↕][↔][×]"])
-        (let ([stale? (head:buffer-stale b)])
+        (let ([stale? (and (not (string? app-position)) (head:buffer-stale b))])
           (paint! (+ start height) (head:window-xoff w)
                   (list 'status status current? stale?)
                   (lambda ()
@@ -831,11 +831,12 @@
   (define (terminal-size!)
     (when size-dirty?
       (set! size-dirty? #f)
-      (set! rows (max 4 (env-number "LINES" 24)))
+      ;; One text row, its status line and the echo area fit in three rows.
+      (set! rows (max 3 (env-number "LINES" 24)))
       (set! cols (max 20 (env-number "COLUMNS" 80)))
       (let ([size (sys:terminal-size)])
         (when size
-          (set! rows (max 4 (car size)))
+          (set! rows (max 3 (car size)))
           (set! cols (max 20 (cdr size)))))))
   (define (window-layout)
     ;; Tile the persistent split tree into the screen minus the echo
@@ -1271,8 +1272,8 @@
 
   (define (echo-cap)
     ;; How tall the whole echo area may grow: everything but each
-    ;; window's minimum -- head:min-window-lines of text (at least 2,
-    ;; redraw!'s collapse threshold) plus its status line.
+    ;; window's minimum -- head:min-window-lines of text (at least 1)
+    ;; plus its status line.
     (max 1 (- rows (head:layout-min-height (head:root)))))
 
   (define (update-echo-geometry!)
@@ -1398,6 +1399,7 @@
                        "\x1b;[0 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
+                         [(text) "\x1b;[0 q"]
                          [(block) "\x1b;[2 q"]
                          [(underline) "\x1b;[4 q"]
                          [(bar) "\x1b;[6 q"]

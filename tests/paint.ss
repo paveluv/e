@@ -205,6 +205,22 @@
      (painted paint:redraw!)
      (paint:set-screen-rows! 24)
      (paint:set-screen-cols! 80)
+     ;; Apps may project source coordinates or replace generated details
+     ;; with operation text. A stale fact must not leave a partial marker
+     ;; or invalid substring bounds when that standard header is replaced.
+     (let ([view (head:register-view! (head:new-local-buffer "status projection") void)])
+       (head:view-replace! view '("generated"))
+       (head:buffer-stale-set! view #t)
+       (head:set-window-buffer! (head:current) view)
+       (check 'app-status-projection-keeps-default-coordinates-and-operation-text-coherent
+         (map (lambda (value)
+                (head:set-app-status-position! view (and value (lambda (b) value)))
+                (let ([frame (stripped (painted paint:redraw!))])
+                  (list (contains? frame "!!") (contains? frame "L8 C3") (contains? frame "Pick a file"))))
+              '(#f (7 . 2) "Pick a file"))
+         '((#t #f #f) (#t #t #f) (#f #f #t)))
+       (head:set-window-buffer! (head:current) document)
+       (head:forget-buffer! view))
      ;; A preparation hook may present a notice, causing a direct redraw.
      ;; Both frames prepare at the current width; their synchronized updates
      ;; must not nest, since the inner end would release the outer update.

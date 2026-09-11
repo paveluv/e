@@ -98,7 +98,8 @@
             (list (path "alpha") (path "alphabet") (path "dir/")))
      (check 'complete-dotfiles-on-request
             (file:complete (path ".")) (list (path ".hidden")))
-     (check 'complete-nowhere (file:complete "/no/such/dir/x") '())
+     (check 'complete-home-root-and-missing-directory
+            (list (file:complete "~") (file:complete "/no/such/dir/x")) '(("~/") ()))
 
      (check 'visit-path-existing
             (file:visit-path (string-append scratch "/./alpha")) (path "alpha"))

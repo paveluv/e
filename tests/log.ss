@@ -66,9 +66,10 @@
        '(("(+ 1 2)" . 3) ("(+ 1 2)" . 3) (ignored . value) ("(car x)" . err)))
      (for-each (lambda (datum) (log:add! 'file-like datum #f))
        '((Loaded . "/first") (Wrote . "/first") (Loaded . "/second")))
-     (test:check 'histories-select-strings-and-collapse-consecutive-repeats
-       (list (log:history 'eval-like car) (log:history 'file-like cdr))
-       '(("(car x)" "(+ 1 2)") ("/second" "/first")))
+     (test:check 'histories-select-strings-collapse-repeats-and-optionally-follow-an-actor
+       (list (log:history 'eval-like car) (log:history 'file-like cdr)
+             (log:history 'probe values head) (log:history 'probe values '(head "absent")))
+       '(("(car x)" "(+ 1 2)") ("/second" "/first") ("hello") ()))
 
      (let* ([actor (list 'head (string-copy "owned"))]
             [payload (vector (string-copy "first") (list 'item) (u8-list->bytevector '(1 2)))]
@@ -237,12 +238,14 @@
        (for-each log:unsubscribe! (list first-token late-token)))
 
      ;; Histories select before copying and cap matching records, so a noisy
-     ;; unrelated component does not consume the prompt's allowance.
+     ;; unrelated component or actor does not consume the prompt's allowance.
      (do ([i 0 (+ i 1)]) ((= i 205))
-       (log:add! 'history-cap (number->string i) #f)
+       (actor:call-as head (lambda () (log:add! 'history-cap (number->string i) #f)))
        (log:add! 'other i #f))
+     (do ([i 0 (+ i 1)]) ((= i 205)) (log:add! 'history-cap "foreign" #f))
      (test:check 'history-and-entry-limits-apply-to-matching-records
-       (list (log:history 'history-cap) (map log:datum (log:entries 'history-cap 2)))
-       (list (map (lambda (i) (number->string (- 204 i))) (iota 200)) '("204" "203")))
+       (list (log:history 'history-cap values head) (log:history 'history-cap)
+             (map log:datum (log:entries 'history-cap 2)))
+       (list (map (lambda (i) (number->string (- 204 i))) (iota 200)) '("foreign") '("foreign" "foreign")))
 
      (test:finish! 'log)))

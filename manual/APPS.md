@@ -192,7 +192,7 @@ in one `store:set-properties!` batch:
 | `alive` | Boolean; enables app input and cursor following while true. |
 | `capture` | `#f` or `()` for none, `all`, a list of event strings, or `(except "EVENT" ...)`. |
 | `status` | A short string or `#f`; remains visible after the app stops. |
-| `cursor-style` | `default`, `block`, `underline`, `bar`, their `blinking-` variants, or `#f`. |
+| `cursor-style` | `default`, `text`, `block`, `underline`, `bar`, their `blinking-` variants, or `#f`. |
 | `sticky-lines` | Nonnegative count of leading rows kept visible. |
 | `scrollbar`, `wrap` | The same presentation preferences described below. |
 | `manages-viewport` | Boolean; declares a live grid at the transcript's tail. |
@@ -307,11 +307,20 @@ the app's rows overflow the window, or `#f`. The optional fourth argument overri
 soft wrapping with `#t` or `#f`; `default` (and omission) follows the ordinary
 window and global setting. A fifth argument selects `block`, `underline`,
 `bar`, or the normal `default` cursor; these explicit shapes are steady.
+`text` asks for the editor's own shape for editable text, for an app whose
+rows are typed into even though the buffer is read-only; a `default` app
+shows the read-only bar.
 Sticky rows, scrollbar geometry, cursor placement,
 mouse hit-testing, and scrolling are handled together by the head and the
 painter and apply to every window showing the app. The scrollbar is a position indicator:
 it is painted, not dragged -- the wheel, the keyboard, and clicks in the
 text scroll.
+
+`head:set-app-status-position!` accepts a callback receiving the buffer. A
+returned zero-based `(row . column)` projects the status position onto source
+text. A returned string replaces the usual buffer details with operation
+text, while retaining the window number and controls. Temporary prompts use
+this for key hints and completion page counts. `#f` restores the default.
 
 The same bar is off for ordinary buffers by default; `(scrollbar #t)`
 enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`

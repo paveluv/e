@@ -796,14 +796,14 @@
   ;;; Files -----------------------------------------------------------------
 
   (define (default-directory)
-    ;; The directory of the current buffer's file (or the working
-    ;; directory), with a trailing slash, absolute -- a file visited
-    ;; by a relative path has a relative directory-part, useless as a
-    ;; prompt offer on its own -- and abbreviated for display.
-    (file:abbreviate
-      (file:absolute
-        (or (and file-name (file:directory-part file-name))
-            (string-append (current-directory) "/")))))
+    ;; A file's parent, an app's working directory, or the head's launch
+    ;; directory. All callers get an absolute, abbreviated directory with
+    ;; a trailing slash, ready for appending another path component.
+    (let ([dir (file:absolute
+                 (or (and file-name (file:directory-part file-name))
+                     (head:buffer-fact (current-buffer) 'directory #f)
+                     (current-directory)))])
+      (file:abbreviate (if (string:suffix? "/" dir) dir (string-append dir "/")))))
 
   (define (set-buffer-name! b name)
     (head:buffer-name-set! b name)
@@ -812,40 +812,38 @@
   (define (file-buffer path)
     ;; -> (values buffer created?). Consult shared identity before reading
     ;; disk; admission rechecks it under the writer if another visitor wins.
-    (guard (ex [else (parameterize ([message-source 'visit-file!])
-                       (set-message! (format "Cannot open ~a: ~a"
-                                             path (kernel:condition-text ex))))
-                     (values #f #f)])
-      (cond [(store:find-file path)
-             => (lambda (id)
-                  (values (or (head:adopt-store-buffer! id)
-                              (error 'visit-file! "buffer visiting this file is not visible" path)) #f))]
-        [else
-         (let* ([disk (and (file-exists? path) (file:read-state path))]
-                [lines (file:lines (if disk (car disk) ""))]
-                [detected (mode:detect path (vector-ref lines 0))])
-           (let-values ([(b created?)
-                         (head:visit-file! (file:base-name path) lines
+    (cond [(store:find-file path)
+           => (lambda (id)
+                (values (or (head:adopt-store-buffer! id)
+                            (error 'visit-file! "buffer visiting this file is not visible" path)) #f))]
+      [else
+       (when (file-directory? path) (refuse-file! "Choose a file inside the directory"))
+       (unless (file-directory? (file:directory-part path))
+         (refuse-file! "Parent directory does not exist"))
+       (let* ([disk (and (file-exists? path) (file:read-state path))]
+              [lines (file:lines (if disk (car disk) ""))]
+              [detected (mode:detect path (vector-ref lines 0))])
+         (head:visit-file! (file:base-name path) lines
                            (append (list (cons 'file path) (cons 'mode (and detected (mode:name detected))))
                              (if disk
                                  (list (cons 'trailing (file:ends-in-newline? (car disk)))
-                                       (cons 'base (car disk)) (cons 'stamp (cdr disk))) '())))])
-             ;; Creation already published the baseline before callbacks.
-             (when created? (log:add! 'visit-file! (cons (if disk "Loaded" "New file:") path)))
-             (values b created?)))])))
+                                       (cons 'base (car disk)) (cons 'stamp (cdr disk))) '()))))]))
 
-  (define (visit-file! path)
-    ;; Switch to the buffer visiting path, creating it if necessary.
-    ;; Reopening a buffer whose file changed on disk meanwhile raises
-    ;; a buffer-only dialog: merge, reread, cancel.  Reopening never writes.
+  (define (prepare-file-visit path)
+    ;; Acquire the file before replacing the prompt. The returned action
+    ;; shows the admitted buffer once its window is restored; no second
+    ;; initial read or second creation is needed to recover from an error.
     (let ([path (file:visit-path path)])
       (let-values ([(b created?)
                     (cond [(find (lambda (b) (and (not (head:buffer-store-id b))
                                                   (equal? (head:buffer-file b) path))) buffers)
                            => (lambda (b) (values b #f))]
                       [else (file-buffer path)])])
-        (when b
+        (lambda ()
           (show-buffer! b)
+          (log:add! 'visit-file!
+            (cons (if created? (if (head:buffer-base b) "Loaded" "New file:") "Visited") path)
+            created?)
           (unless created?
             (let-values ([(text revision facts) (head:buffer-state b)])
               (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
@@ -861,6 +859,14 @@
                       [else
                        (parameterize ([message-source 'visit-file!])
                          (set-message! (format "Cannot reread ~a" path)))]))))))))))
+
+  (define (visit-file! path)
+    ;; Direct visits and the interactive picker share acquisition and the
+    ;; buffer-only merge/reread/cancel flow. Visiting never writes to disk.
+    (guard (ex [else
+                (parameterize ([message-source 'visit-file!])
+                  (set-message! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))))])
+      ((prepare-file-visit path))))
 
   (define (refuse-file! message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
@@ -1292,11 +1298,12 @@
   (define (switch-buffer!!)
     (let* ([current (head:window-buffer current-window)]
            [default (find (lambda (b) (not (eq? b current))) buffers)]
-           [s (prompt:read! (if default
-                              (format "Switch to buffer (default ~a): "
-                                (head:buffer-name default))
-                              "Switch to buffer: ")
-                            complete-buffer-name)])
+           [s (parameterize ([prompt:in-window #t])
+                (prompt:read! (if default
+                                (format "Switch to buffer (default ~a): "
+                                  (head:buffer-name default))
+                                "Switch to buffer: ")
+                              complete-buffer-name))])
       (when s
         (cond [(string=? s "") (when default (show-buffer! default))]
               [(head:buffer-named s) => show-buffer!]
@@ -1891,14 +1898,19 @@
             [(discard-reviewed! b revision facts) ""]
             [else "  Buffer changed; review it again"])))))
 
-  (define (file-prompt-styler label)
+  (define (path-in-directory path directory)
+    (if (or (string:prefix? "/" path) (string:prefix? "~" path)) path
+        (string-append directory path)))
+
+  (define (file-prompt-styler label . directory)
     ;; Existence shown in the face, component-wise: the typed path's
     ;; longest leading run of components that exists on disk stays
     ;; upright, the rest leans italic -- so a TAB that landed on a
     ;; mere common prefix (no such file yet) is telling at a glance,
     ;; without another TAB to ask.
     (define (exists? p)
-      (guard (ex [else #f]) (file-exists? (file:expand p))))
+      (guard (ex [else #f])
+        (file-exists? (file:expand (if (pair? directory) (path-in-directory p (car directory)) p)))))
     (paint:prompt-styler label
       (lambda (path)
         (let* ([v (make-vector (string-length path) 'plain)]
@@ -1914,10 +1926,16 @@
           (style:fill-range! v split (string-length path) 'italic)
           v))))
 
+  (define (file-completion-label path)
+    (if (string:suffix? "/" path)
+        (string-append (file:base-name (substring path 0 (- (string-length path) 1))) "/")
+        (file:base-name path)))
+
   (define (save!!)
     (if file-name
         (save-file! file-name)
-        (let ([s (parameterize ([paint:echo-highlight
+        (let ([s (parameterize ([prompt:completion-label file-completion-label]
+                                [paint:echo-highlight
                                  (file-prompt-styler "Write file: ")])
                    (prompt:read! "Write file: " file:complete
                                  (default-directory)))])
@@ -1928,7 +1946,8 @@
     ;; Prompt for a path -- prefilled with the current file, ready to
     ;; edit -- and save the buffer there: the buffer visits the new
     ;; file from then on, its name and mode following.
-    (let ([s (parameterize ([paint:echo-highlight (file-prompt-styler "Save as: ")])
+    (let ([s (parameterize ([prompt:completion-label file-completion-label]
+                            [paint:echo-highlight (file-prompt-styler "Save as: ")])
                (prompt:read! "Save as: " file:complete
                              (if file-name
                                (file:abbreviate (file:absolute file-name))
@@ -1937,15 +1956,47 @@
       (when (and s (> (string-length s) 0)) (save-file! s)))
     (void))
 
+  (define find-file-drafts (make-weak-eq-hashtable))
+
   (define (find-file!!)
-    ;; Visiting a file never loses the old buffer, so no confirmation
-    ;; needed.  Up and down browse the paths visited before, off the
-    ;; log.
-    (let ([s (parameterize ([paint:echo-highlight
-                             (file-prompt-styler "Find file: ")])
-               (prompt:read! "Find file: " file:complete (default-directory)
-                             (box (log:history 'visit-file! cdr))))])
-      (when (and s (> (string-length s) 0)) (visit-file! s))))
+    ;; Validate/acquire while the path is still editable; show it only
+    ;; after the temporary view has returned the window. Focus loss keeps
+    ;; a per-window draft, while acceptance and explicit cancellation end it.
+    (let* ([owner current-window] [before (current-buffer)]
+           [saved (hashtable-ref find-file-drafts owner #f)]
+           [directory (if saved (car saved) (default-directory))]
+           [draft (if saved (cdr saved) (box #f))]
+           [ready #f])
+      (define (resolve s) (path-in-directory s directory))
+      (define (complete s)
+        (let* ([full (resolve s)] [prefix (- (string-length full) (string-length s))])
+          (map (lambda (value) (string:tail value prefix)) (file:complete full))))
+      (define (normalize s)
+        (if (and (> (string-length s) 0) (not (string:suffix? "/" s))
+                 (guard (ex [else #f]) (file-directory? (file:expand (resolve s)))))
+            (string-append s "/") s))
+      (define (validate s)
+        (guard (ex [(head:interrupted? ex) "Interrupted; edit the path or try again"]
+                   [(i/o-file-protection-error? ex) "Permission denied"]
+                   [(kernel:refusal? ex) (condition-message ex)]
+                   [else (kernel:condition-text ex)])
+          (cond [(string=? s "") #f]
+                [(file-directory? (file:expand (resolve s))) "Directory; Tab to list files"]
+                [else
+                 (set! ready (head:call-with-interrupt (lambda () (prepare-file-visit (resolve s)))))
+                 #f])))
+      (let ([s (parameterize ([prompt:completion-label file-completion-label]
+                              [paint:echo-highlight (file-prompt-styler "Find file: " directory)]
+                              [prompt:in-window #t] [prompt:validate validate] [prompt:draft draft])
+                 (prompt:read! "Find file: " complete directory
+                   (box (fold-right (lambda (path recent) (cons path (remove path recent)))
+                          '() (log:history 'visit-file! cdr head:ui-actor)))
+                   #f normalize))])
+        (if (and (not s) (memq owner windows) (not (eq? owner current-window))
+                 (eq? (head:window-buffer owner) before))
+            (hashtable-set! find-file-drafts owner (cons directory draft))
+            (hashtable-delete! find-file-drafts owner))
+        (when (and s ready) (ready)))))
 
   (define (local-quit-state)
     ;; Own only the facts used by state-clean?. Other head-local metadata can

@@ -59,6 +59,8 @@
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's kill ring
 ;; (head:min-window-lines 2)      ; squeezed windows keep this many text lines
+;; (prompt:in-window #t)          ; every prompt takes the current window, as
+;;                                ; C-x C-f and C-x b do, instead of the echo area
 ;; (style:set! 'chrome '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground

@@ -195,7 +195,7 @@
       [(answer) (arity 2) (apply policy:session-answer! session args)]
       [(cancel) (arity 1) (policy:session-cancel! session (car args))]
       [(log-snapshot)
-       (unless (<= 1 (length args) 3) (error 'wire "expected start, optional count and component"))
+       (unless (<= 1 (length args) 4) (error 'wire "expected start, optional count, component and actor"))
        (call-with-values (lambda () (apply log:snapshot args)) list)]
       [(log-retention)
        (unless (<= (length args) 1) (error 'wire "expected an optional record count"))

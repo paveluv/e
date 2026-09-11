@@ -38,12 +38,15 @@
       [(start) (snapshot start #f #f)]
       [(start limit) (snapshot start limit #f)]
       [(start limit component)
+       (snapshot start limit component #f)]
+      [(start limit component actor)
        ;; Newest matching records, end bookmark, and global retention floor
        ;; from one commit. Expired starts clamp to the floor. Filter and limit
        ;; before copying; immutable entries can be copied outside the writer.
        (unless (and (natural? start) (or (not limit) (natural? limit))
-                    (or (not component) (symbol? component)))
-         (error 'snapshot "expected a start, optional count and component" start limit component))
+                    (or (not component) (symbol? component))
+                    (or (not actor) (actor:identity? actor)))
+         (error 'snapshot "expected a start, optional count, component and actor" start limit component actor))
        (let-values ([(selected end first)
                      (with-mutex lock
                        (unless (<= start count) (error 'snapshot "start outside the log" start))
@@ -52,7 +55,8 @@
                            (if (or (< i from) (eqv? left 0))
                                (values (reverse out) count first)
                                (let ([entry (vector-ref records (mod i (vector-length records)))])
-                                 (if (or (not component) (eq? component (caddr entry)))
+                                 (if (and (or (not component) (eq? component (caddr entry)))
+                                          (or (not actor) (equal? actor (cadr entry))))
                                      (loop (- i 1) (and left (- left 1)) (cons entry out))
                                      (loop (- i 1) left out)))))))])
          (values (map datum:copy selected) end first))]))

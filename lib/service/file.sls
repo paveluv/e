@@ -89,25 +89,26 @@
     ;; a trailing slash on directories so completion can descend into them.
     ;; A leading ~ is kept in the candidates but expanded for the lookups.
     ;; Dotfiles are offered only once the component starts with a dot.
-    (guard (ex [else '()])
-      (let* ([dir (or (directory-part s) "")]
-             [part (string:tail s (string-length dir))]
-             [listing (directory-list
-                        (path:expand
-                          (cond [(string=? dir "") "."]
-                                [(string=? dir "/") "/"]
-                                [else (substring dir 0 (- (string-length dir) 1))])))])
-        (map (lambda (name)
-               (let ([full (string-append dir name)])
-                 (if (file-directory? (path:expand full))
+    (if (string=? s "~") '("~/")
+      (guard (ex [else '()])
+        (let* ([dir (or (directory-part s) "")]
+               [part (string:tail s (string-length dir))]
+               [listing (directory-list
+                          (path:expand
+                            (cond [(string=? dir "") "."]
+                              [(string=? dir "/") "/"]
+                              [else (substring dir 0 (- (string-length dir) 1))])))])
+          (map (lambda (name)
+                 (let ([full (string-append dir name)])
+                   (if (file-directory? (path:expand full))
                      (string-append full "/")
                      full)))
-             (sort string<?
-                   (filter (lambda (name)
-                             (and (string:prefix? part name)
-                                  (or (not (string=? part ""))
-                                      (not (string:prefix? "." name)))))
-                           listing))))))
+            (sort string<?
+                  (filter (lambda (name)
+                            (and (string:prefix? part name)
+                                 (or (not (string=? part ""))
+                                     (not (string:prefix? "." name)))))
+                          listing)))))))
 
   (define (data-directory)
     ;; Where commands and apps keep built or fetched data, out of git:
