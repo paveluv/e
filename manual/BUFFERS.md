@@ -308,7 +308,7 @@ Mouse clicks and wheel events also settle the echo area.
 Configure scrollbars in `config.e`:
 
 ```scheme
-(scrollbar #t)                 ; default; #f hides ordinary-buffer scrollbars
+(scrollbar #f)                 ; default; #t shows ordinary-buffer scrollbars
 (scrollbar-position 'right)    ; default; the alternative is 'left
 ```
 

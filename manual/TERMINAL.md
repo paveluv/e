@@ -267,8 +267,9 @@ database.
 
 The base's `vt` library also runs without a PTY or editor buffer. This is useful
 for tests, protocol experiments, and tools that need structured terminal
-output. Import it from the ordinary `lib` source root; an attached head's `vt`
-client exposes terminal service calls and does not contain the emulator:
+output. The emulator is the base implementation, `lib/base/service/vt.sls`;
+an attached head's `vt` client exposes terminal service calls and does not
+contain the emulator:
 
 ```scheme
 (import (prefix (vt) vt:))

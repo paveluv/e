@@ -2,6 +2,9 @@
 
 - Before every commit, run `tools/scheme-format.sps -i` on all `*.sls`,
   `*.ss`, `*.sps`, and `*.e` files, plus the extensionless loader `e`.
+- An agent's commit ends with a `Co-Authored-By:` trailer naming the agent
+  (for example `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`),
+  separated from the subject by a blank line.
 - Every library but the command layer `edit` is imported with its own
   prefix -- seams and apps alike (`store:`, `terminal:`, `git:`,
   `sys:`) -- and that is how M-x sees them; only `edit`'s names are

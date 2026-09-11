@@ -200,8 +200,8 @@ entry for that evaluation.
 Both commands publish structured describe entries. Use any of:
 
 ```scheme
-(describe eval:run!)
-(describe eval:run!!)
+(describe:this eval:run!)
+(describe:show! 'eval:run!!)
 ```
 
 or press `C-h f` and complete the command name. The live describe page shows

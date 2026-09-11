@@ -59,7 +59,7 @@ binaries or packages; stable Git tags mark the releases.
 Install as a personal editor:
 
 ```sh
-$ git clone --branch v0.1 https://github.com/paveluv/e ~/.e
+$ git clone https://github.com/paveluv/e ~/.e
 $ ~/.e/e file.txt
 ```
 
@@ -67,7 +67,7 @@ Or vendor it inside a project so the editor and project-specific extensions
 travel with the source:
 
 ```sh
-$ git clone --branch v0.1 https://github.com/paveluv/e ~/git/project/.e
+$ git clone https://github.com/paveluv/e ~/git/project/.e
 $ rm -rf ~/git/project/.e/.git
 $ ~/git/project/.e/e file.txt
 ```
@@ -79,7 +79,7 @@ Base and attached implementations use separate `eo/base/` and `eo/client/`
 caches of `.so` objects. Configurations retain the `.e` extension; tools use
 `.sps`. See [the module layout](manual/MODULES.md#library-architecture).
 
-This branch supports [daemon attachment](manual/CONFIGURATION.md#daemon-and-attachment):
+This branch supports [daemon attachment](manual/MULTIHEAD.md#running-a-daemon-and-attaching):
 `e --daemon` keeps shared buffers and terminals alive; `e --attach` opens a
 head on it, and `C-x C-c` detaches that head. Several screens can edit together.
 Reattaching with the same `--name` restores its layout, positions and kill text,
@@ -114,6 +114,7 @@ On FreeBSD, where Chez installs a differently named script interpreter, run
 | `C-h f`, `M-.`, `C-h k` | Describe a name, symbol at point, or key |
 | `C-x g` | Browse Git history and patches |
 | `C-c t` | Open a terminal buffer |
+| `C-c a` | Answer a question another actor left for you |
 | `C-g`, Escape | Cancel the current interaction |
 
 ## Scheme at the center
@@ -122,14 +123,16 @@ The live top-level environment exposes the published editor API and loaded
 modules. You can call it via `M-x`:
 
 ```scheme
-M-x (buffer-name (current-buffer))
-M-x (replace-all! "old" "new" buffer-file)
-M-x (log-view 'eval)
-M-x (terminal!!)
-M-x (describe terminal!!)
+M-x (head:buffer-name (current-buffer))
+M-x (replace-all! "old" "new" head:buffer-file)
+M-x (log-view:buffer 'eval)
+M-x (terminal:open!!)
+M-x (describe:this terminal:open!!)
 ```
 
-(The double-bang suffix `!!` means that the command is interactive.)
+(The double-bang suffix `!!` means that the command is interactive. Every
+library but the command layer is seen under its prefix -- `head:`, `log-view:`,
+`terminal:` -- and the command layer's names are bare.)
 
 Configuration is Scheme too. Copy `config.template.e` to `config.e`, uncomment
 the settings worth changing, and save it; the running editor applies it
@@ -139,8 +142,11 @@ immediately.
 
 - [Buffers and windows](manual/BUFFERS.md): files, splits, scrolling, line
   numbers, scrollbars, mouse behavior, `<buffers>`, and the buffer API.
-- [Evaluation](manual/EVAL.md): M-x, `eval!`, multiline commands, output capture,
-  interruption, history, and result copying.
+- [Base, heads and agents](manual/MULTIHEAD.md): the daemon, attaching and
+  reattaching named screens, what is shared and what is local, questions
+  between actors, agent sessions and permissions.
+- [Evaluation](manual/EVAL.md): M-x, `eval:run!`, multiline commands, output
+  capture, interruption, history, and result copying.
 - [Terminal buffers](manual/TERMINAL.md): capture, escape, emulation, scrollback,
   titles, process lifetime, and the terminal API.
 - [Search and replacement](manual/SEARCH.md): incremental search, smart case,
@@ -153,8 +159,11 @@ immediately.
   formatters, and dynamic log views.
 - [Describe](manual/DESCRIBE.md): live reference pages, key discovery, corpus
   installation, structured queries, and module-published documentation.
-- [Configuration](manual/CONFIGURATION.md): reload semantics, precedence, and
-  common settings.
+- [Markdown viewing](manual/MARKDOWN.md): the rendered companion of a
+  Markdown buffer, links, tables, and the viewer API.
+- [Configuration](manual/CONFIGURATION.md): startup options and head names,
+  `config.e` and `base-config.e`, reload semantics, precedence, and common
+  settings.
 - [Key bindings](manual/KEY_BINDING.md): key syntax, contextual maps, overrides,
   unbinding, and inspection.
 - [Styles](manual/STYLES.md): the style DSL, faces, colors, terminal behavior, and
@@ -164,8 +173,10 @@ immediately.
 - [Git](manual/GIT.md): structured repository queries and the history browser.
 - [Pretty Scheme](manual/PRETTY_SCHEME.md): structural delimiter glyphs, depth
   and rainbow variants, and semantic symbol styling.
-- [Modules and architecture](manual/MODULES.md): library boundaries, hot reload,
-  registrations, modes, highlighters, and extension conventions.
+- [HTTPS](manual/HTTPS.md): the HTTP(S) client, its TLS transport, the curl
+  backend, and portability notes.
+- [Modules and architecture](manual/MODULES.md): the library layout, hot
+  reload, registrations, modes, highlighters, and extension conventions.
 
 Development notes live in `dev/`, apart from the manual: design notes, the
 task tracker with its tech-debt ledger, the dead-code and debugging-lessons

@@ -58,7 +58,7 @@
 ;; (terminal:forward-clipboard-to-kill-ring #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's kill ring
-;; (min-window-lines 2)           ; squeezed windows keep this many text lines
+;; (head:min-window-lines 2)      ; squeezed windows keep this many text lines
 ;; (style:set! 'chrome '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground

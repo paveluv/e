@@ -16,56 +16,12 @@ one head in the same process. `--attach` connects a head to a running daemon.
 
 ## Daemon and attachment
 
-`./e --daemon [--socket PATH]` starts a foreground base without a screen.
-The socket defaults to `$XDG_RUNTIME_DIR/e/base`, or `~/.e/base` when that
-environment variable is absent. `--socket=PATH` also works. The daemon does
-not take a head name or file argument. Run it under a supervisor or as a shell
-background job with its output redirected; SIGHUP leaves it running.
-SIGTERM or Ctrl-C stops it and its terminal processes. State is in memory
-for the life of the daemon; stopping it does not save a session to disk.
-
-Start the daemon on the SSH host, then attach each screen to it:
-
-```sh
-./e --daemon >e-base.log 2>&1 &
-./e --attach --name desk
-```
-
-Use the same `--socket PATH` on both commands to choose another daemon.
-`./e --attach [--socket PATH] [--name NAME] [--] [file]` runs the usual editor:
-edits and undo are shared, while windows, prompts and local buffers belong to
-that screen. Terminal processes and describe sources belong to the base.
-File commands address the filesystem on that same host. If no base is running,
-attachment reports an error.
-
-`C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
-stay alive; local unsaved text still requires confirmation. A new attachment
-with the same `--name` restores its split layout, selected window and buffers,
-points, viewports, selection, window preferences and kill text. Use distinct
-names for independent screens. An explicit file argument opens in the restored
-selected window. Without a saved screen, normal startup configuration applies.
-
-The daemon retains the latest completed screen checkpoint, including after an
-abrupt SSH disconnect. Shared edits made while absent move the saved positions;
-after a reset or expired history, positions clamp to the current text. Markdown
-and describe companions rebuild from their shared sources at the new width.
-Existing registered tools reopen by identity. A missing or hidden source, or a
-local view without a restore provider, uses the startup buffer in that window.
-Arbitrary local buffer text and per-tool query settings are not saved. Very
-small terminals use the editor's usual layout fitting. Checkpoints last only
-while the daemon runs. Questions first asked while a known named head is
-offline wait for its next attachment; press `C-c a` to answer. An agent's
-disconnect withdraws its own unanswered questions.
-
-Scheme clients can read, evaluate granted read-only expressions, edit, undo and
-redo according to their session's permissions, exchange attributed mail and ask
-other actors questions. You can revoke an agent from an attached head. Actual
-provider integrations are deferred. The current messages and primitives are described in the development
-[wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).
-
-Only peers running as the same OS user connect. An existing socket path is
-never removed at startup, and a clean stop releases its path. After a crash,
-remove a stale socket explicitly after checking that no daemon still uses it.
+`./e --daemon [--socket PATH]` runs the base alone, and
+`./e --attach [--socket PATH] [--name NAME] [--] [file]` connects a screen to
+it. Running the daemon, attaching and detaching, named screens and their
+checkpoints, what is shared between heads, and agent sessions are described
+in [Base, heads and agents](MULTIHEAD.md). The daemon reads `base-config.e`
+only; a head reads `config.e` only.
 
 ## Configuration file
 
@@ -108,64 +64,12 @@ independently of this limit; see [the log manual](LOG.md).
 `head` symbol; the default remains `head`. Supported head-app reload reapplies
 head configuration. Changes to the base runtime require a restart.
 
-The daemon uses `base:connection-policy`, a procedure parameter, to choose a
-policy from each connecting actor identity. Heads default to all-buffer write
-access; agents default to read-only sessions. For example, in `base-config.e`:
-
-```scheme
-(define default-connection-policy (base:connection-policy))
-(base:connection-policy
-  (lambda (actor)
-    (if (equal? actor '(agent "helper"))
-        (policy:make '(+ buffer-text-line read-buffer) 100000 '("notes") 8000)
-        (default-connection-policy actor))))
-```
-
-This grants that named agent the listed read-only evaluation bindings and
-edits, undo and redo in `notes`, subject to the buffer's current name and
-read-only flag. Buffer write permissions do not restrict which buffers it can
-read. The resolver receives
-an owned identity; the hello carries no permissions. Each connection gets a
-new session and disconnect revokes it. The `eval` request uses that session's
-grants, engine fuel and result preview cap. Fuel covers evaluation and result
-formatting; the cap clips displayed text and does not bound memory allocation.
-
-`base:connection-owner` independently chooses the actor an agent asks when it
-omits a recipient. Heads default to themselves; agents default to `#f` (no
-owner). To route the helper's questions to your named screen:
-
-```scheme
-(define default-connection-owner (base:connection-owner))
-(base:connection-owner
-  (lambda (actor)
-    (if (equal? actor '(agent "helper"))
-        '(head "desk")
-        (default-connection-owner actor))))
-```
-
-Attach `--name desk` once so the daemon knows that head. Later questions can
-wait while it is disconnected. Owner selection supplies no permissions, and
-an explicit question recipient does not change the configured owner. Each
-connection keeps the owner selected at admission.
-
-From an attached head, use `M-x` to inspect sessions and revoke an agent:
-
-```scheme
-(client:request 'sessions)                 ; ((actor owner) ...)
-(client:request 'revoke '(agent "helper"))  ; normally 1, or 0 if absent
-```
-
-These controls require a head with all-buffer permission. Any such head can
-revoke an agent, regardless of where the agent routes its questions. The result
-counts sessions selected from the current inventory; private handles stay in
-the base. Revocation closes their connections and withdraws their unanswered
-questions. Already admitted operations may finish, including an edit whose
-reply is lost on close; inspect a fresh snapshot before continuing.
-
-Revocation applies to the selected sessions. A later connection receives a
-fresh session from base configuration, and cannot revive the old questions.
-It does not change future admission rules or undo completed edits; the usual
-undo scopes let you undo an agent's work.
+Agent permissions and question routing are base configuration too:
+`base:connection-policy` chooses each connecting actor's session policy and
+`base:connection-owner` the actor its questions go to by default. Both are
+procedure parameters set in `base-config.e`; examples, the session controls
+an attached head can run, and the policy API are in
+[Agents and sessions](MULTIHEAD.md#agents-and-sessions).
 
 ## Loading and reloading
 

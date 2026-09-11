@@ -91,7 +91,7 @@
     (terminal-color-scheme! (head:host-color-scheme))
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (head:add-pre-redraw-hook! present-notices!)
-    (keymap:bind! "C-c t" terminal!!)
+    (keymap:bind-default! "C-c t" terminal!!)
     (keymap:set-context-escape! 'terminal "C-]")
     (keymap:bind-default! 'terminal "C-] C-]" terminal-literal-escape!)
     (keymap:bind-default! 'terminal "C-] C-y" terminal-yank!)

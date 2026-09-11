@@ -105,12 +105,13 @@ that mode is current:
 ;; as markdown.sls's init! registers them
 (keymap:bind-default! 'markdown "C-c v" markdown:view!)
 (keymap:bind-default! 'markdown-view "C-c v" markdown:edit!)
-(keymap:bind-default! 'markdown-view "RET" follow-link)
-(keymap:bind-default! 'markdown-view "MOUSE-CLICK" follow-link-quietly)
+(keymap:bind-default! 'markdown-view "RET" follow-md-link!)
+(keymap:bind-default! 'markdown-view "MOUSE-CLICK" click-md-link!)
 ```
 
-(`follow-link` and `follow-link-quietly` are the viewer's own procedures;
-a user override in config.e binds its own command with `keymap:bind!`.)
+(`follow-md-link!` and `click-md-link!` are the viewer's own private
+procedures; a user override in config.e binds its own command with
+`keymap:bind!`.)
 
 Any mode can carry such a context: the name is the mode's name as a
 symbol, and `MOUSE-CLICK` is a bindable pseudo-key that fires after a
