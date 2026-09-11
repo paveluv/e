@@ -44,9 +44,16 @@
     (if (path-absolute? dir) dir (string-append (current-directory) "/" dir))))
 
 (library-directories
-  (map (lambda (kind)
-         (cons (string-append e-home "/lib/" kind) (string-append e-home "/eo/base")))
-       '("foundation" "sys" "core")))
+  ;; the common kinds, as the loader selects them: every leaf directory
+  ;; under lib beside the two implementation trees, which the engine and
+  ;; its dependencies (string, kernel, path) never reach
+  (let ([lib (string-append e-home "/lib")])
+    (map (lambda (name) (cons (string-append lib "/" name) (string-append e-home "/eo/base")))
+      (list-sort string<?
+        (filter (lambda (name)
+                  (and (not (member name '("base" "client")))
+                       (file-directory? (string-append lib "/" name))))
+                (directory-list lib))))))
 (compile-imported-libraries #t)
 (compile-file-message #f)
 

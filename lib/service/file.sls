@@ -77,9 +77,11 @@
                              (substring dir 0 (- (string-length dir) 1))
                              dir)]
                  [real-parent (sys:canonical-file-path parent)])
-            (if real-parent
-                (string-append real-parent "/" (base-name full))
-                full)))))
+            ;; realpath spells the root as "/", the one parent that already
+            ;; ends in the separator the join adds.
+            (cond [(not real-parent) full]
+                  [(string=? real-parent "/") (string-append "/" (base-name full))]
+                  [else (string-append real-parent "/" (base-name full))])))))
 
   (define (complete s)
     ;; Completion candidates for the partial path s: the entries of its

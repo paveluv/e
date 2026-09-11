@@ -1035,6 +1035,16 @@
             (list (status-has? "<completions>") (status-has? "*scratch*"))
             '(#f #t))
 
+     ;; the interaction protocol's answer is a key and a public command:
+     ;; C-c a reports the empty queue, and the M-x environment -- the one
+     ;; read-editor evaluates in -- resolves the exported name
+     (send! "\x03;a")                   ; C-c a
+     (pump! 600)
+     (let* ([key-answered (or (screen-has? 22 "Nothing to answer")
+                              (screen-has? 23 "Nothing to answer"))]
+            [exported (read-editor '(procedure? answer!!))])
+       (check 'answer-is-bound-and-exported (list key-answered exported) '(#t #t)))
+
      ;; the policy seam is live -- mint a session at M-x,
      ;; evaluate through its sandbox, and hit the edit allowlist
      (check 'minted-session-evals-and-is-fenced

@@ -86,6 +86,7 @@
     selected-window select-window!
     set-message!
     mouse!
+    answer!!
     present-log-entry! present-log-entries!
 
 

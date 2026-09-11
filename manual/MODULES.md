@@ -15,10 +15,11 @@ importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
 
-`--attach` selects `lib/client/state` and `lib/client/service`; plain e and
-the daemon select `lib/base/state` and `lib/base/service`. Both then search
-the common roots `lib/foundation`, `lib/sys`, `lib/core`, `lib/service`,
-`lib/head`, `lib/apps`, `lib/modes` and `lib/run`. Parent directories are not
+`--attach` selects the `lib/client` implementation tree; plain e and the
+daemon select `lib/base`. Both then search every other leaf directory under
+`lib/`: `foundation`, `sys`, `core`, `service`, `head`, `apps`, `modes` and
+`run`. The loader discovers these roots from the tree instead of naming
+them; the parent directories `lib/`, `lib/base/` and `lib/client/` are not
 source roots. Attached heads import the same `edit` and `main` consumers.
 Chez's `.so` objects live in `eo/client` or `eo/base`, with one flat cache
 per runtime. Source lookup and reload follow the active implementation. The loader sets

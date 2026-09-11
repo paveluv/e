@@ -132,12 +132,14 @@
   (define c-setsid
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "setsid" () int))))
+  ;; Both exec entries take the program as the argv copy's first string, so
+  ;; a forked child converts no Scheme string on its way to exec.
   (define c-execv
     (and libc-loaded?
-         (guard (ex [else #f]) (foreign-procedure "execv" (string uptr) int))))
+         (guard (ex [else #f]) (foreign-procedure "execv" (uptr uptr) int))))
   (define c-execvp
     (and libc-loaded?
-         (guard (ex [else #f]) (foreign-procedure "execvp" (string uptr) int))))
+         (guard (ex [else #f]) (foreign-procedure "execvp" (uptr uptr) int))))
   (define c-strdup
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "strdup" (string) uptr))))
@@ -284,7 +286,7 @@
            (when (and c-setenv (< (c-setenv "TERM" "xterm-256color" 1) 0))
              (when c-perror (c-perror "setenv TERM"))
              (c-exit 127))
-           (c-execv shell (car arguments))
+           (c-execv (cadr arguments) (car arguments))
            (when c-perror (c-perror "execv terminal shell"))
            (c-exit 127)]
           [else
@@ -532,9 +534,10 @@
                  (when (or (< (c-dup2 (car to) 0) 0)
                            (< (c-dup2 (cdr from) 1) 0)
                            (< (c-dup2 (cdr errors) 2) 0))
+                   (when c-perror (c-perror "dup2"))
                    (c-exit 127))
                  (close-child-descriptors!)
-                 (c-execvp (car arguments) (car argv))
+                 (c-execvp (cadr argv) (car argv))
                  (when c-perror (c-perror (car arguments)))
                  (c-exit 127)]
                 [else

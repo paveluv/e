@@ -16,11 +16,17 @@
 
 (import (chezscheme))
 (library-directories
-  (map (lambda (root)
-         (cons (string-append (current-directory) "/lib/" root)
-               (string-append (current-directory) "/eo/base")))
-       '("base/state" "base/service" "foundation" "sys" "core" "service"
-         "head" "apps" "modes" "run")))
+  ;; the base runtime's roots, as the loader selects them: every leaf
+  ;; directory under lib/base and under lib
+  (let ([here (current-directory)])
+    (define (leaves parent)
+      (map (lambda (name) (cons (string-append parent "/" name) (string-append here "/eo/base")))
+        (list-sort string<?
+          (filter (lambda (name)
+                    (and (not (member name '("base" "client")))
+                         (file-directory? (string-append parent "/" name))))
+                  (directory-list parent)))))
+    (append (leaves (string-append here "/lib/base")) (leaves (string-append here "/lib")))))
 (compile-imported-libraries #t)
 
 (eval

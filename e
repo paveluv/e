@@ -54,12 +54,21 @@
     (if (path-absolute? dir) dir (string-append (current-directory) "/" dir))))
 
 (define (runtime-roots runtime)
+  ;; Every leaf directory under lib is a source root: the selected
+  ;; runtime's implementation tree (lib/base or lib/client) and the
+  ;; common kinds beside them.  Stems are unique within a runtime
+  ;; (tests/layers.ss), so the search order is immaterial: a stale
+  ;; object is recompiled from wherever its source is found.
   (let ([objects (string-append e-home "/eo/" runtime)])
-    (map (lambda (root) (cons (string-append e-home "/" root) objects))
-      (append (map (lambda (kind) (string-append "lib/" runtime "/" kind))
-                   '("state" "service"))
-              '("lib/foundation" "lib/sys" "lib/core" "lib/service"
-                "lib/head" "lib/apps" "lib/modes" "lib/run")))))
+    (define (leaves parent)
+      (map (lambda (name) (cons (string-append parent "/" name) objects))
+        (list-sort string<?
+          (filter (lambda (name)
+                    (and (not (member name '("base" "client")))
+                         (file-directory? (string-append parent "/" name))))
+                  (directory-list parent)))))
+    (append (leaves (string-append e-home "/lib/" runtime))
+            (leaves (string-append e-home "/lib")))))
 
 ;; Option admission imports only common facilities. Runtime consumers
 ;; are imported after choosing their implementation roots below.

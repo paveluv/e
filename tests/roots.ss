@@ -4,12 +4,20 @@
 
 (define (test-roots! runtime)
   (unless (memq runtime '(base client)) (error 'test-roots! "expected base or client" runtime))
+  ;; The loader's rule: every leaf directory under lib is a root, the
+  ;; runtime's implementation tree and the common kinds; tests adds (test).
   (let ([here (current-directory)] [objects (format "~a/eo/~a" (current-directory) runtime)])
+    (define (leaves parent)
+      (map (lambda (name) (cons (string-append parent "/" name) objects))
+        (list-sort string<?
+          (filter (lambda (name)
+                    (and (not (member name '("base" "client")))
+                         (file-directory? (string-append parent "/" name))))
+                  (directory-list parent)))))
     (library-directories
-      (map (lambda (root) (cons (string-append here "/" root) objects))
-        (append (map (lambda (kind) (format "lib/~a/~a" runtime kind)) '(state service))
-                '("lib/foundation" "lib/sys" "lib/core" "lib/service"
-                  "lib/head" "lib/apps" "lib/modes" "lib/run" "tests"))))
+      (append (leaves (format "~a/lib/~a" here runtime))
+              (leaves (string-append here "/lib"))
+              (list (cons (string-append here "/tests") objects))))
     (compile-imported-libraries #t)
     (eval '(begin
              (import (prefix (kernel) kernel:))

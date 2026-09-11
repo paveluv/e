@@ -104,6 +104,13 @@
             (file:visit-path (string-append scratch "/./alpha")) (path "alpha"))
      (check 'visit-path-new-file
             (file:visit-path (string-append scratch "/dir/../new.txt")) (path "new.txt"))
+     ;; a missing child of the root joins onto realpath's "/" without a
+     ;; second separator, so its identity holds once the file exists
+     (let ([name (format "e-file-test-~a-~a" (getenv "USER") (random 1000000))])
+       (check 'visit-path-new-root-child
+              (list (file-exists? (string-append "/" name))
+                    (file:visit-path (string-append "/./" name)))
+              (list #f (string-append "/" name))))
 
      ;; One table covers the shared port scope for text and corpus data.
      ;; Keep both the port and any expired engine alive through the check;
