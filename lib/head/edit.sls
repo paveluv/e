@@ -3014,8 +3014,9 @@
           (set! buffers-view (head:register-app! "*buffers*"
                                refresh-buffers-view!
                                handle-buffers-event!))
-          ;; Always show its position bar, using the globally selected side.
-          (head:set-app-presentation! buffers-view 1 #t)
+          ;; A position bar on the configured side, only while the rows
+          ;; overflow the window.
+          (head:set-app-presentation! buffers-view 1 'auto)
           (mode:choose! buffers-view "buffers")
           (refresh-buffers-view!)
           buffers-view)))
@@ -3173,7 +3174,7 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Show `<buffers>` in the current window as an in-place buffer switcher. The blue row is the buffer the selected window shows; the bold underlined row is the one a key or click would pick: move it with Up, Down, or the wheel and press Enter to show that buffer here, or point at a row and click to show its buffer in the selected window without moving focus.")
+         "Show `<buffers>` in the current window as an in-place buffer switcher. The blue row is the buffer the selected window shows; the bold row is the one a key or click would pick: move it with Up, Down, or the wheel and press Enter to show that buffer here, or point at a row and click to show its buffer in the selected window without moving focus.")
         ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")
@@ -3185,8 +3186,8 @@
       (lambda ()
         ;; The blue row is state: the buffer the selected window shows, in
         ;; every window listing it, whether or not the list has focus.  Bold
-        ;; underline is interaction: the row a key would pick -- point, in a
-        ;; focused list -- or a click would -- the row under the pointer.
+        ;; is interaction: the row a key would pick -- point, in a focused
+        ;; list -- or a click would -- the row under the pointer.
         (if (and buffers-view (memq buffers-view (buffer-list)))
             (let ([row-range
                    (lambda (scope row face)

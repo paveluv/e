@@ -248,8 +248,8 @@
          "Reload commits and changed files in the open `<git-log>` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
     (paint:add-highlighter!
       (lambda ()
-        ;; The row Enter or a click would act on is the candidate: bold
-        ;; and underlined, like the buffers app's.
+        ;; The row Enter or a click would act on is the candidate: bold,
+        ;; like the buffers app's.
         (if (and log-buffer (memq log-buffer (buffer-list)))
             (let ([row (call-with-buffer log-buffer
                          (lambda () (car (point))))])

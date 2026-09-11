@@ -915,6 +915,25 @@
   (define scroll-margin
     (make-parameter 8 (lambda (v) (max 0 v))))
 
+  (define (decide-scrollbar! w height)
+    ;; An auto scrollbar appears only while the whole content overflows the
+    ;; window, judged at the full content width: a bar takes a column, which
+    ;; can only make content longer, so what overflows without it overflows
+    ;; with it and what fits without it needs none.  Sticky rows count.
+    (let ([b (head:window-buffer w)])
+      (when (eq? (head:buffer-fact b 'scrollbar #f) 'auto)
+        (head:window-auto-scrollbar-set! w
+          (let* ([v (head:buffer-lines b)]
+                 [width (max 1 (- (head:window-width w) (head:window-line-number-width w)))]
+                 [wrapped? (window-wrapped? w)])
+            (let loop ([i 0] [n 0])
+              (cond [(> n height) #t]
+                    [(>= i (vector-length v)) #f]
+                    [else (loop (+ i 1)
+                                (+ n (if wrapped?
+                                         (vector-length (compute-breaks (vector-ref v i) width))
+                                         1)))])))))))
+
   (define (view-overflows? w v height)
     ;; Is there more content than the window holds, counting from its
     ;; top segment?
@@ -1423,6 +1442,7 @@
     ;; current windows after that callout, with no later resize delivery.
     (let ([layout (window-layout)])
       (head:refresh-renditions!)
+      (for-each (lambda (entry) (decide-scrollbar! (car entry) (caddr entry))) layout)
       (let ([view (list rows cols
                         (map (lambda (entry)
                                (list (cadr entry) (caddr entry)

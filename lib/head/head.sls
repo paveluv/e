@@ -92,7 +92,7 @@
           app-manages-window-viewport? app-cursor-style set-app-presentation!
           buffer-sticky-lines scrollbar scrollbar-position line-numbers
           buffer-line-numbers window-line-number-width
-          window-scrollbar? window-content-width buffer-narrowest-width
+          window-scrollbar? window-auto-scrollbar-set! window-content-width buffer-narrowest-width
           buffer-window-size window-scrollbar-column register-view!
           view-buffer? refresh-visible-views! view-append!
           view-replace! forget-buffer! set-window-buffer! buffer-named
@@ -2068,17 +2068,17 @@
   (define (set-app-presentation! b sticky-lines scrollbar . options)
     ;; Configure presentation shared by every window showing this local
     ;; app.  Sticky rows stay above the scrollable body; scrollbar is
-    ;; #f, #t (enabled using the
-    ;; configured side), left, or right.
+    ;; #f, #t (enabled using the configured side), left, right, or auto
+    ;; (the configured side, only while the content overflows the window).
     (let ([a (app-of b)])
       (unless a (error 'set-app-presentation! "not an app buffer" b))
       (unless (and (integer? sticky-lines) (exact? sticky-lines)
                    (>= sticky-lines 0))
         (error 'set-app-presentation! "sticky line count must be nonnegative"
                sticky-lines))
-      (unless (memq scrollbar '(#f #t left right))
+      (unless (memq scrollbar '(#f #t left right auto))
         (error 'set-app-presentation!
-               "scrollbar must be #f, #t, left, or right" scrollbar))
+               "scrollbar must be #f, #t, left, right, or auto" scrollbar))
       (let ([wrap (if (pair? options) (car options) 'default)]
             [cursor-style (if (and (pair? options) (pair? (cdr options)))
                               (cadr options) 'default)])
@@ -2135,9 +2135,19 @@
                (number->string (line-count (window-buffer w)))))
         0))
 
+  ;; An auto scrollbar shows only while the window's content overflows it.
+  ;; The painter judges that per window when it prepares a frame and records
+  ;; the verdict here, so geometry and hit-testing agree with the last frame.
+  (define auto-scrollbars (make-weak-eq-hashtable))
+
+  (define (window-auto-scrollbar-set! w shown?)
+    (hashtable-set! auto-scrollbars w (and shown? #t)))
+
   (define (window-scrollbar? w)
     (let ([choice (buffer-fact (window-buffer w) 'scrollbar #f)])
       (cond [(memq choice '(left right)) choice]
+            [(eq? choice 'auto)
+             (and (hashtable-ref auto-scrollbars w #f) (scrollbar-position))]
             [(or choice (scrollbar)) (scrollbar-position)]
             [else #f])))
 

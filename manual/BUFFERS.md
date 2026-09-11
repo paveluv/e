@@ -273,7 +273,7 @@ or line count changes. The bold header is sticky; modified rows are italic.
 Two faces tell two things apart. The blue row (`active`) is state: it marks
 the buffer the selected window shows, in every window listing it, whether or
 not `<buffers>` has focus; the `.` in the `C` column marks the same buffer.
-The bold, underlined row (`candidate`) is interaction: the row a key or
+The bold row (`candidate`) is interaction: the row a key or
 click would pick. In a focused `<buffers>` window that is the row at point;
 in any `<buffers>` window it is also the row under the mouse pointer. Each
 window showing `<buffers>` keeps its own point. Both faces are configurable
@@ -300,7 +300,8 @@ documented in [App buffers](APPS.md).
 ## Scrollbars
 
 Ordinary buffers show no scrollbar by default; `(scrollbar #t)` in config.e
-enables a one-column vertical bar for them, and `<buffers>` always shows one. The thin `│` is the track and the centered heavy
+enables a one-column vertical bar for them, and `<buffers>` shows one while
+its rows overflow the window. The thin `│` is the track and the centered heavy
 `┃` is the visible extent. Thumb size reflects the proportion of the buffer
 visible in the window, and its position reflects the scrollable range. Sticky
 app headers do not count as part of that range.
@@ -318,8 +319,10 @@ Configure scrollbars in `config.e`:
 (scrollbar-position 'right)    ; default; the alternative is 'left
 ```
 
-An app may force a scrollbar or a side through `head:set-app-presentation!`.
-`<buffers>` forces it on but follows `scrollbar-position`.
+An app may force a scrollbar, a side, or an automatic bar through
+`head:set-app-presentation!`. `<buffers>` uses the automatic bar: it appears
+on the `scrollbar-position` side only when the list is taller than the
+window.
 
 Every frame is a cached repaint -- rows are painted only when their content
 changed -- framed in a synchronized update, so fixed chrome never shifts and

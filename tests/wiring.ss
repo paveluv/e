@@ -110,7 +110,7 @@
             '(#t #t))
 
      ;; <buffers> as a control panel in an unfocused window: pointing at a
-     ;; row underlines it without moving focus or settling the echo area,
+     ;; row makes it bold without moving focus or settling the echo area,
      ;; the blue row stays on the selected window's buffer, and a click on
      ;; the pointed row switches the selected window to it.
      (define panel
@@ -155,9 +155,9 @@
      (let* ([hovered (cell-style log-cell)]
             [own (cell-style own-cell)]
             [echo-after (echo-rows)])
-       (check 'hovered-buffers-row-is-bold-underlined-and-blue-row-is-state
-         (list (and (member "1" (sgr-params hovered)) (member "4" (sgr-params hovered)) #t)
-               (and (string:search own "48;5;24" 0 (string-length own)) #t)
+       (check 'hovered-buffers-row-is-bold-and-blue-row-is-state
+         (list (and (member "1" (sgr-params hovered)) (not (member "4" (sgr-params hovered))))
+               (and (string:search own "48;5;31" 0 (string-length own)) #t)
                (equal? echo-before echo-after)
                (read-editor '(list (head:buffer-name (current-buffer)) (head:window-index (selected-window)))))
          (list #t #t #t (list (car panel) (cadr panel)))))
@@ -170,6 +170,28 @@
                                       (head:windows))
                                 #t)))
        (list "<log>" (cadr panel) #t))
+     ;; The panel's scrollbar follows its content: none while the short list
+     ;; fits, the configured side once the list outgrows the window, and
+     ;; none again after the extra buffers are killed.  Each read-editor
+     ;; frames before the next reads the verdict.
+     (define (panel-bar)
+       (read-editor
+         '(head:window-scrollbar?
+            (find (lambda (w) (eq? (head:window-buffer w) (head:find-tool-buffer "*buffers*")))
+                  (head:windows)))))
+     (define fits (panel-bar))
+     (read-editor
+       '(begin (for-each (lambda (i) (head:add-buffer! (head:new-local-buffer (format "<filler ~a>" i))))
+                         (iota 40))
+               #t))
+     (define overflows (panel-bar))
+     (read-editor
+       '(begin (for-each (lambda (b) (when (string:prefix? "<filler" (head:buffer-name b)) (kill-buffer! b)))
+                         (buffer-list))
+               #t))
+     (check 'buffers-scrollbar-appears-only-when-the-list-overflows
+       (list fits overflows (panel-bar))
+       '(#f right #f))
      (read-editor `(begin (show-buffer! (buffer ,(car panel))) (delete-other-windows!) #t))
 
      ;; A direct store edit of the otherwise empty scratch buffer is

@@ -302,7 +302,8 @@ Table-like apps can request shared presentation chrome:
 
 The second argument is the number of sticky leading rows. The third is either
 `#t` for a one-column vertical scrollbar on the configured side, `'left` or
-`'right` for a fixed side, or `#f`. The optional fourth argument overrides
+`'right` for a fixed side, `'auto` for a bar on the configured side only while
+the app's rows overflow the window, or `#f`. The optional fourth argument overrides
 soft wrapping with `#t` or `#f`; `default` (and omission) follows the ordinary
 window and global setting. A fifth argument selects `block`, `underline`,
 `bar`, or the normal `default` cursor; these explicit shapes are steady.
@@ -315,8 +316,9 @@ text scroll.
 The same bar is off for ordinary buffers by default; `(scrollbar #t)`
 enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
 select the global side, which defaults to the right. An app's explicit side
-overrides that position. `<buffers>` always enables its bar and follows the
-global side.
+overrides that position. `<buffers>` uses `auto`: its bar appears on the
+global side when the list is taller than its window and disappears when
+everything fits.
 
 ## Windows
 
@@ -357,15 +359,15 @@ purpose is to switch a buffer, not to enter the app.
 Outside the app, `M-Shift-Up` and `M-Shift-Down` switch the current window through the
 same alphabetical buffer list.
 
-The blue row is state and the bold, underlined row is interaction. The
+The blue row is state and the bold row is interaction. The
 `active` face marks the buffer the selected window shows, in every window
 listing it and whether or not the app has focus; the `candidate` face marks
 the row at point in a focused `<buffers>` window and the row under the
 pointer in any of them. Both can be customized like any other face:
 
 ```scheme
-(style:set! 'active '((background 24) (foreground white)))
-(style:set! 'candidate '(bold (underline-color 208) curly-underline))
+(style:set! 'active '((background 31) (foreground white)))
+(style:set! 'candidate '(bold (foreground 208)))
 ```
 
 Rows are always alphabetical, so visiting a buffer does not move it. The table
