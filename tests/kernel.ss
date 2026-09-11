@@ -490,7 +490,7 @@
      (define (fixture-control name)
        (kernel:persistent-cell (list 'kernel-fixture name) (lambda () (lambda (version) (void)))))
      (define (write-library name form)
-       (call-with-output-file (string-append sources "/" name ".e")
+       (call-with-output-file (string-append sources "/" name ".sls")
          (lambda (port) (pretty-print form port))
          'replace))
      (define (write-fixture name version)

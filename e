@@ -12,11 +12,11 @@
 ;; both support the multi-argument form), or invoke
 ;; `chez-scheme --script e` directly.
 ;;
-;; The editor lives in the lib directory next to this script as R6RS
-;; libraries with the .e extension.  This script is pure bootstrap --
+;; The editor lives under lib next to this script as flat-named R6RS
+;; libraries with the .sls extension, grouped by kind. This is bootstrap --
 ;; only what must run before the libraries can exist: locate the
 ;; installation, point Chez's library system at it (sources compile on
-;; demand into the eo directory next to lib and recompile when stale),
+;; demand into eo/base or eo/client and recompile when stale),
 ;; and start the editor.  Everything else, the loading of the extension
 ;; modules included, is the kernel's and main's business
 ;; (kernel:load-modules!, main:run).
@@ -51,11 +51,19 @@
       (display (format "e: no lib directory in ~a\n" dir)
                (current-error-port))
       (exit 1))
-    dir))
+    (if (path-absolute? dir) dir (string-append (current-directory) "/" dir))))
 
-(library-directories
-  (list (cons (string-append e-home "/lib") (string-append e-home "/eo"))))
-(library-extensions (cons '(".e" . ".eo") (library-extensions)))
+(define (runtime-roots runtime)
+  (let ([objects (string-append e-home "/eo/" runtime)])
+    (map (lambda (root) (cons (string-append e-home "/" root) objects))
+      (append (map (lambda (kind) (string-append "lib/" runtime "/" kind))
+                   '("state" "service"))
+              '("lib/foundation" "lib/sys" "lib/core" "lib/service"
+                "lib/head" "lib/apps" "lib/modes" "lib/run")))))
+
+;; Option admission imports only common facilities. Runtime consumers
+;; are imported after choosing their implementation roots below.
+(library-directories (runtime-roots "base"))
 (compile-imported-libraries #t)
 
 (eval `(begin
@@ -73,8 +81,7 @@
              (if (eq? (startup:mode) 'attach)
                  (begin
                    (library-directories
-                     ',(list (cons (string-append e-home "/lib/client") (string-append e-home "/eo/client"))
-                             (cons (string-append e-home "/lib") (string-append e-home "/eo/client"))))
+                     ',(runtime-roots "client"))
                    (eval '(begin
                             (import (prefix (client) client:))
                             (client:call-with-runtime

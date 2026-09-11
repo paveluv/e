@@ -242,7 +242,7 @@
      (define before-reload (surface:snapshot reentrant))
      (define reload-events (test:recorder))
      (define reload-token (surface:subscribe! reentrant reload-events))
-     (load "lib/surface.e")
+     (load "lib/base/state/surface.sls")
      (define refreshed
        (eval '(begin (import (prefix (surface) refreshed:))
                      (list refreshed:snapshot refreshed:publish!))))

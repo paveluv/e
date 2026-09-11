@@ -1,0 +1,913 @@
+;; sys.sls -- the e editor's system-specific layer: the library (sys).
+;;
+;; Everything that touches the operating system through libc lives here:
+;; terminal modes via termios, the window size via ioctl, SIGWINCH
+;; registration, and pipes for evaluated programs' process output. The rest
+;; of the editor imports this library and stays free of foreign procedures
+;; and platform constants. Terminal operations degrade softly: without a
+;; terminal (or without libc) they become no-ops and sys:terminal-size
+;; returns #f.
+
+(library (sys)
+  (export terminal-raw! terminal-restore! terminal-isig!
+          terminal-size watch-terminal-resize! call-with-streamed-output
+          duplicate-standard-output-port duplicate-output-port
+          duplicate-standard-input-port
+          terminal-output-port
+          terminal-character-width
+          canonical-file-path host-name terminal-name
+          listen-local accept-local connect-local close-local-listener!
+          connection-input connection-output close-connection! watch-daemon-signals!
+          open-process write-process! process-input process-result close-process!
+          spawn-terminal-process terminal-process?
+          terminal-process-input terminal-process-output
+          terminal-process-pid resize-terminal-process!
+          close-terminal-process! reap-terminal-process!)
+  (import (chezscheme))
+
+  (define os
+    ;; From the machine type's suffix: ...osx is macOS, ...fb is FreeBSD,
+    ;; anything else is treated as Linux.
+    (let* ([mt (symbol->string (machine-type))]
+           [n (string-length mt)])
+      (define (suffix? s)
+        (let ([m (string-length s)])
+          (and (>= n m) (string=? (substring mt (- n m) n) s))))
+      (cond [(suffix? "osx") 'macos]
+            [(suffix? "fb") 'freebsd]
+            [else 'linux])))
+
+  (define-syntax os-case   ; (os-case linux-value macos-value freebsd-value)
+    (syntax-rules ()
+      [(_ l m f) (case os [(macos) m] [(freebsd) f] [else l])]))
+
+  (define libc-loaded?
+    (let try ([names (os-case '("libc.so.6" "libc.so")
+                              '("libSystem.dylib" "libc.dylib")
+                              '("libc.so.7" "libc.so"))])
+      (cond [(null? names) #f]
+            [(guard (ex [else #f]) (load-shared-object (car names)) #t) #t]
+            [else (try (cdr names))])))
+
+  (define tcgetattr
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "tcgetattr" (int u8*) int))))
+
+  (define tcsetattr
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "tcsetattr" (int int u8*) int))))
+
+  (define cfmakeraw
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "cfmakeraw" (u8*) void))))
+
+  (define c-pipe
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "pipe" (u8*) int))))
+  (define c-dup
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "dup" (int) int))))
+  (define c-dup2
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "dup2" (int int) int))))
+  (define c-close
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "close" (int) int))))
+  (define c-realpath
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "realpath" (string u8*) uptr))))
+  (define c-gethostname
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "gethostname" (u8* uptr) int))))
+  (define c-ttyname-r
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "ttyname_r" (int u8* uptr) int))))
+  (define c-setlocale
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "setlocale" (int string) uptr))))
+  (define c-wcwidth
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "wcwidth" (unsigned-int) int))))
+
+  ;; wcwidth follows LC_CTYPE. Chez strings are Unicode regardless of the C
+  ;; locale, so initialize libc's character classification explicitly.
+  (define libc-character-locale
+    (and c-setlocale (c-setlocale 0 "")))
+
+  (define (terminal-character-width character)
+    (let ([width (and c-wcwidth (c-wcwidth (char->integer character)))])
+      (cond [(and width (>= width 0)) width]
+            [(memq (char-general-category character) '(Mn Me Cf)) 0]
+            [else 1])))
+
+  ;; PTYs are deliberately kept in the system layer.  The terminal emulator
+  ;; consumes byte ports and never needs platform constants or libc details.
+  ;; openpty lives in libc on Linux and libutil on the BSD family.
+  (define libutil-loaded?
+    (or (and libc-loaded?
+             (guard (ex [else #f])
+               (load-shared-object
+                 (os-case "libutil.so.1" "libutil.dylib" "libutil.so"))
+               #t))
+        #f))
+  (define c-openpty
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "openpty" (u8* u8* u8* u8* u8*) int))))
+  (define c-fork
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "fork" () int))))
+  (define c-setsid
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "setsid" () int))))
+  (define c-execv
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "execv" (string uptr) int))))
+  (define c-strdup
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "strdup" (string) uptr))))
+  (define c-free
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "free" (uptr) void))))
+  (define c-perror
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "perror" (string) void))))
+  (define c-chdir
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "chdir" (string) int))))
+  (define c-setenv
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "setenv" (string string int) int))))
+  (define c-kill
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "kill" (int int) int))))
+  (define c-exit
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "_exit" (int) void))))
+  (define c-waitpid
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "waitpid" (int u8* int) int))))
+  (define c-poll
+    (and libc-loaded?
+         (eval `(foreign-procedure __collect_safe "poll"
+                  (uptr ,(os-case 'uptr 'unsigned-int 'unsigned-int) int) int))))
+  (define c-close-range
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "close_range"
+                              (unsigned-int unsigned-int unsigned-int) int))))
+  (define c-closefrom
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "closefrom" (int) void))))
+  (define c-getdtablesize
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure "getdtablesize" () int))))
+  (define pty-ioctl
+    (and libc-loaded?
+         (or (guard (ex [else #f])
+               (eval '(foreign-procedure (__varargs_after 2) "ioctl"
+                                         (int unsigned-long u8*) int)))
+             (guard (ex [else #f])
+               (foreign-procedure "ioctl" (int unsigned-long u8*) int)))))
+
+  (define-record-type terminal-process
+    (fields input output pid master (mutable closed) (mutable reaped) lock))
+
+  (define tiocsctty-request (os-case #x540e #x20007461 #x20007461))
+  (define tiocswinsz-request (os-case #x5414 #x80087467 #x80087467))
+
+  (define (winsize rows cols)
+    (let ([size (make-bytevector 8 0)])
+      (bytevector-u16-native-set! size 0 rows)
+      (bytevector-u16-native-set! size 2 cols)
+      size))
+
+  (define (close-child-descriptors!)
+    ;; M-x temporarily owns extra stdout/stderr pipe descriptors. A PTY child
+    ;; must not inherit them: otherwise the evaluator waits forever for pipe
+    ;; EOF while the interactive shell keeps their hidden copies open.
+    (cond [c-close-range (c-close-range 3 #xffffffff 0)]
+          [c-closefrom (c-closefrom 3)]
+          [c-getdtablesize
+           (do ([fd 3 (+ fd 1)]) ((= fd (min 65536 (c-getdtablesize))))
+             (c-close fd))]))
+
+  (define (resize-terminal-process! process rows cols)
+    (unless (terminal-process? process)
+      (error 'resize-terminal-process! "expected a terminal process" process))
+    (with-mutex (terminal-process-lock process)
+      (when (and pty-ioctl (not (terminal-process-closed process)))
+        (pty-ioctl (terminal-process-master process) tiocswinsz-request
+                   (winsize rows cols))
+        ;; The child is a session and process-group leader after setsid.
+        (when c-kill (c-kill (- (terminal-process-pid process)) 28)))))
+
+  (define (make-exec-arguments shell command)
+    (let* ([values (if command (list shell "-c" command) (list shell))]
+           [strings (map c-strdup values)])
+      (when (exists zero? strings)
+        (for-each (lambda (string) (unless (zero? string) (c-free string)))
+                  strings)
+        (error 'spawn-terminal-process "could not allocate exec arguments"))
+      (let* ([width (foreign-sizeof 'uptr)]
+             [arguments (foreign-alloc (* (+ (length strings) 1) width))])
+        (do ([items strings (cdr items)] [index 0 (+ index 1)])
+            ((null? items))
+          (foreign-set! 'uptr arguments (* index width) (car items)))
+        (foreign-set! 'uptr arguments (* (length strings) width) 0)
+        (cons arguments strings))))
+
+  (define (free-exec-arguments! arguments)
+    (for-each c-free (cdr arguments))
+    (foreign-free (car arguments)))
+
+  (define (spawn-terminal-process shell command directory rows cols)
+    (unless (and c-openpty c-fork c-setsid c-execv c-strdup c-free
+                 c-dup2 c-close c-exit)
+      (error 'spawn-terminal-process "PTY processes are unavailable"))
+    (let ([master (make-bytevector 4 0)]
+          [slave (make-bytevector 4 0)]
+          [size (winsize rows cols)]
+          [arguments (make-exec-arguments shell command)])
+      (unless (= (c-openpty master slave #f #f size) 0)
+        (free-exec-arguments! arguments)
+        (error 'spawn-terminal-process "openpty failed"))
+      (let* ([master-fd (bytevector-s32-native-ref master 0)]
+             [slave-fd (bytevector-s32-native-ref slave 0)]
+             [pid (c-fork)])
+        (cond
+          [(< pid 0)
+           (c-close master-fd)
+           (c-close slave-fd)
+           (free-exec-arguments! arguments)
+           (error 'spawn-terminal-process "fork failed")]
+          [(= pid 0)
+           (c-close master-fd)
+           (when (< (c-setsid) 0)
+             (when c-perror (c-perror "setsid"))
+             (c-exit 127))
+           (when pty-ioctl
+             (when (< (pty-ioctl slave-fd tiocsctty-request #f) 0)
+               (when c-perror (c-perror "TIOCSCTTY"))
+               (c-exit 127))
+             (when (< (pty-ioctl slave-fd tiocswinsz-request size) 0)
+               (when c-perror (c-perror "TIOCSWINSZ"))
+               (c-exit 127)))
+           (when (or (< (c-dup2 slave-fd 0) 0)
+                     (< (c-dup2 slave-fd 1) 0)
+                     (< (c-dup2 slave-fd 2) 0))
+             (when c-perror (c-perror "dup2"))
+             (c-exit 127))
+           (when (> slave-fd 2) (c-close slave-fd))
+           (close-child-descriptors!)
+           (when (and c-chdir (< (c-chdir directory) 0))
+             (when c-perror (c-perror "chdir"))
+             (c-exit 127))
+           (when (and c-setenv (< (c-setenv "TERM" "xterm-256color" 1) 0))
+             (when c-perror (c-perror "setenv TERM"))
+             (c-exit 127))
+           (c-execv shell (car arguments))
+           (when c-perror (c-perror "execv terminal shell"))
+           (c-exit 127)]
+          [else
+           (c-close slave-fd)
+           (free-exec-arguments! arguments)
+           (let ([input (open-fd-input-port (c-dup master-fd) 'block #f)]
+                 [output (open-fd-output-port (c-dup master-fd) 'none #f)])
+             (make-terminal-process input output pid master-fd #f #f
+                                    (make-mutex)))]))))
+
+  (define (close-terminal-descriptors! process)
+    (unless (terminal-process-closed process)
+      (terminal-process-closed-set! process #t)
+      (guard (ex [else (void)]) (close-port (terminal-process-input process)))
+      (guard (ex [else (void)]) (close-port (terminal-process-output process)))
+      (when c-close (c-close (terminal-process-master process)))))
+
+  (define (wait-terminal-process! process options)
+    (and c-waitpid
+         (not (terminal-process-reaped process))
+         (let ([result (c-waitpid (terminal-process-pid process)
+                                  (make-bytevector 4 0) options)])
+           (when (or (= result (terminal-process-pid process)) (< result 0))
+             (terminal-process-reaped-set! process #t))
+           result)))
+
+  (define (close-terminal-process! process)
+    (with-mutex (terminal-process-lock process)
+      (close-terminal-descriptors! process)
+      (unless (terminal-process-reaped process)
+        (when c-kill (c-kill (- (terminal-process-pid process)) 15))
+        ;; Give cooperative programs a short chance to clean up. Never let a
+        ;; terminal buffer kill or editor shutdown block on a stubborn child.
+        (let poll ([attempts 8])
+          (let ([result (wait-terminal-process! process 1)]) ; WNOHANG
+            (cond [(or (not result) (terminal-process-reaped process)) (void)]
+                  [(> attempts 0)
+                   (sleep (make-time 'time-duration 25000000 0))
+                   (poll (- attempts 1))]
+                  [else
+                   (when c-kill (c-kill (- (terminal-process-pid process)) 9))
+                   (wait-terminal-process! process 0)]))))))
+
+  (define (reap-terminal-process! process)
+    ;; Called after the master reports EOF: the child has closed the slave and
+    ;; can be waited without delaying the editor.
+    (with-mutex (terminal-process-lock process)
+      (close-terminal-descriptors! process)
+      (wait-terminal-process! process 0)))
+
+  (define (nul-terminated-string bytes)
+    (let find ([n 0])
+      (cond [(= n (bytevector-length bytes)) #f]
+            [(zero? (bytevector-u8-ref bytes n))
+             (let ([trimmed (make-bytevector n)])
+               (bytevector-copy! bytes 0 trimmed 0 n)
+               (utf8->string trimmed))]
+            [else (find (+ n 1))])))
+
+  ;;; Local sockets -----------------------------------------------------------
+
+  (define c-socket (and libc-loaded? (foreign-procedure "socket" (int int int) int)))
+  (define c-bind (and libc-loaded? (foreign-procedure "bind" (int u8* unsigned) int)))
+  (define c-listen (and libc-loaded? (foreign-procedure "listen" (int int) int)))
+  (define c-accept
+    (and libc-loaded? (foreign-procedure __collect_safe "accept" (int uptr uptr) int)))
+  (define c-connect
+    (and libc-loaded? (foreign-procedure __collect_safe "connect" (int u8* unsigned) int)))
+  (define c-shutdown (and libc-loaded? (foreign-procedure "shutdown" (int int) int)))
+  (define c-chmod (and libc-loaded? (foreign-procedure "chmod" (string unsigned) int)))
+  (define c-geteuid (and libc-loaded? (foreign-procedure "geteuid" () unsigned)))
+  (define c-getsockopt
+    (and libc-loaded? (foreign-procedure "getsockopt" (int int int u8* u8*) int)))
+  (define c-getpeereid
+    (and libc-loaded? (not (eq? os 'linux))
+         (foreign-procedure "getpeereid" (int u8* u8*) int)))
+  (define c-errno
+    (and libc-loaded?
+         (foreign-procedure (os-case "__errno_location" "__error" "__error") () uptr)))
+  (define c-fcntl
+    (and libc-loaded?
+         (or (guard (ex [else #f])
+               (eval '(foreign-procedure (__varargs_after 2) "fcntl" (int int int) int)))
+             (foreign-procedure "fcntl" (int int int) int))))
+
+  (define-record-type local-listener
+    (fields fd path lock (mutable closed)))
+  (define-record-type connection
+    (fields fd input output lock (mutable closed)))
+
+  (define (socket-check who result)
+    (when (< result 0)
+      (error who "local socket operation failed" (foreign-ref 'int (c-errno) 0)))
+    result)
+
+  (define (close-on-exec! fd)
+    (socket-check 'local-socket (c-fcntl fd 2 1))) ; F_SETFD, FD_CLOEXEC
+
+  (define (call-with-local-address path proc)
+    (unless (and (string? path) (> (string-length path) 0)
+                 (not (memv #\nul (string->list path))))
+      (error 'local-socket "expected a nonempty path without NUL" path))
+    (let* ([bytes (string->utf8 path)] [n (bytevector-length bytes)]
+           [size (+ n 3)] [address (make-bytevector size 0)])
+      (unless (< n (os-case 108 104 104))
+        (error 'local-socket "socket path is too long" path))
+      (if (eq? os 'linux)
+          (bytevector-u16-native-set! address 0 1) ; AF_UNIX
+          (begin (bytevector-u8-set! address 0 size) (bytevector-u8-set! address 1 1)))
+      (bytevector-copy! bytes 0 address 2 n)
+      ;; connect can block; collect-safe calls must not retain movable data.
+      (dynamic-wind (lambda () (lock-object address))
+        (lambda () (proc address size))
+        (lambda () (unlock-object address)))))
+
+  (define (same-user! fd)
+    ;; Local access belongs to this OS user. Directory/socket permissions
+    ;; alone differ across Unix systems; check peer credentials at both ends.
+    (let ([uid (make-bytevector 4 0)])
+      (if c-getpeereid
+          (socket-check 'local-socket (c-getpeereid fd uid (make-bytevector 4 0)))
+          (let ([credentials (make-bytevector 12 0)] [size (make-bytevector 4 0)])
+            (bytevector-u32-native-set! size 0 12)
+            (socket-check 'local-socket (c-getsockopt fd 1 17 credentials size)) ; SO_PEERCRED
+            (bytevector-copy! credentials 4 uid 0 4)))
+      (unless (= (bytevector-u32-native-ref uid 0) (c-geteuid))
+        (error 'local-socket "peer belongs to another OS user"))))
+
+  (define (connection-from-fd fd)
+    (let ([input #f] [output #f] [out-fd #f])
+      (guard (ex [else
+                  (if input (close-port input) (c-close fd))
+                  (if output (close-port output) (when out-fd (c-close out-fd)))
+                  (raise ex)])
+        (same-user! fd)
+        (close-on-exec! fd)
+        (set! input (open-fd-input-port fd 'block #f))
+        (set! out-fd (socket-check 'local-socket (c-dup fd)))
+        (close-on-exec! out-fd)
+        (set! output (open-fd-output-port out-fd 'none #f))
+        (make-connection fd input output (make-mutex) #f))))
+
+  (define (listen-local path)
+    (unless c-socket (error 'listen-local "local sockets are unavailable"))
+    (call-with-local-address path
+      (lambda (address size)
+        (let ([fd (socket-check 'listen-local (c-socket 1 1 0))] [bound? #f])
+          (guard (ex [else (c-close fd) (when bound? (delete-file path)) (raise ex)])
+            (close-on-exec! fd)
+            ;; Never unlink before binding: an existing endpoint or ordinary
+            ;; file belongs to its current owner, including after a crash.
+            (socket-check 'listen-local (c-bind fd address size))
+            (set! bound? #t)
+            (socket-check 'listen-local (c-chmod path #o600))
+            (socket-check 'listen-local (c-listen fd 32))
+            (make-local-listener fd (string-copy path) (make-mutex) #f))))))
+
+  (define (accept-local listener)
+    (let again ()
+      (if (local-listener-closed listener) #f
+          (let ([fd (c-accept (local-listener-fd listener) 0 0)])
+            (cond [(>= fd 0) (guard (ex [else (again)]) (connection-from-fd fd))]
+                  [(local-listener-closed listener) #f]
+                  [(= (foreign-ref 'int (c-errno) 0) 4) (again)] ; EINTR
+                  [else (socket-check 'accept-local fd)])))))
+
+  (define (connect-local path)
+    (unless c-socket (error 'connect-local "local sockets are unavailable"))
+    (call-with-local-address path
+      (lambda (address size)
+        (let ([fd (socket-check 'connect-local (c-socket 1 1 0))])
+          (guard (ex [else (c-close fd) (raise ex)])
+            (close-on-exec! fd)
+            (socket-check 'connect-local (c-connect fd address size)))
+          (connection-from-fd fd)))))
+
+  (define (close-connection! connection)
+    (with-mutex (connection-lock connection)
+      (unless (connection-closed connection)
+        (connection-closed-set! connection #t)
+        ;; Wake blocked reads/writes before closing their port descriptors.
+        (c-shutdown (connection-fd connection) 2)
+        (for-each (lambda (port) (guard (ex [else (void)]) (close-port port)))
+                  (list (connection-input connection) (connection-output connection))))))
+
+  (define (close-local-listener! listener)
+    (with-mutex (local-listener-lock listener)
+      (unless (local-listener-closed listener)
+        (local-listener-closed-set! listener #t)
+        (c-shutdown (local-listener-fd listener) 2)
+        (c-close (local-listener-fd listener))
+        (delete-file (local-listener-path listener)))))
+
+  (define (watch-daemon-signals! stop!)
+    (register-signal-handler 1 (lambda (signal) (void))) ; SIGHUP: keep the base
+    (register-signal-handler 15 (lambda (signal) (stop!)))
+    (keyboard-interrupt-handler stop!))
+
+  ;;; Foreground commands -----------------------------------------------------
+
+  ;; One caller owns a command, its ports and its completion. Service stderr
+  ;; alongside stdout/stdin rather than leaving reader threads behind on an
+  ;; escape. Only a poll blocks, with foreign memory and the collector released.
+  ;; Exec one quoted argument list; cancellation owns that PID, not the
+  ;; editor's process group or arbitrary children of other callers.
+  (define-record-type command-process
+    (fields to from errors pid buffer capture
+            (mutable code) (mutable input process-input set-process-input!)
+            (mutable prefix) (mutable closed) (mutable complaint)))
+
+  (define (open-process arguments)
+    (unless (and c-waitpid c-kill c-poll c-errno)
+      (error 'open-process "command processes are unavailable"))
+    (unless (and (list? arguments) (pair? arguments) (for-all string? arguments))
+      (error 'open-process "expected a nonempty argument list" arguments))
+    (with-interrupts-disabled
+      (let-values ([(to from errors pid)
+                    (open-process-ports
+                      (apply string-append "exec "
+                        (map (lambda (word)
+                               (string-append "'"
+                                 (apply string-append
+                                   (map (lambda (c) (if (char=? c #\') "'\\''" (string c)))
+                                        (string->list word))) "' ")) arguments))
+                      'none)])
+        (let ([process (make-command-process to from errors pid (make-bytevector 4096)
+                         (call-with-values open-bytevector-output-port cons) #f #f #f #f #f)])
+          (guard (ex [else (close-process! process) (raise ex)])
+            (for-each (lambda (port)
+                        (set-port-nonblocking! port #t)
+                        (close-on-exec! (port-file-descriptor port)))
+                      (list to from errors))
+            (set-process-input! process
+              (make-custom-binary-input-port "command output"
+                (lambda (bytes start count) (read-process! process bytes start count))
+                #f #f (lambda () (close-process! process))))
+            process)))))
+
+  (define (wait-process-io! process writing?)
+    (let* ([ports (filter (lambda (port) (not (port-closed? port)))
+                    (append (list (command-process-from process) (command-process-errors process))
+                            (if writing? (list (command-process-to process)) '())))]
+           [polls #f])
+      (dynamic-wind #t
+        (lambda () (set! polls (foreign-alloc (* 8 (length ports)))))
+        (lambda ()
+          (do ([ports ports (cdr ports)] [offset 0 (+ offset 8)]) ((null? ports))
+            (foreign-set! 'int polls offset (port-file-descriptor (car ports)))
+            (foreign-set! 'short polls (+ offset 4)
+              (if (eq? (car ports) (command-process-to process)) 4 1)) ; POLLOUT / POLLIN
+            (foreign-set! 'short polls (+ offset 6) 0))
+          (let again ()
+            (when (< (c-poll polls (length ports) -1) 0)
+              (if (= (foreign-ref 'int (c-errno) 0) 4) (again) ; EINTR
+                  (error 'process "poll failed" (foreign-ref 'int (c-errno) 0))))))
+        (lambda () (foreign-free polls)))))
+
+  (define (capture-process! process port sink)
+    ;; One available chunk per turn: a noisy stream cannot starve the other.
+    (if (port-closed? port) 0
+        (let* ([buffer (command-process-buffer process)]
+               [count (get-bytevector-some! port buffer 0 (bytevector-length buffer))])
+          (cond [(eof-object? count) (close-port port) 0]
+                [else (put-bytevector sink buffer 0 count) count]))))
+
+  (define (capture-process-errors! process)
+    (capture-process! process (command-process-errors process)
+                      (car (command-process-capture process))))
+
+  (define (write-process! process bytes)
+    ;; Submit one optional input body and then EOF. Keep early stdout while
+    ;; sending a large body, so even a program writing before reading can run.
+    (when (command-process-closed process) (error 'write-process! "command is closed"))
+    (let ([to (command-process-to process)])
+      (when (port-closed? to) (error 'write-process! "command input was already sent"))
+      (let-values ([(out take) (open-bytevector-output-port)])
+        (when bytes
+          (let loop ([start 0])
+            (when (< start (bytevector-length bytes))
+              (capture-process-errors! process)
+              (capture-process! process (command-process-from process) out)
+              (let ([count (put-bytevector-some to bytes start (- (bytevector-length bytes) start))])
+                (when (zero? count) (wait-process-io! process #t))
+                (loop (+ start count))))))
+        (command-process-prefix-set! process (open-bytevector-input-port (take)))
+        (close-port to))))
+
+  (define (poll-process! process)
+    ;; A returned status and its adoption are indivisible: never signal a PID
+    ;; after reaping it, including on engine expiry. Other owners' PIDs stay out.
+    (or (command-process-code process)
+        (with-interrupts-disabled
+          (let* ([status (make-bytevector 4)]
+                 [pid (command-process-pid process)] [result (c-waitpid pid status 1)])
+            (cond [(= result pid)
+                   (let* ([bits (bytevector-s32-native-ref status 0)]
+                          [signal (bitwise-and bits #x7f)]
+                          [code (if (zero? signal) (bitwise-and (bitwise-arithmetic-shift-right bits 8) #xff)
+                                    (- signal))])
+                     (command-process-code-set! process code)
+                     code)]
+                  [(zero? result) #f]
+                  [(= (foreign-ref 'int (c-errno) 0) 4) (poll-process! process)]
+                  [else
+                   (command-process-code-set! process 'unavailable)
+                   (error 'process "waitpid failed" (foreign-ref 'int (c-errno) 0))])))))
+
+  (define (finish-process! process)
+    (let wait ()
+      (let ([count (capture-process-errors! process)])
+        (unless (poll-process! process)
+          (when (zero? count) (sleep (make-time 'time-duration 10000000 0)))
+          (wait))))
+    (let drain ()
+      (when (> (capture-process-errors! process) 0) (drain)))
+    (close-port (command-process-errors process)))
+
+  (define (read-process! process bytes start count)
+    (when (command-process-closed process) (error 'process "command is closed"))
+    (cond
+      [(zero? count) 0]
+      [(command-process-prefix process)
+       => (lambda (prefix)
+            (let ([got (get-bytevector-n! prefix bytes start count)])
+              (if (not (eof-object? got)) got
+                  (begin (close-port prefix) (command-process-prefix-set! process #f)
+                         (read-process! process bytes start count)))))]
+      [else
+       (capture-process-errors! process)
+       (let* ([from (command-process-from process)]
+              [got (if (port-closed? from) (eof-object) (get-bytevector-some! from bytes start count))])
+         (cond [(eof-object? got) (close-port from) (finish-process! process) 0]
+               [(zero? got) (wait-process-io! process #f) (read-process! process bytes start count)]
+               [else got]))]))
+
+  (define (process-result process)
+    ;; Ask after output EOF or explicit close. Status matches Chez's system:
+    ;; an exit code, or the negated terminating signal.
+    (unless (integer? (command-process-code process))
+      (error 'process-result "command completion is unavailable"))
+    (unless (command-process-complaint process)
+      (command-process-complaint-set! process
+        (bytevector->string ((cdr (command-process-capture process)))
+                            (make-transcoder (utf-8-codec) 'none 'replace))))
+    (values (command-process-code process) (string-copy (command-process-complaint process))))
+
+  (define (close-process! process)
+    (with-interrupts-disabled
+      (unless (command-process-closed process)
+        (command-process-closed-set! process #t)
+        (dynamic-wind void
+          (lambda ()
+            (unless (poll-process! process)
+              (c-kill (command-process-pid process) 15)
+              (let wait ([attempts 8])
+                (unless (poll-process! process)
+                  (if (zero? attempts) (c-kill (command-process-pid process) 9)
+                      (begin (sleep (make-time 'time-duration 25000000 0))
+                             (wait (- attempts 1))))))
+              (let wait ()
+                (unless (poll-process! process)
+                  (sleep (make-time 'time-duration 1000000 0)) (wait)))))
+          (lambda ()
+            (guard (ex [else (void)]) (capture-process-errors! process))
+            (for-each (lambda (port) (when port (guard (ex [else (void)]) (close-port port))))
+              (list (command-process-to process) (command-process-from process)
+                    (command-process-errors process) (command-process-prefix process)
+                    (process-input process))))))))
+
+  (define (host-name)
+    (and c-gethostname
+         (let ([out (make-bytevector 1024 0)])
+           (and (zero? (c-gethostname out (bytevector-length out)))
+                (nul-terminated-string out)))))
+
+  (define (terminal-name)
+    ;; ttyname_r owns its output buffer, unlike ttyname's shared C storage.
+    (and c-ttyname-r
+         (let ([out (make-bytevector 1024 0)])
+           (and (zero? (c-ttyname-r 0 out (bytevector-length out)))
+                (nul-terminated-string out)))))
+
+  (define (canonical-file-path path)
+    ;; The absolute, symlink-resolved spelling of an existing path, or #f.
+    ;; PATH_MAX is commonly 4096; realpath fails instead of overflowing the
+    ;; caller-provided buffer.
+    (and c-realpath
+         (let ([out (make-bytevector 4096 0)])
+           (and (not (= (c-realpath path out) 0))
+                (nul-terminated-string out)))))
+
+  ;; The destination for terminal-control output. Normally this is stdout;
+  ;; clients that temporarily redirect process stdout can preserve a separate
+  ;; terminal descriptor here so the interface remains drawable.
+  (define terminal-output-port (make-parameter (current-output-port)))
+
+  (define (make-pipe)
+    (and c-pipe
+         (let ([fds (make-bytevector 8 0)])
+           (and (= (c-pipe fds) 0)
+                (cons (bytevector-s32-native-ref fds 0)
+                      (bytevector-s32-native-ref fds 4))))))
+
+  (define (duplicate-standard-output-port)
+    ;; A stable route to the terminal while fd 1 is temporarily redirected
+    ;; into an evaluated program's stdout pipe.
+    (unless c-dup
+      (error 'duplicate-standard-output-port "dup is unavailable"))
+    (open-fd-output-port (c-dup 1) 'block (native-transcoder)))
+
+  (define (duplicate-standard-input-port)
+    ;; A private route to the terminal's input: its own port object,
+    ;; its own lock -- a thread blocked reading it never starves
+    ;; writers on the console ports.
+    (unless c-dup
+      (error 'duplicate-standard-input-port "dup is unavailable"))
+    (open-fd-input-port (c-dup 0) 'block (native-transcoder)))
+
+  (define (duplicate-output-port port)
+    ;; Keep an independently closeable route to an existing descriptor.  PTY
+    ;; readers use this to outlive M-x's temporary evaluation display port.
+    ;; Chez may represent an interactive terminal as a combined custom port,
+    ;; for which port-file-descriptor raises; outside redirected evaluation,
+    ;; fd 1 is the same terminal and is the safe fallback.
+    (unless c-dup
+      (error 'duplicate-output-port "dup is unavailable"))
+    (guard (ex [else (duplicate-standard-output-port)])
+      (open-fd-output-port (c-dup (port-file-descriptor port))
+                           'block (native-transcoder))))
+
+  (define-record-type capture-stream
+    (fields target standard emit
+            (mutable pipe) (mutable saved) (mutable input) (mutable output)
+            (mutable reader) (mutable failure)))
+
+  (define (read-capture! stream)
+    (define (failed! ex)
+      (unless (capture-stream-failure stream)
+        (capture-stream-failure-set! stream (list ex))))
+    (dynamic-wind #t void
+      (lambda ()
+        (guard (ex [else (failed! ex)])
+          (let loop ()
+            (let ([line (get-line (capture-stream-input stream))])
+              (unless (eof-object? line)
+                ;; A failed callback stops delivery, but keep draining so the
+                ;; producer can finish. The owner reports the failure after join.
+                (unless (capture-stream-failure stream)
+                  (guard (ex [else (failed! ex)]) ((capture-stream-emit stream) line)))
+                (loop))))))
+      (lambda ()
+        (guard (ex [else (failed! ex)]) (close-port (capture-stream-input stream))))))
+
+  (define (call-with-streamed-output stdout! stderr! thunk)
+    ;; Run thunk with Scheme's current ports and the process-level stdout and
+    ;; stderr descriptors connected to pipes. Reader threads emit each line
+    ;; as it arrives, including output inherited by child processes.
+    (unless (and c-pipe c-dup c-dup2 c-close)
+      (error 'call-with-streamed-output "output capture is unavailable"))
+    (let ([streams (map (lambda (target standard emit)
+                          (make-capture-stream target standard emit #f #f #f #f #f #f))
+                        '(1 2) (list (standard-output-port) (standard-error-port)) (list stdout! stderr!))]
+          [ended? #f] [failure #f] [interrupted #f])
+      (define (attempt thunk)
+        (guard (ex [else (unless failure (set! failure (list ex)))]) (thunk)))
+      (define (descriptor result)
+        (when (< result 0) (error 'call-with-streamed-output "descriptor operation failed"))
+        result)
+      (define (start! stream)
+        (capture-stream-pipe-set! stream (or (make-pipe) (error 'call-with-streamed-output "pipe failed")))
+        (capture-stream-saved-set! stream (descriptor (c-dup (capture-stream-target stream))))
+        (for-each close-on-exec!
+          (list (car (capture-stream-pipe stream)) (cdr (capture-stream-pipe stream)) (capture-stream-saved stream)))
+        (capture-stream-input-set! stream
+          (open-fd-input-port (car (capture-stream-pipe stream)) 'block (native-transcoder)))
+        (capture-stream-output-set! stream
+          (open-fd-output-port (cdr (capture-stream-pipe stream)) 'line (native-transcoder)))
+        (capture-stream-reader-set! stream (fork-thread (lambda () (read-capture! stream)))))
+      (define (release!)
+        ;; Release all writers and restore both descriptors before either join.
+        ;; A callback may still use the caller's ports until that join finishes.
+        (for-each
+          (lambda (stream)
+            (attempt (lambda ()
+                       (unless (port-closed? (capture-stream-standard stream))
+                         (flush-output-port (capture-stream-standard stream)))))
+            (attempt (lambda ()
+                       (cond [(capture-stream-output stream) => close-port]
+                             [(capture-stream-pipe stream) => (lambda (pipe) (c-close (cdr pipe)))]))))
+          streams)
+        (for-each
+          (lambda (stream)
+            (when (capture-stream-saved stream)
+              (attempt (lambda () (descriptor (c-dup2 (capture-stream-saved stream) (capture-stream-target stream)))))
+              (c-close (capture-stream-saved stream))))
+          streams)
+        (for-each
+          (lambda (stream)
+            (attempt (lambda ()
+                       (cond [(capture-stream-reader stream) => thread-join]
+                             [(capture-stream-input stream) => close-port]
+                             [(capture-stream-pipe stream) => (lambda (pipe) (c-close (car pipe)))]))))
+          streams))
+      (define (finish!)
+        (set! ended? #t)
+        ;; Waiting with all interrupts disabled blocks collection needed by
+        ;; readers. Defer cancellation, then release this winder's disable count
+        ;; while flushing/joining. Restore it before returning to the winder.
+        (let ([keyboard (keyboard-interrupt-handler)] [timer (timer-interrupt-handler)])
+          (define (defer! handler) (unless interrupted (set! interrupted handler)))
+          (parameterize ([keyboard-interrupt-handler (lambda () (defer! keyboard))]
+                         [timer-interrupt-handler (lambda () (defer! timer))])
+            (dynamic-wind enable-interrupts release! disable-interrupts))))
+      (call-with-values
+        (lambda ()
+          (dynamic-wind #t
+            (lambda ()
+              (when ended? (error 'call-with-streamed-output "capture scope has ended"))
+              (guard (ex [else (finish!) (raise ex)])
+                (for-each start! streams)
+                (for-each (lambda (stream)
+                            (flush-output-port (capture-stream-standard stream))
+                            (descriptor (c-dup2 (cdr (capture-stream-pipe stream)) (capture-stream-target stream))))
+                          streams)))
+            (lambda ()
+              (parameterize ([current-output-port (capture-stream-output (car streams))]
+                             [current-error-port (capture-stream-output (cadr streams))])
+                (thunk)))
+            finish!))
+        (lambda results
+          ;; Escapes retain their original cause. Report worker/cleanup errors
+          ;; on normal return only, after all captured resources are released.
+          (let ([failure (or failure (exists capture-stream-failure streams))])
+            (when failure (raise (car failure))))
+          (when interrupted (interrupted))
+          (apply values results)))))
+
+  (define winsize-ioctl
+    ;; ioctl is variadic, and on ARM64 macOS variadic C functions use a
+    ;; different calling convention -- say so where Chez supports it
+    ;; (the plain declaration remains correct on the other platforms).
+    (and libc-loaded?
+         (or (guard (ex [else #f])
+               (eval '(foreign-procedure (__varargs_after 2) "ioctl"
+                                         (int unsigned-long u8*) int)))
+             (guard (ex [else #f])
+               (foreign-procedure "ioctl" (int unsigned-long u8*) int)))))
+
+  ;; TIOCGWINSZ: Linux's own encoding; macOS and FreeBSD share BSD's.
+  (define winsize-request (os-case #x5413 #x40087468 #x40087468))
+
+  ;; struct termios differs across the three: the width and offset of the
+  ;; local-modes word (c_lflag), the ISIG bit, the offset and indices of
+  ;; the control-character array, and the disabling value -- all verified
+  ;; against the platform headers.
+  (define lflag-offset (os-case 12 24 12))
+  (define lflag-64bit? (os-case #f #t #f))
+  (define isig-bit (os-case #x1 #x80 #x80))
+  (define cc-offset (os-case 17 32 16))
+  (define vintr (os-case 0 8 8))
+  (define vquit (os-case 1 9 9))
+  (define vsusp 10)
+  (define vdisable (os-case 0 #xff #xff))
+  (define tcsanow 0)
+
+  (define (get-lflag t)
+    (if lflag-64bit?
+        (bytevector-u64-native-ref t lflag-offset)
+        (bytevector-u32-native-ref t lflag-offset)))
+
+  (define (set-lflag! t v)
+    (if lflag-64bit?
+        (bytevector-u64-native-set! t lflag-offset v)
+        (bytevector-u32-native-set! t lflag-offset v)))
+
+  (define saved-termios #f)
+
+  (define (terminal-raw!)
+    ;; Switch the terminal to raw mode, remembering how to put it back.
+    (when (and tcgetattr tcsetattr cfmakeraw)
+      (guard (ex [else (void)])
+        (let ([orig (make-bytevector 128 0)])
+          (when (= (tcgetattr 0 orig) 0)
+            (set! saved-termios orig)
+            (let ([raw (bytevector-copy orig)])
+              (cfmakeraw raw)
+              (tcsetattr 0 tcsanow raw)))))))
+
+  (define (terminal-restore!)
+    (when (and tcsetattr saved-termios)
+      (guard (ex [else (void)])
+        (tcsetattr 0 tcsanow saved-termios))))
+
+  (define (terminal-isig! on)
+    ;; Let the terminal turn C-g into SIGINT (the interrupt character is
+    ;; set to C-g; quit and suspend stay disabled), or stop doing so.
+    (when (and tcgetattr tcsetattr)
+      (guard (ex [else (void)])
+        (let ([t (make-bytevector 128 0)])
+          (when (= (tcgetattr 0 t) 0)
+            (set-lflag! t (if on
+                              (bitwise-ior (get-lflag t) isig-bit)
+                              (bitwise-and (get-lflag t)
+                                           (bitwise-not isig-bit))))
+            (when on
+              (bytevector-u8-set! t (+ cc-offset vintr) 7)   ; C-g
+              (bytevector-u8-set! t (+ cc-offset vquit) vdisable)
+              (bytevector-u8-set! t (+ cc-offset vsusp) vdisable))
+            (tcsetattr 0 tcsanow t))))))
+
+  (define (terminal-size)
+    ;; (rows . cols) via TIOCGWINSZ, or #f.
+    (and winsize-ioctl
+         (guard (ex [else #f])
+           (let ([size (make-bytevector 8 0)])
+             (and (= (winsize-ioctl
+                       (port-file-descriptor (standard-output-port))
+                       winsize-request size) 0)
+                  (let ([r (bytevector-u16-native-ref size 0)]
+                        [c (bytevector-u16-native-ref size 2)])
+                    (and (> r 0) (> c 0) (cons r c))))))))
+
+  (define (watch-terminal-resize! thunk)
+    ;; Call thunk on window-size changes.  SIGWINCH is signal 28 on both
+    ;; Linux and macOS; #f when registration is unavailable.
+    (guard (ex [else #f])
+      (register-signal-handler 28 (lambda args (thunk)))
+      #t)))

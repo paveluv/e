@@ -3,15 +3,13 @@
 (import (chezscheme))
 
 (define (test-roots! runtime)
-  (let ([objects (case runtime
-                   [(base) "eo"]
-                   [(client) "eo/client"]
-                   [else (error 'test-roots! "expected base or client" runtime)])])
+  (unless (memq runtime '(base client)) (error 'test-roots! "expected base or client" runtime))
+  (let ([here (current-directory)] [objects (format "~a/eo/~a" (current-directory) runtime)])
     (library-directories
-      (append (if (eq? runtime 'client) (list (cons "lib/client" objects)) '())
-              (list (cons "lib" objects) (cons "tests" objects))))
-    (library-extensions (cons '(".e" . ".eo")
-                          (remove '(".e" . ".eo") (library-extensions))))
+      (map (lambda (root) (cons (string-append here "/" root) objects))
+        (append (map (lambda (kind) (format "lib/~a/~a" runtime kind)) '(state service))
+                '("lib/foundation" "lib/sys" "lib/core" "lib/service"
+                  "lib/head" "lib/apps" "lib/modes" "lib/run" "tests"))))
     (compile-imported-libraries #t)
     (eval '(begin
              (import (prefix (kernel) kernel:))

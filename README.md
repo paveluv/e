@@ -74,6 +74,10 @@ $ ~/git/project/.e/e file.txt
 
 Each installation is self-contained. It uses the `lib/`, `config.e`, `data/`,
 optional `base-config.e`, and compiled `eo/` beside its own loader.
+On this branch, `lib/` groups flat-named `.sls` libraries by responsibility.
+Base and attached implementations use separate `eo/base/` and `eo/client/`
+caches of `.so` objects. Configurations retain the `.e` extension; tools use
+`.sps`. See [the module layout](manual/MODULES.md#library-architecture).
 
 This branch supports [daemon attachment](manual/CONFIGURATION.md#daemon-and-attachment):
 `e --daemon` keeps shared buffers and terminals alive; `e --attach` opens a

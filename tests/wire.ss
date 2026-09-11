@@ -46,16 +46,18 @@
      (define (write-text path text)
        (call-with-output-file path (lambda (port) (display text port)) 'replace))
      (define (copy-text source target) (write-text target (call-with-input-file source get-string-all)))
+     (define (copy-libraries source target)
+       (for-each
+         (lambda (name)
+           (let ([from (string-append source "/" name)] [to (string-append target "/" name)])
+             (cond [(file-directory? from) (mkdir to) (copy-libraries from to)]
+                   [(string:suffix? ".sls" name) (copy-text from to)])))
+         (directory-list source)))
      (define (write-forms path forms)
        (call-with-output-file path (lambda (port) (for-each (lambda (form) (pretty-print form port)) forms)) 'replace))
      (for-each (lambda (path) (mkdir path #o700)) (list root sources objects))
      (copy-text "e" (string-append root "/e"))
-     (for-each (lambda (name) (copy-text (string-append "lib/" name) (string-append sources "/" name)))
-       (filter (lambda (name) (string:suffix? ".e" name)) (directory-list "lib")))
-     (mkdir (string-append sources "/client"))
-     (mkdir (string-append objects "/client"))
-     (for-each (lambda (name) (copy-text (string-append "lib/client/" name) (string-append sources "/client/" name)))
-       (directory-list "lib/client"))
+     (copy-libraries "lib" sources)
      (write-text (string-append root "/config.e") "(error 'head-config \"daemon loaded head config\")\n")
      (write-forms (string-append root "/base-config.e")
        `((define footprint
@@ -682,7 +684,36 @@
                                      (guard (ex [else #t]) (kernel:reload-module! "store") #f)))) (list a b))
                      (map (lambda (name)
                             (list (list 'head name) (list 'head name) "<log>" 4096
-                                  (string-append sources "/client/store.e") #f #t)) '("screen A" "screen B")))
+                                  (string-append sources "/client/state/store.sls") #f #t)) '("screen A" "screen B")))
+                   ;; Exercise the installed save hook, including first load,
+                   ;; reload, inactive roots, old extensions and pinned code.
+                   (let* ([probe (string-append sources "/apps/layout-probe.sls")]
+                          [ignored (list (cons (string-append sources "/apps/layout-legacy.e") "layout-legacy")
+                                         (cons (string-append sources "/base/state/layout-inactive.sls") "layout-inactive")
+                                         (cons (string-append root "/layout-outside.sls") "layout-outside"))])
+                     (define (publish path name version)
+                       (write-forms path
+                         `((library (,(string->symbol name)) (export init! value) (import (rnrs))
+                             (define (value) ,version) (define (init!) (value))))))
+                     (publish probe "layout-probe" 1)
+                     (for-each (lambda (entry) (publish (car entry) (cdr entry) 0)) ignored)
+                     (let ([first (head-read a `(begin (file:run-post-save-hooks! ,probe)
+                                                       (eval '(layout-probe:value))))])
+                       (publish probe "layout-probe" 2)
+                       (test:check 'save-hook-follows-active-sls-roots-and-pinned-lifetimes
+                         (list first
+                           (head-read a
+                             `(let ([before (top-level-value 'store:exists?)])
+                                (for-each file:run-post-save-hooks!
+                                  (append ',(cons probe (map car ignored))
+                                          (list (kernel:module-source "store"))))
+                                (list (eval '(layout-probe:value))
+                                      (filter (lambda (name)
+                                                (member name '("layout-probe" "layout-legacy"
+                                                               "layout-inactive" "layout-outside")))
+                                              (kernel:loaded-modules))
+                                      (eq? before (top-level-value 'store:exists?))))))
+                         '(1 (2 ("layout-probe") #t)))))
                    (test:check 'client-log-delivery-stays-on-main-through-workers-reentry-and-retraction
                      (head-read a
                        '(let ([seen '()] [main-thread (get-thread-id)])

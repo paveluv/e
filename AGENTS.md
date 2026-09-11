@@ -1,6 +1,7 @@
 # Repository rules
 
-- Before every commit, run `tools/scheme-format -i` on all `*.e` files.
+- Before every commit, run `tools/scheme-format.sps -i` on all `*.sls`,
+  `*.ss`, `*.sps`, and `*.e` files, plus the extensionless loader `e`.
 - Every library but the command layer `edit` is imported with its own
   prefix -- seams and apps alike (`store:`, `terminal:`, `git:`,
   `sys:`) -- and that is how M-x sees them; only `edit`'s names are

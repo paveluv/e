@@ -24,7 +24,7 @@ Typing `)` or `]` closes the innermost construct using the source delimiter
 that opened it. The status line reports the actual source character beneath
 point.
 
-The cluster palette is literal data near the top of `lib/pretty-scheme.e`.
+The cluster palette is literal data near the top of `lib/apps/pretty-scheme.sls`.
 Editing and saving it hot-reloads the module and restyles visible buffers.
 
 ## Depth variants

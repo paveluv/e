@@ -68,7 +68,7 @@
      (check 'long-lists-copy-in-linear-time
             (let* ([lines (map (lambda (i) "line") (iota 40000))]
                    [ms (elapsed-ms (lambda () (unless (= (length (datum:copy lines)) 40000)
-                                               (error 'datum-test "lost elements"))))])
+                                                (error 'datum-test "lost elements"))))])
               (< ms 200))
             #t)
 

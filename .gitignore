@@ -1,5 +1,5 @@
 /eo/
-lib/#*#
+/lib/**/#*#
 /data/
 /config.e
 /base-config.e

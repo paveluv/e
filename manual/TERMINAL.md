@@ -329,11 +329,11 @@ during that hold. Reading a frame does not consume pending output.
 reader performs UTF-8 decoding before feeding the same state machine.
 
 The OS-specific PTY creation, resize, cleanup, and process-group operations
-live in `sys.e`. The PTY session leader directly executes the configured shell,
+live in `sys.sls`. The PTY session leader directly executes the configured shell,
 adding `-c command` only when a command is supplied; there is no intermediate
 `system()` process, and setup failures are written to the child terminal before
 it exits. Escape parsing, screen state, scrollback, input translation, and the
-app lifecycle live in `vt.e`, with no head or painter dependency. `terminal.e`
+app lifecycle live in `vt.sls`, with no head or painter dependency. `terminal.sls`
 provides commands, escape/paging bindings, and local clipboard/diagnostic
 presentation. The shared app adapter owns each window's following and input
 projection. Killing the store buffer closes its process even when no head is

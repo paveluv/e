@@ -19,9 +19,9 @@
        (unless
          (and (string=? (kernel:installation-directory) (current-directory))
               (string=? (kernel:module-source "store")
-                ,(if (eq? roots-runtime 'client) "lib/client/store.e" "lib/store.e"))
+                        (format "~a/lib/~a/state/store.sls" (current-directory) ',roots-runtime))
               (for-all (lambda (root)
-                         (string=? (cdr root) ,(if (eq? roots-runtime 'client) "eo/client" "eo")))
+                         (string=? (cdr root) (format "~a/eo/~a" (current-directory) ',roots-runtime)))
                        (library-directories))
               (equal? (and (memq 'publish! (library-exports '(store))) #t)
                       ,(eq? roots-runtime 'base)))

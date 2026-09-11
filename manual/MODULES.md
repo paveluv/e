@@ -2,20 +2,26 @@
 
 ## Library architecture
 
-Everything in `lib/` is an R6RS library using the `.e` extension. `edit.e` is
-`(edit)`, `eval.e` is `(eval)`, and so on. The loader is only bootstrap: it
-locates the adjacent libraries and compiled-object directory and configures
-Chez. It admits options through `startup`, then selects `base` or `client` runtime.
+Libraries under `lib/` use the `.sls` extension and flat names:
+`lib/head/edit.sls` is `(edit)`, `lib/apps/eval.sls` is `(eval)`, and so on.
+Directories group responsibility in dependency order:
+`foundation`, `sys`, `core`, `state`, `service`, `head`, `apps`, `modes`, `run`.
+Imports may point down or sideways; no library imports a runtime entrypoint.
+The loader locates the adjacent libraries and object caches and configures
+Chez. It admits options through `startup`, then selects the base or client runtime.
 Plain `e` subsequently imports the command layer (`edit`, bare -- the names
 M-x sees) and `main`, and runs `(main:run)`. `--daemon` runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
 
-`--attach` selects `lib/client/` ahead of `lib/` for service implementations,
-then imports the same `edit` and `main`. Its compiled objects live in
-`eo/client`; daemon and plain-editor objects stay in `eo`. Source lookup and
-reload follow the active implementation. The loader sets
+`--attach` selects `lib/client/state` and `lib/client/service`; plain e and
+the daemon select `lib/base/state` and `lib/base/service`. Both then search
+the common roots `lib/foundation`, `lib/sys`, `lib/core`, `lib/service`,
+`lib/head`, `lib/apps`, `lib/modes` and `lib/run`. Parent directories are not
+source roots. Attached heads import the same `edit` and `main` consumers.
+Chez's `.so` objects live in `eo/client` or `eo/base`, with one flat cache
+per runtime. Source lookup and reload follow the active implementation. The loader sets
 `kernel:installation-directory` to its own directory; `config.e`,
 `base-config.e` and `data/` are located there independently of source roots.
 Direct library users can set this parameter before starting their runtime.
@@ -25,9 +31,9 @@ does not redirect configuration or data. Client libraries expose the operations
 used by head commands, not the base's producer and session-control APIs.
 
 The editor is layered seam modules -- `kernel`, `store`, `file`, `head`,
-`paint`, `prompt`, `mode`, `keymap`, ... -- with `main.e` running the loop on
-top, `edit.e`, the command layer, as the default app, and the other apps
-(`terminal`, `git`, `describe`, `eval`, ...) beside it. `sys.e` owns libc,
+`paint`, `prompt`, `mode`, `keymap`, ... -- with `main.sls` running the loop on
+top, `edit.sls`, the command layer, as the default app, and the other apps
+(`terminal`, `git`, `describe`, `eval`, ...) beside it. `sys.sls` owns libc,
 termios, ioctl, signals, PTYs, and other foreign procedures. Feature modules
 compose the command API and the seams and, when necessary, narrowly scoped
 system facilities.
@@ -103,6 +109,9 @@ An extension exports `init!`, which performs its registrations:
     (mode:register! "my" '(".my") '() my-styles)))
 ```
 
+Place this example in `lib/modes/my-mode.sls`; its library name and prefix
+remain `my-mode` regardless of the containing kind directory.
+
 `base`, `client` and `main` select their bundled modules explicitly. The kernel loads
 that list and calls each `init!`; dependencies remain ordinary R6RS imports.
 Load additional extensions with `(kernel:load-module! "my-mode")` from the
@@ -116,6 +125,9 @@ module reload cannot displace configuration choices.
 ## Hot reload
 
 Saving a reloadable extension's source from the active installation reloads it in place.
+The source must be a `.sls` file in an active library root; its stem remains
+the module name even when its directory changes. A saved file in the other
+runtime's implementation tree does not reload the active implementation.
 Modules that import it recompile and reinitialize in dependency order. Editing
 outside e can be picked up explicitly:
 

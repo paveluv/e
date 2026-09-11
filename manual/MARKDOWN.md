@@ -102,7 +102,7 @@ in per-mode contexts, consulted before the global map while a buffer of
 that mode is current:
 
 ```scheme
-;; as markdown.e's init! registers them
+;; as markdown.sls's init! registers them
 (keymap:bind-default! 'markdown "C-c v" markdown:view!)
 (keymap:bind-default! 'markdown-view "C-c v" markdown:edit!)
 (keymap:bind-default! 'markdown-view "RET" follow-link)

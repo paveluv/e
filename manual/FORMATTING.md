@@ -73,12 +73,12 @@ Scheme data.
 
 ## Command-line formatter
 
-The same pure `(scheme-format)` library drives `tools/scheme-format`:
+The same pure `(scheme-format)` library drives `tools/scheme-format.sps`:
 
 ```sh
-tools/scheme-format file.e
-tools/scheme-format -i library.sls tests.ss tool.sps
-tools/scheme-format --intrusive --width 100 -i file.e
+tools/scheme-format.sps file.sls
+tools/scheme-format.sps -i library.sls tests.ss tool.sps
+tools/scheme-format.sps --intrusive --width 100 -i file.sls
 ```
 
 Without files it reads standard input and writes standard output. Supplying

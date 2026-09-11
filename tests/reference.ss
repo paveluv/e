@@ -15,7 +15,7 @@
              (prefix (log) log:) (prefix (store) store:) (prefix (test) test:))
 
      (define root (format "/tmp/e-reference-~a" (get-process-id)))
-     (define source (string-append (current-directory) "/lib/reference.e"))
+     (define source (kernel:module-source "reference"))
      (define database (string-append root "/data/describe/describe.sdata"))
      (define page-heads '((head "west λ") (head "east")))
      (define page-ids '())

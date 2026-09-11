@@ -13,7 +13,7 @@
      (define here (current-directory))
      (define root (format "/tmp/e-format-~a-~a λ" (get-process-id) (random 1000000)))
      (define install (string-append root "/install"))
-     (define tool (string-append install "/tools/scheme-format"))
+     (define tool (string-append install "/tools/scheme-format.sps"))
      (define (read-text port)
        (let ([text (get-string-all port)]) (if (eof-object? text) "" text)))
      (define (write-text path text)
@@ -49,16 +49,17 @@
              (list "empty.e" '() "" "")))
 
      (for-each mkdir (list root install (string-append install "/lib")
+                           (string-append install "/lib/foundation")
+                           (string-append install "/lib/sys") (string-append install "/lib/core")
                            (string-append install "/eo") (string-append install "/tools")))
      (dynamic-wind void
        (lambda ()
          ;; A private installation starts with a cold cache; invoking it from
          ;; elsewhere must find its own libraries and keep compilation quiet.
-         (copy-text "tools/scheme-format" tool)
+         (copy-text "tools/scheme-format.sps" tool)
          (for-each
-           (lambda (name)
-             (copy-text (string-append "lib/" name ".e") (string-append install "/lib/" name ".e")))
-           '("scheme-format" "kernel" "path" "string"))
+           (lambda (path) (copy-text (string-append "lib/" path) (string-append install "/lib/" path)))
+           '("foundation/scheme-format.sls" "core/kernel.sls" "sys/path.sls" "foundation/string.sls"))
          (current-directory root)
          (for-each
            (lambda (entry)
