@@ -114,6 +114,6 @@ and precedence rules.
 
 ## Self-contained installations
 
-Each checkout reads only the `config.e`, `base-config.e`, `lib/`, `data/`, and compiled `eo/`
-beside its own loader. A project can therefore vendor a customized e checkout
+Each checkout reads only the `config.e`, `base-config.e`, `lib/`, `data/`, compiled `eo/`,
+and its daemon's `.socket/` beside its own loader; nothing of e's lives elsewhere. A project can therefore vendor a customized e checkout
 without affecting a personal installation elsewhere.

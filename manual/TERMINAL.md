@@ -82,8 +82,8 @@ Partial-width margins compose with the locked scroll rectangle.
 The terminfo media-copy controls use a virtual printer sink. Printing the
 screen records its cell rows, and printer-controller mode diverts subsequent
 output until its termination sequence instead of echoing it to the grid. The
-headless emulator exposes both the controller state and accumulated output for
-tests; e never invokes a host printer or command implicitly.
+headless emulator exposes both the controller state and accumulated output;
+e never invokes a host printer or command implicitly.
 
 The status hint distinguishes a focused terminal that is capturing
 input (`▶ capturing input`), its temporarily escaped state
@@ -234,8 +234,7 @@ Diagnostics include the identifying CSI parameters or protocol selector but
 omit arbitrary OSC and DCS payloads, which may contain private application
 data. Unknown control strings and character controls are reported as well.
 Headless emulators record the same signatures, readable through
-`vt:emulator-unsupported`, so a test can assert that a sequence is
-either implemented or reported rather than silently dropped.
+`vt:emulator-unsupported`.
 
 ## Scheme API
 
@@ -260,13 +259,8 @@ exited`. It also stops capturing input, so ordinary editor chords such as
 `C-x b`, `C-x k`, and `C-x o` work immediately; kill the buffer normally when
 it is no longer needed.
 
-The automated and optional `vttest` procedures are documented in the
-[terminal testing guide](../dev/TERMINAL_TESTING.md). The automated suite is
-entirely owned by e and never depends on `vttest` or the host terminfo
-database.
-
 The base's `vt` library also runs without a PTY or editor buffer. This is useful
-for tests, protocol experiments, and tools that need structured terminal
+for protocol experiments and tools that need structured terminal
 output. The emulator is the base implementation, `lib/base/service/vt.sls`;
 an attached head's `vt` client exposes terminal service calls and does not
 contain the emulator:

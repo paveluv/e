@@ -180,8 +180,8 @@ registries. Both preserve unrelated concurrent changes.
 which reads its own additions and removals. Nested success joins the parent;
 only the outer scope publishes. Exceptions and continuation escapes discard
 the scope's changes, and a closed scope cannot be resumed. Return values are
-preserved. Use this scope instead of the old snapshot/restore helpers, and
-publish new registration handles to runtime consumers only after it commits.
+preserved. Publish new registration handles to runtime consumers only after
+it commits.
 Reads can observe later committed work; this publication scope does not make
 a read-then-add check atomic. Use a keyed registry to enforce uniqueness at
 commit. Staging and `kernel:registering-module` are thread parameters, so

@@ -84,7 +84,7 @@ and revision, preserving the local label and following saved source-row anchors
 through edits and width changes. Literal views and companions of local-only
 sources have no daemon source to restore.
 `markdown:render` is the pure renderer
-(the automated suite pins it; `width` bounds tables, default 79), and
+(`width` bounds tables, default 79), and
 `markdown:view-install!` renders literal lines into a local buffer;
 it refuses a shared buffer. These literal views have no source to
 return to with `markdown:edit!`. The `markdown:browser` parameter holds the web-link command,

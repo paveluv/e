@@ -221,6 +221,13 @@
                          (lambda () (list (startup:mode) (startup:socket) (options)))))))
              (startup:mode)))
          '((daemon "/tmp/base λ" (#f #f) (attach "another" ("desk" "notes"))) standalone))
+       ;; Without --socket the base lives beside its loader, so two
+       ;; installations never share a socket; the path is canonical.
+       (test:check 'default-socket-lives-in-the-installation
+         (parameterize ([kernel:installation-directory "/tmp/e-install λ/unused/.."])
+           (map (lambda (args) (startup:call-with-options args startup:socket))
+                '(("--daemon") ("--attach" "--name=desk"))))
+         (make-list 2 "/tmp/e-install λ/.socket/base"))
        (for-each
          (lambda (flag)
            (test:check (list 'help flag)

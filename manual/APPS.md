@@ -325,7 +325,7 @@ windows showing the same app.
 
 ## The buffers app
 
-`<buffers>` is the first interactive app. It renders live buffer status and
+`<buffers>` is an interactive app. It renders live buffer status and
 supports these controls:
 
 Its heading is sticky at the top of every window. The remaining rows scroll

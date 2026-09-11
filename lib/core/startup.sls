@@ -4,6 +4,7 @@
   (export call-with-options mode name file socket default-name)
   (import (rnrs)
           (only (chezscheme) make-thread-parameter parameterize getenv get-process-id)
+          (prefix (kernel) kernel:)
           (prefix (string) string:)
           (prefix (sys) sys:))
 
@@ -15,10 +16,11 @@
   (define (name) (and (cadr (options)) (string-copy (cadr (options)))))
   (define (file) (and (caddr (options)) (string-copy (caddr (options)))))
   (define (socket)
+    ;; Everything of e's stays beside its loader, the base socket included:
+    ;; two checkouts (a stable one and an experiment) never meet through a
+    ;; shared runtime directory.  --socket still names any path.
     (cond [(cadddr (options)) => string-copy]
-          [(nonempty (getenv "XDG_RUNTIME_DIR")) => (lambda (dir) (string-append dir "/e/base"))]
-          [(nonempty (getenv "HOME")) => (lambda (dir) (string-append dir "/.e/base"))]
-          [else (error 'e "--socket is required without HOME or XDG_RUNTIME_DIR")]))
+          [else (string-append (kernel:installation-directory) "/.socket/base")]))
 
   (define (nonempty text) (and text (> (string-length text) 0) text))
 

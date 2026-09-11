@@ -376,8 +376,7 @@ stacked windows beside a tall window, and its column chooses between adjacent
 windows above or below it. The destination keeps its own point position.
 
 Window edges are resized by dragging them with the mouse, respecting the
-split tree's ownership and minimum sizes. (A keyboard counterpart is
-planned; the earlier transient `C-x w` mode was removed for redesign.)
+split tree's ownership and minimum sizes.
 
 ## Buffer API
 
@@ -451,8 +450,7 @@ deletion releases it. `store:buffer-name` returns the current name and
 or delete the buffer before the call returns. For a head record, use
 `(set-buffer-name! b name)` or `(head:buffer-name-set! b name)` to commit and
 adopt its current name. A failed rename preserves the cached label and
-reports the error. The old `head:unique-name` and `head:mirror-rename!`
-entrypoints are removed.
+reports the error.
 
 An audience change takes effect before the head's next frame, including
 changes made by that head. Hiding moves its windows to visible buffers,
@@ -499,11 +497,10 @@ Renaming the displayed buffer does not change its tool key.  App
 registration and `fresh-buffer` use this same lookup, so a snapshot
 tool rebuilds its own buffer and preserves ordinary buffers with a
 matching label.  Killing a tool buffer removes that instance.
-Names supplied as `name`, `<name>`, or legacy `*name*` get the local label
-`<name>`; tool keys retain the exact supplied string.  Existing built-in
-tool keys such as `"*log*"` therefore still identify the same tool, whose
-displayed name is now `<log>`.  Use the displayed label with `buffer` and
-the key with `head:find-tool-buffer`.
+Names supplied as `name`, `<name>`, or `*name*` get the local label
+`<name>`; tool keys retain the exact supplied string, so the key `"*log*"`
+identifies the tool displayed as `<log>`.  Use the displayed label with
+`buffer` and the key with `head:find-tool-buffer`.
 
 `head:buffer-fact` uses its fallback only for an absent fact; an explicit
 `#f` remains `#f`, and store failures propagate. `head:buffer-facts-set!`

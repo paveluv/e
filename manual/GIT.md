@@ -6,10 +6,7 @@ parses all output at the module boundary. Callers receive Scheme records rather
 than command output or display-oriented text.
 
 This design avoids a runtime dependency on `libgit2` and follows the user's Git
-configuration and repository semantics. A direct `libgit2` binding would
-require a substantial foreign API layer for opaque object lifetimes, callbacks,
-errors, and ABI compatibility; it can be added later without changing these
-public records.
+configuration and repository semantics.
 
 ## Opening a repository
 
@@ -63,9 +60,7 @@ argument list, without a shell; callers never construct command strings. The sta
 from the child process; a terminating signal is represented by its negative
 number. Both successful and failed calls close their pipes and reap the child.
 
-The initial API is intentionally query-only. Future mutation commands such as
-stage, commit, or switch can reuse the same runner while keeping their effects
-explicit.
+The API is query-only: e never runs a Git command that changes the repository.
 
 ## History browser
 

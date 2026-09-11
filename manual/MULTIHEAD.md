@@ -16,8 +16,10 @@ log records, questions and undo history carry the actor that made them.
 ## Running a daemon and attaching
 
 `./e --daemon [--socket PATH]` starts a foreground base without a screen.
-The socket defaults to `$XDG_RUNTIME_DIR/e/base`, or `~/.e/base` when that
-environment variable is absent. `--socket=PATH` also works. The daemon does
+The socket defaults to `.socket/base` inside the installation, beside the
+loader: everything of e's stays in its own directory, so two checkouts, say
+a stable editor and an experiment, never meet through a shared runtime
+directory. `--socket=PATH` also works and may point anywhere. The daemon does
 not take a head name or file argument. Run it under a supervisor or as a shell
 background job with its output redirected; SIGHUP leaves it running.
 SIGTERM or Ctrl-C stops it and its terminal processes. State is in memory
@@ -145,7 +147,7 @@ reachable when that registration update commits; see [module registration](MODUL
 
 Actors have a directory as well as a mailbox. `actor:register! who deliver!
 [capabilities]` claims an identity `(kind name ...)`; names may be strings or
-legacy symbols. Duplicate identities raise a registration-conflict condition,
+symbols. Duplicate identities raise a registration-conflict condition,
 including races between staged updates. Replace an endpoint by detaching and
 registering it in one `kernel:call-with-registration-update` scope. Directory
 metadata and delivery follow the same module ownership and rollback rules.
@@ -155,7 +157,7 @@ entries, oldest registration first; `actor:describe who` returns one or `#f`.
 The display name is a string, and the timestamp is the UTC second when the
 registration was created. Optional capabilities are descriptive plain data,
 defaulting to `#f`; they do not grant permissions. `actor:registered? who`
-queries presence, replacing the old, misleading `unregister?` name.
+queries presence.
 
 `actor:subscribe! proc` returns a token for `actor:unsubscribe!`. The callback
 receives one batch of `(detached actor)` and `(attached actor)` entries per
@@ -182,8 +184,8 @@ command loop run as `head:ui-actor`.
 
 Scheme clients can read, evaluate granted read-only expressions, edit, undo and
 redo according to their session's permissions, exchange attributed mail and ask
-other actors questions. Actual provider integrations are deferred. The current
-messages and primitives are described in the development
+other actors questions. The messages and primitives an agent uses over the
+socket are specified in the
 [wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).
 
 The daemon uses `base:connection-policy`, a procedure parameter, to choose a
@@ -297,8 +299,7 @@ ticket` withdraws only questions created by that exact session. Both return
 `#f` for a revoked session, a stale ticket or a different recipient/session.
 
 `policy:session-edit! session buffer-id basis span lines [context]` returns
-`(values 'applied (revision text-vector changes))` on success. This replaces
-the earlier revision-only result; take its first field for the revision.
+`(values 'applied (revision text-vector changes))` on success.
 The receipt is owned plain data captured at the transaction, with each change
 represented as `(revision actor delta-datum)`; use `text:datum->delta` to
 reconstruct a delta. Stale/refused outcomes keep their existing meanings.

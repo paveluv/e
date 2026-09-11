@@ -73,13 +73,15 @@ $ ~/git/project/.e/e file.txt
 ```
 
 Each installation is self-contained. It uses the `lib/`, `config.e`, `data/`,
-optional `base-config.e`, and compiled `eo/` beside its own loader.
-On this branch, `lib/` groups flat-named `.sls` libraries by responsibility.
+optional `base-config.e`, compiled `eo/`, and the daemon's `.socket/` beside
+its own loader; nothing of e's lives outside that directory, so several
+checkouts coexist without noticing each other.
+`lib/` groups flat-named `.sls` libraries by responsibility.
 Base and attached implementations use separate `eo/base/` and `eo/client/`
 caches of `.so` objects. Configurations retain the `.e` extension; tools use
 `.sps`. See [the module layout](manual/MODULES.md#library-architecture).
 
-This branch supports [daemon attachment](manual/MULTIHEAD.md#running-a-daemon-and-attaching):
+e supports [daemon attachment](manual/MULTIHEAD.md#running-a-daemon-and-attaching):
 `e --daemon` keeps shared buffers and terminals alive; `e --attach` opens a
 head on it, and `C-x C-c` detaches that head. Several screens can edit together.
 Reattaching with the same `--name` restores its layout, positions and kill text,
@@ -87,7 +89,6 @@ including after an abrupt disconnect. Scripted clients can cooperate while
 heads are absent and leave questions for a named head to answer on return.
 They share the granted read-only evaluator; an attached human can inspect
 sessions and revoke an agent's connection.
-Actual agent provider integrations are deferred.
 
 On FreeBSD, where Chez installs a differently named script interpreter, run
 `chez-scheme --script e` or change the shebang as explained in the loader.

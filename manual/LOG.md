@@ -144,8 +144,8 @@ of presentation is separate from the base's operation order.
   `(log:snapshot 0 0)` reads just the bounds without copying payloads.
   Formatting callbacks run after the snapshot; additions belong to the next read.
   On attached connections, use bounded tail/component reads: a full journal
-  snapshot can exceed the wire's 16 MiB frame limit. Paged history browsing
-  is not implemented by the log view.
+  snapshot can exceed the wire's 16 MiB frame limit. The log view does not
+  page through older history.
 - `log:history` derives values for interactive history.
 - `log:register-formatter!` installs component presentation.
 - `present-log-entry!` and `present-log-entries!` expose the shared echo
@@ -158,7 +158,6 @@ procedure receives `(entry presentation)`, where presentation is `#f`,
 `append`, or `progress`. It hears quiet records too. Subscribers belong to
 the module registering them and are retracted on reload; newly registered
 subscribers hear subsequent appends, and revocation cancels queued delivery.
-This replaces the former single `log:set-presenter!` hook.
 
 Callbacks run outside the log's writer lock, in append order, under the
 originating actor and progress context. Concurrent and reentrant appends
