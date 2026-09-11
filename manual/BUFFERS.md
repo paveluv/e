@@ -270,26 +270,32 @@ Rows remain alphabetical and update whenever buffers are created, killed,
 modified, reread, renamed, or shown, or when their mode, file, read-only state,
 or line count changes. The bold header is sticky; modified rows are italic.
 
-The active row uses the `active` face. When another window has focus, the row
-for that window's buffer follows it with the lighter `active-shadow` face.
-Each window showing `<buffers>` keeps its own point and active row.
-Both faces are configurable through the style DSL described in
-[Styles](STYLES.md).
+Two faces tell two things apart. The blue row (`active`) is state: it marks
+the buffer the selected window shows, in every window listing it, whether or
+not `<buffers>` has focus; the `.` in the `C` column marks the same buffer.
+The bold, underlined row (`candidate`) is interaction: the row a key or
+click would pick. In a focused `<buffers>` window that is the row at point;
+in any `<buffers>` window it is also the row under the mouse pointer. Each
+window showing `<buffers>` keeps its own point. Both faces are configurable
+through the style DSL described in [Styles](STYLES.md).
 
 ### Keyboard and mouse controls
 
-- Up or `C-p`, Down or `C-n`: move the active row.
-- Enter: show the active row's buffer in this window, completing the switch
-  in place.
-- Click a row: show it in the selected window.
-- Wheel over the app: move one row.
+- Up or `C-p`, Down or `C-n`: move the candidate row.
+- Enter: show the candidate row's buffer in this window, completing the
+  switch in place.
+- Move the pointer over a row: it becomes the candidate; focus does not move.
+- Click a row: show its buffer in the selected window; focus stays there.
+- Wheel over the app: move one row and show its buffer in the selected window.
 - Click the app's status line: focus `<buffers>`.
 
-Apps act on the selected window -- their own, when it is selected -- so
-`<buffers>` is an in-place switcher: choose a row and the list gives way to
-the buffer.  Status-line clicks always focus their window and cannot be
-overridden by an app.  The public app API is documented in
-[App buffers](APPS.md).
+So `<buffers>` plays two roles. Opened in the current window with `C-x C-b`,
+it is an in-place switcher: arrow keys and Enter replace the list with the
+chosen buffer, an alternative to `C-x b`. Kept in another window, it is a
+control panel: it shows what the selected window displays, and a click
+switches that window without taking focus. Status-line clicks always focus
+their window and cannot be overridden by an app.  The public app API is
+documented in [App buffers](APPS.md).
 
 ## Scrollbars
 

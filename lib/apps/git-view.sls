@@ -248,21 +248,15 @@
          "Reload commits and changed files in the open `<git-log>` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
     (paint:add-highlighter!
       (lambda ()
+        ;; The row Enter or a click would act on is the candidate: bold
+        ;; and underlined, like the buffers app's.
         (if (and log-buffer (memq log-buffer (buffer-list)))
             (let ([row (call-with-buffer log-buffer
                          (lambda () (car (point))))])
               (if (<= 1 row (- (buffer-line-count log-buffer) 1))
-                  (let ([shadow
-                         (list log-buffer row 0
-                               (string-length (buffer-line log-buffer row))
-                               'active-shadow)])
-                    (if (eq? (current-buffer) log-buffer)
-                        (list shadow
-                              (list (selected-window) row 0
-                                    (string-length
-                                      (buffer-line log-buffer row))
-                                    'active))
-                        (list shadow)))
+                  (list (list log-buffer row 0
+                              (string-length (buffer-line log-buffer row))
+                              'candidate))
                   '()))
             '())))
     (keymap:bind-default! "C-x g" git-log!!)))

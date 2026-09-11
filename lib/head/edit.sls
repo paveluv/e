@@ -2205,8 +2205,9 @@
                       ;; act on the click and explicitly preserve the old
                       ;; focus by returning keep-focus for MOUSE-CLICK.
                       (let ([result
-                             (call-with-app-mouse-event w start height x y button
-                               (lambda () (head:dispatch-app-event! "MOUSE-CLICK")))])
+                             (parameterize ([head:app-event-focus old])
+                               (call-with-app-mouse-event w start height x y button
+                                 (lambda () (head:dispatch-app-event! "MOUSE-CLICK"))))])
                         (cond [(eq? result 'ignore-click)
                                (goto-point! old-point)
                                (when (memq old windows)
@@ -2293,17 +2294,18 @@
           (if (and meta? (memv dir '(0 1)))
               (run-global-key! (if (= dir 0) "M-S-UP" "M-S-DOWN"))
               (begin
-                (unless (call-with-app-mouse-event w (cadr entry) (caddr entry) x y button
-                          (lambda ()
-                            (head:dispatch-app-event!
-                              (string-append
-                                (if shift? "S-" "")
-                                (case dir
-                                  [(0) "WHEEL-UP"]
-                                  [(1) "WHEEL-DOWN"]
-                                  [(2) "WHEEL-LEFT"]
-                                  [(3) "WHEEL-RIGHT"]
-                                  [else "WHEEL"])))))
+                (unless (parameterize ([head:app-event-focus old])
+                          (call-with-app-mouse-event w (cadr entry) (caddr entry) x y button
+                            (lambda ()
+                              (head:dispatch-app-event!
+                                (string-append
+                                  (if shift? "S-" "")
+                                  (case dir
+                                    [(0) "WHEEL-UP"]
+                                    [(1) "WHEEL-DOWN"]
+                                    [(2) "WHEEL-LEFT"]
+                                    [(3) "WHEEL-RIGHT"]
+                                    [else "WHEEL"]))))))
                   ((wheel-mover dir)))))
           (when (memq old windows) (set! current-window old))
           "MOUSE-HANDLED"))))
@@ -2330,26 +2332,71 @@
   ;; (tty:read-event stdin); the main thread applies the parsed mouse
   ;; data below, through the handler init! installs on the pump.
 
+  (define hover-window #f)   ; the window whose local app last heard MOUSE-MOVE
+
+  (define (tell-app! w event entry x y)
+    ;; Deliver a pointer event to w's local app as the selected window,
+    ;; then restore the selection: pointing focuses nothing.  Shared apps
+    ;; are not told; their capture is for the keys and clicks the wire
+    ;; carries.
+    (when (and (memq w windows) (head:app-of (head:window-buffer w)))
+      (let ([old current-window])
+        (set! current-window w)
+        (parameterize ([head:app-event-focus old])
+          (if entry
+              (call-with-app-mouse-event w (cadr entry) (caddr entry) x y 35
+                (lambda () (head:dispatch-app-event! event)))
+              (head:dispatch-app-event! event)))
+        (when (memq old windows) (set! current-window old)))))
+
+  (define (mouse-move! x y)
+    ;; Pointer motion without a button (any-event tracking).  The local
+    ;; app whose text is under the pointer hears MOUSE-MOVE with the
+    ;; usual event coordinates; the one the pointer left hears
+    ;; MOUSE-LEAVE.  Chrome -- status bars, dividers, scrollbars, the
+    ;; echo area -- counts as leaving.
+    (let ([target
+           (head:window-at (- x 1) (- y 1)
+             (lambda (entry)
+               (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
+                 (and (< (- y 1) (+ start height))
+                      (head:app-of (head:window-buffer w))
+                      (not (and (head:window-scrollbar-column w)
+                                (= (- x 1) (head:window-scrollbar-column w))))
+                      entry))))])
+      (when (and hover-window (not (eq? hover-window (and target (car target)))))
+        (tell-app! hover-window "MOUSE-LEAVE" #f x y)
+        (set! hover-window #f))
+      (when target
+        (tell-app! (car target) "MOUSE-MOVE" target x y)
+        (set! hover-window (car target)))))
+
   (define (apply-mouse-event! handle? c b x y)
-    ;; Wheel is button 64/65; releases are ignored.  A context that
-    ;; must not change editor focus passes handle? #f: the report is
-    ;; consumed without being applied.
-    (and handle?
-         (cond [(char=? c #\m)                         ; release
-                (mouse-release! x y b)
-                (set! drag-divider #f)
-                "MOUSE-HANDLED"]
-               [(= (bitwise-and b 64) 64)               ; wheel
-                (mouse-wheel! x y b (bitwise-and b 3)
-                              (= (bitwise-and b 8) 8)
-                              (= (bitwise-and b 4) 4))]
-               [(= (bitwise-and b 32) 32)               ; drag
-                (when (< (bitwise-and b 3) 3)
-                  (mouse-drag! x y b))
-                "MOUSE-HANDLED"]
-               [(< (bitwise-and b 3) 3)                 ; a press
-                (mouse-press! x y b)]
-               [else "MOUSE-HANDLED"])))
+    ;; Wheel is button 64/65; releases are ignored.  Pointer motion
+    ;; without a button only moves hover state and is never an event
+    ;; for the loop, so it settles nothing.  A context that must not
+    ;; change editor focus passes handle? #f: the report is consumed
+    ;; without being applied.
+    (cond [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
+                (= (bitwise-and b 32) 32) (zero? (bitwise-and b 64)))
+           (when handle? (mouse-move! x y))
+           'ignore]
+          [(not handle?) #f]
+          [(char=? c #\m)                         ; release
+           (mouse-release! x y b)
+           (set! drag-divider #f)
+           "MOUSE-HANDLED"]
+          [(= (bitwise-and b 64) 64)               ; wheel
+           (mouse-wheel! x y b (bitwise-and b 3)
+                         (= (bitwise-and b 8) 8)
+                         (= (bitwise-and b 4) 4))]
+          [(= (bitwise-and b 32) 32)               ; drag
+           (when (< (bitwise-and b 3) 3)
+             (mouse-drag! x y b))
+           "MOUSE-HANDLED"]
+          [(< (bitwise-and b 3) 3)                 ; a press
+           (mouse-press! x y b)]
+          [else "MOUSE-HANDLED"]))
 
   ;;; Small commands and key description -------------------------------------
 
@@ -2801,6 +2848,9 @@
 
   (define buffers-view #f)
   (define buffer-rows '())
+  ;; The row under the mouse pointer in a <buffers> window: (window . row),
+  ;; or #f.  Hovering picks a row the way point does in a focused window.
+  (define hover #f)
 
   (define (buffers-styles line)
     ;; Separate the headings from the data; in data rows the third status cell
@@ -2875,14 +2925,19 @@
                        0)))
 
   (define (activate-buffer-row!)
+    ;; Enter, a click or a wheel tick shows the candidate's buffer in the
+    ;; window that has keyboard focus: this one when the list is focused,
+    ;; the previously focused window when the list is a control panel in
+    ;; another window.
     (clamp-buffer-row!)
     (let* ([row (car (point))]
            [b (and (<= 1 row (length buffer-rows))
-                   (list-ref buffer-rows (- row 1)))])
+                   (list-ref buffer-rows (- row 1)))]
+           [target (head:app-event-focus)])
       (when b
+        (when (and target (memq target windows)) (set! current-window target))
         (show-buffer! b)
-        ;; the view acts on the selected window -- its own, so activating
-        ;; a row replaces the list with the buffer (unless it is the list)
+        ;; the buffer shown may be the list itself: keep its row on b
         (when (eq? (current-buffer) buffers-view)
           (refresh-buffers-view!)
           (select-buffer-row! b)))))
@@ -2906,6 +2961,13 @@
           [(string=? event "WHEEL-DOWN")
            (move-buffer-row! 1) (activate-buffer-row!) #t]
           [(string=? event "RET") (activate-buffer-row!) #t]
+          [(string=? event "MOUSE-MOVE")
+           ;; the pointer picks a row in this window without focusing it
+           (let ([at (app-event-buffer-position)])
+             (set! hover (and at (<= 1 (car at) (length buffer-rows))
+                              (cons (selected-window) (car at)))))
+           #t]
+          [(string=? event "MOUSE-LEAVE") (set! hover #f) #t]
           [(string=? event "MOUSE-CLICK")
            (let ([clicked (app-event-buffer-position)])
              (if (and clicked
@@ -3111,7 +3173,7 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Show `<buffers>` in the current window and make that window its own target. Move through its alphabetical rows with Up, Down, or the wheel; press Enter to replace the app with the selected buffer, or click a row to switch immediately.")
+         "Show `<buffers>` in the current window as an in-place buffer switcher. The blue row is the buffer the selected window shows; the bold underlined row is the one a key or click would pick: move it with Up, Down, or the wheel and press Enter to show that buffer here, or point at a row and click to show its buffer in the selected window without moving focus.")
         ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")
@@ -3121,25 +3183,28 @@
     (buffers-view-buffer)
     (paint:add-highlighter!
       (lambda ()
-        (cond
-          [(and buffers-view (eq? (current-buffer) buffers-view))
-           (if (> (car (point)) 0)
-               (let ([row (car (point))])
-                 (list
-                   (list buffers-view row 0
-                         (string-length (buffer-line buffers-view row))
-                         'active-shadow)
-                   (list (selected-window) row 0
-                         (string-length (buffer-line buffers-view row))
-                         'active)))
-               '())]
-          [(and buffers-view (memq buffers-view (buffer-list))
-                (buffer-row (current-buffer)))
-           => (lambda (row)
-                (list (list buffers-view row 0
-                            (string-length (buffer-line buffers-view row))
-                            'active-shadow)))]
-          [else '()])))
+        ;; The blue row is state: the buffer the selected window shows, in
+        ;; every window listing it, whether or not the list has focus.  Bold
+        ;; underline is interaction: the row a key would pick -- point, in a
+        ;; focused list -- or a click would -- the row under the pointer.
+        (if (and buffers-view (memq buffers-view (buffer-list)))
+            (let ([row-range
+                   (lambda (scope row face)
+                     (list scope row 0
+                           (string-length (buffer-line buffers-view row)) face))])
+              (append
+                (cond [(buffer-row (current-buffer))
+                       => (lambda (row) (list (row-range buffers-view row 'active)))]
+                      [else '()])
+                (if (and (eq? (current-buffer) buffers-view) (> (car (point)) 0))
+                    (list (row-range (selected-window) (car (point)) 'candidate))
+                    '())
+                (if (and hover (memq (car hover) windows)
+                         (eq? (head:window-buffer (car hover)) buffers-view)
+                         (<= 1 (cdr hover) (length buffer-rows)))
+                    (list (row-range (car hover) (cdr hover) 'candidate))
+                    '())))
+            '())))
     (keymap:bind-default! "C-x C-b" list-buffers!)
     (keymap:bind-default! "M-S-UP" previous-buffer!)
     (keymap:bind-default! "M-S-DOWN" next-buffer!)

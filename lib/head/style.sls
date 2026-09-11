@@ -183,7 +183,7 @@
         (mark (underline))
         (selection ((background blue)))
         (active ((background 24)))
-        (active-shadow ((background 31)))
+        (candidate (bold underline))
         (choice (bold (foreground 135)))
         (match ((background cyan) (foreground black)))
         (match-point ((background yellow) (foreground black))))))

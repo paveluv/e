@@ -109,6 +109,69 @@
                      (lambda () (store:unsubscribe! token))))))
             '(#t #t))
 
+     ;; <buffers> as a control panel in an unfocused window: pointing at a
+     ;; row underlines it without moving focus or settling the echo area,
+     ;; the blue row stays on the selected window's buffer, and a click on
+     ;; the pointed row switches the selected window to it.
+     (define panel
+       (read-editor
+         '(begin
+            ;; the panel goes in a new side window, whose top rows keep their
+            ;; screen position while the echo area grows and shrinks; window
+            ;; 0 keeps focus so the fixture's later window numbering holds
+            (split-window-right!)
+            (other-window!)
+            (list-buffers!)
+            (other-window!)
+            (let* ([view (head:find-tool-buffer "*buffers*")]
+                   [w (find (lambda (w) (eq? (head:window-buffer w) view)) (head:windows))]
+                   [row-of (lambda (name)
+                             (let ([needle (string-append "  " name " ")])
+                               (let loop ([i 1])
+                                 (if (string:search (buffer-line view i) needle 0
+                                                    (string-length (buffer-line view i)))
+                                     i (loop (+ i 1))))))]
+                   [log-cell (paint:window-screen-position w (row-of "<log>") 0)]
+                   [own-cell (paint:window-screen-position w (row-of (head:buffer-name (current-buffer))) 0)])
+              (list (head:buffer-name (current-buffer)) (head:window-index (selected-window))
+                    log-cell own-cell)))))
+     (define (sgr-params style)
+       (if (string? style)
+           (let loop ([chars (string->list style)] [cur '()] [acc '()])
+             (cond [(null? chars) (reverse (cons (list->string (reverse cur)) acc))]
+                   [(char=? (car chars) #\;) (loop (cdr chars) '() (cons (list->string (reverse cur)) acc))]
+                   [else (loop (cdr chars) (cons (car chars) cur) acc)]))
+           '()))
+     (define (cell-style cell)          ; the mirror cell two columns into the row
+       (let ([style (vector-ref (vector-ref (vt:emulator-styles mirror) (- (car cell) 1))
+                                (+ (cdr cell) 2))])
+         (if (string? style) style "plain")))
+     (define log-cell (caddr panel))
+     (define own-cell (cadddr panel))
+     (define (echo-rows) (map screen-line '(18 19 20 21 22 23)))
+     (define echo-before (echo-rows))
+     (send! (format "\x1b;[<35;~a;~aM" (+ (cdr log-cell) 3) (car log-cell)))
+     (pump! 500)
+     (let* ([hovered (cell-style log-cell)]
+            [own (cell-style own-cell)]
+            [echo-after (echo-rows)])
+       (check 'hovered-buffers-row-is-bold-underlined-and-blue-row-is-state
+         (list (and (member "1" (sgr-params hovered)) (member "4" (sgr-params hovered)) #t)
+               (and (string:search own "48;5;24" 0 (string-length own)) #t)
+               (equal? echo-before echo-after)
+               (read-editor '(list (head:buffer-name (current-buffer)) (head:window-index (selected-window)))))
+         (list #t #t #t (list (car panel) (cadr panel)))))
+     (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am" (+ (cdr log-cell) 3) (car log-cell)
+                    (+ (cdr log-cell) 3) (car log-cell)))
+     (pump! 500)
+     (check 'clicking-the-pointed-row-switches-the-selected-window-and-keeps-the-panel
+       (read-editor '(list (head:buffer-name (current-buffer)) (head:window-index (selected-window))
+                           (and (find (lambda (w) (eq? (head:window-buffer w) (head:find-tool-buffer "*buffers*")))
+                                      (head:windows))
+                                #t)))
+       (list "<log>" (cadr panel) #t))
+     (read-editor `(begin (show-buffer! (buffer ,(car panel))) (delete-other-windows!) #t))
+
      ;; A direct store edit of the otherwise empty scratch buffer is
      ;; unsaved work.  Even read-only protection cannot make it disposable.
      (check 'foreign-scratch-is-protected-before-head-adoption

@@ -7,7 +7,7 @@
 ;;
 ;;   a key        "a", "C-x", "M-f", "UP", "C-M-S-F5", "KP-ENTER", ...
 ;;   end of input the eof object
-;;   mouse        (mouse c b x y)      SGR: press/release/drag/wheel
+;;   mouse        (mouse c b x y)      SGR: press/release/drag/motion/wheel
 ;;   paste        (paste . text)       bracketed, closer stripped
 ;;   host report  (host-color-scheme dark|light)   DSR 997
 ;;
@@ -28,11 +28,12 @@
   ;;; Input-side negotiation ------------------------------------------------------
 
   (define (mouse-reporting! on?)
-    ;; SGR mouse tracking with button-event reports (1002;1006): on
-    ;; asks the terminal to send the (mouse ...) events read-event
-    ;; decodes; off restores the terminal's native selection.
+    ;; SGR mouse tracking with any-event reports (1003;1006): on asks
+    ;; the terminal to send the (mouse ...) events read-event decodes,
+    ;; pointer motion included so an app row can follow the pointer;
+    ;; off restores the terminal's native selection.
     (let ([port (sys:terminal-output-port)])
-      (display (if on? "\x1b;[?1002;1006h" "\x1b;[?1002;1006l") port)
+      (display (if on? "\x1b;[?1003;1006h" "\x1b;[?1003;1006l") port)
       (flush-output-port port)))
 
   ;;; Key naming ---------------------------------------------------------------

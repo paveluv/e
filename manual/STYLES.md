@@ -102,8 +102,8 @@ The built-in faces available to `style:set!` are:
 | `rainbow1` … `rainbow7` | Foregrounds `196`, `208`, `220`, `40`, `33`, `57`, `129` | Pretty-Scheme nesting colors |
 | `mark` | `(underline)` | Generic highlighted ranges, including matching delimiters |
 | `selection` | `((background blue))` | The active selected region |
-| `active` | `((background 24))` | The active row in an app buffer |
-| `active-shadow` | `((background 31))` | A lighter blue app row tracking the focused buffer while the app is inactive |
+| `active` | `((background 24))` | The `<buffers>` row of the buffer the selected window shows |
+| `candidate` | `(bold underline)` | The app row a key or click would pick: the row at point in a focused app, or the row under the mouse pointer |
 | `choice` | `(bold (foreground 135))` | The initial letters of choices in focused dialog prompts |
 | `match` | `((background cyan) (foreground black))` | Incremental-search matches |
 | `match-point` | `((background yellow) (foreground black))` | The current incremental-search match |

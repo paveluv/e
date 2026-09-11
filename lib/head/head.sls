@@ -64,6 +64,7 @@
           quit! quitting? last-command set-last-command!
           current-keys set-current-keys! escaped-buffer set-escaped-buffer!
           dispatch-app-event! app-event-position app-event-buffer-position app-event-button
+          app-event-focus
           app-facts app-status follow-app! app-following? request-app-size!
           host-color-scheme add-color-scheme-hook!
           tile! layout window-at window-button-at divider-at
@@ -419,7 +420,8 @@
 
   ;; The pump's hooks: the frame hook prepares and paints a frame (the
   ;; painter's, above); the mouse handler applies a report -- (handler handle? c b
-  ;; x y) -> an event string or #f (the commands', above).
+  ;; x y) -> an event string, #f, or the symbol ignore for a report the
+  ;; loop need not hear at all, such as pointer motion (the commands', above).
   (define frame-hook void)
   (define mouse-handler (lambda (handle? c b x y) #f))
 
@@ -523,8 +525,13 @@
                 (cond
                   [(not (pair? event)) event]
                   [(eq? (car event) 'mouse)
-                   (or (apply mouse-handler handle-mouse? (cdr event))
-                       "MOUSE-HANDLED")]
+                   (let ([result (apply mouse-handler handle-mouse? (cdr event))])
+                     (cond [(eq? result 'ignore)
+                            ;; Swallowed, but it may have moved hover state:
+                            ;; frame once the burst of reports has drained.
+                            (request-frame-at! (current-time 'time-monotonic))
+                            (pump)]
+                           [else (or result "MOUSE-HANDLED")]))]
                   [(eq? (car event) 'paste)
                    (set! pending-paste (cdr event))
                    "PASTE"]
@@ -1871,6 +1878,10 @@
   (define app-event-position (make-thread-parameter #f))
   (define app-event-buffer-position (make-thread-parameter #f))
   (define app-event-button (make-thread-parameter #f))
+  ;; The window with keyboard focus when a pointer event began.  The app's
+  ;; own window is selected while its handler runs; a control panel that
+  ;; acts on the focused window addresses this one instead.
+  (define app-event-focus (make-thread-parameter #f))
 
   (define (captures? rule event)
     (or (eq? rule 'all)

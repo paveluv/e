@@ -94,7 +94,6 @@
                        (case (mark-style m)
                          [(match-point) 'match-point]
                          [(active) 'active]
-                         [(active-shadow) (or acc 'active-shadow)]
                          [(match) (or acc 'match)]
                          [else acc])
                        acc))
@@ -163,8 +162,7 @@
            (let ([m (find (lambda (m)
                             (and (covers? m col)
                                  (not (memq (mark-style m)
-                                            '(match match-point active
-                                                    active-shadow)))))
+                                            '(match match-point active)))))
                           marks)])
              (and m (mark-style m)))))
     ;; Emit runs of identically-attributed columns as single writes.
@@ -189,7 +187,6 @@
           (case bg
             [(match-point) (ansi (style:code 'match-point))]
             [(active) (ansi (style:code 'active))]
-            [(active-shadow) (ansi (style:code 'active-shadow))]
             [(match) (ansi (style:code 'match))]
             [else (void)])
           (when mk (ansi (style:code mk)))

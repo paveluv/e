@@ -33,7 +33,11 @@ are refused by this head-app API.
 `head:view-replace!` or `head:view-append!`. `handle-event!` receives one canonical
 event string, such as `"UP"`, `"RET"`, `"MOUSE-CLICK"`, or `"WHEEL-UP"`.
 For keyboard events it returns true when the app consumed the event; false
-lets the normal global key dispatcher handle it. For `"MOUSE-CLICK"`, returning
+lets the normal global key dispatcher handle it. A local app also hears
+`"MOUSE-MOVE"` while the pointer moves over its text, with the same position
+parameters as a click and the hovered window selected for the call, and
+`"MOUSE-LEAVE"` when the pointer moves off it; neither changes focus or
+settles the echo area, and shared apps do not receive them. For `"MOUSE-CLICK"`, returning
 the symbol `keep-focus` consumes the click but restores keyboard focus to the
 previously focused window. Any other result follows the normal rule that
 clicking app content focuses the app and places its cursor at the clicked
@@ -49,7 +53,10 @@ position within the text viewport, excluding the scrollbar and line-number
 gutter. `(app-event-button)` is the raw xterm button code, including motion and
 modifier bits. These thread-local parameters are also exported by `head:`;
 the command-layer names reference the same context. They are `#f` outside
-pointer delivery.
+pointer delivery. `(head:app-event-focus)` is the window that had keyboard
+focus when the pointer event began: the app's own window is selected while
+its handler runs, so an app acting as a control panel for another window
+addresses this one instead. It is `#f` for keyboard events.
 Registrations belong to their module and disappear transactionally on unload
 or reload like modes, key bindings, and hooks.
 The local buffer and its facts remain, ready for the module to register
@@ -332,10 +339,12 @@ Its heading is sticky at the top of every window. The remaining rows scroll
 under it, with the configured edge showing the visible body's position and
 extent.
 
-- Up or `C-p`: move the active row up.
-- Down or `C-n`: move the active row down.
-- Enter: show the active row's buffer here -- the list gives way to it.
-- Mouse click: select the clicked row and show its buffer immediately;
+- Up or `C-p`: move the candidate row up.
+- Down or `C-n`: move the candidate row down.
+- Enter: show the candidate row's buffer here -- the list gives way to it.
+- Pointer motion: the row under the pointer becomes the candidate; focus
+  does not move.
+- Mouse click: show the clicked row's buffer in the selected window;
   keyboard focus stays where it was.
 - Mouse wheel: while hovering over the app, move exactly one row per tick and
   show its buffer immediately without moving keyboard focus.
@@ -348,24 +357,21 @@ purpose is to switch a buffer, not to enter the app.
 Outside the app, `M-Shift-Up` and `M-Shift-Down` switch the current window through the
 same alphabetical buffer list.
 
-The active row uses the `active` face. It can be customized like any other
-face:
+The blue row is state and the bold, underlined row is interaction. The
+`active` face marks the buffer the selected window shows, in every window
+listing it and whether or not the app has focus; the `candidate` face marks
+the row at point in a focused `<buffers>` window and the row under the
+pointer in any of them. Both can be customized like any other face:
 
 ```scheme
 (style:set! 'active '((background 24) (foreground white)))
+(style:set! 'candidate '(bold (underline-color 208) curly-underline))
 ```
 
 Rows are always alphabetical, so visiting a buffer does not move it. The table
 header is bold, and modified-buffer rows are italic. The table remains a live rendering: buffer creation,
 removal, focus, modified state, read-only state, line count, mode, and file
-changes appear on redraw.
-
-While `<buffers>` has focus, its active row uses the `active` face. When focus
-moves to another window, the row for that window's buffer continues to follow
-it dynamically using the subtler `active-shadow` face.
-
-Each app window keeps its own point and active row. The focused app window
-paints its active row with `active`; unfocused windows use `active-shadow`.
+changes appear on redraw. Each app window keeps its own point.
 
 Refresh failures are logged under the `app` component and shown in the echo
 area. An unchanged failure is reported once instead of once per redraw; a

@@ -63,7 +63,8 @@ fires in a mode's context after a text click has placed point, so a mode can
 act on the click (the markdown viewer follows links with it). Mouse reports
 themselves are handled before key dispatch: clicks, drags, releases, and
 wheel events act directly and settle the transient echo area like keyboard
-input.
+input. Pointer motion is not a key event: it only moves an app's hover row
+and leaves the echo area alone.
 
 Examples:
 
