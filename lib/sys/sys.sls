@@ -135,6 +135,9 @@
   (define c-execv
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "execv" (string uptr) int))))
+  (define c-execvp
+    (and libc-loaded?
+         (guard (ex [else #f]) (foreign-procedure "execvp" (string uptr) int))))
   (define c-strdup
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "strdup" (string) uptr))))
@@ -218,9 +221,8 @@
         ;; The child is a session and process-group leader after setsid.
         (when c-kill (c-kill (- (terminal-process-pid process)) 28)))))
 
-  (define (make-exec-arguments shell command)
-    (let* ([values (if command (list shell "-c" command) (list shell))]
-           [strings (map c-strdup values)])
+  (define (make-exec-arguments values)
+    (let ([strings (map c-strdup values)])
       (when (exists zero? strings)
         (for-each (lambda (string) (unless (zero? string) (c-free string)))
                   strings)
@@ -244,7 +246,7 @@
     (let ([master (make-bytevector 4 0)]
           [slave (make-bytevector 4 0)]
           [size (winsize rows cols)]
-          [arguments (make-exec-arguments shell command)])
+          [arguments (make-exec-arguments (if command (list shell "-c" command) (list shell)))])
       (unless (= (c-openpty master slave #f #f size) 0)
         (free-exec-arguments! arguments)
         (error 'spawn-terminal-process "openpty failed"))
@@ -486,7 +488,7 @@
   ;; One caller owns a command, its ports and its completion. Service stderr
   ;; alongside stdout/stdin rather than leaving reader threads behind on an
   ;; escape. Only a poll blocks, with foreign memory and the collector released.
-  ;; Exec one quoted argument list; cancellation owns that PID, not the
+  ;; Exec one argument list; cancellation owns that PID, not the
   ;; editor's process group or arbitrary children of other callers.
   (define-record-type command-process
     (fields to from errors pid buffer capture
@@ -494,32 +496,72 @@
             (mutable prefix) (mutable closed) (mutable complaint)))
 
   (define (open-process arguments)
-    (unless (and c-waitpid c-kill c-poll c-errno)
+    (unless (and c-waitpid c-kill c-poll c-errno c-pipe c-fork c-execvp
+                 c-dup2 c-close c-exit c-strdup c-free)
       (error 'open-process "command processes are unavailable"))
     (unless (and (list? arguments) (pair? arguments) (for-all string? arguments))
       (error 'open-process "expected a nonempty argument list" arguments))
     (with-interrupts-disabled
-      (let-values ([(to from errors pid)
-                    (open-process-ports
-                      (apply string-append "exec "
-                        (map (lambda (word)
-                               (string-append "'"
-                                 (apply string-append
-                                   (map (lambda (c) (if (char=? c #\') "'\\''" (string c)))
-                                        (string->list word))) "' ")) arguments))
-                      'none)])
-        (let ([process (make-command-process to from errors pid (make-bytevector 4096)
-                         (call-with-values open-bytevector-output-port cons) #f #f #f #f #f)])
-          (guard (ex [else (close-process! process) (raise ex)])
-            (for-each (lambda (port)
-                        (set-port-nonblocking! port #t)
-                        (close-on-exec! (port-file-descriptor port)))
-                      (list to from errors))
-            (set-process-input! process
-              (make-custom-binary-input-port "command output"
-                (lambda (bytes start count) (read-process! process bytes start count))
-                #f #f (lambda () (close-process! process))))
-            process)))))
+      ;; Chez registers open-process-ports children for reaping during GC,
+      ;; discarding their status. Fork directly, as for PTYs, so this owner
+      ;; alone can reap the child even if collection runs before output EOF.
+      (let ([fds '()] [ports '()] [pid #f] [argv #f] [process #f] [ready? #f])
+        (define (pipe!)
+          (let ([pair (make-pipe)])
+            (unless pair (error 'open-process "pipe failed"))
+            (set! fds (cons (car pair) (cons (cdr pair) fds)))
+            pair))
+        (define (close-fd! fd)
+          (c-close fd)
+          (set! fds (remv fd fds)))
+        (define (port! fd output?)
+          (let ([port ((if output? open-fd-output-port open-fd-input-port) fd 'none #f)])
+            (set! fds (remv fd fds))
+            (set! ports (cons port ports))
+            (set-port-nonblocking! port #t)
+            (close-on-exec! fd)
+            port))
+        (dynamic-wind void
+          (lambda ()
+            (set! argv (make-exec-arguments arguments))
+            (let* ([to (pipe!)] [from (pipe!)] [errors (pipe!)])
+              (set! pid (c-fork))
+              (cond
+                [(< pid 0) (error 'open-process "fork failed")]
+                [(zero? pid)
+                 (when (or (< (c-dup2 (car to) 0) 0)
+                           (< (c-dup2 (cdr from) 1) 0)
+                           (< (c-dup2 (cdr errors) 2) 0))
+                   (c-exit 127))
+                 (close-child-descriptors!)
+                 (c-execvp (car arguments) (car argv))
+                 (when c-perror (c-perror (car arguments)))
+                 (c-exit 127)]
+                [else
+                 (for-each close-fd! (list (car to) (cdr from) (cdr errors)))
+                 (let* ([to (port! (cdr to) #t)]
+                        [from (port! (car from) #f)] [errors (port! (car errors) #f)])
+                   (set! process (make-command-process to from errors pid (make-bytevector 4096)
+                                   (call-with-values open-bytevector-output-port cons) #f #f #f #f #f)))
+                 (set-process-input! process
+                   (make-custom-binary-input-port "command output"
+                     (lambda (bytes start count) (read-process! process bytes start count))
+                     #f #f (lambda () (close-process! process))))
+                 (set! ready? #t)
+                 process])))
+          (lambda ()
+            (when argv (free-exec-arguments! argv))
+            (for-each c-close fds)
+            (unless ready?
+              (if process (close-process! process)
+                  (begin
+                    (for-each (lambda (port) (guard (ex [else (void)]) (close-port port))) ports)
+                    (when (and pid (> pid 0))
+                      (c-kill pid 9)
+                      (let wait ()
+                        (when (and (< (c-waitpid pid (make-bytevector 4) 0) 0)
+                                   (= (foreign-ref 'int (c-errno) 0) 4))
+                          (wait))))))))))))
 
   (define (wait-process-io! process writing?)
     (let* ([ports (filter (lambda (port) (not (port-closed? port)))

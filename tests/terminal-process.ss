@@ -100,8 +100,19 @@
              (check 'commands-release-only-owned-resources
                (equal? (list (test:child-pids) (test:fd-count)) resources)))
            (sys:write-process! other (string->utf8 "still here\n"))
+           ;; On Linux, wait until this owned child is a zombie before GC:
+           ;; its unread stdout must not let Chez discard its exit status.
+           ;; Other hosts retain the same completion check after collection.
+           (when (test:child-pids)
+             (let ([pid (car (remp (lambda (pid) (memv pid (car before))) (test:child-pids)))])
+               (test:await 'other-command-is-waitable
+                 (lambda ()
+                   (guard (ex [(i/o-file-does-not-exist-error? ex) #f])
+                     (call-with-input-file (format "/proc/~a/stat" pid)
+                       (lambda (port) (read port) (read port) (eq? (read port) 'Z))))))))
+           (collect (collect-maximum-generation))
            (let ([output (get-bytevector-all (sys:process-input other))])
-             (check 'other-command-retains-completion
+             (check 'other-command-retains-completion-through-collection
                (equal? (cons (utf8->string output) (call-with-values (lambda () (sys:process-result other)) list))
                        '("still here" 23 "")))))
          (lambda () (sys:close-process! other)))

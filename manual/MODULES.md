@@ -245,7 +245,8 @@ raised normally; the command loop reports unexpected conditions in the echo
 area and log.
 
 Foreground commands use one `sys` owner. `sys:open-process` takes a nonempty
-list of argument strings; `sys:write-process!` sends one bytevector, or `#f`
+list of argument strings, executes them directly and searches `PATH` for a
+program without a slash; `sys:write-process!` sends one bytevector, or `#f`
 for no input, and closes stdin. Read the blocking binary `sys:process-input`
 port to EOF, then call `sys:process-result` for two values: exit status and
 stderr text. A terminating signal is returned as its negative number.
