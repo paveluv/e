@@ -2893,7 +2893,7 @@
   (define buffer-filter "")
   (define buffer-modified-only? #f)
   (define buffer-sorts '())         ; (column . descending?) in priority order
-  (define buffer-headings '#("Buffer" "Lines" "Mode" "File" "Modified" "Read-only"))
+  (define buffer-headings '#("Buffer" "Lines" "Mode" "File" "M" "RO"))
   (define buffer-columns '())       ; (column start-character end-character)
   (define buffer-first-row 2)       ; sticky filter and column headings
   (define-record-type buffer-choice (fields (mutable origin) (mutable selected)))
@@ -2976,7 +2976,8 @@
     (string-append (vector-ref buffer-headings column)
       (let loop ([keys buffer-sorts] [priority 1])
         (cond [(null? keys) ""]
-              [(= column (caar keys)) (format " ~a~a" (if (cdar keys) "↓" "↑") priority)]
+              [(= column (caar keys))
+               (format " ~a~a" (if (cdar keys) "↓" "↑") (string-ref "¹²³⁴⁵⁶" (- priority 1)))]
               [else (loop (cdr keys) (+ priority 1))]))))
 
   (define (cycle-buffer-sort! column)
@@ -3000,7 +3001,7 @@
     ;; Size from the full list so typing does not make columns jump. Share
     ;; spare cells among columns that need them; work is bounded by the pane,
     ;; not by the longest path. Narrow panes retain names and paths first.
-    (let* ([minimum '#(9 8 7 10 11 12)] [sizes (vector-copy minimum)]
+    (let* ([minimum '#(9 8 7 10 4 5)] [sizes (vector-copy minimum)]
            [columns
             (let fit ([columns '(0 4 5 1 2 3)]
                       [drop (append (filter (lambda (i) (not (assv i buffer-sorts))) '(2 1 5 4 3))
@@ -3106,8 +3107,7 @@
                         (glyph:cells (format "~a▏~a [↕][↔][×]"
                                        (head:window-index current-window) (head:buffer-name buffers-view))))])
            (let add ([text ""]
-                     [hints (list "Type to filter" "↑↓ choose" "Enter open" "Esc return"
-                              (if buffer-modified-only? "M-m all" "M-m modified") "C-u clear")])
+                     [hints (list (if buffer-modified-only? "M-m all" "M-m modified") "C-u clear")])
              (if (null? hints) text
                  (add (if (<= (+ (glyph:cells text) 2 (glyph:cells (car hints))) room)
                           (string-append text "  " (car hints)) text)

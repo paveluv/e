@@ -304,18 +304,18 @@ The live, read-only table has these columns:
 | Column | Meaning |
 |---|---|
 | `Buffer` | Buffer name. |
-| `Modified` | `*` when the buffer has unsaved changes; blank otherwise. |
-| `Read-only` | `%` when ordinary text editing is disabled; blank otherwise. |
+| `M` | Modified: `*` when the buffer has unsaved changes; blank otherwise. |
+| `RO` | Read-only: `%` when ordinary text editing is disabled; blank otherwise. |
 | `Lines` | Current line count. |
 | `Mode` | Detected or assigned mode. |
 | `File` | Visited path, with the home directory abbreviated as `~`. |
 
 Each heading cycles through ascending, descending, then off. Several columns
 can be enabled: the first enabled column is the primary key, followed by the
-others in activation order. Numbered arrows, such as `Modified ↓1` and
-`Lines ↑2`, show direction and priority. Changing direction keeps that
-priority. Turning a key off removes it and renumbers the others; enabling it
-again appends it after them.
+others in activation order. Arrows with superscript priorities, such as
+`M ↓¹` and `Lines ↑²`, show direction and priority. Changing direction keeps
+that priority. Turning a key off removes it and renumbers the others;
+enabling it again appends it after them.
 
 Names, modes and full paths sort alphabetically without case distinctions;
 line counts sort numerically. Flags sort blank first in ascending order,
@@ -341,10 +341,10 @@ keyboard candidate. Hover neither scrolls nor takes focus. Modified rows are
 italic. These faces are configurable through [Styles](STYLES.md).
 
 There is no text cursor. Keyboard selection still scrolls into view. The
-status bar shows `<buffers>` and, only in the focused window, keyboard hints
-as space permits. Window numbers and controls remain available in every
-window. Creation, deletion, edits, saves, renames and mode/file changes
-appear on redraw.
+status bar shows `<buffers>` and, only in the focused window, hints for
+`M-m` and C-u as space permits. Window numbers and controls remain available
+in every window. Creation, deletion, edits, saves, renames and mode/file
+changes appear on redraw.
 
 ### Keyboard and mouse controls
 
