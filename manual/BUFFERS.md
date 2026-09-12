@@ -312,8 +312,8 @@ The live, read-only table has these columns:
 
 Each heading cycles through ascending, descending, then off. Several columns
 can be enabled: the first enabled column is the primary key, followed by the
-others in activation order. Arrows with superscript priorities, such as
-`M ↓¹` and `Lines ↑²`, show direction and priority. Changing direction keeps
+others in activation order. Superscript priorities follow the column name
+directly, before the arrow: `M¹↓`, `Lines²↑`. Changing direction keeps
 that priority. Turning a key off removes it and renumbers the others;
 enabling it again appends it after them.
 

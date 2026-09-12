@@ -2977,7 +2977,7 @@
       (let loop ([keys buffer-sorts] [priority 1])
         (cond [(null? keys) ""]
               [(= column (caar keys))
-               (format " ~a~a" (if (cdar keys) "↓" "↑") (string-ref "¹²³⁴⁵⁶" (- priority 1)))]
+               (format "~a~a" (string-ref "¹²³⁴⁵⁶" (- priority 1)) (if (cdar keys) "↓" "↑"))]
               [else (loop (cdr keys) (+ priority 1))]))))
 
   (define (cycle-buffer-sort! column)
