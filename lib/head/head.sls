@@ -35,6 +35,7 @@
           call-uninterrupted call-with-interrupt interrupted? make-interrupted
           window make-window window? window-index window-numbered
           window-buffer window-buffer-set!
+          window-lines window-rendition
           window-top window-top-set!
           window-topseg window-topseg-set!
           window-left window-left-set!
@@ -185,7 +186,27 @@
       ;; scrolling horizontally
       (mutable wrap)
       ;; Following a shared app is a window preference, never a store fact.
-      (mutable following?)))
+      (mutable following?)
+      ;; Optional local-app presentation; rows retain their shared identity.
+      (mutable view)))
+
+  (define-record-type view (fields owner source lines frame))
+
+  (define (window-view-current w)
+    (let ([v (window-view w)] [b (window-buffer w)])
+      (and v
+           (if (and (eq? (view-owner v) (app-of b))
+                    (eq? (view-source v) (buffer-lines b))
+                    (not (buffer-selectable? b))) v
+               (begin (window-view-set! w #f) #f)))))
+
+  (define (window-lines w)
+    (let ([v (window-view-current w)])
+      (if v (view-lines v) (buffer-lines (window-buffer w)))))
+
+  (define (window-rendition w)
+    (let ([v (window-view-current w)])
+      (if v (view-frame v) (buffer-rendition (window-buffer w)))))
 
   (define-record-type layout-split
     (fields orientation (mutable first) (mutable second)
@@ -220,7 +241,7 @@
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size xoff width wrap #t))
+                  size xoff width wrap #t #f))
 
   (define (window-numbered n)
     ;; the live window numbered n, or #f
@@ -1332,7 +1353,7 @@
             (window-prow-set! w (min (window-prow w) last))
             (window-pcol-set!
               w (min (window-pcol w)
-                     (string-length (vector-ref v (window-prow w)))))
+                     (string-length (vector-ref (window-lines w) (window-prow w)))))
             (window-top-set! w (min (window-top w) last))))
         the-windows)))
 
@@ -1767,7 +1788,7 @@
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
                          (%make-window index (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                           0 topseg left 0 0 1 0 80 wrap following?)) node)]
+                           0 topseg left 0 0 1 0 80 wrap following? #f)) node)]
                     [(split)
                      (apply
                        (lambda (tag orientation first-weight second-weight first second)
@@ -2295,13 +2316,35 @@
     ;; one state before repaint callbacks can reenter.  Unplaced anchors
     ;; keep their coordinates, clamped into the new text.  A top placement
     ;; uses the key (top . window), or spot-top for the saved viewport.
+    ;; Optional (window . lines) presentations keep the same logical rows.
+    ;; They belong to non-selectable local apps: columns are display positions,
+    ;; while the shared text remains independent of any window's width.
     (unless (and (buffer? b) (not (buffer-store-id b)))
       (error 'view-replace! "expected a local buffer" b))
-    (unless (<= (length options) 2)
-      (error 'view-replace! "expected facts and position placements" options))
+    (unless (<= (length options) 3)
+      (error 'view-replace! "expected facts, position placements and window presentations" options))
     (let* ([new (text:normalize lines)]
            [facts (store:validate-properties (if (pair? options) (car options) '()))]
-           [placements (if (= (length options) 2) (cadr options) '())]
+           [placements (if (>= (length options) 2) (cadr options) '())]
+           [presentations (if (= (length options) 3) (caddr options) '())]
+           [views
+            (begin
+              (unless (and (list? presentations)
+                           (or (null? presentations)
+                               (and (app-of b)
+                                    (not (app-fact facts 'selectable (buffer-fact b 'selectable #t))))))
+                (error 'view-replace! "window presentations require a non-selectable local app" presentations))
+              (let validate ([rest presentations] [seen '()])
+                (if (null? rest) '()
+                    (let ([entry (car rest)])
+                      (unless (and (pair? entry) (memq (car entry) the-windows)
+                                   (eq? (window-buffer (car entry)) b) (not (memq (car entry) seen)))
+                        (error 'view-replace! "invalid presentation window" entry))
+                      (let ([text (text:normalize (cdr entry))])
+                        (unless (= (vector-length text) (vector-length new))
+                          (error 'view-replace! "presentation must preserve the shared rows" entry))
+                        (cons (cons (car entry) text) (validate (cdr rest) (cons (car entry) seen))))))))]
+           [views-changed? #f]
            [text-changed? (not (equal? (buffer-lines b) new))]
            [facts-changed?
             (exists (lambda (entry)
@@ -2313,13 +2356,29 @@
         (error 'view-replace! "expected numeric position placements" placements))
       (when text-changed? (adopt-local! b new #f))
       (buffer-facts-set! b facts)
+      (when (pair? views) (buffer-marked-raw-set! b #f))
       (apply-placements! b placements)
+      (for-each
+        (lambda (w)
+          (when (eq? (window-buffer w) b)
+            (let* ([old (window-view w)] [entry (assq w views)]
+                   [same? (and old entry (equal? (view-lines old) (cdr entry)))]
+                   [text (and entry (if same? (view-lines old) (cdr entry)))])
+              (unless (or same? (and (not old) (not entry))) (set! views-changed? #t))
+              (window-view-set! w
+                (and text
+                     (let ([height (max 1 (window-size w))] [point (window-prow w)] [top (window-top w)])
+                       (make-view (app-of b) (buffer-lines b) text
+                         (render:prepare (and old (view-frame old)) #f text 0
+                           (list (cons 0 (buffer-sticky-lines b)) (cons top (+ top height))
+                                 (cons (- point height -1) (+ point height)))))))))))
+        the-windows)
       (clamp-buffer-positions! b)
       (when (and facts-changed? (not text-changed?)) (bump-buffer-revision! b))
       ;; Styles can change even when rendered text is equal.  Invalidate
       ;; cached rows for either change, and never write older state after
       ;; the callback returns: it may have adopted a newer rendering.
-      (when (or text-changed? facts-changed?) (request-repaint!))))
+      (when (or text-changed? facts-changed? views-changed?) (request-repaint!))))
 
 
   (define (buffer-named name)
@@ -2339,6 +2398,7 @@
     (ensure-buffer-visible! b)
     (let ([old (window-buffer w)])
       (unless (eq? old b)
+        (window-view-set! w #f)
         (buffer-spot-row-set! old (window-prow w))
         (buffer-spot-col-set! old (window-pcol w))
         (buffer-spot-top-set! old (window-top w))

@@ -129,6 +129,56 @@
      (check 'shorter-view-selection-can-be-copied (mark) #f)
      (show-buffer! app)
 
+     ;; One model can publish different row layouts to its windows. Geometry
+     ;; reads the same presentation, while resizing changes no source text.
+     (let* ([root (head:root)] [w (head:current)] [was (current-buffer)]
+            [b (head:register-view! "window presentation" void)]
+            [other (head:make-window b 0 0 0 0 0 4 41 20 'default)]
+            [source '("heading" "complete source row")]
+            [wide '#("wide heading" "界e\x301;Z")]
+            [narrow '#("heading" "e\x301;Z")]
+            [observed #f])
+       (show-buffer! b)
+       (head:set-layout-root! (head:make-layout-split 'right w other 2 1))
+       (head:set-app-selectable! b #f)
+       (head:set-repaint-hook!
+         (lambda () (set! observed (map head:window-lines (list w other)))))
+       (head:view-replace! b source '() '() (list (cons w wide) (cons other narrow)))
+       (check 'window-presentations-land-together-with-their-own-glyph-geometry
+         (list observed (buffer-text b)
+               (render:column (head:window-rendition w) 1 3)
+               (paint:column-at-cell other 1 #f 0 1)
+               (begin (goto-point! '(1 . 99)) (point))
+               (begin (beginning-of-line!) (end-of-line!) (point)))
+         (list (list wide narrow) "heading\ncomplete source row\n" 3 2 '(1 . 4) '(1 . 4)))
+       (let ([basis (head:edit-basis b)] [retained (head:window-lines other)]
+             [changed '#("wider heading" "界界e\x301;Z")])
+         (head:view-replace! b source '() '() (list (cons w changed) (cons other narrow)))
+         (check 'refitting-one-window-preserves-source-and-the-other-presentation
+           (list (equal? basis (head:edit-basis b)) (eq? retained (head:window-lines other))
+                 (head:window-lines w)) (list #t #t changed))
+         (check 'invalid-window-presentations-refuse-the-whole-update
+           (map (lambda (bad)
+                  (and (refused? (lambda () (head:view-replace! b '("bad" "source") '() '() bad)))
+                       (equal? basis (head:edit-basis b))
+                       (equal? changed (head:window-lines w)) (eq? retained (head:window-lines other))))
+             (list (list (cons w '("missing row")))
+                   (list (cons w wide) (cons w narrow))
+                   (list (cons w '("embedded\nnewline" "row")))
+                   (list (cons 'spot wide)))) '(#t #t #t #t)))
+       (head:detach-app! b)
+       (check 'detachment-and-source-replacement-retire-window-presentations
+         (list (map head:window-lines (list w other))
+               (begin (head:register-view! b void)
+                      (head:view-replace! b source '() '() (list (cons w wide) (cons other narrow)))
+                      (head:buffer-lines-set! b '#("replacement"))
+                      (map head:window-lines (list w other))))
+         (list (make-list 2 (list->vector source)) '(#("replacement") #("replacement"))))
+       (head:set-repaint-hook! paint:invalidate-screen-cache!)
+       (head:set-layout-root! root)
+       (show-buffer! was)
+       (head:forget-buffer! b))
+
      ;; A shared label wins even when it arrives after the local tool.
      (define collision
        (store:create! '(agent test) "<renamed app>" '("shared")))

@@ -236,6 +236,8 @@
   (define (vlen) (vector-length lines))
   (define (line-at n) (vector-ref lines n))
   (define (current-line) (line-at point-row))
+  ;; Navigation addresses the window presentation; editing addresses source.
+  (define (current-display-line) (vector-ref (head:window-lines current-window) point-row))
 
   (define (snapshot-key snapshot)
     (and (> (length snapshot) 6) (list-ref snapshot 6)))
@@ -491,16 +493,16 @@
 
   (define (clamp-point!)
     (set! point-row (max 0 (min point-row (- (vlen) 1))))
-    (set! point-col (max 0 (min point-col (string-length (current-line))))))
+    (set! point-col (max 0 (min point-col (string-length (current-display-line))))))
 
   (define (move-left!)
     (cond [(> point-col 0) (set! point-col (- point-col 1))]
           [(> point-row 0)
            (set! point-row (- point-row 1))
-           (set! point-col (string-length (current-line)))]))
+           (set! point-col (string-length (current-display-line)))]))
 
   (define (move-right!)
-    (cond [(< point-col (string-length (current-line)))
+    (cond [(< point-col (string-length (current-display-line)))
            (set! point-col (+ point-col 1))]
           [(< point-row (- (vlen) 1))
            (set! point-row (+ point-row 1)) (set! point-col 0)]))
@@ -514,10 +516,10 @@
 
   (define (goto-point! p)
     ;; Point belongs to the selected window, for apps and text alike.
-    ;; Move it straight to (row . col), clamped into the buffer.
+    ;; Move it straight to (row . col), clamped into its displayed rows.
     (head:follow-app! current-window #f)
     (set! point-row (max 0 (min (car p) (- (vlen) 1))))
-    (set! point-col (max 0 (min (cdr p) (string-length (current-line))))))
+    (set! point-col (max 0 (min (cdr p) (string-length (current-display-line))))))
 
   ;; Vertical moves aim for a goal column, so point comes back to it after
   ;; passing through shorter lines (as in Emacs).  The goal survives exactly
@@ -530,13 +532,14 @@
     ;; Equal row/column numbers alone do not identify a navigation context.
     (let ([b (current-buffer)])
       (list current-window b (caddr (head:edit-basis b))
+            (head:window-lines current-window)
             (and wrapped? (paint:wrap-width current-window))
-            (render:header (head:buffer-rendition b)) point-row point-col)))
+            (render:header (head:window-rendition current-window)) point-row point-col)))
 
   (define (visual-column w row col)
-    (let* ([b (head:window-buffer w)] [frame (head:buffer-rendition b)]
+    (let* ([frame (head:window-rendition w)]
            [breaks (and (paint:window-wrapped? w)
-                        (paint:line-breaks w (vector-ref (head:buffer-lines b) row)))])
+                        (paint:line-breaks w (vector-ref (head:window-lines w) row)))])
       (- (render:column frame row col)
          (if breaks
              (render:column frame row (paint:segment-start breaks (paint:segment-of breaks col))) 0))))
@@ -556,7 +559,7 @@
           (cond
             [(zero? n) (void)]
             [(negative? n)
-             (let* ([breaks (paint:line-breaks current-window (current-line))]
+             (let* ([breaks (paint:line-breaks current-window (current-display-line))]
                     [seg (paint:segment-of breaks point-col)])
                (cond
                  [(> seg 0)                ; up, within the same line
@@ -564,18 +567,18 @@
                  [(> point-row 0)          ; onto the line above's last row
                   (set! point-row (- point-row 1))
                   (let ([breaks (paint:line-breaks current-window
-                                                   (current-line))])
+                                                   (current-display-line))])
                     (land! breaks (- (vector-length breaks) 1)))]))
              (step (+ n 1))]
             [else
-             (let* ([breaks (paint:line-breaks current-window (current-line))]
+             (let* ([breaks (paint:line-breaks current-window (current-display-line))]
                     [seg (paint:segment-of breaks point-col)])
                (cond
                  [(< (+ seg 1) (vector-length breaks))
                   (land! breaks (+ seg 1))]  ; down, within the same line
                  [(< point-row (- (vlen) 1))
                   (set! point-row (+ point-row 1))
-                  (land! (paint:line-breaks current-window (current-line)) 0)]))
+                  (land! (paint:line-breaks current-window (current-display-line)) 0)]))
              (step (- n 1))]))
         (begin
           (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
@@ -1781,7 +1784,7 @@
     ;; A second outward page at an already-clamped edge moves point to that
     ;; edge. Wrapped segments count as rows; the visual column is preserved.
     (let* ([w current-window]
-           [v (head:buffer-lines (current-buffer))]
+           [v (head:window-lines w)]
            [n (vector-length v)]
            [sticky (min (head:buffer-sticky-lines (current-buffer)) (- n 1))]
            [height (paint:page-size)]
@@ -1830,7 +1833,7 @@
     (page-window! direction fraction))
 
   (define (set-point-without-scroll! position)
-    (let* ([v (head:buffer-lines (current-buffer))]
+    (let* ([v (head:window-lines current-window)]
            [row (max 0 (min (car position) (- (vector-length v) 1)))])
       (head:window-prow-set! current-window row)
       (head:window-pcol-set! current-window
@@ -2414,7 +2417,7 @@
       (set! mark-active? #t))
     (set! message (if mark-active? "Mark set" "")))
   (define (beginning-of-line!) (set! point-col 0))
-  (define (end-of-line!) (set! point-col (string-length (current-line))))
+  (define (end-of-line!) (set! point-col (string-length (current-display-line))))
   (define (keyboard-quit!) (set! mark-active? #f) (set! message "Quit"))
   (define (redraw-command!)
     (tty:query-color-scheme!)
@@ -2428,7 +2431,7 @@
   (define (beginning-of-buffer!) (set! point-row 0) (set! point-col 0))
   (define (end-of-buffer!)
     (set! point-row (- (vlen) 1))
-    (set! point-col (string-length (current-line))))
+    (set! point-col (string-length (current-display-line))))
 
   (define (action-name action)
     (cond
@@ -2859,10 +2862,9 @@
   (define buffer-filter "")
   (define buffer-sorts '())         ; (column . descending?) in priority order
   (define buffer-headings '#("Modified" "RO" "Buffer" "Lines" "Mode" "File"))
-  (define buffer-columns '())       ; (column start-character end-character)
   (define buffer-first-row 2)       ; sticky filter and column headings
   (define buffer-filter-label "Filter: ")
-  (define-record-type buffer-choice (fields (mutable origin) (mutable selected)))
+  (define-record-type buffer-choice (fields (mutable origin) (mutable selected) (mutable columns)))
   (define buffer-choices (make-weak-eq-hashtable))
   ;; The pointer targets a buffer identity or a column number in one window.
   ;; A hovered buffer takes precedence over that window's keyboard candidate;
@@ -2882,11 +2884,11 @@
             [(eq? (car left) b) row]
             [else (loop (cdr left) (+ row 1))])))
 
-  (define (buffer-column-at at)
+  (define (buffer-column-at w at)
     ;; Sorting and hover share the column's padded hit area; gaps are inert.
     (and at (= (car at) (- buffer-first-row 1))
          (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
-           buffer-columns)))
+           (buffer-choice-columns (buffer-choice-for w)))))
 
   (define (other-buffer was)
     (find (lambda (b) (and (not (eq? b was)) (not (eq? b buffers-view)))) buffers))
@@ -2894,7 +2896,7 @@
   (define (buffer-choice-for w)
     (or (hashtable-ref buffer-choices w #f)
         (let ([choice (make-buffer-choice (other-buffer buffers-view)
-                        (buffer-at-row (head:window-prow w)))])
+                        (buffer-at-row (head:window-prow w)) '())])
           (hashtable-set! buffer-choices w choice)
           choice)))
 
@@ -3013,17 +3015,27 @@
             (let ([given (list-head want (min room (length want)))])
               (for-each (lambda (i) (vector-set! sizes i (+ 1 (vector-ref sizes i)))) given)
               (grow (- room (length given)))))))
-      (set! buffer-columns
+      (values
+        (cons* (let* ([label buffer-filter-label] [n (glyph:cells label)])
+                 (string-append (glyph:fit label (min n width))
+                   (glyph:fit buffer-filter (max 0 (- width n)) 'left)))
+          (row #f #t)
+          (if (null? entries) (list (glyph:fit "No matching buffers" width))
+              (map (lambda (entry) (row (cdr entry) #f)) entries)))
         (let bounds ([columns columns] [start 0])
           (if (null? columns) '()
               (let ([end (+ start (vector-ref sizes (car columns)))])
-                (cons (list (car columns) start end) (bounds (cdr columns) (+ end 2)))))))
-      (cons* (let* ([label buffer-filter-label] [n (glyph:cells label)])
-               (string-append (glyph:fit label (min n width))
-                 (glyph:fit buffer-filter (max 0 (- width n)) 'left)))
-        (row #f #t)
-        (if (null? entries) (list (glyph:fit "No matching buffers" width))
-            (map (lambda (entry) (row (cdr entry) #f)) entries)))))
+                (cons (list (car columns) start end) (bounds (cdr columns) (+ end 2)))))))))
+
+  (define (buffer-table-source entries)
+    ;; Shared rows retain unelided field text, independent of window width.
+    ;; Each window presentation has these same logical rows.
+    (cons* (string-append buffer-filter-label buffer-filter)
+      (string:join (map buffer-heading (iota 6)) "  ")
+      (if (null? entries) '("No matching buffers")
+          (map (lambda (entry)
+                 (let ([line (string:join (map (lambda (i) (buffer-cell (cdr entry) i)) (iota 6)) "  ")])
+                   (glyph:fit line (glyph:cells line)))) entries))))
 
   (define (refresh-buffers-view!)
     (head:call-with-display-update
@@ -3034,21 +3046,25 @@
                              (list w (buffer-choice-for w) (buffer-at-row (head:window-top w))))
                         (filter (lambda (w) (eq? (head:window-buffer w) buffers-view)) windows))])
           (set! buffer-rows (map car entries))
-          (let ([placements
-                 (apply append
-                   (map (lambda (entry)
-                          (let* ([w (car entry)] [choice (cadr entry)]
-                                 [selected (buffer-choice-selected choice)]
-                                 [row (or (buffer-row selected) (and (pair? buffer-rows) buffer-first-row))])
-                            (when row (buffer-choice-selected-set! choice (buffer-at-row row)))
-                            (list (cons w (cons (or row buffer-first-row) 0))
-                                  (cons (cons 'top w) (cons (or (buffer-row (caddr entry)) buffer-first-row) 0))))) saved))])
+          (let* ([presentations
+                  (map (lambda (entry)
+                         (let ([w (car entry)])
+                           (let-values ([(lines columns) (buffer-table entries all (head:window-content-width w))])
+                             (buffer-choice-columns-set! (cadr entry) columns)
+                             (cons w lines)))) saved)]
+                 [placements
+                  (apply append
+                    (map (lambda (entry)
+                           (let* ([w (car entry)] [choice (cadr entry)]
+                                  [selected (buffer-choice-selected choice)]
+                                  [row (or (buffer-row selected) (and (pair? buffer-rows) buffer-first-row))])
+                             (when row (buffer-choice-selected-set! choice (buffer-at-row row)))
+                             (list (cons w (cons (or row buffer-first-row) 0))
+                                   (cons (cons 'top w) (cons (or (buffer-row (caddr entry)) buffer-first-row) 0))))) saved))])
             (head:view-replace! buffers-view
-              (buffer-table entries all (or (head:buffer-narrowest-width buffers-view)
-                                          (head:window-content-width current-window)))
-              '() placements))
+              (buffer-table-source entries) '() placements presentations))
           (when (and hover (not (or (memq (cdr hover) buffer-rows)
-                                  (assv (cdr hover) buffer-columns))))
+                                  (assv (cdr hover) (buffer-choice-columns (buffer-choice-for (car hover)))))))
             (set! hover #f))))))
 
   (define (select-buffer-row! b)
@@ -3126,7 +3142,7 @@
           [(string=? event "MOUSE-MOVE")
            (let* ([at (app-event-buffer-position)]
                   [target (or (and at (buffer-at-row (car at)))
-                              (cond [(buffer-column-at at) => car] [else #f]))])
+                              (cond [(buffer-column-at current-window at) => car] [else #f]))])
              (set! hover (and target (cons current-window target))))
            #t]
           [(member event '("MOUSE-LEAVE" "BLUR")) (set! hover #f) #t]
@@ -3134,7 +3150,7 @@
            (select-buffer-row! (buffer-choice-selected (buffer-choice-for current-window))) #t]
           [(string=? event "MOUSE-CLICK")
            (let* ([at (app-event-buffer-position)] [b (and at (buffer-at-row (car at)))]
-                  [column (buffer-column-at at)])
+                  [column (buffer-column-at current-window at)])
              (cond [b (set! hover #f) (select-buffer-row! b) (activate-buffer-row!) 'keep-focus]
                    [column (cycle-buffer-sort! (car column))
                            (set! hover (cons current-window (car column))) 'keep-focus]
@@ -3193,7 +3209,7 @@
           (hashtable-set! buffer-choices current-window
             (make-buffer-choice
               (if (eq? was b) (buffer-choice-origin (buffer-choice-for current-window)) was)
-              (or (other-buffer was) was)))
+              (or (other-buffer was) was) '()))
           ;; The persistent picker is inventory, not a document visit. Keep
           ;; it behind visited buffers so retirement falls back to a document.
           (set! buffers (append (remq b buffers) (list b)))
@@ -3378,30 +3394,28 @@
         ;; Blue describes the focused document. Each list window has at most
         ;; one bold candidate: hover wins there until keyboard input or leave.
         (if (and buffers-view (memq buffers-view (buffer-list)))
-            (let ([row-range
-                   (lambda (scope row face)
-                     (list scope row 0
-                           (string-length (buffer-line buffers-view row)) face))])
-              (append
-                (cond [(buffer-row (current-buffer))
-                       => (lambda (row) (list (row-range buffers-view row 'active)))]
-                      [else '()])
-                (apply append
-                  (map (lambda (w)
-                         (let* ([over (and (head:mouse-position) (buffer-hover w))] [column (assv over buffer-columns)]
-                                [row (and (or (eq? w current-window) (memq over buffer-rows))
-                                          (buffer-row (buffer-candidate w)))])
-                           (append
-                             (if column
-                                 (list (list w (- buffer-first-row 1) (cadr column)
-                                         (min (caddr column)
-                                              (+ (cadr column) (string-length (buffer-heading (car column)))))
-                                         'hover))
-                                 '())
-                             (if row (list (row-range w row (if (memq over buffer-rows) 'hover 'candidate))) '()))))
-                    (filter (lambda (w)
-                              (eq? (head:window-buffer w) buffers-view))
-                      windows)))))
+            (let ([active-row (buffer-row (current-buffer))]
+                  [row-range
+                   (lambda (w row face)
+                     (list w row 0
+                           (string-length (vector-ref (head:window-lines w) row)) face))])
+              (apply append
+                (map (lambda (w)
+                       (let* ([over (and (head:mouse-position) (buffer-hover w))]
+                              [column (assv over (buffer-choice-columns (buffer-choice-for w)))]
+                              [row (buffer-row (buffer-candidate w))])
+                         (append
+                           (if active-row (list (row-range w active-row 'active)) '())
+                           (if column
+                               (list (list w (- buffer-first-row 1) (cadr column)
+                                       (min (caddr column)
+                                            (+ (cadr column) (string-length (buffer-heading (car column)))))
+                                       'hover))
+                               '())
+                           (if row (list (row-range w row (if (memq over buffer-rows) 'hover 'candidate))) '()))))
+                     (filter (lambda (w)
+                               (eq? (head:window-buffer w) buffers-view))
+                       windows))))
             '())))
     (keymap:bind-default! "C-x C-b" list-buffers!)
     (keymap:bind-default! "M-S-UP" previous-buffer!)

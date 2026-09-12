@@ -227,6 +227,9 @@
                  (+ (cdr cell) 1) (+ (car cell) 1) (+ (cdr cell) 1) (+ (car cell) 1))))
      (define (hover! cell)
        (press! (format "\x1b;[<35;~a;~aM" (+ (cdr cell) 1) (+ (car cell) 1))))
+     (define (wheel! cell direction)
+       (press! (format "\x1b;[<~a;~a;~aM" (if (eq? direction 'up) 64 65)
+                 (+ (cdr cell) 1) (+ (car cell) 1))))
      (define (resize! rows cols)
        (vt:emulator-resize! mirror rows cols)
        (sys:resize-terminal-process! process rows cols)
@@ -457,8 +460,7 @@
      (check 'arrows-continue-from-hover-and-clear-its-old-emphasis
        (map hover-face '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
        '((#f #f) (#f #f) (#t #f)))
-     (let ([cell (find-cell "<picker-gamma>")])
-       (press! (format "\x1b;[<64;~a;~aM" (+ (cdr cell) 1) (+ (car cell) 1))))
+     (wheel! (find-cell "<picker-gamma>") 'up)
      (check 'wheel-browses-without-opening (list (car (picker-state)) (picker-face "<picker-beta>" "1"))
        '("<buffers>" #t))
      (resize! 8 26)
@@ -514,6 +516,72 @@
                   (head:windows) '("alpha.txt" "beta.ss")))
              (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)) (quiet-buffers-bar? 1))
        '((#f #t #t) (#t #f) (#t #t) #t #t))
+     ;; Split only the right pane: its width changes without changing the
+     ;; left pane's geometry. Both still show the same buffers model.
+     (let ([before
+            (read-editor
+              '(begin
+                 (select-window! (window 1)) (split-window-right!)
+                 (select-window! (window 2)) (show-buffer! (buffer "<picker-beta>"))
+                 (goto-point! '(4 . 1))
+                 (paint:window-layout)
+                 (head:refresh-visible-views!)
+                 (list (head:window-lines (window 0)) (head:window-lines (window 1))
+                       (caddr (head:edit-basis (head:window-buffer (window 0)))))))])
+       (define (pane-state)
+         (read-editor
+           '(map (lambda (i)
+                   (let ([w (window i)])
+                     (list (head:window-xoff w) (head:window-content-width w) (head:window-lines w)))) '(0 1))))
+       (read-editor
+         '(begin (head:transfer-split! (head:layout-parent (head:root) (window 1)) 3) #t))
+       (let* ([panes (pane-state)] [left (car panes)] [right (cadr panes)]
+              [right-cell (cons 3 (+ (car right) 1))])
+         (check 'buffers-fit-each-window-without-changing-the-shared-model
+           (list (equal? (car before) (caddr left)) (not (equal? (cadr before) (caddr right)))
+                 (for-all (lambda (pane)
+                            (let ([header (vector-ref (caddr pane) 1)])
+                              (string=? header (substring (screen-line 1) (car pane)
+                                                 (+ (car pane) (string-length header)))))) panes)
+                 (read-editor `(and (eq? (head:window-buffer (window 0)) (head:window-buffer (window 1)))
+                                    (= ,(caddr before) (caddr (head:edit-basis (head:window-buffer (window 0))))))))
+           '(#t #t #t #t))
+         (hover! right-cell)
+         (check 'wheel-in-an-unfocused-buffers-pane-shows-its-candidate-and-keeps-focus
+           (list (picker-sequence
+                   (lambda (direction)
+                     (wheel! right-cell direction)
+                     (let ([row (read-editor '(head:window-prow (window 1)))])
+                       (list row (hover-face (cons row (+ (car right) 1)))))) '(up down down))
+                 (picker-state) (read-editor '(head:window-index (selected-window)))
+                 (quiet-buffers-bar? 0) (quiet-buffers-bar? 1))
+           '(((2 (#t #f)) (3 (#t #f)) (4 (#t #f))) ("<picker-beta>" (4 . 1)) 2 #t #t))
+         (read-editor '(begin (select-window! (window 0)) #t))
+         (press! "\x15;日本語")
+         (let ([filtered
+                (read-editor
+                  '(map (lambda (i)
+                          (let ([lines (head:window-lines (window i))])
+                            (list (vector-length lines) (string:prefix? "Filter: 日本語" (vector-ref lines 0))))) '(0 1)))])
+           (press! "\x15;picker-")
+           ;; Buffer is the first visible column in the narrow pane, while
+           ;; the wide pane still has Modified/RO before it.
+           (hover! (cons 1 (car right)))
+           (let ([pointed (list (hover-face (cons 1 (car right))) (picker-face "Modified" "4:4"))])
+             (click! (cons 1 (car right))) ; Buffer descending -> off
+             (let ([unsorted (car (picker-result))])
+               (click! (cons 1 (car right))) ; off -> ascending, shared by both
+               (check 'different-width-panes-share-filter-and-sort-with-their-own-header-hits
+                 (list filtered pointed unsorted
+                       (map (lambda (pane)
+                              (let ([header (vector-ref (caddr pane) 1)])
+                                (and (string:search header "Buffer¹↑" 0 (string-length header)) #t))) (pane-state))
+                       (read-editor '(head:window-index (selected-window))))
+                 (list '((3 #t) (3 #t)) '((#t #t) #f) picker-all '(#t #t) 0)))))
+         (press! "\x1b;OR") ; restore descending
+         (read-editor '(begin (select-window! (window 1)) #t))
+         (press! "\x1b;[H\x1b;[B")
+         (read-editor '(begin (select-window! (window 2)) (delete-window!) (select-window! (window 0)) #t))))
      ;; Every bracketed control has one hover target, including in an
      ;; inactive pane. The actual hit area is all three characters.
      (let* ([labels '("[↕]" "[↔]" "[×]")]

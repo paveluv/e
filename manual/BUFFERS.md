@@ -291,7 +291,8 @@ Enter opens the candidate. Esc or C-g returns to the document from which
 the app was opened, preserving its text and point. Changing window focus
 keeps the list and filter available; invoking either shortcut clears the
 filter. The filter and sort belong to this head's app. Two windows showing
-it share the table, but each retains its own candidate and viewport.
+it share the filter and row order, but each fits its own columns and retains
+its own candidate and viewport.
 
 The live, read-only table has these columns:
 
@@ -340,7 +341,8 @@ columns are inactive. Heading hover does not move the buffer selection or
 take focus from another window. Theme changes update
 automatically when reported by the terminal; use C-l to refresh older
 terminals after changing their theme.
-Rows fit the narrowest window showing the app and never wrap. Long paths
+Rows fit each window independently and never wrap. Resizing one pane does
+not shorten the rows in another pane whose width stays the same. Long paths
 keep their tail, with `…` marking
 the omitted beginning. Names elide at the end. Narrow panes omit metadata
 columns before names and paths, preserving sorted columns in priority order.
@@ -348,7 +350,7 @@ Widening a pane restores the columns and fuller labels. Elision never changes
 which buffer a row opens.
 
 The blue `active` face marks the document in the focused window. Bold
-`candidate` marks the keyboard choice in each interacting list window. A
+`candidate` marks the choice in each list window, including unfocused panes. A
 mouse-hovered row uses the shared `hover` face: bold with a dotted underline,
 taking precedence over the keyboard candidate there. Enter accepts that row,
 and arrows continue from it with bold emphasis only. Moving the pointer away
@@ -374,7 +376,8 @@ changes appear on redraw.
 - Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
 - Click a heading: cycle its sort key ascending, descending, then off.
-- Wheel over the app: browse one row per tick without opening a buffer.
+- Wheel over the app: move its candidate one row per tick, even in an
+  unfocused pane, without opening a buffer or taking keyboard focus.
 - Click the app's status line: focus `<buffers>`.
 
 Kept in another window, the same app is a control panel: a click switches the

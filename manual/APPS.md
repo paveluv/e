@@ -50,7 +50,8 @@ An ignored click arms neither, and an action that opens another buffer cannot
 move that new buffer's point when the mouse button is released.
 During clicks, drags, releases, and wheel events, `(app-event-buffer-position)`
 returns the unclamped zero-based `(row . character-column)` addressed by the
-pointer. It may lie beyond the buffer's last line, allowing an app to ignore
+pointer, using that window's presentation when it has one. It may lie beyond
+the buffer's last line, allowing an app to ignore
 empty viewport space. `(app-event-position)` is a one-based `(x . y)` cell
 position within the text viewport, excluding the scrollbar and line-number
 gutter. `(app-event-button)` is the raw xterm button code, including motion and
@@ -66,7 +67,7 @@ The local buffer and its facts remain, ready for the module to register
 the same tool key again.  Killing the buffer ends that tool instance;
 its next registration creates a new buffer.
 
-`(head:view-replace! buffer lines [facts [placements]])` installs a local
+`(head:view-replace! buffer lines [facts [placements [presentations]]])` installs a local
 rendering and its related state before repaint callbacks can run. `lines`
 is a line list or vector; `facts` is an optional alist. `placements` is an
 alist whose keys are windows showing this buffer, `mark`, `spot`,
@@ -75,10 +76,30 @@ positions in the new rendering. Top placements use only the row and reset
 wrapped top segments. All positions are clamped into the new text; omitted
 ones keep their coordinates. Invalid input changes nothing. Changed facts
 invalidate painting even when the text is equal, as for a style change.
+When a window has a separate presentation, its point columns are clamped to
+that presentation; saved buffer positions and marks address the shared text.
 Pass computed positions and presentation facts in the replacement call:
 assigning old coordinates after it returns can overwrite a newer refresh
 performed by a callback. Workers schedule head changes with
 `head:run-on-main!`.
+
+For a local app with text selection disabled, `presentations` can supply an
+alist of `(window . lines)` entries. Each window must be live, show this app,
+and occur only once. Its lines must have the same count and logical row order
+as the shared text, but may fit columns and shorten labels for its own width.
+The shared text, window presentations and positions are installed together.
+Windows omitted from the list use the shared text; omitting the argument
+clears earlier presentations. Detachment, re-registration, switching buffers
+and replacing the source also retire old presentations.
+
+`(head:window-lines window)` reads the text displayed in that window, and
+`(head:window-rendition window)` supplies its glyph geometry. Use them for
+window overlays and hit testing. Ordinary buffers use their existing text
+and rendition through the same accessors. Mode stylers receive the displayed
+row text. Buffer text queries continue to
+read the common rows; changing only a window's formatting does not create
+a content revision. The buffers app uses this facility to share filtering
+and sorting while fitting each pane independently.
 
 `(head:view-append! buffer lines [drop])` appends a line list and optionally
 drops that many old rows from the start. `drop` defaults to zero and must be
@@ -365,11 +386,13 @@ windows showing the same app.
 table with a name/path filter, ordered column sort keys, modification times,
 read-only flags, and a candidate preserved by buffer identity. Click headings
 or use F1–F6 to cycle sorting. Each window keeps its own candidate and point;
-the filter and sort belong to the local app. Its rows fit the narrowest
-visible window, with sticky filter and
+the filter and sort belong to the local app. Its rows fit each window
+independently, with sticky filter and
 heading rows, elided paths, an automatic scrollbar, a hidden cursor and
 disabled text selection. See [Using the buffers app](BUFFERS.md#the-buffers-app)
-for the complete keyboard, mouse and cancellation behavior.
+for the complete keyboard, mouse and cancellation behavior. Wheel input
+moves the pointed window's candidate and leaves keyboard focus where it was;
+the candidate stays visible in an unfocused pane.
 
 Status-bar clicks always focus their window; app handlers cannot override
 them. `<buffers>` returns `keep-focus` for content clicks because the click's

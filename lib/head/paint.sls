@@ -334,7 +334,7 @@
     ;; withdrawal restores the head's ordinary buffer/window wrap setting.
     (let* ([b (head:window-buffer w)] [choice (buffer-wrap-setting b)]
            [x (if (eq? choice 'default) (head:window-wrap w) choice)])
-      (and (not (render:header (head:buffer-rendition b))) (if (eq? x 'default) (wrap-lines) x))))
+      (and (not (render:header (head:window-rendition w))) (if (eq? x 'default) (wrap-lines) x))))
 
   (define (clean-wrap? w)
     (let ([x (buffer-wrap-setting (head:window-buffer w))])
@@ -414,7 +414,7 @@
       (hover-ranges
         (lambda (w row column)
           (find (lambda (link) (<= (car link) column (- (cadr link) 1)))
-            (buffer-line-hyperlinks (head:window-buffer w) row))))
+            (line-hyperlinks (head:window-buffer w) row (head:window-lines w) (head:window-rendition w)))))
       (kernel:registry-items highlighters)))
 
   (define (hover-ranges hit)
@@ -434,7 +434,7 @@
                           (<= left (- (car position) 1))
                           (< (- (car position) 1) (+ left (head:window-content-width w)))
                           (let* ([at (window-position w start height (car position) (cdr position))]
-                                 [lines (head:buffer-lines (head:window-buffer w))])
+                                 [lines (head:window-lines w)])
                             (and (< (car at) (vector-length lines))
                                  (let ([range (hit w (car at) (cdr at))])
                                    (and range (list (list w (car at) (car range) (cadr range) 'hover)))))))))))
@@ -462,9 +462,11 @@
   (define (buffer-line-hyperlinks buffer row)
     ;; The public query returns source character ranges, including outside
     ;; the visible viewport. Painting uses its already prepared frame below.
-    (let* ([text (head:buffer-lines buffer)]
-           [frame (head:read-rendition buffer (list (cons row (+ row 1))))]
-           [data (render:row frame row)])
+    (line-hyperlinks buffer row (head:buffer-lines buffer)
+      (head:read-rendition buffer (list (cons row (+ row 1))))))
+
+  (define (line-hyperlinks buffer row text frame)
+    (let ([data (render:row frame row)])
       (append
         (if data
             (map (lambda (range)
@@ -532,17 +534,17 @@
   (define (column-at-cell w row breaks segment cell)
     ;; Shared landing rule for vertical goals, paging, clicks and hover.
     ;; Clamp to the segment, then snap to a cluster's leading character.
-    (let* ([b (head:window-buffer w)] [frame (head:buffer-rendition b)]
-           [length (string-length (vector-ref (head:buffer-lines b) row))]
+    (let* ([frame (head:window-rendition w)]
+           [length (string-length (vector-ref (head:window-lines w) row))]
            [start (if breaks (segment-start breaks segment) 0)]
            [end (if breaks (segment-close breaks segment length) length)]
            [at (min end (render:character frame row (+ (render:column frame row start) cell)))])
       (render:character frame row (render:column frame row at))))
 
   (define (window-position w start height x y)
-    ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
+    ;; The displayed (row . col) at 1-based screen (x, y) inside w's text
     ;; band. Wrapped lines occupy successive screen rows.
-    (let* ([v (head:buffer-lines (head:window-buffer w))]
+    (let* ([v (head:window-lines w)]
            [sticky (head:buffer-sticky-lines (head:window-buffer w))]
            [k (max 0 (- y 1 start))]
            [col (max 0 (- x 1 (head:window-xoff w)
@@ -551,7 +553,7 @@
       (cond
         [(< k sticky)
          (let ([row (min k (- (vector-length v) 1))])
-           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row col)))]
+           (cons row (render:character (head:window-rendition w) row col)))]
         [(window-wrapped? w)
          (let loop ([i (max sticky (head:window-top w))]
                     [k (+ (- k sticky) (head:window-topseg w))])
@@ -567,7 +569,7 @@
                      (loop (+ i 1) (- k segs))))))]
         [else
          (let ([row (+ (max sticky (head:window-top w)) (- k sticky))])
-           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row
+           (cons row (render:character (head:window-rendition w) row
                                        (+ (head:window-left w) col))))])))
 
   (define (erase-screen!)
@@ -667,8 +669,8 @@
 
   (define (paint-window! w start height ranges)
     (let* ([b (head:window-buffer w)]
-           [v (head:buffer-lines b)]
-           [frame (head:buffer-rendition b)]
+           [v (head:window-lines w)]
+           [frame (head:window-rendition w)]
            [wrap? (window-wrapped? w)]
            [n (vector-length v)]
            [sticky (min height (head:buffer-sticky-lines b))]
@@ -971,7 +973,7 @@
   (define (rows-before w prow pcol)
     ;; Screen rows between w's top -- its first visible segment -- and
     ;; point, wrap-aware.
-    (let* ([v (head:buffer-lines (head:window-buffer w))]
+    (let* ([v (head:window-lines w)]
            [sticky (head:buffer-sticky-lines (head:window-buffer w))])
       (let loop ([i (max sticky (head:window-top w))]
                  [n (- (head:window-topseg w))])
@@ -996,7 +998,7 @@
     (let ([b (head:window-buffer w)])
       (when (eq? (head:buffer-fact b 'scrollbar #f) 'auto)
         (head:window-auto-scrollbar-set! w
-          (let* ([v (head:buffer-lines b)]
+          (let* ([v (head:window-lines w)]
                  [width (max 1 (- (head:window-width w) (head:window-line-number-width w)))]
                  [wrapped? (window-wrapped? w)])
             (let loop ([i 0] [n 0])
@@ -1023,7 +1025,7 @@
     ;; the ground under it) and scroll so point stays visible -- at
     ;; least scroll-margin rows from the edges, where the buffer's
     ;; ends allow.
-    (let* ([v (head:buffer-lines (head:window-buffer w))]
+    (let* ([v (head:window-lines w)]
            [sticky (head:buffer-sticky-lines (head:window-buffer w))]
            [height (max 1 (- height sticky))]
            [prow (max 0 (min (head:window-prow w) (- (vector-length v) 1)))]
@@ -1093,7 +1095,7 @@
               (head:window-top-set! w
                 (min (- prow (- height 1 m))
                      (max sticky (- (vector-length v) height)))))
-            (let ([cell (render:column (head:buffer-rendition (head:window-buffer w)) prow pcol)])
+            (let ([cell (render:column (head:window-rendition w) prow pcol)])
               (when (< cell (head:window-left w)) (head:window-left-set! w cell))
               (when (>= cell (+ (head:window-left w) (head:window-content-width w)))
                 (head:window-left-set! w
@@ -1419,10 +1421,10 @@
         (ansi "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
 
   (define (window-screen-position w prow pcol)
-    ;; 1-based screen (row . col) of a buffer position in w, wrap-aware.
+    ;; 1-based screen (row . col) of a displayed position in w, wrap-aware.
     (let* ([entry (assq w (window-layout))]
            [sticky (head:buffer-sticky-lines (head:window-buffer w))]
-           [frame (head:buffer-rendition (head:window-buffer w))]
+           [frame (head:window-rendition w)]
            [x (+ (head:window-xoff w)
                  (if (eq? (head:window-scrollbar? w) 'left) 1 0)
                  (head:window-line-number-width w))]
@@ -1434,7 +1436,7 @@
           (cons screen-row
                 (let ([breaks (line-breaks
                                 w (vector-ref
-                                    (head:buffer-lines (head:window-buffer w)) prow))])
+                                    (head:window-lines w) prow))])
                   (+ x
                      (- (render:column frame prow pcol)
                         (render:column frame prow (segment-start breaks (segment-of breaks pcol))))
