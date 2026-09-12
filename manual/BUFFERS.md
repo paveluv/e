@@ -276,7 +276,10 @@ line.
 `C-x b` and `C-x C-b` show the same app in the current window. The initial
 candidate is the most recently used other buffer, so either shortcut followed
 by Enter switches back immediately. Repeated quick switches alternate between
-the documents; the switcher itself never becomes the default or a table row.
+the documents; the switcher itself never becomes the default. The table
+includes `<buffers>` so every buffer reachable through global switching
+also has a row when the filter is clear. Its own row can be filtered,
+sorted and opened like the others.
 
 Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted

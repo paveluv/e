@@ -1140,7 +1140,10 @@
 
   (define (show-buffer! b)
     (head:add-buffer! b)
-    (set! buffers (cons b (remq b buffers)))   ; most recently used first
+    ;; The picker is inventory, not a document visit, including when its
+    ;; own row is opened. Keep it behind documents in the recency list.
+    (let ([rest (remq b buffers)])
+      (set! buffers (if (eq? b buffers-view) (append rest (list b)) (cons b rest))))
     (head:set-window-buffer! current-window b))
 
   ;; Read-only views of the editor's state, for M-x and modules; mutation
@@ -3040,8 +3043,16 @@
   (define (refresh-buffers-view!)
     (head:call-with-display-update
       (lambda ()
-        (let* ([all (map (lambda (b) (cons b (buffer-data b))) (remq buffers-view buffers))]
-               [entries (sort buffer-entry<? (filter buffer-matches? all))]
+        (let* ([all (map (lambda (b) (cons b (buffer-data b))) buffers)]
+               [matches (filter buffer-matches? all)]
+               [entries
+                (begin
+                  ;; The self row describes this publication, including its
+                  ;; line count for sorting, without a second refresh.
+                  (let ([self (assq buffers-view all)])
+                    (when self
+                      (vector-set! (cdr self) 3 (+ buffer-first-row (max 1 (length matches))))))
+                  (sort buffer-entry<? matches))]
                [saved (map (lambda (w)
                              (list w (buffer-choice-for w) (buffer-at-row (head:window-top w))))
                         (filter (lambda (w) (eq? (head:window-buffer w) buffers-view)) windows))])
@@ -3217,10 +3228,7 @@
             (make-buffer-choice
               (if (eq? was b) (buffer-choice-origin (buffer-choice-for current-window)) was)
               (or (other-buffer was) was) '()))
-          ;; The persistent picker is inventory, not a document visit. Keep
-          ;; it behind visited buffers so retirement falls back to a document.
-          (set! buffers (append (remq b buffers) (list b)))
-          (head:set-window-buffer! current-window b)
+          (show-buffer! b)
           (refresh-buffers-view!)))
       (set-message! "")))
 

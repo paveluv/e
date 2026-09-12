@@ -637,12 +637,31 @@
        (read-editor '(and (<= 2 (car (point)) (- (buffer-line-count (current-buffer)) 1)) #t)) #t)
      (click! (find-cell "Buffer"))
      (press! "\x07;")
-     (check 'killed-switcher-recreates-its-app-presentation
-       (read-editor
-         '(begin (kill-buffer! (head:find-tool-buffer "*buffers*")) (list-buffers!)
-                 (list (head:app-buffer? (current-buffer)) (head:app-cursor-visible-in? (selected-window))
-                       (head:buffer-selectable? (current-buffer))
-                       (paint:window-wrapped? (selected-window))))) '(#t #f #f #f))
+     (let ([presentation
+            (read-editor
+              '(begin (kill-buffer! (head:find-tool-buffer "*buffers*")) (list-buffers!)
+                      (list (head:app-buffer? (current-buffer)) (head:app-cursor-visible-in? (selected-window))
+                            (head:buffer-selectable? (current-buffer))
+                            (paint:window-wrapped? (selected-window)))))])
+       (press! "<buffers>\r") ; the app can find and open its own row
+       (let* ([selection (picker-state)]
+              [inventory
+               (read-editor
+                 '(let ([b (current-buffer)])
+                    (head:dispatch-app-event! "C-u")
+                    (let* ([rows (head:buffer-lines b)]
+                           [needle (format "<buffers>  ~a  buffers" (vector-length rows))])
+                      ;; The first full-table publication already contains its
+                      ;; own current line count; a second refresh is inert.
+                      (head:refresh-visible-views!)
+                      (list (= (vector-length rows) (+ 2 (length (buffer-list))))
+                            (exists (lambda (line) (and (string:search line needle 0 (string-length line)) #t))
+                              (vector->list rows))
+                            (eq? rows (head:buffer-lines b))
+                            (eq? b (car (reverse (buffer-list))))))))])
+         (check 'recreated-switcher-lists-itself-with-current-metadata-and-document-recency
+           (list presentation selection inventory)
+           '((#t #f #f #f) ("<buffers>" (2 . 0)) (#t #t #t #t)))))
      (press! "\x07;")
      (check 'retiring-a-visited-buffer-does-not-return-to-the-switcher
        (read-editor

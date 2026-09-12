@@ -383,12 +383,12 @@ windows showing the same app.
 ## The buffers app
 
 `<buffers>` is the shared implementation of `C-x b` and `C-x C-b`: a live
-table with a name/path filter, ordered column sort keys, modification times,
-read-only flags, and a candidate preserved by buffer identity. Click headings
-or use F1–F6 to cycle sorting. Each window keeps its own candidate and point;
-the filter and sort belong to the local app. Its rows fit each window
-independently, with sticky filter and
-heading rows, elided paths, an automatic scrollbar, a hidden cursor and
+table of all buffers, including itself, with a name/path filter, ordered
+column sort keys, modification times, read-only flags, and a candidate
+preserved by buffer identity. Click headings or use F1–F6 to cycle sorting.
+Each window keeps its own candidate and point; the filter and sort belong
+to the local app. Its rows fit each window independently, with sticky filter
+and heading rows, elided paths, an automatic scrollbar, a hidden cursor and
 disabled text selection. See [Using the buffers app](BUFFERS.md#the-buffers-app)
 for the complete keyboard, mouse and cancellation behavior. Wheel input
 in an unfocused pane runs the global `M-Shift-Up` / `M-Shift-Down` binding
