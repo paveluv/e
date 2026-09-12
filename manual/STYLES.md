@@ -89,7 +89,7 @@ The built-in faces available to `style:set!` are:
 | --- | --- | --- |
 | `plain` | `(reset)` | Ordinary text and fallback rendering |
 | `chrome` | `((foreground bright-black))` | Prompt labels, ghost text, log prefixes, and quiet UI furniture |
-| `header` | `((foreground cyan) underline)` | Table column headings, distinct from muted filter labels and bold candidate rows |
+| `header` | `((foreground 252) (background 238) underline)` | Light gray table headings on a charcoal background, distinct from muted filter labels and bold candidate rows |
 | `comment` | `((foreground bright-black))` | Source comments and Markdown block quotes |
 | `string` | `((foreground green))` | Strings and Markdown code |
 | `keyword` | `(bold (foreground cyan))` | Language keywords and Markdown headings |
