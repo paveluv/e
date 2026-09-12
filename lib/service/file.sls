@@ -141,6 +141,8 @@
 
   (define (read path)
     ;; the file's whole text ("" when empty); raises when unreadable
+    (unless (file-regular? path)
+      (error 'read "not a regular file" path))
     (call-with-port path #f
       (lambda (p)
         (let ([s (get-string-all p)])

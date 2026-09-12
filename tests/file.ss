@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (prefix (file) file:) (prefix (test) test:)
+     (import (prefix (file) file:) (prefix (directory) directory:) (prefix (sys) sys:) (prefix (test) test:)
              (only (chezscheme)
                    format getenv putenv current-directory
                    delete-file delete-directory mkdir chmod get-mode
@@ -112,6 +112,79 @@
               (list (file-exists? (string-append "/" name))
                     (file:visit-path (string-append "/./" name)))
               (list #f (string-append "/" name))))
+
+     ;; Directory browsing uses metadata without opening files, counts past
+     ;; the display threshold, and can be abandoned between filesystem calls.
+     ;; One tree covers boundaries, deep/hidden matches, links and races.
+     (let ([root (path "browse")])
+       (define (child name) (string-append root "/" name))
+       (define (remove-tree path)
+         (if (file-directory? path #f)
+             (begin (for-each (lambda (name) (remove-tree (string-append path "/" name))) (directory-list path))
+                    (delete-directory path))
+             (delete-file path)))
+       (define (scan needle hidden? limit)
+         (let ([result #f])
+           (directory:scan root needle hidden? limit (lambda () #f)
+             (lambda (entries failures done?) (when done? (set! result (cons failures entries))))) result))
+       (define (entry name result)
+         (find (lambda (e) (string=? (directory:entry-path e) (child name))) (cdr result)))
+       (define (group name result)
+         (let ([e (entry name result)])
+           (list (directory:entry-count e) (directory:entry-complete? e)
+                 (sort string<? (map (lambda (match) (file:base-name (directory:entry-path match)))
+                                  (directory:entry-matches e))))))
+       (mkdir root)
+       (for-each (lambda (dir) (mkdir (child dir))) '("small" "small/nested" "large" ".private"))
+       (for-each (lambda (name) (file:write! (child name) '#("needle in the contents") #f))
+         '("small/needle-one" "small/nested/NEEDLE-two" "small/unrelated"
+           "large/needle-a" "large/needle-b" "large/needle-c" ".private/needle-secret" "needle-root"))
+       (file:write! (child "needle-root") '#("abc") #f)
+       (chmod (child "needle-root") #o640)
+       ;; Native test-fixture operations stay in Scheme; (sys) loaded libc.
+       (check 'directory-links-fixture
+         (list ((foreign-procedure "symlink" (string string) int) root (child "small/loop"))
+               ((foreign-procedure "symlink" (string string) int) (child "small") (child "alias"))
+               ((foreign-procedure "mkfifo" (string unsigned) int) (child "pipe") #o600)) '(0 0 0))
+       (let* ([info (sys:file-info (child "needle-root"))] [stamp (file:stamp (child "needle-root"))])
+         (check 'directory-metadata-is-typed-and-full-precision
+           (list (vector-ref info 0) (vector-ref info 1)
+                 (and (memv (vector-ref info 2) '(#f 3)) #t)
+                 (= (vector-ref info 3) (+ (* (car stamp) 1000000000) (cdr stamp)))
+                 (or (not (vector-ref info 4)) (integer? (vector-ref info 4))))
+           '(file 416 #t #t #t)))
+       (let ([result (scan "" #f 2)])
+         (check 'directory-shallow-counts-and-symlink-boundary
+           (list (car result) (group "small" result) (group "large" result)
+                 (directory:entry-link? (entry "alias" result))
+                 (directory:entry-count (entry "alias" result))
+                 (directory:entry-kind (entry "pipe" result)))
+           '(0 (4 #t ()) (3 #t ()) #t #f special)))
+       (let ([result (scan "needle" #f 2)])
+         (check 'directory-expands-at-the-limit-and-counts-beyond-it
+           (list (car result) (group "small" result) (group "large" result)
+                 (entry ".private" result))
+           '(0 (2 #t ("NEEDLE-two" "needle-one")) (3 #t ()) #f)))
+       (check 'directory-hidden-and-zero-expansion
+         (let ([result (scan "needle" #t 0)])
+           (list (group ".private" result) (group "small" result)))
+         '((1 #t ()) (2 #t ())))
+       (check 'directory-cancel-has-no-late-publication
+         (let ([cancel? #f] [publications '()])
+           (directory:scan root "needle" #f 2 (lambda () cancel?)
+             (lambda (entries failures done?) (set! publications (cons done? publications)) (set! cancel? #t)))
+           publications) '(#f))
+       (check 'directory-vanishing-subtree-stays-explicitly-incomplete
+         (let ([changed? #f] [result #f])
+           (directory:scan root "secret" #t 2 (lambda () #f)
+             (lambda (entries failures done?)
+               (unless changed? (set! changed? #t) (remove-tree (child ".private")))
+               (when done? (set! result (cons failures entries)))))
+           (list (car result) (group ".private" result))) '(1 (0 #f ())))
+       (check 'file-read-refuses-special-files-before-opening
+         (map (lambda (name) (test:raises? (lambda () (file:read (child name))))) '("pipe" "small"))
+         '(#t #t))
+       (remove-tree root))
 
      ;; One table covers the shared port scope for text and corpus data.
      ;; Keep both the port and any expired engine alive through the check;

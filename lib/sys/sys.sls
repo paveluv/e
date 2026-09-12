@@ -15,7 +15,7 @@
           duplicate-standard-input-port
           terminal-output-port
           terminal-character-width
-          canonical-file-path host-name terminal-name
+          canonical-file-path file-info host-name terminal-name
           listen-local accept-local connect-local close-local-listener!
           connection-input connection-output close-connection! watch-daemon-signals!
           open-process write-process! process-input process-result close-process!
@@ -84,6 +84,10 @@
     (and libc-loaded?
          (guard (ex [else #f])
            (foreign-procedure "realpath" (string u8*) uptr))))
+  (define c-statx
+    (and libc-loaded? (eq? os 'linux)
+         (guard (ex [else #f])
+           (foreign-procedure __collect_safe "statx" (int u8* int unsigned u8*) int))))
   (define c-gethostname
     (and libc-loaded?
          (guard (ex [else #f])
@@ -718,6 +722,54 @@
          (let ([out (make-bytevector 4096 0)])
            (and (not (= (c-realpath path out) 0))
                 (nul-terminated-string out)))))
+
+  (define file-info
+    ;; #(kind permissions byte-size modified-ns created-ns), or #f when
+    ;; inaccessible. Never open the file to obtain metadata: a device/FIFO
+    ;; must not turn directory browsing into a read. Unknown fields are #f.
+    ;; Linux's fixed statx ABI includes birth time; ctime is not creation.
+    (case-lambda
+      [(path) (file-info path #f)]
+      [(path follow?)
+       (define (portable)
+         (guard (ex [else #f])
+           (and (file-exists? path follow?)
+                (vector (cond [(and (not follow?) (file-symbolic-link? path)) 'link]
+                              [(file-directory? path follow?) 'directory]
+                              [(file-regular? path follow?) 'file]
+                              [else 'special])
+                  (guard (ex [else #f]) (get-mode path)) #f
+                  (guard (ex [else #f])
+                    (let ([t (file-modification-time path)])
+                      (+ (* (time-second t) 1000000000) (time-nanosecond t)))) #f))))
+       (unless (and (string? path) (not (memv #\nul (string->list path))))
+         (error 'file-info "expected a path without NUL" path))
+       (if (not c-statx) (portable)
+           (let ([name (string->utf8 (string-append path (string #\nul)))]
+                 [out (make-bytevector 256 0)])
+             (define (stamp offset)
+               (+ (* (bytevector-s64-native-ref out offset) 1000000000)
+                  (bytevector-u32-native-ref out (+ offset 8))))
+             (dynamic-wind
+               (lambda () (lock-object name) (lock-object out))
+               (lambda ()
+                 ;; AT_FDCWD, AT_NO_AUTOMOUNT, optional NOFOLLOW, and the
+                 ;; requested TYPE/MODE/SIZE/MTIME/BTIME fields. Both buffers
+                 ;; are pinned while a slow filesystem lets other threads GC.
+                 (if (zero? (c-statx -100 name (if follow? #x800 #x900) #xa43 out))
+                     (let ([mask (bytevector-u32-native-ref out 0)]
+                           [mode (bytevector-u16-native-ref out 28)])
+                       (vector
+                         (case (logand mode #o170000)
+                           [(#o040000) 'directory] [(#o100000) 'file]
+                           [(#o120000) 'link] [else 'special])
+                         (and (not (zero? (logand mask 2))) (logand mode #o7777))
+                         (and (not (zero? (logand mask #x200))) (bytevector-u64-native-ref out 40))
+                         (and (not (zero? (logand mask #x40))) (stamp 112))
+                         (and (not (zero? (logand mask #x800))) (stamp 80))))
+                     ;; Older kernels can have libc's entry but no syscall.
+                     (and (= (foreign-ref 'int (c-errno) 0) 38) (portable))))
+               (lambda () (unlock-object out) (unlock-object name)))))]))
 
   ;; The destination for terminal-control output. Normally this is stdout;
   ;; clients that temporarily redirect process stdout can preserve a separate
