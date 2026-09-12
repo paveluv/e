@@ -2895,7 +2895,7 @@
   (define buffer-descending? #f)
   (define buffer-headings '#("Buffer" "Lines" "Mode" "File"))
   (define buffer-columns '())       ; (column start-character end-character)
-  (define buffer-count 0)
+  (define buffer-first-row 2)       ; sticky filter and column headings
   (define-record-type buffer-choice (fields (mutable origin) (mutable selected)))
   (define buffer-choices (make-weak-eq-hashtable))
   ;; The pointer's candidate is an identity, not an unstable rendered row.
@@ -2904,10 +2904,11 @@
   (define hover #f)
 
   (define (buffer-at-row row)
-    (and (<= 1 row (length buffer-rows)) (list-ref buffer-rows (- row 1))))
+    (and (<= buffer-first-row row (+ buffer-first-row (length buffer-rows) -1))
+         (list-ref buffer-rows (- row buffer-first-row))))
 
   (define (buffer-row b)
-    (let loop ([left buffer-rows] [row 1])
+    (let loop ([left buffer-rows] [row buffer-first-row])
       (cond [(null? left) #f]
             [(eq? (car left) b) row]
             [else (loop (cdr left) (+ row 1))])))
@@ -2930,11 +2931,15 @@
   (define (buffers-styles b row line)
     ;; A row provider sees live metadata even if its printed text is equal.
     ;; A text-only style cache cannot notice modified -> saved transitions.
-    (make-vector (string-length line)
-                 (cond [(zero? row) 'bold]
-                       [(not (buffer-at-row row)) 'chrome]
-                       [(head:buffer-modified (buffer-at-row row)) 'italic]
-                       [else 'plain])))
+    (let ([styles
+           (make-vector (string-length line)
+             (cond [(zero? row) 'plain]
+                   [(< row buffer-first-row) 'header]
+                   [(not (buffer-at-row row)) 'chrome]
+                   [(head:buffer-modified (buffer-at-row row)) 'italic]
+                   [else 'plain]))])
+      (when (zero? row) (style:fill-range! styles 0 (min 8 (vector-length styles)) 'chrome))
+      styles))
 
   (define (buffer-data b)
     (vector (head:buffer-name b) (buffer-line-count b)
@@ -3002,7 +3007,9 @@
           (if (null? columns) '()
               (let ([end (+ start (vector-ref sizes (car columns)))])
                 (cons (list (car columns) start end) (bounds (cdr columns) (+ end 2)))))))
-      (cons (row #f #t)
+      (cons* (string-append (glyph:fit "Filter: " (min 8 width))
+               (glyph:fit buffer-filter (max 0 (- width 8)) 'left))
+        (row #f #t)
         (if (null? entries) (list (glyph:fit "No matching buffers" width))
             (map (lambda (entry) (row (cdr entry) #f)) entries)))))
 
@@ -3014,7 +3021,6 @@
                [saved (map (lambda (w)
                              (list w (buffer-choice-for w) (buffer-at-row (head:window-top w))))
                         (filter (lambda (w) (eq? (head:window-buffer w) buffers-view)) windows))])
-          (set! buffer-count (length all))
           (set! buffer-rows (map car entries))
           (when (and hover (not (memq (cdr hover) buffer-rows))) (set! hover #f))
           (let ([placements
@@ -3022,10 +3028,10 @@
                    (map (lambda (entry)
                           (let* ([w (car entry)] [choice (cadr entry)]
                                  [selected (buffer-choice-selected choice)]
-                                 [row (or (buffer-row selected) (and (pair? buffer-rows) 1))])
+                                 [row (or (buffer-row selected) (and (pair? buffer-rows) buffer-first-row))])
                             (when row (buffer-choice-selected-set! choice (buffer-at-row row)))
-                            (list (cons w (cons (or row 1) 0))
-                                  (cons (cons 'top w) (cons (or (buffer-row (caddr entry)) 1) 0))))) saved))])
+                            (list (cons w (cons (or row buffer-first-row) 0))
+                                  (cons (cons 'top w) (cons (or (buffer-row (caddr entry)) buffer-first-row) 0))))) saved))])
             (head:view-replace! buffers-view
               (buffer-table entries all (or (head:buffer-narrowest-width buffers-view)
                                           (head:window-content-width current-window)))
@@ -3038,11 +3044,12 @@
         (goto-point! (cons row 0)))))
 
   (define (move-buffer-row! delta)
-    (let ([row (or (buffer-row (buffer-candidate current-window)) 1)])
+    (let ([row (or (buffer-row (buffer-candidate current-window)) buffer-first-row)])
       (set! hover #f)
       (when (pair? buffer-rows)
         (select-buffer-row!
-          (buffer-at-row (min (max 1 (+ row delta)) (length buffer-rows)))))))
+          (buffer-at-row (min (max buffer-first-row (+ row delta))
+                              (+ buffer-first-row (length buffer-rows) -1)))))))
 
   (define (activate-buffer-row!)
     ;; A panel click changes the previously focused window. Keyboard use
@@ -3059,29 +3066,19 @@
     (set! buffer-filter text)
     (refresh-buffers-view!))
 
-  (define (buffers-status b)
-    (let* ([candidate (cond [(eq? (current-buffer) b) (buffer-candidate current-window)]
-                            [(and hover (memq (cdr hover) buffer-rows)) (cdr hover)]
-                            [else (current-buffer)])]
-           [count (if (string=? buffer-filter "") (format "~a buffers" buffer-count)
-                      (format "~a/~a" (length buffer-rows) buffer-count))]
-           [room (max 1 (- (or (head:buffer-narrowest-width b) 80) 12))]
-           [query (if (string=? buffer-filter "") #f
-                      (string-append "Filter: "
-                        (glyph:fit buffer-filter
-                          (min (glyph:cells buffer-filter) 32 (max 1 (- room (glyph:cells count) 10))) 'left)))])
-      ;; Retain the typed tail, then add whole details/hints that fit. A
-      ;; cropped help string must not look like more elision of the filter.
-      (let add ([text (if query (string-append count "  " query) count)]
-                [details (list (and candidate (head:buffer-modified candidate) "modified")
-                               (and candidate (head:buffer-read-only candidate) "read-only")
-                               (and (not query) "Type to filter")
-                               "↑↓ choose" "Enter open" "Esc return" "C-u clear")])
-        (if (null? details) text
-            (add (if (and (car details)
-                          (<= (+ (glyph:cells text) 2 (glyph:cells (car details))) room))
-                     (string-append text "  " (car details)) text)
-              (cdr details))))))
+  (define (buffers-status-hint)
+    ;; Ordinary status hints are called only for the focused window, even
+    ;; when another window shows this same app. Keep whole hints that fit.
+    (and (eq? (current-buffer) buffers-view)
+         (let ([room (- (head:window-width current-window)
+                        (glyph:cells (format "~a▏~a [↕][↔][×]"
+                                       (head:window-index current-window) (head:buffer-name buffers-view))))])
+           (let add ([text ""]
+                     [hints '("Type to filter" "↑↓ choose" "Enter open" "Esc return" "C-u clear")])
+             (if (null? hints) text
+                 (add (if (<= (+ (glyph:cells text) 2 (glyph:cells (car hints))) room)
+                          (string-append text "  " (car hints)) text)
+                   (cdr hints)))))))
 
   (define (handle-buffers-event! event)
     (cond [(string=? event "FOCUS") (refresh-buffers-view!) #t]
@@ -3091,7 +3088,7 @@
           [(member event '("END" "C-e" "M->")) (move-buffer-row! (length buffer-rows)) #t]
           [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
            (move-buffer-row! (* (if (member event '("PAGEUP" "M-v")) -1 1)
-                               (max 1 (- (head:window-size current-window) 1)))) #t]
+                               (max 1 (- (head:window-size current-window) buffer-first-row)))) #t]
           [(string=? event "RET") (activate-buffer-row!) #t]
           [(member event '("ESC" "C-g"))
            (let* ([origin (buffer-choice-origin (buffer-choice-for current-window))]
@@ -3119,7 +3116,7 @@
            (select-buffer-row! (buffer-choice-selected (buffer-choice-for current-window))) #t]
           [(string=? event "MOUSE-CLICK")
            (let* ([at (app-event-buffer-position)] [b (and at (buffer-at-row (car at)))]
-                  [column (and at (zero? (car at))
+                  [column (and at (= (car at) (- buffer-first-row 1))
                                (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
                                  buffer-columns))])
              (cond [b (set! hover #f) (select-buffer-row! b) (activate-buffer-row!) 'keep-focus]
@@ -3162,9 +3159,9 @@
                                handle-buffers-event!))
           ;; A position bar on the configured side, only while the rows
           ;; overflow the window.
-          (head:set-app-presentation! buffers-view 1 'auto #f)
+          (head:set-app-presentation! buffers-view buffer-first-row 'auto #f)
           (head:set-app-cursor-visible! buffers-view #f)
-          (head:set-app-status-position! buffers-view buffers-status)
+          (head:set-app-status-position! buffers-view head:buffer-name)
           (head:buffer-line-numbers-setting-set! buffers-view #f)
           (mode:choose! buffers-view "buffers")
           (refresh-buffers-view!)
@@ -3345,6 +3342,7 @@
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the next buffer in alphabetical order, wrapping at the end.")))
     (buffers-view-buffer)
+    (paint:add-status-hint! buffers-status-hint)
     (head:add-buffer-kill-hook!
       (lambda (b)
         ;; A hidden picker must not keep a killed document's text alive.

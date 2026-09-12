@@ -280,8 +280,10 @@ the documents; the switcher itself never becomes the default or a table row.
 
 Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted
-text also filters. Backspace removes the last character cluster, and C-u
-clears the filter. The selected buffer stays selected while it matches;
+text also filters. The first line shows `Filter: ` followed by the query;
+a long query keeps its most recently typed characters visible. Backspace
+removes the last character cluster, and C-u clears the filter. The selected
+buffer stays selected while it matches;
 otherwise the first match becomes the candidate. Empty results show
 `No matching buffers`, and Enter leaves the filter available for correction.
 
@@ -306,7 +308,9 @@ without case distinctions; line counts sort numerically. Names break ties.
 The default is Buffer ascending, and the chosen sort survives reopening.
 Selection follows buffer identity across sorting, renaming and live updates.
 
-The header stays visible while rows scroll. Rows fit the narrowest window
+The filter and underlined column headings stay visible while rows scroll.
+The subdued `header` face distinguishes headings from the bold candidate,
+including when only one match remains. Rows fit the narrowest window
 showing the app and never wrap. Long paths keep their tail, with `…` marking
 the omitted beginning. Names elide at the end. Narrow panes omit metadata
 columns before names and paths, while retaining the active sort heading.
@@ -321,10 +325,10 @@ keyboard candidate. Hover neither scrolls nor takes focus. Modified rows are
 italic. These faces are configurable through [Styles](STYLES.md).
 
 There is no text cursor. Keyboard selection still scrolls into view. The
-status bar shows buffer/match counts, the filter, the candidate's modified
-and read-only state, and controls as space permits. A long filter keeps its
-most recently typed characters visible. Creation, deletion, edits, saves,
-renames and mode/file changes appear on redraw.
+status bar shows `<buffers>` and, only in the focused window, keyboard hints
+as space permits. Window numbers and controls remain available in every
+window. Creation, deletion, edits, saves, renames and mode/file changes
+appear on redraw.
 
 ### Keyboard and mouse controls
 

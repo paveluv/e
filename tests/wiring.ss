@@ -54,6 +54,16 @@
            (cond [(> (+ i len) (string-length line)) #f]
                  [(string=? (substring line i (+ i len)) needle) #t]
                  [else (scan (+ i 1))]))))
+     (define (buffers-bar index)
+       (let* ([prefix (format "~a▏<buffers>" index)]
+              [line (find (lambda (line) (string:search line prefix 0 (string-length line)))
+                      (vector->list (vt:emulator-screen mirror)))]
+              [start (and line (+ (string:search line prefix 0 (string-length line)) (string-length prefix)))]
+              [end (and start (string:search line " [↕][↔][×]" start (string-length line)))])
+         (and end (substring line start end))))
+     (define (quiet-buffers-bar? index)
+       (let ([text (buffers-bar index)])
+         (and text (for-all char-whitespace? (string->list text)))))
 
      ;; ask the editor whether the current buffer's lines equal its
      ;; store twin's, writing the verdict to the probe file
@@ -126,7 +136,7 @@
             (let* ([view (head:find-tool-buffer "*buffers*")]
                    [w (find (lambda (w) (eq? (head:window-buffer w) view)) (head:windows))]
                    [row-of (lambda (name)
-                             (let loop ([i 1])
+                             (let loop ([i 2])
                                (cond [(= i (buffer-line-count view)) (error 'panel "missing row" name)]
                                      [(string:prefix? name (buffer-line view i)) i]
                                      [else (loop (+ i 1))])))]
@@ -157,8 +167,7 @@
        (check 'hovered-buffers-row-is-bold-and-blue-row-is-state
          (list (and (member "1" (sgr-params hovered)) (not (member "4" (sgr-params hovered))))
                (and (string:search own "48;5;31" 0 (string-length own)) #t)
-               (and (exists (lambda (line) (string:search line "read-only" 0 (string-length line)))
-                      (vector->list (vt:emulator-screen mirror))) #t)
+               (quiet-buffers-bar? 1)
                (equal? echo-before echo-after)
                (read-editor '(list (head:buffer-name (current-buffer)) (head:window-index (selected-window)))))
          (list #t #t #t #t (list (car panel) (cadr panel)))))
@@ -242,6 +251,10 @@
             was)))
      (define (picker-state)
        (read-editor '(list (head:buffer-name (current-buffer)) (point))))
+     (define (picker-face name face)
+       (let* ([cell (find-cell name)]
+              [value (and cell (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell)) (cdr cell)))])
+         (and (member face (sgr-params value)) #t)))
      (check 'both-switch-shortcuts-keep-the-previous-document-default
        (map (lambda (keys) (press! (string-append keys "\r")) (picker-state))
          '("\x18;b" "\x18;\x02;" "\x18;b" "\x18;\x02;"))
@@ -252,12 +265,16 @@
        (map (lambda (needle)
               (press! (string-append "\x15;\x1b;[200~" needle "\x1b;[201~"))
               (read-editor '(list (buffer-line-count (current-buffer))
-                                  (substring (buffer-line (current-buffer) 1) 0 13))))
+                                  (substring (buffer-line (current-buffer) 2) 0 13))))
          '("kEr-BeTa" "project/alpha/src" "日本語"))
-       '((2 "<picker-beta>") (2 "<picker-beta>") (2 "<picker-alpha")))
+       '((3 "<picker-beta>") (3 "<picker-beta>") (3 "<picker-alpha")))
      (press! "e\x301;\x7f;")
-     (check 'filter-backspace-removes-a-whole-combining-cluster
-       (visible? "Filter: 日本語") #t)
+     (check 'filter-backspace-and-distinct-header-with-a-single-match
+       (list (screen-has? 0 "Filter: 日本語") (screen-has? 1 "Buffer ↑")
+             (picker-face "Buffer ↑" "4") (picker-face "Buffer ↑" "1")
+             (picker-face "<picker-alpha" "1")
+             (string:prefix? "  Type to filter  ↑↓ choose  Enter open  Esc return  C-u clear" (buffers-bar 0)))
+       '(#t #t #t #f #t #t))
      (press! "\x15;no-such-buffer\r")
      (check 'empty-results-never-create-a-buffer-or-leave-the-list
        (list (visible? "No matching buffers")
@@ -268,7 +285,7 @@
      (press! "\x18;bpicker-")
      (define (picker-names)
        (map (lambda (line) (substring line 0 (+ 1 (string:search line ">" 0 (string-length line)))))
-         (cdr (read-editor '(vector->list (head:buffer-lines (current-buffer)))))))
+         (cddr (read-editor '(vector->list (head:buffer-lines (current-buffer)))))))
      (define (picker-selected?)
        (read-editor '(string:prefix? "<picker-alpha>" (buffer-line (current-buffer) (car (point))))))
      (check 'column-sorts-toggle-numerically-or-lexically-without-changing-selection
@@ -287,17 +304,11 @@
          ((#t ("<picker-alpha>" "<picker-beta>" "<picker-gamma>") #t)
           (#t ("<picker-gamma>" "<picker-beta>" "<picker-alpha>") #t))))
      (click! (find-cell "Buffer"))
-     (define (picker-face name face)
-       (let* ([cell (find-cell name)]
-              [value (and cell (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell)) (cdr cell)))])
-         (and (member face (sgr-params value)) #t)))
-     (read-editor '(begin (head:buffer-modified-set! (buffer "<picker-alpha>") #t)
-                          (head:buffer-read-only-set! (buffer "<picker-alpha>") #t) #t))
-     (let ([marked (list (picker-face "<picker-alpha>" "3") (visible? "modified") (visible? "read-only"))])
+     (read-editor '(begin (head:buffer-modified-set! (buffer "<picker-alpha>") #t) #t))
+     (let ([marked (picker-face "<picker-alpha>" "3")])
        (read-editor '(begin (head:buffer-modified-set! (buffer "<picker-alpha>") #f) #t))
-       (check 'metadata-styles-and-status-refresh-when-row-text-does-not-change
-         (list marked (picker-face "<picker-alpha>" "3") (visible? "modified"))
-         '((#t #t #t) #f #f)))
+       (check 'metadata-styles-refresh-when-row-text-does-not-change
+         (list marked (picker-face "<picker-alpha>" "3")) '(#t #f)))
      (let ([cell (find-cell "<picker-beta>")])
        (press! (format "\x1b;[<35;~a;~aM" (+ (cdr cell) 1) (+ (car cell) 1))))
      (check 'hover-has-one-candidate-and-hides-the-text-cursor
@@ -321,7 +332,12 @@
        (list (visible? "…") (visible? "beta.ss")
              (read-editor '(list (buffer-line-count (current-buffer))
                                  (paint:window-wrapped? (selected-window)))))
-       '(#t #t (4 #f)))
+       '(#t #t (5 #f)))
+     (resize! 6 32)
+     (press! "\x1b;[F")
+     (check 'filter-and-headings-stay-visible-while-browsing-a-short-pane
+       (list (screen-has? 0 "Filter: picker-") (screen-has? 1 "Buffer ↑")
+             (picker-face "100" "1")) '(#t #t #t))
      (press! "\x15;some-long-filter-ending-日本語")
      (check 'narrow-filter-shows-its-newest-characters-and-keeps-window-controls
        (list (visible? "日本語") (visible? "[↕][↔][×]")) '(#t #t))
@@ -332,16 +348,17 @@
      (read-editor '(begin (other-window!) #t))
      (click! (find-cell "Buffer"))
      (check 'two-list-windows-keep-independent-identities-through-a-sort
-       (read-editor
-         '(map (lambda (w) (substring (buffer-line (head:window-buffer w) (head:window-prow w)) 0 13))
-            (head:windows)))
-       '("<picker-alpha" "<picker-beta>"))
+       (list (read-editor
+               '(map (lambda (w) (substring (buffer-line (head:window-buffer w) (head:window-prow w)) 0 13))
+                  (head:windows)))
+             (string:prefix? "  Type to filter" (buffers-bar 0)) (quiet-buffers-bar? 1))
+       '(("<picker-alpha" "<picker-beta>") #t #t))
      (read-editor '(begin (delete-other-windows!) (set-buffer-name! (buffer "<picker-alpha>") "picker-delta") #t))
      (check 'renaming-the-selected-buffer-does-not-move-selection-to-another-identity
        (read-editor '(string:prefix? "<picker-delta>" (buffer-line (current-buffer) (car (point))))) #t)
      (read-editor '(begin (kill-buffer! (buffer "<picker-delta>")) #t))
      (check 'deleting-a-selected-buffer-leaves-a-live-candidate
-       (read-editor '(and (<= 1 (car (point)) (- (buffer-line-count (current-buffer)) 1)) #t)) #t)
+       (read-editor '(and (<= 2 (car (point)) (- (buffer-line-count (current-buffer)) 1)) #t)) #t)
      (click! (find-cell "Buffer"))
      (press! "\x07;")
      (check 'killed-switcher-recreates-its-app-presentation

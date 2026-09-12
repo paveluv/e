@@ -328,9 +328,9 @@ returned zero-based `(row . column)` projects the status position onto source
 text. A returned string replaces the usual buffer details with operation
 text, while retaining the window number and controls. Temporary prompts use
 this for key hints and completion page counts; the buffers app shows its
-filter, counts and selected-buffer state. Status text fits terminal cells,
-including wide characters, so window controls keep their positions. `#f`
-restores the default.
+name and adds keyboard hints only in the focused window. Status text fits
+terminal cells, including wide characters, so window controls keep their
+positions. `#f` restores the default.
 
 The same bar is off for ordinary buffers by default; `(scrollbar #t)`
 enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
@@ -357,9 +357,9 @@ windows showing the same app.
 table with an incremental name/path filter, sortable headings, and selection
 preserved by buffer identity. Each window keeps its own candidate and point;
 the filter and sort belong to the local app. Its rows fit the narrowest
-visible window, with a sticky header, elided paths, automatic scrollbar and
-hidden cursor. See [Using the buffers app](BUFFERS.md#the-buffers-app) for the
-complete keyboard, mouse and cancellation behavior.
+visible window, with sticky filter and heading rows, elided paths, automatic
+scrollbar and hidden cursor. See [Using the buffers app](BUFFERS.md#the-buffers-app)
+for the complete keyboard, mouse and cancellation behavior.
 
 Status-bar clicks always focus their window; app handlers cannot override
 them. `<buffers>` returns `keep-focus` for content clicks because the click's
