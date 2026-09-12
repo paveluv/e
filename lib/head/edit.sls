@@ -2454,6 +2454,7 @@
   (define (end-of-line!) (set! point-col (string-length (current-line))))
   (define (keyboard-quit!) (set! mark-active? #f) (set! message "Quit"))
   (define (redraw-command!)
+    (tty:query-color-scheme!)
     (paint:mark-size-dirty!) (paint:erase-screen!) (set! message "Screen redrawn"))
   (define (open-line!)
     (parameterize ([edit-point 'start]) (newline!)))
@@ -3263,6 +3264,8 @@
                                 'red)))))))
     (style:set-changed-hook!
       (lambda () (paint:invalidate-screen-cache!)))
+    (style:color-scheme! (head:host-color-scheme))
+    (head:add-color-scheme-hook! style:color-scheme!)
     (head:add-shutdown-hook! (lambda () (head:flush-ui-audit! 'all)))
     ;; the global commands a prompt may run without losing its input:
     ;; pure window management, and a prompt-safe stand-in for the one

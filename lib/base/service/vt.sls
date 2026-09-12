@@ -13,7 +13,7 @@
   (import (chezscheme) (prefix (kernel) kernel:) (prefix (string) string:)
           (prefix (datum) datum:) (prefix (sys) sys:) (prefix (actor) actor:)
           (prefix (store) store:) (prefix (surface) surface:) (prefix (text) text:)
-          (prefix (glyph) glyph:))
+          (prefix (glyph) glyph:) (prefix (color) color:))
 
   (define-record-type terminal-state
     (nongenerative e-vt-terminal-state-v1)
@@ -1375,28 +1375,6 @@
     ;; VT100 with advanced video: matches xterm-256color's terminfo probe.
     (terminal-reply! state "\x1b;[?1;2c"))
 
-  (define (hex-component text)
-    (and (> (string-length text) 0)
-         (let ([value (string->number text 16)]
-               [maximum (- (expt 16 (string-length text)) 1)])
-           (and value (inexact->exact (round (* 255 (/ value maximum))))))))
-
-  (define (parse-osc-color text)
-    (cond
-      [(string:prefix? "rgb:" text)
-       (let ([parts (split-parameter
-                      (substring text 4 (string-length text)) #\/)])
-         (and (= (length parts) 3)
-              (let ([values (map hex-component parts)])
-                (and (for-all integer? values) values))))]
-      [(and (= (string-length text) 7) (char=? (string-ref text 0) #\#))
-       (let ([values
-              (map (lambda (start)
-                     (hex-component (substring text start (+ start 2))))
-                   '(1 3 5))])
-         (and (for-all integer? values) values))]
-      [else #f]))
-
   (define (osc-color-text color)
     (define (component value)
       (let ([hex (format "~x" value)])
@@ -1422,7 +1400,7 @@
          (format "\x1b;]~a;~a\x1b;\\"
                  (if foreground? 10 11)
                  (osc-color-text (default-color state foreground?))))]
-      [(parse-osc-color specification) =>
+      [(color:parse specification) =>
        (lambda (color)
          (if foreground?
              (terminal-state-default-foreground-set! state color)
@@ -1436,7 +1414,7 @@
         (when (and (pair? fields) (pair? (cdr fields)))
           (let ([index (string->number (car fields))]
                 [specification (cadr fields)])
-            (when (and (integer? index) (<= 0 index 255))
+            (when (and (integer? index) (exact? index) (<= 0 index 255))
               (if (string=? specification "?")
                   (terminal-reply!
                     state
@@ -1445,7 +1423,7 @@
                             (osc-color-text
                               (or (vector-ref palette index)
                                   (vector-ref (make-default-palette) index)))))
-                  (cond [(parse-osc-color specification) =>
+                  (cond [(color:parse specification) =>
                          (lambda (color)
                            (vector-set! palette index color)
                            (invalidate-rendered-scrollback! state)
@@ -1552,7 +1530,7 @@
              (for-each
                (lambda (field)
                  (let ([index (string->number field)])
-                   (when (and (integer? index) (<= 0 index 255))
+                   (when (and (integer? index) (exact? index) (<= 0 index 255))
                      (vector-set! (terminal-state-palette state) index #f))))
                (cdr fields)))
          (invalidate-rendered-scrollback! state)

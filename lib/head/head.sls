@@ -451,26 +451,27 @@
     ;; frame checkpoints the screen the user will return to.
     (when (and (in-main-pump) (eq? (startup:mode) 'attach)) (checkpoint! 'idle)))
 
-  ;; The host's color scheme, learned from its DSR 997 reports (mode
-  ;; 2031 subscribes to them at startup): #f until the host says, then
-  ;; 'dark or 'light.  Hooks run on the main thread whenever a report
-  ;; arrives, so the terminal module can forward the change to
-  ;; subscribed children.
+  ;; The host's color scheme: prefer DSR 997 reports, with the OSC 11
+  ;; background as a fallback for older terminals. Hooks run on the main
+  ;; thread when the scheme changes, updating faces and terminal children.
   (define host-color-scheme-value #f)
+  (define host-color-scheme-reported? #f)
 
   (define (host-color-scheme) host-color-scheme-value)
 
-  (define color-scheme-hooks '())
+  (define color-scheme-hooks (kernel:make-registry))
 
   (define (add-color-scheme-hook! hook)
     (unless (procedure? hook)
       (error 'add-color-scheme-hook! "expected a procedure" hook))
-    (set! color-scheme-hooks (cons hook color-scheme-hooks)))
+    (kernel:registry-add! color-scheme-hooks hook))
 
   (define (note-color-scheme! scheme)
-    (set! host-color-scheme-value scheme)
-    (for-each (lambda (hook) (guard (ex [else (void)]) (hook scheme)))
-              color-scheme-hooks))
+    (unless (eq? scheme host-color-scheme-value)
+      (set! host-color-scheme-value scheme)
+      (for-each (lambda (hook) (guard (ex [else (void)]) (hook scheme)))
+                (kernel:registry-items color-scheme-hooks))
+      (wake-main!)))
 
   ;; The seat's lifetime, and the command the dispatcher ran last (kill
   ;; chaining and typed runs ask).
@@ -536,7 +537,15 @@
                    (set! pending-paste (cdr event))
                    "PASTE"]
                   [(eq? (car event) 'host-color-scheme)
+                   (set! host-color-scheme-reported? #t)
                    (note-color-scheme! (cadr event))
+                   (pump)]
+                  [(eq? (car event) 'host-background)
+                   (unless host-color-scheme-reported?
+                     ;; Approximate brightness on the reported RGB scale.
+                     (note-color-scheme!
+                       (if (< (apply + (map * '(299 587 114) (cdr event))) 127500)
+                           'dark 'light)))
                    (pump)]
                   [else (pump)]))]
              [(wake)

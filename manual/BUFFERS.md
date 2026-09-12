@@ -330,9 +330,12 @@ recorded time is retained. Unchanged edits and other metadata changes preserve
 it. Every attached head sees the time recorded by the buffer's owner.
 
 The filter and underlined column headings stay visible while rows scroll.
-The `header` face uses light gray, underlined text on a charcoal background.
-This band distinguishes headings from the muted gray filter label and the
-bold candidate, including when only one match remains.
+The `header` face uses underlined text on a neutral band: light gray text on
+medium gray for dark terminals, dark text on pale gray for light terminals.
+The band distinguishes headings from the muted gray filter label and the
+bold candidate, including when only one match remains. Theme changes update
+automatically when reported by the terminal; use C-l to refresh older
+terminals after changing their theme.
 Rows fit the narrowest window showing the app and never wrap. Long paths
 keep their tail, with `…` marking
 the omitted beginning. Names elide at the end. Narrow panes omit metadata

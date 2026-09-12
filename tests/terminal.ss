@@ -819,7 +819,9 @@
                      (vector-ref
                        (vector-ref (vt:emulator-styles terminal) 0) 0))
                 #f))
-       (vt:emulator-feed! terminal "\x1b;]4;1;?\x7;")
+       ;; Malformed components or inexact indices must neither replace the
+       ;; palette nor raise from Scheme's numeric parser/vector operations.
+       (vt:emulator-feed! terminal "\x1b;]4;1;rgb:1+i/0/0\x7;\x1b;]4;1;rgb:-f/0/0\x7;\x1b;]4;1.0;?\x7;\x1b;]104;1.0\x7;\x1b;]4;1;?\x7;")
        (check 'osc-palette-query
               (vt:emulator-replies terminal)
               '("\x1b;]4;1;rgb:1212/3434/5656\x1b;\\")))

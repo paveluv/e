@@ -203,11 +203,11 @@
       ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
       ;; making a paste one identifiable edit; others ignore the mode.
       ;; Mouse tracking likewise (see mouse!).
-      ;; Mode 2031 subscribes to the host's color-scheme change reports
-      ;; and DSR 996 asks for the current one; hosts without the feature
-      ;; ignore both.
+      ;; Mode 2031 subscribes to theme changes. Query both the scheme and
+      ;; the background color so older hosts can supply a fallback.
       (lambda () (sys:terminal-raw!)
-        (paint:ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h\x1b;[?996n")
+        (paint:ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h")
+        (tty:query-color-scheme!)
         (tty:mouse-reporting! #t)
         (paint:set-screen-live! #t)
         (head:start-input-reader!))

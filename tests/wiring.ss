@@ -252,10 +252,11 @@
             was)))
      (define (picker-state)
        (read-editor '(list (head:buffer-name (current-buffer)) (point))))
+     (define (picker-style name)
+       (let ([cell (find-cell name)])
+         (and cell (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell)) (cdr cell)))))
      (define (picker-face name face)
-       (let* ([cell (find-cell name)]
-              [value (and cell (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell)) (cdr cell)))])
-         (and (member face (sgr-params value)) #t)))
+       (and (member face (sgr-params (picker-style name))) #t))
      (define (picker-sequence proc items)
        ;; map does not promise effect order; click/keypress sequences do.
        (reverse (fold-left (lambda (results item) (cons (proc item) results)) '() items)))
@@ -279,6 +280,28 @@
              (picker-face "<picker-alpha" "1")
              (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)))
        '(#t #t #t #f #t #t))
+     ;; Reports repaint the existing table while the user is idle. OSC 11
+     ;; works on older hosts; an explicit scheme report takes precedence.
+     (let* ([filter-row (screen-line 0)] [candidate (picker-style "<picker-alpha")]
+            [background-queries
+             (lambda ()
+               (length (filter (lambda (reply) (string:prefix? "\x1b;]11;" reply))
+                         (vt:emulator-replies mirror))))]
+            [queries-before (background-queries)])
+       (press! "\x0c;")
+       (check 'buffer-heading-theme-reports-repaint-without-changing-the-filter
+         (list (> queries-before 0) (= (background-queries) (+ queries-before 1))
+           (picker-sequence
+             (lambda (report)
+               (press! report)
+               (list (picker-style "Buffer")
+                     (and (equal? filter-row (screen-line 0))
+                          (equal? candidate (picker-style "<picker-alpha")))))
+             '("\x1b;]11;rgb:ffff/ffff/ffff\x7;" "\x1b;]11;rgb:0/0/0\x1b;\\"
+               "\x1b;[?997;2n" "\x1b;]11;rgb:0/0/0\x7;" "\x1b;[?997;1n")))
+         '(#t #t (("0;38;5;236;48;5;253;4" #t) ("0;38;5;252;48;5;240;4" #t)
+                  ("0;38;5;236;48;5;253;4" #t) ("0;38;5;236;48;5;253;4" #t)
+                  ("0;38;5;252;48;5;240;4" #t)))))
      (press! "\x15;no-such-buffer\r")
      (check 'empty-results-never-create-a-buffer-or-leave-the-list
        (list (visible? "No matching buffers")

@@ -11,9 +11,34 @@
 
 (eval
   '(begin
-     (import (edit) (prefix (style) style:) (prefix (test) test:))
+     (import (edit) (prefix (style) style:) (prefix (test) test:)
+             (prefix (kernel) kernel:))
 
      (define check test:check)
+
+     ;; Theme changes invalidate cached ink, preserve explicit overrides,
+     ;; and leave faces with no light variant alone. Repeated reports are inert.
+     (let ([dark (style:code 'header)] [chrome (style:code 'chrome)] [changes 0])
+       (style:set-changed-hook! (lambda () (set! changes (+ changes 1))))
+       (style:color-scheme! #f)
+       (style:color-scheme! 'light)
+       (let ([light (style:code 'header)])
+         (style:color-scheme! 'light)
+         (parameterize ([kernel:registering-module 'style-test])
+           (style:set! 'header '(reverse)))
+         (style:color-scheme! 'dark)
+         (let ([override (style:code 'header)])
+           (style:color-scheme! 'light)
+           (let ([kept? (equal? override (style:code 'header))])
+             (kernel:retract-module! 'style-test)
+             (check 'theme-defaults-overrides-and-repaint
+               (list (not (equal? dark light)) (equal? chrome (style:code 'chrome))
+                     (equal? override (style:escape '(reverse))) kept?
+                     (equal? light (style:code 'header)) changes
+                     (guard (ex [else 'rejected]) (style:color-scheme! 'invalid)))
+               '(#t #t #t #t #t 4 rejected)))))
+       (style:set-changed-hook! #f)
+       (style:color-scheme! #f))
 
      (check 'surface-sgr-values-are-parameters-only
        (map style:code '("" "31" "4:3;38:2::1:2:3" "31mBAD" "\x1b;[31" "31\n"))

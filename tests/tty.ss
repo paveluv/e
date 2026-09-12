@@ -82,13 +82,27 @@
             (events "\x1b;[200~a\x1b;[Bb\x1b;[201~")
             '((paste . "a\x1b;[Bb")))
 
-     (check 'color-scheme-report (events "\x1b;[?997;1n")
-            '((host-color-scheme dark)))
-     (check 'light-report (events "\x1b;[?997;2n")
-            '((host-color-scheme light)))
+     (check 'theme-reports-and-background-color-formats
+       (map events '("\x1b;[?997;1n" "\x1b;[?997;2n"
+                     "\x1b;]11;rgb:0/0/0\x7;" "\x1b;]11;rgb:ff/ff/ff\x1b;\\"
+                     "\x1b;]11;rgb:1234/abcd/FfFf\x7;" "\x1b;]11;#123456\x7;"))
+       '(((host-color-scheme dark)) ((host-color-scheme light))
+         ((host-background 0 0 0)) ((host-background 255 255 255))
+         ((host-background 18 171 255)) ((host-background 18 52 86))))
 
-     ;; an unknown host report is swallowed, never leaks as typed text
-     (check 'unknown-report-swallowed (events "\x1b;[?42;0nq") '("q"))
+     ;; Invalid or unknown replies never become typed text or kill the reader.
+     (let ([reports
+            (append '("\x1b;[?42;0n" "\x1b;[?997n" "\x1b;[?997;0n" "\x1b;[?997;2;1n"
+                      "\x1b;]10;rgb:ff/ff/ff\x7;" "\x1b;]11;rgb:/ff/ff\x7;"
+                      "\x1b;]11;rgb:1+i/ff/ff\x7;" "\x1b;]11;rgb:+f/ff/ff\x7;"
+                      "\x1b;]11;rgb:12345/ff/ff\x1b;\\" "\x1b;]11;rgb:ff/ff/ff/ff\x7;"
+                      "\x1b;]11;rgb:ff/ff/ff\x18;")
+                    (list (string-append "\x1b;]11;" (make-string 1024 #\a) "\x1b;\\")))])
+       (check 'unknown-and-invalid-reports-swallowed
+         (map (lambda (report) (events (string-append report "q"))) reports)
+         (map (lambda (_) '("q")) reports)))
+     (check 'unfinished-background-report-at-eof
+       (events "\x1b;]11;rgb:ff/ff/ff\x1b;") '())
      (check 'unknown-csi-swallowed (events "\x1b;[99jq") '("q"))
 
      ;; -- event helpers ---------------------------------------------------------

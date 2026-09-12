@@ -12,7 +12,7 @@
 
 (library (style)
   (export (rename (compile-style compile)) (rename (style-escape escape)) (rename (set-style! set!)) (rename (style-code code))
-          (rename (set-styles-changed-hook! set-changed-hook!)) fill-range!)
+          (rename (set-styles-changed-hook! set-changed-hook!)) color-scheme! fill-range!)
   (import (rnrs)
           (only (chezscheme) format void)
           (prefix (kernel) kernel:)
@@ -141,6 +141,20 @@
   (define (set-styles-changed-hook! proc)
     (set! styles-changed-hook proc))
 
+  (define (styles-changed!)
+    (when styles-changed-hook
+      (guard (ex [else (void)]) (styles-changed-hook))))
+
+  (define current-color-scheme 'dark)
+
+  (define (color-scheme! scheme)
+    (unless (memq scheme '(dark light #f))
+      (error 'color-scheme! "expected dark, light or #f" scheme))
+    (let ([next (or scheme 'dark)])
+      (unless (eq? next current-color-scheme)
+        (set! current-color-scheme next)
+        (styles-changed!))))
+
   (define (set-style! style spec)
     (kernel:registry-add!
       style-overrides
@@ -149,8 +163,7 @@
                    (style-escape `((foreground ,spec)))]
                   [(string? spec) (format "\x1b;[~am" spec)]
                   [else (style-escape spec)])))
-    (when styles-changed-hook
-      (guard (ex [else (void)]) (styles-changed-hook))))
+    (styles-changed!))
 
   (define (style-override style)
     (let ([hit (kernel:registry-find style-overrides
@@ -163,7 +176,7 @@
     (map (lambda (entry) (cons (car entry) (style-escape (cadr entry))))
       '((plain (reset))
         (chrome ((foreground bright-black)))
-        (header ((foreground 252) (background 238) underline))
+        (header ((foreground 252) (background 240) underline))
         (comment ((foreground bright-black)))
         (string ((foreground green)))
         (keyword (bold (foreground cyan)))
@@ -189,6 +202,10 @@
         (match ((background cyan) (foreground black)))
         (match-point ((background yellow) (foreground black))))))
 
+  (define light-styles
+    ;; Most faces use terminal colors or attributes and need no variant.
+    (list (cons 'header (style-escape '((foreground 236) (background 253) underline)))))
+
   (define (style-code style)
     (or (style-override style)
         ;; Surfaces carry SGR parameters as values, without allocating a
@@ -197,7 +214,8 @@
              (for-all (lambda (c) (or (char<=? #\0 c #\9) (memv c '(#\; #\:))))
                       (string->list style))
              (format "\x1b;[~am" style))
-        (let ([hit (assq style default-styles)])
+        (let ([hit (or (and (eq? current-color-scheme 'light) (assq style light-styles))
+                       (assq style default-styles))])
           (if hit (cdr hit) (cdar default-styles)))))
   ;;; Styles vectors --------------------------------------------------------------
 

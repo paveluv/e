@@ -10,6 +10,7 @@
 ;;   mouse        (mouse c b x y)      SGR: press/release/drag/motion/wheel
 ;;   paste        (paste . text)       bracketed, closer stripped
 ;;   host report  (host-color-scheme dark|light)   DSR 997
+;;                (host-background red green blue)   OSC 11, 8-bit RGB
 ;;
 ;; The decoder is a pure function of the byte stream: side effects
 ;; happen at consumption, on whatever thread pumps the events (the
@@ -19,13 +20,20 @@
 
 (library (tty)
   (export read-event character-event key-event-character
-          mouse-reporting! paste-lines)
+          mouse-reporting! query-color-scheme! paste-lines)
   (import (rnrs)
           (only (chezscheme) format char-ready?)
           (prefix (only (sys) terminal-output-port) sys:)
-          (prefix (string) string:))
+          (prefix (string) string:) (prefix (color) color:))
 
   ;;; Input-side negotiation ------------------------------------------------------
+
+  (define (query-color-scheme!)
+    ;; Ask without waiting: OSC 11 also works on hosts without DSR 996.
+    ;; The ordinary input pump consumes either reply.
+    (let ([port (sys:terminal-output-port)])
+      (display "\x1b;]11;?\x1b;\\\x1b;[?996n" port)
+      (flush-output-port port)))
 
   (define (mouse-reporting! on?)
     ;; SGR mouse tracking with any-event reports (1003;1006): on asks
@@ -95,6 +103,23 @@
 
   ;;; Sequence decoding ----------------------------------------------------------
 
+  (define (osc-event port)
+    ;; BEL and ST terminate replies. Only retain enough text for a color;
+    ;; drain unknown/oversized strings too, so none becomes a typed key.
+    (let loop ([chars '()] [size 0] [escape? #f])
+      (let ([c (read-char port)])
+        (cond
+          [(or (eof-object? c) (memv c '(#\x18 #\x1a))) #f]
+          [(or (char=? c #\x7) (and escape? (char=? c #\\)))
+           (and chars
+                (let ([text (list->string (reverse chars))])
+                  (and (string:prefix? "11;" text)
+                       (let ([rgb (color:parse (string:tail text 3))])
+                         (and rgb (cons 'host-background rgb))))))]
+          [(char=? c #\esc) (loop (and (not escape?) chars) size #t)]
+          [else (loop (and chars (not escape?) (< size 32) (cons c chars))
+                      (+ size 1) #f)]))))
+
   (define (mouse-event port)
     ;; The rest of an ESC [ < sequence: b ; x ; y then M (press) or
     ;; m (release), as data.
@@ -157,12 +182,10 @@
                (let ([numbers (csi-numbers
                                 (list->string (reverse params)))])
                  (if (and (char? b) (char=? b #\n)
-                          (pair? numbers) (eqv? (car numbers) 997))
+                          (= (length numbers) 2) (eqv? (car numbers) 997)
+                          (memv (cadr numbers) '(1 2)))
                      (list 'host-color-scheme
-                           (if (eqv? (and (pair? (cdr numbers))
-                                          (cadr numbers))
-                                     2)
-                               'light 'dark))
+                           (if (= (cadr numbers) 2) 'light 'dark))
                      #f))))]
         [else
          (let drain ([b first] [params '()])
@@ -225,6 +248,8 @@
                [(eof-object? a) "ESC"]
                [(char=? a #\[)
                 (or (csi-event port) (again))]
+               [(char=? a #\])
+                (or (osc-event port) (again))]
                [(char=? a #\O)
                 (case (read-char port)
                   [(#\P) "F1"] [(#\Q) "F2"]

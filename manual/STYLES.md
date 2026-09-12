@@ -81,6 +81,19 @@ An RGB color contains three integers from 0 through 255:
 RGB requires true-color terminal support. The actual appearance of named and
 palette colors is controlled by the terminal's theme.
 
+### Light and dark terminals
+
+e asks the terminal for its theme when starting or attaching. Terminals with
+theme-change reports update the faces automatically. On older terminals,
+including GNOME Terminal with VTE before 0.82, e infers light/dark from the
+reported background color; press C-l after changing the terminal's theme to
+refresh it. If the terminal answers neither query, e uses the dark defaults.
+
+The `header` face has two neutral variants: light gray text on medium gray
+in a dark theme, and dark text on pale gray in a light theme. Explicit
+`style:set!` overrides take precedence over both variants and survive theme
+changes. This follows each head's terminal independently.
+
 ## Faces
 
 The built-in faces available to `style:set!` are:
@@ -89,7 +102,7 @@ The built-in faces available to `style:set!` are:
 | --- | --- | --- |
 | `plain` | `(reset)` | Ordinary text and fallback rendering |
 | `chrome` | `((foreground bright-black))` | Prompt labels, ghost text, log prefixes, and quiet UI furniture |
-| `header` | `((foreground 252) (background 238) underline)` | Light gray table headings on a charcoal background, distinct from muted filter labels and bold candidate rows |
+| `header` | Dark: `((foreground 252) (background 240) underline)`; light: `((foreground 236) (background 253) underline)` | Neutral table heading band, distinct from muted filter labels and bold candidate rows |
 | `comment` | `((foreground bright-black))` | Source comments and Markdown block quotes |
 | `string` | `((foreground green))` | Strings and Markdown code |
 | `keyword` | `(bold (foreground cyan))` | Language keywords and Markdown headings |
