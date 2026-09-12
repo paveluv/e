@@ -64,6 +64,8 @@ in that form.
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
 
 `C-x C-f` reads a path [in the window](PROMPTS.md#prompts-in-the-window).
+`C-x f` opens the [files app](FILES.md) for directory navigation and recursive
+filename filtering, with the same column-sorting controls as buffers.
 Both buffer-switch shortcuts use the [live table](#the-buffers-app) below.
 An unmatched filter stays in the table; it never creates a buffer. Use
 `new-buffer!!` for creation. Empty input cancels creation; an existing name

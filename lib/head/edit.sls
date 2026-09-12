@@ -47,7 +47,7 @@
     (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
     (rename (lookup-window window))   ; windows print as (window n)
     ;; buffers, windows, files
-    visit-file! save-file! save!! save-as!! find-file!!
+    visit-file! save-file! save!! save-as!! find-file!! default-directory
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
     fresh-buffer
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
@@ -1389,6 +1389,7 @@
     (and (memq w windows) (begin (focus-window! w) #t)))
 
   (define (split-current-window! orientation b)
+    (paint:window-layout)
     (let* ([vertical? (eq? orientation 'below)]
            [extent (if vertical?
                        (+ (head:window-size current-window) 1)
@@ -1947,10 +1948,15 @@
 
   (define find-file-drafts (make-weak-eq-hashtable))
 
-  (define (find-file!!)
+  (define (find-file!! . directory-action)
     ;; Validate/acquire while the path is still editable; show it only
     ;; after the temporary view has returned the window. Focus loss keeps
     ;; a per-window draft, while acceptance and explicit cancellation end it.
+    ;; A browser may also accept a directory, using the same path editing,
+    ;; completion, validation and prompt lifetime as ordinary file visits.
+    (unless (or (null? directory-action)
+                (and (null? (cdr directory-action)) (procedure? (car directory-action))))
+      (error 'find-file!! "expected an optional directory action" directory-action))
     (let* ([owner current-window] [before (current-buffer)]
            [saved (hashtable-ref find-file-drafts owner #f)]
            [directory (if saved (car saved) (default-directory))]
@@ -1970,7 +1976,11 @@
                    [(kernel:refusal? ex) (condition-message ex)]
                    [else (kernel:condition-text ex)])
           (cond [(string=? s "") #f]
-                [(file-directory? (file:expand (resolve s))) "Directory; Tab to list files"]
+                [(file-directory? (file:expand (resolve s)))
+                 (if (null? directory-action) "Directory; Tab to list files"
+                     (begin
+                       (set! ready (lambda () ((car directory-action) (file:canonical (file:expand (resolve s))))))
+                       #f))]
                 [else
                  (set! ready (head:call-with-interrupt (lambda () (prepare-file-visit (resolve s)))))
                  #f])))
@@ -3303,6 +3313,12 @@
         ((keep-disk!) (("procedure" . "(keep-disk!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
+        ((default-directory) (("procedure" . "(default-directory)")) "string"
+         ("(edit)") edit "Files" #f
+         "The current file's parent, an app's working directory, or the head's launch directory, absolute with home abbreviated and a trailing slash. This is the common starting directory for path prompts and browsers.")
+        ((find-file!!) (("procedure" . "(find-file!! [on-directory])")) "void"
+         ("(edit)") edit "Files" #f
+         "Read a file path with completion, history and validation, then visit it. With an optional procedure, accepting a directory closes the prompt and calls that procedure with the absolute directory path; without it, a directory stays in path entry for completion. The files app uses this to share the ordinary opening flow.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; C-u clears the filter. Click headings or use F1 through F6 in column order to cycle ascending, descending, then off; superscripts show sort-key priority. Modified shows the last edit time for unsaved buffers and sorts by the full timestamp. A side-panel click changes the focused window without taking focus.")

@@ -11,7 +11,7 @@ shared apps publish text, facts, and rendition through the store and surface.
 Head apps are local buffers: their generated text, modes, and presentation
 facts stay in this head.  They have no store id and do not appear in the
 store's buffer list or publish cursor marks.  This includes completions,
-buffer and git views, log renderings, and describe's rendered companion.
+buffer, file and git views, log renderings, and describe's rendered companion.
 Describe's private Markdown source and terminal buffers belong to the base:
 their text is readable through `store:`.
 
@@ -379,6 +379,16 @@ the user's window commands and mouse gestures move between them as usual
 while an app is focused.
 Each window keeps its own point and viewport, including multiple
 windows showing the same app.
+
+## The files app
+
+`C-x f` opens `<files>`: a local directory browser with incremental recursive
+filename filtering, ancestor navigation, match counts and sortable metadata.
+It shares the buffers table's sort-key cycling and column fitting. Its
+directory, filter and sorting are shared within one head; formatting,
+selection and scrolling belong to each window. Filesystem work runs outside
+refresh callbacks and publishes only while its request and registration are
+still current. See [Files](FILES.md) for controls and search behavior.
 
 ## The buffers app
 

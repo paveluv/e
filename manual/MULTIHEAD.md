@@ -55,9 +55,12 @@ The daemon retains the latest completed screen checkpoint, including after an
 abrupt SSH disconnect. Shared edits made while absent move the saved positions;
 after a reset or expired history, positions clamp to the current text. Markdown
 and describe companions rebuild from their shared sources at the new width.
+The files app rebuilds its directory/filter/sort state and selected paths
+from a small descriptor, then rescans at the new window widths.
 Existing registered tools reopen by identity. A missing or hidden source, or a
 local view without a restore provider, uses the startup buffer in that window.
-Arbitrary local buffer text and per-tool query settings are not saved. Very
+Arbitrary local buffer text and query settings of tools without a restore
+provider are not saved. Very
 small terminals use the editor's usual layout fitting. Checkpoints last only
 while the daemon runs. Questions first asked while a known named head is
 offline wait for its next attachment; press `C-c a` to answer. An agent's

@@ -98,6 +98,7 @@ On FreeBSD, where Chez installs a differently named script interpreter, run
 | Key | Action |
 |---|---|
 | `C-x C-f` | Find a file |
+| `C-x f` | Browse and recursively filter files in the `<files>` app |
 | `C-x C-s` | Save |
 | `C-x C-w` | Save as |
 | `C-x C-c` | Quit safely |
@@ -143,6 +144,8 @@ immediately.
 
 - [Buffers and windows](manual/BUFFERS.md): files, splits, scrolling, line
   numbers, scrollbars, mouse behavior, `<buffers>`, and the buffer API.
+- [Files app](manual/FILES.md): directory navigation, recursive filename
+  filtering, match counts and sortable filesystem metadata.
 - [Base, heads and agents](manual/MULTIHEAD.md): the daemon, attaching and
   reattaching named screens, what is shared and what is local, questions
   between actors, agent sessions and permissions.
