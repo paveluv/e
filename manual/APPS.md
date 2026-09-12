@@ -392,7 +392,8 @@ heading rows, elided paths, an automatic scrollbar, a hidden cursor and
 disabled text selection. See [Using the buffers app](BUFFERS.md#the-buffers-app)
 for the complete keyboard, mouse and cancellation behavior. Wheel input
 moves the pointed window's candidate and leaves keyboard focus where it was;
-the candidate stays visible in an unfocused pane.
+in an unfocused pane, it also opens the candidate in the focused window.
+Wheel input in the focused app browses rows without opening a buffer.
 
 Status-bar clicks always focus their window; app handlers cannot override
 them. `<buffers>` returns `keep-focus` for content clicks because the click's

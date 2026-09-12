@@ -3082,8 +3082,8 @@
                               (+ buffer-first-row (length buffer-rows) -1)))))))
 
   (define (activate-buffer-row!)
-    ;; A panel click changes the previously focused window. Keyboard use
-    ;; replaces the list here. Hover and arrows resolve the same candidate.
+    ;; Panel clicks and unfocused wheel ticks change the focused window.
+    ;; Keyboard use replaces the list here. All use the visible candidate.
     (let* ([b (buffer-candidate current-window)]
            [target (head:app-event-focus)])
       (when b
@@ -3114,8 +3114,13 @@
     (cond [(string=? event "FOCUS") (refresh-buffers-view!) #t]
           [(member event '("F1" "F2" "F3" "F4" "F5" "F6"))
            (cycle-buffer-sort! (- (char->integer (string-ref event 1)) (char->integer #\1))) #t]
-          [(member event '("UP" "C-p" "S-TAB" "WHEEL-UP")) (move-buffer-row! -1) #t]
-          [(member event '("DOWN" "C-n" "TAB" "WHEEL-DOWN")) (move-buffer-row! 1) #t]
+          [(member event '("UP" "C-p" "S-TAB")) (move-buffer-row! -1) #t]
+          [(member event '("DOWN" "C-n" "TAB")) (move-buffer-row! 1) #t]
+          [(member event '("WHEEL-UP" "WHEEL-DOWN"))
+           (move-buffer-row! (if (string=? event "WHEEL-UP") -1 1))
+           (let ([target (head:app-event-focus)])
+             (when (and target (not (eq? target current-window)) (memq target windows))
+               (activate-buffer-row!))) #t]
           [(member event '("HOME" "C-a" "M-<")) (move-buffer-row! (- (length buffer-rows))) #t]
           [(member event '("END" "C-e" "M->")) (move-buffer-row! (length buffer-rows)) #t]
           [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))

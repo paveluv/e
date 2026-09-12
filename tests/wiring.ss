@@ -547,15 +547,21 @@
                                     (= ,(caddr before) (caddr (head:edit-basis (head:window-buffer (window 0))))))))
            '(#t #t #t #t))
          (hover! right-cell)
-         (check 'wheel-in-an-unfocused-buffers-pane-shows-its-candidate-and-keeps-focus
+         (check 'wheel-in-an-unfocused-buffers-pane-switches-the-focused-window
            (list (picker-sequence
                    (lambda (direction)
                      (wheel! right-cell direction)
-                     (let ([row (read-editor '(head:window-prow (window 1)))])
-                       (list row (hover-face (cons row (+ (car right) 1)))))) '(up down down))
-                 (picker-state) (read-editor '(head:window-index (selected-window)))
+                     (let* ([state (read-editor '(list (head:window-prow (window 1))
+                                                       (head:buffer-name (current-buffer)) (point)
+                                                       (head:window-index (selected-window))))]
+                            [row (car state)])
+                       (list state (hover-face (cons row (+ (car right) 1)))))) '(up up down down down))
                  (quiet-buffers-bar? 0) (quiet-buffers-bar? 1))
-           '(((2 (#t #f)) (3 (#t #f)) (4 (#t #f))) ("<picker-beta>" (4 . 1)) 2 #t #t))
+           '((((2 "<picker-gamma>" (0 . 0) 2) (#t #f))
+              ((2 "<picker-gamma>" (0 . 0) 2) (#t #f))
+              ((3 "<picker-beta>" (4 . 1) 2) (#t #f))
+              ((4 "<picker-alpha>" (3 . 2) 2) (#t #f))
+              ((4 "<picker-alpha>" (3 . 2) 2) (#t #f))) #t #t))
          (read-editor '(begin (select-window! (window 0)) #t))
          (press! "\x15;日本語")
          (let ([filtered

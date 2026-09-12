@@ -376,14 +376,16 @@ changes appear on redraw.
 - Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
 - Click a heading: cycle its sort key ascending, descending, then off.
-- Wheel over the app: move its candidate one row per tick, even in an
-  unfocused pane, without opening a buffer or taking keyboard focus.
+- Wheel over the app: move its candidate one row per tick. In an unfocused
+  pane, also show that buffer in the focused window, keeping focus there.
+  In the focused pane, browse rows until Enter or a click opens a buffer.
 - Click the app's status line: focus `<buffers>`.
 
-Kept in another window, the same app is a control panel: a click switches the
-focused window without taking focus. Click the panel's status line to focus
-it and type a filter. Global `M-Shift-Up` / `M-Shift-Down` and Meta-wheel keep
-their alphabetical traversal independently of the table's filter and sort.
+Kept in another window, the same app is a control panel: a click or wheel tick
+switches the focused window without taking focus. Click the panel's status
+line to focus it and type a filter. Global `M-Shift-Up` / `M-Shift-Down` and
+Meta-wheel keep their alphabetical traversal independently of the table's
+filter and sort.
 The public app API is documented in [App buffers](APPS.md).
 
 ## Scrollbars
