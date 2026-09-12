@@ -163,7 +163,7 @@
     (map (lambda (entry) (cons (car entry) (style-escape (cadr entry))))
       '((plain (reset))
         (chrome ((foreground bright-black)))
-        (header ((foreground bright-black) underline))
+        (header ((foreground cyan) underline))
         (comment ((foreground bright-black)))
         (string ((foreground green)))
         (keyword (bold (foreground cyan)))

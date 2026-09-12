@@ -330,9 +330,10 @@ recorded time is retained. Unchanged edits and other metadata changes preserve
 it. Every attached head sees the time recorded by the buffer's owner.
 
 The filter and underlined column headings stay visible while rows scroll.
-The subdued `header` face distinguishes headings from the bold candidate,
-including when only one match remains. Rows fit the narrowest window
-showing the app and never wrap. Long paths keep their tail, with `…` marking
+The cyan, underlined `header` face distinguishes headings from the muted gray
+filter label and the bold candidate, including when only one match remains.
+Rows fit the narrowest window showing the app and never wrap. Long paths
+keep their tail, with `…` marking
 the omitted beginning. Names elide at the end. Narrow panes omit metadata
 columns before names and paths, preserving sorted columns in priority order.
 Widening a pane restores the columns and fuller labels. Elision never changes
