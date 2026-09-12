@@ -73,10 +73,11 @@
      (insert! id 10 "!")
      (store:undo! bot id)
      (check 'store-undo-to-saved-text-is-clean (store:property id 'modified) #f)
-     (check 'dirty-fact-cannot-be-forged
-            (raises? (lambda () (store:set-property! bot id 'modified #f))) #t)
-     (check 'dirty-fact-cannot-be-dropped
-            (raises? (lambda () (store:drop-property! bot id 'modified))) #t)
+     (check 'modification-facts-belong-to-the-store
+       (map (lambda (key)
+              (list (raises? (lambda () (store:set-property! bot id key #f)))
+                    (raises? (lambda () (store:drop-property! bot id key))))) property:edit-keys)
+       '((#t #t) (#t #t)))
      (define equivalent (store:create! bot "equivalent-lines" '("line" "")))
      (store:set-properties! bot equivalent '((trailing . #f) (base . "line\n")))
      (check 'equivalent-line-representation-is-clean (store:property equivalent 'modified) #f)
@@ -99,6 +100,47 @@
      (check 'local-read-only-work-is-protected (buffer-clean? local-work) #f)
      (check 'snapshot-tools-declare-disposal
             (head:buffer-fact (fresh-buffer "state-generated") 'disposable #f) #t)
+
+     ;; One sequence covers clock ownership and no-op/save preservation for
+     ;; shared and local buffers. Actual changes must fall within UTC bounds.
+     (define (utc-nanos)
+       (let ([now (current-time 'time-utc)])
+         (+ (* (time-second now) 1000000000) (time-nanosecond now))))
+     (define time-steps
+       '((insert . #t) (same . #f) (metadata . #f) (save . #f) (newline . #t)
+         (edit . #t) (undo . #t) (redo . #t) (reset . #t) (reset . #f)
+         (representation . #t) (representation . #f)))
+     (check 'modification-times-follow-content-in-either-owner
+       (map
+         (lambda (shared?)
+           (let ([b (fresh (if shared? "timed-shared" "timed-local") shared?)])
+             (reverse
+               (fold-left
+                 (lambda (results step)
+                   (let ([before (head:buffer-modified-at b)] [started (utc-nanos)])
+                     (case (car step)
+                       [(insert) (insert-text! "a")]
+                       [(same) (head:store-edit! b (text:make-span 0 0 0 1) '("a"))]
+                       [(metadata) (head:buffer-fact-set! b 'status "metadata")]
+                       [(save) (head:buffer-facts-set! b
+                                 (append '((base . "a\n")) (if shared? '() '((modified . #f)))))]
+                       [(newline) (head:buffer-trailing-set! b #f)]
+                       [(edit) (insert-text! "b")]
+                       [(undo) (undo!)] [(redo) (redo!)]
+                       [(reset) (head:store-reset! b '("reset")
+                                  (append '((base . "reset\n") (trailing . #t))
+                                    (if shared? '() '((modified . #f)))))]
+                       ;; Equal saved bytes can still change the displayed
+                       ;; line structure, just as an ordinary edit can.
+                       [(representation) (head:store-reset! b '("reset" "") '((trailing . #f)))])
+                     (let ([after (head:buffer-modified-at b)])
+                       (cons (cons (car step)
+                               (if (cdr step)
+                                   (and (integer? after) (exact? after) (<= started after (utc-nanos))
+                                        (not (equal? before after)))
+                                   (equal? before after))) results))))
+                 '() time-steps)))) '(#t #f))
+       (make-list 2 (map (lambda (step) (cons (car step) #t)) time-steps)))
 
      ;; Text and facts are one immutable snapshot.  Every property callback
      ;; observes all members of a batch, never a half-published file state.
@@ -220,6 +262,7 @@
                    (lambda () (head:store-reset! b '#("ok" 7)))
                    (lambda () (head:store-reset! b '("lost") '((trailing . 7))))
                    (lambda () (head:buffer-facts-set! b '((file . "changed") (7 . bad))))
+                   (lambda () (head:buffer-facts-set! b '((file . "changed") (modified-at . 1.5))))
                    (lambda () (head:buffer-facts-set! b '((file . "changed")) '(base (base . #f))))
                    (lambda () (head:buffer-facts-set! b '((file . "changed")) #f ""))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
@@ -232,7 +275,7 @@
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("embedded\nnewline")))
                    (lambda () (buffer-append! b "embedded\nnewline"))
                    (lambda () (store:create! bot "invalid-line-input" '("embedded\nnewline")))
-                   (lambda () (format-buffer!)))) (make-list 13 '(#t #t #t))))))
+                   (lambda () (format-buffer!)))) (make-list 14 '(#t #t #t))))))
        '(#t #f))
 
      ;; The buffer still exists when the store rejects the fact write.

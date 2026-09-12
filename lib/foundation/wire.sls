@@ -5,7 +5,7 @@
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (datum) datum:))
 
-  (define version 1)
+  (define version 2)
   (define frame-limit #x1000000) ; 16 MiB, checked before reading a payload
 
   (define (frame-size! size)

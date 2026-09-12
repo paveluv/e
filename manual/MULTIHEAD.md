@@ -40,6 +40,10 @@ File commands address the filesystem on that same host. If no base is running,
 attachment reports an error. Head names and the generated default are
 described under [startup](CONFIGURATION.md#startup-and-head-names).
 
+The daemon and attached heads must use compatible builds. The current wire
+protocol is version 2; after updating from version 1, save your work and
+restart the daemon before attaching the updated heads.
+
 `C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
 stay alive; local unsaved text still requires confirmation. A new attachment
 with the same `--name` restores its split layout, selected window and buffers,
@@ -299,10 +303,11 @@ ticket` withdraws only questions created by that exact session. Both return
 `#f` for a revoked session, a stale ticket or a different recipient/session.
 
 `policy:session-edit! session buffer-id basis span lines [context]` returns
-`(values 'applied (revision text-vector changes))` on success.
+`(values 'applied (revision text-vector changes edit-facts))` on success.
 The receipt is owned plain data captured at the transaction, with each change
 represented as `(revision actor delta-datum)`; use `text:datum->delta` to
-reconstruct a delta. Stale/refused outcomes keep their existing meanings.
+reconstruct a delta. `edit-facts` contains the `modified` and `modified-at`
+pairs from that same commit. Stale/refused outcomes keep their existing meanings.
 Context is `#f` or `(key label [undo-facts [commit-facts [expected]]])`. Reuse a key for
 the parts of one action in one buffer; keys belong to the session actor.
 Undo reverses text and undo facts together. Commit facts describe external

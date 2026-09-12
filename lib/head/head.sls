@@ -22,7 +22,7 @@
           buffer-history buffer-history-set!
           buffer-mark-row buffer-mark-row-set!
           buffer-mark-col buffer-mark-col-set!
-          buffer-marked buffer-marked-set!
+          buffer-marked buffer-marked-set! buffer-selectable?
           buffer-spot-row buffer-spot-row-set!
           buffer-spot-col buffer-spot-col-set!
           buffer-spot-top buffer-spot-top-set!
@@ -71,7 +71,7 @@
           transfer-split! drag set-drag! double-click?
           ui-actor buffer-fact buffer-fact-set! buffer-facts-set! buffer-state
           buffer-file buffer-file-set! buffer-trailing buffer-trailing-set!
-          buffer-modified buffer-modified-set!
+          buffer-modified buffer-modified-set! buffer-modified-at
           buffer-mode-auto buffer-mode-auto-set!
           buffer-read-only buffer-read-only-set!
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
@@ -87,7 +87,7 @@
           before-frame! add-shutdown-hook! run-shutdown-hooks!
           checkpoint! resume! register-resume! resume-source buffer-placements
           registered-apps app-of app-buffer? detach-app! register-app!
-          set-app-cursor-visible! set-app-manages-viewport!
+          set-app-cursor-visible! set-app-manages-viewport! set-app-selectable!
           set-app-status-position! app-cursor-visible-in?
           app-manages-window-viewport? app-cursor-style set-app-presentation!
           buffer-sticky-lines scrollbar scrollbar-position line-numbers
@@ -103,7 +103,7 @@
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme) keyboard-interrupt-handler
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
-                format remq cons* iota time-second current-time time? time-type time<? time<=? copy-time
+                format remq cons* iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
                 make-time add-duration
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
@@ -135,7 +135,7 @@
             (mutable revision)      ; the seat's repaint counter
             (mutable history)       ; local undo; shared group labels/presentation
             (mutable mark-row) (mutable mark-col)
-            (mutable marked)
+            (mutable marked buffer-marked buffer-marked-raw-set!)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
             ;; #t/#f after a local toggle, or default to follow the global
@@ -719,6 +719,7 @@
   ;;   file    the visited path, or #f
   ;;   trailing whether the file ends in a newline
   ;;   modified unsaved changes (any actor's)
+  ;;   modified-at last content change, as UTC nanoseconds, or #f
   ;;   mode    the buffer's mode NAME -- the registry record never
   ;;           crosses the seam; find-mode resolves it on read, so a
   ;;           reloaded mode module is picked up live
@@ -761,11 +762,15 @@
                  ;; Reconcile current truth instead of installing a stale ack.
                  (when name (sync-foreign-edits! id))
                  #t))
-          (let ([name (and name (unique-local-name (string-copy name) b))])
+          (let ([name (and name (unique-local-name (string-copy name) b))]
+                [trailing? (buffer-trailing b)])
             (and (local-facts-match? b expected)
                  (begin
                    (for-each (lambda (entry) (hashtable-set! (buffer-local-facts b) (car entry) (cdr entry)))
                              updates)
+                   (when (or (not (eq? trailing? (buffer-trailing b)))
+                             (and (buffer-modified b) (not (buffer-modified-at b))))
+                     (note-local-modification! b))
                    (when name (buffer-name-raw-set! b name))
                    #t))))))
 
@@ -784,6 +789,12 @@
   (define (buffer-trailing-set! b v) (buffer-fact-set! b 'trailing v))
   (define (buffer-modified b) (buffer-fact b 'modified #f))
   (define (buffer-modified-set! b v) (buffer-fact-set! b 'modified v))
+  (define (buffer-modified-at b) (buffer-fact b 'modified-at #f))
+
+  (define (note-local-modification! b)
+    (let ([now (current-time 'time-utc)])
+      (hashtable-set! (buffer-local-facts b) 'modified-at
+        (+ (* (time-second now) 1000000000) (time-nanosecond now)))))
   (define (buffer-mode-auto b) (buffer-fact b 'mode-auto #t))
   (define (buffer-mode-auto-set! b v) (buffer-fact-set! b 'mode-auto v))
   (define (buffer-read-only b) (buffer-fact b 'read-only #f))
@@ -985,6 +996,9 @@
     ;; Only explicitly local buffers own their text in this head.
     (when (buffer-store-id b)
       (error 'adopt-local! "a shared buffer must commit in the store"))
+    (unless (if delta (equal? (text:delta-removed delta) (text:delta-inserted delta))
+                (equal? (buffer-lines b) text))
+      (note-local-modification! b))
     (let ([revision (+ (buffer-local-rev b) 1)])
       (adopt-text! b text revision (and delta (list (list revision ui-actor delta))))))
 
@@ -1872,6 +1886,12 @@
 
   (define (app-buffer? b) (or (and (app-of b) #t) (app-live? (app-facts b))))
 
+  (define (buffer-selectable? b)
+    (or (not (app-of b)) (buffer-fact b 'selectable #t)))
+
+  (define (buffer-marked-set! b marked?)
+    (buffer-marked-raw-set! b (and marked? (buffer-selectable? b))))
+
   ;; Mouse context is head-owned; edit reexports these same parameters.
   ;; Position is a one-based viewport cell pair, buffer position is an
   ;; unclamped character pair, and button is the raw xterm code.
@@ -2026,6 +2046,13 @@
         (error 'set-app-manages-viewport! "manages must be #t or #f" manages?))
       (buffer-fact-set! b 'manages-viewport manages?)
       b))
+
+  (define (set-app-selectable! b selectable?)
+    (unless (and (app-of b) (boolean? selectable?))
+      (error 'set-app-selectable! "expected an app buffer and boolean" b selectable?))
+    (buffer-fact-set! b 'selectable selectable?)
+    (unless selectable? (buffer-marked-raw-set! b #f))
+    b)
 
   (define (set-app-status-position! b position)
     ;; A coordinate pair projects a source position; a string supplies

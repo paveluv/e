@@ -1,9 +1,12 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
 (library (property)
-  (export select validate-expected matches?
+  (export select validate-expected matches? edit-keys
           (rename (validate-properties validate)
                   (writable-properties writable) (validate-edit-context edit-context)))
   (import (rnrs) (prefix (identity) identity:))
+
+  ;; Maintained by the text owner and carried with incremental edit replies.
+  (define edit-keys '(modified modified-at))
 
   (define (validate-properties updates)
     ;; A pure boundary shared with head-local facts.  Validate the whole
@@ -17,7 +20,9 @@
                         (not (memq (car entry) seen))
                         (case (car entry)
                           [(base) (or (not (cdr entry)) (string? (cdr entry)))]
-                          [(trailing disposable alive manages-viewport) (boolean? (cdr entry))]
+                          [(trailing disposable alive manages-viewport selectable) (boolean? (cdr entry))]
+                          [(modified-at) (or (not (cdr entry))
+                                             (and (integer? (cdr entry)) (exact? (cdr entry))))]
                           [(app) (or (boolean? (cdr entry))
                                      (and (identity:valid? (cdr entry)) (eq? (cadr entry) 'app)))]
                           [(capture)
@@ -37,8 +42,8 @@
 
   (define (writable-properties updates)
     (validate-properties updates)
-    (when (assq 'modified updates)
-      (error 'store "modified is derived from text and its baseline"))
+    (when (exists (lambda (entry) (memq (car entry) edit-keys)) updates)
+      (error 'store "modification facts are maintained by the text owner"))
     (when (assq 'publication updates)
       (error 'store "publication identity belongs to publish!"))
     updates)

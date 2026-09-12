@@ -240,7 +240,7 @@
   (define (session-edit! s id basis span lines . options)
     (call-as-session s
       (lambda ()
-        ;; One owned plain receipt (revision text changes), ending at this
+        ;; One owned plain receipt (revision text changes edit-facts), ending at this
         ;; commit. Optional grouping/undo/commit facts use the store context.
         ;; Own the span/lines too: the pure store shares immutable inputs.
         ;; The connection never supplies write access; the session owns it.
@@ -257,7 +257,7 @@
                               (and context (datum:copy context)) access)])
                 (values status
                   (if (and delta? (eq? status 'applied))
-                      (list (car detail) #f (caddr detail))
+                      (cons* (car detail) #f (cddr detail))
                       detail)))))))))
 
   (define (session-history-step! s id direction scope)

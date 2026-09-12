@@ -350,7 +350,7 @@
            (let* ([head (connect)] [identity '(head "desk λ")])
              (test:check 'claim-precedes-welcome-and-queued-mail
                (list (hello head identity) (receive head))
-               (list (list 'hello 1 identity '(read edit undo redo)) '(event (from-base "welcome"))))
+               (list (list 'hello wire:version identity '(read edit undo redo)) '(event (from-base "welcome"))))
              (let* ([ids (rpc head 'buffers)] [snapshot (rpc head 'snapshot (car ids))]
                     [facts (caddr snapshot)])
                (test:check 'base-only-config-and-owned-snapshot
@@ -371,7 +371,7 @@
                               (eof-object? (receive duplicate))
                               (and (member identity (map car (rpc head 'actors))) #t)
                               (inventory head))))
-                    '(0 1))
+                    (list 0 wire:version))
                (make-list 2 (list 'error #t #t (list (list identity identity)))))
              (test:check 'request-errors-preserve-the-connection
                (map (lambda (message) (list-head (exchange head message) 3))
@@ -414,7 +414,7 @@
                      (rpc agent 'eval "(buffer-text-line \"notes λ\" 0)") (rpc agent 'eval #f)
                      (rpc agent 'eval "'#0=#(#0#)")
                      (rpc agent 'eval "(") (car (rpc agent 'eval "(delete-file \"unused\")")))
-               (list (list 'hello 1 identity '(read)) '(event (from-base "welcome")) '(1 2 3)
+               (list (list 'hello wire:version identity '(read)) '(event (from-base "welcome")) '(1 2 3)
                      '#("a local audience") '(ok . "=> \"hello λ\"") '(ok . "=> #f")
                      '(ok . "=> #0=#(#0#)")
                      '(error . "unreadable expression") 'unbound))
@@ -462,7 +462,7 @@
                  (map (lambda (connection actor)
                         (list (hello connection actor) (receive connection)
                               (rpc connection 'watch) (rpc connection 'watch))) writers actors)
-                 (map (lambda (actor) (list (list 'hello 1 actor '(read edit undo redo))
+                 (map (lambda (actor) (list (list 'hello wire:version actor '(read edit undo redo))
                                             '(event (from-base "welcome")) '(1 2 3) '(1 2 3))) actors))
                (test:check 'wire-evaluation-uses-the-configured-grants-fuel-and-preview-cap
                  (list (rpc first 'eval "(+ 1 2)")
@@ -479,22 +479,25 @@
                ;; describe exactly its own accepted revision and anchor chain.
                (wire:send! (sys:connection-output first)
                  '(request 7 edit 1 0 (0 0 0 5) ("HELLO")
-                    ((batch 1) "replace and prefix" ((trailing . #f)) ((saved-stamp . "observed")))))
+                    ((batch 1) "replace and prefix" ((trailing . #f)) ((saved-stamp . "observed"))) #t))
                (test:await 'first-edit-committed (lambda () (file-exists? edit-held)))
                (let ([second-result (rpc second 'edit 1 0 '(0 7 0 7) '("!") '((batch 1) "other actor"))])
                  (write-text edit-release "continue")
                  (let ([results (list (reply-value (receive-reply first)) second-result)])
-                   (test:check 'authoritative-receipts-rebase-and-attribute-both-writers
-                     (map
-                       (lambda (result actor)
-                         (let* ([receipt (cadr result)] [changes (caddr receipt)]
-                                [reconstructed (apply-changes '#("hello λ") changes)])
-                           (list (car result) (car receipt) (cadr receipt)
-                                 (equal? reconstructed (cadr receipt))
-                                 (equal? (cadr (car (reverse changes))) actor)
-                                 (map car changes))))
-                       results actors)
-                     '((applied 1 #("HELLO λ") #t #t (1)) (applied 2 #("HELLO λ!") #t #t (1 2))))))
+                   (test:check 'full-and-delta-receipts-keep-each-writers-own-commit-facts
+                     (list
+                       (map
+                         (lambda (result actor)
+                           (let* ([receipt (cadr result)] [changes (caddr receipt)])
+                             (list (car result) (car receipt) (cadr receipt)
+                                   (apply-changes '#("hello λ") changes)
+                                   (equal? (cadr (car (reverse changes))) actor)
+                                   (map car changes) (length receipt) (map car (cadddr receipt)))))
+                         results actors)
+                       (< (cdr (assq 'modified-at (cadddr (cadar results))))
+                          (cdr (assq 'modified-at (cadddr (cadadr results))))))
+                     '(((applied 1 #f #("HELLO λ") #t (1) 4 (modified modified-at))
+                        (applied 2 #("HELLO λ!") #("HELLO λ!") #t (1 2) 4 (modified modified-at))) #t))))
                (test:check 'watchers-adopt-one-text-facts-and-anchor-snapshot
                  (map
                    (lambda (connection)
@@ -516,7 +519,7 @@
                          (cadr plain) (cadr future) (list-ref future 4)
                          (map car (cadddr (rpc (car writers) 'state 1 2 'facts)))
                          (and (assq 'trailing (cadddr delta)) #t)))
-                 '(#f #("HELLO λ!") 2 #("HELLO λ!") #("HELLO λ!") #f (modified) #t))
+                 '(#f #("HELLO λ!") 2 #("HELLO λ!") #("HELLO λ!") #f (modified modified-at) #t))
                (test:check 'stale-and-permission-refusals-preserve-text
                  (list (rpc second 'edit 1 0 '(0 1 0 3) '("bad"))
                        (rpc agent 'edit 1 2 '(0 0 0 0) '("bad"))
@@ -656,16 +659,6 @@
                    (test:check 'wire-state-keeps-name-and-facts-coherent-through-deletion
                      (list results (rpc head 'state target #f)) '((#f #f) #f)))
                  (sys:close-connection! writer))
-               (let ([id (rpc head 'create "delta receipt" '("ab"))])
-                 (test:check 'wire-edit-receipts-omit-text-on-request
-                   (let ([full (rpc head 'edit id 0 '(0 1 0 1) '("X"))]
-                         [delta (rpc head 'edit id 1 '(0 3 0 3) '("Y") #f #t)])
-                     (list (car full) (cadr (cadr full)) (car delta) (cadr (cadr delta))
-                           (apply-changes '#("ab") (append (caddr (cadr full)) (caddr (cadr delta))))
-                           (car (rpc head 'snapshot id))
-                           (length (cadr full)) (boolean? (cadddr (cadr delta)))))
-                   '(applied #("aXb") applied #f #("aXbY") #("aXbY") 3 #t))
-                 (rpc head 'delete id))
                (let ([id (rpc head 'create "attached text" '("shared text") '((trailing . #t)))])
                  (write-forms (string-append root "/config.e")
                    `((main:set-startup-page! #f)
@@ -752,8 +745,11 @@
                    (test:check 'attached-history-keeps-other-actors-and-rich-receipts
                      (list (car (rpc head 'snapshot id))
                            (head-read a '(point))
-                           (map cadr (rpc head 'history id 3)))
-                     '(#("shared text B") (0 . 0) ((head "screen A") (head "screen B") (head "screen A"))))
+                           (map cadr (rpc head 'history id 3))
+                           (let ([stamp (cdr (assq 'modified-at (caddr (rpc head 'snapshot id))))])
+                             (map (lambda (screen)
+                                    (= stamp (head-read screen '(head:buffer-modified-at (current-buffer))))) (list a b))))
+                     '(#("shared text B") (0 . 0) ((head "screen A") (head "screen B") (head "screen A")) (#t #t)))
                    (head-read a '(undo! 'all))
                    (test:check 'attached-explicit-other-actor-undo-and-requester-redo
                      (list (car (rpc head 'snapshot id))

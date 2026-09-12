@@ -2446,8 +2446,10 @@
   ;;; Small commands and key description -------------------------------------
 
   (define (set-mark-command!)
-    (set! mark-row point-row) (set! mark-col point-col)
-    (set! mark-active? #t) (set! message "Mark set"))
+    (when (head:buffer-selectable? (current-buffer))
+      (set! mark-row point-row) (set! mark-col point-col)
+      (set! mark-active? #t))
+    (set! message (if mark-active? "Mark set" "")))
   (define (beginning-of-line!) (set! point-col 0))
   (define (end-of-line!) (set! point-col (string-length (current-line))))
   (define (keyboard-quit!) (set! mark-active? #f) (set! message "Quit"))
@@ -2891,11 +2893,11 @@
   (define buffers-view #f)
   (define buffer-rows '())
   (define buffer-filter "")
-  (define buffer-modified-only? #f)
   (define buffer-sorts '())         ; (column . descending?) in priority order
-  (define buffer-headings '#("Buffer" "Lines" "Mode" "File" "M" "RO"))
+  (define buffer-headings '#("Buffer" "Modified" "RO" "Lines" "Mode" "File"))
   (define buffer-columns '())       ; (column start-character end-character)
   (define buffer-first-row 2)       ; sticky filter and column headings
+  (define buffer-filter-label "Filter: ")
   (define-record-type buffer-choice (fields (mutable origin) (mutable selected)))
   (define buffer-choices (make-weak-eq-hashtable))
   ;; The pointer's candidate is an identity, not an unstable rendered row.
@@ -2928,9 +2930,6 @@
                  (buffer-choice-selected (buffer-choice-for w)))])
       (and (memq b buffer-rows) b)))
 
-  (define (buffer-filter-label)
-    (if buffer-modified-only? "Filter: [modified] " "Filter: "))
-
   (define (buffers-styles b row line)
     ;; A row provider sees live metadata even if its printed text is equal.
     ;; A text-only style cache cannot notice modified -> saved transitions.
@@ -2942,23 +2941,31 @@
                    [(head:buffer-modified (buffer-at-row row)) 'italic]
                    [else 'plain]))])
       (when (zero? row)
-        (style:fill-range! styles 0 (min (string-length (buffer-filter-label)) (vector-length styles)) 'chrome))
+        (style:fill-range! styles 0 (min (string-length buffer-filter-label) (vector-length styles)) 'chrome))
       styles))
 
   (define (buffer-data b)
-    (vector (head:buffer-name b) (buffer-line-count b)
-            (or (mode:name-of b) "") (or (head:buffer-file b) "")
-            (and (head:buffer-modified b) #t) (and (head:buffer-read-only b) #t)))
+    (vector (head:buffer-name b) (and (head:buffer-modified b) (head:buffer-modified-at b))
+            (and (head:buffer-read-only b) #t) (buffer-line-count b)
+            (or (mode:name-of b) "") (or (head:buffer-file b) "")))
 
   (define (buffer-cell data column)
     (let ([value (vector-ref data column)])
-      (cond [(boolean? value) (if value (if (= column 4) "*" "%") "")]
+      (cond [(= column 1)
+             (if value
+                 (let ([date (time-utc->date
+                               (make-time 'time-utc (mod value 1000000000) (div value 1000000000)))])
+                   (format "~2,'0d:~2,'0d:~2,'0d" (date-hour date) (date-minute date) (date-second date)))
+                 "")]
+            [(boolean? value) (if value "%" "")]
             [(number? value) (number->string value)]
-            [(= column 3) (abbreviate-home value)]
+            [(= column 5) (abbreviate-home value)]
             [else value])))
 
   (define (buffer-value<? a b)
-    (cond [(boolean? a) (and (not a) b)]
+    (cond [(not a) (and b #t)]
+          [(not b) #f]
+          [(boolean? a) #f]
           [(number? a) (< a b)]
           [else (string-ci<? a b)]))
 
@@ -2993,18 +3000,17 @@
 
   (define (buffer-matches? entry)
     (let ([data (cdr entry)])
-      (and (or (not buffer-modified-only?) (vector-ref data 4))
-           (exists (lambda (s) (string:search s buffer-filter 0 (string-length s) #t))
-             (list (vector-ref data 0) (vector-ref data 3) (buffer-cell data 3))))))
+      (exists (lambda (s) (string:search s buffer-filter 0 (string-length s) #t))
+        (list (vector-ref data 0) (vector-ref data 5) (buffer-cell data 5)))))
 
   (define (buffer-table entries all width)
     ;; Size from the full list so typing does not make columns jump. Share
     ;; spare cells among columns that need them; work is bounded by the pane,
     ;; not by the longest path. Narrow panes retain names and paths first.
-    (let* ([minimum '#(9 8 7 10 4 5)] [sizes (vector-copy minimum)]
+    (let* ([minimum '#(9 10 5 8 7 10)] [sizes (vector-copy minimum)]
            [columns
-            (let fit ([columns '(0 4 5 1 2 3)]
-                      [drop (append (filter (lambda (i) (not (assv i buffer-sorts))) '(2 1 5 4 3))
+            (let fit ([columns '(0 1 2 3 4 5)]
+                      [drop (append (filter (lambda (i) (not (assv i buffer-sorts))) '(4 3 2 1 5))
                               (remv 0 (reverse (map car buffer-sorts))))])
               (if (or (null? drop)
                       (<= (+ (* 2 (- (length columns) 1))
@@ -3023,8 +3029,8 @@
                                  (buffer-heading i)
                                  (buffer-cell data i))]
                        [size (vector-ref sizes i)])
-                   (if (and (= i 1) (not header?)) (pad-left text size)
-                       (glyph:fit text size (if (and (= i 3) (not header?)) 'left 'right)))))
+                   (if (and (= i 3) (not header?)) (pad-left text size)
+                       (glyph:fit text size (if (and (= i 5) (not header?)) 'left 'right)))))
             columns) "  "))
       (when (null? (cdr columns)) (vector-set! sizes 0 width))
       (let grow ([room (- width (* 2 (- (length columns) 1))
@@ -3039,7 +3045,7 @@
           (if (null? columns) '()
               (let ([end (+ start (vector-ref sizes (car columns)))])
                 (cons (list (car columns) start end) (bounds (cdr columns) (+ end 2)))))))
-      (cons* (let* ([label (buffer-filter-label)] [n (glyph:cells label)])
+      (cons* (let* ([label buffer-filter-label] [n (glyph:cells label)])
                (string-append (glyph:fit label (min n width))
                  (glyph:fit buffer-filter (max 0 (- width n)) 'left)))
         (row #f #t)
@@ -3107,7 +3113,7 @@
                         (glyph:cells (format "~a▏~a [↕][↔][×]"
                                        (head:window-index current-window) (head:buffer-name buffers-view))))])
            (let add ([text ""]
-                     [hints (list (if buffer-modified-only? "M-m all" "M-m modified") "C-u clear")])
+                     [hints '("F1–F6 sort" "C-u clear")])
              (if (null? hints) text
                  (add (if (<= (+ (glyph:cells text) 2 (glyph:cells (car hints))) room)
                           (string-append text "  " (car hints)) text)
@@ -3115,6 +3121,8 @@
 
   (define (handle-buffers-event! event)
     (cond [(string=? event "FOCUS") (refresh-buffers-view!) #t]
+          [(member event '("F1" "F2" "F3" "F4" "F5" "F6"))
+           (cycle-buffer-sort! (- (char->integer (string-ref event 1)) (char->integer #\1))) #t]
           [(member event '("UP" "C-p" "S-TAB" "WHEEL-UP")) (move-buffer-row! -1) #t]
           [(member event '("DOWN" "C-n" "TAB" "WHEEL-DOWN")) (move-buffer-row! 1) #t]
           [(member event '("HOME" "C-a" "M-<")) (move-buffer-row! (- (length buffer-rows))) #t]
@@ -3128,11 +3136,7 @@
                   [b (if (memq origin buffers) origin (other-buffer buffers-view))])
              (set! hover #f)
              (when b (show-buffer! b))) #t]
-          [(string=? event "C-u")
-           (set! buffer-modified-only? #f) (filter-buffers! "") #t]
-          [(string=? event "M-m")
-           (set! buffer-modified-only? (not buffer-modified-only?))
-           (filter-buffers! buffer-filter) #t]
+          [(string=? event "C-u") (filter-buffers! "") #t]
           [(member event '("BACKSPACE" "C-h"))
            (unless (string=? buffer-filter "")
              (filter-buffers!
@@ -3194,6 +3198,7 @@
           ;; overflow the window.
           (head:set-app-presentation! buffers-view buffer-first-row 'auto #f)
           (head:set-app-cursor-visible! buffers-view #f)
+          (head:set-app-selectable! buffers-view #f)
           (head:set-app-status-position! buffers-view head:buffer-name)
           (head:buffer-line-numbers-setting-set! buffers-view #f)
           (mode:choose! buffers-view "buffers")
@@ -3208,7 +3213,6 @@
       (head:call-with-display-update
         (lambda ()
           (set! buffer-filter "")
-          (set! buffer-modified-only? #f)
           (set! hover #f)
           (hashtable-set! buffer-choices current-window
             (make-buffer-choice
@@ -3362,7 +3366,7 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; M-m toggles modified-only filtering and C-u clears both filters. Click headings to cycle ascending, descending, then off; numbered arrows show sort-key priority. A side-panel click changes the focused window without taking focus.")
+         "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; C-u clears the filter. Click headings or use F1 through F6 in column order to cycle ascending, descending, then off; superscripts show sort-key priority. Modified shows the last edit time for unsaved buffers and sorts by the full timestamp. A side-panel click changes the focused window without taking focus.")
         ((switch-buffer!!) (("procedure" . "(switch-buffer!!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Open the filterable buffers app, just like `list-buffers!`. C-x b and C-x C-b share this workflow; Enter immediately selects the most recently used other buffer.")

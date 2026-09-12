@@ -6,6 +6,7 @@
           (prefix (sys) sys:) (prefix (wire) wire:)
           (prefix (store) store:) (prefix (actor) actor:)
           (prefix (policy) policy:) (prefix (text) text:) (prefix (datum) datum:)
+          (prefix (property) property:)
           (prefix (log) log:)
           (prefix (file) file:) (prefix (vt) vt:)
           (prefix (surface) surface:) (prefix (reference) reference:) (prefix (doc) doc:))
@@ -94,12 +95,12 @@
          (error 'wire "expected buffer, basis and optional delta flag"))
        ;; A client holding text at the basis asks for a delta reply: the text
        ;; slot is #f whenever the complete chain since the basis is included.
-       ;; One holding the facts too (facts) gets only the computed modified
-       ;; flag; stored facts change through events it already receives.
+       ;; One holding the facts too (facts) gets the modification facts;
+       ;; other stored facts change through events it already receives.
        (let* ([mode (and (= (length args) 3) (caddr args))]
               [complete? (lambda (state) (and state (= (length state) 5) (list-ref state 4)))]
               [state (let ([selected (store:state (car args) (cadr args)
-                                       (if (eq? mode 'facts) '(modified) #t))])
+                                       (if (eq? mode 'facts) property:edit-keys #t))])
                        ;; A broken chain needs the whole state after all.
                        (if (and (eq? mode 'facts) (not (complete? selected)))
                            (store:state (car args) (cadr args))
@@ -129,12 +130,8 @@
          (let-values ([(status detail)
                        (policy:session-edit! session (car args) (cadr args)
                          (text:datum->span (caddr args)) (cadddr args) context delta?)])
-           (list status
-             (if (and (eq? status 'applied) delta?)
-                 ;; The only fact an edit changes by itself rides along, so the
-                 ;; client's facts stay current without another read.
-                 (list (car detail) #f (caddr detail) (store:property (car args) 'modified #f))
-                 detail))))]
+           ;; The receipt already owns its text and facts from one commit.
+           (list status detail)))]
       [(undo)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional undo scope"))
        (call-with-values (lambda () (apply policy:session-undo! session args)) list)]
@@ -297,7 +294,7 @@
                                (caddr hello))])
               (unless (and (actor:identity? actor) (= (length actor) 2)
                            (memq (car actor) '(head agent)) (string? (cadr actor)))
-                (error 'wire "expected (hello 1 (head-or-agent name))"))
+                (error 'wire (format "expected (hello ~a (head-or-agent name))" wire:version)))
               (let* ([p ((connection-policy) (datum:copy actor))]
                      [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo redo))])
                 (set! session (policy:mint! actor p ((connection-owner) (datum:copy actor)) close!))

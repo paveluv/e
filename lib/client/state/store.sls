@@ -19,7 +19,7 @@
   ;; id -> (label text revision facts), or #f for a buffer known to be absent
   (define cache (make-eqv-hashtable))
   ;; ids whose cached entry may lag the base: text (edits only, so only the
-  ;; computed modified flag among the facts) or facts (anything)
+  ;; modification facts) or facts (anything)
   (define stale (make-eqv-hashtable))
   ;; id -> the recent applied chain, newest first, ending at the cached
   ;; revision: a catch-up from an older basis the ring still covers needs
@@ -44,6 +44,8 @@
             [else (take (cdr rest) (cons (car rest) out))])))
 
   (define (entry id) (and (hashtable-contains? cache id) (hashtable-ref cache id #f)))
+  (define (merge-facts fresh old)
+    (append fresh (remp (lambda (fact) (assq (car fact) fresh)) old)))
   (define (stale! id level)
     (when (and (hashtable-contains? cache id)
                (not (eq? (hashtable-ref stale id #f) 'facts)))
@@ -86,7 +88,7 @@
     ;; chain since the caller's basis, #f when it is not continuous.
     ;; With cached text the request starts at the cached revision (or the
     ;; caller's earlier basis) and asks for a delta reply; with cached facts
-    ;; too, only the modified flag comes back and merges into them.
+    ;; too, only modification facts come back and merge into them.
     (let* ([old (entry id)]
            [have (and old (caddr old))]
            [ask (cond [(not have) basis] [(not basis) have] [else (min have basis)])]
@@ -100,8 +102,7 @@
                 [text (or (cadr state) (apply-chain (cadr old) have changes))]
                 [revision (caddr state)]
                 [facts (if (and (eq? mode 'facts) (not (cadr state)))
-                           (append (cadddr state)
-                                   (remp (lambda (fact) (assq (car fact) (cadddr state))) (cadddr old)))
+                           (merge-facts (cadddr state) (cadddr old))
                            (cadddr state))])
            (cond [(not changes) (hashtable-delete! chains id)]
                  [(cadr state) (hashtable-set! chains id (reverse changes))]
@@ -209,8 +210,8 @@
            [result (apply client:request 'edit id basis (text:span->datum span) replacement context
                      (if delta? '(#t) '()))]
            [status (car result)] [detail (cadr result)])
-      ;; A plain delta receipt carries the modified flag, the one fact an
-      ;; edit changes by itself; committed facts leave the entry stale.
+      ;; A plain delta receipt carries its modification facts; explicit
+      ;; committed facts leave the entry stale.
       (if (and (eq? status 'applied) delta?
                (not (and context (>= (length context) 3)
                          (or (pair? (caddr context))
@@ -222,14 +223,11 @@
             (let* ([revision (car detail)]
                    [changes (decode-changes (caddr detail))]
                    [text (or (cadr detail) (apply-chain (cadr old) have changes))]
-                   [facts (if (and old (pair? (cdddr detail)))
-                              (cons (cons 'modified (cadddr detail))
-                                    (remp (lambda (fact) (eq? (car fact) 'modified)) (cadddr old)))
-                              (and old (cadddr old)))])
+                   [facts (and old (merge-facts (cadddr detail) (cadddr old)))])
               (when old
                 (hashtable-set! cache id (list (car old) text revision facts))
                 (if delta? (remember-chain! id have changes) (hashtable-set! chains id (reverse changes))))
-              (list revision text changes))
+              (list revision text changes (datum:copy (cadddr detail))))
             detail))))
   (define (edit! actor id basis span replacement . options)
     (let-values ([(status detail) (apply edit-with-snapshot! actor id basis span replacement options)])

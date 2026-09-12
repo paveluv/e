@@ -282,47 +282,52 @@ Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted
 text also filters. The first line shows `Filter: ` followed by the query;
 a long query keeps its most recently typed characters visible. Backspace
-removes the last character cluster, and C-u clears both filters. The selected
+removes the last character cluster, and C-u clears the filter. The selected
 buffer stays selected while it matches;
 otherwise the first match becomes the candidate. Empty results show
 `No matching buffers`, and Enter leaves the filter available for correction.
 
-`M-m` toggles showing only modified buffers, combined with the typed query.
-`Filter: [modified]` marks this restriction. Editing or saving updates the
-list immediately on redraw; saving the selected buffer moves the candidate
-to a remaining match. Toggle `M-m` again to restore all matches for the same
-query, or use C-u to clear the query and modified-only restriction together.
-
 Enter opens the candidate. Esc or C-g returns to the document from which
 the app was opened, preserving its text and point. Changing window focus
-keeps the list and filters available; invoking either shortcut clears both
-filters. The filters and sort belong to this head's app. Two windows showing
+keeps the list and filter available; invoking either shortcut clears the
+filter. The filter and sort belong to this head's app. Two windows showing
 it share the table, but each retains its own candidate and viewport.
 
 The live, read-only table has these columns:
 
-| Column | Meaning |
-|---|---|
-| `Buffer` | Buffer name. |
-| `M` | Modified: `*` when the buffer has unsaved changes; blank otherwise. |
-| `RO` | Read-only: `%` when ordinary text editing is disabled; blank otherwise. |
-| `Lines` | Current line count. |
-| `Mode` | Detected or assigned mode. |
-| `File` | Visited path, with the home directory abbreviated as `~`. |
+| Column | Sort key | Meaning |
+|---|---|---|
+| `Buffer` | F1 | Buffer name. |
+| `Modified` | F2 | Time of the latest content change, in local `HH:MM:SS`, when the buffer has unsaved changes; blank otherwise. |
+| `RO` | F3 | Read-only: `%` when ordinary text editing is disabled; blank otherwise. |
+| `Lines` | F4 | Current line count. |
+| `Mode` | F5 | Detected or assigned mode. |
+| `File` | F6 | Visited path, with the home directory abbreviated as `~`. |
 
-Each heading cycles through ascending, descending, then off. Several columns
-can be enabled: the first enabled column is the primary key, followed by the
-others in activation order. Superscript priorities follow the column name
-directly, before the arrow: `M¹↓`, `Lines²↑`. Changing direction keeps
+Click a heading or press its function key to cycle through ascending,
+descending, then off. Function keys keep this full left-to-right mapping
+even when a narrow pane hides columns. Several columns can be enabled:
+the first enabled column is the primary key, followed by the others in
+activation order. Superscript priorities follow the column name
+directly, before the arrow: `Modified¹↓`, `Lines²↑`. These numbers show sort
+priority, independently of the function keys. Changing direction keeps
 that priority. Turning a key off removes it and renumbers the others;
 enabling it again appends it after them.
 
 Names, modes and full paths sort alphabetically without case distinctions;
-line counts sort numerically. Flags sort blank first in ascending order,
-flagged first in descending order. Names break remaining ties and provide
-the default order when every key is off. The sort keys survive reopening;
-C-u clears filters without changing them. Selection follows buffer identity
+line counts sort numerically. Modified sorts by the full timestamp, including
+date and nanoseconds, even when the displayed times are identical. Ascending
+puts clean buffers first; descending puts unsaved buffers first, newest change
+first. RO sorts blank first in ascending order, flagged first in descending
+order. Names break remaining ties and provide the default order when every
+key is off. The sort keys survive reopening;
+C-u clears the filter without changing them. Selection follows buffer identity
 across sorting, renaming and live updates.
+
+Content edits, undo, redo and final-newline changes update the modification
+time. Saving clears the displayed time when the buffer becomes clean; the
+recorded time is retained. Unchanged edits and other metadata changes preserve
+it. Every attached head sees the time recorded by the buffer's owner.
 
 The filter and underlined column headings stay visible while rows scroll.
 The subdued `header` face distinguishes headings from the bold candidate,
@@ -340,9 +345,10 @@ bold row, and arrows continue from it. Moving the pointer away restores the
 keyboard candidate. Hover neither scrolls nor takes focus. Modified rows are
 italic. These faces are configurable through [Styles](STYLES.md).
 
-There is no text cursor. Keyboard selection still scrolls into view. The
-status bar shows `<buffers>` and, only in the focused window, hints for
-`M-m` and C-u as space permits. Window numbers and controls remain available
+There is no text cursor or text selection; C-Space does not set a mark.
+The keyboard candidate still scrolls into view. The status bar shows
+`<buffers>` and, only in the focused window, hints for
+F1–F6 and C-u as space permits. Window numbers and controls remain available
 in every window. Creation, deletion, edits, saves, renames and mode/file
 changes appear on redraw.
 
@@ -353,8 +359,8 @@ changes appear on redraw.
 - Page Up / `M-v`, Page Down / `C-v`: move by a page of rows.
 - Enter: show the candidate row's buffer in this window, completing the
   switch in place.
-- Esc / C-g: return to the invoking document; C-u: clear both filters.
-- `M-m`: toggle modified-only filtering, keeping the typed query.
+- Esc / C-g: return to the invoking document; C-u: clear the filter.
+- F1–F6: cycle sorting for Buffer, Modified, RO, Lines, Mode and File.
 - Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
 - Click a heading: cycle its sort key ascending, descending, then off.
@@ -461,8 +467,16 @@ split tree's ownership and minimum sizes.
 
 The public Scheme API exposes read-only inspection through `current-buffer`,
 `buffer-list`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `buffer-text`,
-`buffer-clean?`, `head:buffer-modified`, `head:buffer-read-only`, `mode:name-of`,
+`buffer-clean?`, `head:buffer-modified`, `head:buffer-modified-at`,
+`head:buffer-read-only`, `mode:name-of`,
 `buffer-line`, `buffer-line-count`, and `mode:line-styles`.
+
+`(head:buffer-modified-at b)` returns the last content-change time as an exact
+integer of UTC nanoseconds, or `#f` before a change has been recorded.
+`(store:property id 'modified-at)` exposes the same owner-maintained fact
+for shared buffers. Like `modified`, it cannot be overwritten through the
+shared property API. It survives saves; use `head:buffer-modified` to check
+whether there are unsaved changes.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
@@ -707,12 +721,13 @@ key retain their original identity; keep their equality stable while the
 action is retained. Use plain keys for transportable work.
 
 `store:edit-with-snapshot!` takes the same arguments but returns
-`(values 'applied (revision text changes))`. This acknowledgement describes
-exactly the accepted transaction, even if a subscriber immediately edits
-again. Its complete `(revision actor delta)` chain starts after the supplied
-basis and includes this edit; a commit that trims the oldest retained log
-entry still returns that entry in its acknowledgement. Refusals are the same
-as for `store:edit!`.
+`(values 'applied (revision text changes edit-facts))`. This acknowledgement
+describes exactly the accepted transaction, even if a subscriber immediately
+edits again. `edit-facts` contains the `modified` and `modified-at` pairs
+captured under the same store lock. Its complete `(revision actor delta)`
+chain starts after the supplied basis and includes this edit; a commit that
+trims the oldest retained log entry still returns that entry in its
+acknowledgement. Refusals are the same as for `store:edit!`.
 
 Head extensions can capture `(head:edit-basis b)` before computing a
 proposal. It contains the immutable source lines, store id (or `#f`), and

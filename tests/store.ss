@@ -272,16 +272,20 @@
      ;; subscriber writes again before the API returns to its caller.
      (define acknowledged (store:create! alice "acknowledged" '("abc" "tail")))
      (edit! bot acknowledged 0 0 0 0 0 '("Q"))
+     (define acknowledged-facts #f)
      (define ack-token
        (store:subscribe! acknowledged
          (lambda (event)
            (when (and (eq? (car event) 'edit) (equal? (list-ref event 3) alice))
-             (edit! bot acknowledged (store:revision acknowledged) 1 4 1 4 '("Z"))))))
+             (set! acknowledged-facts (property:select (store:properties acknowledged) property:edit-keys))
+             (edit! bot acknowledged (store:revision acknowledged) 1 4 1 4 '("Z"))
+             (store:set-property! bot acknowledged 'base "QabXc\ntailZ\n")))))
      (let-values ([(status receipt)
                    (store:edit-with-snapshot! alice acknowledged 0 (span 0 2 0 2) '("X"))])
-       (check 'acknowledgement-applied status 'applied)
-       (check 'acknowledgement-has-exact-commit-revision (car receipt) 2)
-       (check 'acknowledgement-has-exact-commit-text (cadr receipt) '#("QabXc" "tail"))
+       (check 'acknowledgement-keeps-text-revision-and-modification-facts-together
+         (list status (car receipt) (cadr receipt) (cadddr receipt)
+               (store:property acknowledged 'modified))
+         (list 'applied 2 '#("QabXc" "tail") acknowledged-facts #f))
        (check 'acknowledgement-keeps-complete-basis-chain
               (map (lambda (entry) (list (car entry) (cadr entry))) (caddr receipt))
               (list (list 1 bot) (list 2 alice)))
@@ -567,7 +571,7 @@
      (store:edit! alice absent 1 (span 1 0 1 1) '("B") '(g "group" ((trailing . #t))))
      (store:undo! reviewer absent 'all)
      (check 'grouped-fact-undo-restores-absence
-            (remp (lambda (entry) (eq? (car entry) 'modified)) (store:properties absent)) '())
+            (remp (lambda (entry) (memq (car entry) property:edit-keys)) (store:properties absent)) '())
      (store:redo! reviewer absent)
      (check 'grouped-fact-redo-restores-value (store:property absent 'trailing) #t)
      (store:undo! reviewer absent 'all)
@@ -576,7 +580,7 @@
             (call-with-values (lambda () (store:redo! reviewer absent)) list)
             '(blocked property-changed))
      (check 'property-tombstones-stay-private
-            (remp (lambda (entry) (eq? (car entry) 'modified)) (store:properties absent)) '())
+            (remp (lambda (entry) (memq (car entry) property:edit-keys)) (store:properties absent)) '())
      (define invalid-context-revision (store:revision absent))
      (check 'duplicate-transaction-properties-refuse
             (guard (ex [else #t])

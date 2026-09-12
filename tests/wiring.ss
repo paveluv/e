@@ -23,6 +23,7 @@
      (define probe (format "/tmp/e-wiring-~a" (getenv "USER")))
 
      (putenv "SHELL" "/bin/sh")
+     (putenv "TZ" "UTC") ; deterministic clock display in the buffer table
      (define mirror (vt:make-emulator 24 100))
      (define process
        (sys:spawn-terminal-process "/bin/sh" "exec ./e --name 'wired head λ'"
@@ -276,7 +277,7 @@
        (list (screen-has? 0 "Filter: 日本語") (screen-has? 1 "Buffer")
              (picker-face "Buffer" "4") (picker-face "Buffer" "1")
              (picker-face "<picker-alpha" "1")
-             (string:prefix? "  M-m modified  C-u clear" (buffers-bar 0)))
+             (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)))
        '(#t #t #t #f #t #t))
      (press! "\x15;no-such-buffer\r")
      (check 'empty-results-never-create-a-buffer-or-leave-the-list
@@ -300,75 +301,93 @@
             (= (length labels)
                (length (filter (lambda (c) (memv c '(#\↑ #\↓))) (string->list (screen-line 1)))))))
      (define (picker-sort! heading labels)
-       (click! (find-cell heading))
+       (if (integer? heading)
+           (press! (vector-ref '#("\x1b;OP" "\x1b;OQ" "\x1b;OR" "\x1b;OS" "\x1b;[15~" "\x1b;[17~") (- heading 1)))
+           (click! (find-cell heading)))
        (cons (picker-sort-visible? labels) (picker-result)))
      (read-editor
        '(begin
           (for-each (lambda (name) (head:buffer-modified-set! (buffer name) #t)) '("<picker-alpha>" "<picker-gamma>"))
+          (head:buffer-fact-set! (buffer "<picker-alpha>") 'modified-at 1704164645000000900)
+          (head:buffer-fact-set! (buffer "<picker-gamma>") 'modified-at 1704078245000000900)
           (for-each (lambda (name) (head:buffer-read-only-set! (buffer name) #t)) '("<picker-beta>" "<picker-gamma>")) #t))
      (define picker-sort-cases
-       '(("Lines" (beta alpha gamma) (gamma alpha beta))
-         ("Mode" (gamma beta alpha) (alpha beta gamma))
-         ("File" (gamma beta alpha) (alpha beta gamma))
-         ("Buffer" (alpha beta gamma) (gamma beta alpha))
-         ("M" (beta alpha gamma) (alpha gamma beta))
-         ("RO" (alpha beta gamma) (beta gamma alpha))))
-     (check 'every-column-cycles-ascending-descending-off-without-changing-selection
+       '(("Buffer" 1 (alpha beta gamma) (gamma beta alpha))
+         ("Modified" 2 (beta gamma alpha) (alpha gamma beta))
+         ("RO" 3 (alpha beta gamma) (beta gamma alpha))
+         ("Lines" 4 (beta alpha gamma) (gamma alpha beta))
+         ("Mode" 5 (gamma beta alpha) (alpha beta gamma))
+         ("File" 6 (gamma beta alpha) (alpha beta gamma))
+         ;; Same visible second, but gamma is 800 nanoseconds earlier.
+         ("Modified" 2 (beta gamma alpha) (alpha gamma beta) 1704164645000000100)))
+     (check 'column-keys-and-clicks-cycle-real-values-without-changing-selection
        (picker-sequence (lambda (entry)
+                          (when (pair? (cddddr entry))
+                            (read-editor `(begin (head:buffer-fact-set! (buffer "<picker-gamma>") 'modified-at ,(car (cddddr entry))) #t)))
                           (picker-sequence (lambda (arrow)
-                                             (picker-sort! (car entry) (if arrow (list (string-append (car entry) arrow)) '())))
+                                             (picker-sort! (if (equal? arrow "¹↓") (car entry) (cadr entry))
+                                               (if arrow (list (string-append (car entry) arrow)) '())))
                             '("¹↑" "¹↓" #f))) picker-sort-cases)
        (map (lambda (entry)
               (map (lambda (order) (list #t (picker-order order) #t))
-                (list (cadr entry) (caddr entry) '(alpha beta gamma)))) picker-sort-cases))
+                (list (caddr entry) (cadddr entry) '(alpha beta gamma)))) picker-sort-cases))
      ;; Equal first and second keys force comparison through the third key.
-     (read-editor '(begin (head:buffer-read-only-set! (buffer "<picker-alpha>") #t) #t))
+     (read-editor '(begin (head:buffer-read-only-set! (buffer "<picker-alpha>") #t)
+                          (head:buffer-fact-set! (buffer "<picker-gamma>") 'modified-at
+                            (head:buffer-modified-at (buffer "<picker-alpha>")))
+                          #t))
      (define picker-compound-cases
-       '(("M" ("M¹↑") (beta alpha gamma))
-         ("RO" ("M¹↑" "RO²↑") (beta alpha gamma))
-         ("Lines" ("M¹↑" "RO²↑" "Lines³↑") (beta alpha gamma))
-         ("Lines" ("M¹↑" "RO²↑" "Lines³↓") (beta gamma alpha))
-         ("M" ("M¹↓" "RO²↑" "Lines³↓") (gamma alpha beta))
-         ("M" ("RO¹↑" "Lines²↓") (gamma alpha beta))
-         ("M" ("RO¹↑" "Lines²↓" "M³↑") (gamma alpha beta))
-         ("Lines" ("RO¹↑" "M²↑") (beta alpha gamma))
-         ("RO" ("RO¹↓" "M²↑") (beta alpha gamma))
-         ("RO" ("M¹↑") (beta alpha gamma))
-         ("M" ("M¹↓") (alpha gamma beta))
-         ("M" () (alpha beta gamma))))
+       '((2 ("Modified¹↑") (beta alpha gamma))
+         ("RO" ("Modified¹↑" "RO²↑") (beta alpha gamma))
+         (4 ("Modified¹↑" "RO²↑" "Lines³↑") (beta alpha gamma))
+         ("Lines" ("Modified¹↑" "RO²↑" "Lines³↓") (beta gamma alpha))
+         ("Modified" ("Modified¹↓" "RO²↑" "Lines³↓") (gamma alpha beta))
+         (2 ("RO¹↑" "Lines²↓") (gamma alpha beta))
+         ("Modified" ("RO¹↑" "Lines²↓" "Modified³↑") (gamma alpha beta))
+         (4 ("RO¹↑" "Modified²↑") (beta alpha gamma))
+         (3 ("RO¹↓" "Modified²↑") (beta alpha gamma))
+         ("RO" ("Modified¹↑") (beta alpha gamma))
+         (2 ("Modified¹↓") (alpha gamma beta))
+         ("Modified" () (alpha beta gamma))))
      (check 'compound-sort-retains-priority-renumbers-and-appends-reenabled-keys
        (picker-sequence (lambda (entry) (picker-sort! (car entry) (cadr entry))) picker-compound-cases)
        (map (lambda (entry) (list #t (picker-order (caddr entry)) #t)) picker-compound-cases))
      (read-editor '(begin (head:buffer-read-only-set! (buffer "<picker-alpha>") #f) #t))
+     (define (picker-clock name)
+       (let ([start (cdr (find-cell "Modified"))])
+         (substring (screen-line (car (find-cell name))) start (+ start 8))))
      (define picker-flags
-       (map (lambda (name) (map (lambda (flag) (screen-has? (car (find-cell name)) flag)) '("*" "%"))) picker-all))
-     (press! "\x1b;m")
+       (map (lambda (name)
+              (list (string=? (picker-clock name) "03:04:05")
+                    (screen-has? (car (find-cell name)) "%"))) picker-all))
+     (press! "\x1b;OQ\x1b;OQ")
      (define modified-rows (car (picker-result)))
-     (press! "\x1b;m")
-     (define toggled-rows (list (screen-has? 0 "Filter: picker-") (car (picker-result))))
-     (press! "\x1b;m")
      (read-editor '(begin (head:buffer-modified-set! (buffer "<picker-alpha>") #f) #t))
      (define saved-rows (car (picker-result)))
      (read-editor '(begin (head:buffer-modified-set! (buffer "<picker-gamma>") #f) #t))
-     (press! "\r")
-     (define no-modified (list (visible? "No matching buffers") (screen-has? 0 "Filter: [modified] picker-")))
+     (define clean-rows
+       (list (car (picker-result)) (screen-has? 0 "Filter: picker-")
+             (for-all (lambda (name) (string=? (picker-clock name) "        ")) picker-all)))
+     (press! "\x1b;OQ")
      (press! "\x15;picker-")
      (define cleared-rows (car (picker-result)))
-     (press! "\x1b;m\x18;b")
-     (check 'modified-filter-composes-with-the-query-and-follows-live-flags
-       (list picker-flags modified-rows toggled-rows saved-rows no-modified cleared-rows
+     (press! "\x18;b")
+     (check 'modified-times-sort-unsaved-rows-first-and-clear-on-save
+       (list picker-flags modified-rows saved-rows clean-rows cleared-rows
              (read-editor '(for-all char-whitespace?
                              (string->list (substring (buffer-line (current-buffer) 0) 8
                                              (string-length (buffer-line (current-buffer) 0)))))))
-       (list '((#t #f) (#f #t) (#t #t)) (picker-order '(alpha gamma))
-             (list #t picker-all) (picker-order '(gamma)) '(#t #t) picker-all #t))
+       (list '((#t #f) (#f #t) (#t #t)) (picker-order '(alpha gamma beta))
+             (picker-order '(gamma alpha beta)) (list picker-all #t #t) picker-all #t))
      (press! "picker-")
+     (press! "\x00;")
      (let ([cell (find-cell "<picker-beta>")])
        (press! (format "\x1b;[<35;~a;~aM" (+ (cdr cell) 1) (+ (car cell) 1))))
-     (check 'hover-has-one-candidate-and-hides-the-text-cursor
+     (check 'hover-has-one-candidate-without-a-text-cursor-or-mark
        (list (map (lambda (name) (picker-face name "1")) '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
-             (cdr (assq 'cursor-visible (vt:emulator-state mirror))))
-       '((#f #t #f) #f))
+             (cdr (assq 'cursor-visible (vt:emulator-state mirror)))
+             (read-editor '(mark)) (visible? "Mark set"))
+       '((#f #t #f) #f #f #f))
      (press! "\r")
      (check 'enter-accepts-the-visible-hover-candidate (picker-state) '("<picker-beta>" (4 . 1)))
      (press! "\x18;bpicker-")
@@ -395,6 +414,10 @@
              (car narrow-modified) (picker-face "beta.ss" "3")
              (equal? (cadr narrow-modified) (screen-line (car (find-cell "beta.ss")))))
        '(#t #t (5 #f) #t #f #t))
+     (press! "\x1b;OQ")
+     (check 'sort-hotkeys-keep-their-column-when-narrow-panes-hide-it
+       (list (visible? "Modified¹↑") (picker-face "<picker-beta>" "1")) '(#t #t))
+     (press! "\x1b;OQ\x1b;OQ")
      (resize! 6 32)
      (press! "\x1b;[F")
      (check 'filter-and-headings-stay-visible-while-browsing-a-short-pane
@@ -417,7 +440,7 @@
                        (let ([line (buffer-line (head:window-buffer w) (head:window-prow w))])
                          (and (string:search line tail 0 (string-length line)) #t)))
                   (head:windows) '("alpha.txt" "beta.ss")))
-             (string:prefix? "  M-m modified  C-u clear" (buffers-bar 0)) (quiet-buffers-bar? 1))
+             (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)) (quiet-buffers-bar? 1))
        '((#t #t) #t #t))
      (read-editor '(begin (delete-other-windows!) (set-buffer-name! (buffer "<picker-alpha>") "picker-delta") #t))
      (check 'renaming-the-selected-buffer-does-not-move-selection-to-another-identity
@@ -431,7 +454,8 @@
        (read-editor
          '(begin (kill-buffer! (head:find-tool-buffer "*buffers*")) (list-buffers!)
                  (list (head:app-buffer? (current-buffer)) (head:app-cursor-visible-in? (selected-window))
-                       (paint:window-wrapped? (selected-window))))) '(#t #f #f))
+                       (head:buffer-selectable? (current-buffer))
+                       (paint:window-wrapped? (selected-window))))) '(#t #f #f #f))
      (press! "\x07;")
      (check 'retiring-a-visited-buffer-does-not-return-to-the-switcher
        (read-editor

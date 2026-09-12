@@ -29,7 +29,8 @@
           subscribe! unsubscribe! watch!)
   (import (rnrs)
           (only (chezscheme)
-                box unbox set-box! set-cdr! make-mutex with-mutex format void remq)
+                box unbox set-box! set-cdr! make-mutex with-mutex format void remq
+                current-time time-second time-nanosecond)
           (prefix (text) text:) (prefix (property) property:)
           (prefix (actor) actor:)
           (prefix (datum) datum:)
@@ -48,7 +49,8 @@
             (mutable undo)       ; undo groups, most recent operation first
             (mutable properties) ; ((key . datum) ...), see set-property!
             (mutable baseline)   ; cached (base-cell lines trailing?), or #f
-            (mutable modified))) ; derived from text/trailing and the baseline
+            (mutable modified)   ; derived from text/trailing and the baseline
+            (mutable modified-at))) ; UTC nanoseconds of the last content change
 
   (define-record-type undo-group
     (fields id actor key
@@ -96,7 +98,7 @@
     (let ([cell (property-cell (buffer-properties b) key)])
       (if (and cell (not (eq? (cdr cell) missing-property))) (cdr cell) fallback)))
 
-  (define (refresh-modified! b)
+  (define (refresh-edit-facts! b changed?)
     ;; Dirty state is store truth, never a head's bookkeeping write.
     ;; Parse the baseline once per property version; line equality can
     ;; share unchanged strings and avoids serializing a file per key.
@@ -115,7 +117,14 @@
             (not (text:content=? text (property-value b 'trailing #t)
                                  (cadr baseline) (caddr baseline)))
             (not (and (= (vector-length text) 1)
-                      (string=? (vector-ref text 0) "")))))))
+                      (string=? (vector-ref text 0) ""))))))
+    (when (or changed? (and (buffer-modified b) (not (buffer-modified-at b))))
+      (let ([now (current-time 'time-utc)])
+        (buffer-modified-at-set! b (+ (* (time-second now) 1000000000) (time-nanosecond now))))))
+
+  (define (edit-facts b)
+    (list (cons 'modified (buffer-modified b))
+          (cons 'modified-at (buffer-modified-at b))))
 
   (define validate-properties property:validate)
   (define writable-properties property:writable)
@@ -127,9 +136,9 @@
                  (buffer-properties b) updates)))
 
   (define (current-properties b)
-    (cons (cons 'modified (buffer-modified b))
-          (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
-                  (buffer-properties b))))
+    (append (edit-facts b)
+            (filter (lambda (cell) (not (eq? (cdr cell) missing-property)))
+                    (buffer-properties b))))
 
   (define (property-data b) (map datum:copy (current-properties b)))
 
@@ -216,9 +225,9 @@
     ;; Caller holds the store lock; creation and publication use one path.
     (let* ([s (current-store)] [name (unique-name name #f)] [id (store-next-id s)])
       (store-next-id-set! s (+ id 1))
-      (let ([b (make-buffer name text 0 '() '() '() '() #f #f)])
+      (let ([b (make-buffer name text 0 '() '() '() '() #f #f #f)])
         (install-properties! b updates)
-        (refresh-modified! b)
+        (refresh-edit-facts! b #f)
         (hashtable-set! (store-buffers s) id b))
       (enqueue-event! `(create ,id ,name ,actor))
       id))
@@ -264,14 +273,16 @@
                (reset-buffer! actor id text updates))))))
 
   (define (reset-buffer! actor id text updates)
-    (let ([b (buffer-of 'reset! id)]
-          [clamp (lambda (position)
-                   (let* ([line (min (car position) (- (vector-length text) 1))]
-                          [column (min (cdr position) (string-length (vector-ref text line)))])
-                     (cons line column)))])
+    (let* ([b (buffer-of 'reset! id)]
+           [old (buffer-text b)] [trailing? (property-value b 'trailing #t)]
+           [clamp (lambda (position)
+                    (let* ([line (min (car position) (- (vector-length text) 1))]
+                           [column (min (cdr position) (string-length (vector-ref text line)))])
+                      (cons line column)))])
       (buffer-text-set! b text)
       (install-properties! b updates)
-      (refresh-modified! b)
+      (refresh-edit-facts! b
+        (or (not (equal? old text)) (not (eq? trailing? (property-value b 'trailing #t)))))
       (buffer-revision-set! b (+ (buffer-revision b) 1))
       (buffer-deltas-set! b '())
       (buffer-undo-set! b '())
@@ -549,6 +560,7 @@
     ;; The attribution log always retains the actual deltas; cancelling
     ;; pairs is only a temporary proof used when planning another undo.
     (let* ([new-revision (+ (buffer-revision b) 1)]
+           [trailing? (property-value b 'trailing #t)]
            [entry (vector new-revision actor delta origin facts)])
       (buffer-text-set! b new-text)
       (buffer-revision-set! b new-revision)
@@ -556,7 +568,9 @@
         b (bounded (cons entry (buffer-deltas b)) delta-log-limit))
       (buffer-properties-set! b (apply-property-changes (buffer-properties b) facts))
       (install-properties! b commit-facts)
-      (refresh-modified! b)
+      (refresh-edit-facts! b
+        (or (not (equal? (text:delta-removed delta) (text:delta-inserted delta)))
+            (not (eq? trailing? (property-value b 'trailing #t)))))
       (buffer-marks-set!
         b (map (lambda (entry)
                  (cons (car entry) (rebase-mark-value (cdr entry) delta)))
@@ -635,7 +649,7 @@
 
   (define (edit-with-snapshot! actor id basis span replacement . options)
     ;; The same transaction with an atomic acknowledgement:
-    ;; (revision text changes), ending at this edit, before subscribers
+    ;; (revision text changes edit-facts), ending at this edit, before subscribers
     ;; can write again.  Changes include the complete chain from basis
     ;; through the accepted edit, even if committing trims its oldest
     ;; entry out of the retained log.  A head uses this to place its
@@ -675,7 +689,8 @@
                             (remember-edit! b actor group-context)
                             (list 'applied new-revision (buffer-text b)
                               (append (map change-data since)
-                                      (list (change-data (car (buffer-deltas b)))))))]))])))])
+                                      (list (change-data (car (buffer-deltas b)))))
+                              (edit-facts b)))]))])))])
         (case (car outcome)
           [(applied)
            (values 'applied (cdr outcome))]
@@ -1030,9 +1045,9 @@
   ;; cursors, selections, viewports -- stays with heads and their
   ;; marks.  Values are data only -- #f included: a fact may be
   ;; explicitly off -- and an absent property uses its declared fallback.
-  ;; Modified is derived from text/trailing/base and cannot be written.
-  ;; Its causing edit/reset/property event already notifies observers;
-  ;; no redundant modified-property event is needed.  Other properties
+  ;; Modification facts belong to the writer and cannot be set by clients.
+  ;; Their causing edit/reset/property event already notifies observers;
+  ;; incremental replies carry both facts without redundant events. Other properties
   ;; survive resets and renames unless explicitly updated, and die with
   ;; delete!.  Subscribers hear (property id key actor).
 
@@ -1049,13 +1064,14 @@
           [name (and (= (length options) 2) (own-name (cadr options)))])
       (transact! actor
         (lambda (actor)
-          (let ([b (if expected (hashtable-ref (store-buffers (current-store)) id #f)
-                       (buffer-of 'set-properties! id))])
+          (let* ([b (if expected (hashtable-ref (store-buffers (current-store)) id #f)
+                        (buffer-of 'set-properties! id))]
+                 [trailing? (and b (property-value b 'trailing #t))])
             (and b (or (not expected) (property:matches? expected (current-properties b)))
                  (begin
                    (unless (null? updates)
                      (install-properties! b updates)
-                     (refresh-modified! b))
+                     (refresh-edit-facts! b (not (eq? trailing? (property-value b 'trailing #t)))))
                    (when name (rename-buffer! actor id name))
                    (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
                    #t)))))))
@@ -1063,14 +1079,14 @@
   (define (drop-property! actor id key)
     (unless (symbol? key)
       (error 'drop-property! "expected a symbol key" key))
-    (when (eq? key 'modified) (error 'drop-property! "modified is derived"))
+    (when (memq key property:edit-keys) (error 'drop-property! "modification facts belong to the text owner"))
     (when (eq? key 'publication) (error 'drop-property! "publication identity belongs to publish!"))
     (transact! actor
       (lambda (actor)
-        (let ([b (buffer-of 'drop-property! id)])
+        (let* ([b (buffer-of 'drop-property! id)] [trailing? (property-value b 'trailing #t)])
           (buffer-properties-set!
             b (replace-property-cell (buffer-properties b) (cons key missing-property)))
-          (refresh-modified! b)
+          (refresh-edit-facts! b (not (eq? trailing? (property-value b 'trailing #t))))
           (enqueue-event! `(property ,id ,key ,actor)))))
     (void))
 
@@ -1080,11 +1096,14 @@
     (locked
       (lambda ()
         (let ([b (buffer-of 'property id)])
-          (if (eq? key 'modified) (buffer-modified b)
-              (let ([cell (property-cell (buffer-properties b) key)])
-                (if (and cell (not (eq? (cdr cell) missing-property)))
-                    (datum:copy (cdr cell))
-                    (and (pair? fallback) (car fallback)))))))))
+          (case key
+            [(modified) (buffer-modified b)]
+            [(modified-at) (buffer-modified-at b)]
+            [else
+             (let ([cell (property-cell (buffer-properties b) key)])
+               (if (and cell (not (eq? (cdr cell) missing-property)))
+                   (datum:copy (cdr cell))
+                   (and (pair? fallback) (car fallback))))])))))
 
   (define (properties id)
     ;; every fact, as fresh pairs: ((key . value) ...)

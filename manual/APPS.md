@@ -317,6 +317,11 @@ a predicate receiving the window. Viewport ownership is separate:
 `head:set-app-manages-viewport!` disables the editor's automatic following
 when the app positions its own viewport.
 
+`(head:set-app-selectable! app-buffer #f)` disables text selection and clears
+an existing mark. Keyboard commands and mouse gestures cannot activate a mark
+while it is disabled. Selection defaults to enabled and is independent of
+cursor visibility. Detaching the app restores ordinary text selection.
+
 Sticky rows, scrollbar geometry, cursor placement,
 mouse hit-testing, and scrolling are handled together by the head and the
 painter and apply to every window showing the app. The scrollbar is a position indicator:
@@ -354,12 +359,13 @@ windows showing the same app.
 ## The buffers app
 
 `<buffers>` is the shared implementation of `C-x b` and `C-x C-b`: a live
-table with name/path and modified-only filters, ordered column sort keys,
-modified/read-only flags, and selection preserved by buffer identity. Each
-window keeps its own candidate and point; the filters and sort belong to the
-local app. Its rows fit the narrowest visible window, with sticky filter and
-heading rows, elided paths, automatic
-scrollbar and hidden cursor. See [Using the buffers app](BUFFERS.md#the-buffers-app)
+table with a name/path filter, ordered column sort keys, modification times,
+read-only flags, and a candidate preserved by buffer identity. Click headings
+or use F1–F6 to cycle sorting. Each window keeps its own candidate and point;
+the filter and sort belong to the local app. Its rows fit the narrowest
+visible window, with sticky filter and
+heading rows, elided paths, an automatic scrollbar, a hidden cursor and
+disabled text selection. See [Using the buffers app](BUFFERS.md#the-buffers-app)
 for the complete keyboard, mouse and cancellation behavior.
 
 Status-bar clicks always focus their window; app handlers cannot override
