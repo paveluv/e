@@ -224,6 +224,8 @@
        (unless cell (error 'click! "text not on screen" (vector->list (vt:emulator-screen mirror))))
        (press! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
                  (+ (cdr cell) 1) (+ (car cell) 1) (+ (cdr cell) 1) (+ (car cell) 1))))
+     (define (hover! cell)
+       (press! (format "\x1b;[<35;~a;~aM" (+ (cdr cell) 1) (+ (car cell) 1))))
      (define (resize! rows cols)
        (vt:emulator-resize! mirror rows cols)
        (sys:resize-terminal-process! process rows cols)
@@ -253,10 +255,14 @@
      (define (picker-state)
        (read-editor '(list (head:buffer-name (current-buffer)) (point))))
      (define (picker-style name)
-       (let ([cell (find-cell name)])
+       (let ([cell (if (string? name) (find-cell name) name)])
          (and cell (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell)) (cdr cell)))))
      (define (picker-face name face)
        (and (member face (sgr-params (picker-style name))) #t))
+     (define picker-headings '("Buffer" "Modified" "RO" "Lines" "Mode" "File"))
+     (define (picker-heading-hover)
+       (filter (lambda (entry) (or (cadr entry) (caddr entry)))
+         (map (lambda (name) (list name (picker-face name "1") (picker-face name "4:4"))) picker-headings)))
      (define (picker-sequence proc items)
        ;; map does not promise effect order; click/keypress sequences do.
        (reverse (fold-left (lambda (results item) (cons (proc item) results)) '() items)))
@@ -279,7 +285,7 @@
              (picker-face "Buffer" "4") (picker-face "Buffer" "1")
              (picker-face "<picker-alpha" "1")
              (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)))
-       '(#t #t #t #f #t #t))
+       '(#t #t #f #f #t #t))
      ;; Reports repaint the existing table while the user is idle. OSC 11
      ;; works on older hosts; an explicit scheme report takes precedence.
      (let* ([filter-row (screen-line 0)] [candidate (picker-style "<picker-alpha")]
@@ -294,14 +300,37 @@
            (picker-sequence
              (lambda (report)
                (press! report)
-               (list (picker-style "Buffer")
-                     (and (equal? filter-row (screen-line 0))
-                          (equal? candidate (picker-style "<picker-alpha")))))
+               (hover! (find-cell "Modified"))
+               (let ([hovered (picker-heading-hover)])
+                 (hover! (find-cell "Filter:"))
+                 (list (picker-style "Buffer")
+                       (and (equal? hovered '(("Modified" #t #t)))
+                            (null? (picker-heading-hover))
+                            (equal? filter-row (screen-line 0))
+                            (equal? candidate (picker-style "<picker-alpha"))))))
              '("\x1b;]11;rgb:ffff/ffff/ffff\x7;" "\x1b;]11;rgb:0/0/0\x1b;\\"
                "\x1b;[?997;2n" "\x1b;]11;rgb:0/0/0\x7;" "\x1b;[?997;1n")))
-         '(#t #t (("0;38;5;236;48;5;253;4" #t) ("0;38;5;252;48;5;240;4" #t)
-                  ("0;38;5;236;48;5;253;4" #t) ("0;38;5;236;48;5;253;4" #t)
-                  ("0;38;5;252;48;5;240;4" #t)))))
+         '(#t #t (("0;38;5;236;48;5;253" #t) ("0;38;5;252;48;5;240" #t)
+                  ("0;38;5;236;48;5;253" #t) ("0;38;5;236;48;5;253" #t)
+                  ("0;38;5;252;48;5;240" #t)))))
+     ;; The padded column is clickable; only its label gets dots. Crossing
+     ;; a gap, the filter, or the status bar clears the heading feedback.
+     (let* ([before (picker-state)] [first (find-cell "Buffer")] [next (find-cell "Modified")]
+            [targets (append (map (lambda (name) (list name (find-cell name) #t)) picker-headings)
+                       (list (list "Buffer" (cons (car first) (+ (cdr first) 6)) #f)
+                             (list #f (cons (car next) (- (cdr next) 1)) #f)
+                             (list #f (find-cell "Filter:") #f)
+                             (list #f (find-cell "0▏<buffers>") #f)))])
+       (let ([samples (picker-sequence
+                        (lambda (entry)
+                          (hover! (cadr entry))
+                          (list (picker-heading-hover) (picker-face (cadr entry) "4:4")
+                                (picker-face "<picker-alpha" "1"))) targets)])
+         (check 'heading-hover-targets-one-label-and-preserves-the-keyboard-candidate
+           (list samples (equal? before (picker-state)))
+           (list (map (lambda (entry)
+                        (list (if (car entry) (list (list (car entry) #t #t)) '()) (caddr entry) #t)) targets)
+                 #t))))
      (press! "\x15;no-such-buffer\r")
      (check 'empty-results-never-create-a-buffer-or-leave-the-list
        (list (visible? "No matching buffers")
@@ -327,7 +356,10 @@
        (if (integer? heading)
            (press! (vector-ref '#("\x1b;OP" "\x1b;OQ" "\x1b;OR" "\x1b;OS" "\x1b;[15~" "\x1b;[17~") (- heading 1)))
            (click! (find-cell heading)))
-       (cons (picker-sort-visible? labels) (picker-result)))
+       (let ([visible? (and (picker-sort-visible? labels)
+                            (equal? (picker-heading-hover)
+                              (if (integer? heading) '() (list (list heading #t #t)))))])
+         (cons visible? (picker-result))))
      (read-editor
        '(begin
           (for-each (lambda (name) (head:buffer-modified-set! (buffer name) #t)) '("<picker-alpha>" "<picker-gamma>"))
@@ -404,8 +436,7 @@
              (picker-order '(gamma alpha beta)) (list picker-all #t #t) picker-all #t))
      (press! "picker-")
      (press! "\x00;")
-     (let ([cell (find-cell "<picker-beta>")])
-       (press! (format "\x1b;[<35;~a;~aM" (+ (cdr cell) 1) (+ (car cell) 1))))
+     (hover! (find-cell "<picker-beta>"))
      (check 'hover-has-one-candidate-without-a-text-cursor-or-mark
        (list (map (lambda (name) (picker-face name "1")) '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
              (cdr (assq 'cursor-visible (vt:emulator-state mirror)))
@@ -414,8 +445,8 @@
      (press! "\r")
      (check 'enter-accepts-the-visible-hover-candidate (picker-state) '("<picker-beta>" (4 . 1)))
      (press! "\x18;bpicker-")
-     (let ([cell (find-cell "<picker-beta>")])
-       (press! (format "\x1b;[<35;~a;~aM\x1b;[B" (+ (cdr cell) 1) (+ (car cell) 1))))
+     (hover! (find-cell "<picker-beta>"))
+     (press! "\x1b;[B")
      (check 'arrows-continue-from-hover-and-clear-its-old-emphasis
        (map (lambda (name) (picker-face name "1")) '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
        '(#f #f #t))
@@ -443,9 +474,10 @@
      (press! "\x1b;OQ\x1b;OQ")
      (resize! 6 32)
      (press! "\x1b;[F")
+     (hover! (find-cell "Buffer"))
      (check 'filter-and-headings-stay-visible-while-browsing-a-short-pane
        (list (screen-has? 0 "Filter: picker-") (screen-has? 1 "Buffer")
-             (picker-face "<picker-g" "1")) '(#t #t #t))
+             (picker-face "<picker-g" "1") (picker-face "Buffer" "4:4")) '(#t #t #t #t))
      (press! "\x15;some-long-filter-ending-日本語")
      (check 'narrow-filter-shows-its-newest-characters-and-keeps-window-controls
        (list (visible? "日本語") (visible? "[↕][↔][×]")) '(#t #t))
@@ -454,17 +486,27 @@
      (read-editor '(begin (split-window-right!) (other-window!) #t))
      (press! "\x1b;[B")
      (read-editor '(begin (other-window!) #t))
+     (define right-heading
+       (let ([first (find-cell "Buffer")])
+         (cons (car first) (string:search (screen-line (car first)) "Buffer" (+ (cdr first) 1)
+                             (string-length (screen-line (car first)))))))
+     (hover! right-heading)
+     (define inactive-heading-hover
+       (list (picker-face "Buffer" "4:4") (picker-face right-heading "4:4") (quiet-buffers-bar? 1)))
      ;; Ascending is the fallback already; descending must actually move rows.
      (click! (find-cell "Buffer"))
      (click! (find-cell "Buffer"))
+     (define active-heading-hover
+       (list (picker-face "Buffer" "4:4") (picker-face right-heading "4:4")))
      (check 'two-list-windows-keep-independent-identities-through-a-sort
-       (list (read-editor
+       (list inactive-heading-hover active-heading-hover
+             (read-editor
                '(map (lambda (w tail)
                        (let ([line (buffer-line (head:window-buffer w) (head:window-prow w))])
                          (and (string:search line tail 0 (string-length line)) #t)))
                   (head:windows) '("alpha.txt" "beta.ss")))
              (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)) (quiet-buffers-bar? 1))
-       '((#t #t) #t #t))
+       '((#f #t #t) (#t #f) (#t #t) #t #t))
      (read-editor '(begin (delete-other-windows!) (set-buffer-name! (buffer "<picker-alpha>") "picker-delta") #t))
      (check 'renaming-the-selected-buffer-does-not-move-selection-to-another-identity
        (read-editor '(string:prefix? "<picker-delta>" (buffer-line (current-buffer) (car (point))))) #t)

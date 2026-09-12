@@ -2901,10 +2901,13 @@
   (define buffer-filter-label "Filter: ")
   (define-record-type buffer-choice (fields (mutable origin) (mutable selected)))
   (define buffer-choices (make-weak-eq-hashtable))
-  ;; The pointer's candidate is an identity, not an unstable rendered row.
-  ;; It takes precedence over the keyboard candidate in the same window,
-  ;; without moving point and making hover scroll near viewport margins.
+  ;; The pointer targets a buffer identity or a column number in one window.
+  ;; A hovered buffer takes precedence over that window's keyboard candidate;
+  ;; a heading only decorates its label. Neither moves point or the viewport.
   (define hover #f)
+
+  (define (buffer-hover w)
+    (and hover (eq? (car hover) w) (cdr hover)))
 
   (define (buffer-at-row row)
     (and (<= buffer-first-row row (+ buffer-first-row (length buffer-rows) -1))
@@ -2915,6 +2918,12 @@
       (cond [(null? left) #f]
             [(eq? (car left) b) row]
             [else (loop (cdr left) (+ row 1))])))
+
+  (define (buffer-column-at at)
+    ;; Sorting and hover share the column's padded hit area; gaps are inert.
+    (and at (= (car at) (- buffer-first-row 1))
+         (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
+           buffer-columns)))
 
   (define (other-buffer was)
     (find (lambda (b) (and (not (eq? b was)) (not (eq? b buffers-view)))) buffers))
@@ -2927,7 +2936,7 @@
           choice)))
 
   (define (buffer-candidate w)
-    (let ([b (if (and hover (eq? (car hover) w)) (cdr hover)
+    (let ([b (if (memq (buffer-hover w) buffer-rows) (buffer-hover w)
                  (buffer-choice-selected (buffer-choice-for w)))])
       (and (memq b buffer-rows) b)))
 
@@ -3062,7 +3071,6 @@
                              (list w (buffer-choice-for w) (buffer-at-row (head:window-top w))))
                         (filter (lambda (w) (eq? (head:window-buffer w) buffers-view)) windows))])
           (set! buffer-rows (map car entries))
-          (when (and hover (not (memq (cdr hover) buffer-rows))) (set! hover #f))
           (let ([placements
                  (apply append
                    (map (lambda (entry)
@@ -3075,7 +3083,10 @@
             (head:view-replace! buffers-view
               (buffer-table entries all (or (head:buffer-narrowest-width buffers-view)
                                           (head:window-content-width current-window)))
-              '() placements))))))
+              '() placements))
+          (when (and hover (not (or (memq (cdr hover) buffer-rows)
+                                  (assv (cdr hover) buffer-columns))))
+            (set! hover #f))))))
 
   (define (select-buffer-row! b)
     (let ([row (buffer-row b)])
@@ -3150,19 +3161,20 @@
           [(tty:key-event-character event)
            => (lambda (c) (filter-buffers! (string-append buffer-filter (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
-           (let* ([at (app-event-buffer-position)] [b (and at (buffer-at-row (car at)))])
-             (set! hover (and b (cons current-window b))))
+           (let* ([at (app-event-buffer-position)]
+                  [target (or (and at (buffer-at-row (car at)))
+                              (cond [(buffer-column-at at) => car] [else #f]))])
+             (set! hover (and target (cons current-window target))))
            #t]
           [(member event '("MOUSE-LEAVE" "BLUR")) (set! hover #f) #t]
           [(member event '("MOUSE-RELEASE" "MOUSE-DRAG"))
            (select-buffer-row! (buffer-choice-selected (buffer-choice-for current-window))) #t]
           [(string=? event "MOUSE-CLICK")
            (let* ([at (app-event-buffer-position)] [b (and at (buffer-at-row (car at)))]
-                  [column (and at (= (car at) (- buffer-first-row 1))
-                               (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
-                                 buffer-columns))])
+                  [column (buffer-column-at at)])
              (cond [b (set! hover #f) (select-buffer-row! b) (activate-buffer-row!) 'keep-focus]
-                   [column (cycle-buffer-sort! (car column)) 'keep-focus]
+                   [column (cycle-buffer-sort! (car column))
+                           (set! hover (cons current-window (car column))) 'keep-focus]
                    [else 'ignore-click]))]
           [else #f]))
 
@@ -3395,6 +3407,7 @@
           (hashtable-values buffer-choices))
         (when (eq? b buffers-view)
           (set! buffers-view #f)
+          (set! hover #f)
           (set! buffer-rows '())
           (hashtable-clear! buffer-choices))))
     (paint:add-highlighter!
@@ -3412,11 +3425,19 @@
                       [else '()])
                 (apply append
                   (map (lambda (w)
-                         (let ([row (buffer-row (buffer-candidate w))])
-                           (if row (list (row-range w row 'candidate)) '())))
+                         (let* ([over (buffer-hover w)] [column (assv over buffer-columns)]
+                                [row (and (or (eq? w current-window) (memq over buffer-rows))
+                                          (buffer-row (buffer-candidate w)))])
+                           (append
+                             (if column
+                                 (list (list w (- buffer-first-row 1) (cadr column)
+                                         (min (caddr column)
+                                              (+ (cadr column) (string-length (buffer-heading (car column)))))
+                                         'header-hover))
+                                 '())
+                             (if row (list (row-range w row 'candidate)) '()))))
                     (filter (lambda (w)
-                              (and (eq? (head:window-buffer w) buffers-view)
-                                   (or (eq? w current-window) (and hover (eq? (car hover) w)))))
+                              (eq? (head:window-buffer w) buffers-view))
                       windows)))))
             '())))
     (keymap:bind-default! "C-x C-b" list-buffers!)

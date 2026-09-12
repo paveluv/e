@@ -317,6 +317,19 @@
        (check 'colon-rgb-matches-semicolon-rgb
               (style-at colon 0 0) (style-at semicolon 0 0)))
 
+     (let ([terminal (vt:make-emulator 1 8)])
+       ;; Variants survive stored SGR, palette resolution and reverse video.
+       ;; Both 4:0 and 24 cancel them; unknown variants and a grouped attribute
+       ;; in place of a color component leave the surrounding rendition alone.
+       (vt:emulator-feed! terminal
+         "\x1b;[4:1mA\x1b;[4:2mB\x1b;[4:3mC\x1b;[4:4mD\x1b;[4:5mE\x1b;[4:0mF\x1b;[1;4:4mG\x1b;[24m\x1b;[4:9m\x1b;[38;5;4:4mH")
+       (let ([variants (map (lambda (col) (style-at terminal 0 col)) (iota 8))])
+         (vt:emulator-feed! terminal "\x1b;[?5h")
+         (check 'underline-variants-replace-cancel-and-survive-resolution
+           (list variants (style-at terminal 0 3))
+           '(("0;4" "0;4:2" "0;4:3" "0;4:4" "0;4:5" plain "0;1;4:4" "0;1")
+             "0;4:4;7"))))
+
      (let ([semicolon (vt:make-emulator 1 4)]
            [colon (vt:make-emulator 1 4)]
            [plain (vt:make-emulator 1 4)])

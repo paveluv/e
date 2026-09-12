@@ -1273,6 +1273,7 @@
     ;; ISO 8613-6 permits colon-delimited color subparameters. Normalize
     ;; 38:5:n and 38:2:[colorspace:]r:g:b (and their 48 background forms) to
     ;; the semicolon form understood by the canonical SGR state machine.
+    ;; Underline subparameters stay grouped so they retain their meaning.
     (apply append
       (map (lambda (part)
              (let ([fields (split-parameter part #\:)])
@@ -1286,6 +1287,12 @@
                      ;; crash the parser or degrade into SGR 0: drop the
                      ;; malformed color and keep the surrounding rendition.
                      (cond
+                       [(eqv? (car values) 4)
+                        ;; Keep underline subparameters as one operation;
+                        ;; flattening 4:4 loses the dotted variant.
+                        (if (and (= (length values) 2) (memv (cadr values) '(0 1 2 3 4 5)))
+                            (case (cadr values) [(0) '(24)] [(1) '(4)] [else (list values)])
+                            '())]
                        [(and (memv (car values) '(38 48 58))
                              (pair? (cdr values))
                              (eqv? (cadr values) 5))
@@ -1710,10 +1717,15 @@
   (define (style-parameters style)
     (if (eq? style 'plain) "" (substring style 2 (string-length style))))
 
+  (define (sgr-text operations)
+    (string:join
+      (map (lambda (op) (string:join (map number->string op) (if (= (car op) 4) ":" ";"))) operations)
+      ";"))
+
   (define (reversed-style style)
     (let* ([sequence (style-parameters style)]
            [operations (and sequence
-                            (sgr-operations (parameter-list sequence)))])
+                            (sgr-operations (sgr-parameter-list sequence)))])
       (if (not operations) style
           (let* ([has-reverse?
                   (exists (lambda (operation)
@@ -1725,8 +1737,7 @@
                               (eq? (sgr-category operation) 'reverse))
                             operations)
                       (append operations '((7))))])
-            (sgr-style
-              (string:join (map number->string (apply append updated)) ";"))))))
+            (sgr-style (sgr-text updated))))))
 
   (define (palette-index operation foreground?)
     (let ([code (car operation)])
@@ -1746,7 +1757,7 @@
   (define (resolved-style state style)
     (let* ([sequence (style-parameters style)]
            [operations (if (string=? sequence "") '()
-                           (sgr-operations (parameter-list sequence)))]
+                           (sgr-operations (sgr-parameter-list sequence)))]
            [palette (terminal-state-palette state)]
            [resolved
             (map (lambda (operation)
@@ -1788,8 +1799,7 @@
                                 #f (terminal-state-default-background state))))
                 resolved)])
       (if (null? resolved) 'plain
-          (sgr-style
-            (string:join (map number->string (apply append resolved)) ";")))))
+          (sgr-style (sgr-text resolved)))))
 
   (define (effective-style-row state row)
     (vector-map
@@ -1800,18 +1810,21 @@
       row))
 
   (define (sgr-operations codes)
-    ;; Group extended colors so zero-valued components remain color data.
+    ;; Group extended colors so zero-valued components remain color data;
+    ;; the parser has already grouped colon-delimited underline variants.
     (let loop ([xs codes] [out '()])
-      (if (null? xs)
-          (reverse out)
-          (let* ([code (car xs)]
-                 [count (if (and (memv code '(38 48 58)) (pair? (cdr xs)))
-                            (case (cadr xs) [(5) 3] [(2) 5] [else 1])
-                            1)])
-            (let take ([ys xs] [n count] [op '()])
-              (if (or (= n 0) (null? ys))
-                  (loop ys (cons (reverse op) out))
-                  (take (cdr ys) (- n 1) (cons (car ys) op))))))))
+      (cond [(null? xs) (reverse out)]
+            [(pair? (car xs)) (loop (cdr xs) (cons (car xs) out))]
+            [else
+             (let* ([code (car xs)]
+                    [count (if (and (memv code '(38 48 58)) (pair? (cdr xs)))
+                             (case (cadr xs) [(5) 3] [(2) 5] [else 1])
+                             1)])
+               (let take ([ys xs] [n count] [op '()])
+                 (if (or (= n 0) (null? ys))
+                   ;; A grouped attribute cannot be a color component.
+                   (loop ys (if (for-all number? op) (cons (reverse op) out) out))
+                   (take (cdr ys) (- n 1) (cons (car ys) op)))))])))
 
   (define (sgr-category op)
     (let ([code (car op)])
@@ -1831,11 +1844,11 @@
   (define (canonical-sgr current additions)
     (define (remove-category state category)
       (remp (lambda (op) (eqv? (sgr-category op) category)) state))
-    (let loop ([ops (append (sgr-operations (parameter-list current))
+    (let loop ([ops (append (sgr-operations (sgr-parameter-list current))
                             (sgr-operations additions))]
                [state '()])
       (if (null? ops)
-          (apply append (reverse state))
+          (reverse state)
           (let* ([op (car ops)] [code (car op)])
             (cond
               [(= code 0) (loop (cdr ops) '())]
@@ -1862,9 +1875,9 @@
   (define (set-sgr! state text)
     ;; Store the effective face, not a history of every SGR command. This
     ;; makes selective resets exact and keeps emitted sequences bounded.
-    (let* ([codes (canonical-sgr (terminal-state-sgr state)
-                                 (sgr-parameter-list text))]
-           [sequence (string:join (map number->string codes) ";")])
+    (let* ([operations (canonical-sgr (terminal-state-sgr state)
+                                      (sgr-parameter-list text))]
+           [sequence (sgr-text operations)])
       (terminal-state-sgr-set! state sequence)
       (terminal-state-style-set! state (sgr-style sequence))))
 

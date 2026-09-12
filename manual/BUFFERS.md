@@ -329,11 +329,15 @@ time. Saving clears the displayed time when the buffer becomes clean; the
 recorded time is retained. Unchanged edits and other metadata changes preserve
 it. Every attached head sees the time recorded by the buffer's owner.
 
-The filter and underlined column headings stay visible while rows scroll.
-The `header` face uses underlined text on a neutral band: light gray text on
+The filter and column headings stay visible while rows scroll.
+The `header` face uses plain text on a neutral band: light gray text on
 medium gray for dark terminals, dark text on pale gray for light terminals.
 The band distinguishes headings from the muted gray filter label and the
-bold candidate, including when only one match remains. Theme changes update
+bold candidate, including when only one match remains. Hovering over a column
+makes its label bold with a dotted underline where supported, including any
+sort indicators. Padding shares the column's click target; gaps between
+columns are inactive. Heading hover does not move the buffer selection or
+take focus from another window. Theme changes update
 automatically when reported by the terminal; use C-l to refresh older
 terminals after changing their theme.
 Rows fit the narrowest window showing the app and never wrap. Long paths

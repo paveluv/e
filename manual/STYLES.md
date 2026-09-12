@@ -102,7 +102,8 @@ The built-in faces available to `style:set!` are:
 | --- | --- | --- |
 | `plain` | `(reset)` | Ordinary text and fallback rendering |
 | `chrome` | `((foreground bright-black))` | Prompt labels, ghost text, log prefixes, and quiet UI furniture |
-| `header` | Dark: `((foreground 252) (background 240) underline)`; light: `((foreground 236) (background 253) underline)` | Neutral table heading band, distinct from muted filter labels and bold candidate rows |
+| `header` | Dark: `((foreground 252) (background 240))`; light: `((foreground 236) (background 253))` | Neutral table heading band, distinct from muted filter labels and bold candidate rows |
+| `header-hover` | `(bold dotted-underline)` | Hovered clickable heading label; overlays the header's theme colors |
 | `comment` | `((foreground bright-black))` | Source comments and Markdown block quotes |
 | `string` | `((foreground green))` | Strings and Markdown code |
 | `keyword` | `(bold (foreground cyan))` | Language keywords and Markdown headings |

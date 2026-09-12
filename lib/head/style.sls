@@ -176,7 +176,8 @@
     (map (lambda (entry) (cons (car entry) (style-escape (cadr entry))))
       '((plain (reset))
         (chrome ((foreground bright-black)))
-        (header ((foreground 252) (background 240) underline))
+        (header ((foreground 252) (background 240)))
+        (header-hover (bold dotted-underline))
         (comment ((foreground bright-black)))
         (string ((foreground green)))
         (keyword (bold (foreground cyan)))
@@ -204,7 +205,7 @@
 
   (define light-styles
     ;; Most faces use terminal colors or attributes and need no variant.
-    (list (cons 'header (style-escape '((foreground 236) (background 253) underline)))))
+    (list (cons 'header (style-escape '((foreground 236) (background 253))))))
 
   (define (style-code style)
     (or (style-override style)
