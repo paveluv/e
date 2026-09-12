@@ -2858,7 +2858,7 @@
   (define buffer-rows '())
   (define buffer-filter "")
   (define buffer-sorts '())         ; (column . descending?) in priority order
-  (define buffer-headings '#("Buffer" "Modified" "RO" "Lines" "Mode" "File"))
+  (define buffer-headings '#("Modified" "RO" "Buffer" "Lines" "Mode" "File"))
   (define buffer-columns '())       ; (column start-character end-character)
   (define buffer-first-row 2)       ; sticky filter and column headings
   (define buffer-filter-label "Filter: ")
@@ -2918,13 +2918,13 @@
       styles))
 
   (define (buffer-data b)
-    (vector (head:buffer-name b) (and (head:buffer-modified b) (head:buffer-modified-at b))
-            (and (head:buffer-read-only b) #t) (buffer-line-count b)
+    (vector (and (head:buffer-modified b) (head:buffer-modified-at b))
+            (and (head:buffer-read-only b) #t) (head:buffer-name b) (buffer-line-count b)
             (or (mode:name-of b) "") (or (head:buffer-file b) "")))
 
   (define (buffer-cell data column)
     (let ([value (vector-ref data column)])
-      (cond [(= column 1)
+      (cond [(= column 0)
              (if value
                  (let ([date (time-utc->date
                                (make-time 'time-utc (mod value 1000000000) (div value 1000000000)))])
@@ -2945,7 +2945,7 @@
   (define (buffer-entry<? a b)
     (let compare ([keys buffer-sorts])
       (if (null? keys)
-          (let ([x (vector-ref (cdr a) 0)] [y (vector-ref (cdr b) 0)])
+          (let ([x (vector-ref (cdr a) 2)] [y (vector-ref (cdr b) 2)])
             (or (string-ci<? x y) (and (string-ci=? x y) (string<? x y))))
           (let ([x (vector-ref (cdr a) (caar keys))] [y (vector-ref (cdr b) (caar keys))])
             (cond [(buffer-value<? x y) (not (cdar keys))]
@@ -2974,17 +2974,17 @@
   (define (buffer-matches? entry)
     (let ([data (cdr entry)])
       (exists (lambda (s) (string:search s buffer-filter 0 (string-length s) #t))
-        (list (vector-ref data 0) (vector-ref data 5) (buffer-cell data 5)))))
+        (list (vector-ref data 2) (vector-ref data 5) (buffer-cell data 5)))))
 
   (define (buffer-table entries all width)
     ;; Size from the full list so typing does not make columns jump. Share
     ;; spare cells among columns that need them; work is bounded by the pane,
     ;; not by the longest path. Narrow panes retain names and paths first.
-    (let* ([minimum '#(9 10 5 8 7 10)] [sizes (vector-copy minimum)]
+    (let* ([minimum '#(10 5 9 8 7 10)] [sizes (vector-copy minimum)]
            [columns
             (let fit ([columns '(0 1 2 3 4 5)]
-                      [drop (append (filter (lambda (i) (not (assv i buffer-sorts))) '(4 3 2 1 5))
-                              (remv 0 (reverse (map car buffer-sorts))))])
+                      [drop (append (filter (lambda (i) (not (assv i buffer-sorts))) '(4 3 1 0 5))
+                              (remv 2 (reverse (map car buffer-sorts))))])
               (if (or (null? drop)
                       (<= (+ (* 2 (- (length columns) 1))
                              (apply + (map (lambda (i) (vector-ref minimum i)) columns))) width))
@@ -3005,7 +3005,7 @@
                    (if (and (= i 3) (not header?)) (pad-left text size)
                        (glyph:fit text size (if (and (= i 5) (not header?)) 'left 'right)))))
             columns) "  "))
-      (when (null? (cdr columns)) (vector-set! sizes 0 width))
+      (when (null? (cdr columns)) (vector-set! sizes 2 width))
       (let grow ([room (- width (* 2 (- (length columns) 1))
                          (apply + (map (lambda (i) (vector-ref sizes i)) columns)))])
         (let ([want (filter (lambda (i) (< (vector-ref sizes i) (vector-ref natural i))) columns)])

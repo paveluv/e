@@ -297,9 +297,9 @@ The live, read-only table has these columns:
 
 | Column | Sort key | Meaning |
 |---|---|---|
-| `Buffer` | F1 | Buffer name. |
-| `Modified` | F2 | Time of the latest content change, in local `HH:MM:SS`, when the buffer has unsaved changes; blank otherwise. |
-| `RO` | F3 | Read-only: `%` when ordinary text editing is disabled; blank otherwise. |
+| `Modified` | F1 | Time of the latest content change, in local `HH:MM:SS`, when the buffer has unsaved changes; blank otherwise. |
+| `RO` | F2 | Read-only: `%` when ordinary text editing is disabled; blank otherwise. |
+| `Buffer` | F3 | Buffer name. |
 | `Lines` | F4 | Current line count. |
 | `Mode` | F5 | Detected or assigned mode. |
 | `File` | F6 | Visited path, with the home directory abbreviated as `~`. |
@@ -370,7 +370,7 @@ changes appear on redraw.
 - Enter: show the candidate row's buffer in this window, completing the
   switch in place.
 - Esc / C-g: return to the invoking document; C-u: clear the filter.
-- F1–F6: cycle sorting for Buffer, Modified, RO, Lines, Mode and File.
+- F1–F6: cycle sorting for Modified, RO, Buffer, Lines, Mode and File.
 - Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
 - Click a heading: cycle its sort key ascending, descending, then off.

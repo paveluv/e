@@ -139,7 +139,8 @@
                    [row-of (lambda (name)
                              (let loop ([i 2])
                                (cond [(= i (buffer-line-count view)) (error 'panel "missing row" name)]
-                                     [(string:prefix? name (buffer-line view i)) i]
+                                     [(let ([line (buffer-line view i)])
+                                        (string:search line name 0 (string-length line))) i]
                                      [else (loop (+ i 1))])))]
                    [log-cell (paint:window-screen-position w (row-of "<log>") 0)]
                    [own-cell (paint:window-screen-position w (row-of (head:buffer-name (current-buffer))) 0)])
@@ -260,7 +261,7 @@
      (define (picker-face name face)
        (and (member face (sgr-params (picker-style name))) #t))
      (define (hover-face cell) (list (picker-face cell "1") (picker-face cell "4:4")))
-     (define picker-headings '("Buffer" "Modified" "RO" "Lines" "Mode" "File"))
+     (define picker-headings '("Modified" "RO" "Buffer" "Lines" "Mode" "File"))
      (define (picker-heading-hover)
        (filter (lambda (entry) (or (cadr entry) (caddr entry)))
          (map (lambda (name) (cons name (hover-face name))) picker-headings)))
@@ -276,13 +277,16 @@
      (check 'filter-matches-names-and-full-paths-without-case-or-prefix-restrictions
        (picker-sequence (lambda (needle)
                           (press! (string-append "\x15;\x1b;[200~" needle "\x1b;[201~"))
-                          (read-editor '(list (buffer-line-count (current-buffer))
-                                          (substring (buffer-line (current-buffer) 2) 0 13))))
+                          (read-editor '(let* ([line (buffer-line (current-buffer) 2)]
+                                               [start (string:search line "<" 0 (string-length line))])
+                                          (list (buffer-line-count (current-buffer))
+                                                (substring line start (+ start 13))))))
          '("kEr-BeTa" "project/alpha/src" "日本語"))
        '((3 "<picker-beta>") (3 "<picker-beta>") (3 "<picker-alpha")))
      (press! "e\x301;\x7f;")
      (check 'filter-backspace-and-distinct-header-with-a-single-match
-       (list (screen-has? 0 "Filter: 日本語") (screen-has? 1 "Buffer")
+       (list (screen-has? 0 "Filter: 日本語")
+             (apply < (map (lambda (name) (cdr (find-cell name))) picker-headings))
              (picker-face "Buffer" "4") (picker-face "Buffer" "1")
              (picker-face "<picker-alpha" "1")
              (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)))
@@ -316,9 +320,9 @@
                   ("0;38;5;252;48;5;240" #t)))))
      ;; The padded column is clickable; only its label gets dots. Crossing
      ;; a gap, the filter, or the status bar clears the heading feedback.
-     (let* ([before (picker-state)] [first (find-cell "Buffer")] [next (find-cell "Modified")]
+     (let* ([before (picker-state)] [first (find-cell "Modified")] [next (find-cell "RO")]
             [targets (append (map (lambda (name) (list name (find-cell name) #t)) picker-headings)
-                       (list (list "Buffer" (cons (car first) (+ (cdr first) 6)) #f)
+                       (list (list "Modified" (cons (car first) (+ (cdr first) 8)) #f)
                              (list #f (cons (car next) (- (cdr next) 1)) #f)
                              (list #f (find-cell "Filter:") #f)
                              (list #f (find-cell "0▏<buffers>") #f)))])
@@ -345,10 +349,12 @@
      (define (picker-result)
        ;; One snapshot covers both row order and selection for every sort.
        (read-editor
-         '(let ([b (current-buffer)])
-            (list (map (lambda (line) (substring line 0 (+ 1 (string:search line ">" 0 (string-length line)))))
-                    (cddr (vector->list (head:buffer-lines b))))
-                  (string:prefix? "<picker-alpha>" (buffer-line b (car (point))))))))
+         '(let ([b (current-buffer)]
+                [name-in (lambda (line)
+                           (substring line (string:search line "<" 0 (string-length line))
+                             (+ 1 (string:search line ">" 0 (string-length line)))))])
+            (list (map name-in (cddr (vector->list (head:buffer-lines b))))
+                  (string=? "<picker-alpha>" (name-in (buffer-line b (car (point)))))))))
      (define (picker-sort-visible? labels)
        (and (for-all visible? labels)
             (= (length labels)
@@ -368,14 +374,14 @@
           (head:buffer-fact-set! (buffer "<picker-gamma>") 'modified-at 1704078245000000900)
           (for-each (lambda (name) (head:buffer-read-only-set! (buffer name) #t)) '("<picker-beta>" "<picker-gamma>")) #t))
      (define picker-sort-cases
-       '(("Buffer" 1 (alpha beta gamma) (gamma beta alpha))
-         ("Modified" 2 (beta gamma alpha) (alpha gamma beta))
-         ("RO" 3 (alpha beta gamma) (beta gamma alpha))
+       '(("Modified" 1 (beta gamma alpha) (alpha gamma beta))
+         ("RO" 2 (alpha beta gamma) (beta gamma alpha))
+         ("Buffer" 3 (alpha beta gamma) (gamma beta alpha))
          ("Lines" 4 (beta alpha gamma) (gamma alpha beta))
          ("Mode" 5 (gamma beta alpha) (alpha beta gamma))
          ("File" 6 (gamma beta alpha) (alpha beta gamma))
          ;; Same visible second, but gamma is 800 nanoseconds earlier.
-         ("Modified" 2 (beta gamma alpha) (alpha gamma beta) 1704164645000000100)))
+         ("Modified" 1 (beta gamma alpha) (alpha gamma beta) 1704164645000000100)))
      (check 'column-keys-and-clicks-cycle-real-values-without-changing-selection
        (picker-sequence (lambda (entry)
                           (when (pair? (cddddr entry))
@@ -393,17 +399,17 @@
                             (head:buffer-modified-at (buffer "<picker-alpha>")))
                           #t))
      (define picker-compound-cases
-       '((2 ("Modified¹↑") (beta alpha gamma))
+       '((1 ("Modified¹↑") (beta alpha gamma))
          ("RO" ("Modified¹↑" "RO²↑") (beta alpha gamma))
          (4 ("Modified¹↑" "RO²↑" "Lines³↑") (beta alpha gamma))
          ("Lines" ("Modified¹↑" "RO²↑" "Lines³↓") (beta gamma alpha))
          ("Modified" ("Modified¹↓" "RO²↑" "Lines³↓") (gamma alpha beta))
-         (2 ("RO¹↑" "Lines²↓") (gamma alpha beta))
+         (1 ("RO¹↑" "Lines²↓") (gamma alpha beta))
          ("Modified" ("RO¹↑" "Lines²↓" "Modified³↑") (gamma alpha beta))
          (4 ("RO¹↑" "Modified²↑") (beta alpha gamma))
-         (3 ("RO¹↓" "Modified²↑") (beta alpha gamma))
+         (2 ("RO¹↓" "Modified²↑") (beta alpha gamma))
          ("RO" ("Modified¹↑") (beta alpha gamma))
-         (2 ("Modified¹↓") (alpha gamma beta))
+         (1 ("Modified¹↓") (alpha gamma beta))
          ("Modified" () (alpha beta gamma))))
      (check 'compound-sort-retains-priority-renumbers-and-appends-reenabled-keys
        (picker-sequence (lambda (entry) (picker-sort! (car entry) (cadr entry))) picker-compound-cases)
@@ -416,7 +422,7 @@
        (map (lambda (name)
               (list (string=? (picker-clock name) "03:04:05")
                     (screen-has? (car (find-cell name)) "%"))) picker-all))
-     (press! "\x1b;OQ\x1b;OQ")
+     (press! "\x1b;OP\x1b;OP")
      (define modified-rows (car (picker-result)))
      (read-editor '(begin (head:buffer-modified-set! (buffer "<picker-alpha>") #f) #t))
      (define saved-rows (car (picker-result)))
@@ -424,7 +430,7 @@
      (define clean-rows
        (list (car (picker-result)) (screen-has? 0 "Filter: picker-")
              (for-all (lambda (name) (string=? (picker-clock name) "        ")) picker-all)))
-     (press! "\x1b;OQ")
+     (press! "\x1b;OP")
      (press! "\x15;picker-")
      (define cleared-rows (car (picker-result)))
      (press! "\x18;b")
@@ -469,10 +475,10 @@
              (car narrow-modified) (picker-face "beta.ss" "3")
              (equal? (cadr narrow-modified) (screen-line (car (find-cell "beta.ss")))))
        '(#t #t (5 #f) #t #f #t))
-     (press! "\x1b;OQ")
+     (press! "\x1b;OP")
      (check 'sort-hotkeys-keep-their-column-when-narrow-panes-hide-it
        (list (visible? "Modified¹↑") (picker-face "<picker-beta>" "1")) '(#t #t))
-     (press! "\x1b;OQ\x1b;OQ")
+     (press! "\x1b;OP\x1b;OP")
      (resize! 6 32)
      (press! "\x1b;[F")
      (hover! (find-cell "Buffer"))
@@ -537,7 +543,8 @@
                  (make-list 6 '(#f #f)) (make-list 6 '(#f #f)) #t 0))))
      (read-editor '(begin (delete-other-windows!) (set-buffer-name! (buffer "<picker-alpha>") "picker-delta") #t))
      (check 'renaming-the-selected-buffer-does-not-move-selection-to-another-identity
-       (read-editor '(string:prefix? "<picker-delta>" (buffer-line (current-buffer) (car (point))))) #t)
+       (read-editor '(let ([line (buffer-line (current-buffer) (car (point)))])
+                       (and (string:search line "<picker-delta>" 0 (string-length line)) #t))) #t)
      (read-editor '(begin (kill-buffer! (buffer "<picker-delta>")) #t))
      (check 'deleting-a-selected-buffer-leaves-a-live-candidate
        (read-editor '(and (<= 2 (car (point)) (- (buffer-line-count (current-buffer)) 1)) #t)) #t)
