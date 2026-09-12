@@ -106,7 +106,7 @@
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
           (prefix (paint) paint:) (prefix (string) string:)
-          (prefix (render) render:) (prefix (glyph) glyph:)
+          (prefix (render) render:) (prefix (glyph) glyph:) (prefix (table) table:)
           (prefix (mode) mode:) (prefix (file) file:)
           (prefix (prompt) prompt:)
           (prefix (doc) doc:))
@@ -2849,22 +2849,13 @@
 
   ;;; The buffer list -----------------------------------------------------------
 
-  (define (pad-left s width)
-    (let ([n (glyph:cells s)])
-      (if (> n width) (glyph:fit s width 'left)
-          (string-append (make-string (- width n) #\space) s))))
-
-  (define (abbreviate-home path)
-    (let ([home (getenv "HOME")])
-      (if (and home (string:prefix? (string-append home "/") path))
-          (string-append "~" (string:tail path (string-length home)))
-          path)))
-
   (define buffers-view #f)
   (define buffer-rows '())
   (define buffer-filter "")
   (define buffer-sorts '())         ; (column . descending?) in priority order
-  (define buffer-headings '#("Modified" "RO" "Buffer" "Lines" "Mode" "File"))
+  (define buffer-columns
+    (table:make '#("Modified" "RO" "Buffer" "Lines" "Mode" "File")
+      '#(10 5 9 8 7 10) 2 '(4 3 1 0 5) '#(text text text right text tail)))
   (define buffer-first-row 2)       ; sticky filter and column headings
   (define buffer-filter-label "Filter: ")
   (define-record-type buffer-choice (fields (mutable origin) (mutable selected) (mutable columns)))
@@ -2937,42 +2928,20 @@
                  "")]
             [(boolean? value) (if value "%" "")]
             [(number? value) (number->string value)]
-            [(= column 5) (abbreviate-home value)]
+            [(= column 5) (file:abbreviate value)]
             [else value])))
 
-  (define (buffer-value<? a b)
-    (cond [(not a) (and b #t)]
-          [(not b) #f]
-          [(boolean? a) #f]
-          [(number? a) (< a b)]
-          [else (string-ci<? a b)]))
-
   (define (buffer-entry<? a b)
-    (let compare ([keys buffer-sorts])
-      (if (null? keys)
-          (let ([x (vector-ref (cdr a) 2)] [y (vector-ref (cdr b) 2)])
-            (or (string-ci<? x y) (and (string-ci=? x y) (string<? x y))))
-          (let ([x (vector-ref (cdr a) (caar keys))] [y (vector-ref (cdr b) (caar keys))])
-            (cond [(buffer-value<? x y) (not (cdar keys))]
-                  [(buffer-value<? y x) (cdar keys)]
-                  [else (compare (cdr keys))])))))
+    (table:less? buffer-sorts (lambda (entry column) (vector-ref (cdr entry) column))
+      (lambda (a b)
+        (let ([x (vector-ref (cdr a) 2)] [y (vector-ref (cdr b) 2)])
+          (or (string-ci<? x y) (and (string-ci=? x y) (string<? x y))))) a b))
 
   (define (buffer-heading column)
-    (string-append (vector-ref buffer-headings column)
-      (let loop ([keys buffer-sorts] [priority 1])
-        (cond [(null? keys) ""]
-              [(= column (caar keys))
-               (format "~a~a" (string-ref "¹²³⁴⁵⁶" (- priority 1)) (if (cdar keys) "↓" "↑"))]
-              [else (loop (cdr keys) (+ priority 1))]))))
+    (table:heading buffer-columns buffer-sorts column))
 
   (define (cycle-buffer-sort! column)
-    (let ([key (assv column buffer-sorts)])
-      ;; Direction changes retain priority. Disabling and reenabling a key
-      ;; moves it to the end, exactly like enabling a new secondary key.
-      (set! buffer-sorts
-        (cond [(not key) (append buffer-sorts (list (cons column #f)))]
-              [(cdr key) (remq key buffer-sorts)]
-              [else (map (lambda (k) (if (eq? k key) (cons column #t) k)) buffer-sorts)])))
+    (set! buffer-sorts (table:cycle-sort buffer-sorts column))
     (set! hover #f)
     (refresh-buffers-view!))
 
@@ -2982,53 +2951,14 @@
         (list (vector-ref data 2) (vector-ref data 5) (buffer-cell data 5)))))
 
   (define (buffer-table entries all width)
-    ;; Size from the full list so typing does not make columns jump. Share
-    ;; spare cells among columns that need them; work is bounded by the pane,
-    ;; not by the longest path. Narrow panes retain names and paths first.
-    (let* ([minimum '#(10 5 9 8 7 10)] [sizes (vector-copy minimum)]
-           [columns
-            (let fit ([columns '(0 1 2 3 4 5)]
-                      [drop (append (filter (lambda (i) (not (assv i buffer-sorts))) '(4 3 1 0 5))
-                              (remv 2 (reverse (map car buffer-sorts))))])
-              (if (or (null? drop)
-                      (<= (+ (* 2 (- (length columns) 1))
-                             (apply + (map (lambda (i) (vector-ref minimum i)) columns))) width))
-                  columns
-                  (fit (remv (car drop) columns) (cdr drop))))]
-           [natural
-            (list->vector
-              (map (lambda (i)
-                     (fold-left (lambda (n entry) (max n (glyph:cells (buffer-cell (cdr entry) i))))
-                       (vector-ref minimum i) all)) '(0 1 2 3 4 5)))])
-      (define (row data header?)
-        (string:join
-          (map (lambda (i)
-                 (let ([text (if header?
-                                 (buffer-heading i)
-                                 (buffer-cell data i))]
-                       [size (vector-ref sizes i)])
-                   (if (and (= i 3) (not header?)) (pad-left text size)
-                       (glyph:fit text size (if (and (= i 5) (not header?)) 'left 'right)))))
-            columns) "  "))
-      (when (null? (cdr columns)) (vector-set! sizes 2 width))
-      (let grow ([room (- width (* 2 (- (length columns) 1))
-                         (apply + (map (lambda (i) (vector-ref sizes i)) columns)))])
-        (let ([want (filter (lambda (i) (< (vector-ref sizes i) (vector-ref natural i))) columns)])
-          (when (and (> room 0) (pair? want))
-            (let ([given (list-head want (min room (length want)))])
-              (for-each (lambda (i) (vector-set! sizes i (+ 1 (vector-ref sizes i)))) given)
-              (grow (- room (length given)))))))
+    (let-values ([(row columns) (table:layout buffer-columns buffer-sorts (map cdr all) buffer-cell width)])
       (values
         (cons* (let* ([label buffer-filter-label] [n (glyph:cells label)])
                  (string-append (glyph:fit label (min n width))
                    (glyph:fit buffer-filter (max 0 (- width n)) 'left)))
-          (row #f #t)
+          (row #f)
           (if (null? entries) (list (glyph:fit "No matching buffers" width))
-              (map (lambda (entry) (row (cdr entry) #f)) entries)))
-        (let bounds ([columns columns] [start 0])
-          (if (null? columns) '()
-              (let ([end (+ start (vector-ref sizes (car columns)))])
-                (cons (list (car columns) start end) (bounds (cdr columns) (+ end 2)))))))))
+              (map (lambda (entry) (row (cdr entry))) entries))) columns)))
 
   (define (buffer-table-source entries)
     ;; Shared rows retain unelided field text, independent of window width.
