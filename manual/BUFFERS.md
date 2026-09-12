@@ -348,10 +348,11 @@ Widening a pane restores the columns and fuller labels. Elision never changes
 which buffer a row opens.
 
 The blue `active` face marks the document in the focused window. Bold
-`candidate` marks one possible choice in each interacting list window. Hover
-takes precedence over the keyboard candidate there; Enter accepts the visibly
-bold row, and arrows continue from it. Moving the pointer away restores the
-keyboard candidate. Hover neither scrolls nor takes focus. Modified rows are
+`candidate` marks the keyboard choice in each interacting list window. A
+mouse-hovered row uses the shared `hover` face: bold with a dotted underline,
+taking precedence over the keyboard candidate there. Enter accepts that row,
+and arrows continue from it with bold emphasis only. Moving the pointer away
+restores the keyboard candidate. Hover neither scrolls nor takes focus. Modified rows are
 italic. These faces are configurable through [Styles](STYLES.md).
 
 There is no text cursor or text selection; C-Space does not set a mark.
@@ -450,6 +451,8 @@ same operation with the mouse. Beside it, `[↕]` performs the stacked `C-x 2`
 split and `[↔]` performs the side-by-side `C-x 3` split. `C-x 1` retains only
 the current window. `C-x o` moves focus. Status lines and column dividers can
 be dragged to resize their local split.
+Hovering a window button makes it bold with a dotted underline, including
+its brackets, without changing keyboard focus.
 
 Divider intersections expose the split hierarchy even when two layouts have
 the same four rectangles. A thin vertical stroke through the crossing means

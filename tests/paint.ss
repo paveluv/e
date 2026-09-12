@@ -130,12 +130,15 @@
               #t)
        (check 'link-closes (contains? out "\x1b;]8;;\x1b;\\") #t))
 
-     ;; a highlight mark emits its named face on top of the base style
-     (check 'mark-face
-            (contains? (paint-line "abc" "abc" #f '((0 3 mark)) '() 0 #f
-                                   #f 3 1000)
-                       (style:code 'mark))
-            #t)
+     ;; Text overlays retain the base/background; hover consistently wins
+     ;; over keyboard emphasis regardless of registry order.
+     (check 'overlay-faces-and-hover-precedence
+       (map (lambda (marks)
+              (let ([out (paint-line "abc" "abc" #f marks '() 0 '#(keyword keyword keyword) #f 3 3)])
+                (map (lambda (face) (contains? out (style:code face))) '(keyword mark candidate hover active))))
+         '(((0 3 mark)) ((0 3 candidate) (0 3 hover) (0 3 active))
+           ((0 3 hover) (0 3 candidate) (0 3 active))))
+       '((#t #t #f #f #f) (#t #f #f #t #t) (#t #f #f #t #t)))
 
      ;; -- emit-runs ----------------------------------------------------------------
 

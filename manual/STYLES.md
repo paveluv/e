@@ -103,7 +103,7 @@ The built-in faces available to `style:set!` are:
 | `plain` | `(reset)` | Ordinary text and fallback rendering |
 | `chrome` | `((foreground bright-black))` | Prompt labels, ghost text, log prefixes, and quiet UI furniture |
 | `header` | Dark: `((foreground 252) (background 240))`; light: `((foreground 236) (background 253))` | Neutral table heading band, distinct from muted filter labels and bold candidate rows |
-| `header-hover` | `(bold dotted-underline)` | Hovered clickable heading label; overlays the header's theme colors |
+| `hover` | `(bold dotted-underline)` | Mouse-hovered clickable text: app rows, headings, completion labels, links and window controls; preserves the underlying colors |
 | `comment` | `((foreground bright-black))` | Source comments and Markdown block quotes |
 | `string` | `((foreground green))` | Strings and Markdown code |
 | `keyword` | `(bold (foreground cyan))` | Language keywords and Markdown headings |
@@ -118,7 +118,7 @@ The built-in faces available to `style:set!` are:
 | `mark` | `(underline)` | Generic highlighted ranges, including matching delimiters |
 | `selection` | `((background blue))` | The active selected region |
 | `active` | `((background 31))` | The `<buffers>` row of the buffer the selected window shows |
-| `candidate` | `(bold)` | The app row a key or click would pick; in the buffers app, hover replaces keyboard emphasis in that window |
+| `candidate` | `(bold)` | The keyboard candidate in an app; in the buffers app, a hovered row takes precedence using the `hover` face |
 | `choice` | `(bold (foreground 135))` | The initial letters of choices in focused dialog prompts |
 | `match` | `((background cyan) (foreground black))` | Incremental-search matches |
 | `match-point` | `((background yellow) (foreground black))` | The current incremental-search match |

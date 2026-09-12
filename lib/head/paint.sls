@@ -22,7 +22,7 @@
           wrap-lines buffer-wrap-setting window-wrapped? clean-wrap? wrap-width
           line-breaks segment-of segment-start segment-close line-segments
           add-status-hint! add-buffer-status-hint! add-highlighter!
-          highlight-ranges add-hyperlinker! buffer-line-hyperlinks
+          highlight-ranges hover-ranges add-hyperlinker! buffer-line-hyperlinks
           ranges-on-row region-span
           begin-frame! invalidate-screen-cache! erase-screen! paint!
 
@@ -39,7 +39,7 @@
           present-echo! echo-log-prefix echo-log-spans
           echo-log-rows display-echo-log-row
           echo-cap update-echo-geometry!
-          update-terminal-title! window-screen-position
+          update-terminal-title! window-screen-position window-position column-at-cell
           place-cursor! terminal-size!)
   (import (rnrs) (rnrs mutable-strings) (rnrs r5rs)
           (only (chezscheme)
@@ -159,13 +159,16 @@
       ;; of the background styles is emitted on top of the base style,
       ;; so highlighters can name their own faces (the bracket match
       ;; does).
+      ;; Pointer feedback wins over a keyboard candidate or other text
+      ;; overlay, independently of highlighter registration order.
       (and (< col n)
-           (let ([m (find (lambda (m)
-                            (and (covers? m col)
-                                 (not (memq (mark-style m)
-                                            '(match match-point active)))))
-                          marks)])
-             (and m (mark-style m)))))
+           (fold-left (lambda (face m)
+                        (let ([next (mark-style m)])
+                          (cond [(not (covers? m col)) face]
+                                [(eq? next 'hover) 'hover]
+                                [(or face (memq next '(match match-point active))) face]
+                                [else next])))
+             #f marks)))
     ;; Emit runs of identically-attributed columns as single writes.
     (let loop ([col left])
       (when (< col limit)
@@ -408,7 +411,34 @@
 
   (define (highlight-ranges)
     (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
-               '() (kernel:registry-items highlighters)))
+      (hover-ranges
+        (lambda (w row column)
+          (find (lambda (link) (<= (car link) column (- (cadr link) 1)))
+            (buffer-line-hyperlinks (head:window-buffer w) row))))
+      (kernel:registry-items highlighters)))
+
+  (define (hover-ranges hit)
+    ;; Reuse click geometry and the existing highlighter protocol. A hit
+    ;; query takes (window row character-column) and returns (start end ...)
+    ;; or #f. Resolve against the current viewport on every frame, so a
+    ;; refresh, scroll, resize or buffer switch cannot leave stale ink.
+    (let ([position (head:mouse-position)])
+      (or (and position
+               (head:window-at (- (car position) 1) (- (cdr position) 1)
+                 (lambda (entry)
+                   (let* ([w (car entry)] [start (cadr entry)] [height (caddr entry)]
+                          [left (+ (head:window-xoff w)
+                                   (if (eq? (head:window-scrollbar? w) 'left) 1 0)
+                                   (head:window-line-number-width w))])
+                     (and (< (- (cdr position) 1) (+ start height))
+                          (<= left (- (car position) 1))
+                          (< (- (car position) 1) (+ left (head:window-content-width w)))
+                          (let* ([at (window-position w start height (car position) (cdr position))]
+                                 [lines (head:buffer-lines (head:window-buffer w))])
+                            (and (< (car at) (vector-length lines))
+                                 (let ([range (hit w (car at) (cdr at))])
+                                   (and range (list (list w (car at) (car range) (cadr range) 'hover)))))))))))
+          '())))
 
   ;; Hyperlinkers produce (start end URI [id]) ranges for one buffer line.
   ;; They are deliberately separate from visual highlighters: links carry a
@@ -498,6 +528,47 @@
     (if (window-wrapped? w)
         (vector-length (line-breaks w line))
         1))
+
+  (define (column-at-cell w row breaks segment cell)
+    ;; Shared landing rule for vertical goals, paging, clicks and hover.
+    ;; Clamp to the segment, then snap to a cluster's leading character.
+    (let* ([b (head:window-buffer w)] [frame (head:buffer-rendition b)]
+           [length (string-length (vector-ref (head:buffer-lines b) row))]
+           [start (if breaks (segment-start breaks segment) 0)]
+           [end (if breaks (segment-close breaks segment length) length)]
+           [at (min end (render:character frame row (+ (render:column frame row start) cell)))])
+      (render:character frame row (render:column frame row at))))
+
+  (define (window-position w start height x y)
+    ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
+    ;; band. Wrapped lines occupy successive screen rows.
+    (let* ([v (head:buffer-lines (head:window-buffer w))]
+           [sticky (head:buffer-sticky-lines (head:window-buffer w))]
+           [k (max 0 (- y 1 start))]
+           [col (max 0 (- x 1 (head:window-xoff w)
+                          (if (eq? (head:window-scrollbar? w) 'left) 1 0)
+                          (head:window-line-number-width w)))])
+      (cond
+        [(< k sticky)
+         (let ([row (min k (- (vector-length v) 1))])
+           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row col)))]
+        [(window-wrapped? w)
+         (let loop ([i (max sticky (head:window-top w))]
+                    [k (+ (- k sticky) (head:window-topseg w))])
+           (if (>= i (vector-length v))
+               ;; Keep blank viewport space distinct from the final row.
+               ;; Only the ordinary point setter clamps a click to text.
+               (cons i col)
+               (let* ([line (vector-ref v i)]
+                      [breaks (line-breaks w line)]
+                      [segs (vector-length breaks)])
+                 (if (< k segs)
+                     (cons i (column-at-cell w i breaks k col))
+                     (loop (+ i 1) (- k segs))))))]
+        [else
+         (let ([row (+ (max sticky (head:window-top w)) (- k sticky))])
+           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row
+                                       (+ (head:window-left w) col))))])))
 
   (define (erase-screen!)
     ;; Blank the terminal and schedule the full repaint -- an actual
@@ -714,10 +785,13 @@
                         (status-hint-values b current?)))]
              [hint-text (apply string-append (map car hint-values))]
              [status (string-append head mode-text hint-text)]
-             [window-buttons " [↕][↔][×]"])
+             [window-buttons (string-append " " (apply string-append (map cdr head:window-buttons)))]
+             [pointed (let ([at (head:mouse-position)])
+                        (and at (head:window-button-at (- (car at) 1) (- (cdr at) 1))))]
+             [hovered (and pointed (eq? (cdr pointed) w) (car pointed))])
         (let ([stale? (and (not (string? app-position)) (head:buffer-stale b))])
           (paint! (+ start height) (head:window-xoff w)
-                  (list 'status status current? stale?)
+                  (list 'status status current? stale? hovered)
                   (lambda ()
                     ;; Reversed cells take the bar's shade from the
                     ;; foreground color, so full reverse tracks the
@@ -734,8 +808,7 @@
                            ;; Geometry is in cells; the style spans below
                            ;; index characters in this already fitted text.
                            [content-end (string-length fitted)]
-                           [text (string-append fitted window-buttons)]
-                           [n (string-length text)]
+                           [text fitted]
                            [cs (min (string-length head) content-end)]
                            [ns (min (string-length head-prefix) content-end)]
                            [ne (min (+ ns (string-length name)) content-end)]
@@ -771,10 +844,14 @@
                               [(italic) (ansi "\x1b;[23m")]
                               [(red) (ansi fg)])
                             (loop (cdr values) end))))
-                      (ansi (substring text he content-end)
-                        "\x1b;[1m"
-                        (substring text content-end n)
-                        "\x1b;[0m"))))))))
+                      (ansi (substring text he content-end) " ")
+                      (for-each
+                        (lambda (button)
+                          (when (eq? (car button) hovered) (ansi (style:code 'hover)))
+                          (ansi (cdr button))
+                          (when (eq? (car button) hovered) (ansi "\x1b;[0m" bar)))
+                        head:window-buttons)
+                      (ansi "\x1b;[0m"))))))))
 
 
   ;;; The frame driver ----------------------------------------------------------------

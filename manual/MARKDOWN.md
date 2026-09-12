@@ -33,7 +33,8 @@ use the same row mapping.
   markdown hard break (a line ending in two spaces) keeps its line.
 - Blockquotes drop their `>` markers and wear `md-quote`.
 - `[text](url)` shows only the text, underlined in the link face; the
-  target lives in the buffer's hyperlink layer. While point rests on a
+  target lives in the buffer's hyperlink layer. Hover makes the link bold
+  with a dotted underline, preserving its color. While point rests on a
   link the echo area shows a transient, unlogged `hyperlink:` hint
   with the target. RET or a mouse click follows it (and that is
   logged): web links open through the `markdown:browser` command

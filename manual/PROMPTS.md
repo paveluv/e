@@ -104,7 +104,9 @@ cannot be extended, Tab shows `<completions>` in the currently focused window
 or, for a window prompt, candidates above its input. Repeated Tab cycles
 through pages when the list is taller than the available space. Clicking a
 candidate fills the input without opening it or moving focus away from the
-prompt. Finishing or dismissing the list restores the borrowed window's
+prompt. Hover makes the candidate label bold with a dotted underline without
+changing the input; column padding remains clickable without being underlined.
+Finishing or dismissing the list restores the borrowed window's
 buffer, point and viewport; completion does not change the split layout.
 
 Completion candidates use a shared semantic style:

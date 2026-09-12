@@ -45,6 +45,9 @@ position. Returning `ignore-click` consumes the click and restores both the
 previous focus and the app's previous point. If the handler returns false—or the buffer is a view with no
 handler—the press also starts an ordinary text selection, so dragging selects
 from the clicked cell even though the buffer is read-only.
+Drag and release belong to the window and buffer that accepted the press.
+An ignored click arms neither, and an action that opens another buffer cannot
+move that new buffer's point when the mouse button is released.
 During clicks, drags, releases, and wheel events, `(app-event-buffer-position)`
 returns the unclamped zero-based `(row . character-column)` addressed by the
 pointer. It may lie beyond the buffer's last line, allowing an app to ignore
@@ -373,13 +376,26 @@ them. `<buffers>` returns `keep-focus` for content clicks because the click's
 purpose is to switch a buffer, not to enter the app.
 
 The `active` face marks the document in the focused window. The `candidate`
-face marks one choice per interacting list window: hover takes precedence
-over keyboard emphasis there. Both can be customized like any other face:
+face marks a keyboard choice. Mouse-hovered clickable text uses the shared
+`hover` face, bold with a dotted underline; in the buffers app it takes
+precedence over the keyboard candidate in that window. Headings, completion
+labels, Git file rows and refresh, hyperlinks, and status-bar window controls
+use the same face. These faces can be customized like any other:
 
 ```scheme
 (style:set! 'active '((background 31) (foreground white)))
 (style:set! 'candidate '(bold (foreground 208)))
+(style:set! 'hover '(bold dotted-underline))
 ```
+
+For a clickable app, register a highlighter that calls
+`(paint:hover-ranges hit)`. `hit` receives `(window row character-column)`
+and returns `(start end ...)` for the clickable label or `#f` for inert text.
+Use the same hit test as the click handler. The helper supplies the shared
+face and window scope, excludes gutters and status bars, and uses the
+current viewport, including wrapping and wide characters. It does not move
+point or invoke the action. Keyboard input clears the pointer emphasis until
+another mouse report. Hyperlinks receive this feedback automatically.
 
 Refresh failures are logged under the `app` component and shown in the echo
 area. An unchanged failure is reported once instead of once per redraw; a

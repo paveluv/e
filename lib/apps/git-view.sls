@@ -143,10 +143,18 @@
                 (sleep (make-time 'time-duration (* remaining 1000000) 0))))
             (set! refresh-pressed? #f))))))
 
-  (define (refresh-button?)
-    (and (= (car (point)) 0)
-         (<= refresh-column (cdr (point)))
-         (< (cdr (point)) (+ refresh-column (string-length refresh-label)))))
+  (define (log-hit at)
+    ;; Clicks and hover use raw source coordinates: empty viewport space
+    ;; must not activate the last file through the clamped editor point.
+    (and at
+         (let ([row (car at)] [column (cdr at)])
+           (cond [(and (= row 0)
+                       (<= refresh-column column (- (+ refresh-column (string-length refresh-label)) 1)))
+                  (list refresh-column (+ refresh-column (string-length refresh-label)) 'refresh)]
+                 [(and (<= 1 row (length log-rows))
+                       (eq? (car (list-ref log-rows (- row 1))) 'file))
+                  (list 0 (string-length (buffer-line log-buffer row)) 'file)]
+                 [else #f]))))
 
   (define (handle-log-event! event)
     (cond [(member event '("UP" "C-p")) (move-row! -1) #t]
@@ -156,8 +164,11 @@
           [(member event '("r" "R")) (git-log-refresh!) #t]
           [(string=? event "RET") (show-row-diff!) #t]
           [(string=? event "MOUSE-CLICK")
-           (if (refresh-button?) (git-log-refresh!) (show-row-diff!))
-           'keep-focus]
+           (let ([hit (log-hit (app-event-buffer-position))])
+             (cond [hit
+                    (if (eq? (caddr hit) 'refresh) (git-log-refresh!) (show-row-diff!))
+                    'keep-focus]
+                   [else 'ignore-click]))]
           [else #f]))
 
   (define (fill-style line style)
@@ -248,15 +259,19 @@
          "Reload commits and changed files in the open `<git-log>` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
     (paint:add-highlighter!
       (lambda ()
-        ;; The row Enter or a click would act on is the candidate: bold,
-        ;; like the buffers app's.
-        (if (and log-buffer (memq log-buffer (buffer-list)))
-            (let ([row (call-with-buffer log-buffer
-                         (lambda () (car (point))))])
-              (if (<= 1 row (- (buffer-line-count log-buffer) 1))
-                  (list (list log-buffer row 0
-                              (string-length (buffer-line log-buffer row))
-                              'candidate))
-                  '()))
-            '())))
+        (append
+          (paint:hover-ranges
+            (lambda (w row column)
+              (and (eq? (head:window-buffer w) log-buffer) (log-hit (cons row column)))))
+          ;; Keyboard navigation is bold; only actionable mouse targets
+          ;; get the shared hover face, scoped to the pointed window.
+          (if (and log-buffer (memq log-buffer (buffer-list)))
+              (let ([row (call-with-buffer log-buffer
+                           (lambda () (car (point))))])
+                (if (<= 1 row (- (buffer-line-count log-buffer) 1))
+                    (list (list log-buffer row 0
+                                (string-length (buffer-line log-buffer row))
+                                'candidate))
+                    '()))
+              '()))))
     (keymap:bind-default! "C-x g" git-log!!)))

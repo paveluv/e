@@ -21,6 +21,7 @@
              (prefix (kernel) kernel:)
              (prefix (keymap) keymap:)
              (prefix (file) file:)
+             (prefix (paint) paint:)
              (prefix (test) test:))
 
      (define check test:check)
@@ -180,6 +181,13 @@
      (show-buffer! source)
      (markdown:view!)
      (goto-point! '(0 . 0))
+     (head:tile! 80 12)
+     (let* ([w (head:current)] [cell (paint:window-screen-position w 0 1)])
+       (head:set-mouse-position! (cons (cdr cell) (car cell)))
+       (check 'markdown-link-hover-uses-the-link-label-without-moving-point
+         (list (filter (lambda (range) (eq? (car range) w)) (paint:highlight-ranges)) (point))
+         (list (list (list w 0 0 5 'hover)) '(0 . 0)))
+       (head:set-mouse-position! #f))
      ((keymap:binding 'markdown-view "RET"))
      (define child-view (current-buffer))
      (define child (head:buffer-fact child-view 'markdown-input #f))

@@ -302,8 +302,12 @@ selection, and wrapping consistent with what is displayed.
 ## Highlighting and formatting
 
 `paint:add-highlighter!` registers redraw-time ranges shaped as `(row start
-end)` or `(row start end face)`. Search, bracket matching, selections, and app
-cursors use this mechanism.
+end)` or `(row start end face)` in the selected window, or `(buffer row start
+end face)` / `(window row start end face)` with explicit scope. Search, bracket
+matching, selections, and app candidates use this mechanism.
+`paint:hover-ranges` builds a window-scoped `hover` range from a clickable
+text hit test; see [App buffers](APPS.md). It shares click and navigation
+geometry and keeps mouse emphasis separate from keyboard selection.
 
 Language layout remains modular through `register-indenter!` and
 `register-formatter!`. See [Formatting](FORMATTING.md).

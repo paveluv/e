@@ -177,7 +177,7 @@
       '((plain (reset))
         (chrome ((foreground bright-black)))
         (header ((foreground 252) (background 240)))
-        (header-hover (bold dotted-underline))
+        (hover (bold dotted-underline))
         (comment ((foreground bright-black)))
         (string ((foreground green)))
         (keyword (bold (foreground cyan)))

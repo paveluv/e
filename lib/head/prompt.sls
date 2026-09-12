@@ -186,15 +186,34 @@
   ;; cursor and handles mouse input after wrapping, paging or clipping.
   ;; input is a source interval; choices are (start end value) intervals.
   (define-record-type row (fields text styles input choices))
-  (define line-styles (make-weak-eq-hashtable))
+  ;; Cache only styles and numeric choice spans: a row also owns its text,
+  ;; which would keep the weak key alive after a prompt is dismissed.
+  (define line-presentation (make-weak-eq-hashtable))
+  (define (choice-at choices column)
+    (find (lambda (entry) (<= (car entry) column (- (cadr entry) 1)))
+      choices))
   (define prompt-modes
-    (for-each
-      (lambda (name)
-        (mode:register! name '() '()
-          (lambda (line)
-            (hashtable-ref line-styles line
-              (make-vector (string-length line) 'plain)))))
-      '("prompt" "completions")))
+    (begin
+      (for-each
+        (lambda (name)
+          (mode:register! name '() '()
+            (lambda (line)
+              (let ([info (hashtable-ref line-presentation line #f)])
+                (if info (car info) (make-vector (string-length line) 'plain))))))
+        '("prompt" "completions"))
+      (paint:add-highlighter!
+        (lambda ()
+          (paint:hover-ranges
+            (lambda (w row column)
+              (and (running?) (or (not (window-owner)) (eq? w (window-owner)))
+                   (let* ([line (vector-ref (head:buffer-lines (head:window-buffer w)) row)]
+                          [info (hashtable-ref line-presentation line #f)]
+                          [choice (and info (choice-at (cdr info) column))])
+                     ;; Padding accepts a click; only the label gets ink.
+                     (and choice
+                          (let trim ([end (cadr choice)])
+                            (if (and (> end (car choice)) (char-whitespace? (string-ref line (- end 1))))
+                                (trim (- end 1)) (list (car choice) end))))))))))))
 
   (define (format-columns candidates width labeler highlight?)
     (let* ([labels (map labeler candidates)]
@@ -353,8 +372,7 @@
          (let ([at (head:app-event-buffer-position)])
            (when (and at (<= 0 (car at)) (< (car at) (vector-length shown-rows)))
              (let* ([row (vector-ref shown-rows (car at))] [source (row-input row)]
-                    [choice (find (lambda (entry) (<= (car entry) (cdr at) (- (cadr entry) 1)))
-                                  (row-choices row))])
+                    [choice (choice-at (row-choices row) (cdr at))])
                (cond [source
                       (set! clicked
                         (cons input (min (string-length input)
@@ -443,8 +461,10 @@
               (list (cons target point) (cons (cons 'top target) '(0 . 0))))
             (let ([lines (head:buffer-lines view)])
               (do ([i 0 (+ i 1)]) ((= i (vector-length shown-rows)))
-                (hashtable-set! line-styles (vector-ref lines i)
-                  (row-styles (vector-ref shown-rows i)))))))))
+                (let ([row (vector-ref shown-rows i)])
+                  (hashtable-set! line-presentation (vector-ref lines i)
+                    (cons (row-styles row)
+                          (map (lambda (choice) (list (car choice) (cadr choice))) (row-choices row)))))))))))
 
     (define (record-history! s)
       (when (and history (> (string-length s) 0))

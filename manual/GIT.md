@@ -74,7 +74,9 @@ containing the current file. Pass a path explicitly to browse another one:
 The app shows the latest 20 commits followed by each commit's changed files.
 The repository heading stays fixed while the body scrolls. Click `[refresh]`
 beside the repository name, or press `r`, to reload it; the control changes
-color briefly while pressed. Use Up/Down or the wheel
+color briefly while pressed. The refresh label and clickable file rows become
+bold with a dotted underline on hover. Commit headings and blank space do not
+open patches. Use Up/Down or the wheel
 to move one row at a time. Enter on a file opens that file's patch in a
 read-only `<git-diff>` view in the current window, in place of the history.
 Clicking a file performs the same action immediately and keeps keyboard focus

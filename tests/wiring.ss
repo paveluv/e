@@ -121,7 +121,7 @@
             '(#t #t))
 
      ;; <buffers> as a control panel in an unfocused window: pointing at a
-     ;; row makes it bold without moving focus or settling the echo area,
+     ;; row makes it bold and dotted without moving focus or settling the echo area,
      ;; the blue row stays on the selected window's buffer, and a click on
      ;; the pointed row switches the selected window to it.
      (define panel
@@ -165,8 +165,8 @@
      (let* ([hovered (cell-style log-cell)]
             [own (cell-style own-cell)]
             [echo-after (echo-rows)])
-       (check 'hovered-buffers-row-is-bold-and-blue-row-is-state
-         (list (and (member "1" (sgr-params hovered)) (not (member "4" (sgr-params hovered))))
+       (check 'hovered-buffers-row-is-bold-and-dotted-while-blue-row-is-state
+         (list (and (member "1" (sgr-params hovered)) (member "4:4" (sgr-params hovered)) #t)
                (and (string:search own "48;5;31" 0 (string-length own)) #t)
                (quiet-buffers-bar? 1)
                (equal? echo-before echo-after)
@@ -259,10 +259,11 @@
          (and cell (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell)) (cdr cell)))))
      (define (picker-face name face)
        (and (member face (sgr-params (picker-style name))) #t))
+     (define (hover-face cell) (list (picker-face cell "1") (picker-face cell "4:4")))
      (define picker-headings '("Buffer" "Modified" "RO" "Lines" "Mode" "File"))
      (define (picker-heading-hover)
        (filter (lambda (entry) (or (cadr entry) (caddr entry)))
-         (map (lambda (name) (list name (picker-face name "1") (picker-face name "4:4"))) picker-headings)))
+         (map (lambda (name) (cons name (hover-face name))) picker-headings)))
      (define (picker-sequence proc items)
        ;; map does not promise effect order; click/keypress sequences do.
        (reverse (fold-left (lambda (results item) (cons (proc item) results)) '() items)))
@@ -438,18 +439,18 @@
      (press! "\x00;")
      (hover! (find-cell "<picker-beta>"))
      (check 'hover-has-one-candidate-without-a-text-cursor-or-mark
-       (list (map (lambda (name) (picker-face name "1")) '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
+       (list (map hover-face '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
              (cdr (assq 'cursor-visible (vt:emulator-state mirror)))
              (read-editor '(mark)) (visible? "Mark set"))
-       '((#f #t #f) #f #f #f))
+       '(((#f #f) (#t #t) (#f #f)) #f #f #f))
      (press! "\r")
      (check 'enter-accepts-the-visible-hover-candidate (picker-state) '("<picker-beta>" (4 . 1)))
      (press! "\x18;bpicker-")
      (hover! (find-cell "<picker-beta>"))
      (press! "\x1b;[B")
      (check 'arrows-continue-from-hover-and-clear-its-old-emphasis
-       (map (lambda (name) (picker-face name "1")) '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
-       '(#f #f #t))
+       (map hover-face '("<picker-alpha>" "<picker-beta>" "<picker-gamma>"))
+       '((#f #f) (#f #f) (#t #f)))
      (let ([cell (find-cell "<picker-gamma>")])
        (press! (format "\x1b;[<64;~a;~aM" (+ (cdr cell) 1) (+ (car cell) 1))))
      (check 'wheel-browses-without-opening (list (car (picker-state)) (picker-face "<picker-beta>" "1"))
@@ -507,6 +508,33 @@
                   (head:windows) '("alpha.txt" "beta.ss")))
              (string:prefix? "  F1–F6 sort  C-u clear" (buffers-bar 0)) (quiet-buffers-bar? 1))
        '((#f #t #t) (#t #f) (#t #t) #t #t))
+     ;; Every bracketed control has one hover target, including in an
+     ;; inactive pane. The actual hit area is all three characters.
+     (let* ([labels '("[↕]" "[↔]" "[×]")]
+            [left (map find-cell labels)]
+            [right (map (lambda (label cell)
+                          (cons (car cell) (string:search (screen-line (car cell)) label
+                                             (+ (cdr cell) 3) 100))) labels left)]
+            [controls (append left right)]
+            [before (echo-rows)]
+            [samples
+             (picker-sequence
+               (lambda (cell)
+                 (picker-sequence
+                   (lambda (offset)
+                     (hover! (cons (car cell) (+ (cdr cell) offset)))
+                     (map hover-face controls)) '(0 1 2))) controls)])
+       (hover! '(0 . 50)) ; the divider is inert
+       (let ([left-behind (map hover-face controls)] [echo-untouched? (equal? before (echo-rows))])
+         (hover! (car controls))
+         (press! "\x1b;[B")
+         (check 'window-controls-have-scoped-hover-and-clear-on-leave-or-keyboard
+           (list samples left-behind (map hover-face controls) echo-untouched?
+                 (read-editor '(head:window-index (selected-window))))
+           (list (map (lambda (target)
+                        (make-list 3 (map (lambda (cell) (if (equal? cell target) '(#t #t) '(#f #f))) controls)))
+                   controls)
+                 (make-list 6 '(#f #f)) (make-list 6 '(#f #f)) #t 0))))
      (read-editor '(begin (delete-other-windows!) (set-buffer-name! (buffer "<picker-alpha>") "picker-delta") #t))
      (check 'renaming-the-selected-buffer-does-not-move-selection-to-another-identity
        (read-editor '(string:prefix? "<picker-delta>" (buffer-line (current-buffer) (car (point))))) #t)
@@ -532,6 +560,61 @@
           (show-buffer! (buffer ,picker-origin))
           (for-each (lambda (b) (when (string:prefix? "<picker-" (head:buffer-name b)) (kill-buffer! b))) (buffer-list))
           (kernel:retract-module! 'picker-fixture) #t))
+     (check 'window-controls-retain-their-split-and-close-actions
+       (picker-sequence
+         (lambda (label)
+           (click! (if (string=? label "[×]")
+                       (let ([bar (find-cell "2▏")])
+                         (cons (car bar) (string:search (screen-line (car bar)) label (cdr bar) 100)))
+                       (find-cell label)))
+           (read-editor '(begin (select-window! (window 0)) (length (head:windows)))))
+         '("[↔]" "[↕]" "[×]")) '(2 3 2))
+     (read-editor '(begin (delete-other-windows!) #t))
+
+     ;; One real commit supplies actionable file rows and an inert commit
+     ;; heading. No repository history, user config or shell quoting is needed.
+     (let ([directory (format "/tmp/e-git-hover-~a-~a" (get-process-id) (random 1000000))]
+           [was (read-editor '(head:buffer-name (current-buffer)))])
+       (define (remove-tree! path)
+         (if (and (not (file-symbolic-link? path)) (file-directory? path))
+             (begin (for-each (lambda (name) (remove-tree! (string-append path "/" name))) (directory-list path))
+                    (delete-directory path))
+             (delete-file path)))
+       (mkdir directory)
+       (dynamic-wind void
+         (lambda ()
+           (call-with-output-file (string-append directory "/hover.txt") (lambda (p) (display "fixture\n" p)))
+           (for-each
+             (lambda (arguments)
+               (let ([command (sys:open-process
+                                (append (list "git" "-C" directory "-c" "user.name=Test" "-c" "user.email=test@example.com"
+                                              "-c" "commit.gpgsign=false" "-c" "core.hooksPath=/dev/null") arguments))])
+                 (dynamic-wind void
+                   (lambda ()
+                     (get-bytevector-all (sys:process-input command))
+                     (let-values ([(code error-text) (sys:process-result command)])
+                       (unless (= code 0) (error 'git-hover-fixture error-text arguments))))
+                   (lambda () (sys:close-process! command)))))
+             '(("init" "--quiet" "--template=") ("add" "--" "hover.txt") ("commit" "--quiet" "-m" "Hover fixture")))
+           (read-editor
+             `(begin (git-view:log!! ,directory)
+                     (let ([b (current-buffer)]) (select-window! (window 0)) (show-buffer! b))
+                     (delete-other-windows!) (goto-point! '(1 . 0)) #t))
+           (let ([samples
+                  (picker-sequence
+                    (lambda (cell) (hover! cell) (map (lambda (name) (picker-face name "4:4")) '("[refresh]" "hover.txt")))
+                    (list (find-cell "[refresh]") (find-cell "Hover fixture") (find-cell "hover.txt") '(4 . 3)))])
+             (click! '(4 . 3))
+             (let ([blank (picker-state)])
+               (click! (find-cell "[refresh]"))
+               (click! (find-cell "hover.txt"))
+               (check 'git-hover-matches-actions-and-blank-space-cannot-open-the-last-file
+                 (list samples blank (car (picker-state)) (visible? "+fixture"))
+                 '(((#t #f) (#f #f) (#f #t) (#f #f)) ("<git-log>" (1 . 0)) "<git-diff>" #t))))
+           (read-editor
+             `(begin (show-buffer! (buffer ,was))
+                     (for-each (lambda (key) (kill-buffer! (head:find-tool-buffer key))) '("*git-log*" "*git-diff*")) #t)))
+         (lambda () (remove-tree! directory))))
 
      (define before-prompt (read-editor '(head:buffer-name (current-buffer))))
      (define prompt-dir (format "/tmp/e-find-file-~a-~a" (getenv "USER") (random 1000000)))
@@ -565,9 +648,14 @@
                (and cell (< (car cell) 22)))
          '(#t #t)))
      (press! "\t")
+     (hover! (find-cell "atlas.txt"))
+     (define completion-hover (list (hover-face "atlas.txt") (picker-face "apple.txt" "4:4")))
+     (hover! (find-cell "Find file: "))
      (check 'find-file-candidates-sit-above-input-with-operation-hints
        (list (< (car (find-cell "atlas.txt")) (car (find-cell "Find file: ")))
-             (visible? "2 matches") (visible? "↑↓: history")) '(#t #t #t))
+             (visible? "2 matches") (visible? "↑↓: history") completion-hover
+             (picker-face "atlas.txt" "4:4") (picker-face "Find file: " "4:4"))
+       '(#t #t #t ((#t #t) #f) #f #f))
      (press! "\x1b;[A")
      (let ([revisit (and (visible? (prompt-path "alpha/apple.txt")) (not (visible? "atlas.txt")))])
        (press! "\x1b;[A")
@@ -588,10 +676,13 @@
        (map visible? (list "another name.txt" clicked-name "日本語.txt" ".hidden")) '(#t #t #t #f))
      (resize! 6 24)
      (let ([truncated (visible? "…")])
-       (click! (find-cell "a long"))
-       (resize! 24 100)
-       (check 'clicking-a-truncated-candidate-fills-its-full-path
-         (list truncated (visible? (prompt-path clicked-name)) (visible? "another name.txt")) '(#t #t #f)))
+       (hover! (find-cell "a long"))
+       (let ([hovered (hover-face "a long")])
+         (click! (find-cell "a long"))
+         (resize! 24 100)
+         (check 'clicking-a-truncated-candidate-fills-its-full-path
+           (list truncated hovered (visible? (prompt-path clicked-name)) (visible? "another name.txt"))
+           '(#t (#t #t) #t #f))))
      (press! "\r")
      (check 'accepting-a-clicked-file-opens-the-exact-name
        (read-editor '(head:buffer-file (current-buffer))) (prompt-path clicked-name))
@@ -662,8 +753,9 @@
                "\x1b;[201~\r"))
      (prompt-input! "outer-draft")
      (press! "\x1b;.\t")
+     (hover! (find-cell "inner-two"))
      (check 'nested-prompt-has-its-own-echo-input-and-completion-view
-       (list (visible? "Nested: inner-") (visible? "inner-two") (visible? "<completions>")) '(#t #t #t))
+       (list (visible? "Nested: inner-") (hover-face "inner-two") (visible? "<completions>")) '(#t (#t #t) #t))
      (click! (find-cell "inner-two"))
      (press! "\r")
      (check 'nested-acceptance-resumes-the-outer-input-without-file-validation
@@ -2053,6 +2145,12 @@
        (list (screen-has? 0 "界éZ")
              (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1))
        '(#t ("https://surface.example" "wide")))
+     (hover! '(0 . 1)) ; the second cell of the wide link
+     (let ([on (map hover-face '((0 . 0) (0 . 1) (0 . 2)))])
+       (hover! '(0 . 2))
+       (check 'surface-links-hover-by-character-without-stealing-point
+         (list on (picker-face '(0 . 0) "4:4") (read-editor '(point)))
+         '(((#t #t) (#t #t) (#t #f)) #f (0 . 0))))
      (check 'surface-mouse-cells-map-to-source-characters
        (map (lambda (x)
               (send! (format "\x1b;[<0;~a;1M\x1b;[<0;~a;1m" x x))
@@ -2100,19 +2198,21 @@
               (paint:window-layout)
               (cons (+ (head:window-xoff w) 2) (+ (cadr (assq w (head:layout))) 1))))))
      (check 'app-mouse-focus-and-ignore-results-survive-dispatch
-       (map (lambda (reply offset)
-              (read-editor
-                `(begin (head:buffer-fact-set! (head:window-buffer (cadr (head:windows))) 'reply ',reply) #t))
-              (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
-                       (+ (car app-cell) offset) (+ (cdr app-cell) offset)
-                       (+ (car app-cell) offset) (+ (cdr app-cell) offset)))
-              (pump! 200)
-              (read-editor
-                '(list (eq? (selected-window) (car (head:windows)))
-                       (head:buffer-point (head:window-buffer (cadr (head:windows)))))))
-         '(keep-focus ignore-click) '(0 1))
-       '((#t (0 . 1)) (#t (0 . 1))))
-     (read-editor '(begin (kill-buffer! (head:window-buffer (cadr (head:windows))))
+       (picker-sequence
+         (lambda (case)
+           (read-editor
+             `(begin (head:buffer-fact-set! (head:window-buffer (cadr (head:windows))) 'reply ',(car case))
+                     (when ,(cadr case) (head:set-current! (cadr (head:windows)))) #t))
+           (let ([x (+ (car app-cell) (caddr case))] [y (+ (cdr app-cell) (caddr case))])
+             (send! (format "\x1b;[<0;~a;~aM\x1b;[<32;~a;~aM\x1b;[<0;~a;~am" x y x y x y)))
+           (pump! 200)
+           (read-editor
+             '(list (eq? (selected-window) (car (head:windows)))
+                    (head:buffer-point (head:window-buffer (cadr (head:windows)))) (mark))))
+         '((keep-focus #f 0) (ignore-click #f 1) (ignore-click #t 1)))
+       '((#t (0 . 1) #f) (#t (0 . 1) #f) (#f (0 . 1) #f)))
+     (read-editor '(begin (head:set-current! (car (head:windows)))
+                          (kill-buffer! (head:window-buffer (cadr (head:windows))))
                           (delete-other-windows!) #t))
 
      ;; A shared endpoint receives keys/paste/pointers while the same surface
@@ -2161,7 +2261,8 @@
      ;; with real input before addressing cells in the live grid again.
      (send! "x")
      (pump! 150)
-     (send! (format "\x1b;[<0;~a;~aM\x1b;[<32;~a;~aM\x1b;[<0;~a;~am\x1b;[<64;~a;~aM"
+     (send! (format "\x1b;[<35;~a;~aM\x1b;[<0;~a;~aM\x1b;[<32;~a;~aM\x1b;[<0;~a;~am\x1b;[<64;~a;~aM"
+              (car shared-pointer) (cdr shared-pointer)
               (car shared-pointer) (cdr shared-pointer) (car shared-pointer) (cdr shared-pointer)
               (car shared-pointer) (cdr shared-pointer) (car shared-pointer) (cdr shared-pointer)))
      (pump! 250)
@@ -2173,7 +2274,7 @@
                          (cdr (assq 'viewport data)) (cdr (assq 'button data)))))
             (reverse (filter (lambda (message)
                                (and (eq? (car message) 'input)
-                                    (member (cadddr message) '("MOUSE-CLICK" "MOUSE-DRAG" "MOUSE-RELEASE" "WHEEL-UP"))))
+                                    (member (cadddr message) '("MOUSE-MOVE" "MOUSE-LEAVE" "MOUSE-CLICK" "MOUSE-DRAG" "MOUSE-RELEASE" "WHEEL-UP"))))
                        (unbox (kernel:persistent-cell 'wiring-app-events (lambda () '()))))))
          "\x1d;")
        '(("MOUSE-CLICK" (8 . 1) (8 . 2) (3 . 1) 0)

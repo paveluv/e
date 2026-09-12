@@ -67,7 +67,8 @@
           app-event-focus
           app-facts app-status follow-app! app-following? request-app-size!
           host-color-scheme add-color-scheme-hook!
-          tile! layout window-at window-button-at divider-at
+          tile! layout window-at window-buttons window-button-at divider-at
+          mouse-position set-mouse-position!
           transfer-split! drag set-drag! double-click?
           ui-actor buffer-fact buffer-fact-set! buffer-facts-set! buffer-state
           buffer-file buffer-file-set! buffer-trailing buffer-trailing-set!
@@ -424,6 +425,11 @@
   ;; loop need not hear at all, such as pointer motion (the commands', above).
   (define frame-hook void)
   (define mouse-handler (lambda (handle? c b x y) #f))
+  ;; Last reported pointer cell (1-based x . y). Keyboard input retires
+  ;; mouse emphasis; the next report restores it without moving point.
+  (define the-mouse-position #f)
+  (define (mouse-position) the-mouse-position)
+  (define (set-mouse-position! position) (set! the-mouse-position position))
 
   (define (set-frame-hook! proc) (set! frame-hook proc))
   (define (set-mouse-handler! proc) (set! mouse-handler proc))
@@ -524,8 +530,10 @@
              [(key)
               (let ([event (cdr message)])
                 (cond
-                  [(not (pair? event)) event]
+                  [(not (pair? event)) (set-mouse-position! #f) event]
                   [(eq? (car event) 'mouse)
+                   (set-mouse-position! (and handle-mouse?
+                                          (cons (list-ref event 3) (list-ref event 4))))
                    (let ([result (apply mouse-handler handle-mouse? (cdr event))])
                      (cond [(eq? result 'ignore)
                             ;; Swallowed, but it may have moved hover state:
@@ -534,6 +542,7 @@
                             (pump)]
                            [else (or result "MOUSE-HANDLED")]))]
                   [(eq? (car event) 'paste)
+                   (set-mouse-position! #f)
                    (set! pending-paste (cdr event))
                    "PASTE"]
                   [(eq? (car event) 'host-color-scheme)
@@ -594,18 +603,22 @@
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
+  (define window-buttons '((below . "[↕]") (right . "[↔]") (close . "[×]")))
+
   (define (window-button-at x0 r0)
-    ;; The three bracketed status-line controls occupy the last nine
-    ;; columns: (close . w), (right . w), (below . w), or #f.
+    ;; Paint and hit-test the same single-cell labels, flush right.
+    ;; Return (action . window), or #f outside a button.
     (window-at x0 r0
       (lambda (entry)
         (let ([w (car entry)])
           (and (= r0 (+ (cadr entry) (caddr entry)))
-               (let ([from-end (- (+ (window-xoff w) (window-width w)) x0)])
-                 (cond [(<= 1 from-end 3) (cons 'close w)]
-                       [(<= 4 from-end 6) (cons 'right w)]
-                       [(<= 7 from-end 9) (cons 'below w)]
-                       [else #f])))))))
+               (let loop ([buttons window-buttons]
+                          [column (- x0 (+ (window-xoff w) (window-width w)
+                                          (- (apply + (map (lambda (b) (string-length (cdr b))) window-buttons)))))])
+                 (and (pair? buttons) (>= column 0)
+                      (let ([width (string-length (cdar buttons))])
+                        (if (< column width) (cons (caar buttons) w)
+                            (loop (cdr buttons) (- column width)))))))))))
 
   (define (divider-at x0 r0)
     ;; The divider descriptor under (x0, r0), or #f.  A crossing
@@ -661,7 +674,9 @@
 
   ;;; Gestures -----------------------------------------------------------------------
 
-  (define the-drag #f)        ; the divider descriptor being dragged, or #f
+  ;; One press owns subsequent motion/release: a divider descriptor,
+  ;; (window . buffer) for text, or #f for an action that consumed the press.
+  (define the-drag #f)
   (define the-last-press #f)  ; (x y ms) of the previous button press
 
   (define (drag) the-drag)

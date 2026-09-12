@@ -541,17 +541,6 @@
          (if breaks
              (render:column frame row (paint:segment-start breaks (paint:segment-of breaks col))) 0))))
 
-  (define (column-at-cell w row breaks segment cell)
-    ;; Shared landing rule for vertical goals, paging, and wrapped clicks.
-    ;; A segment's final source character may be inside a combining cluster;
-    ;; clamp first, then snap to that cluster's leading character.
-    (let* ([b (head:window-buffer w)] [frame (head:buffer-rendition b)]
-           [length (string-length (vector-ref (head:buffer-lines b) row))]
-           [start (if breaks (paint:segment-start breaks segment) 0)]
-           [end (if breaks (paint:segment-close breaks segment length) length)]
-           [at (min end (render:character frame row (+ (render:column frame row start) cell)))])
-      (render:character frame row (render:column frame row at))))
-
   (define (move-vertical! delta)
     ;; By buffer lines -- or by visual rows in a soft-wrapping window,
     ;; where up and down walk a long line's segments (C-a and C-e
@@ -559,7 +548,7 @@
     (define wrapped? (paint:window-wrapped? current-window))
     (define (land! breaks k)
       ;; the goal column within segment k, clamped into it
-      (set! point-col (column-at-cell current-window point-row breaks k goal-col)))
+      (set! point-col (paint:column-at-cell current-window point-row breaks k goal-col)))
     (unless (equal? goal-pos (goal-position wrapped?))
       (set! goal-col (visual-column current-window point-row point-col)))
     (if wrapped?
@@ -590,7 +579,7 @@
              (step (- n 1))]))
         (begin
           (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
-          (set! point-col (column-at-cell current-window point-row #f 0 goal-col))))
+          (set! point-col (paint:column-at-cell current-window point-row #f 0 goal-col))))
     (set! goal-pos (goal-position wrapped?)))
 
   (define (split-inserted-lines s)
@@ -1813,7 +1802,7 @@
       (define (column-at position)
         (let* ([row (car position)]
                [line (vector-ref v row)])
-          (column-at-cell w row (and wrapped? (paint:line-breaks w line)) (cdr position) visual-col)))
+          (paint:column-at-cell w row (and wrapped? (paint:line-breaks w line)) (cdr position) visual-col)))
       (define (land! top-offset point-offset)
         (let ([top (position-at top-offset)]
               [point (position-at point-offset)])
@@ -2098,13 +2087,18 @@
   (define (mouse! on)
     ;; Turn mouse tracking on or off (off restores native selection).
     (tty:mouse-reporting! on)
+    (head:set-mouse-position! #f)
     (set! message (format "Mouse ~a" (if on "on" "off")))
     (void))
 
   ;; Hit-testing over the remembered tiling, and the gesture state,
   ;; live in (head); the actions they trigger stay here.
-  (define-syntax drag-divider
+  (define-syntax mouse-gesture
     (identifier-syntax [id (head:drag)] [(set! id v) (head:set-drag! v)]))
+
+  (define (text-gesture? w)
+    (and (pair? mouse-gesture) (eq? (car mouse-gesture) w)
+         (eq? (cdr mouse-gesture) (head:window-buffer w))))
 
   (define (word-char? c)
     (not (or (char-whitespace? c)
@@ -2132,40 +2126,6 @@
   (define app-event-position head:app-event-position)
   (define app-event-button head:app-event-button)
   (define app-event-buffer-position head:app-event-buffer-position)
-  (define (window-position w start height x y)
-    ;; The buffer (row . col) at 1-based screen (x, y) inside w's text
-    ;; band, wrap-aware: wrapped lines occupy successive screen rows,
-    ;; so the band row is walked through the segment counts.
-    (let* ([v (head:buffer-lines (head:window-buffer w))]
-           [sticky (head:buffer-sticky-lines (head:window-buffer w))]
-           [k (max 0 (- y 1 start))]
-           [col (max 0 (- x 1 (head:window-xoff w)
-                          (if (eq? (head:window-scrollbar? w) 'left) 1 0)
-                          (head:window-line-number-width w)))])
-      (cond
-        [(< k sticky)
-         (let ([row (min k (- (vector-length v) 1))])
-           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row col)))]
-        [(paint:window-wrapped? w)
-         (let loop ([i (max sticky (head:window-top w))]
-                    [k (+ (- k sticky) (head:window-topseg w))])
-           (if (>= i (vector-length v))
-               ;; Preserve the addressed row outside the buffer. The point
-               ;; setter clamps ordinary clicks; app handlers also receive
-               ;; this raw position so blank viewport space stays distinct
-               ;; from the final rendered line.
-               (cons i col)
-               (let* ([line (vector-ref v i)]
-                      [breaks (paint:line-breaks w line)]
-                      [segs (vector-length breaks)])
-                 (if (< k segs)
-                     (cons i (column-at-cell w i breaks k col))
-                     (loop (+ i 1) (- k segs))))))]
-        [else
-         (let ([row (+ (max sticky (head:window-top w)) (- k sticky))])
-           (cons row (render:character (head:buffer-rendition (head:window-buffer w)) row
-                                       (+ (head:window-left w) col))))])))
-
   (define (call-with-app-mouse-event w start height x y button thunk)
     ;; One coordinate boundary for clicks, drags, releases, and wheel ticks.
     ;; Exclude chrome from viewport cells; retain raw character positions
@@ -2176,7 +2136,7 @@
                         (if (eq? (head:window-scrollbar? w) 'left) 1 0)
                         (head:window-line-number-width w)))
               (max 1 (- y start)))]
-       [app-event-buffer-position (window-position w start height x y)]
+       [app-event-buffer-position (paint:window-position w start height x y)]
        [app-event-button button])
       (thunk)))
 
@@ -2190,7 +2150,7 @@
     ;; than the lowest) arms a resize drag instead.
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
-    (set! drag-divider #f)
+    (set! mouse-gesture #f)
     (let ([double? (head:double-click? x y (real-time))])
       (define (arm-text-selection!)
         (set! mark-row point-row)
@@ -2217,7 +2177,7 @@
            (when (eq? (car divider) 'below)
              (head:window-at (- x 1) (- y 1)
                (lambda (entry) (focus-window! (car entry)))))
-           (set! drag-divider divider)
+           (set! mouse-gesture divider)
            "MOUSE-HANDLED")]
         [else
          (head:window-at (- x 1) (- y 1)
@@ -2243,9 +2203,10 @@
                   (let ([old current-window])
                     (set! current-window w)
                     (let ([old-point (point)]
-                          [clicked (window-position w start height x y)])
+                          [clicked (paint:window-position w start height x y)])
                       (goto-point! clicked)
                       (set! mark-active? #f)
+                      (set! mouse-gesture (cons w (head:window-buffer w)))
                       ;; Focusing the clicked window is the default. An app may
                       ;; act on the click and explicitly preserve the old
                       ;; focus by returning keep-focus for MOUSE-CLICK.
@@ -2254,6 +2215,7 @@
                                (call-with-app-mouse-event w start height x y button
                                  (lambda () (head:dispatch-app-event! "MOUSE-CLICK"))))])
                         (cond [(eq? result 'ignore-click)
+                               (set! mouse-gesture #f)
                                (goto-point! old-point)
                                (when (memq old windows)
                                  (set! current-window old))]
@@ -2267,8 +2229,9 @@
                     "MOUSE-HANDLED")]
                  [else                                ; a text row
                   (focus-window! w)
-                  (goto-point! (window-position w start height x y))
+                  (goto-point! (paint:window-position w start height x y))
                   (arm-text-selection!)
+                  (set! mouse-gesture (cons w (head:window-buffer w)))
                   ;; A mode may act on the click -- following a link,
                   ;; say -- through a MOUSE-CLICK binding in its keymap.
                   (let ([context (mode:key-context (current-buffer))])
@@ -2287,26 +2250,26 @@
     ;; the mark activates and point follows the pointer within the
     ;; focused window's text area.
     (cond
-      [drag-divider
-       (let* ([orientation (car drag-divider)]
-              [split (cadr drag-divider)]
+      [(and (pair? mouse-gesture) (memq (car mouse-gesture) '(right below)))
+       (let* ([orientation (car mouse-gesture)]
+              [split (cadr mouse-gesture)]
               [old (if (eq? orientation 'right)
-                       (caddr drag-divider)
-                       (cadddr drag-divider))]
+                       (caddr mouse-gesture)
+                       (cadddr mouse-gesture))]
               [now (if (eq? orientation 'right) (- x 1) (- y 1))]
               [delta (- now old)])
          (unless (= delta 0)
            (head:transfer-split! split delta)
            (if (eq? orientation 'right)
-               (set-car! (cddr drag-divider) now)
-               (set-car! (cdddr drag-divider) now))))]
+               (set-car! (cddr mouse-gesture) now)
+               (set-car! (cdddr mouse-gesture) now))))]
       [else
        (head:window-at (- x 1) (- y 1)
          (lambda (entry)
            (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-             (when (and (eq? w current-window)
+             (when (and (eq? w current-window) (text-gesture? w)
                         (< (- y 1) (+ start height)))
-               (goto-point! (window-position w start height x y))
+               (goto-point! (paint:window-position w start height x y))
                (if (head:app-buffer? (head:window-buffer w))
                    (unless (call-with-app-mouse-event w start height x y button
                              (lambda () (head:dispatch-app-event! "MOUSE-DRAG")))
@@ -2317,10 +2280,10 @@
     (head:window-at (- x 1) (- y 1)
       (lambda (entry)
         (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-          (when (and (eq? w current-window)
+          (when (and (eq? w current-window) (text-gesture? w)
                      (< (- y 1) (+ start height))
                      (head:app-buffer? (head:window-buffer w)))
-            (goto-point! (window-position w start height x y))
+            (goto-point! (paint:window-position w start height x y))
             (call-with-app-mouse-event w start height x y button
               (lambda () (head:dispatch-app-event! "MOUSE-RELEASE"))))))))
 
@@ -2429,7 +2392,7 @@
           [(not handle?) #f]
           [(char=? c #\m)                         ; release
            (mouse-release! x y b)
-           (set! drag-divider #f)
+           (set! mouse-gesture #f)
            "MOUSE-HANDLED"]
           [(= (bitwise-and b 64) 64)               ; wheel
            (mouse-wheel! x y b (bitwise-and b 3)
@@ -3425,7 +3388,7 @@
                       [else '()])
                 (apply append
                   (map (lambda (w)
-                         (let* ([over (buffer-hover w)] [column (assv over buffer-columns)]
+                         (let* ([over (and (head:mouse-position) (buffer-hover w))] [column (assv over buffer-columns)]
                                 [row (and (or (eq? w current-window) (memq over buffer-rows))
                                           (buffer-row (buffer-candidate w)))])
                            (append
@@ -3433,9 +3396,9 @@
                                  (list (list w (- buffer-first-row 1) (cadr column)
                                          (min (caddr column)
                                               (+ (cadr column) (string-length (buffer-heading (car column)))))
-                                         'header-hover))
+                                         'hover))
                                  '())
-                             (if row (list (row-range w row 'candidate)) '()))))
+                             (if row (list (row-range w row (if (memq over buffer-rows) 'hover 'candidate))) '()))))
                     (filter (lambda (w)
                               (eq? (head:window-buffer w) buffers-view))
                       windows)))))

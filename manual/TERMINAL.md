@@ -181,7 +181,9 @@ scrollback reflow, and alternate-screen rendering. They enter e's generic
 buffer hyperlink layer, which emits OSC 8 to the host terminal around the
 corresponding visible cells. Thus, links produced by an application inside an
 e terminal remain available to the outer terminal even when their labels are
-not URLs.
+not URLs. Hover applies e's shared bold, dotted underline to the label in
+that head's window, without moving the child's cursor or sending it an input
+event.
 OSC 52 clipboard writes from terminal children are decoded into exact UTF-8
 text and, by default, stored in the last input actor's head kill ring. The
 receiving head's echo area and `<log>` report
