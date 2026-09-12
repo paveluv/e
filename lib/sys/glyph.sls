@@ -1,6 +1,6 @@
 ;; glyph.sls -- shared terminal-cell widths and cluster boundaries.
 (library (glyph)
-  (export width extends? clusters)
+  (export width extends? clusters cells fit)
   (import (chezscheme) (prefix (sys) sys:))
 
   (define (width text)
@@ -25,6 +25,28 @@
 
   (define (control? c)
     (let ([n (char->integer c)]) (or (< n 32) (<= 127 n 159))))
+
+  (define (cells text)
+    (fold-left (lambda (n cluster) (+ n (cdr cluster))) 0 (clusters text)))
+
+  (define (fit text width . side)
+    ;; Fit a label to exactly width terminal cells, padding on the right.
+    ;; Truncate whole clusters, with an ellipsis on the right by default
+    ;; or on the left to retain a path's informative tail.
+    (let* ([left? (and (pair? side) (eq? (car side) 'left))]
+           [parts (clusters text)]
+           [size (fold-left (lambda (n part) (+ n (cdr part))) 0 parts)])
+      (cond [(<= width 0) ""]
+            [(<= size width) (string-append text (make-string (- width size) #\space))]
+            [else
+             (let keep ([parts (if left? (reverse parts) parts)] [chars 0] [used 0])
+               (if (or (null? parts) (> (+ used (cdar parts)) (- width 1)))
+                   (string-append
+                     (if left?
+                         (string-append "…" (substring text (- (string-length text) chars) (string-length text)))
+                         (string-append (substring text 0 chars) "…"))
+                     (make-string (- width used 1) #\space))
+                   (keep (cdr parts) (+ chars (caar parts)) (+ used (cdar parts)))))])))
 
   (define (clusters text)
     ;; Positive (character-count . cell-count) pairs. A control occupies one

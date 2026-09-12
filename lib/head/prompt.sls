@@ -196,23 +196,9 @@
               (make-vector (string-length line) 'plain)))))
       '("prompt" "completions")))
 
-  (define (cells s)
-    (fold-left (lambda (n cluster) (+ n (cdr cluster))) 0 (glyph:clusters s)))
-
-  (define (fit-label s width)
-    ;; Truncate whole clusters and make truncation visible. The padding
-    ;; measures cells, so wide filenames cannot push the next column out.
-    (if (<= (cells s) width)
-        (string-append s (make-string (- width (cells s)) #\space))
-        (let loop ([rest (glyph:clusters s)] [at 0] [used 0])
-          (if (or (null? rest) (> (+ used (cdar rest)) (- width 1)))
-              (string-append (substring s 0 at) "…"
-                (make-string (max 0 (- width used 1)) #\space))
-              (loop (cdr rest) (+ at (caar rest)) (+ used (cdar rest)))))))
-
   (define (format-columns candidates width labeler highlight?)
     (let* ([labels (map labeler candidates)]
-           [column (min width (+ 2 (fold-left max 0 (map cells labels))))]
+           [column (min width (+ 2 (fold-left max 0 (map glyph:cells labels))))]
            [columns (max 1 (div width (max 1 column)))])
       (let rows ([values candidates] [labels labels] [out '()])
         (if (null? values) (list->vector (reverse out))
@@ -222,7 +208,7 @@
                   (rows values labels
                     (cons (make-row text (list->vector (apply append (reverse styles)))
                             #f (reverse choices)) out))
-                  (let* ([label (car labels)] [shown (fit-label label column)]
+                  (let* ([label (car labels)] [shown (glyph:fit label column)]
                          [start (string-length text)] [end (+ start (string-length shown))])
                     (fill (cdr values) (cdr labels) (+ count 1)
                       (string-append text shown)
@@ -246,7 +232,7 @@
                      [to (if (= (+ i 1) count) end (+ start (vector-ref breaks (+ i 1))))]
                      [text (substring content from to)]
                      [shown (if (= (+ i 1) count) text
-                                (string-append (fit-label text (max 1 (- width 1))) "\\"))]
+                                (string-append (glyph:fit text (max 1 (- width 1))) "\\"))]
                      [face (make-vector (string-length shown) 'chrome)])
                 (do ([j 0 (+ j 1)]) ((= j (min (- to from) (vector-length face))))
                   (vector-set! face j (vector-ref styles (+ from j))))
@@ -358,7 +344,7 @@
                        (string-append short "  ↑↓: history  Enter: accept  Esc: cancel")
                        (if (> room 35) (string-append short "  ↑↓: history  Esc: cancel") short))]
              [name (head:buffer-name b)])
-        (if (<= (+ (cells name) (cells help) 2) room)
+        (if (<= (+ (glyph:cells name) (glyph:cells help) 2) room)
             (string-append name "  " help) help)))
     (define (mouse! event)
       (cond

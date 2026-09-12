@@ -10,10 +10,19 @@
              (prefix (head) head:) (prefix (store) store:) (prefix (text) text:)
              (prefix (paint) paint:) (prefix (vt) vt:)
              (prefix (kernel) kernel:) (prefix (string) string:)
-             (prefix (style) style:)
+             (prefix (style) style:) (prefix (glyph) glyph:)
              (prefix (sys) sys:) (prefix (test) test:))
 
      (define author '(app render-test))
+     ;; The labels in prompts and tables fit the same clusters as the painter.
+     ;; One matrix covers padding, either elision edge and tiny cell budgets.
+     (test:check 'labels-fit-whole-clusters-at-either-edge
+       (map (lambda (case) (apply glyph:fit (list-head case 3)))
+         '(("abc" 5 right "abc  ") ("abcdef" 4 right "abc…")
+           ("abcdef" 4 left "…def") ("界e\x301;Z" 3 right "界…")
+           ("界e\x301;Z" 3 left "…e\x301;Z") ("a👩‍💻z" 3 right "a… ")
+           ("abcdef" 1 left "…") ("界" 0 right "")))
+       '("abc  " "abc…" "…def" "界…" "…e\x301;Z" "a… " "…" ""))
      ;; Expected maps include EOF. The same table checks plain source,
      ;; character styles, and both coordinate directions without one test
      ;; fixture per script or glyph family.

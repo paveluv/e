@@ -57,16 +57,20 @@ in that form.
 
 | Key | Action |
 |---|---|
-| `C-x b` | Prompt for a buffer name. Empty input selects the most recently used other buffer; an unknown name creates an unvisited buffer. |
-| `C-x C-b` | Show `<buffers>` in the current window as an interactive buffer switcher. |
+| `C-x b` / `C-x C-b` | Open the buffers app. Type to filter; Enter selects the most recently used other buffer or the chosen match. |
+| `M-x (new-buffer!!)` | Ask for a name and create an empty unvisited buffer. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
 
-`C-x b` and `C-x C-f` prompt in the current window rather than the echo area;
-see [prompts in the window](PROMPTS.md#prompts-in-the-window).
-Buffer-name completion is available with Tab in the prompts. Killing a modified
-buffer requires confirmation. If its shared text or facts change while the
+`C-x C-f` reads a path [in the window](PROMPTS.md#prompts-in-the-window).
+Both buffer-switch shortcuts use the [live table](#the-buffers-app) below.
+An unmatched filter stays in the table; it never creates a buffer. Use
+`new-buffer!!` for creation. Empty input cancels creation; an existing name
+receives a unique suffix.
+
+The kill prompt completes buffer names with Tab. Killing a modified buffer
+requires confirmation. If its shared text or facts change while the
 question is open, e reviews it again before deleting. A failed deletion reports
 the error and keeps the buffer. Killing a buffer removes its app registration,
 if any, and every window showing it changes to another live buffer. If the last
@@ -269,52 +273,78 @@ line.
 
 ## The `<buffers>` app
 
-`C-x C-b` shows the app in the current window. Move to a row and press Enter
-to replace `<buffers>` with that buffer, making the command an alternative
-interactive form of `C-x b`.
+`C-x b` and `C-x C-b` show the same app in the current window. The initial
+candidate is the most recently used other buffer, so either shortcut followed
+by Enter switches back immediately. Repeated quick switches alternate between
+the documents; the switcher itself never becomes the default or a table row.
 
-`<buffers>` is a live, read-only table with these columns:
+Type a substring to filter by buffer name or file path, ignoring case. The
+whole path is searchable, including directories hidden by elision. Pasted
+text also filters. Backspace removes the last character cluster, and C-u
+clears the filter. The selected buffer stays selected while it matches;
+otherwise the first match becomes the candidate. Empty results show
+`No matching buffers`, and Enter leaves the filter available for correction.
+
+Enter opens the candidate. Esc or C-g returns to the document from which
+the app was opened, preserving its text and point. Changing window focus
+keeps the list and filter available; invoking either shortcut starts a fresh
+filter. The filter and sort belong to this head's app. Two windows showing
+it share the table, but each retains its own candidate and viewport.
+
+The live, read-only table has these columns:
 
 | Column | Meaning |
 |---|---|
-| `C` | `.` marks the buffer displayed by the current window. |
-| `R` | `%` marks a read-only buffer. |
-| `M` | `*` marks a modified buffer. |
 | `Buffer` | Buffer name. |
 | `Lines` | Current line count. |
 | `Mode` | Detected or assigned mode. |
 | `File` | Visited path, with the home directory abbreviated as `~`. |
 
-Rows remain alphabetical and update whenever buffers are created, killed,
-modified, reread, renamed, or shown, or when their mode, file, read-only state,
-or line count changes. The bold header is sticky; modified rows are italic.
+Click a heading to sort ascending; click it again for descending. The active
+heading carries `↑` or `↓`. Names, modes and full paths sort alphabetically
+without case distinctions; line counts sort numerically. Names break ties.
+The default is Buffer ascending, and the chosen sort survives reopening.
+Selection follows buffer identity across sorting, renaming and live updates.
 
-Two faces tell two things apart. The blue row (`active`) is state: it marks
-the buffer the selected window shows, in every window listing it, whether or
-not `<buffers>` has focus; the `.` in the `C` column marks the same buffer.
-The bold row (`candidate`) is interaction: the row a key or
-click would pick. In a focused `<buffers>` window that is the row at point;
-in any `<buffers>` window it is also the row under the mouse pointer. Each
-window showing `<buffers>` keeps its own point. Both faces are configurable
-through the style DSL described in [Styles](STYLES.md).
+The header stays visible while rows scroll. Rows fit the narrowest window
+showing the app and never wrap. Long paths keep their tail, with `…` marking
+the omitted beginning. Names elide at the end. Narrow panes omit metadata
+columns before names and paths, while retaining the active sort heading.
+Widening a pane restores the columns and fuller labels. Elision never changes
+which buffer a row opens.
+
+The blue `active` face marks the document in the focused window. Bold
+`candidate` marks one possible choice in each interacting list window. Hover
+takes precedence over the keyboard candidate there; Enter accepts the visibly
+bold row, and arrows continue from it. Moving the pointer away restores the
+keyboard candidate. Hover neither scrolls nor takes focus. Modified rows are
+italic. These faces are configurable through [Styles](STYLES.md).
+
+There is no text cursor. Keyboard selection still scrolls into view. The
+status bar shows buffer/match counts, the filter, the candidate's modified
+and read-only state, and controls as space permits. A long filter keeps its
+most recently typed characters visible. Creation, deletion, edits, saves,
+renames and mode/file changes appear on redraw.
 
 ### Keyboard and mouse controls
 
-- Up or `C-p`, Down or `C-n`: move the candidate row.
+- Up / `C-p` / Shift-Tab, Down / `C-n` / Tab: move the candidate row.
+- Home / `C-a` / `M-<`, End / `C-e` / `M->`: select the first or last match.
+- Page Up / `M-v`, Page Down / `C-v`: move by a page of rows.
 - Enter: show the candidate row's buffer in this window, completing the
   switch in place.
-- Move the pointer over a row: it becomes the candidate; focus does not move.
+- Esc / C-g: return to the invoking document; C-u: clear the filter.
+- Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
-- Wheel over the app: move one row and show its buffer in the selected window.
+- Click a heading: sort its column ascending, then descending.
+- Wheel over the app: browse one row per tick without opening a buffer.
 - Click the app's status line: focus `<buffers>`.
 
-So `<buffers>` plays two roles. Opened in the current window with `C-x C-b`,
-it is an in-place switcher: arrow keys and Enter replace the list with the
-chosen buffer, an alternative to `C-x b`. Kept in another window, it is a
-control panel: it shows what the selected window displays, and a click
-switches that window without taking focus. Status-line clicks always focus
-their window and cannot be overridden by an app.  The public app API is
-documented in [App buffers](APPS.md).
+Kept in another window, the same app is a control panel: a click switches the
+focused window without taking focus. Click the panel's status line to focus
+it and type a filter. Global `M-Shift-Up` / `M-Shift-Down` and Meta-wheel keep
+their alphabetical traversal independently of the table's filter and sort.
+The public app API is documented in [App buffers](APPS.md).
 
 ## Scrollbars
 

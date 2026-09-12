@@ -52,7 +52,7 @@
     fresh-buffer
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
     call-with-buffer
-    switch-buffer!! kill-buffer!!
+    switch-buffer!! new-buffer!! kill-buffer!!
     split-window! split-window-right!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
@@ -106,7 +106,7 @@
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
           (prefix (paint) paint:) (prefix (string) string:)
-          (prefix (render) render:)
+          (prefix (render) render:) (prefix (glyph) glyph:)
           (prefix (mode) mode:) (prefix (file) file:)
           (prefix (prompt) prompt:)
           (prefix (doc) doc:))
@@ -1296,19 +1296,13 @@
                            (map head:buffer-name buffers))))
 
   (define (switch-buffer!!)
-    (let* ([current (head:window-buffer current-window)]
-           [default (find (lambda (b) (not (eq? b current))) buffers)]
-           [s (parameterize ([prompt:in-window #t])
-                (prompt:read! (if default
-                                (format "Switch to buffer (default ~a): "
-                                  (head:buffer-name default))
-                                "Switch to buffer: ")
-                              complete-buffer-name))])
-      (when s
-        (cond [(string=? s "") (when default (show-buffer! default))]
-              [(head:buffer-named s) => show-buffer!]
-              [else (show-buffer! (head:new-buffer s))
-                    (set! message (format "New buffer ~a" s))]))))
+    (list-buffers!))
+
+  (define (new-buffer!!)
+    ;; Creation stays explicit when an empty switcher result is a typo.
+    (let ([name (prompt:read! "New buffer: " #f)])
+      (when (and name (not (string=? name "")))
+        (show-buffer! (head:new-buffer name)))))
 
   (define (kill-buffer! b)
     (when (head:buffer-store-id b)
@@ -2883,13 +2877,10 @@
 
   ;;; The buffer list -----------------------------------------------------------
 
-  (define (pad s width)
-    (let ([n (string-length s)])
-      (if (>= n width) s (string-append s (make-string (- width n) #\space)))))
-
   (define (pad-left s width)
-    (let ([n (string-length s)])
-      (if (>= n width) s (string-append (make-string (- width n) #\space) s))))
+    (let ([n (glyph:cells s)])
+      (if (> n width) (glyph:fit s width 'left)
+          (string-append (make-string (- width n) #\space) s))))
 
   (define (abbreviate-home path)
     (let ([home (getenv "HOME")])
@@ -2899,61 +2890,21 @@
 
   (define buffers-view #f)
   (define buffer-rows '())
-  ;; The row under the mouse pointer in a <buffers> window: (window . row),
-  ;; or #f.  Hovering picks a row the way point does in a focused window.
+  (define buffer-filter "")
+  (define buffer-sort 0)
+  (define buffer-descending? #f)
+  (define buffer-headings '#("Buffer" "Lines" "Mode" "File"))
+  (define buffer-columns '())       ; (column start-character end-character)
+  (define buffer-count 0)
+  (define-record-type buffer-choice (fields (mutable origin) (mutable selected)))
+  (define buffer-choices (make-weak-eq-hashtable))
+  ;; The pointer's candidate is an identity, not an unstable rendered row.
+  ;; It takes precedence over the keyboard candidate in the same window,
+  ;; without moving point and making hover scroll near viewport margins.
   (define hover #f)
 
-  (define (buffers-styles line)
-    ;; Separate the headings from the data; in data rows the third status cell
-    ;; is M, where a star makes the complete modified-buffer row italic.
-    (make-vector (string-length line)
-                 (cond [(string:prefix? "CRM  Buffer" line) 'bold]
-                       [(and (> (string-length line) 2)
-                             (char=? (string-ref line 2) #\*))
-                        'italic]
-                       [else 'plain])))
-
-  (define (buffer-table)
-    ;; The complete rendering and its source rows. Keeping this pure lets the
-    ;; view refresh on every redraw without mutation hooks throughout the
-    ;; editor.
-    (let* ([current (current-buffer)]
-           [listed (sort (lambda (a b)
-                           (string-ci<? (head:buffer-name a) (head:buffer-name b)))
-                         (buffer-list))]
-           [view-lines (+ (length listed) 1)]
-           [rows (map (lambda (b)
-                        (list (string-append
-                                (if (eq? b current) "." " ")
-                                (if (head:buffer-read-only b) "%" " ")
-                                (if (head:buffer-modified b) "*" " "))
-                              (head:buffer-name b)
-                              (number->string
-                                (if (eq? b buffers-view)
-                                    view-lines
-                                    (buffer-line-count b)))
-                              (or (mode:name-of b) "")
-                              (let ([f (head:buffer-file b)])
-                                (if f (abbreviate-home f) ""))))
-                      listed)]
-           [all (cons (list "CRM" "Buffer" "Lines" "Mode" "File") rows)]
-           [width (lambda (i)
-                    (fold-left (lambda (w r)
-                                 (max w (string-length (list-ref r i))))
-                               0 all))]
-           [wname (width 1)] [wlines (width 2)] [wmode (width 3)]
-           [render (lambda (r)
-                     (format "~a  ~a  ~a  ~a  ~a"
-                             (car r)
-                             (pad (list-ref r 1) wname)
-                             (pad-left (list-ref r 2) wlines)
-                             (pad (list-ref r 3) wmode)
-                             (list-ref r 4)))])
-      (set! buffer-rows listed)
-      (cons (map render all) rows)))
-
-  (define (refresh-buffers-view!)
-    (head:view-replace! buffers-view (car (buffer-table))))
+  (define (buffer-at-row row)
+    (and (<= 1 row (length buffer-rows)) (list-ref buffer-rows (- row 1))))
 
   (define (buffer-row b)
     (let loop ([left buffer-rows] [row 1])
@@ -2961,77 +2912,227 @@
             [(eq? (car left) b) row]
             [else (loop (cdr left) (+ row 1))])))
 
+  (define (other-buffer was)
+    (find (lambda (b) (and (not (eq? b was)) (not (eq? b buffers-view)))) buffers))
+
+  (define (buffer-choice-for w)
+    (or (hashtable-ref buffer-choices w #f)
+        (let ([choice (make-buffer-choice (other-buffer buffers-view)
+                        (buffer-at-row (head:window-prow w)))])
+          (hashtable-set! buffer-choices w choice)
+          choice)))
+
+  (define (buffer-candidate w)
+    (let ([b (if (and hover (eq? (car hover) w)) (cdr hover)
+                 (buffer-choice-selected (buffer-choice-for w)))])
+      (and (memq b buffer-rows) b)))
+
+  (define (buffers-styles b row line)
+    ;; A row provider sees live metadata even if its printed text is equal.
+    ;; A text-only style cache cannot notice modified -> saved transitions.
+    (make-vector (string-length line)
+                 (cond [(zero? row) 'bold]
+                       [(not (buffer-at-row row)) 'chrome]
+                       [(head:buffer-modified (buffer-at-row row)) 'italic]
+                       [else 'plain])))
+
+  (define (buffer-data b)
+    (vector (head:buffer-name b) (buffer-line-count b)
+            (or (mode:name-of b) "") (or (head:buffer-file b) "")))
+
+  (define (buffer-cell data column)
+    (let ([value (vector-ref data column)])
+      (cond [(number? value) (number->string value)]
+            [(= column 3) (abbreviate-home value)]
+            [else value])))
+
+  (define (buffer-entry<? a b)
+    (let ([a (if buffer-descending? (cdr b) (cdr a))]
+          [b (if buffer-descending? (cdr a) (cdr b))])
+      (let ([x (vector-ref a buffer-sort)] [y (vector-ref b buffer-sort)])
+        (if (if (number? x) (= x y) (string-ci=? x y))
+            (string<? (vector-ref a 0) (vector-ref b 0))
+            ((if (number? x) < string-ci<?) x y)))))
+
+  (define (buffer-matches? entry)
+    (let ([data (cdr entry)])
+      (exists (lambda (s) (string:search s buffer-filter 0 (string-length s) #t))
+        (list (vector-ref data 0) (vector-ref data 3) (buffer-cell data 3)))))
+
+  (define (buffer-table entries all width)
+    ;; Size from the full list so typing does not make columns jump. Share
+    ;; spare cells among columns that need them; work is bounded by the pane,
+    ;; not by the longest path. Narrow panes retain names and paths first.
+    (let* ([minimum '#(8 7 6 10)] [sizes (vector-copy minimum)]
+           [columns
+            (let fit ([columns '(0 1 2 3)]
+                      [drop (append (remv buffer-sort '(2 1 3))
+                              (if (zero? buffer-sort) '() (list buffer-sort)))])
+              (if (or (null? drop)
+                      (<= (+ (* 2 (- (length columns) 1))
+                             (apply + (map (lambda (i) (vector-ref minimum i)) columns))) width))
+                  columns
+                  (fit (remv (car drop) columns) (cdr drop))))]
+           [natural
+            (list->vector
+              (map (lambda (i)
+                     (fold-left (lambda (n entry) (max n (glyph:cells (buffer-cell (cdr entry) i))))
+                       (vector-ref minimum i) all)) '(0 1 2 3)))])
+      (define (row data header?)
+        (string:join
+          (map (lambda (i)
+                 (let ([text (if header?
+                                 (string-append (vector-ref buffer-headings i)
+                                   (if (= i buffer-sort) (if buffer-descending? " ↓" " ↑") ""))
+                                 (buffer-cell data i))]
+                       [size (vector-ref sizes i)])
+                   (if (and (= i 1) (not header?)) (pad-left text size)
+                       (glyph:fit text size (if (and (= i 3) (not header?)) 'left 'right)))))
+            columns) "  "))
+      (when (null? (cdr columns)) (vector-set! sizes 0 width))
+      (let grow ([room (- width (* 2 (- (length columns) 1))
+                         (apply + (map (lambda (i) (vector-ref sizes i)) columns)))])
+        (let ([want (filter (lambda (i) (< (vector-ref sizes i) (vector-ref natural i))) columns)])
+          (when (and (> room 0) (pair? want))
+            (let ([given (list-head want (min room (length want)))])
+              (for-each (lambda (i) (vector-set! sizes i (+ 1 (vector-ref sizes i)))) given)
+              (grow (- room (length given)))))))
+      (set! buffer-columns
+        (let bounds ([columns columns] [start 0])
+          (if (null? columns) '()
+              (let ([end (+ start (vector-ref sizes (car columns)))])
+                (cons (list (car columns) start end) (bounds (cdr columns) (+ end 2)))))))
+      (cons (row #f #t)
+        (if (null? entries) (list (glyph:fit "No matching buffers" width))
+            (map (lambda (entry) (row (cdr entry) #f)) entries)))))
+
+  (define (refresh-buffers-view!)
+    (head:call-with-display-update
+      (lambda ()
+        (let* ([all (map (lambda (b) (cons b (buffer-data b))) (remq buffers-view buffers))]
+               [entries (sort buffer-entry<? (filter buffer-matches? all))]
+               [saved (map (lambda (w)
+                             (list w (buffer-choice-for w) (buffer-at-row (head:window-top w))))
+                        (filter (lambda (w) (eq? (head:window-buffer w) buffers-view)) windows))])
+          (set! buffer-count (length all))
+          (set! buffer-rows (map car entries))
+          (when (and hover (not (memq (cdr hover) buffer-rows))) (set! hover #f))
+          (let ([placements
+                 (apply append
+                   (map (lambda (entry)
+                          (let* ([w (car entry)] [choice (cadr entry)]
+                                 [selected (buffer-choice-selected choice)]
+                                 [row (or (buffer-row selected) (and (pair? buffer-rows) 1))])
+                            (when row (buffer-choice-selected-set! choice (buffer-at-row row)))
+                            (list (cons w (cons (or row 1) 0))
+                                  (cons (cons 'top w) (cons (or (buffer-row (caddr entry)) 1) 0))))) saved))])
+            (head:view-replace! buffers-view
+              (buffer-table entries all (or (head:buffer-narrowest-width buffers-view)
+                                          (head:window-content-width current-window)))
+              '() placements))))))
+
   (define (select-buffer-row! b)
     (let ([row (buffer-row b)])
-      (when row (goto-point! (cons row 0)))))
-
-  (define (clamp-buffer-row!)
-    (when (pair? buffer-rows)
-      (goto-point! (cons (min (max 1 (car (point))) (length buffer-rows)) 0))))
+      (when row
+        (buffer-choice-selected-set! (buffer-choice-for current-window) b)
+        (goto-point! (cons row 0)))))
 
   (define (move-buffer-row! delta)
-    (clamp-buffer-row!)
-    (goto-point! (cons (min (max 1 (+ (car (point)) delta))
-                            (length buffer-rows))
-                       0)))
+    (let ([row (or (buffer-row (buffer-candidate current-window)) 1)])
+      (set! hover #f)
+      (when (pair? buffer-rows)
+        (select-buffer-row!
+          (buffer-at-row (min (max 1 (+ row delta)) (length buffer-rows)))))))
 
   (define (activate-buffer-row!)
-    ;; Enter, a click or a wheel tick shows the candidate's buffer in the
-    ;; window that has keyboard focus: this one when the list is focused,
-    ;; the previously focused window when the list is a control panel in
-    ;; another window.
-    (clamp-buffer-row!)
-    (let* ([row (car (point))]
-           [b (and (<= 1 row (length buffer-rows))
-                   (list-ref buffer-rows (- row 1)))]
+    ;; A panel click changes the previously focused window. Keyboard use
+    ;; replaces the list here. Hover and arrows resolve the same candidate.
+    (let* ([b (buffer-candidate current-window)]
            [target (head:app-event-focus)])
       (when b
+        (set! hover #f)
         (when (and target (memq target windows)) (set! current-window target))
-        (show-buffer! b)
-        ;; the buffer shown may be the list itself: keep its row on b
-        (when (eq? (current-buffer) buffers-view)
-          (refresh-buffers-view!)
-          (select-buffer-row! b)))))
+        (show-buffer! b))))
 
-  (define (previous-buffer)
-    ;; the buffer the user was in before this view: next in MRU order
-    (let ([bs (buffer-list)])
-      (if (and (pair? bs) (pair? (cdr bs))) (cadr bs) (car bs))))
+  (define (filter-buffers! text)
+    (set! hover #f)
+    (set! buffer-filter text)
+    (refresh-buffers-view!))
+
+  (define (buffers-status b)
+    (let* ([candidate (cond [(eq? (current-buffer) b) (buffer-candidate current-window)]
+                            [(and hover (memq (cdr hover) buffer-rows)) (cdr hover)]
+                            [else (current-buffer)])]
+           [count (if (string=? buffer-filter "") (format "~a buffers" buffer-count)
+                      (format "~a/~a" (length buffer-rows) buffer-count))]
+           [room (max 1 (- (or (head:buffer-narrowest-width b) 80) 12))]
+           [query (if (string=? buffer-filter "") #f
+                      (string-append "Filter: "
+                        (glyph:fit buffer-filter
+                          (min (glyph:cells buffer-filter) 32 (max 1 (- room (glyph:cells count) 10))) 'left)))])
+      ;; Retain the typed tail, then add whole details/hints that fit. A
+      ;; cropped help string must not look like more elision of the filter.
+      (let add ([text (if query (string-append count "  " query) count)]
+                [details (list (and candidate (head:buffer-modified candidate) "modified")
+                               (and candidate (head:buffer-read-only candidate) "read-only")
+                               (and (not query) "Type to filter")
+                               "↑↓ choose" "Enter open" "Esc return" "C-u clear")])
+        (if (null? details) text
+            (add (if (and (car details)
+                          (<= (+ (glyph:cells text) 2 (glyph:cells (car details))) room))
+                     (string-append text "  " (car details)) text)
+              (cdr details))))))
 
   (define (handle-buffers-event! event)
-    (cond [(string=? event "FOCUS")
-           (refresh-buffers-view!)
-           (select-buffer-row! (previous-buffer))
-           #t]
-          [(member event '("UP" "C-p"))
-           (move-buffer-row! -1) #t]
-          [(member event '("DOWN" "C-n"))
-           (move-buffer-row! 1) #t]
-          [(string=? event "WHEEL-UP")
-           (move-buffer-row! -1) (activate-buffer-row!) #t]
-          [(string=? event "WHEEL-DOWN")
-           (move-buffer-row! 1) (activate-buffer-row!) #t]
+    (cond [(string=? event "FOCUS") (refresh-buffers-view!) #t]
+          [(member event '("UP" "C-p" "S-TAB" "WHEEL-UP")) (move-buffer-row! -1) #t]
+          [(member event '("DOWN" "C-n" "TAB" "WHEEL-DOWN")) (move-buffer-row! 1) #t]
+          [(member event '("HOME" "C-a" "M-<")) (move-buffer-row! (- (length buffer-rows))) #t]
+          [(member event '("END" "C-e" "M->")) (move-buffer-row! (length buffer-rows)) #t]
+          [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
+           (move-buffer-row! (* (if (member event '("PAGEUP" "M-v")) -1 1)
+                               (max 1 (- (head:window-size current-window) 1)))) #t]
           [(string=? event "RET") (activate-buffer-row!) #t]
+          [(member event '("ESC" "C-g"))
+           (let* ([origin (buffer-choice-origin (buffer-choice-for current-window))]
+                  [b (if (memq origin buffers) origin (other-buffer buffers-view))])
+             (set! hover #f)
+             (when b (show-buffer! b))) #t]
+          [(string=? event "C-u") (filter-buffers! "") #t]
+          [(member event '("BACKSPACE" "C-h"))
+           (unless (string=? buffer-filter "")
+             (filter-buffers!
+               (substring buffer-filter 0
+                 (- (string-length buffer-filter) (car (car (reverse (glyph:clusters buffer-filter)))))))) #t]
+          [(string=? event "PASTE")
+           (filter-buffers! (string-append buffer-filter
+                              (list->string (filter (lambda (c) (>= (char->integer c) 32))
+                                              (string->list (head:read-paste)))))) #t]
+          [(tty:key-event-character event)
+           => (lambda (c) (filter-buffers! (string-append buffer-filter (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
-           ;; the pointer picks a row in this window without focusing it
-           (let ([at (app-event-buffer-position)])
-             (set! hover (and at (<= 1 (car at) (length buffer-rows))
-                              (cons (selected-window) (car at)))))
+           (let* ([at (app-event-buffer-position)] [b (and at (buffer-at-row (car at)))])
+             (set! hover (and b (cons current-window b))))
            #t]
-          [(string=? event "MOUSE-LEAVE") (set! hover #f) #t]
+          [(member event '("MOUSE-LEAVE" "BLUR")) (set! hover #f) #t]
+          [(member event '("MOUSE-RELEASE" "MOUSE-DRAG"))
+           (select-buffer-row! (buffer-choice-selected (buffer-choice-for current-window))) #t]
           [(string=? event "MOUSE-CLICK")
-           (let ([clicked (app-event-buffer-position)])
-             (if (and clicked
-                      (<= 1 (car clicked) (length buffer-rows)))
-                 (begin
-                   (goto-point! (cons (car clicked) 0))
-                   (activate-buffer-row!)
-                   'keep-focus)
-                 'ignore-click))]
+           (let* ([at (app-event-buffer-position)] [b (and at (buffer-at-row (car at)))]
+                  [column (and at (zero? (car at))
+                               (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
+                                 buffer-columns))])
+             (cond [b (set! hover #f) (select-buffer-row! b) (activate-buffer-row!) 'keep-focus]
+                   [column
+                    (set! hover #f)
+                    (set! buffer-descending? (and (= buffer-sort (car column)) (not buffer-descending?)))
+                    (set! buffer-sort (car column))
+                    (refresh-buffers-view!) 'keep-focus]
+                   [else 'ignore-click]))]
           [else #f]))
 
   (define (switch-buffer-by-row! delta)
-    ;; Global alphabetical traversal, matching the stable order in *buffers*.
+    ;; Global alphabetical traversal is independent of the table's filter/sort.
     (let* ([current (current-buffer)]
            [listed (sort (lambda (a b)
                            (string-ci<? (head:buffer-name a) (head:buffer-name b)))
@@ -3047,13 +3148,7 @@
                         (if (eq? (cadr left) current)
                             (car left)
                             (loop (cdr left))))])])
-          (show-buffer! next)
-          ;; Each window has its own point. If traversal enters the buffers app
-          ;; in this window, its active row must describe what this window now
-          ;; shows rather than inherit an unrelated row from another app window.
-          (when (eq? next buffers-view)
-            (refresh-buffers-view!)
-            (select-buffer-row! buffers-view))))))
+          (if (eq? next buffers-view) (list-buffers!) (show-buffer! next))))))
 
   (define (previous-buffer!) (switch-buffer-by-row! -1))
   (define (next-buffer!) (switch-buffer-by-row! 1))
@@ -3067,21 +3162,32 @@
                                handle-buffers-event!))
           ;; A position bar on the configured side, only while the rows
           ;; overflow the window.
-          (head:set-app-presentation! buffers-view 1 'auto)
+          (head:set-app-presentation! buffers-view 1 'auto #f)
+          (head:set-app-cursor-visible! buffers-view #f)
+          (head:set-app-status-position! buffers-view buffers-status)
+          (head:buffer-line-numbers-setting-set! buffers-view #f)
           (mode:choose! buffers-view "buffers")
           (refresh-buffers-view!)
           buffers-view)))
 
   (define (list-buffers!)
-    ;; Use the live table as an interactive buffer switcher in this
-    ;; window: Enter shows the chosen buffer here, completing the switch
-    ;; in place.
+    ;; Both switch shortcuts use one app. The app itself never displaces the
+    ;; previous document as the default, even after repeated quick switches.
     (let ([b (buffers-view-buffer)]
           [was (current-buffer)])
-      (refresh-buffers-view!)
-      (show-buffer! b)
-      (refresh-buffers-view!)
-      (select-buffer-row! was)
+      (head:call-with-display-update
+        (lambda ()
+          (set! buffer-filter "")
+          (set! hover #f)
+          (hashtable-set! buffer-choices current-window
+            (make-buffer-choice
+              (if (eq? was b) (buffer-choice-origin (buffer-choice-for current-window)) was)
+              (or (other-buffer was) was)))
+          ;; The persistent picker is inventory, not a document visit. Keep
+          ;; it behind visited buffers so retirement falls back to a document.
+          (set! buffers (append (remq b buffers) (list b)))
+          (head:set-window-buffer! current-window b)
+          (refresh-buffers-view!)))
       (set-message! "")))
 
 
@@ -3189,7 +3295,7 @@
       (head:set-quit-command! quit!!)
       (head:set-after-key! clamp-point!))
 
-    (mode:register! "buffers" '() '() buffers-styles)
+    (mode:register! "buffers" '() '() (lambda (line) #f) #f buffers-styles)
     (doc:register!
       '(((undo-scope) (("parameter" . "(undo-scope [scope])")) "symbol"
          ("(edit)") edit "Editing commands" #f
@@ -3225,7 +3331,13 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Show `<buffers>` in the current window as an in-place buffer switcher. The blue row is the buffer the selected window shows; the bold row is the one a key or click would pick: move it with Up, Down, or the wheel and press Enter to show that buffer here, or point at a row and click to show its buffer in the selected window without moving focus.")
+         "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; C-u clears the filter. Click headings to sort ascending/descending. A side-panel click changes the focused window without taking focus.")
+        ((switch-buffer!!) (("procedure" . "(switch-buffer!!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Open the filterable buffers app, just like `list-buffers!`. C-x b and C-x C-b share this workflow; Enter immediately selects the most recently used other buffer.")
+        ((new-buffer!!) (("procedure" . "(new-buffer!!)")) "void"
+         ("(edit)") edit "Editing commands" #f
+         "Ask for a name and create an empty shared buffer here. Empty input or cancellation leaves the document unchanged. A name already in use receives a unique suffix; an unmatched switcher filter never creates a buffer.")
         ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")
@@ -3233,12 +3345,23 @@
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the next buffer in alphabetical order, wrapping at the end.")))
     (buffers-view-buffer)
+    (head:add-buffer-kill-hook!
+      (lambda (b)
+        ;; A hidden picker must not keep a killed document's text alive.
+        (when (and hover (eq? (cdr hover) b)) (set! hover #f))
+        (vector-for-each
+          (lambda (choice)
+            (when (eq? (buffer-choice-origin choice) b) (buffer-choice-origin-set! choice #f))
+            (when (eq? (buffer-choice-selected choice) b) (buffer-choice-selected-set! choice #f)))
+          (hashtable-values buffer-choices))
+        (when (eq? b buffers-view)
+          (set! buffers-view #f)
+          (set! buffer-rows '())
+          (hashtable-clear! buffer-choices))))
     (paint:add-highlighter!
       (lambda ()
-        ;; The blue row is state: the buffer the selected window shows, in
-        ;; every window listing it, whether or not the list has focus.  Bold
-        ;; is interaction: the row a key would pick -- point, in a focused
-        ;; list -- or a click would -- the row under the pointer.
+        ;; Blue describes the focused document. Each list window has at most
+        ;; one bold candidate: hover wins there until keyboard input or leave.
         (if (and buffers-view (memq buffers-view (buffer-list)))
             (let ([row-range
                    (lambda (scope row face)
@@ -3248,14 +3371,14 @@
                 (cond [(buffer-row (current-buffer))
                        => (lambda (row) (list (row-range buffers-view row 'active)))]
                       [else '()])
-                (if (and (eq? (current-buffer) buffers-view) (> (car (point)) 0))
-                    (list (row-range (selected-window) (car (point)) 'candidate))
-                    '())
-                (if (and hover (memq (car hover) windows)
-                         (eq? (head:window-buffer (car hover)) buffers-view)
-                         (<= 1 (cdr hover) (length buffer-rows)))
-                    (list (row-range (car hover) (cdr hover) 'candidate))
-                    '())))
+                (apply append
+                  (map (lambda (w)
+                         (let ([row (buffer-row (buffer-candidate w))])
+                           (if row (list (row-range w row 'candidate)) '())))
+                    (filter (lambda (w)
+                              (and (eq? (head:window-buffer w) buffers-view)
+                                   (or (eq? w current-window) (and hover (eq? (car hover) w)))))
+                      windows)))))
             '())))
     (keymap:bind-default! "C-x C-b" list-buffers!)
     (keymap:bind-default! "M-S-UP" previous-buffer!)

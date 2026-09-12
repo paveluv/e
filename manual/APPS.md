@@ -310,6 +310,13 @@ window and global setting. A fifth argument selects `block`, `underline`,
 `text` asks for the editor's own shape for editable text, for an app whose
 rows are typed into even though the buffer is read-only; a `default` app
 shows the read-only bar.
+
+`(head:set-app-cursor-visible! app-buffer #f)` hides the text cursor while
+retaining normal keyboard navigation and viewport following. It also accepts
+a predicate receiving the window. Viewport ownership is separate:
+`head:set-app-manages-viewport!` disables the editor's automatic following
+when the app positions its own viewport.
+
 Sticky rows, scrollbar geometry, cursor placement,
 mouse hit-testing, and scrolling are handled together by the head and the
 painter and apply to every window showing the app. The scrollbar is a position indicator:
@@ -320,7 +327,10 @@ text scroll.
 returned zero-based `(row . column)` projects the status position onto source
 text. A returned string replaces the usual buffer details with operation
 text, while retaining the window number and controls. Temporary prompts use
-this for key hints and completion page counts. `#f` restores the default.
+this for key hints and completion page counts; the buffers app shows its
+filter, counts and selected-buffer state. Status text fits terminal cells,
+including wide characters, so window controls keep their positions. `#f`
+restores the default.
 
 The same bar is off for ordinary buffers by default; `(scrollbar #t)`
 enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
@@ -343,46 +353,26 @@ windows showing the same app.
 
 ## The buffers app
 
-`<buffers>` is an interactive app. It renders live buffer status and
-supports these controls:
-
-Its heading is sticky at the top of every window. The remaining rows scroll
-under it, with the configured edge showing the visible body's position and
-extent.
-
-- Up or `C-p`: move the candidate row up.
-- Down or `C-n`: move the candidate row down.
-- Enter: show the candidate row's buffer here -- the list gives way to it.
-- Pointer motion: the row under the pointer becomes the candidate; focus
-  does not move.
-- Mouse click: show the clicked row's buffer in the selected window;
-  keyboard focus stays where it was.
-- Mouse wheel: while hovering over the app, move exactly one row per tick and
-  show its buffer immediately without moving keyboard focus.
-- Status-bar click: focus the app window.
+`<buffers>` is the shared implementation of `C-x b` and `C-x C-b`: a live
+table with an incremental name/path filter, sortable headings, and selection
+preserved by buffer identity. Each window keeps its own candidate and point;
+the filter and sort belong to the local app. Its rows fit the narrowest
+visible window, with a sticky header, elided paths, automatic scrollbar and
+hidden cursor. See [Using the buffers app](BUFFERS.md#the-buffers-app) for the
+complete keyboard, mouse and cancellation behavior.
 
 Status-bar clicks always focus their window; app handlers cannot override
 them. `<buffers>` returns `keep-focus` for content clicks because the click's
 purpose is to switch a buffer, not to enter the app.
 
-Outside the app, `M-Shift-Up` and `M-Shift-Down` switch the current window through the
-same alphabetical buffer list.
-
-The blue row is state and the bold row is interaction. The
-`active` face marks the buffer the selected window shows, in every window
-listing it and whether or not the app has focus; the `candidate` face marks
-the row at point in a focused `<buffers>` window and the row under the
-pointer in any of them. Both can be customized like any other face:
+The `active` face marks the document in the focused window. The `candidate`
+face marks one choice per interacting list window: hover takes precedence
+over keyboard emphasis there. Both can be customized like any other face:
 
 ```scheme
 (style:set! 'active '((background 31) (foreground white)))
 (style:set! 'candidate '(bold (foreground 208)))
 ```
-
-Rows are always alphabetical, so visiting a buffer does not move it. The table
-header is bold, and modified-buffer rows are italic. The table remains a live rendering: buffer creation,
-removal, focus, modified state, read-only state, line count, mode, and file
-changes appear on redraw. Each app window keeps its own point.
 
 Refresh failures are logged under the `app` component and shown in the echo
 area. An unchanged failure is reported once instead of once per redraw; a

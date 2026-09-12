@@ -103,7 +103,7 @@ The built-in faces available to `style:set!` are:
 | `mark` | `(underline)` | Generic highlighted ranges, including matching delimiters |
 | `selection` | `((background blue))` | The active selected region |
 | `active` | `((background 31))` | The `<buffers>` row of the buffer the selected window shows |
-| `candidate` | `(bold)` | The app row a key or click would pick: the row at point in a focused app, or the row under the mouse pointer |
+| `candidate` | `(bold)` | The app row a key or click would pick; in the buffers app, hover replaces keyboard emphasis in that window |
 | `choice` | `(bold (foreground 135))` | The initial letters of choices in focused dialog prompts |
 | `match` | `((background cyan) (foreground black))` | Incremental-search matches |
 | `match-point` | `((background yellow) (foreground black))` | The current incremental-search match |

@@ -63,11 +63,12 @@ The repetition is command-based rather than inferred from the cursor position.
 
 ## Prompts in the window
 
-`C-x C-f` and `C-x b` read their input in the current window instead of the
-echo area. Each invocation creates a temporary local view named after the
-command, `<find-file>` or `<switch-to-buffer>`. The input sits at the bottom
+`C-x C-f` reads its input in the current window instead of the echo area.
+Each invocation creates a temporary local `<find-file>` view. The input sits at the bottom
 of the window, with the same editing keys, styles, suggestions and text
 cursor as an echo-area prompt. Clicking the input moves its insertion point.
+
+`C-x b` and `C-x C-b` use the [filterable buffers app](BUFFERS.md#the-buffers-app).
 
 Long input wraps above the bottom row. Tab lists candidates above the input;
 repeated Tab pages through them. Every input change, including history

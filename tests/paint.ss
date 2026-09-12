@@ -219,6 +219,16 @@
                   (list (contains? frame "!!") (contains? frame "L8 C3") (contains? frame "Pick a file"))))
               '(#f (7 . 2) "Pick a file"))
          '((#t #f #f) (#t #t #f) (#f #f #t)))
+       (head:view-replace! view (map (lambda (i) (format "choice ~a" i)) (iota 50)))
+       (check 'hidden-cursor-still-follows-keyboard-selection
+         (map (lambda (visible?)
+                (head:set-app-cursor-visible! view visible?)
+                (head:window-prow-set! (head:current) 49)
+                (head:window-top-set! (head:current) 0)
+                (let ([frame (painted paint:redraw!)])
+                  (list (> (head:window-top (head:current)) 0)
+                        (contains? frame "\x1b;[?25h")))) '(#t #f))
+         '((#t #t) (#t #f)))
        (head:set-window-buffer! (head:current) document)
        (head:forget-buffer! view))
      ;; A preparation hook may present a notice, causing a direct redraw.

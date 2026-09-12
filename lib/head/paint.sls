@@ -52,6 +52,7 @@
           (prefix (string) string:)
           (prefix (head) head:)
           (prefix (render) render:)
+          (prefix (glyph) glyph:)
           (prefix (mode) mode:)
           (prefix (echo) echo:)
           (prefix (kernel) kernel:))
@@ -712,13 +713,7 @@
                             (list (cons (string-append " " app-status) #f)) '())
                         (status-hint-values b current?)))]
              [hint-text (apply string-append (map car hint-values))]
-             [hint-wide-extra
-              (fold-left
-                (lambda (extra character)
-                  (+ extra
-                     (max 0 (- (sys:terminal-character-width character) 1))))
-                0 (string->list hint-text))]
-             [status (format "~a~a~a " head mode-text hint-text)]
+             [status (string-append head mode-text hint-text)]
              [window-buttons " [↕][↔][×]"])
         (let ([stale? (and (not (string? app-position)) (head:buffer-stale b))])
           (paint! (+ start height) (head:window-xoff w)
@@ -734,24 +729,24 @@
                                       [else "\x1b;[7;38;5;245m"])]
                            [fg (cond [current? "\x1b;[39m"]
                                      [else "\x1b;[38;5;245m"])]
-                           [content-width
-                            (max 0 (- (head:window-width w)
-                                      (string-length window-buttons)
-                                      hint-wide-extra))]
-                           [text (string-append (fit status content-width)
-                                                window-buttons)]
+                           [fitted (glyph:fit status
+                                     (max 0 (- (head:window-width w) (glyph:cells window-buttons))))]
+                           ;; Geometry is in cells; the style spans below
+                           ;; index characters in this already fitted text.
+                           [content-end (string-length fitted)]
+                           [text (string-append fitted window-buttons)]
                            [n (string-length text)]
-                           [cs (min (string-length head) content-width)]
-                           [ns (min (string-length head-prefix) content-width)]
-                           [ne (min (+ ns (string-length name)) content-width)]
+                           [cs (min (string-length head) content-end)]
+                           [ns (min (string-length head-prefix) content-end)]
+                           [ne (min (+ ns (string-length name)) content-end)]
                            [hs (min (+ (string-length head)
                                        (string-length mode-text))
-                                    content-width)]
+                                    content-end)]
                            [he (min (+ hs (string-length hint-text))
-                                    content-width)]
-                           [number-end (min (string-length number) content-width)]
+                                    content-end)]
+                           [number-end (min (string-length number) content-end)]
                            [normal-start
-                            (if stale? (min (+ number-end 2) content-width) number-end)])
+                            (if stale? (min (+ number-end 2) content-end) number-end)])
                       (ansi bar)
                       ;; the window's number and its bar, then the state
                       ;; marker -- a stale buffer's !! in red
@@ -776,9 +771,9 @@
                               [(italic) (ansi "\x1b;[23m")]
                               [(red) (ansi fg)])
                             (loop (cdr values) end))))
-                      (ansi (substring text he content-width)
+                      (ansi (substring text he content-end)
                         "\x1b;[1m"
-                        (substring text content-width n)
+                        (substring text content-end n)
                         "\x1b;[0m"))))))))
 
 
@@ -960,8 +955,9 @@
            [m (min (scroll-margin) (div (max 0 (- height 1)) 2))])
       (head:window-prow-set! w prow)
       (head:window-pcol-set! w pcol)
-      (unless (or (not (head:app-cursor-visible-in? w))
-                  (head:app-manages-window-viewport? w))
+      ;; Cursor visibility controls its ink, not whether keyboard navigation
+      ;; keeps point in view. Only an app owning its viewport overrides this.
+      (unless (head:app-manages-window-viewport? w)
         (if (window-wrapped? w)
           (let ([pseg (segment-of (line-breaks w (vector-ref v prow))
                                   pcol)])
@@ -1438,6 +1434,14 @@
     (head:refresh-visible-views!)
     ;; a terminal too small for the splits collapses back to one window
     (head:fit-layout! cols (- rows (echo:height)))
+    ;; A newly needed scrollbar changes the width an app just rendered for.
+    ;; Refit before painting or offering sizes, rather than clipping the
+    ;; informative end of a fitted row for one frame after a resize/filter.
+    (let* ([layout (window-layout)]
+           [widths (map (lambda (entry) (head:window-content-width (car entry))) layout)])
+      (for-each (lambda (entry) (decide-scrollbar! (car entry) (caddr entry))) layout)
+      (unless (equal? widths (map (lambda (entry) (head:window-content-width (car entry))) layout))
+        (head:refresh-visible-views!)))
     (window-layout)
     (head:request-app-size!)
     ;; Delivery may reenter and change the layout. Prepare and paint the
