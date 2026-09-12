@@ -282,15 +282,21 @@ Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted
 text also filters. The first line shows `Filter: ` followed by the query;
 a long query keeps its most recently typed characters visible. Backspace
-removes the last character cluster, and C-u clears the filter. The selected
+removes the last character cluster, and C-u clears both filters. The selected
 buffer stays selected while it matches;
 otherwise the first match becomes the candidate. Empty results show
 `No matching buffers`, and Enter leaves the filter available for correction.
 
+`M-m` toggles showing only modified buffers, combined with the typed query.
+`Filter: [modified]` marks this restriction. Editing or saving updates the
+list immediately on redraw; saving the selected buffer moves the candidate
+to a remaining match. Toggle `M-m` again to restore all matches for the same
+query, or use C-u to clear the query and modified-only restriction together.
+
 Enter opens the candidate. Esc or C-g returns to the document from which
 the app was opened, preserving its text and point. Changing window focus
-keeps the list and filter available; invoking either shortcut starts a fresh
-filter. The filter and sort belong to this head's app. Two windows showing
+keeps the list and filters available; invoking either shortcut clears both
+filters. The filters and sort belong to this head's app. Two windows showing
 it share the table, but each retains its own candidate and viewport.
 
 The live, read-only table has these columns:
@@ -298,22 +304,32 @@ The live, read-only table has these columns:
 | Column | Meaning |
 |---|---|
 | `Buffer` | Buffer name. |
+| `Modified` | `*` when the buffer has unsaved changes; blank otherwise. |
+| `Read-only` | `%` when ordinary text editing is disabled; blank otherwise. |
 | `Lines` | Current line count. |
 | `Mode` | Detected or assigned mode. |
 | `File` | Visited path, with the home directory abbreviated as `~`. |
 
-Click a heading to sort ascending; click it again for descending. The active
-heading carries `↑` or `↓`. Names, modes and full paths sort alphabetically
-without case distinctions; line counts sort numerically. Names break ties.
-The default is Buffer ascending, and the chosen sort survives reopening.
-Selection follows buffer identity across sorting, renaming and live updates.
+Each heading cycles through ascending, descending, then off. Several columns
+can be enabled: the first enabled column is the primary key, followed by the
+others in activation order. Numbered arrows, such as `Modified ↓1` and
+`Lines ↑2`, show direction and priority. Changing direction keeps that
+priority. Turning a key off removes it and renumbers the others; enabling it
+again appends it after them.
+
+Names, modes and full paths sort alphabetically without case distinctions;
+line counts sort numerically. Flags sort blank first in ascending order,
+flagged first in descending order. Names break remaining ties and provide
+the default order when every key is off. The sort keys survive reopening;
+C-u clears filters without changing them. Selection follows buffer identity
+across sorting, renaming and live updates.
 
 The filter and underlined column headings stay visible while rows scroll.
 The subdued `header` face distinguishes headings from the bold candidate,
 including when only one match remains. Rows fit the narrowest window
 showing the app and never wrap. Long paths keep their tail, with `…` marking
 the omitted beginning. Names elide at the end. Narrow panes omit metadata
-columns before names and paths, while retaining the active sort heading.
+columns before names and paths, preserving sorted columns in priority order.
 Widening a pane restores the columns and fuller labels. Elision never changes
 which buffer a row opens.
 
@@ -337,10 +353,11 @@ appear on redraw.
 - Page Up / `M-v`, Page Down / `C-v`: move by a page of rows.
 - Enter: show the candidate row's buffer in this window, completing the
   switch in place.
-- Esc / C-g: return to the invoking document; C-u: clear the filter.
+- Esc / C-g: return to the invoking document; C-u: clear both filters.
+- `M-m`: toggle modified-only filtering, keeping the typed query.
 - Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
-- Click a heading: sort its column ascending, then descending.
+- Click a heading: cycle its sort key ascending, descending, then off.
 - Wheel over the app: browse one row per tick without opening a buffer.
 - Click the app's status line: focus `<buffers>`.
 

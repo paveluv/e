@@ -354,10 +354,11 @@ windows showing the same app.
 ## The buffers app
 
 `<buffers>` is the shared implementation of `C-x b` and `C-x C-b`: a live
-table with an incremental name/path filter, sortable headings, and selection
-preserved by buffer identity. Each window keeps its own candidate and point;
-the filter and sort belong to the local app. Its rows fit the narrowest
-visible window, with sticky filter and heading rows, elided paths, automatic
+table with name/path and modified-only filters, ordered column sort keys,
+modified/read-only flags, and selection preserved by buffer identity. Each
+window keeps its own candidate and point; the filters and sort belong to the
+local app. Its rows fit the narrowest visible window, with sticky filter and
+heading rows, elided paths, automatic
 scrollbar and hidden cursor. See [Using the buffers app](BUFFERS.md#the-buffers-app)
 for the complete keyboard, mouse and cancellation behavior.
 

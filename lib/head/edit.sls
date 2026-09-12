@@ -2891,9 +2891,9 @@
   (define buffers-view #f)
   (define buffer-rows '())
   (define buffer-filter "")
-  (define buffer-sort 0)
-  (define buffer-descending? #f)
-  (define buffer-headings '#("Buffer" "Lines" "Mode" "File"))
+  (define buffer-modified-only? #f)
+  (define buffer-sorts '())         ; (column . descending?) in priority order
+  (define buffer-headings '#("Buffer" "Lines" "Mode" "File" "Modified" "Read-only"))
   (define buffer-columns '())       ; (column start-character end-character)
   (define buffer-first-row 2)       ; sticky filter and column headings
   (define-record-type buffer-choice (fields (mutable origin) (mutable selected)))
@@ -2928,6 +2928,9 @@
                  (buffer-choice-selected (buffer-choice-for w)))])
       (and (memq b buffer-rows) b)))
 
+  (define (buffer-filter-label)
+    (if buffer-modified-only? "Filter: [modified] " "Filter: "))
+
   (define (buffers-styles b row line)
     ;; A row provider sees live metadata even if its printed text is equal.
     ;; A text-only style cache cannot notice modified -> saved transitions.
@@ -2938,41 +2941,70 @@
                    [(not (buffer-at-row row)) 'chrome]
                    [(head:buffer-modified (buffer-at-row row)) 'italic]
                    [else 'plain]))])
-      (when (zero? row) (style:fill-range! styles 0 (min 8 (vector-length styles)) 'chrome))
+      (when (zero? row)
+        (style:fill-range! styles 0 (min (string-length (buffer-filter-label)) (vector-length styles)) 'chrome))
       styles))
 
   (define (buffer-data b)
     (vector (head:buffer-name b) (buffer-line-count b)
-            (or (mode:name-of b) "") (or (head:buffer-file b) "")))
+            (or (mode:name-of b) "") (or (head:buffer-file b) "")
+            (and (head:buffer-modified b) #t) (and (head:buffer-read-only b) #t)))
 
   (define (buffer-cell data column)
     (let ([value (vector-ref data column)])
-      (cond [(number? value) (number->string value)]
+      (cond [(boolean? value) (if value (if (= column 4) "*" "%") "")]
+            [(number? value) (number->string value)]
             [(= column 3) (abbreviate-home value)]
             [else value])))
 
+  (define (buffer-value<? a b)
+    (cond [(boolean? a) (and (not a) b)]
+          [(number? a) (< a b)]
+          [else (string-ci<? a b)]))
+
   (define (buffer-entry<? a b)
-    (let ([a (if buffer-descending? (cdr b) (cdr a))]
-          [b (if buffer-descending? (cdr a) (cdr b))])
-      (let ([x (vector-ref a buffer-sort)] [y (vector-ref b buffer-sort)])
-        (if (if (number? x) (= x y) (string-ci=? x y))
-            (string<? (vector-ref a 0) (vector-ref b 0))
-            ((if (number? x) < string-ci<?) x y)))))
+    (let compare ([keys buffer-sorts])
+      (if (null? keys)
+          (let ([x (vector-ref (cdr a) 0)] [y (vector-ref (cdr b) 0)])
+            (or (string-ci<? x y) (and (string-ci=? x y) (string<? x y))))
+          (let ([x (vector-ref (cdr a) (caar keys))] [y (vector-ref (cdr b) (caar keys))])
+            (cond [(buffer-value<? x y) (not (cdar keys))]
+                  [(buffer-value<? y x) (cdar keys)]
+                  [else (compare (cdr keys))])))))
+
+  (define (buffer-heading column)
+    (string-append (vector-ref buffer-headings column)
+      (let loop ([keys buffer-sorts] [priority 1])
+        (cond [(null? keys) ""]
+              [(= column (caar keys)) (format " ~a~a" (if (cdar keys) "↓" "↑") priority)]
+              [else (loop (cdr keys) (+ priority 1))]))))
+
+  (define (cycle-buffer-sort! column)
+    (let ([key (assv column buffer-sorts)])
+      ;; Direction changes retain priority. Disabling and reenabling a key
+      ;; moves it to the end, exactly like enabling a new secondary key.
+      (set! buffer-sorts
+        (cond [(not key) (append buffer-sorts (list (cons column #f)))]
+              [(cdr key) (remq key buffer-sorts)]
+              [else (map (lambda (k) (if (eq? k key) (cons column #t) k)) buffer-sorts)])))
+    (set! hover #f)
+    (refresh-buffers-view!))
 
   (define (buffer-matches? entry)
     (let ([data (cdr entry)])
-      (exists (lambda (s) (string:search s buffer-filter 0 (string-length s) #t))
-        (list (vector-ref data 0) (vector-ref data 3) (buffer-cell data 3)))))
+      (and (or (not buffer-modified-only?) (vector-ref data 4))
+           (exists (lambda (s) (string:search s buffer-filter 0 (string-length s) #t))
+             (list (vector-ref data 0) (vector-ref data 3) (buffer-cell data 3))))))
 
   (define (buffer-table entries all width)
     ;; Size from the full list so typing does not make columns jump. Share
     ;; spare cells among columns that need them; work is bounded by the pane,
     ;; not by the longest path. Narrow panes retain names and paths first.
-    (let* ([minimum '#(8 7 6 10)] [sizes (vector-copy minimum)]
+    (let* ([minimum '#(9 8 7 10 11 12)] [sizes (vector-copy minimum)]
            [columns
-            (let fit ([columns '(0 1 2 3)]
-                      [drop (append (remv buffer-sort '(2 1 3))
-                              (if (zero? buffer-sort) '() (list buffer-sort)))])
+            (let fit ([columns '(0 4 5 1 2 3)]
+                      [drop (append (filter (lambda (i) (not (assv i buffer-sorts))) '(2 1 5 4 3))
+                              (remv 0 (reverse (map car buffer-sorts))))])
               (if (or (null? drop)
                       (<= (+ (* 2 (- (length columns) 1))
                              (apply + (map (lambda (i) (vector-ref minimum i)) columns))) width))
@@ -2982,13 +3014,12 @@
             (list->vector
               (map (lambda (i)
                      (fold-left (lambda (n entry) (max n (glyph:cells (buffer-cell (cdr entry) i))))
-                       (vector-ref minimum i) all)) '(0 1 2 3)))])
+                       (vector-ref minimum i) all)) '(0 1 2 3 4 5)))])
       (define (row data header?)
         (string:join
           (map (lambda (i)
                  (let ([text (if header?
-                                 (string-append (vector-ref buffer-headings i)
-                                   (if (= i buffer-sort) (if buffer-descending? " ↓" " ↑") ""))
+                                 (buffer-heading i)
                                  (buffer-cell data i))]
                        [size (vector-ref sizes i)])
                    (if (and (= i 1) (not header?)) (pad-left text size)
@@ -3007,8 +3038,9 @@
           (if (null? columns) '()
               (let ([end (+ start (vector-ref sizes (car columns)))])
                 (cons (list (car columns) start end) (bounds (cdr columns) (+ end 2)))))))
-      (cons* (string-append (glyph:fit "Filter: " (min 8 width))
-               (glyph:fit buffer-filter (max 0 (- width 8)) 'left))
+      (cons* (let* ([label (buffer-filter-label)] [n (glyph:cells label)])
+               (string-append (glyph:fit label (min n width))
+                 (glyph:fit buffer-filter (max 0 (- width n)) 'left)))
         (row #f #t)
         (if (null? entries) (list (glyph:fit "No matching buffers" width))
             (map (lambda (entry) (row (cdr entry) #f)) entries)))))
@@ -3074,7 +3106,8 @@
                         (glyph:cells (format "~a▏~a [↕][↔][×]"
                                        (head:window-index current-window) (head:buffer-name buffers-view))))])
            (let add ([text ""]
-                     [hints '("Type to filter" "↑↓ choose" "Enter open" "Esc return" "C-u clear")])
+                     [hints (list "Type to filter" "↑↓ choose" "Enter open" "Esc return"
+                              (if buffer-modified-only? "M-m all" "M-m modified") "C-u clear")])
              (if (null? hints) text
                  (add (if (<= (+ (glyph:cells text) 2 (glyph:cells (car hints))) room)
                           (string-append text "  " (car hints)) text)
@@ -3095,7 +3128,11 @@
                   [b (if (memq origin buffers) origin (other-buffer buffers-view))])
              (set! hover #f)
              (when b (show-buffer! b))) #t]
-          [(string=? event "C-u") (filter-buffers! "") #t]
+          [(string=? event "C-u")
+           (set! buffer-modified-only? #f) (filter-buffers! "") #t]
+          [(string=? event "M-m")
+           (set! buffer-modified-only? (not buffer-modified-only?))
+           (filter-buffers! buffer-filter) #t]
           [(member event '("BACKSPACE" "C-h"))
            (unless (string=? buffer-filter "")
              (filter-buffers!
@@ -3120,11 +3157,7 @@
                                (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
                                  buffer-columns))])
              (cond [b (set! hover #f) (select-buffer-row! b) (activate-buffer-row!) 'keep-focus]
-                   [column
-                    (set! hover #f)
-                    (set! buffer-descending? (and (= buffer-sort (car column)) (not buffer-descending?)))
-                    (set! buffer-sort (car column))
-                    (refresh-buffers-view!) 'keep-focus]
+                   [column (cycle-buffer-sort! (car column)) 'keep-focus]
                    [else 'ignore-click]))]
           [else #f]))
 
@@ -3175,6 +3208,7 @@
       (head:call-with-display-update
         (lambda ()
           (set! buffer-filter "")
+          (set! buffer-modified-only? #f)
           (set! hover #f)
           (hashtable-set! buffer-choices current-window
             (make-buffer-choice
@@ -3328,7 +3362,7 @@
          "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; C-u clears the filter. Click headings to sort ascending/descending. A side-panel click changes the focused window without taking focus.")
+         "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; M-m toggles modified-only filtering and C-u clears both filters. Click headings to cycle ascending, descending, then off; numbered arrows show sort-key priority. A side-panel click changes the focused window without taking focus.")
         ((switch-buffer!!) (("procedure" . "(switch-buffer!!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Open the filterable buffers app, just like `list-buffers!`. C-x b and C-x C-b share this workflow; Enter immediately selects the most recently used other buffer.")
