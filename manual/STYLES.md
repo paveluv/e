@@ -90,9 +90,11 @@ reported background color; press C-l after changing the terminal's theme to
 refresh it. If the terminal answers neither query, e uses the dark defaults.
 
 The `header` face has two neutral variants: light gray text on medium gray
-in a dark theme, and dark text on pale gray in a light theme. Explicit
-`style:set!` overrides take precedence over both variants and survive theme
-changes. This follows each head's terminal independently.
+in a dark theme, and dark text on pale gray in a light theme. The `hover`
+face keeps text bold and gives its dotted underline a muted gray color,
+lighter in a light theme. Explicit `style:set!` overrides take
+precedence over the theme variants and survive theme changes. This follows
+each head's terminal independently.
 
 ## Faces
 
@@ -103,7 +105,7 @@ The built-in faces available to `style:set!` are:
 | `plain` | `(reset)` | Ordinary text and fallback rendering |
 | `chrome` | `((foreground bright-black))` | Prompt labels, ghost text, log prefixes, and quiet UI furniture |
 | `header` | Dark: `((foreground 252) (background 240))`; light: `((foreground 236) (background 253))` | Neutral table heading band, distinct from muted filter labels and bold candidate rows |
-| `hover` | `(bold dotted-underline)` | Mouse-hovered clickable text: app rows, headings, completion labels, links and window controls; preserves the underlying colors |
+| `hover` | Dark: `(bold dotted-underline (underline-color 242))`; light: `(bold dotted-underline (underline-color 248))` | Mouse-hovered clickable text: app rows, headings, completion labels, links and window controls; preserves text foreground and background |
 | `comment` | `((foreground bright-black))` | Source comments and Markdown block quotes |
 | `string` | `((foreground green))` | Strings and Markdown code |
 | `keyword` | `(bold (foreground cyan))` | Language keywords and Markdown headings |

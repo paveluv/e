@@ -401,15 +401,16 @@ purpose is to switch a buffer, not to enter the app.
 
 The `active` face marks the document in the focused window. The `candidate`
 face marks a keyboard choice. Mouse-hovered clickable text uses the shared
-`hover` face, bold with a dotted underline; in the buffers app it takes
-precedence over the keyboard candidate in that window. Headings, completion
-labels, Git file rows and refresh, hyperlinks, and status-bar window controls
-use the same face. These faces can be customized like any other:
+`hover` face, bold with a muted gray dotted underline suited to the theme;
+in the buffers app it takes precedence over the keyboard candidate in that
+window. Headings, completion labels, Git file rows and refresh, hyperlinks,
+and status-bar window controls use the same face. These faces can be
+customized like any other:
 
 ```scheme
 (style:set! 'active '((background 31) (foreground white)))
 (style:set! 'candidate '(bold (foreground 208)))
-(style:set! 'hover '(bold dotted-underline))
+(style:set! 'hover '(bold dotted-underline (underline-color 242)))
 ```
 
 For a clickable app, register a highlighter that calls

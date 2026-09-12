@@ -335,8 +335,8 @@ The `header` face uses plain text on a neutral band: light gray text on
 medium gray for dark terminals, dark text on pale gray for light terminals.
 The band distinguishes headings from the muted gray filter label and the
 bold candidate, including when only one match remains. Hovering over a column
-makes its label bold with a dotted underline where supported, including any
-sort indicators. Padding shares the column's click target; gaps between
+makes its label bold with a muted dotted underline where supported, including
+any sort indicators. Padding shares the column's click target; gaps between
 columns are inactive. Heading hover does not move the buffer selection or
 take focus from another window. Theme changes update
 automatically when reported by the terminal; use C-l to refresh older
@@ -351,11 +351,12 @@ which buffer a row opens.
 
 The blue `active` face marks the document in the focused window. Bold
 `candidate` marks the choice in each list window, including unfocused panes. A
-mouse-hovered row uses the shared `hover` face: bold with a dotted underline,
-taking precedence over the keyboard candidate there. Enter accepts that row,
-and arrows continue from it with bold emphasis only. Moving the pointer away
-restores the keyboard candidate. Hover neither scrolls nor takes focus. Modified rows are
-italic. These faces are configurable through [Styles](STYLES.md).
+mouse-hovered row uses the shared `hover` face: bold with a muted dotted
+underline, taking precedence over the keyboard candidate there. Enter accepts
+that row, and arrows continue from it with bold emphasis only. Moving the
+pointer away restores the keyboard candidate. Hover neither scrolls nor takes
+focus. Modified rows are italic. These faces are configurable through
+[Styles](STYLES.md).
 
 There is no text cursor or text selection; C-Space does not set a mark.
 The keyboard candidate still scrolls into view. The status bar shows
