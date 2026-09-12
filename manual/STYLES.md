@@ -120,7 +120,7 @@ The built-in faces available to `style:set!` are:
 | `mark` | `(underline)` | Generic highlighted ranges, including matching delimiters |
 | `selection` | `((background blue))` | The active selected region |
 | `active` | `((background 31))` | The `<buffers>` row of the buffer the selected window shows |
-| `candidate` | `(bold)` | The keyboard candidate in an app; in the buffers app, a hovered row takes precedence using the `hover` face |
+| `candidate` | `(bold)` | The keyboard candidate in an app; the buffers app shows it only when focused, with a hovered row taking precedence using the `hover` face |
 | `choice` | `(bold (foreground 135))` | The initial letters of choices in focused dialog prompts |
 | `match` | `((background cyan) (foreground black))` | Incremental-search matches |
 | `match-point` | `((background yellow) (foreground black))` | The current incremental-search match |

@@ -3082,7 +3082,7 @@
                               (+ buffer-first-row (length buffer-rows) -1)))))))
 
   (define (activate-buffer-row!)
-    ;; Panel clicks and unfocused wheel ticks change the focused window.
+    ;; Panel clicks change the focused window.
     ;; Keyboard use replaces the list here. All use the visible candidate.
     (let* ([b (buffer-candidate current-window)]
            [target (head:app-event-focus)])
@@ -3117,10 +3117,12 @@
           [(member event '("UP" "C-p" "S-TAB")) (move-buffer-row! -1) #t]
           [(member event '("DOWN" "C-n" "TAB")) (move-buffer-row! 1) #t]
           [(member event '("WHEEL-UP" "WHEEL-DOWN"))
-           (move-buffer-row! (if (string=? event "WHEEL-UP") -1 1))
-           (let ([target (head:app-event-focus)])
-             (when (and target (not (eq? target current-window)) (memq target windows))
-               (activate-buffer-row!))) #t]
+           (let ([target (head:app-event-focus)] [up? (string=? event "WHEEL-UP")])
+             (if (and target (not (eq? target current-window)) (memq target windows))
+                 (begin
+                   (set! current-window target)
+                   (run-global-key! (if up? "M-S-UP" "M-S-DOWN")))
+                 (move-buffer-row! (if up? -1 1)))) #t]
           [(member event '("HOME" "C-a" "M-<")) (move-buffer-row! (- (length buffer-rows))) #t]
           [(member event '("END" "C-e" "M->")) (move-buffer-row! (length buffer-rows)) #t]
           [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
@@ -3396,8 +3398,8 @@
           (hashtable-clear! buffer-choices))))
     (paint:add-highlighter!
       (lambda ()
-        ;; Blue describes the focused document. Each list window has at most
-        ;; one bold candidate: hover wins there until keyboard input or leave.
+        ;; Blue describes the focused document. Bold marks the hovered row
+        ;; or the focused list's keyboard candidate; passive lists stay quiet.
         (if (and buffers-view (memq buffers-view (buffer-list)))
             (let ([active-row (buffer-row (current-buffer))]
                   [row-range
@@ -3417,7 +3419,8 @@
                                             (+ (cadr column) (string-length (buffer-heading (car column)))))
                                        'hover))
                                '())
-                           (if row (list (row-range w row (if (memq over buffer-rows) 'hover 'candidate))) '()))))
+                           (if (and row (or (eq? w current-window) (memq over buffer-rows)))
+                               (list (row-range w row (if (memq over buffer-rows) 'hover 'candidate))) '()))))
                      (filter (lambda (w)
                                (eq? (head:window-buffer w) buffers-view))
                        windows))))

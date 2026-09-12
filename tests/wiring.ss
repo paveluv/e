@@ -536,7 +536,20 @@
        (read-editor
          '(begin (head:transfer-split! (head:layout-parent (head:root) (window 1)) 3) #t))
        (let* ([panes (pane-state)] [left (car panes)] [right (cadr panes)]
-              [right-cell (cons 3 (+ (car right) 1))])
+              [right-cell (cons 2 (+ (car right) 1))])
+         (define (quiet-panes?)
+           (for-all (lambda (pane)
+                      (for-all (lambda (row) (equal? (hover-face (cons row (+ (car pane) 1))) '(#f #f)))
+                        '(2 3 4))) panes))
+         (define (switch-with! wheel? entry)
+           (read-editor `(begin (show-buffer! (buffer ,(cadr entry))) #t))
+           (if wheel?
+               (begin (hover! right-cell) (wheel! right-cell (car entry)))
+               (press! (if (eq? (car entry) 'up) "\x1b;[1;4A" "\x1b;[1;4B")))
+           (let ([state (read-editor '(list (head:buffer-name (current-buffer)) (point)
+                                            (head:window-index (selected-window))))])
+             (hover! (cons 0 (+ (car right) 1)))
+             (list state (quiet-panes?))))
          (check 'buffers-fit-each-window-without-changing-the-shared-model
            (list (equal? (car before) (caddr left)) (not (equal? (cadr before) (caddr right)))
                  (for-all (lambda (pane)
@@ -546,22 +559,22 @@
                  (read-editor `(and (eq? (head:window-buffer (window 0)) (head:window-buffer (window 1)))
                                     (= ,(caddr before) (caddr (head:edit-basis (head:window-buffer (window 0))))))))
            '(#t #t #t #t))
-         (hover! right-cell)
-         (check 'wheel-in-an-unfocused-buffers-pane-switches-the-focused-window
-           (list (picker-sequence
-                   (lambda (direction)
-                     (wheel! right-cell direction)
-                     (let* ([state (read-editor '(list (head:window-prow (window 1))
-                                                       (head:buffer-name (current-buffer)) (point)
-                                                       (head:window-index (selected-window))))]
-                            [row (car state)])
-                       (list state (hover-face (cons row (+ (car right) 1)))))) '(up up down down down))
-                 (quiet-buffers-bar? 0) (quiet-buffers-bar? 1))
-           '((((2 "<picker-gamma>" (0 . 0) 2) (#t #f))
-              ((2 "<picker-gamma>" (0 . 0) 2) (#t #f))
-              ((3 "<picker-beta>" (4 . 1) 2) (#t #f))
-              ((4 "<picker-alpha>" (3 . 2) 2) (#t #f))
-              ((4 "<picker-alpha>" (3 . 2) 2) (#t #f))) #t #t))
+         ;; The panel is filtered and sorted descending. Unfocused wheel
+         ;; input still follows the global keys, including alphabetical wrap,
+         ;; regardless of the hovered row or either panel's remembered choice.
+         (let* ([ends (read-editor '(let ([names (list-sort string-ci<? (map head:buffer-name (buffer-list)))])
+                                      (list (car names) (car (reverse names)))))]
+                [quiet-before? (quiet-panes?)]
+                [ticks
+                 (picker-sequence
+                   (lambda (entry)
+                     (let* ([keyboard (switch-with! #f entry)] [wheel (switch-with! #t entry)])
+                       (list (caar wheel) (equal? keyboard wheel) (= (caddar wheel) 2) (cadr wheel))))
+                   `((up "<picker-beta>") (down "<picker-beta>") (up ,(car ends)) (down ,(cadr ends))))])
+           (check 'unfocused-wheel-matches-global-keys-and-keeps-keyboard-candidates-quiet
+             (list quiet-before? ticks (quiet-buffers-bar? 0) (quiet-buffers-bar? 1))
+             (list #t (map (lambda (name) (list name #t #t #t))
+                        (append '("<picker-alpha>" "<picker-gamma>") (reverse ends))) #t #t)))
          (read-editor '(begin (select-window! (window 0)) #t))
          (press! "\x15;日本語")
          (let ([filtered

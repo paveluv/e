@@ -391,18 +391,20 @@ independently, with sticky filter and
 heading rows, elided paths, an automatic scrollbar, a hidden cursor and
 disabled text selection. See [Using the buffers app](BUFFERS.md#the-buffers-app)
 for the complete keyboard, mouse and cancellation behavior. Wheel input
-moves the pointed window's candidate and leaves keyboard focus where it was;
-in an unfocused pane, it also opens the candidate in the focused window.
-Wheel input in the focused app browses rows without opening a buffer.
+in an unfocused pane runs the global `M-Shift-Up` / `M-Shift-Down` binding
+in the focused window, preserving focus. Its default alphabetical traversal
+and wraparound are independent of the table's filter, sorting and hovered
+row. Wheel input in the focused app browses rows without opening a buffer.
 
 Status-bar clicks always focus their window; app handlers cannot override
 them. `<buffers>` returns `keep-focus` for content clicks because the click's
 purpose is to switch a buffer, not to enter the app.
 
 The `active` face marks the document in the focused window. The `candidate`
-face marks a keyboard choice. Mouse-hovered clickable text uses the shared
-`hover` face, bold with a muted gray dotted underline suited to the theme;
-in the buffers app it takes precedence over the keyboard candidate in that
+face marks a keyboard choice in the focused buffers pane; unfocused panes
+retain their choices without making those rows bold. Mouse-hovered clickable
+text uses the shared `hover` face, bold with a muted gray dotted underline
+suited to the theme; in the buffers app it takes precedence over the keyboard candidate in that
 window. Headings, completion labels, Git file rows and refresh, hyperlinks,
 and status-bar window controls use the same face. These faces can be
 customized like any other:

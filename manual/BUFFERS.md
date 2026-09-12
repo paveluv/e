@@ -350,13 +350,14 @@ Widening a pane restores the columns and fuller labels. Elision never changes
 which buffer a row opens.
 
 The blue `active` face marks the document in the focused window. Bold
-`candidate` marks the choice in each list window, including unfocused panes. A
+`candidate` marks the keyboard choice in the focused list window. Unfocused
+panes show no bold candidate unless the pointer hovers over a row. A
 mouse-hovered row uses the shared `hover` face: bold with a muted dotted
 underline, taking precedence over the keyboard candidate there. Enter accepts
 that row, and arrows continue from it with bold emphasis only. Moving the
-pointer away restores the keyboard candidate. Hover neither scrolls nor takes
-focus. Modified rows are italic. These faces are configurable through
-[Styles](STYLES.md).
+pointer away restores the focused list's keyboard emphasis. Hover neither
+scrolls nor takes focus. Modified rows are italic. These faces are
+configurable through [Styles](STYLES.md).
 
 There is no text cursor or text selection; C-Space does not set a mark.
 The keyboard candidate still scrolls into view. The status bar shows
@@ -377,9 +378,10 @@ changes appear on redraw.
 - Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
 - Click a heading: cycle its sort key ascending, descending, then off.
-- Wheel over the app: move its candidate one row per tick. In an unfocused
-  pane, also show that buffer in the focused window, keeping focus there.
-  In the focused pane, browse rows until Enter or a click opens a buffer.
+- Wheel over the focused app: browse rows until Enter or a click opens a buffer.
+- Wheel over an unfocused app: run `M-Shift-Up` / `M-Shift-Down` in the focused
+  window. By default this switches buffers alphabetically with wraparound,
+  independently of the panel's filter, sorting and hovered row. Focus stays put.
 - Click the app's status line: focus `<buffers>`.
 
 Kept in another window, the same app is a control panel: a click or wheel tick
