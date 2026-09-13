@@ -16,6 +16,7 @@
              (prefix (head) head:)
              (prefix (echo) echo:)
              (prefix (kernel) kernel:)
+             (prefix (glyph) glyph:)
              (prefix (test) test:)
              (prefix (only (sys) terminal-output-port) sys:)
              (only (chezscheme)
@@ -234,7 +235,28 @@
                   (list (> (head:window-top (head:current)) 0)
                         (contains? frame "\x1b;[?25h")))) '(#t #f))
          '((#t #t) (#t #f)))
-       (head:set-window-buffer! (head:current) document)
+       ;; Clickable status spans use cell geometry, including wide/combining
+       ;; labels. Ellipsizing a control makes the entire control inert.
+       (let* ([prefix "界e\x301; 🔒"] [toggle void]
+              [start (+ (glyph:cells (format "~a▏~a" (head:window-index (head:current)) prefix)) 1)]
+              [edge (+ start 2 head:window-buttons-width 1)])
+         (define (hits)
+           (let* ([entry (car (head:layout))] [row (+ (cadr entry) (caddr entry))])
+             (map (lambda (column)
+                    (let ([hit (head:window-button-at column row)]) (and hit (eq? (car hit) toggle))))
+               (list (- start 2) start (+ start 1) (+ start 2)))))
+         (head:set-app-status-position! view (lambda (b) prefix))
+         (parameterize ([kernel:registering-module 'paint-control-test])
+           (paint:add-buffer-status-hint!
+             (lambda (b active?) (and (eq? b view) (list '(" " . #f) (cons "🔓" toggle) '(" tail" . #f))))))
+         (check 'status-controls-hit-only-complete-visible-labels
+           (map (lambda (width) (paint:set-screen-cols! width) (painted paint:redraw!) (hits))
+             (list 80 edge (+ edge 1)))
+           '((#f #t #t #f) (#f #f #f #f) (#f #t #t #f)))
+         (head:set-window-buffer! (head:current) document)
+         (check 'replacing-buffer-clears-painted-controls (hits) '(#f #f #f #f))
+         (kernel:retract-module! 'paint-control-test)
+         (paint:set-screen-cols! 80))
        (head:forget-buffer! view))
      ;; A preparation hook may present a notice, causing a direct redraw.
      ;; Both frames prepare at the current width; their synchronized updates

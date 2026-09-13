@@ -20,13 +20,14 @@
 
   ;;; Key dispatch ---------------------------------------------------------------------
 
-  (define (run-key-action! action)
+  (define (run-key-action! action capture)
     ;; Run a resolved binding's action and remember it as the last
     ;; command (an error still counts); an unbound key, or a context
     ;; action leaking into the global map, is reported and remembered
     ;; as no command at all.
     (cond [(procedure? action)
-           (head:follow-app! (head:current) #f)
+           (unless (and capture (eq? action (cadr capture)))
+             (head:follow-app! (head:current) #f))
            (dynamic-wind void action
              (lambda () (head:set-last-command! action)))]
           [(not action)
@@ -38,84 +39,61 @@
 
   (define (dispatch-sequence! first)
     ;; Resolve a key sequence: the buffer's mode context first, then the
-    ;; global map.  A context may name an escape prefix
-    ;; (keymap:set-context-escape!): a sequence it starts and the
-    ;; context does not bind resolves, minus the prefix, in the global
-    ;; map -- how a captured app's user runs one complete global
-    ;; command.
+    ;; global map. Once a prefix reaches e, the whole command stays here,
+    ;; including synchronous prompts; an app cannot consume its suffix.
     (let* ([buffer (head:window-buffer (head:current))]
            [mode-context (mode:key-context buffer)]
-           [escape (and mode-context (keymap:context-escape mode-context))])
-      (define (resolve!)
-        (let loop ([sequence (list first)])
-          (let* ([in-context (and mode-context
-                               (keymap:resolved-binding mode-context sequence))]
-                 [context-prefix? (and mode-context
-                                    (keymap:binding-prefix? mode-context sequence))]
-                 [escaped (and escape (not in-context) (not context-prefix?)
-                            (pair? (cdr sequence))
-                            (string=? (car sequence) escape)
-                            (cdr sequence))]
-                 [global (or escaped sequence)]
-                 [hit (or in-context (keymap:resolved-binding 'global global))]
-                 ;; Declaring an escape makes it a prefix on its own; an app
-                 ;; need not bind a dummy escaped command to keep it open.
-                 [prefix? (or context-prefix?
-                              (and escape (not in-context) (null? (cdr sequence))
-                                   (string=? first escape))
-                              (keymap:binding-prefix? 'global global))])
-            (cond
-              [prefix?
-               (echo:set-text! (string-append (keymap:sequence-text sequence) "-"))
-               (echo:set-pending! '())
-               (paint:redraw!)
-               (let ([next (head:read-key-event)])
-                 (if (eof-object? next)
+           [capture (and mode-context (keymap:context-capture mode-context))])
+      (let loop ([sequence (list first)])
+        (let* ([in-context (and mode-context
+                                (keymap:resolved-binding mode-context sequence))]
+               [context-prefix? (and mode-context
+                                     (keymap:binding-prefix? mode-context sequence))]
+               [hit (or in-context (keymap:resolved-binding 'global sequence))]
+               [prefix? (or context-prefix?
+                            (keymap:binding-prefix? 'global sequence))])
+          (cond
+            [prefix?
+             (echo:set-text! (string-append (keymap:sequence-text sequence) "-"))
+             (echo:set-pending! '())
+             (paint:redraw!)
+             (let ([next (head:read-key-event)])
+               (if (eof-object? next)
                    (head:quit!)
                    (loop (append sequence (list next)))))]
-              [hit
-               ;; A prefix is only a waiting indicator. Once its complete binding
-               ;; is known, remove it before the command runs; commands that have
-               ;; something useful to report will publish their own message.
-               (when (> (length sequence) 1) (echo:settle!))
-               (head:set-current-keys! sequence)
-               (run-key-action! (keymap:binding-action (cdr hit)))]
-              [(and (= (length sequence) 1)
-                 (tty:key-event-character first)
-                 (keymap:resolved-binding 'global '("SELF-INSERT")))
-               ;; an unbound character inserts itself: the command bound to
-               ;; SELF-INSERT reads the key from head:current-keys
-               => (lambda (hit)
-                    (head:set-current-keys! sequence)
-                    (run-key-action! (keymap:binding-action (cdr hit))))]
-              [else
-               (head:set-last-command! #f)
-               (echo:set-text!
-                 (format "~a is undefined" (keymap:sequence-text sequence)))]))))
-      (if (and escape (string=? first escape))
-          ;; the escape suspends the app's capture until the command it
-          ;; introduces has run -- prefixes and synchronous prompts
-          ;; included -- and the seat shows the buffer as escaped
-          ;; throughout, for its status hint and cursor
-          (let ([outer (head:escaped-buffer)])
-            (dynamic-wind
-              (lambda () (head:set-escaped-buffer! buffer))
-              resolve!
-              (lambda () (head:set-escaped-buffer! outer))))
-          (resolve!))))
+            [hit
+             ;; A prefix is only a waiting indicator. Once its complete binding
+             ;; is known, remove it before the command runs; commands that have
+             ;; something useful to report will publish their own message.
+             (when (> (length sequence) 1) (echo:settle!))
+             (head:set-current-keys! sequence)
+             (run-key-action! (keymap:binding-action (cdr hit)) capture)]
+            [(and (= (length sequence) 1)
+                  (tty:key-event-character first)
+                  (keymap:resolved-binding 'global '("SELF-INSERT")))
+             ;; an unbound character inserts itself: the command bound to
+             ;; SELF-INSERT reads the key from head:current-keys
+             => (lambda (hit)
+                  (head:set-current-keys! sequence)
+                  (run-key-action! (keymap:binding-action (cdr hit)) capture))]
+            [else
+             (head:set-last-command! #f)
+             (echo:set-text!
+               (format "~a is undefined" (keymap:sequence-text sequence)))])))))
 
   (define (context-claims? event)
     ;; Whether the current buffer's mode context binds event, starts a
-    ;; binding with it, or names it as the escape.  Such a key belongs
+    ;; binding with it, or leaves it to e while unlocked. Such a key belongs
     ;; to the keymaps even inside a capturing app: the app's handler
     ;; sees only the keys its context leaves unbound, so a terminal
-    ;; cannot swallow the C-] that is meant to get out of it.
+    ;; cannot swallow its capture control or an unlocked editor prefix.
     (let ([context (mode:key-context (head:window-buffer (head:current)))])
       (and context
-           (let ([sequence (list event)])
+           (let ([sequence (list event)] [capture (keymap:context-capture context)])
              (or (keymap:resolved-binding context sequence)
                  (keymap:binding-prefix? context sequence)
-                 (equal? event (keymap:context-escape context))))
+                 (and capture (not (head:capture-locked? (head:current)))
+                      (member event (cddr capture)))))
            #t)))
 
   (define (handle-key! input)

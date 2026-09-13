@@ -282,8 +282,8 @@
                (and (file-exists? probe)
                     (begin (set! result (call-with-input-file probe read)) (not (eof-object? result)))))))
          result))
-     (define (head-blame head . prefix)
-       (apply head-read head
+     (define (head-blame head)
+       (head-read head
          '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
             (list
               (map (lambda (range) (list (cadr range) (caddr range) (cadddr range)))
@@ -292,7 +292,7 @@
                                (memq (list-ref range 4)
                                  '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
                   (paint:highlight-ranges)))
-              (cadar (store:blame id 1)))) prefix))
+              (cadar (store:blame id 1))))))
      (define (screen-state head)
        (head-read head
          '(list (let shape ([node (head:root)])
@@ -1182,17 +1182,21 @@
                      '(() ()))
                    (head-read a '(begin (terminal:open!! "printf 'attached terminal'; read answer; printf '\\n%s' \"$answer\"; read done") #t))
                    (head-wait 'attached-terminal a (lambda () (head-sees? a "attached terminal")))
-                   (let ([terminal-id (head-read a '(head:buffer-store-id (current-buffer)) "\x1d;")])
+                   (let ([terminal-id (head-read a '(head:buffer-store-id (current-buffer)))])
                      (head-read b `(begin (show-buffer! (head:adopt-store-buffer! ,terminal-id)) #t))
                      (head-wait 'shared-terminal-surface b (lambda () (head-sees? b "attached terminal")))
-                     (head-read a '(begin (terminal:send! "through base\n") #t) "\x1d;")
+                     (head-read a '(begin (terminal:send! "through base\n") #t))
                      (head-wait 'shared-terminal-input b (lambda () (head-sees? b "through base")))
                      (test:check 'terminal-output-keeps-authorship-without-tints
-                       (map (lambda (screen) (head-blame screen "\x1d;")) (list a b))
+                       (map head-blame (list a b))
                        (make-list 2 (list '() (cdr (assq 'app (caddr (rpc head 'snapshot terminal-id)))))))
-                     (head-read a '(begin (delete-other-windows!) (head:set-kill-ring! "screen A kill") #t) "\x1d;")
-                     (head-read b '(begin (head:set-kill-ring! "screen B kill") #t) "\x1d;")
-                     (head-send! a "\x1d;\x18;\x03;")
+                     (head-read a '(begin (delete-other-windows!) (head:set-kill-ring! "screen A kill") #t))
+                     (head-read b '(begin (head:set-kill-ring! "screen B kill")
+                                          (terminal:toggle-capture-lock!) #t))
+                     (test:check 'shared-terminal-capture-lock-is-local-to-each-head
+                       (list (head-read a '(head:capture-locked? (selected-window)))
+                             (and (head-sees? a "▶ 🔓") #t) (and (head-sees? b "▶ 🔒") #t)) '(#f #t #t))
+                     (head-send! a "\x18;\x03;")
                      (head-wait 'real-head-detaches a
                        (lambda () (not (member '(head "screen A") (map car (rpc head 'actors))))))
                      (test:check 'detach-preserves-dirty-text-and-live-base-terminal
@@ -1206,7 +1210,11 @@
                      (let ([first (connect)] [second (connect)])
                        (for-each (lambda (connection who) (hello connection who) (receive connection))
                          (list first second) '((agent "first") (agent "second")))
-                       (head-send! b "\x1d;\x18;\x03;")
+                       ;; Lose SSH with capture still locked. A clean keyboard
+                       ;; detach would first unlock it and save that new choice.
+                       (unless (zero? (system (format "kill -KILL ~a" (sys:terminal-process-pid (vector-ref b 0)))))
+                         (error 'wire-head "could not terminate fixture head"))
+                       (set! killed-heads (cons b killed-heads))
                        (sys:close-connection! head)
                        (test:await 'every-human-head-is-absent
                          (lambda () (not (exists (lambda (entry) (eq? (caar entry) 'head)) (rpc agent 'actors)))))
@@ -1257,25 +1265,28 @@
                          (set! head (connect))
                          (hello head '(head "desk λ")) (receive head)
                          (set! b (start-head "screen B"))
-                         (head-wait 'other-screen-returns b (lambda () (head-sees? b "through base")))
+                         (head-wait 'named-head-restores-locked-capture b
+                           (lambda () (and (head-sees? b "through base") (head-sees? b "▶ 🔒"))))
+                         (head-send! b "\x1d;")
+                         (head-wait 'restored-lock-remains-toggleable b (lambda () (head-sees? b "▶ 🔓")))
                          (set! a (start-head "screen A"))
                          (head-wait 'owner-returns-to-offline-question a (lambda () (head-sees? a "through base")))
                          (test:check 'returning-owner-sees-only-the-live-session-question
-                           (head-read a '(actor:pending head:ui-actor) "\x1d;")
+                           (head-read a '(actor:pending head:ui-actor))
                            (list (list question '(agent "second") "Continue agent work?" '("yes" "no"))))
-                         (head-send! a "\x1d;\x03;a")
+                         (head-send! a "\x1b;xanswer!!\r")
                          (head-wait 'offline-question-prompt a (lambda () (head-sees? a "Continue agent work?")))
                          (head-send! a "yes\r")
                          (test:check 'reattached-human-answers-the-surviving-agent-once
                            (list (receive-reply second) (rpc second 'cancel question)
                                  (rpc head 'answer question "wrong head")
-                                 (head-read a '(actor:pending head:ui-actor) "\x1d;"))
+                                 (head-read a '(actor:pending head:ui-actor)))
                            '((event (answer 73 "yes")) #f #f ())))
                        ;; A real human head controls the existing session
                        ;; inventory, including agents routed to another head.
                        ;; Revocation wakes an idle reader and removes watches
                        ;; through the ordinary connection cleanup.
-                       (head-read a '(begin (echo:settle!) #t) "\x1d;")
+                       (head-read a '(begin (echo:settle!) #t))
                        (let* ([question (rpc second 'ask "Withdraw on revoke?" '())]
                               [watched (rpc second 'watch)]
                               [shown (head-wait 'question-before-revocation a
@@ -1283,7 +1294,7 @@
                               [selected
                                (head-read b
                                  '(list (assoc '(agent "second") (client:request 'sessions))
-                                        (client:request 'revoke '(agent "second"))) "\x1d;")])
+                                        (client:request 'revoke '(agent "second"))))])
                          (test:await 'human-revocation-retracts-the-endpoint
                            (lambda () (not (assoc '(agent "second") (rpc agent 'actors)))))
                          (head-wait 'revoked-question-disappears-while-idle a
@@ -1291,8 +1302,8 @@
                          (test:check 'human-revocation-closes-the-agent-and-preserves-other-clients
                            (list selected (eof-object? (receive-reply second))
                                  (head-read a `(list (actor:pending head:ui-actor)
-                                                     (actor:answer! ,question "too late")) "\x1d;")
-                                 (head-read b '(client:request 'revoke '(agent "second")) "\x1d;")
+                                                     (actor:answer! ,question "too late")))
+                                 (head-read b '(client:request 'revoke '(agent "second")))
                                  (rpc agent 'eval "(+ 1 2)") (car (rpc head 'snapshot id))
                                  (cdr (assq 'alive (caddr (rpc head 'snapshot terminal-id)))))
                            '((((agent "second") (head "screen A")) 1) #t (() #f) 0
@@ -1308,7 +1319,7 @@
                        (head-wait 'real-head-reattaches again (lambda () (head-sees? again "through base")))
                        (test:check 'clean-reattach-restores-the-terminal-and-reuses-scratch
                          (list (head-read again '(list (head:buffer-store-id (current-buffer))
-                                                       (length (head:windows)) (head:kill-ring)) "\x1d;")
+                                                       (length (head:windows)) (head:kill-ring)))
                                (filter (lambda (name) (string:prefix? "*scratch*" name))
                                  (map (lambda (id) (rpc head 'name id)) (rpc head 'buffers))))
                          (list (list terminal-id 1 "screen A kill") '("*scratch*")))
@@ -1338,7 +1349,7 @@
                               (head:buffer-marked-set! (current-buffer) #t)
                               (let ([other (head:window-numbered 2)])
                                 (head:window-prow-set! other 50) (head:window-pcol-set! other 4)
-                                (head:window-top-set! other 45)) #t) "\x1d;")
+                                (head:window-top-set! other 45)) #t))
                          (let ([before (screen-state again)])
                            ;; Completion borrows the selected window. A wake
                            ;; in that modal loop must not checkpoint its chrome.
@@ -1383,7 +1394,7 @@
                                  (list (head-read fallback '(map (lambda (w) (head:buffer-store-id (head:window-buffer w)))
                                                               (head:windows)))
                                        (head-read b '(list (length (head:windows))
-                                                           (head:buffer-store-id (current-buffer)) (head:kill-ring)) "\x1d;"))
+                                                           (head:buffer-store-id (current-buffer)) (head:kill-ring))))
                                  (list (make-list 3 id) (list 1 terminal-id "screen B kill")))))))))
                    ;; Pause only a head's UI while its socket reader keeps
                    ;; running. Both budgets must close that connection and

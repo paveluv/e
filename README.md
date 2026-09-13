@@ -34,7 +34,8 @@ Highlights:
   either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
 - `C-c t` opens a new PTY-backed terminal buffer able to run
   shells, full-screen programs, or another editor such as
-  [legmacs](https://github.com/nooga/legmacs).
+  [legmacs](https://github.com/nooga/legmacs). `C-x` and `M-x` reach e by default;
+  `C-]` or the clickable status lock toggles full capture for the child.
 - Undo and redo describe meaningful edits: typed runs, pastes, replacements,
   and formatter passes. Undo targets your own changes by default; choose
   another actor's changes or opt into undoing everyone's work.
@@ -182,7 +183,7 @@ immediately.
   between actors, and the agent-ready session and permission APIs.
 - [Evaluation](manual/EVAL.md): M-x, `eval:run!`, multiline commands, output
   capture, interruption, history, and result copying.
-- [Terminal buffers](manual/TERMINAL.md): capture, escape, emulation, scrollback,
+- [Terminal buffers](manual/TERMINAL.md): capture locking, emulation, scrollback,
   titles, process lifetime, and the terminal API.
 - [Search and replacement](manual/SEARCH.md): incremental search, smart case,
   query replace, and structured replacement targets.

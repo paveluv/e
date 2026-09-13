@@ -14,7 +14,7 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (vt) vt:))
+     (import (prefix (sys) sys:) (prefix (vt) vt:) (prefix (glyph) glyph:))
 
      ;; The nested terminal must run a predictable shell.
      (putenv "SHELL" "/bin/sh")
@@ -81,16 +81,17 @@
                 (or (string=? (substring text at (+ at m)) part)
                     (loop (+ at 1)))))))
 
-     (define (find-cell part)
+     (define (find-cell part . start)
        ;; (row . column) of the first screen position showing part.
-       (let loop ([lines (screen-lines)] [row 0])
+       (let loop ([lines (list-tail (screen-lines) (if (pair? start) (car start) 0))]
+                  [row (if (pair? start) (car start) 0)])
          (cond
            [(null? lines) #f]
            [(contains? (car lines) part)
             (let ([line (car lines)] [m (string-length part)])
               (let find ([at 0])
                 (if (string=? (substring line at (+ at m)) part)
-                    (cons row at)
+                    (cons row (glyph:cells (substring line 0 at)))
                     (find (+ at 1)))))]
            [else (loop (cdr lines) (+ row 1))])))
 
@@ -155,32 +156,57 @@
 
      (send! "\x3;t")                    ; C-c t
      (wait-for! 'nested-terminal-opens
-                (lambda () (find-cell "capturing input")) 10000)
+                (lambda () (and (find-cell "▶ 🔓") (find-cell "C-] toggle capture lock"))) 10000)
 
-     ;; -- C-] gets out of the capture -------------------------------------
-     ;; The terminal's handler can encode C-] for the child, so the
-     ;; dispatcher must hand the context's escape to the keymaps before
-     ;; the handler sees it (regression: the escape became keymap data
-     ;; while the handler kept first refusal, and C-] went to the shell).
-     (send! "\x1d;")                      ; C-]
-     (wait-for! 'escape-shows-in-the-status-line
-                (lambda () (find-cell "▶ escaped")) 5000)
+     ;; Default capture lets whole editor commands through; other keys are
+     ;; still the child's. The toggle is immediate and never reaches it.
      (send! "\x1b;x")                     ; M-x
-     (wait-for! 'escape-opens-the-global-prompt
-                (lambda () (and (find-cell "M-x (") (find-cell "▶ escaped")))
+     (wait-for! 'unlocked-capture-opens-the-global-prompt
+                (lambda () (and (find-cell "M-x (") (find-cell "▶ 🔓")))
                 5000)
-     (send! "\x7;")                       ; C-g: back to the capture
-     (wait-for! 'capture-resumes-after-the-command
-                (lambda () (and (find-cell "capturing input")
-                                (not (find-cell "▶ escaped"))))
-                5000)
+     (send! "\x7;\x18;2")                 ; cancel, C-x 2
+     (wait-for! 'unlocked-prefix-splits-the-terminal
+       (lambda () (= 2 (length (filter (lambda (line) (contains? line "▶ 🔓")) (screen-lines))))) 5000)
+     (let ([lock (find-cell "▶ 🔓" (+ (car (find-cell "▶ 🔓")) 1))])
+       (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
+                (+ (cdr lock) 3) (+ (car lock) 1) (+ (cdr lock) 3) (+ (car lock) 1)))
+       (wait-for! 'click-focuses-and-locks-only-the-pointed-terminal-window
+         (lambda () (and (find-cell "▶ 🔒") (find-cell "▶ 🔓"))) 3000)
+       (send! "\x1d;"))                   ; unlock the newly focused window
+     (send! "\x18;1\x18;k")               ; C-x 1, C-x k
+     (wait-for! 'unlocked-prefix-opens-kill-buffer (lambda () (find-cell "Kill buffer (default")) 5000)
+     (send! "\x7;\x1b;xhead:buffer-name-set! (current-buffer) \"界🔒 term\"\r")
+     (settle! 300)
      (send! "cat -v\r")
      (settle! 500)
-     (send! "\x1d;\x1d;\r")               ; C-] C-]: the literal character
-     (wait-for! 'literal-escape-reaches-the-child
-                (lambda () (find-cell "^]")) 5000)
+     (send! "\x1d;\x18;\x1b;x\r")         ; lock, then child C-x/M-x
+     (wait-for! 'locked-capture-forwards-editor-prefixes
+       (lambda () (and (find-cell "▶ 🔒") (find-cell "^X^[x"))) 5000)
+     ;; A lock in the buffer name is just text; the actual control uses
+     ;; painted cell ranges, including the second cell of a wide glyph.
+     (let ([decoy (find-cell "🔒")])
+       (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
+                (+ (cdr decoy) 1) (+ (car decoy) 1) (+ (cdr decoy) 1) (+ (car decoy) 1)))
+       (settle! 150)
+       (check 'lock-in-buffer-name-is-inert (find-cell "▶ 🔒")))
+     (for-each
+       (lambda (icons)
+         (let* ([status (find-cell (car icons))] [column (+ (cdr status) 3)] [row (car status)])
+           (send! (format "\x1b;[<35;~a;~aM" (+ column 1) (+ row 1)))
+           (settle! 150)
+           (let ([style (string-append ";" (style-at (cons row column)) ";")])
+             (check 'lock-uses-bold-dotted-hover (and (contains? style ";1;") (contains? style ";4:4;"))))
+           (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
+                    (+ column 1) (+ row 1) (+ column 1) (+ row 1)))
+           (wait-for! 'click-toggles-capture (lambda () (find-cell (cadr icons))) 3000)))
+       '(("▶ 🔒" "▶ 🔓") ("▶ 🔓" "▶ 🔒")))
+     (send! "\x1d;")
+     (settle! 150)
+     (check 'capture-control-never-sends-its-byte (and (find-cell "▶ 🔓") (not (find-cell "^]"))))
      (send! "\x4;")                       ; C-d ends cat
      (settle! 500)
+     (send! "\x1b;xhead:buffer-name-set! (current-buffer) \"*terminal*\"\r")
+     (settle! 200)
 
      ;; -- fill scrollback with palette-red lines --------------------------
      (send! "for i in $(seq 1 40); do printf '\\033[31mred line %d\\033[0m\\n' \"$i\"; done\r")
@@ -247,7 +273,7 @@
      (set! transcript '())
      (send! "exit\r")
      (wait-for! 'shell-exit-frees-buffer
-                (lambda () (not (find-cell "capturing input"))) 10000)
+                (lambda () (find-cell "■ 🔓")) 10000)
      ;; The dead terminal must not log a failed refresh: its detachment
      ;; happens on the main thread, never under a frame in progress
      ;; (regression: the reader thread detached the app mid-refresh).

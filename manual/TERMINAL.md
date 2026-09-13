@@ -47,9 +47,17 @@ focus reports alone do not take control of its size or color scheme.
 
 ## Input and leaving the terminal
 
+Terminals start with capture **unlocked** (`🔓`). `C-x` and `M-x` reach e, so
+`C-x 2`, `C-x k`, and M-x work directly. Press `C-]` or click the lock in the
+status bar to **lock** capture (`🔒`), forwarding those keys to the child too.
+Use locked capture for another editor such as Emacs. `C-]` always toggles
+immediately; `Shift-PageUp/Down` remain available for local scrollback in
+either mode. Hovering over the lock makes it bold with a muted dotted underline.
+
 Printable keys, control and Meta keys, arrows, Home/End, Insert/Delete,
 PageUp/PageDown, F1–F63, application-keypad keys, their xterm modifier
-combinations, and bracketed paste are sent to the child. Applications may
+combinations, and bracketed paste are sent to the child, except for the
+editor controls above. Applications may
 enable xterm mouse reporting; clicks and wheel reports are then forwarded
 through the PTY, including through nested terminal emulators. Without mouse
 reporting, wheel ticks scroll the local terminal history by one eighth of the
@@ -57,8 +65,9 @@ window. `Shift-PageUp` and `Shift-PageDown` move by a full window;
 `Shift-wheel` explicitly selects local history even while the child reports
 mouse input. Scrolling is per window when several windows mirror one terminal.
 The editor's cursor replaces the terminal cursor while that window is browsing
-history; the next keyboard or paste input returns it to the live cursor before sending the
-input. Ordinary mouse selection remains available when the child is not
+history; the next input sent to the child returns it to the live cursor.
+Toggling the capture lock preserves the cursor and scrollback position.
+Ordinary mouse selection remains available when the child is not
 tracking the mouse. A blinking block cursor marks the terminal's live input
 position by default. Programs can change its shape and blinking behavior with
 the standard `DECSCUSR` terminal sequence.
@@ -67,8 +76,9 @@ Mouse reports support the original X10 coordinates, UTF-8 extended
 coordinates (`1005`), SGR coordinates (`1006`), and urxvt coordinates
 (`1015`); SGR takes precedence when a child enables several encodings. Focus
 reporting mode (`1004`) sends `CSI I` and `CSI O` as editor focus enters and
-leaves a terminal window. Mirrored windows share one terminal mode state,
-while each real focus transition produces only one report.
+leaves a terminal window. Mirrored windows share the child's terminal protocol
+modes; capture locking remains local to each e window. Each real focus
+transition produces only one report.
 
 The `xterm-256color` Meta mode (`1034`) is honored dynamically. Meta keys use
 the ordinary ESC prefix by default; while the mode is enabled, single-byte
@@ -85,11 +95,16 @@ output until its termination sequence instead of echoing it to the grid. The
 headless emulator exposes both the controller state and accumulated output;
 e never invokes a host printer or command implicitly.
 
-The status hint distinguishes a focused terminal that is capturing
-input (`▶ capturing input`), its temporarily escaped state
-(`▶ escaped`), and a terminal running in a passive window (`▶`). After the
-process exits, every window shows `■`; capture is
-disabled and the retained terminal buffer remains a read-only transcript with
+Every terminal window shows its process indicator and capture preference:
+`▶ 🔓` or `▶ 🔒` while running, and `■ 🔓` or `■ 🔒` after exit. A focused
+window also shows `C-] toggle capture lock`. The lock belongs to the window;
+other windows and attached heads keep their own choice. A split copies the
+current choice into the new window, after which each is independent. Switching
+buffers preserves the window preference; opening a new terminal resets it to
+unlocked. Named-head reattachment restores the saved choice.
+
+After the process exits, input is no longer captured regardless of the lock
+preference, and the retained terminal buffer remains a read-only transcript with
 the normal vertical read-only cursor. It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
 Killing this buffer terminates a process that is still running; deleting one
@@ -98,22 +113,23 @@ the daemon terminates every live terminal process, including terminals whose
 buffers are not currently shown. Quitting an attached head only detaches that
 screen; the daemon's terminals keep running.
 
-`C-]` temporarily suspends terminal capture for one complete global e command:
+While capture is unlocked:
 
 | Sequence | Action |
 |----------|--------|
-| `C-] C-]` | Send a literal `C-]` to the child |
-| `C-] C-y` | Yank the kill ring into the terminal as a paste |
-| `C-] M-x` | Open M-x; capture resumes when its command finishes |
-| `C-] C-x 2` | Run the complete global split-window binding |
-| `C-] C-x o` | Focus the next e window |
-| `C-] C-x k` | Run the ordinary kill-buffer command |
+| `M-x` | Run an e command or Scheme expression |
+| `C-x 2` / `C-x 3` | Split the e window |
+| `C-x o` | Focus the next e window |
+| `C-x k` | Open the ordinary kill-buffer prompt |
+| `C-]` or click `🔓` | Lock capture for this window |
 
-Any other key receives its normal global meaning. For example, `C-] a` attempts
-e's ordinary self-insertion, which reports that the terminal buffer is
-read-only; it does not send `a` to the child. After the command or prompt ends,
-the focused buffer determines capture again. If the terminal is active, it
-immediately resumes capturing. Status-bar clicks always remain editor-owned.
+Complete editor chords and their prompts stay in e. Subsequent input follows
+the newly focused buffer. Status-bar clicks always remain editor-owned; clicking
+an unfocused window's lock focuses it and toggles only its capture preference.
+
+Run `terminal:yank!` through M-x to paste the kill ring into the child.
+`C-]` is reserved for the toggle; to send its literal byte, evaluate
+`(terminal:send! "\x1d;")` through M-x. `C-] C-]` now toggles twice.
 
 ## Display model
 

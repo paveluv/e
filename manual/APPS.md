@@ -242,8 +242,8 @@ to decide capture; an unreachable or failing endpoint declines delivery.
 
 Each window initially follows the shared surface cursor. Editor commands
 and mouse navigation pause following; captured input resumes it. Focus and
-blur reports preserve the current preference. Escape suppresses following
-and gives the cursor back to the editor. Extensions can set the preference
+blur reports and capture-lock toggles preserve the current preference.
+Extensions can set the preference
 with `(head:follow-app! window boolean)`; `(head:app-following? window)` reports
 whether it is active. Following uses the same prepared surface generation
 as painting, even when the cursor moves offscreen.
@@ -252,8 +252,8 @@ With `manages-viewport` true, the final `rows` text lines of surface size
 `(rows cols)` form the live grid, and the published cursor must lie there.
 Following windows anchor at that grid and clip around the cursor when smaller. Other apps use ordinary
 viewport scrolling. Inspection uses the editor's cursor visibility and shape;
-following uses the published ones. The selected app's status also shows
-`capturing input` or `escaped` when capture is enabled.
+following uses the published ones. The producer's status remains unchanged;
+the head adds a window's capture control when its mode declares one.
 
 After layout, the focused head sends `(request actor buffer-id resize (rows
 cols))` when its size offer changes or focus/presence is refreshed. Repeated
@@ -276,34 +276,39 @@ through naturally.
 The handler has first refusal on every key the buffer's mode context leaves
 unbound: a true result consumes the event, a false one lets it continue
 through the keymaps -- the mode context, then the global map.  A key the
-context binds, starts a binding with, or names as its escape goes straight
+context binds, starts a binding with, or leaves to e while unlocked goes straight
 to the keymaps; the handler never sees it.  An app that embeds a complete
 interactive environment simply consumes everything it is offered while it
 is alive; a shared terminal declares that capture through its store facts.
 
-The way out of such an app is keymap data, not a mode of dispatch.  The
-app's mode context names an escape prefix and may bind app-specific sequences:
+A capturing app can declare a lock control and the keys left to e while
+unlocked. The terminal registers:
 
 ```scheme
-(keymap:set-context-escape! 'terminal "C-]")
-(keymap:bind-default! 'terminal "C-] C-]"
-  (lambda () (terminal:send! "\x1d;")))
-(keymap:bind-default! 'terminal "C-] C-y" terminal:yank!)
+(keymap:set-context-capture! 'terminal "C-]"
+  terminal:toggle-capture-lock! '("C-x" "M-x"))
 ```
 
-Declaring the escape alone makes it wait for the next key; an app need not
-add a binding under that prefix.
+The declaration installs the toggle as a default context binding. It and the
+declaration retract with their module. All key specifications here are single
+events; a passed-through prefix such as `C-x` enters ordinary complete chord
+resolution, including any synchronous prompt. The toggle does not pause app
+following. Other context bindings remain editor controls in either state.
 
-A sequence starting with the escape that the context does not bind resolves,
-minus the prefix, in the global map: `C-] C-x C-f` opens the files app from
-inside a captured terminal.  Multi-key bindings wait for their remaining
-keys, commands keep control through their synchronous prompts, and when the
-command returns subsequent input follows the current buffer's context.
-The handler need not know about the escape: the dispatcher consults the
-context first.
-While the escape is in progress `head:escaped-buffer` names the buffer, so a
-status hint can say so -- the terminal shows `▶ escaped` -- and the cursor
-takes the editor's shape rather than the app's.
+`(head:capture-locked? window)` reads the preference and
+`(head:set-capture-locked! window boolean)` changes it. Windows start unlocked;
+splits copy the preference and named-head checkpoints retain it. This is head
+state: it does not change the producer's capture facts or another head's input.
+`keymap:context-capture` returns `(toggle-key toggle-procedure unlocked-key ...)`
+or `#f`. Paint inserts the clickable lock after the first token of the producer's
+status, with the toggle hint in the focused window.
+
+Status hints may also contain controls. `paint:add-buffer-status-hint!` receives
+a `(lambda (buffer active?) ...)` returning a string, `(text . style)` span, or
+list of spans. A zero-argument procedure in the style slot makes that text
+clickable; clicking focuses its window before calling it. Controls share the
+bold, muted dotted hover style and use terminal-cell geometry. A partially
+clipped label is inert. Other supported style slots are `#f`, `italic`, and `red`.
 
 The handler is optional. Thus these are equivalent:
 

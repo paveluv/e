@@ -74,10 +74,10 @@
        (pump! 900)
        (equal? (call-with-input-file probe read) #t))
 
-     (define (read-editor expression . prefix)
+     (define (read-editor expression)
        (when (file-exists? probe) (delete-file probe))
-       (send! (format "~a\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
-                      (if (null? prefix) "" (car prefix)) probe expression))
+       (send! (format "\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
+                      probe expression))
        (pump! 900)
        (guard (ex [else (error 'read-editor "probe did not return a datum" expression
                                (map screen-line '(20 21 22 23)))])
@@ -1408,15 +1408,15 @@
        (read-editor '(head:buffer-file (current-buffer))) (prompt-path "many/sample-17.txt"))
      (let ([terminal
             (read-editor '(begin (terminal:open!! "exec /bin/cat") (head:buffer-name (current-buffer))))])
-       (press! "\x1d;\x18;\x06;")
+       (press! "\x18;\x06;")
        (let ([browser (and (visible? "<files>") (visible? (string-append "Directory: " (prompt-path "many/"))))])
-         (press! "\x07;\x1d;\x1b;xfind-file!!\r")
+         (press! "\x07;\x1b;xfind-file!!\r")
          (check 'files-shortcut-and-direct-prompt-use-the-terminal-launch-directory
            (list browser (visible? (string-append "Find file: " (prompt-path "many/")))) '(#t #t)))
        (press! "\x07;terminal-still-alive\r")
        (check 'cancelling-find-file-resumes-terminal-input
-         (list (visible? "terminal-still-alive") (visible? "capturing input")) '(#t #t))
-       (read-editor `(begin (terminal:close!) (kill-buffer! (buffer ,terminal)) #t) "\x1d;"))
+         (list (visible? "terminal-still-alive") (visible? "▶ 🔓")) '(#t #t))
+       (read-editor `(begin (terminal:close!) (kill-buffer! (buffer ,terminal)) #t)))
      (check 'prompt-scenarios-finish-without-errors-or-transient-views
        (read-editor
          `(begin
@@ -2704,7 +2704,7 @@
                          [text (sandbox:read-buffer name 0 1)]
                          [ready (list (head:buffer-fact (current-buffer) 'alive #f)
                                       (and (string:search text "界éZ" 0 (string-length text)) #t))])
-                    (terminal:send! "\n") ready) "\x1d;")]
+                    (terminal:send! "\n") ready))]
               [split
                (read-editor
                  `(let ([terminal (head:buffer-of-store-id ,terminal-id)])
@@ -2857,7 +2857,9 @@
             (vector-set! text 8 "界e\x301;Z    ")
             (actor:register! owner (lambda (message) (set-box! events (cons message (unbox events)))))
             (mode:register! "adapter-live" '() '() (lambda (line) #f))
-            (keymap:set-context-escape! 'adapter-live "C-]")
+            (keymap:set-context-capture! 'adapter-live "C-]"
+              (lambda () (head:set-capture-locked! (selected-window) (not (head:capture-locked? (selected-window)))))
+              '("C-x" "M-x"))
             (let* ([id (store:create! owner "*adapter-live*" text
                          `((app . ,owner) (alive . #t) (capture . all) (status . "ready")
                            (read-only . #t) (wrap . #f) (scrollbar . left)
@@ -2876,7 +2878,7 @@
                        (head:window-line-number-width (selected-window)) 4) 1)))))
      (check 'shared-app-paints-grid-and-declared-status
        (list (screen-has? 0 "界éZ")
-             (exists (lambda (row) (screen-has? row "ready capturing input")) (iota 24))) '(#t #t))
+             (exists (lambda (row) (screen-has? row "ready 🔓")) (iota 24))) '(#t #t))
      (send! "x\x1b;[200~paste\ntext\x1b;[201~")
      (pump! 250)
      (check 'shared-app-receives-real-key-and-paste-as-owned-data
@@ -2887,9 +2889,9 @@
             (reverse (filter (lambda (message)
                                (and (eq? (car message) 'input) (member (cadddr message) '("x" "PASTE"))))
                        (unbox (kernel:persistent-cell 'wiring-app-events (lambda () '()))))))
-         "\x1d;")
+       )
        '(((head "wired head λ") "x" #f) ((head "wired head λ") "PASTE" "paste\ntext")))
-     ;; The escaped probe is an editor command and pauses following. Resume
+     ;; The M-x probe is an editor command and pauses following. Resume
      ;; with real input before addressing cells in the live grid again.
      (send! "x")
      (pump! 150)
@@ -2908,18 +2910,17 @@
                                (and (eq? (car message) 'input)
                                     (member (cadddr message) '("MOUSE-MOVE" "MOUSE-LEAVE" "MOUSE-CLICK" "MOUSE-DRAG" "MOUSE-RELEASE" "WHEEL-UP"))))
                        (unbox (kernel:persistent-cell 'wiring-app-events (lambda () '()))))))
-         "\x1d;")
+       )
        '(("MOUSE-CLICK" (8 . 1) (8 . 2) (3 . 1) 0)
          ("MOUSE-DRAG" (8 . 1) (8 . 2) (3 . 1) 32)
          ("MOUSE-RELEASE" (8 . 1) (8 . 2) (3 . 1) 0)
          ("WHEEL-UP" (8 . 1) (8 . 2) (3 . 1) 64)))
-     (check 'shared-app-escape-runs-a-complete-editor-command
-       (read-editor '(list (eq? (head:escaped-buffer) (current-buffer))
-                           (head:app-status (current-buffer) #t)) "\x1d;")
-       '(#t "ready escaped"))
+     (check 'unlocked-shared-app-runs-a-complete-editor-command
+       (read-editor '(list (head:capture-locked? (selected-window)) (head:app-status (current-buffer))))
+       '(#f "ready"))
      (read-editor '(let ([b (current-buffer)])
                      (actor:detach! '(app adapter-live))
-                     (kill-buffer! b) #t) "\x1d;")
+                     (kill-buffer! b) #t))
 
      ;; Finish through the real quit path. A shutdown hook can still read
      ;; reviewed work, but cannot commit new work after the user's consent.

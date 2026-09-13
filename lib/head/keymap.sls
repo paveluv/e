@@ -19,10 +19,10 @@
           sequence-bindings resolved-binding choose-binding
           binding-context binding-sequence binding-action
           binding-kind binding-spec same-sequence?
-          set-context-escape! context-escape)
+          set-context-capture! context-capture)
   (import (rnrs)
           (only (chezscheme)
-                format iota top-level-bound? top-level-value)
+                cons* format iota top-level-bound? top-level-value)
           (prefix (kernel) kernel:)
           (prefix (string) string:))
 
@@ -216,30 +216,32 @@
       [(spec) (add-key-binding! 'global spec #f 'user)]
       [(context spec) (add-key-binding! context spec #f 'user)]))
 
-  ;;; Context escapes -------------------------------------------------------------
+  ;;; Capture controls -----------------------------------------------------------
 
-  ;; A context whose handler consumes every unbound key (a captured
-  ;; app's) may name an escape prefix: a sequence starting with it that
-  ;; the context does not bind resolves, minus the prefix, in the
-  ;; global map -- one complete global command from inside the
-  ;; capture.  Registry-owned like a binding: it retracts with its
-  ;; module.
+  ;; Capture belongs to the app; its lock is a window preference. A context
+  ;; declares the control and the keys left to e while unlocked. The toggle
+  ;; is an ordinary binding, but does not pause following the app's cursor.
+  ;; Both declarations retract with their owning module on reload.
+  (define context-captures (kernel:make-registry))
 
-  (define context-escapes (kernel:make-registry))
+  (define (set-context-capture! context spec toggle keys)
+    (define (single-key spec)
+      (let ([tokens (key-spec spec)])
+        (unless (null? (cdr tokens))
+          (error 'set-context-capture! "expected a single key" spec))
+        (car tokens)))
+    (unless (and (symbol? context) (procedure? toggle) (list? keys))
+      (error 'set-context-capture! "expected a context, toggle procedure, and key list" context toggle keys))
+    (let ([key (single-key spec)] [keys (map single-key keys)])
+      (bind-default-key! context spec toggle)
+      (kernel:registry-add! context-captures (cons* context key toggle keys))))
 
-  (define (set-context-escape! context spec)
-    (unless (symbol? context)
-      (error 'set-context-escape! "context must be a symbol" context))
-    (let ([tokens (key-spec spec)])
-      (unless (null? (cdr tokens))
-        (error 'set-context-escape! "the escape is a single key" spec))
-      (kernel:registry-add! context-escapes (cons context (car tokens)))))
-
-  (define (context-escape context)
-    ;; the context's escape token, or #f
-    (cond [(kernel:registry-find context-escapes
-                                 (lambda (e) (eq? (car e) context)))
-           => cdr]
+  (define (context-capture context)
+    ;; (toggle-key toggle-procedure unlocked-key ...) or #f. Return owned
+    ;; key strings so a caller cannot change a registered capture policy.
+    (cond [(kernel:registry-find context-captures (lambda (entry) (eq? (car entry) context)))
+           => (lambda (entry) (cons* (string-copy (cadr entry)) (caddr entry)
+                                (map string-copy (cdddr entry))))]
           [else #f]))
 
   ;;; Reverse lookup -------------------------------------------------------------

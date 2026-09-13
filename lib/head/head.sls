@@ -45,6 +45,8 @@
           window-xoff window-xoff-set!
           window-width window-width-set!
           window-wrap window-wrap-set!
+          (rename (window-capture-locked? capture-locked?)) set-capture-locked!
+          window-status-actions-set!
           make-layout-split layout-split?
           layout-split-orientation
           layout-split-first layout-split-first-set!
@@ -63,7 +65,7 @@
           set-file-opener! set-quit-command! set-after-key!
           open-file! quit-command! after-key!
           quit! quitting? last-command set-last-command!
-          current-keys set-current-keys! escaped-buffer set-escaped-buffer!
+          current-keys set-current-keys!
           dispatch-app-event! app-event-position app-event-buffer-position app-event-button
           app-event-focus
           app-facts app-status follow-app! app-following? request-app-size!
@@ -188,7 +190,11 @@
       ;; Following a shared app is a window preference, never a store fact.
       (mutable following?)
       ;; Optional local-app presentation; rows retain their shared identity.
-      (mutable view)))
+      (mutable view)
+      ;; Input preference and painted status controls belong to this view,
+      ;; never to the shared process. Only the preference is checkpointed.
+      (mutable capture-locked?)
+      (mutable status-actions)))
 
   (define-record-type view (fields owner source lines frame))
 
@@ -241,7 +247,12 @@
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size xoff width wrap #t #f))
+                  size xoff width wrap #t #f #f '()))
+
+  (define (set-capture-locked! w locked?)
+    (unless (boolean? locked?) (error 'set-capture-locked! "expected a boolean" locked?))
+    (window-capture-locked?-set! w locked?)
+    (request-repaint!))
 
   (define (window-numbered n)
     ;; the live window numbered n, or #f
@@ -516,14 +527,6 @@
   (define (current-keys) the-current-keys)
   (define (set-current-keys! keys) (set! the-current-keys keys))
 
-  ;; the app buffer whose capture the dispatcher is escaping, from the
-  ;; escape key until the command it introduces returns; #f otherwise.
-  ;; The buffer's status hint and cursor show that the keys are the
-  ;; editor's meanwhile.
-  (define the-escaped-buffer #f)
-  (define (escaped-buffer) the-escaped-buffer)
-  (define (set-escaped-buffer! b) (set! the-escaped-buffer b))
-
   (define (start-input-reader!)
     (let ([stdin (sys:duplicate-standard-input-port)])
       (fork-thread
@@ -631,17 +634,25 @@
   (define (window-button-at x0 r0)
     ;; Paint and hit-test the same single-cell labels, flush right,
     ;; with an inert │ before each label and after the final one.
-    ;; Return (action . window), or #f outside a button.
+    ;; Inline controls carry painted, window-relative cell ranges. Return
+    ;; (action . window), or #f outside a visible control.
     (window-at x0 r0
       (lambda (entry)
         (let ([w (car entry)])
           (and (= r0 (+ (cadr entry) (caddr entry)))
-               (let loop ([buttons window-buttons]
-                          [column (- x0 (+ (window-xoff w) (window-width w) (- window-buttons-width)))])
-                 (and (pair? buttons) (> column 0)
-                      (let ([width (string-length (cdar buttons))])
-                        (if (<= column width) (cons (caar buttons) w)
-                            (loop (cdr buttons) (- column width 1)))))))))))
+               (or (let ([column (- x0 (window-xoff w))])
+                     (cond [(find (lambda (span)
+                                    (and (<= 0 (car span) column) (< column (cadr span))
+                                         (<= (cadr span) (- (window-width w) window-buttons-width 1))))
+                              (window-status-actions w))
+                            => (lambda (span) (cons (caddr span) w))]
+                           [else #f]))
+                 (let loop ([buttons window-buttons]
+                            [column (- x0 (+ (window-xoff w) (window-width w) (- window-buttons-width)))])
+                   (and (pair? buttons) (> column 0)
+                     (let ([width (string-length (cdar buttons))])
+                       (if (<= column width) (cons (caar buttons) w)
+                           (loop (cdr buttons) (- column width 1))))))))))))
 
   (define (divider-at x0 r0)
     ;; The divider descriptor under (x0, r0), or #f.  A crossing
@@ -990,7 +1001,7 @@
       (car (clamp-text-position text
              (fold-left text:rebase-position (cons row col) deltas))))
     (let* ([following (if (app-live? facts)
-                          (filter (lambda (w) (and (eq? (window-buffer w) b) (follows-app? w))) the-windows)
+                          (filter (lambda (w) (and (eq? (window-buffer w) b) (window-following? w))) the-windows)
                           '())]
            [ranges
             (fold-left
@@ -1654,7 +1665,8 @@
 
   ;;; Named screen resume ------------------------------------------------------
 
-  ;; A checkpoint is (screen 1 kill-text selected-number layout buffers).
+  ;; A checkpoint is (screen 2 kill-text selected-number layout buffers).
+  ;; Version 1 had no capture lock; restore those windows unlocked.
   ;; Splits retain their ordinary orientation/weights; leaves retain a buffer
   ;; slot and window preferences. A buffer entry is (reference numbers marked
   ;; placements), where placements use window numbers instead of records.
@@ -1710,11 +1722,12 @@
             (let capture ([node the-root])
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
-                    (window-topseg node) (window-left node) (window-wrap node) (window-following? node))
+                    (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
+                    (window-capture-locked? node))
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 1 the-kill-ring (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 2 the-kill-ring (window-index the-current) layout (map capture-buffer the-buffers))])
       (unless (equal? state last-checkpoint)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-sent-at (add-duration checkpoint-sent-at checkpoint-interval))])
@@ -1724,7 +1737,7 @@
                 ;; last one it received under the kept marker.
                 (actor:checkpoint! ui-actor
                   (if (and last-checkpoint (equal? (caddr state) (caddr last-checkpoint)))
-                      (cons* 'screen 1 'kept (cdddr state))
+                      (cons* 'screen 2 'kept (cdddr state))
                       state))
                 (set! last-checkpoint state)
                 (set! checkpoint-sent-at now))
@@ -1773,7 +1786,7 @@
   (define (restore-screen! state)
     (apply
       (lambda (tag version kill selected layout entries)
-        (unless (and (eq? tag 'screen) (eqv? version 1) (string? kill))
+        (unless (and (eq? tag 'screen) (memv version '(1 2)) (string? kill))
           (error 'resume! "unsupported screen checkpoint"))
         (let* ([fallback (window-buffer the-current)]
                [buffers (list->vector (map restore-buffer entries))]
@@ -1784,13 +1797,15 @@
                   (case (car node)
                     [(window)
                      (apply
-                       (lambda (tag index slot topseg left wrap following?)
+                       (lambda (tag index slot topseg left wrap following? locked?)
                          (unless (and (for-all natural? (list index slot topseg left))
-                                      (< slot (vector-length buffers)) (not (memv index indices)) (boolean? following?))
+                                      (< slot (vector-length buffers)) (not (memv index indices))
+                                      (boolean? following?) (boolean? locked?))
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
                          (%make-window index (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                           0 topseg left 0 0 1 0 80 wrap following? #f)) node)]
+                           0 topseg left 0 0 1 0 80 wrap following? #f locked? '()))
+                       (if (= version 1) (append node '(#f)) node))]
                     [(split)
                      (apply
                        (lambda (tag orientation first-weight second-weight first second)
@@ -1956,11 +1971,8 @@
              (if (eq? (car rule) 'except) (not (member event (cdr rule)))
                  (and (member event rule) #t)))))
 
-  (define (follows-app? w)
-    (and (window-following? w) (not (eq? (window-buffer w) the-escaped-buffer))))
-
   (define (app-following? w)
-    (and (follows-app? w) (app-live? (app-facts (window-buffer w)))
+    (and (window-following? w) (app-live? (app-facts (window-buffer w)))
          (let ([header (render:header (buffer-rendition (window-buffer w)))])
            (and header (caddr header) #t))))
 
@@ -1987,13 +1999,9 @@
             (max 0 (- cell (window-content-width w) -1)
                  (min (window-left w) cell (max 0 (- (cadr (cadddr header)) (window-content-width w))))))))))
 
-  (define (app-status b active?)
+  (define (app-status b)
     (let ([facts (app-facts b)])
-      (and facts
-           (string-append (or (app-fact facts 'status #f) "")
-             (if (and active? (app-live? facts)
-                      (let ([rule (app-fact facts 'capture #f)]) (and rule (not (null? rule)))))
-                 (if (eq? b the-escaped-buffer) " escaped" " capturing input") "")))))
+      (and facts (app-fact facts 'status #f))))
 
   (define last-app-size #f)
 
@@ -2019,7 +2027,7 @@
            [handler (and a (app-handle-event! a))])
       (if a (and handler (handler event))
           (let ([facts (app-facts b)])
-            (and (app-live? facts) (not (eq? b the-escaped-buffer))
+            (and (app-live? facts)
                  (captures? (app-fact facts 'capture #f) event)
                  (let* ([frame (buffer-rendition b)] [header (render:header frame)]
                         [point (or (app-event-buffer-position) (cons (window-prow w) (window-pcol w)))]
@@ -2401,6 +2409,7 @@
     (let ([old (window-buffer w)])
       (unless (eq? old b)
         (window-view-set! w #f)
+        (window-status-actions-set! w '())
         (buffer-spot-row-set! old (window-prow w))
         (buffer-spot-col-set! old (window-pcol w))
         (buffer-spot-top-set! old (window-top w))

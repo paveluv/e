@@ -409,24 +409,32 @@
              (head:buffer-spot-col-set! b 4)
              (head:buffer-spot-top-set! b 1)
              (head:set-kill-ring! (string-copy "saved kill"))
+             (head:set-capture-locked! w #t)
              (head:checkpoint!)
              (case kind
+               [(legacy)
+                (let ([state (actor:checkpoint head:ui-actor)])
+                  (actor:checkpoint! head:ui-actor
+                    (list 'screen 1 (caddr state) (cadddr state) (list-head (list-ref state 4) 7) (list-ref state 5))))]
                [(edit) (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("new" ""))]
                [(reset) (store:reset! bot id '("x"))]
                [(expired)
                 (do ([i 0 (+ i 1)]) ((= i 257))
                   (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("x")))])
              (head:window-prow-set! w 0)
+             (head:set-capture-locked! w #f)
              (head:set-kill-ring! "lost")
              (let ([truth (call-with-values (lambda () (store:snapshot-state id)) list)])
                (check (list 'resume-from-saved-revision kind)
                  (list (head:resume!)
                        (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:kill-ring)
+                       (head:capture-locked? (head:current))
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
-                 (list #t expected #t "saved kill" #t)))))
-         '(edit reset expired)
+                 (list #t expected #t "saved kill" (not (eq? kind 'legacy)) #t)))))
+         '(edit reset expired legacy)
          '(((3 . 4) (2 . 0) (3 . 2) (2 . 3) (2 . 0))
            ((0 . 1) (0 . 0) (0 . 1) (0 . 1) (0 . 0))
+           ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))))
        ;; The unchanged-frame comparison owns its data too.
        (string-set! (head:kill-ring) 0 #\X)

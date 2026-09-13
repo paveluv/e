@@ -54,6 +54,7 @@
           (prefix (render) render:)
           (prefix (glyph) glyph:)
           (prefix (mode) mode:)
+          (prefix (keymap) keymap:)
           (prefix (echo) echo:)
           (prefix (kernel) kernel:))
 
@@ -403,6 +404,34 @@
             (loop (cdr procs)
                   (and ordinary (> ordinary 1) (- ordinary 1))
                   (if value (append (reverse value) out) out))))))
+
+  (define (app-status-values w active?)
+    (let* ([b (head:window-buffer w)] [status (head:app-status b)]
+           [context (mode:key-context b)] [capture (and context (keymap:context-capture context))])
+      (cond [(or (not status) (string=? status "")) '()]
+            [capture
+             ;; Insert the window's control beside the producer's first status
+             ;; token (▶, ■, ♪ for terminals), before any diagnostic suffix.
+             (let ([end (or (string:search status " " 0 (string-length status)) (string-length status))]
+                   [key (car capture)] [toggle (cadr capture)])
+               (append
+                 (list (cons (string-append " " (substring status 0 end) " ") #f)
+                       (cons (if (head:capture-locked? w) "🔒" "🔓") toggle)
+                       (cons (string:tail status end) #f))
+                 (if (and active? (eq? toggle (keymap:event-binding context key)))
+                     (list (cons (string-append "  " key " toggle capture lock") #f)) '())))]
+            [else (list (cons (string-append " " status) #f))])))
+
+  (define (status-actions prefix spans visible-cells)
+    ;; Hints already carry style spans. A procedure in the style slot makes
+    ;; the text a control. Project complete, visible labels into terminal
+    ;; cells once; hit testing never searches text for a special symbol.
+    (let loop ([spans spans] [column (glyph:cells prefix)] [out '()])
+      (if (null? spans) (reverse out)
+          (let* ([span (car spans)] [end (+ column (glyph:cells (car span)))])
+            (loop (cdr spans) end
+              (if (and (procedure? (cdr span)) (<= end visible-cells))
+                  (cons (list column end (cdr span)) out) out))))))
 
   (define highlighters (kernel:make-registry))
 
@@ -783,13 +812,14 @@
                        (format "~a~a  L~a C~a" head-prefix name (+ status-row 1) (+ status-col 1)))]
              [mode-text (if (and mode-tag (not (string? app-position))) (format "  (~a)" mode-tag) "")]
              [hint-values
-              (let ([app-status (head:app-status b current?)])
-                (append (if (and app-status (not (string=? app-status "")))
-                            (list (cons (string-append " " app-status) #f)) '())
-                        (status-hint-values b current?)))]
+              (append (app-status-values w current?) (status-hint-values b current?))]
              [hint-text (apply string-append (map car hint-values))]
              [status (string-append head mode-text hint-text)]
+             [status-width (max 0 (- (head:window-width w) head:window-buttons-width 1))]
              [pointed (let ([at (head:mouse-position)])
+                        (head:window-status-actions-set! w
+                          (status-actions (string-append head mode-text) hint-values
+                            (- status-width (if (> (glyph:cells status) status-width) 1 0))))
                         (and at (head:window-button-at (- (car at) 1) (- (cdr at) 1))))]
              [hovered (and pointed (eq? (cdr pointed) w) (car pointed))])
         (let ([stale? (and (not (string? app-position)) (head:buffer-stale b))])
@@ -806,8 +836,7 @@
                                       [else "\x1b;[7;38;5;245m"])]
                            [fg (cond [current? "\x1b;[39m"]
                                      [else "\x1b;[38;5;245m"])]
-                           [fitted (glyph:fit status
-                                     (max 0 (- (head:window-width w) head:window-buttons-width 1)))]
+                           [fitted (glyph:fit status status-width)]
                            ;; Geometry is in cells; the style spans below
                            ;; index characters in this already fitted text.
                            [content-end (string-length fitted)]
@@ -842,7 +871,11 @@
                             (case (cdr value)
                               [(italic) (ansi "\x1b;[3m")]
                               [(red) (ansi "\x1b;[31m")])
+                            (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
+                              (ansi (style:code 'hover)))
                             (ansi (substring text at end))
+                            (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
+                              (ansi "\x1b;[0m" bar))
                             (case (cdr value)
                               [(italic) (ansi "\x1b;[23m")]
                               [(red) (ansi fg)])
@@ -1470,10 +1503,6 @@
                       ;; a prompt: the cursor is in the echo area's input,
                       ;; which is editable whatever the buffer behind it
                       [(echo:cursor) "\x1b;[0 q"]
-                      ;; an escaped app: the next key is the editor's, so
-                      ;; the cursor is the editor's too
-                      [(eq? (head:escaped-buffer) (head:window-buffer (head:current)))
-                       "\x1b;[0 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
                          [(text) "\x1b;[0 q"]

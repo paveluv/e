@@ -126,10 +126,23 @@ three-argument form consisting of the context, key, and semantic action:
 (keymap:bind! 'query-replace "SPC" 'skip)
 ```
 
-Context bindings use action symbols rather than command procedures because the
-operation acts on the currently running prompt or search. Context keys are
+These contexts use action symbols because the operation acts on the currently
+running prompt or search. Their keys are
 individual decoded key events; global keymaps provide arbitrary multi-key
 chords.
+
+Buffer-mode contexts can bind command procedures and complete chords. Terminals
+also declare which keys reach e when capture is unlocked. To include `C-c` as
+well as the default `C-x` and `M-x`, put this in `config.e`:
+
+```scheme
+(keymap:set-context-capture! 'terminal "C-]"
+  terminal:toggle-capture-lock! '("C-x" "M-x" "C-c"))
+```
+
+`C-]` and the clickable status lock toggle the current window's capture.
+Locked capture forwards these keys to the child; ordinary mode bindings such
+as `Shift-PageUp/Down` still belong to e. See [Terminal buffers](TERMINAL.md).
 
 ### `isearch`
 

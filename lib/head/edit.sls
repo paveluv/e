@@ -1405,6 +1405,7 @@
                                        (head:window-wrap current-window))]
                   [node (head:make-layout-split orientation current-window w
                                                 first second)])
+             (head:set-capture-locked! w (head:capture-locked? current-window))
              (head:replace-layout-window! current-window node)
              w))))
 
@@ -2184,13 +2185,12 @@
         [(head:window-button-at (- x 1) (- y 1)) =>
          (lambda (button)
            (let ([action (car button)] [w (cdr button)])
-             (cond
-               [else
-                (focus-window! w)
-                (case action
-                  [(below) (split-window!)]
-                  [(right) (split-window-right!)]
-                  [(close) (delete-window!)])]))
+             (focus-window! w)
+             (if (procedure? action) (action)
+               (case action
+                 [(below) (split-window!)]
+                 [(right) (split-window-right!)]
+                 [(close) (delete-window!)])))
            "MOUSE-HANDLED")]
         [(head:divider-at (- x 1) (- y 1)) =>
          (lambda (divider)
