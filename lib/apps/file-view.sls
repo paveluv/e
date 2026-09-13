@@ -202,8 +202,9 @@
            [files (append
                     (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e query))) inventory)
                     (if filtered? (apply append (map directory:entry-matches dirs)) '()))])
-      (append (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) visible-dirs))
-        (ancestors) (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) files)))))
+      (append (ancestors)
+        (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) visible-dirs))
+        (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) files)))))
   (define (directory-label)
     (string-append "Directory: " (display-path (file:abbreviate location))
       (if (show-hidden) "  [hidden]" "")

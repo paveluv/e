@@ -760,14 +760,15 @@
      (files-open!)
      (press! "\x18;f")
      (files-settle!)
-     (check 'files-directories-precede-ancestors-and-files-with-safe-labels
+     (check 'files-ancestors-precede-subdirectories-and-files-with-safe-labels
        (let ([labels (files-labels)])
-         (list (list-head labels 3) (list-ref labels 3)
+         (list (list-head labels 6)
                (and (member "odd\\xA;name.txt" labels) #t) (and (member ".dot" labels) #t)
                (map hover-face '("empty/" "large/" "small/"))
                (read-editor '(list (head:buffer-store-id (current-buffer))
                                    (head:app-cursor-visible-in? (selected-window)) (head:buffer-selectable? (current-buffer))))))
-       '(("empty/" "large/" "small/") "↑ /tmp" #t #f ((#t #f) (#f #f) (#f #f)) (#f #f #f)))
+       '(("↑ /tmp" "↑ /" "empty/" "large/" "small/" "a 日本語 long (name).txt")
+         #t #f ((#t #f) (#f #f) (#f #f)) (#f #f #f)))
      (press! "\x1b;[B\x1b;[BONly") ; begin on small/, whose descendant will match
      (files-settle!)
      (check 'files-single-recursive-match-is-the-default

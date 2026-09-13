@@ -7,8 +7,8 @@ directory. `M-x (file-view:open! "/some/directory")` starts elsewhere.
 that shortcut, put `(keymap:bind! "C-x C-f" file-view:open!)` in `config.e`.
 
 The first line is the filename filter; the second shows the directory and
-scan status. Child directories appear first, followed by ancestor shortcuts
-(nearest first), then files. Enter or click a directory to enter it. Every
+scan status. Ancestor shortcuts appear first (nearest first), followed by
+child directories, then files. Enter or click a directory to enter it. Every
 ancestor has a row, so a click can jump several levels. Left goes up one
 level and selects the directory just left. Backspace also goes up when the
 filter is empty.
