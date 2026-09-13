@@ -70,7 +70,7 @@ also page the table. Sorting by headings or F1–F6 still works and uses the
 whole matching list, before paging. Clicking a directory or breadcrumb
 updates the path and its table. Clicking a file fills the prompt so you can
 edit its name. Enter refuses an existing file and shows `[file already exists]`
-as a ghost immediately after the input. The ghost disappears after two seconds
+as an italic ghost immediately after the input. It disappears after two seconds
 or when you continue editing; it is not repeated in the echo area.
 Up/Down browse file history; Left/Right edit the path.
 Tab also refreshes the directory's metadata; C-r rescans without completing

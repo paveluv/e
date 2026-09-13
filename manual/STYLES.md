@@ -107,7 +107,8 @@ The built-in faces available to `style:set!` are:
 | Face | Default expression | Used for |
 | --- | --- | --- |
 | `plain` | `(reset)` | Ordinary text and fallback rendering |
-| `chrome` | `((foreground bright-black))` | Prompt labels, ghost text, log prefixes, and quiet UI furniture |
+| `chrome` | `((foreground bright-black))` | Prompt labels, log prefixes, and quiet UI furniture |
+| `ghost` | `((foreground bright-black) italic)` | Suggestions, inline prompt notices and echo-area tails in every app |
 | `header` | Dark: `((foreground 252) (background 240))`; light: `((foreground 236) (background 253))` | Neutral table heading band, distinct from muted filter labels and bold candidate rows |
 | `hover` | Dark: `(bold dotted-underline (underline-color 242))`; light: `(bold dotted-underline (underline-color 248))` | Mouse-hovered clickable text: headings, completion labels, links and window controls; preserves text foreground and background |
 | `comment` | `((foreground bright-black))` | Source comments and Markdown block quotes |

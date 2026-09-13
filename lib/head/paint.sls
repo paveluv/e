@@ -1255,7 +1255,7 @@
             (emit-runs text styles start text-end)
             (ansi "\x1b;[0m" (substring text start text-end))))
       (when (< ghost-start end)
-        (ansi "\x1b;[0m" (style:code 'chrome)
+        (ansi "\x1b;[0m" (style:code 'ghost)
           (substring content ghost-start end)))
       (ansi "\x1b;[0m"
         (make-string (max 0 (- cols (string-length lead) (- end start)
@@ -1337,7 +1337,7 @@
                                    (+ start cut))
                         (ansi (substring content (+ start lb)
                                          (+ start cut))))
-                    (ansi "\x1b;[0m" (style:code 'chrome)
+                    (ansi "\x1b;[0m" (style:code 'ghost)
                           (substring content (+ start cut) end)
                           "\x1b;[0m"
                           (make-string

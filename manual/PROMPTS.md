@@ -126,9 +126,10 @@ the complete path. Dotfiles appear when the final component starts with `.`.
 
 ## Suggestions and inspection
 
-Prompts may display a grey ghost tail after the cursor. `M-x` derives its tail
-from structured describe data, so module-published procedures receive the same
-parameter hints as built-in entries.
+Prompts may display a grey, italic ghost tail after the input. All ghosts use
+the shared `ghost` face, including inline notices and echo-area result tails.
+`M-x` derives its tail from structured describe data, so module-published
+procedures receive the same parameter hints as built-in entries.
 
 `M-.` may inspect the value at the prompt cursor. In `M-x` it opens the live
 describe page for the Scheme symbol under or immediately before point.

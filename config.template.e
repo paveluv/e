@@ -61,15 +61,15 @@
 ;; (head:min-window-lines 2)      ; squeezed windows keep this many text lines
 ;; (prompt:in-window #t)          ; every prompt takes the current window, as
 ;;                                ; find-file!! does, instead of the echo area
-;; (style:set! 'chrome '((foreground 244) italic))
+;; (style:set! 'ghost '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground
 ;;                                ; or background colors may be named, 0..255,
 ;;                                ; or (rgb 0 0 0). Numbers and raw SGR strings
 ;;                                ; remain accepted for compatibility.
 ;;                                ; Full reference: manual/STYLES.md
-;;                                ; chrome is the editor's grey furniture
-;;                                ; (prompt labels, log prefixes, ghost text)
+;;                                ; ghost styles suggestions and notices;
+;;                                ; chrome styles prompt labels and log prefixes
 ;; (keymap:bind! "M-l" log-view:show!)    ; pop the <log> view with one chord
 ;; (keymap:bind! "C-c s" save!!)     ; arbitrary multi-key chords work
 ;; (keymap:unbind! "C-v")            ; remove a global binding

@@ -1132,6 +1132,7 @@
      (press! "\r")
      (define appeared
        (and (visible? (string-append "Create file: " (files-path "empty/late.txt") " [file already exists]"))
+            (picker-face "[file already exists]" "3") (not (picker-face "Create file:" "3"))
             (= 1 (length (filter (lambda (line) (string:search line "file already exists" 0 (string-length line)))
                            (vector->list (vt:emulator-screen mirror)))))))
      (pump! 2200) ; no key: the inline notice must expire through the idle pump
@@ -1143,7 +1144,8 @@
        (delete-file (files-path "empty/late.txt")) (press! "\x12;") (files-settle!)
        (let ([removed (and (visible? "No matching files") (not (path-table? "late.txt")))])
          (prompt-input! (files-path "empty/")) (press! "\r")
-         (let ([refused (visible? (string-append "Create file: " (files-path "empty/") " [directory already exists]"))])
+         (let ([refused (and (visible? (string-append "Create file: " (files-path "empty/") " [directory already exists]"))
+                             (picker-face "[directory already exists]" "3"))])
            (press! "n")
            (let ([edited (and (not (visible? "already exists")) (visible? (files-path "empty/n")))])
              (press! "\x07;") (files-settle!)
@@ -1355,7 +1357,8 @@
                "\x1b;[201~\r"))
      (prompt-input! "outer-draft")
      (press! "\x1b;.\t\r")
-     (define nested-notice (visible? "Nested: inner- [choose a completion]"))
+     (define nested-notice (and (visible? "Nested: inner- [choose a completion]")
+                                (picker-face "[choose a completion]" "3") (not (picker-face "Nested:" "3"))))
      (pump! 2200)
      (define nested-expired (not (visible? "choose a completion")))
      (hover! (find-cell "inner-two"))

@@ -176,6 +176,7 @@
     (map (lambda (entry) (cons (car entry) (style-escape (cadr entry))))
       '((plain (reset))
         (chrome ((foreground bright-black)))
+        (ghost ((foreground bright-black) italic))
         (header ((foreground 252) (background 240)))
         (hover (bold dotted-underline (underline-color 242)))
         (comment ((foreground bright-black)))

@@ -245,14 +245,16 @@
            (lambda ()
              (set! prepared (cons (list (paint:screen-cols) (head:window-width (head:current))) prepared))
              (when (null? (cdr prepared))
+               (paint:echo-queue! 'eval "42" #f #f " [stored in kill ring]")
                (paint:show-message! "Prepared\nmessage" #f)))))
        (dynamic-wind
          (lambda () (paint:set-screen-live! #t))
          (lambda ()
            (let ([frame (painted paint:redraw!)])
              (check 'frame-prepares-before-synchronized-paint
-               (list prepared (sync-events frame) (contains? frame "Prepared") (contains? frame "message"))
-               '(((80 80) (80 80)) (begin end begin end) #t #t))))
+               (list prepared (sync-events frame) (contains? frame "Prepared") (contains? frame "message")
+                     (contains? frame (string-append (style:code 'ghost) " [stored in kill ring]")))
+               '(((80 80) (80 80)) (begin end begin end) #t #t #t))))
          (lambda ()
            (paint:set-screen-live! #f)
            (kernel:retract-module! 'paint-prepare-test)

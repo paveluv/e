@@ -32,7 +32,7 @@ While the prompt is active:
 - e-specific completion candidates use the editor highlight.
 - Unknown or partial symbols are italic, standard Scheme symbols are plain,
   and e-specific symbols use the editor highlight.
-- A grey ghost shows the documented parameters still expected by the
+- A grey, italic ghost shows the documented parameters still expected by the
   innermost open call. Signatures come live from structured describe entries,
   including entries registered by modules; source parameters and procedure
   arity are fallbacks.
@@ -111,7 +111,7 @@ eval: (+ 20 22) => 42
 ```
 
 By default, a non-void result is also copied to the kill buffer, ready to
-insert with `C-y`. The echo result gains a grey ghost tail:
+insert with `C-y`. The echo result gains a grey, italic ghost tail:
 
 ```text
 eval: (+ 20 22) => 42 [stored in kill ring]
