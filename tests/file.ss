@@ -129,10 +129,12 @@
              (begin (for-each (lambda (name) (remove-tree (string-append path "/" name))) (directory-list path))
                     (delete-directory path))
              (delete-file path)))
-       (define (scan needle hidden? limit)
+       (define (scan needle hidden? limit . observe)
          (let ([result #f])
            (directory:scan root needle hidden? limit (lambda () #f)
-             (lambda (entries failures done?) (when done? (set! result (cons failures entries))))) result))
+             (lambda (entries failures done?)
+               (when (pair? observe) ((car observe) entries failures done?))
+               (when done? (set! result (cons failures entries))))) result))
        (define (entry name result)
          (find (lambda (e) (string=? (directory:entry-path e) (child name))) (cdr result)))
        (define (group name result)
@@ -143,7 +145,7 @@
        (mkdir root)
        (for-each (lambda (dir) (mkdir (child dir))) '("small" "small/nested" "large" ".private"))
        (for-each (lambda (name) (file:write! (child name) '#("needle in the contents") #f))
-         '("small/needle-one" "small/nested/NEEDLE-two" "small/unrelated"
+         '("small/needle-one" "small/nested/NEEDLE-two" "small/nested/.needle-dot" "small/unrelated"
            "large/needle-a" "large/needle-b" "large/needle-c" ".private/needle-secret" "needle-root"))
        (file:write! (child "needle-root") '#("abc") #f)
        (chmod (child "needle-root") #o640)
@@ -178,7 +180,37 @@
        (check 'directory-hidden-and-zero-expansion
          (let ([result (scan "needle" #t 0)])
            (list (group ".private" result) (group "small" result)))
-         '((1 #t ()) (2 #t ())))
+         '((1 #t ()) (3 #t ())))
+       ;; Reuse the same tree and real shallow publications: narrowing must
+       ;; keep valid rows, widening keeps a lower bound, and hidden ancestors
+       ;; and leaves must disappear immediately. A completed snapshot wins.
+       (let ([before (scan "needle" #t 4)])
+         (check 'directory-refilter-keeps-only-valid-evidence
+           (map (lambda (step)
+                  (let ([result (cons 0 (directory:refilter (cdr before) root "needle" (car step) #t (cadr step) (caddr step)))])
+                    (list (group "small" result) (group "large" result)
+                          (and (entry ".private" result) #t))))
+             '(("NEEDLE-" #f 2) ("ne" #t 4) ("absent" #f 2) ("" #f 2)))
+           '(((2 #t ("NEEDLE-two" "needle-one")) (3 #t ()) #f)
+             ((3 #f (".needle-dot" "NEEDLE-two" "needle-one")) (3 #f ("needle-a" "needle-b" "needle-c")) #t)
+             ((0 #f ()) (0 #f ()) #f)
+             ((#f #f ()) (#f #f ()) #f))))
+       (check 'directory-publications-preserve-matches-until-authoritative-replacement
+         (let* ([before (scan "needle-one" #f 2)]
+                [preview (directory:refilter (cdr before) root "needle-one" "needle" #f #f 2)]
+                [shallow #f]
+                [after (scan "needle" #f 2
+                         (lambda (entries failures done?)
+                           (unless shallow
+                             (set! shallow (cons failures (directory:reconcile entries preview 2 done?))))))]
+                [narrowed (directory:refilter (cdr after) root "needle" "needle-o" #f #f 2)])
+           (list (group "small" shallow) (group "large" shallow)
+                 (group "small" (cons 0 narrowed)) (group "large" (cons 0 narrowed))
+                 (group "small" (cons 0 (directory:reconcile (cdr after) preview 2 #t)))
+                 (directory:reconcile '() preview 2 #t)))
+         '((1 #f ("needle-one")) (0 #f ())
+           (1 #t ("needle-one")) (#f #f ())
+           (2 #t ("NEEDLE-two" "needle-one")) ()))
        (check 'directory-matches-full-relative-paths-and-directory-slashes
          (let ([result (scan "ALL/NESTED/" #f 2)])
            (list (group "small" result) (group "large" result)
@@ -191,12 +223,17 @@
              (lambda (entries failures done?) (set! publications (cons done? publications)) (set! cancel? #t)))
            publications) '(#f))
        (check 'directory-vanishing-subtree-stays-explicitly-incomplete
-         (let ([changed? #f] [result #f])
+         (let ([changed? #f] [result #f] [pending #f] [preview (cdr (scan "secret" #t 2))])
            (directory:scan root "secret" #t 2 (lambda () #f)
              (lambda (entries failures done?)
                (unless changed? (set! changed? #t) (remove-tree (child ".private")))
-               (when done? (set! result (cons failures entries)))))
-           (list (car result) (group ".private" result))) '(1 (0 #f ())))
+               (when done?
+                 ;; A failed group's partial zero does not erase known
+                 ;; matches; the final snapshot must discard them.
+                 (set! pending (cons failures (directory:reconcile entries preview 2 #f)))
+                 (set! result (cons failures (directory:reconcile entries preview 2 #t))))))
+           (list (car result) (group ".private" pending) (group ".private" result)))
+         '(1 (1 #f ("needle-secret")) (0 #f ())))
        (check 'file-read-refuses-special-files-before-opening
          (map (lambda (name) (test:raises? (lambda () (file:read (child name))))) '("pipe" "small"))
          '(#t #t))

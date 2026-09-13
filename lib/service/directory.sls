@@ -1,7 +1,7 @@
 ;; directory.sls -- filesystem inventory and bounded recursive match groups.
 ;; No head state or threads: the caller owns cancellation and publication.
 (library (directory)
-  (export scan entry-path entry-kind entry-link? entry-mode entry-size
+  (export scan refilter reconcile entry-path entry-kind entry-link? entry-mode entry-size
           entry-modified entry-created entry-count entry-complete? entry-matches
           relative-path matches? directory? (rename (parent-path parent)))
   (import (chezscheme) (prefix (sys) sys:) (prefix (file) file:)
@@ -34,6 +34,64 @@
     (make-entry (entry-path entry) (entry-kind entry) (entry-link? entry)
       (entry-mode entry) (entry-size entry) (entry-modified entry) (entry-created entry)
       count complete? matches))
+
+  (define (visible? entry root hidden?)
+    (or hidden?
+        (let ([path (relative-path entry root)])
+          (not (or (string:prefix? "." path)
+                   (string:search path "/." 0 (string-length path)))))))
+
+  (define (refilter entries root previous query was-hidden? hidden? limit)
+    ;; A narrower query is exact when the previous group retained every
+    ;; match. Otherwise keep the known subset, with a lower bound or an
+    ;; unknown count, until a fresh scan replaces it. Empty queries count
+    ;; immediate children, so their counts cannot stand in for search counts.
+    (let ([same? (and (string=? previous query) (eq? was-hidden? hidden?))]
+          [narrower? (and (not (string=? query ""))
+                          (or (not hidden?) was-hidden?)
+                          (string:search query previous 0 (string-length query) #t))]
+          [wider? (and (not (string=? previous "")) (not (string=? query ""))
+                       (or hidden? (not was-hidden?))
+                       (string:search previous query 0 (string-length previous) #t))])
+      (map (lambda (entry)
+             (if (or (not (directory? entry)) (entry-link? entry)) entry
+                 (let* ([old (entry-count entry)]
+                        [matches (if (string=? query "") '()
+                                     (filter (lambda (e) (and (visible? e root hidden?) (matches? e root query)))
+                                       (entry-matches entry)))]
+                        [exact? (and (entry-complete? entry)
+                                     (or same? (and narrower? old (= old (length (entry-matches entry))))))]
+                        [count (cond [same? old] [exact? (length matches)] [wider? old]
+                                     [(pair? matches) (length matches)]
+                                     [(or (string=? query "") (not old)
+                                          (> old (length (entry-matches entry)))) #f]
+                                     [else 0])])
+                   (with-count entry count exact?
+                     (if (and count (> count limit)) '() matches)))))
+        (filter (lambda (entry) (visible? entry root hidden?)) entries))))
+
+  (define (reconcile entries previous limit done?)
+    ;; A shallow/partial publication must not erase matches the new query
+    ;; already knows. Prefer fresh metadata and union bounded match sets;
+    ;; completed groups (and the final snapshot, including errors/removals)
+    ;; always replace the preview authoritatively.
+    (if done? entries
+        (let ([known (make-hashtable string-hash string=?)])
+          (for-each (lambda (entry) (hashtable-set! known (entry-path entry) entry)) previous)
+          (map (lambda (entry)
+                 (let ([old (hashtable-ref known (entry-path entry) #f)] [count (entry-count entry)])
+                   (cond [(or (not old) (not (directory? entry)) (entry-link? entry) (entry-complete? entry)) entry]
+                         [(not count) (with-count entry (entry-count old) (entry-complete? old) (entry-matches old))]
+                         [else
+                          (let* ([seen (make-hashtable string-hash string=?)]
+                                 [matches
+                                  (filter (lambda (e)
+                                            (and (not (hashtable-contains? seen (entry-path e)))
+                                                 (begin (hashtable-set! seen (entry-path e) #t) #t)))
+                                    (append (entry-matches entry) (entry-matches old)))]
+                                 [total (max count (or (entry-count old) 0) (length matches))])
+                            (with-count entry total #f
+                              (if (<= total limit) matches '())))]))) entries))))
 
   (define (scan path query hidden? limit cancelled? publish!)
     ;; Publish (entries unreadable-directories done?), initially the shallow

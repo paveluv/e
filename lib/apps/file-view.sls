@@ -52,9 +52,13 @@
   (define (start-scan!)
     (set! complete? #f)
     (set! failures 0)
-    (with-mutex scan-lock
-      (set! request (make-scan view (head:app-of view) location (if path-part "" query)
-                      (include-hidden?) (expansion-limit) #f #f)))
+    (let ([needle (if path-part "" query)] [hidden? (include-hidden?)] [limit (expansion-limit)])
+      (with-mutex scan-lock
+        (set! inventory
+          (if (and request (string=? (scan-path request) location))
+              (directory:refilter inventory location (scan-query request) needle (scan-hidden? request) hidden? limit)
+              '()))
+        (set! request (make-scan view (head:app-of view) location needle hidden? limit #f #f))))
     (render!))
 
   (define (scan-work!)
@@ -83,7 +87,8 @@
                         (let ([update (scan-update job)]) (scan-update-set! job #f) update))])
           (when update
             (apply (lambda (entries skipped done? failure)
-                     (set! inventory entries) (set! failures skipped) (set! complete? done?)
+                     (set! inventory (directory:reconcile entries inventory (scan-limit job) done?))
+                     (set! failures skipped) (set! complete? done?)
                      (when failure (set-message! (string-append "File scan failed: " failure)))) update)))
         ;; Config/reload can render before publishing registration. Launch
         ;; only after the worker will see this same identity, never staged state.
@@ -211,7 +216,10 @@
                             (and (<= (string-length prefix) (string-length query))
                                  (string-ci=? prefix (substring query 0 (string-length prefix)))))
                           (and (directory:entry-count e) (positive? (directory:entry-count e)))
+                          ;; Keep unknown groups navigable, including failed
+                          ;; searches, without resurfacing pending zeroes.
                           (and (not (directory:entry-link? e))
+                               (or complete? (not (directory:entry-count e)))
                                (not (directory:entry-complete? e))))) dirs)]
            [files (append
                     (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e location query))) inventory)
@@ -316,7 +324,6 @@
       (set! query next-query)
       (set! location path))
     (when (and selected (string:prefix? "." (file:base-name selected))) (show-hidden #t))
-    (set! inventory '())
     (set! hover #f)
     (start-scan!))
   (define (up-to! path)
@@ -361,12 +368,6 @@
               (choice-selected-set! choice #f)))) (hashtable-values choices)))
     (set! query text)
     (set! hover #f)
-    ;; Old recursive results must disappear immediately, before the worker
-    ;; supplies a new query's counts. The shallow inventory remains useful.
-    (set! inventory (filter (lambda (e)
-                              (and (not (directory:directory? e))
-                                   (or (include-hidden?)
-                                     (not (string:prefix? "." (file:base-name (directory:entry-path e))))))) inventory))
     (start-scan!))
   (define (complete!)
     (let ([matches (head:call-with-interrupt (lambda () (file:complete query location)))])
@@ -395,11 +396,10 @@
            [directory (file:canonical (file:directory-part full))])
       (set! path-part (file:base-name full))
       (unless (string=? directory location)
-        (set! location directory) (set! inventory '()) (set! hover #f)
+        (set! location directory) (set! hover #f)
         (vector-for-each (lambda (choice) (choice-selected-set! choice #f)) (hashtable-values choices)))
       (unless (and request (string=? (scan-path request) location)
                    (string=? (scan-query request) "") (eq? (scan-hidden? request) (include-hidden?)))
-        (set! inventory '())
         (start-scan!))
       (collect-scan!)
       (set! rows (listing))))

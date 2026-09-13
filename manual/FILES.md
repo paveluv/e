@@ -129,7 +129,10 @@ M-x. A count includes matching directories as well as files. A directory's own
 name may match independently of its descendant count.
 
 Scanning runs in the background. Typing or navigating replaces the pending
-search; results from an older search cannot replace the new view. `Searching…`
+search; results from an older search cannot replace the new view. Known paths
+that still match stay visible while the search catches up, including when
+you erase part of the filter. Newly excluded paths disappear immediately.
+`Searching…`
 marks work in progress, `+` marks a lower bound, and `?` means unknown. An
 unreadable or vanished subtree is reported and leaves its count incomplete.
 This is a live filesystem inventory, not an atomic filesystem snapshot; use

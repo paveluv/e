@@ -823,13 +823,27 @@
        (read-editor '(list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer)))) files-visited)
      (files-open!)
      (files-filter! "needle")
-     (check 'files-small-groups-expand-and-large-groups-show-counts
+     (check 'files-groups-remain-stable-through-filter-changes
        (let ([labels (files-labels)])
          (list (and (member "large/" labels) #t) (and (member "large/needle-a.txt" labels) #t)
                (and (member "small/needle-one.txt" labels) #t)
                (read-editor '(let ([line (find (lambda (s) (string:prefix? "large/" s))
                                            (vector->list (head:buffer-lines (current-buffer))))])
-                               (string:suffix? "  3" line))))) '(#t #f #t #t))
+                               (string:suffix? "  3" line)))
+               ;; Inspect the handler's immediate rendering before another
+               ;; refresh can collect worker results. Settled screens hide
+               ;; the erase/refill and column shifts on each keystroke.
+               (read-editor
+                 '(let ([header (vector-ref (head:window-lines (selected-window)) 2)])
+                    (define (sample event)
+                      (head:dispatch-app-event! event)
+                      (let ([lines (vector->list (head:buffer-lines (current-buffer)))])
+                        (define (has? name) (exists (lambda (s) (string:prefix? name s)) lines))
+                        (list (for-all has? '("large/" "small/" "small/needle-one.txt" "small/nested/needle-only.txt"))
+                              (has? "empty/")
+                              (equal? header (vector-ref (head:window-lines (selected-window)) 2)))))
+                    (let ([narrow (sample "-")]) (list narrow (sample "BACKSPACE")))))))
+       '(#t #f #t #t ((#t #f #t) (#t #f #t))))
      (click! (find-cell "large/"))
      (files-settle!)
      (press! "\x1b;[B") ; remember a choice beyond the filtered directory's default
