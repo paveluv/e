@@ -2852,6 +2852,7 @@
                            (guard (ex [(kernel:refusal? ex) #t] [else (raise ex)])
                              (store:create! head:ui-actor "after quit" '("lost")) #f)) p))
                 'replace))) #t))
+     (define mouse-before-quit (bytevector? (vt:emulator-mouse-input mirror 35 2 2 #f)))
      (delete-file probe)
      (send! "\x18;\x03;")
      (pump! 500)
@@ -2859,8 +2860,10 @@
        (or (screen-has? 22 "Modified buffers exist") (screen-has? 23 "Modified buffers exist")) #t)
      (send! "y")
      (test:await 'standalone-quit-exits (lambda () (pump! 25) exited?))
-     (check 'standalone-quit-closes-admission-before-shutdown-hooks
-       (call-with-input-file probe read) '(#t #t #t))
+     (check 'standalone-quit-closes-admission-and-releases-mouse-reporting
+       (list (call-with-input-file probe read) mouse-before-quit
+             (map (lambda (key) (cdr (assq key (vt:emulator-state mirror)))) '(mouse-tracking sgr-mouse)))
+       '((#t #t #t) #t (#f #f)))
      (delete-file probe)
      (sys:close-terminal-process! process)
      (test:finish! 'wiring)))

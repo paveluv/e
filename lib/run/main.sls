@@ -238,7 +238,8 @@
         (head:run-shutdown-hooks!)
         (paint:set-screen-live! #f)
         (paint:reset-cursor-style!)
-        (paint:ansi "\x1b;[?1002;1006l\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+        (tty:mouse-reporting! #f)
+        (paint:ansi "\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
         (flush-output-port (sys:terminal-output-port))
         (sys:terminal-restore!))))
 

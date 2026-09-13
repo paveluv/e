@@ -1415,7 +1415,11 @@
              (stop!)
              (for-each (lambda (head)
                          (head-wait 'head-restores-terminal-after-disconnect head
-                           (lambda () (> (occurrences (vector-ref head 3) "\x1b;[?1049l") 0))))
+                           (lambda ()
+                             (and (> (occurrences (vector-ref head 3) "\x1b;[?1049l") 0)
+                                  (let ([state (vt:emulator-state (vector-ref head 2))])
+                                    (not (or (cdr (assq 'mouse-tracking state))
+                                             (cdr (assq 'sgr-mouse state)))))))))
                ;; SIGKILL cannot run terminal cleanup; all cooperative exits can.
                (filter (lambda (head) (not (memq head killed-heads))) heads))
              (test:check 'stop-closes-idle-clients-and-releases-the-path
