@@ -3055,7 +3055,8 @@
     ;; when another window shows this same app. Keep whole hints that fit.
     (and (eq? (current-buffer) buffers-view)
          (let ([room (- (head:window-width current-window)
-                        (glyph:cells (format "~a▏~a [↕][↔][×]"
+                        head:window-buttons-width
+                        (glyph:cells (format "~a▏~a "
                                        (head:window-index current-window) (head:buffer-name buffers-view))))])
            (let add ([text ""]
                      [hints '("F1–F6 sort" "C-u clear")])

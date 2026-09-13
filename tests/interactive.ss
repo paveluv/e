@@ -122,7 +122,7 @@
            (sys:resize-terminal-process! process rows cols)
            (wait-for! (list 'idle-resize-refreshes-the-screen prompt?)
              (lambda ()
-               (let ([buffer (find-cell "*scratch*")] [close (find-cell "[×]")])
+               (let ([buffer (find-cell "*scratch*")] [close (find-cell "|×|")])
                  (and (contains? (list->string (reverse transcript)) "\x1b;[?2026h")
                       buffer close (= (car buffer) (- rows 2)) (= (cdr close) (- cols 3))
                       (if prompt? (find-cell "M-x (resize-input")

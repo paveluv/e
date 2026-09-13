@@ -60,7 +60,7 @@
               [line (find (lambda (line) (string:search line prefix 0 (string-length line)))
                       (vector->list (vt:emulator-screen mirror)))]
               [start (and line (+ (string:search line prefix 0 (string-length line)) (string-length prefix)))]
-              [end (and start (string:search line " [↕][↔][×]" start (string-length line)))])
+              [end (and start (string:search line " |↕|↔|×|" start (string-length line)))])
          (and end (substring line start end))))
      (define (quiet-buffers-bar? index)
        (let ([text (buffers-bar index)])
@@ -495,7 +495,7 @@
              (picker-face "<picker-g" "1") (picker-face "Buffer" "4:4")) '(#t #t #t #t))
      (press! "\x15;some-long-filter-ending-日本語")
      (check 'narrow-filter-shows-its-newest-characters-and-keeps-window-controls
-       (list (visible? "日本語") (visible? "[↕][↔][×]")) '(#t #t))
+       (list (visible? "日本語") (visible? "|↕|↔|×|")) '(#t #t))
      (resize! 24 100)
      (press! "\x15;picker-\x1b;[H")
      (read-editor '(begin (split-window-right!) (other-window!) #t))
@@ -607,13 +607,13 @@
          (read-editor '(begin (select-window! (window 1)) #t))
          (press! "\x1b;[H\x1b;[B")
          (read-editor '(begin (select-window! (window 2)) (delete-window!) (select-window! (window 0)) #t))))
-     ;; Every bracketed control has one hover target, including in an
-     ;; inactive pane. The actual hit area is all three characters.
-     (let* ([labels '("[↕]" "[↔]" "[×]")]
+     ;; Only the symbols are hover/click targets, including in an inactive
+     ;; pane. The shared | separators remain neutral between controls.
+     (let* ([labels '("↕" "↔" "×")]
             [left (map find-cell labels)]
             [right (map (lambda (label cell)
                           (cons (car cell) (string:search (screen-line (car cell)) label
-                                             (+ (cdr cell) 3) 100))) labels left)]
+                                             (+ (cdr cell) 1) 100))) labels left)]
             [controls (append left right)]
             [before (echo-rows)]
             [samples
@@ -622,7 +622,7 @@
                  (picker-sequence
                    (lambda (offset)
                      (hover! (cons (car cell) (+ (cdr cell) offset)))
-                     (map hover-face controls)) '(0 1 2))) controls)])
+                     (map hover-face controls)) '(-1 0 1))) controls)])
        (hover! '(0 . 50)) ; the divider is inert
        (let ([left-behind (map hover-face controls)] [echo-untouched? (equal? before (echo-rows))])
          (hover! (car controls))
@@ -631,7 +631,9 @@
            (list samples left-behind (map hover-face controls) echo-untouched?
                  (read-editor '(head:window-index (selected-window))))
            (list (map (lambda (target)
-                        (make-list 3 (map (lambda (cell) (if (equal? cell target) '(#t #t) '(#f #f))) controls)))
+                        (list (make-list 6 '(#f #f))
+                              (map (lambda (cell) (if (equal? cell target) '(#t #t) '(#f #f))) controls)
+                              (make-list 6 '(#f #f))))
                    controls)
                  (make-list 6 '(#f #f)) (make-list 6 '(#f #f)) #t 0))))
      (read-editor '(begin (delete-other-windows!) (set-buffer-name! (buffer "<picker-alpha>") "picker-delta") #t))
@@ -682,12 +684,12 @@
      (check 'window-controls-retain-their-split-and-close-actions
        (picker-sequence
          (lambda (label)
-           (click! (if (string=? label "[×]")
+           (click! (if (string=? label "×")
                        (let ([bar (find-cell "2▏")])
                          (cons (car bar) (string:search (screen-line (car bar)) label (cdr bar) 100)))
                        (find-cell label)))
            (read-editor '(begin (select-window! (window 0)) (length (head:windows)))))
-         '("[↔]" "[↕]" "[×]")) '(2 3 2))
+         '("↔" "↕" "×")) '(2 3 2))
      (read-editor '(begin (delete-other-windows!) #t))
 
      ;; One real commit supplies actionable file rows and an inert commit

@@ -518,7 +518,8 @@
   (define (hints)
     (and (eq? (current-buffer) view)
          (let ([room (- (head:window-width (selected-window))
-                        (glyph:cells (format "~a▏~a [↕][↔][×]" (head:window-index (selected-window)) (head:buffer-name view))))])
+                        head:window-buttons-width
+                        (glyph:cells (format "~a▏~a " (head:window-index (selected-window)) (head:buffer-name view))))])
            (fold-left (lambda (text hint)
                         (if (<= (+ (glyph:cells text) 2 (glyph:cells hint)) room)
                             (string-append text "  " hint) text)) ""

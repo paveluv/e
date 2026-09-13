@@ -789,7 +789,6 @@
                         (status-hint-values b current?)))]
              [hint-text (apply string-append (map car hint-values))]
              [status (string-append head mode-text hint-text)]
-             [window-buttons (string-append " " (apply string-append (map cdr head:window-buttons)))]
              [pointed (let ([at (head:mouse-position)])
                         (and at (head:window-button-at (- (car at) 1) (- (cdr at) 1))))]
              [hovered (and pointed (eq? (cdr pointed) w) (car pointed))])
@@ -808,7 +807,7 @@
                            [fg (cond [current? "\x1b;[39m"]
                                      [else "\x1b;[38;5;245m"])]
                            [fitted (glyph:fit status
-                                     (max 0 (- (head:window-width w) (glyph:cells window-buttons))))]
+                                     (max 0 (- (head:window-width w) head:window-buttons-width 1)))]
                            ;; Geometry is in cells; the style spans below
                            ;; index characters in this already fitted text.
                            [content-end (string-length fitted)]
@@ -848,12 +847,13 @@
                               [(italic) (ansi "\x1b;[23m")]
                               [(red) (ansi fg)])
                             (loop (cdr values) end))))
-                      (ansi (substring text he content-end) " ")
+                      (ansi (substring text he content-end) " |")
                       (for-each
                         (lambda (button)
                           (when (eq? (car button) hovered) (ansi (style:code 'hover)))
                           (ansi (cdr button))
-                          (when (eq? (car button) hovered) (ansi "\x1b;[0m" bar)))
+                          (when (eq? (car button) hovered) (ansi "\x1b;[0m" bar))
+                          (ansi "|"))
                         head:window-buttons)
                       (ansi "\x1b;[0m"))))))))
 

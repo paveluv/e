@@ -460,13 +460,13 @@ Each split has independent point, scrolling, wrapping, and status. Splits form
 a tree, so either half may be split again in either direction: `C-x 2` divides
 only the current window into a stacked pair, and `C-x 3` divides only it into a
 side-by-side pair. Deleting a window with `C-x 0` promotes its complete sibling
-subtree; the `[×]` button at the right edge of every status line performs the
-same operation with the mouse. Beside it, `[↕]` performs the stacked `C-x 2`
-split and `[↔]` performs the side-by-side `C-x 3` split. `C-x 1` retains only
+subtree; the `×` button at the right edge of every status line performs the
+same operation with the mouse. Beside it, `↕` performs the stacked `C-x 2`
+split and `↔` performs the side-by-side `C-x 3` split. `C-x 1` retains only
 the current window. `C-x o` moves focus. Status lines and column dividers can
 be dragged to resize their local split.
-Hovering a window button makes it bold with a dotted underline, including
-its brackets, without changing keyboard focus.
+The buttons appear as `|↕|↔|×|`. Hovering a symbol makes it bold with a
+dotted underline without changing keyboard focus; the separators stay plain.
 
 Divider intersections expose the split hierarchy even when two layouts have
 the same four rectangles. A thin vertical stroke through the crossing means

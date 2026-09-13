@@ -68,7 +68,7 @@
           app-event-focus
           app-facts app-status follow-app! app-following? request-app-size!
           host-color-scheme add-color-scheme-hook!
-          tile! layout window-at window-buttons window-button-at divider-at
+          tile! layout window-at window-buttons window-buttons-width window-button-at divider-at
           mouse-position set-mouse-position!
           transfer-split! drag set-drag! double-click?
           ui-actor buffer-fact buffer-fact-set! buffer-facts-set! buffer-state
@@ -624,22 +624,24 @@
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
-  (define window-buttons '((below . "[↕]") (right . "[↔]") (close . "[×]")))
+  (define window-buttons '((below . "↕") (right . "↔") (close . "×")))
+  (define window-buttons-width
+    (+ 1 (apply + (map (lambda (b) (+ 1 (string-length (cdr b)))) window-buttons))))
 
   (define (window-button-at x0 r0)
-    ;; Paint and hit-test the same single-cell labels, flush right.
+    ;; Paint and hit-test the same single-cell labels, flush right,
+    ;; with an inert | before each label and after the final one.
     ;; Return (action . window), or #f outside a button.
     (window-at x0 r0
       (lambda (entry)
         (let ([w (car entry)])
           (and (= r0 (+ (cadr entry) (caddr entry)))
                (let loop ([buttons window-buttons]
-                          [column (- x0 (+ (window-xoff w) (window-width w)
-                                          (- (apply + (map (lambda (b) (string-length (cdr b))) window-buttons)))))])
-                 (and (pair? buttons) (>= column 0)
+                          [column (- x0 (+ (window-xoff w) (window-width w) (- window-buttons-width)))])
+                 (and (pair? buttons) (> column 0)
                       (let ([width (string-length (cdar buttons))])
-                        (if (< column width) (cons (caar buttons) w)
-                            (loop (cdr buttons) (- column width)))))))))))
+                        (if (<= column width) (cons (caar buttons) w)
+                            (loop (cdr buttons) (- column width 1)))))))))))
 
   (define (divider-at x0 r0)
     ;; The divider descriptor under (x0, r0), or #f.  A crossing
