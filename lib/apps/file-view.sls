@@ -22,12 +22,12 @@
   (define query "")
   (define sorts '())
   (define inventory '())
-  (define rows '())                 ; (full path . entry); ancestors have #f entries
+  (define rows '())                 ; (full path . entry)
   (define complete? #f)
   (define failures 0)
   (define first-row 3)              ; filter, directory, column headings
   (define hover #f)                 ; (window . path/column)
-  (define-record-type choice (fields (mutable origin) (mutable selected) (mutable columns)))
+  (define-record-type choice (fields (mutable origin) (mutable selected) (mutable columns) history))
   (define choices (make-weak-eq-hashtable))
   (define resumed-choices '())       ; plain window-number/path pairs from a checkpoint
 
@@ -100,16 +100,15 @@
   (define (choice-for w)
     (or (hashtable-ref choices w #f)
         (let* ([saved (assv (head:window-index w) resumed-choices)]
-               [state (make-choice #f (and saved (cdr saved)) '())])
+               [state (make-choice #f (and saved (cdr saved)) '() (make-hashtable string-hash string=?))])
           (when saved (set! resumed-choices (remq saved resumed-choices)))
           (hashtable-set! choices w state) state)))
   (define (default-row)
-    ;; A single filename match opens with Enter even if its ancestor group
-    ;; also appears above it. Ancestors are navigation, never a surprise
-    ;; default when the filter has no results.
+    ;; A single filename match opens with Enter even if its containing
+    ;; directory also appears above it.
     (or (and (not (string=? query ""))
-             (find (lambda (row) (and (cdr row) (not (directory:directory? (cdr row))))) rows))
-        (find cdr rows)))
+             (find (lambda (row) (not (directory:directory? (cdr row)))) rows))
+        (and (pair? rows) (car rows))))
   (define (keyboard-row w)
     (or (assoc (choice-selected (choice-for w)) rows) (default-row)))
   (define (candidate w)
@@ -119,11 +118,6 @@
          (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
            (choice-columns (choice-for w)))))
 
-  (define (ancestors)
-    (let loop ([path location])
-      (if (string=? path "/") '()
-          (let ([parent (directory:parent path)])
-            (cons (cons parent #f) (loop parent))))))
   (define (display-path path)
     ;; Control characters are legal in filenames, but not extra table rows
     ;; or terminal instructions. Keep the real pathname as the row identity.
@@ -133,21 +127,19 @@
                    [(eq? (char-general-category c) 'Cc) (format "\\x~x;" (char->integer c))]
                    [else (string c)])) (string->list path))))
   (define (label row)
-    (if (not (cdr row)) (string-append "↑ " (display-path (file:abbreviate (car row))))
-        (string-append
-          (display-path (string:tail (car row) (if (string=? location "/") 1 (+ 1 (string-length location)))))
-          (if (directory:entry-link? (cdr row)) "@" "")
-          (if (directory:directory? (cdr row)) "/" ""))))
+    (string-append
+      (display-path (string:tail (car row) (if (string=? location "/") 1 (+ 1 (string-length location)))))
+      (if (directory:entry-link? (cdr row)) "@" "")
+      (if (directory:directory? (cdr row)) "/" "")))
   (define (raw row column)
     (let ([entry (cdr row)])
       (if (zero? column) (car row)
-          (and entry
-               (case column
-                 [(1) (and (not (directory:directory? entry)) (directory:entry-size entry))]
-                 [(2) (directory:entry-modified entry)]
-                 [(3) (directory:entry-created entry)]
-                 [(4) (directory:entry-mode entry)]
-                 [(5) (directory:entry-count entry)])))))
+          (case column
+            [(1) (and (not (directory:directory? entry)) (directory:entry-size entry))]
+            [(2) (directory:entry-modified entry)]
+            [(3) (directory:entry-created entry)]
+            [(4) (directory:entry-mode entry)]
+            [(5) (directory:entry-count entry)]))))
   (define (permissions entry)
     (let ([mode (directory:entry-mode entry)])
       (if (not mode) "?"
@@ -165,7 +157,6 @@
   (define (cell row column)
     (let ([value (raw row column)] [entry (cdr row)])
       (cond [(zero? column) (label row)]
-            [(not entry) ""]
             [(= column 4) (permissions entry)]
             [(= column 5)
              (if (directory:directory? entry)
@@ -202,14 +193,31 @@
            [files (append
                     (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e query))) inventory)
                     (if filtered? (apply append (map directory:entry-matches dirs)) '()))])
-      (append (ancestors)
-        (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) visible-dirs))
+      (append (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) visible-dirs))
         (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) files)))))
   (define (directory-label)
-    (string-append "Directory: " (display-path (file:abbreviate location))
+    (string-append "Directory: " (display-path location) (if (string=? location "/") "" "/")
       (if (show-hidden) "  [hidden]" "")
       (if complete? "" "  Searching…")
       (if (positive? failures) (format "  ~a unreadable path~a" failures (if (= failures 1) "" "s")) "")))
+  (define (breadcrumb-hit w row column)
+    ;; Clicks and hover share character ranges in the actual fitted line.
+    ;; Left elision may hide ancestors, but its ellipsis is never a link.
+    (and (eq? (head:window-buffer w) view) (= row 1) (not (string=? location "/"))
+         (let* ([line (vector-ref (head:window-lines w) row)]
+                [clipped? (and (positive? (string-length line)) (char=? (string-ref line 0) #\…))]
+                [shift (if clipped?
+                           (- (let trim ([end (string-length line)])
+                                (if (and (positive? end) (char=? (string-ref line (- end 1)) #\space))
+                                    (trim (- end 1)) end))
+                              (string-length (directory-label))) 0)])
+           (let find ([from 0] [start (+ 11 shift)])
+             (let ([slash (string:search location "/" from (string-length location))])
+               (and slash
+                    (let ([end (+ start (string-length (display-path (substring location from (+ slash 1)))))])
+                      (if (<= (max (if clipped? 1 0) start) column (- end 1))
+                          (list (max (if clipped? 1 0) start) end (if (zero? slash) "/" (substring location 0 slash)))
+                          (find (+ slash 1) end)))))))))
 
   (define (render!)
     (when (and view location (head:app-buffer? view))
@@ -221,7 +229,7 @@
                    (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))])
             (set! rows (listing))
             (when (and hover (string? (cdr hover)) (not (assoc (cdr hover) rows))) (set! hover #f))
-            (let* ([empty (if (exists cdr rows) '()
+            (let* ([empty (if (pair? rows) '()
                               (list (cond [(not complete?) "Searching…"]
                                           [(positive? failures) "Cannot read directory; Left goes to its parent"]
                                           [(string=? query "") "Empty directory"] [else "No matching files"])))]
@@ -264,33 +272,51 @@
       (when (pair? rows)
         (select! (at-row (min (+ first-row (length rows) -1) (max first-row (+ index delta))))))))
   (define (navigate! path keep-filter? selected)
-    (set! location (file:canonical (file:expand path)))
+    (let ([path (file:canonical (file:expand path))])
+      (vector-for-each
+        (lambda (choice)
+          (when location (hashtable-set! (choice-history choice) location (choice-selected choice)))
+          (choice-selected-set! choice (or selected (hashtable-ref (choice-history choice) path #f))))
+        (hashtable-values choices))
+      (set! location path))
     (unless keep-filter? (set! query ""))
+    (when (and selected (string:prefix? "." (file:base-name selected))) (show-hidden #t))
     (set! inventory '())
     (set! hover #f)
-    (vector-for-each (lambda (choice) (choice-selected-set! choice selected)) (hashtable-values choices))
     (start-scan!))
+  (define (up-to! path)
+    ;; Remember every branch, including those skipped by a breadcrumb jump,
+    ;; so entering it again retraces the route in each window.
+    (let branch ([child location])
+      (let ([parent (directory:parent child)])
+        (vector-for-each (lambda (choice) (hashtable-set! (choice-history choice) parent child))
+          (hashtable-values choices))
+        (if (string=? parent path) (navigate! path #f child) (branch parent)))))
   (define (parent!)
     (unless (string=? location "/")
-      (navigate! (directory:parent location) #f location)))
+      (up-to! (directory:parent location))))
   (define (activate! directories-only?)
-    (let* ([row (candidate (selected-window))] [entry (and row (cdr row))])
-      (when row
+    (let* ([choice (choice-for (selected-window))]
+           [row (candidate (selected-window))] [entry (and row (cdr row))]
+           ;; A remembered directory can be reentered before its fresh
+           ;; inventory arrives. Rapid Right presses then retrace Left
+           ;; presses without dropping input or reading disk on this thread.
+           [returning (and (not complete?) (not row) (choice-selected choice)
+                           (hashtable-contains? (choice-history choice) (choice-selected choice)))]
+           [path (if row (car row) (and returning (choice-selected choice)))])
+      (when path
         (set! hover #f)
-        (cond [(or (not entry) (directory:directory? entry))
-               (navigate! (car row)
+        (cond [(or returning (directory:directory? entry))
+               (navigate! path
                  (and entry (directory:entry-count entry) (positive? (directory:entry-count entry))
                       (not (string=? query "")))
-                 (and (not entry)
-                      (let branch ([path location])
-                        (if (string=? (directory:parent path) (car row)) path
-                            (branch (directory:parent path))))))]
+                 #f)]
               [(not directories-only?)
                (if (not (eq? (directory:entry-kind entry) 'file))
                    (set-message! "Not a readable regular file; refresh to check for changes")
                    (let ([target (head:app-event-focus)])
                      (when (and target (memq target (head:windows))) (head:set-current! target))
-                     (head:call-with-interrupt (lambda () (visit-file! (car row))))))]))))
+                     (head:call-with-interrupt (lambda () (visit-file! path)))))]))))
   (define (filter! text)
     ;; A container visible only because descendants match must not keep
     ;; stealing Enter from the filename being typed. Preserve an existing
@@ -298,7 +324,7 @@
     (vector-for-each
       (lambda (choice)
         (let ([row (assoc (choice-selected choice) rows)])
-          (unless (and row (cdr row) (directory:matches? (cdr row) text))
+          (unless (and row (directory:matches? (cdr row) text))
             (choice-selected-set! choice #f)))) (hashtable-values choices))
     (set! query text)
     (set! hover #f)
@@ -356,8 +382,10 @@
           [(member event '("MOUSE-RELEASE" "MOUSE-DRAG")) (select! (keyboard-row (selected-window))) #t]
           [(string=? event "MOUSE-CLICK")
            (let* ([at (app-event-buffer-position)] [row (and at (at-row (car at)))]
+                  [breadcrumb (and at (breadcrumb-hit (selected-window) (car at) (cdr at)))]
                   [column (column-at (selected-window) at)])
              (cond [row (set! hover #f) (select! row) (activate! #f) 'keep-focus]
+                   [breadcrumb (up-to! (caddr breadcrumb)) 'keep-focus]
                    [column (cycle! (car column)) (set! hover (cons (selected-window) (car column))) 'keep-focus]
                    [else 'ignore-click]))]
           [else #f]))
@@ -365,9 +393,10 @@
   (define (styles b row line)
     (let* ([entry (at-row row)]
            [face (cond [(= row 2) 'header] [(< row 2) 'plain]
-                       [(not entry) 'chrome] [(not (cdr entry)) 'chrome] [else 'plain])]
+                       [(not entry) 'chrome] [else 'plain])]
            [out (make-vector (string-length line) face)])
-      (when (< row 2) (style:fill-range! out 0 (min (vector-length out) (if (zero? row) 8 11)) 'chrome)) out))
+      (when (or (zero? row) (and (= row 1) (string:prefix? "Directory: " line)))
+        (style:fill-range! out 0 (min (vector-length out) (if (zero? row) 8 11)) 'chrome)) out))
   (define (hints)
     (and (eq? (current-buffer) view)
          (let ([room (- (head:window-width (selected-window))
@@ -398,7 +427,7 @@
            [selected (head:buffer-file was)])
       (ensure!)
       (unless (eq? was view)
-        (hashtable-set! choices (selected-window) (make-choice was selected '())))
+        (hashtable-set! choices (selected-window) (make-choice was selected '() (make-hashtable string-hash string=?))))
       (show-buffer! view)
       (if (and (eq? was view) (null? path)) (refresh!)
           (navigate! dir #f selected))) (void))
@@ -419,18 +448,19 @@
     (head:add-shutdown-hook! (lambda () (with-mutex scan-lock (set! request #f))))
     (paint:add-highlighter!
       (lambda ()
-        (apply append
-          (map (lambda (w)
-                 (let* ([over (and (head:mouse-position) (over w))]
-                        [column (assv over (choice-columns (choice-for w)))]
-                        [chosen (candidate w)] [row (and chosen (row-index (car chosen)))])
-                   (append
-                     (if column (list (list w 2 (cadr column)
-                                        (min (caddr column) (+ (cadr column) (string-length (heading (car column))))) 'hover)) '())
-                     (if (and row (or (eq? w (selected-window)) (string? over)))
+        (append (paint:hover-ranges breadcrumb-hit)
+          (apply append
+            (map (lambda (w)
+                   (let* ([over (and (head:mouse-position) (over w))]
+                          [column (assv over (choice-columns (choice-for w)))]
+                          [chosen (candidate w)] [row (and chosen (row-index (car chosen)))])
+                     (append
+                       (if column (list (list w 2 (cadr column)
+                                          (min (caddr column) (+ (cadr column) (string-length (heading (car column))))) 'hover)) '())
+                       (if (and row (or (eq? w (selected-window)) (string? over)))
                          (list (list w row 0 (string-length (vector-ref (head:window-lines w) row))
                                  (if (string? over) 'hover 'candidate))) '()))))
-            (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows))))))
+              (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))))))
     (when (head:find-tool-buffer "*files*") (ensure!) (start-scan!))
     (head:register-resume! 'file-view
       (lambda (b positions)
@@ -457,7 +487,7 @@
     (doc:register!
       '(((file-view:open!) (("procedure" . "(file-view:open! [directory])")) "void"
          ("(file-view)") file-view "Files" #f
-         "Open `<files>` in this window. Type to filter filenames recursively; Enter opens the selected file or directory. Left navigates up, C-l reads a path, C-u clears, M-. toggles hidden entries and C-r refreshes. Click column headings or use F1–F6 for ordered ascending/descending/off sorting. Small subdirectory match groups expand; larger groups show counts and can be entered to narrow the search.")
+         "Open `<files>` in this window. Type to filter filenames recursively; Enter opens the selected file or directory. Click an ancestor component in the full directory path to navigate there. Left selects the directory just left in its parent; Right enters a directory and recalls its selection. C-l reads a path, C-u clears, M-. toggles hidden entries and C-r refreshes. Click column headings or use F1–F6 for ordered ascending/descending/off sorting. Small subdirectory match groups expand; larger groups show counts and can be entered to narrow the search.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
          ("(file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")

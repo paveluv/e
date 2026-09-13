@@ -6,16 +6,27 @@ directory. `M-x (file-view:open! "/some/directory")` starts elsewhere.
 `C-x C-f` still opens the existing path-entry prompt. To use the app for
 that shortcut, put `(keymap:bind! "C-x C-f" file-view:open!)` in `config.e`.
 
-The first line is the filename filter; the second shows the directory and
-scan status. Ancestor shortcuts appear first (nearest first), followed by
-child directories, then files. Enter or click a directory to enter it. Every
-ancestor has a row, so a click can jump several levels. Left goes up one
-level and selects the directory just left. Backspace also goes up when the
+The first line is the filename filter. The Directory line shows the full
+absolute path with a trailing slash, such as `/home/paveluv/git/e/`, plus
+scan status. Each ancestor component and its following slash is clickable:
+`git/` goes to `/home/paveluv/git/`, and the first `/` goes to the root.
+Hover highlights just that component with bold text and a muted dotted
+underline. The final component, `e/` here, is the current directory and
+stays plain. Narrow panes elide the start of the line; the ellipsis is not
+clickable, and visible components still lead to their full paths.
+
+The list contains child directories first, then files. Enter or click a
+directory to enter it; Right does the same for a selected directory. Left
+goes up one level and selects the directory just left, enabling hidden
+entries if needed to show it. Each window remembers its selection in visited
+directories, so Left–Left–Left followed by
+Right–Right–Right retraces the route. A breadcrumb jump also selects the
+branch leading back to the previous location. Backspace goes up when the
 filter is empty.
 
 Type to filter by filename, ignoring case. Up/Down, Tab/Shift-Tab, Home/End
 and PageUp/PageDown choose a row; Enter opens it. A unique nested file match
-is selected directly. An empty result never opens an ancestor automatically.
+is selected directly. Enter on an empty result stays in the current directory.
 Esc or C-g returns to the document from which this window opened the app.
 
 | Key | Action |
@@ -77,7 +88,7 @@ Click a heading or press its F-key to cycle ascending → descending → off.
 Several columns may be active. Click order determines priority; changing
 direction retains it, and disabling then reenabling a key moves it to the end.
 For example, `Size¹↓` and `Name²↑` mean largest first, then name. Directory/file
-groups stay in place and ancestors always remain nearest first.
+groups stay in place.
 
 Sorting uses numeric sizes, permissions, counts and full timestamps including
 nanoseconds. It never compares formatted size or time labels. Unknown values
@@ -94,10 +105,10 @@ windows in one head. Each window fits its own columns and retains its own
 keyboard choice and viewport. Narrow panes hide lower-priority metadata;
 names stay visible and long labels are shortened without wrapping.
 
-Only the focused pane shows its keyboard choice in bold. Hovered rows and
-headings use the common bold, muted dotted underline. Hovering does not move
-the keyboard choice or scroll the list. The cursor and text selection are
-disabled. Status hints appear only while the app is focused.
+Only the focused pane shows its keyboard choice in bold. Hovered rows,
+headings and breadcrumbs use the common bold, muted dotted underline.
+Hovering does not move the keyboard choice or scroll the list. The cursor
+and text selection are disabled. Status hints appear only while the app is focused.
 
 A file clicked in a side panel opens in the focused window. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel

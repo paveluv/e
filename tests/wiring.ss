@@ -738,8 +738,9 @@
      (define files-names '("apple.txt" "zeta.txt" "a 日本語 long (name).txt" "odd\nname.txt" ".dot"
                            "small/needle-one.txt" "small/nested/needle-only.txt"
                            "large/needle-a.txt" "large/needle-b.txt" "large/needle-c.txt"))
+     (define files-directories '("empty" "large" "small" "small/nested" "small/.日本語\n" "small/.日本語\n/leaf"))
      (mkdir files-root)
-     (for-each (lambda (name) (mkdir (files-path name))) '("empty" "large" "small" "small/nested"))
+     (for-each (lambda (name) (mkdir (files-path name))) files-directories)
      (for-each (lambda (name)
                  (call-with-output-file (files-path name)
                    (lambda (p) (display (if (string=? name "zeta.txt") "z\n" "one\ntwo\n") p)))) files-names)
@@ -760,15 +761,17 @@
      (files-open!)
      (press! "\x18;f")
      (files-settle!)
-     (check 'files-ancestors-precede-subdirectories-and-files-with-safe-labels
+     (check 'files-list-has-only-subdirectories-and-files-with-a-full-directory-path
        (let ([labels (files-labels)])
-         (list (list-head labels 6)
+         (list (list-head labels 4)
+               (read-editor '(buffer-line (current-buffer) 1))
                (and (member "odd\\xA;name.txt" labels) #t) (and (member ".dot" labels) #t)
                (map hover-face '("empty/" "large/" "small/"))
                (read-editor '(list (head:buffer-store-id (current-buffer))
                                    (head:app-cursor-visible-in? (selected-window)) (head:buffer-selectable? (current-buffer))))))
-       '(("↑ /tmp" "↑ /" "empty/" "large/" "small/" "a 日本語 long (name).txt")
-         #t #f ((#t #f) (#f #f) (#f #f)) (#f #f #f)))
+       (list '("empty/" "large/" "small/" "a 日本語 long (name).txt")
+         (string-append "Directory: " files-root "/")
+         #t #f '((#t #f) (#f #f) (#f #f)) '(#f #f #f)))
      (press! "\x1b;[B\x1b;[BONly") ; begin on small/, whose descendant will match
      (files-settle!)
      (check 'files-single-recursive-match-is-the-default
@@ -801,14 +804,78 @@
          (list inside (read-editor '(list (head:buffer-fact (current-buffer) 'directory #f)
                                           (string:prefix? "large/" (buffer-line (current-buffer) (car (point)))))))
          (list (list (files-path "large") "Filter: needle") (list files-root #t))))
-     (click! (find-cell "↑ /tmp"))
+     (hover! (find-cell "tmp/"))
+     (let* ([start (find-cell "tmp/")] [slash (cons (car start) (+ (cdr start) 3))]
+            [samples (list (hover-face start) (hover-face slash)
+                           (hover-face (cons (car start) (- (cdr start) 1)))
+                           (hover-face (cons (car start) (+ (cdr start) 4))))])
+       (click! slash)
+       (files-settle!)
+       (check 'files-breadcrumb-hover-and-click-include-the-components-slash
+         (list samples (read-editor '(head:buffer-fact (current-buffer) 'directory #f)))
+         '(((#t #t) (#t #t) (#f #f) (#f #f)) "/tmp")))
+     (read-editor `(begin (file-view:open! ,(files-path "small/nested")) #t))
      (files-settle!)
-     (check 'files-ancestor-shortcut-jumps-directly
-       (read-editor '(head:buffer-fact (current-buffer) 'directory #f)) "/tmp")
+     (check 'files-left-right-retraces-three-levels-with-the-return-child-selected
+       (picker-sequence
+         (lambda (step)
+           (press! (car step)) (files-settle!)
+           (read-editor `(list (head:buffer-fact (current-buffer) 'directory #f)
+                               (string:prefix? ,(cadr step) (buffer-line (current-buffer) (car (point)))))))
+         `(("\x1b;[D" "nested/") ("\x1b;[D" "small/") ("\x1b;[D" ,(string-append (string:tail files-root 5) "/"))
+           ("\x1b;[C" "small/") ("\x1b;[C" "nested/") ("\x1b;[C" "needle-only.txt")
+           ("\x1b;[D\x1b;[D\x1b;[D" ,(string-append (string:tail files-root 5) "/"))
+           ("\x1b;[C\x1b;[C\x1b;[C" "needle-only.txt")))
+       (map (lambda (path) (list path #t))
+         (list (files-path "small") files-root "/tmp" files-root (files-path "small") (files-path "small/nested")
+           "/tmp" (files-path "small/nested"))))
+     (hover! (find-cell "nested/"))
+     (let ([last-face (hover-face "nested/")])
+       (click! (find-cell "nested/"))
+       (let ([unchanged (read-editor '(head:buffer-fact (current-buffer) 'directory #f))])
+         (hover! (find-cell "/"))
+         (let ([root-face (hover-face "/")])
+           (click! (find-cell "/")) (files-settle!)
+           (hover! (find-cell "/"))
+           (let ([current-root-face (hover-face "/")])
+             (click! (find-cell "/")) (press! "\x1b;[D")
+             (check 'files-current-component-is-plain-and-root-navigation-stops-at-root
+               (list last-face unchanged root-face current-root-face
+                     (read-editor '(list (head:buffer-fact (current-buffer) 'directory #f)
+                                         (string:prefix? "Directory: /" (buffer-line (current-buffer) 1)))))
+               (list '(#f #f) (files-path "small/nested") '(#t #t) '(#f #f) '("/" #t)))))))
+     (read-editor `(begin (file-view:open! ,(files-path "small/.日本語\n/leaf")) #t))
+     (files-settle!)
+     (resize! 24 40)
+     (hover! (find-cell "…"))
+     (let ([ellipsis-face (hover-face "…")])
+       (click! (find-cell "…"))
+       (let* ([start (find-cell ".日本語")]
+              [slash (cons (car start) (+ (cdr start) 11))]) ; dot, three wide glyphs, escaped newline, slash
+         (hover! slash)
+         (let ([faces (list (hover-face start) (hover-face slash)
+                            (hover-face (cons (car start) (- (cdr start) 1)))
+                            (hover-face (cons (car start) (+ (cdr start) 12))))])
+           (click! slash) (files-settle!)
+           (check 'files-elided-breadcrumbs-use-visible-glyph-ranges-and-exact-paths
+             (list ellipsis-face faces
+                   (read-editor '(list (head:buffer-fact (current-buffer) 'directory #f)
+                                       (string:prefix? "leaf/" (buffer-line (current-buffer) (car (point)))))))
+             (list '(#f #f) '((#t #t) (#t #t) (#f #f) (#f #f)) (list (files-path "small/.日本語\n") #t))))))
+     (resize! 24 100)
+     (check 'files-return-navigation-reveals-a-hidden-child-and-recalls-its-selection
+       (picker-sequence
+         (lambda (step)
+           (press! (car step)) (files-settle!)
+           (read-editor `(list (head:buffer-fact (current-buffer) 'directory #f) (file-view:show-hidden)
+                               (string:prefix? ,(cadr step) (buffer-line (current-buffer) (car (point)))))))
+         '(("\x1b;[D" ".日本語\\xA;/") ("\x1b;[C" "leaf/")))
+       (list (list (files-path "small") #t #t) (list (files-path "small/.日本語\n") #t #t)))
+     (press! "\x1b;.") (files-settle!)
      (files-open!)
      (files-filter! "no-such-match")
      (press! "\r")
-     (check 'files-empty-filter-result-does-not-activate-an-ancestor
+     (check 'files-empty-filter-result-does-not-navigate
        (list (visible? "No matching files") (read-editor '(head:buffer-fact (current-buffer) 'directory #f))) (list #t files-root))
      (files-filter! "apple")
      (press! "\x1b;OQ\x1b;OP")
@@ -845,11 +912,16 @@
                                 (string-length (vector-ref (head:window-lines (window 0)) 2)))
                              (eq? (head:window-buffer (window 0)) (head:window-buffer (window 1))))) '(#t #t #t)))
      (click! (find-cell "apple.txt"))
-     (check 'files-side-panel-click-opens-in-focused-document-window
-       (read-editor '(list (head:window-index (selected-window)) (head:buffer-file (current-buffer))
-                           (head:buffer-name (head:window-buffer (window 0)))))
-       (list 2 (files-path "apple.txt") "<files>"))
-     (read-editor '(begin (select-window! (window 0)) (delete-other-windows!) #t))
+     (let ([opened (read-editor '(list (head:window-index (selected-window)) (head:buffer-file (current-buffer))
+                                       (head:buffer-name (head:window-buffer (window 0)))))])
+       (click! (find-cell "tmp/")) (files-settle!)
+       (check 'files-side-panel-file-and-breadcrumb-clicks-keep-document-focus
+         (list opened
+               (read-editor '(list (head:window-index (selected-window)) (head:buffer-file (current-buffer))
+                                   (head:buffer-fact (head:find-tool-buffer "*files*") 'directory #f))))
+         (list (list 2 (files-path "apple.txt") "<files>") (list 2 (files-path "apple.txt") "/tmp"))))
+     (read-editor `(begin (select-window! (window 0)) (delete-other-windows!) (file-view:open! ,files-root) #t))
+     (files-settle!)
      (files-filter! "日本語")
      (resize! 5 28)
      (check 'files-tiny-pane-explains-why-rows-are-hidden (visible? "Enlarge pane") #t)
@@ -896,7 +968,7 @@
                             (filter (lambda (b) (let ([path (head:buffer-file b)])
                                                   (and path (string:prefix? ,files-root path)))) (buffer-list))) #t))
      (for-each (lambda (name) (delete-file (files-path name))) files-names)
-     (for-each (lambda (name) (delete-directory (files-path name))) '("small/nested" "small" "large" "empty"))
+     (for-each (lambda (name) (delete-directory (files-path name))) (reverse files-directories))
      (delete-directory files-root)
 
      (define before-prompt (read-editor '(head:buffer-name (current-buffer))))
