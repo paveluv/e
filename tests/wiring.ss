@@ -735,7 +735,7 @@
      (define files-root (format "/tmp/e-files-view-~a-~a" (time-second (current-time)) (random 1000000)))
      (define (files-path name) (string-append files-root "/" name))
      (define files-origin (read-editor '(head:buffer-name (current-buffer))))
-     (define files-names '("apple.txt" "zeta.txt" "a 日本語 long (name).txt" "odd\nname.txt" ".dot"
+     (define files-names '("apple.txt" "APPLE.txt" "zeta.txt" "a 日本語 long (name).txt" "odd\nname.txt" ".dot"
                            "small/needle-one.txt" "small/nested/needle-only.txt"
                            "large/needle-a.txt" "large/needle-b.txt" "large/needle-c.txt"))
      (define files-directories '("empty" "large" "small" "small/nested" "small/.日本語\n" "small/.日本語\n/leaf"))
@@ -758,6 +758,9 @@
          '(map (lambda (line) (substring line 0 (or (string:search line "  " 0 (string-length line)) (string-length line))))
             (list-tail (vector->list (head:buffer-lines (head:find-tool-buffer "*files*"))) 3))))
      (define (files-filter! needle) (press! (string-append "\x15;" needle)) (files-settle!))
+     (define (files-location)
+       (read-editor '(list (head:buffer-fact (current-buffer) 'directory #f)
+                           (head:buffer-fact (current-buffer) 'file-filter #f))))
      (files-open!)
      (press! "\x18;f")
      (files-settle!)
@@ -804,6 +807,55 @@
          (list inside (read-editor '(list (head:buffer-fact (current-buffer) 'directory #f)
                                           (string:prefix? "large/" (buffer-line (current-buffer) (car (point)))))))
          (list (list (files-path "large") "Filter: needle") (list files-root #t))))
+     (check 'files-tab-completes-relative-components-and-selects-the-exact-case-path
+       (picker-sequence
+         (lambda (step)
+           (files-filter! (car step)) (press! "\t") (files-settle!)
+           (read-editor `(list (buffer-line (current-buffer) 0)
+                               (string:prefix? ,(cadr step) (buffer-line (current-buffer) (car (point)))))))
+         (list '("apple" "apple.txt") '("APP" "APPLE.txt") '("./sm" "small/")
+           (list (files-path "sm") "small/") '("sm" "small/")))
+       '(("Filter: apple.txt" #t) ("Filter: APPLE.txt" #t)
+         ("Filter: small/" #t) ("Filter: small/" #t) ("Filter: small/" #t)))
+     (press! "\x1b;[C") (files-settle!)
+     (let ([inside (files-location)])
+       (files-filter! "ne") (press! "\t") (files-settle!)
+       (check 'files-entering-a-completed-directory-consumes-the-prefix-and-ambiguous-tab-stays-put
+         (list inside (files-location))
+         (list (list (files-path "small") "") (list (files-path "small") "ne"))))
+     (files-open!)
+     (files-filter! "SMALL/NESTED/NE")
+     (let ([match (read-editor '(string:prefix? "small/nested/needle-only.txt" (buffer-line (current-buffer) (car (point)))))])
+       (check 'files-path-filter-rebases-as-its-containing-directories-are-entered
+         (cons match
+           (picker-sequence
+             (lambda (name) (click! (find-cell name)) (files-settle!) (files-location)) '("small/" "nested/")))
+         (list #t (list (files-path "small") "NESTED/NE") (list (files-path "small/nested") "NE"))))
+     (files-open!)
+     (files-filter! "small/.") (press! "\t") (files-settle!)
+     (let ([completed (files-location)] [escaped (visible? "Filter: small/.日本語\\xA;/")])
+       (press! "\r") (files-settle!)
+       (check 'files-tab-can-complete-a-hidden-control-character-path-with-a-safe-label
+         (list completed escaped (files-location))
+         (list (list files-root "small/.日本語\n/") #t (list (files-path "small/.日本語\n") ""))))
+     (files-open!)
+     (files-filter! "../") (press! "\t")
+     (check 'files-completion-outside-the-root-offers-explicit-path-entry
+       (list (visible? "Use C-l") (files-location)) (list #t (list files-root "../")))
+     (unless (zero? ((foreign-procedure "symlink" (string string) int) (files-path "small/nested") (files-path "linked")))
+       (error 'files "cannot create directory-link fixture"))
+     (files-open!) (files-filter! "linked/needle") (press! "\t") (files-settle!)
+     (let ([route (files-labels)])
+       (press! "\x1b;[C") (files-settle!)
+       (let ([inside (files-location)])
+         (press! "\r")
+         (check 'files-completed-link-path-remains-navigable-without-recursively-following-links
+           (list route inside (read-editor '(head:buffer-file (current-buffer))))
+           (list '("linked@/") (list (files-path "linked") "needle-only.txt")
+             (files-path "small/nested/needle-only.txt")))))
+     (delete-file (files-path "linked"))
+     (files-open!)
+     (files-filter! "")
      (hover! (find-cell "tmp/"))
      (let* ([start (find-cell "tmp/")] [slash (cons (car start) (+ (cdr start) 3))]
             [samples (list (hover-face start) (hover-face slash)
@@ -914,12 +966,17 @@
      (click! (find-cell "apple.txt"))
      (let ([opened (read-editor '(list (head:window-index (selected-window)) (head:buffer-file (current-buffer))
                                        (head:buffer-name (head:window-buffer (window 0)))))])
-       (click! (find-cell "tmp/")) (files-settle!)
+       ;; Keep this three-pane fixture inside its own tree. The real /tmp
+       ;; can contain thousands of entries unrelated to focus routing.
+       (read-editor `(begin (select-window! (window 0)) (file-view:open! ,(files-path "small/nested"))
+                            (select-window! (window 2)) #t))
+       (files-settle!)
+       (click! (find-cell "small/")) (files-settle!)
        (check 'files-side-panel-file-and-breadcrumb-clicks-keep-document-focus
          (list opened
                (read-editor '(list (head:window-index (selected-window)) (head:buffer-file (current-buffer))
                                    (head:buffer-fact (head:find-tool-buffer "*files*") 'directory #f))))
-         (list (list 2 (files-path "apple.txt") "<files>") (list 2 (files-path "apple.txt") "/tmp"))))
+         (list (list 2 (files-path "apple.txt") "<files>") (list 2 (files-path "apple.txt") (files-path "small")))))
      (read-editor `(begin (select-window! (window 0)) (delete-other-windows!) (file-view:open! ,files-root) #t))
      (files-settle!)
      (files-filter! "日本語")
@@ -937,12 +994,37 @@
      (check 'files-path-entry-can-navigate-an-empty-directory
        (list (visible? "Empty directory") (read-editor '(head:buffer-fact (current-buffer) 'directory #f)))
        (list #t (files-path "empty")))
+     (files-open!)
+     (files-filter! "apple")
+     (let ([matched (visible? "apple.txt")])
+       (press! "\x0c;")
+       (let ([seeded (visible? (string-append "Open/create: " (files-path "apple")))])
+         (press! "\r")
+         (check 'files-explicit-creation-uses-the-filter-even-when-it-matches-existing-files
+           (list matched seeded (read-editor '(head:buffer-file (current-buffer)))
+                 (file-exists? (files-path "apple")))
+           (list #t #t (files-path "apple") #f))))
+     (files-open!)
+     (files-filter! "new/sub/file.txt") (press! "\x0c;\r")
+     (check 'files-path-entry-creates-missing-parents-but-leaves-the-file-unsaved
+       (list (read-editor '(head:buffer-file (current-buffer)))
+             (file-directory? (files-path "new/sub")) (file-exists? (files-path "new/sub/file.txt")))
+       (list (files-path "new/sub/file.txt") #t #f))
+     (files-open!)
+     (files-filter! "new/dirs/leaf/") (press! "\x0c;\r") (files-settle!)
+     (check 'files-explicit-trailing-slash-creates-and-enters-directories
+       (list (files-location) (visible? "Empty directory") (file-directory? (files-path "new/dirs/leaf")))
+       (list (list (files-path "new/dirs/leaf") "") #t #t))
      (press! "\x0c;")
-     (prompt-input! (files-path "new-file.txt"))
-     (press! "\r")
-     (check 'files-path-entry-creates-a-buffer-without-writing-disk
-       (list (read-editor '(head:buffer-file (current-buffer))) (file-exists? (files-path "new-file.txt")))
-       (list (files-path "new-file.txt") #f))
+     (let ([errors (picker-sequence
+                     (lambda (suffix)
+                       (prompt-input! (files-path (string-append "apple.txt" suffix))) (press! "\r")
+                       (and (visible? "not a directory") (visible? "Open/create:"))) '("/child" "/"))])
+       (prompt-input! (files-path "cancelled/child/")) (press! "\x07;")
+       (check 'files-creation-errors-stay-editable-and-cancelling-has-no-filesystem-effect
+         (list errors (file-exists? (files-path "cancelled"))
+               (call-with-input-file (files-path "apple.txt") get-string-all) (files-location))
+         (list '(#t #t) #f "one\ntwo\n" (list (files-path "new/dirs/leaf") ""))))
      (files-open!)
      (read-editor `(begin (head:dispatch-app-event! "n")
                           (kill-buffer! (current-buffer)) (file-view:open! ,(files-path "empty")) #t))
@@ -968,6 +1050,7 @@
                             (filter (lambda (b) (let ([path (head:buffer-file b)])
                                                   (and path (string:prefix? ,files-root path)))) (buffer-list))) #t))
      (for-each (lambda (name) (delete-file (files-path name))) files-names)
+     (for-each (lambda (name) (delete-directory (files-path name))) '("new/dirs/leaf" "new/dirs" "new/sub" "new"))
      (for-each (lambda (name) (delete-directory (files-path name))) (reverse files-directories))
      (delete-directory files-root)
 
@@ -1062,7 +1145,8 @@
              (press! "!")
              (check 'failed-open-retains-editable-input-and-cursor
                (list explained (visible? (string:insert path 1 "!")) (visible? "<find-file>")) '(#t #t #t)))))
-       '(("locked.txt" . "Permission denied") ("missing/new.txt" . "Parent directory does not exist")))
+       '(("locked.txt" . "Permission denied") ("missing/new.txt" . "Parent directory does not exist")
+         ("missing-dir/" . "Not an existing directory")))
      (prompt-input! "fresh.txt")
      (press! "\r")
      (check 'correcting-a-path-creates-a-buffer-in-the-starting-directory-without-writing

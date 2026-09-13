@@ -144,8 +144,8 @@ immediately.
 
 - [Buffers and windows](manual/BUFFERS.md): files, splits, scrolling, line
   numbers, scrollbars, mouse behavior, `<buffers>`, and the buffer API.
-- [Files app](manual/FILES.md): directory navigation, recursive filename
-  filtering, match counts and sortable filesystem metadata.
+- [Files app](manual/FILES.md): directory navigation, recursive path filtering,
+  completion, explicit creation, match counts and sortable filesystem metadata.
 - [Base, heads and agents](manual/MULTIHEAD.md): the daemon, attaching and
   reattaching named screens, what is shared and what is local, questions
   between actors, agent sessions and permissions.

@@ -43,11 +43,15 @@
          (scan-registration job)
          (eq? (scan-registration job) (head:app-of (scan-buffer job)))))
 
+  (define (include-hidden?)
+    (or (show-hidden) (string:prefix? "." query)
+        (and (string:search query "/." 0 (string-length query)) #t)))
+
   (define (start-scan!)
     (set! complete? #f)
     (set! failures 0)
     (let* ([job (make-scan view (head:app-of view) location query
-                  (or (show-hidden) (string:prefix? "." query)) (expansion-limit) #f #f)]
+                  (include-hidden?) (expansion-limit) #f #f)]
            [start? (with-mutex scan-lock
                      (set! request job)
                      (and (not running?) (begin (set! running? #t) #t)))])
@@ -103,10 +107,18 @@
                [state (make-choice #f (and saved (cdr saved)) '() (make-hashtable string-hash string=?))])
           (when saved (set! resumed-choices (remq saved resumed-choices)))
           (hashtable-set! choices w state) state)))
+  (define (exact-row text)
+    (define (find-path same?)
+      (find (lambda (row)
+              (let ([path (directory:relative-path (cdr row) location)])
+                (or (same? path text)
+                    (and (directory:directory? (cdr row)) (same? (string-append path "/") text))))) rows))
+    (or (find-path string=?) (find-path string-ci=?)))
   (define (default-row)
-    ;; A single filename match opens with Enter even if its containing
-    ;; directory also appears above it.
-    (or (and (not (string=? query ""))
+    ;; Exact paths take precedence, including a Tab-completed directory.
+    ;; Otherwise select a filename ahead of its containing match group.
+    (or (exact-row query)
+        (and (not (string=? query ""))
              (find (lambda (row) (not (directory:directory? (cdr row)))) rows))
         (and (pair? rows) (car rows))))
   (define (keyboard-row w)
@@ -128,7 +140,7 @@
                    [else (string c)])) (string->list path))))
   (define (label row)
     (string-append
-      (display-path (string:tail (car row) (if (string=? location "/") 1 (+ 1 (string-length location)))))
+      (display-path (directory:relative-path (cdr row) location))
       (if (directory:entry-link? (cdr row)) "@" "")
       (if (directory:directory? (cdr row)) "/" "")))
   (define (raw row column)
@@ -186,12 +198,17 @@
            [dirs (filter directory:directory? inventory)]
            [visible-dirs
             (filter (lambda (e)
-                      (or (not filtered?) (directory:matches? e query)
+                      (or (not filtered?) (directory:matches? e location query)
+                          ;; Keep the route to an explicitly typed descendant,
+                          ;; even when this directory is a non-traversed link.
+                          (let ([prefix (string-append (directory:relative-path e location) "/")])
+                            (and (<= (string-length prefix) (string-length query))
+                                 (string-ci=? prefix (substring query 0 (string-length prefix)))))
                           (and (directory:entry-count e) (positive? (directory:entry-count e)))
                           (and (not (directory:entry-link? e))
                                (not (directory:entry-complete? e))))) dirs)]
            [files (append
-                    (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e query))) inventory)
+                    (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e location query))) inventory)
                     (if filtered? (apply append (map directory:entry-matches dirs)) '()))])
       (append (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) visible-dirs))
         (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) files)))))
@@ -242,7 +259,7 @@
                                (cons w
                                  (cons* (if (< (head:window-size w) (+ first-row 1)) (glyph:fit "Enlarge pane" width)
                                             (string-append (glyph:fit "Filter: " (min 8 width))
-                                              (glyph:fit query (max 0 (- width 8)) 'left)))
+                                              (glyph:fit (display-path query) (max 0 (- width 8)) 'left)))
                                    (glyph:fit (directory-label) width 'left) (format-row #f)
                                    (append (map format-row rows) (map (lambda (s) (glyph:fit s width)) empty))))))) saved)]
                    [placements
@@ -254,7 +271,7 @@
                                (list (cons w (cons (or row first-row) 0))
                                      (cons (cons 'top w) (cons (or (row-index (caddr saved)) first-row) 0))))) saved))])
               (head:view-replace! view
-                (cons* (string-append "Filter: " query) (directory-label)
+                (cons* (string-append "Filter: " (display-path query)) (directory-label)
                   (string:join (map heading (iota 6)) "  ")
                   (append (map (lambda (row) (string:join (map (lambda (i) (cell row i)) (iota 6)) "  ")) rows) empty))
                 (list (cons 'directory location) (cons 'file-filter query) (cons 'file-sorts sorts)
@@ -272,14 +289,15 @@
       (when (pair? rows)
         (select! (at-row (min (+ first-row (length rows) -1) (max first-row (+ index delta))))))))
   (define (navigate! path keep-filter? selected)
+    (unless keep-filter? (set! query ""))
     (let ([path (file:canonical (file:expand path))])
       (vector-for-each
         (lambda (choice)
           (when location (hashtable-set! (choice-history choice) location (choice-selected choice)))
-          (choice-selected-set! choice (or selected (hashtable-ref (choice-history choice) path #f))))
+          (choice-selected-set! choice
+            (or selected (and (string=? query "") (hashtable-ref (choice-history choice) path #f)))))
         (hashtable-values choices))
       (set! location path))
-    (unless keep-filter? (set! query ""))
     (when (and selected (string:prefix? "." (file:base-name selected))) (show-hidden #t))
     (set! inventory '())
     (set! hover #f)
@@ -295,6 +313,16 @@
   (define (parent!)
     (unless (string=? location "/")
       (up-to! (directory:parent location))))
+  (define (entered-query entry)
+    ;; Filtering compares relative paths. Consume the part already matched
+    ;; by the directory being entered, including partial component matches.
+    (let ([prefix (string-append (directory:relative-path entry location) "/")])
+      (if (string:search prefix query 0 (string-length prefix) #t) ""
+          (let overlap ([n (min (string-length prefix) (string-length query))])
+            (cond [(zero? n) query]
+                  [(string-ci=? (string:tail prefix (- (string-length prefix) n)) (substring query 0 n))
+                   (string:tail query n)]
+                  [else (overlap (- n 1))])))))
   (define (activate! directories-only?)
     (let* ([choice (choice-for (selected-window))]
            [row (candidate (selected-window))] [entry (and row (cdr row))]
@@ -307,10 +335,8 @@
       (when path
         (set! hover #f)
         (cond [(or returning (directory:directory? entry))
-               (navigate! path
-                 (and entry (directory:entry-count entry) (positive? (directory:entry-count entry))
-                      (not (string=? query "")))
-                 #f)]
+               (set! query (if entry (entered-query entry) ""))
+               (navigate! path #t #f)]
               [(not directories-only?)
                (if (not (eq? (directory:entry-kind entry) 'file))
                    (set-message! "Not a readable regular file; refresh to check for changes")
@@ -320,25 +346,41 @@
   (define (filter! text)
     ;; A container visible only because descendants match must not keep
     ;; stealing Enter from the filename being typed. Preserve an existing
-    ;; choice only when its own name still matches the new query.
-    (vector-for-each
-      (lambda (choice)
-        (let ([row (assoc (choice-selected choice) rows)])
-          (unless (and row (directory:matches? (cdr row) text))
-            (choice-selected-set! choice #f)))) (hashtable-values choices))
+    ;; choice only when its path still matches and no exact path supersedes it.
+    (let ([exact (exact-row text)])
+      (vector-for-each
+        (lambda (choice)
+          (let ([row (assoc (choice-selected choice) rows)])
+            (unless (and row (directory:matches? (cdr row) location text)
+                         (or (not exact) (equal? (car row) (car exact))))
+              (choice-selected-set! choice #f)))) (hashtable-values choices)))
     (set! query text)
     (set! hover #f)
     ;; Old recursive results must disappear immediately, before the worker
     ;; supplies a new query's counts. The shallow inventory remains useful.
     (set! inventory (filter (lambda (e)
                               (and (not (directory:directory? e))
-                                   (or (show-hidden) (string:prefix? "." query)
+                                   (or (include-hidden?)
                                      (not (string:prefix? "." (file:base-name (directory:entry-path e))))))) inventory))
     (start-scan!))
+  (define (complete!)
+    (let ([matches (head:call-with-interrupt (lambda () (file:complete query location)))])
+      (if (null? matches) (set-message! "No path completion")
+          (let* ([prefix (string:common-prefix matches)]
+                 [full (file:canonical (file:expand (file:absolute prefix location)))]
+                 [base (file:absolute "" location)]
+                 [relative (cond [(string=? full location) ""]
+                                 [(string:prefix? base full)
+                                  (string-append (string:tail full (string-length base))
+                                    (if (string:suffix? "/" prefix) "/" ""))]
+                                 [else #f])])
+            (cond [(not relative) (set-message! "Use C-l for paths outside this directory")]
+                  [(not (string=? relative query)) (filter! relative)]
+                  [else (set-message! (if (null? (cdr matches)) "Sole completion" "Multiple path completions"))])))))
   (define (cycle! column)
     (set! sorts (table:cycle-sort sorts column)) (set! hover #f) (render!))
   (define (path!!)
-    (find-file!! (lambda (path) (navigate! path #f #f))))
+    (find-file!! (lambda (path) (navigate! path #f #f)) (file:abbreviate (file:absolute query location))))
   (define (refresh!) (when view (start-scan!)) (void))
 
   (define (handle! event)
@@ -346,7 +388,8 @@
           [(member event '("F1" "F2" "F3" "F4" "F5" "F6"))
            (cycle! (- (char->integer (string-ref event 1)) 49)) #t]
           [(member event '("UP" "C-p" "S-TAB" "WHEEL-UP")) (move! -1) #t]
-          [(member event '("DOWN" "C-n" "TAB" "WHEEL-DOWN")) (move! 1) #t]
+          [(member event '("DOWN" "C-n" "WHEEL-DOWN")) (move! 1) #t]
+          [(string=? event "TAB") (complete!) #t]
           [(member event '("HOME" "C-a" "M-<")) (move! (- (length rows))) #t]
           [(member event '("END" "C-e" "M->")) (move! (length rows)) #t]
           [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
@@ -404,7 +447,7 @@
            (fold-left (lambda (text hint)
                         (if (<= (+ (glyph:cells text) 2 (glyph:cells hint)) room)
                             (string-append text "  " hint) text)) ""
-             '("C-l path" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
+             '("C-l open/create" "Tab complete" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
   (define (ensure!)
     (unless (and view (memq view (buffer-list)) (head:app-buffer? view))
       (set! view (head:register-app! "*files*" render! handle!))
@@ -487,13 +530,13 @@
     (doc:register!
       '(((file-view:open!) (("procedure" . "(file-view:open! [directory])")) "void"
          ("(file-view)") file-view "Files" #f
-         "Open `<files>` in this window. Type to filter filenames recursively; Enter opens the selected file or directory. Click an ancestor component in the full directory path to navigate there. Left selects the directory just left in its parent; Right enters a directory and recalls its selection. C-l reads a path, C-u clears, M-. toggles hidden entries and C-r refreshes. Click column headings or use F1–F6 for ordered ascending/descending/off sorting. Small subdirectory match groups expand; larger groups show counts and can be entered to narrow the search.")
+         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. C-l reads a literal path prefilled from the filter: new files open unsaved, missing parents are created, and a trailing slash creates and enters directories. Click an ancestor path component to navigate there. Left selects the directory just left in its parent; Right enters it and recalls its selection. C-u clears, M-. toggles hidden entries and C-r refreshes. Click column headings or use F1–F6 for ordered ascending/descending/off sorting. Small subdirectory match groups expand; larger groups show counts. Entering a directory consumes the matching path prefix from the filter.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
          ("(file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")
         ((file-view:show-hidden) (("parameter" . "(file-view:show-hidden [boolean])")) "boolean"
          ("(file-view)") file-view "Files" #f
-         "Whether files scanning includes dot entries and traverses dot directories; default false. A filter starting with a dot also includes them. M-. toggles this setting and refreshes the view.")
+         "Whether files scanning includes dot entries and traverses dot directories; default false. A filter with a path component starting with a dot also includes them. M-. toggles this setting and refreshes the view.")
         ((file-view:refresh!) (("procedure" . "(file-view:refresh!)")) "void"
          ("(file-view)") file-view "Files" #f
          "Rescan the files app's current directory with its current filter and options, preserving candidate identities where possible."))))

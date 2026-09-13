@@ -6,7 +6,7 @@ directory. `M-x (file-view:open! "/some/directory")` starts elsewhere.
 `C-x C-f` still opens the existing path-entry prompt. To use the app for
 that shortcut, put `(keymap:bind! "C-x C-f" file-view:open!)` in `config.e`.
 
-The first line is the filename filter. The Directory line shows the full
+The first line is the relative-path filter. The Directory line shows the full
 absolute path with a trailing slash, such as `/home/paveluv/git/e/`, plus
 scan status. Each ancestor component and its following slash is clickable:
 `git/` goes to `/home/paveluv/git/`, and the first `/` goes to the root.
@@ -24,33 +24,61 @@ Right–Right–Right retraces the route. A breadcrumb jump also selects the
 branch leading back to the previous location. Backspace goes up when the
 filter is empty.
 
-Type to filter by filename, ignoring case. Up/Down, Tab/Shift-Tab, Home/End
-and PageUp/PageDown choose a row; Enter opens it. A unique nested file match
+Type to filter by relative path, ignoring case. Up/Down, C-p/C-n, Home/End
+and PageUp/PageDown choose a row; Enter opens it. An exact path takes priority,
+including a directory completed with Tab. Otherwise a unique nested file match
 is selected directly. Enter on an empty result stays in the current directory.
 Esc or C-g returns to the document from which this window opened the app.
 
 | Key | Action |
 |---|---|
 | `C-u` | Clear the filter. |
+| `Tab` | Complete the filter as a path, appending `/` for a directory. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
-| `C-l` | Enter a path, with the usual completion and file history. Accept a directory to browse it, or a file to open it. |
+| `C-l` | Open/create a literal path, prefilled from the filter, with completion and file history. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
-| `M-.` | Toggle hidden entries. A filter beginning with `.` also includes them. |
+| `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
 
-Path entry can create an empty visiting buffer for a new file in an existing
-directory; nothing is written until save. Failed path validation leaves the
-prompt editable. Opening a file uses the usual file identity and disk-conflict
-handling, including reuse of unsaved buffers and remembered points.
+Tab completes the final component using the same case-sensitive filename
+prefixes as find-file. With several candidates it extends their common prefix;
+if it cannot extend it, keep typing or choose a row. Filtering itself remains a
+case-insensitive substring search. Paths completed inside the current directory
+are written back in relative form. Use C-l for arbitrary absolute, home or
+parent paths; completion outside the current directory points you to that key.
+
+## Creating files and directories
+
+Creation is explicit and works regardless of what the filter matches. For
+example, type `notes`, press C-l, then Enter to open a new file called `notes`,
+even if the list contains `notes.txt`. The prompt uses the literal path rather
+than the selected search result. Existing files use the usual file identity
+and disk-conflict handling, including unsaved buffers and remembered points.
+
+For a new file, missing parent directories are created and an empty visiting
+buffer opens; the file is written when you save. For example, `drafts/idea.txt`
+creates `drafts/` if needed. End the path with `/` to create directories only
+and enter the last one: `drafts/research/` creates both levels if necessary.
+An existing directory is entered with or without a trailing slash.
+
+Before acceptance, cancelling leaves the filesystem alone. Errors, including
+a file where a directory is required, keep the prompt editable. Parent directories
+created before a later error remain available; existing files are never
+replaced by directory creation.
 
 ## Recursive filtering
 
-A nonempty filter searches descendant filenames as well as immediate entries.
+A nonempty filter searches full relative paths as well as immediate entries.
+Slashes are literal: `lib/` matches that part of a path, including descendants
+whose own names do not contain `lib`. Directories include their trailing `/`
+for matching. Typing a dot component, such as `lib/.git/`, includes hidden entries.
 Each immediate subdirectory shows its descendant match count. Up to 20 matches
 in a group are listed individually with relative paths. Above that threshold,
 the directory and its count remain; enter it to search a smaller subtree with
-the same filter. The threshold does not limit counting or hide direct files
-inside the current directory.
+the remaining filter. Entering `lib/` consumes `lib/` from `lib/foo`, leaving
+`foo`; an unrelated query such as `needle` stays unchanged. If the directory
+itself satisfied the query, the filter clears. The threshold does not limit
+counting or hide direct files inside the current directory.
 
 `(file-view:expansion-limit 10)` changes the per-directory expansion threshold;
 zero keeps all nonempty groups collapsed. Use `C-r` after changing it through
@@ -69,7 +97,9 @@ Dotfiles and dot directories are excluded by default. `M-.` includes them;
 `(file-view:show-hidden #t)` enables them in configuration. Directory symlinks
 are marked `@/` and can be entered explicitly. Recursive searches do not
 follow them, so links cannot create loops or duplicate entire subtrees. Files
-and directories with control characters in their names have escaped labels;
+inside a link can be reached by entering that directory; a typed path through
+it keeps the directory available as a navigation row. Files and directories
+with control characters in their names have escaped labels;
 opening still uses the exact original path. Devices and FIFOs cannot be opened
 as text files.
 

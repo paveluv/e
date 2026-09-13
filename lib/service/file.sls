@@ -23,7 +23,7 @@
           merge conflict-count
           directory-part base-name abbreviate absolute
           (rename (path:expand expand) (path:canonical canonical))
-          visit-path complete data-directory
+          visit-path complete make-directories! data-directory
           add-pre-save-hook! add-post-save-hook!
           run-pre-save-hooks! run-post-save-hooks!)
   ;; These are Chez names too; importers always see this library's exports
@@ -57,12 +57,14 @@
           (string-append "~" (string:tail path (string-length home)))
           path)))
 
-  (define (absolute path)
-    ;; A relative path is relative to the process working directory,
-    ;; which never changes.
-    (if (or (string:prefix? "/" path) (string:prefix? "~" path))
-        path
-        (string-append (current-directory) "/" path)))
+  (define absolute
+    ;; Resolve a relative path against an explicit directory or the process
+    ;; working directory. Keep home notation for editable path prompts.
+    (case-lambda
+      [(path) (absolute path (current-directory))]
+      [(path directory)
+       (if (or (string:prefix? "/" path) (string=? "~" path) (string:prefix? "~/" path)) path
+           (string-append directory (if (string:suffix? "/" directory) "" "/") path))]))
 
   (define (visit-path path)
     ;; One stable identity for visited files. Existing paths chase symbolic
@@ -83,32 +85,37 @@
                   [(string=? real-parent "/") (string-append "/" (base-name full))]
                   [else (string-append real-parent "/" (base-name full))])))))
 
-  (define (complete s)
+  (define complete
     ;; Completion candidates for the partial path s: the entries of its
     ;; directory whose names extend its final component, as full paths, with
     ;; a trailing slash on directories so completion can descend into them.
     ;; A leading ~ is kept in the candidates but expanded for the lookups.
     ;; Dotfiles are offered only once the component starts with a dot.
-    (if (string=? s "~") '("~/")
-      (guard (ex [else '()])
-        (let* ([dir (or (directory-part s) "")]
-               [part (string:tail s (string-length dir))]
-               [listing (directory-list
-                          (path:expand
-                            (cond [(string=? dir "") "."]
-                              [(string=? dir "/") "/"]
-                              [else (substring dir 0 (- (string-length dir) 1))])))])
-          (map (lambda (name)
-                 (let ([full (string-append dir name)])
-                   (if (file-directory? (path:expand full))
-                     (string-append full "/")
-                     full)))
-            (sort string<?
-                  (filter (lambda (name)
-                            (and (string:prefix? part name)
-                                 (or (not (string=? part ""))
-                                     (not (string:prefix? "." name)))))
-                          listing)))))))
+    (case-lambda
+      [(s directory)
+       (let* ([full (absolute s directory)] [prefix (- (string-length full) (string-length s))])
+         (map (lambda (value) (string:tail value prefix)) (complete full)))]
+      [(s)
+       (if (string=? s "~") '("~/")
+         (guard (ex [else '()])
+           (let* ([dir (or (directory-part s) "")]
+                  [part (string:tail s (string-length dir))]
+                  [listing (directory-list
+                             (path:expand
+                               (cond [(string=? dir "") "."]
+                                 [(string=? dir "/") "/"]
+                                 [else (substring dir 0 (- (string-length dir) 1))])))])
+             (map (lambda (name)
+                    (let ([full (string-append dir name)])
+                      (if (file-directory? (path:expand full))
+                        (string-append full "/")
+                        full)))
+               (sort string<?
+                 (filter (lambda (name)
+                           (and (string:prefix? part name)
+                                (or (not (string=? part ""))
+                                    (not (string:prefix? "." name)))))
+                         listing))))))]))
 
   (define (data-directory)
     ;; Where commands and apps keep built or fetched data, out of git:
@@ -118,6 +125,17 @@
     (let ([dir (path:canonical (string-append (kernel:installation-directory) "/data"))])
       (unless (file-directory? dir) (mkdir dir))
       dir))
+
+  (define (make-directories! path)
+    ;; Existing directories (including links to them) are fine. A file or
+    ;; dangling link is an error, never something to replace. A concurrent
+    ;; mkdir is fine too, provided the resulting path is a directory.
+    (let create ([path (path:canonical (path:expand path))])
+      (unless (file-directory? path)
+        (when (file-exists? path #f) (error 'make-directories! "not a directory" path))
+        (create (path:canonical (directory-part path)))
+        (guard (ex [(file-directory? path) (void)] [else (raise ex)]) (mkdir path))))
+    (void))
 
   ;;; Reading and writing ---------------------------------------------------------
 

@@ -3,7 +3,7 @@
 (library (directory)
   (export scan entry-path entry-kind entry-link? entry-mode entry-size
           entry-modified entry-created entry-count entry-complete? entry-matches
-          matches? directory? (rename (parent-path parent)))
+          relative-path matches? directory? (rename (parent-path parent)))
   (import (chezscheme) (prefix (sys) sys:) (prefix (file) file:)
           (prefix (string) string:))
 
@@ -15,8 +15,11 @@
 
   (define (directory? entry) (eq? (entry-kind entry) 'directory))
 
-  (define (matches? entry query)
-    (let ([name (file:base-name (entry-path entry))])
+  (define (relative-path entry root)
+    (string:tail (entry-path entry) (if (string=? root "/") 1 (+ 1 (string-length root)))))
+
+  (define (matches? entry root query)
+    (let ([name (string-append (relative-path entry root) (if (directory? entry) "/" ""))])
       (and (string:search name query 0 (string-length name) #t) #t)))
 
   (define (inspect-entry path)
@@ -77,7 +80,7 @@
                     (for-each
                       (lambda (name)
                         (let ([entry (child (car pending) name)])
-                          (when (matches? entry query)
+                          (when (matches? entry path query)
                             (set! count (+ count 1))
                             (set! found (if (<= count limit) (cons entry found) '())))
                           (when (eq? (entry-kind entry) 'unavailable)

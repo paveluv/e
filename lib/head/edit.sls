@@ -1888,10 +1888,6 @@
             [(discard-reviewed! b revision facts) ""]
             [else "  Buffer changed; review it again"])))))
 
-  (define (path-in-directory path directory)
-    (if (or (string:prefix? "/" path) (string:prefix? "~" path)) path
-        (string-append directory path)))
-
   (define (file-prompt-styler label . directory)
     ;; Existence shown in the face, component-wise: the typed path's
     ;; longest leading run of components that exists on disk stays
@@ -1900,7 +1896,7 @@
     ;; without another TAB to ask.
     (define (exists? p)
       (guard (ex [else #f])
-        (file-exists? (file:expand (if (pair? directory) (path-in-directory p (car directory)) p)))))
+        (file-exists? (file:expand (if (pair? directory) (file:absolute p (car directory)) p)))))
     (paint:prompt-styler label
       (lambda (path)
         (let* ([v (make-vector (string-length path) 'plain)]
@@ -1948,54 +1944,61 @@
 
   (define find-file-drafts (make-weak-eq-hashtable))
 
-  (define (find-file!! . directory-action)
+  (define find-file!!
     ;; Validate/acquire while the path is still editable; show it only
     ;; after the temporary view has returned the window. Focus loss keeps
     ;; a per-window draft, while acceptance and explicit cancellation end it.
-    ;; A browser may also accept a directory, using the same path editing,
-    ;; completion, validation and prompt lifetime as ordinary file visits.
-    (unless (or (null? directory-action)
-                (and (null? (cdr directory-action)) (procedure? (car directory-action))))
-      (error 'find-file!! "expected an optional directory action" directory-action))
-    (let* ([owner current-window] [before (current-buffer)]
-           [saved (hashtable-ref find-file-drafts owner #f)]
-           [directory (if saved (car saved) (default-directory))]
-           [draft (if saved (cdr saved) (box #f))]
-           [ready #f])
-      (define (resolve s) (path-in-directory s directory))
-      (define (complete s)
-        (let* ([full (resolve s)] [prefix (- (string-length full) (string-length s))])
-          (map (lambda (value) (string:tail value prefix)) (file:complete full))))
-      (define (normalize s)
-        (if (and (> (string-length s) 0) (not (string:suffix? "/" s))
+    ;; A browser also accepts directories and creates missing parents on
+    ;; acceptance. Files remain ordinary visiting buffers until saved.
+    (case-lambda
+      [() (find-file!! #f #f)]
+      [(directory-action) (find-file!! directory-action #f)]
+      [(directory-action initial)
+       (unless (and (or (not directory-action) (procedure? directory-action))
+                    (or (not initial) (string? initial)))
+         (error 'find-file!! "expected a directory action and an initial path" directory-action initial))
+       (let* ([owner current-window] [before (current-buffer)]
+              [saved (hashtable-ref find-file-drafts owner #f)]
+              [directory (if saved (car saved) (default-directory))]
+              [draft (if saved (cdr saved) (box #f))]
+              [label (if directory-action "Open/create: " "Find file: ")]
+              [ready #f])
+         (define (resolve s) (file:absolute s directory))
+         (define (complete s) (file:complete s directory))
+         (define (normalize s)
+           (if (and (> (string-length s) 0) (not (string:suffix? "/" s))
                  (guard (ex [else #f]) (file-directory? (file:expand (resolve s)))))
-            (string-append s "/") s))
-      (define (validate s)
-        (guard (ex [(head:interrupted? ex) "Interrupted; edit the path or try again"]
-                   [(i/o-file-protection-error? ex) "Permission denied"]
-                   [(kernel:refusal? ex) (condition-message ex)]
-                   [else (kernel:condition-text ex)])
-          (cond [(string=? s "") #f]
-                [(file-directory? (file:expand (resolve s)))
-                 (if (null? directory-action) "Directory; Tab to list files"
-                     (begin
-                       (set! ready (lambda () ((car directory-action) (file:canonical (file:expand (resolve s))))))
-                       #f))]
-                [else
-                 (set! ready (head:call-with-interrupt (lambda () (prepare-file-visit (resolve s)))))
-                 #f])))
-      (let ([s (parameterize ([prompt:completion-label file-completion-label]
-                              [paint:echo-highlight (file-prompt-styler "Find file: " directory)]
-                              [prompt:in-window #t] [prompt:validate validate] [prompt:draft draft])
-                 (prompt:read! "Find file: " complete directory
-                   (box (fold-right (lambda (path recent) (cons path (remove path recent)))
-                          '() (log:history 'visit-file! cdr head:ui-actor)))
-                   #f normalize))])
-        (if (and (not s) (memq owner windows) (not (eq? owner current-window))
+             (string-append s "/") s))
+         (define (validate s)
+           (set! ready #f)
+           (guard (ex [(head:interrupted? ex) "Interrupted; edit the path or try again"]
+                    [(i/o-file-protection-error? ex) "Permission denied"]
+                    [(kernel:refusal? ex) (condition-message ex)]
+                    [else (kernel:condition-text ex)])
+             (if (string=? s "") #f
+               (head:call-with-interrupt
+                 (lambda ()
+                   (let* ([path (file:canonical (file:expand (resolve s)))]
+                          [directory? (or (string:suffix? "/" s) (file-directory? path))])
+                     (when directory-action
+                       (file:make-directories! (if directory? path (file:directory-part path))))
+                     (cond [directory?
+                            (if (not directory-action)
+                              (if (file-directory? path) "Directory; Tab to list files" "Not an existing directory")
+                              (begin (set! ready (lambda () (directory-action path))) #f))]
+                           [else (set! ready (prepare-file-visit path)) #f])))))))
+         (let ([s (parameterize ([prompt:completion-label file-completion-label]
+                                 [paint:echo-highlight (file-prompt-styler label directory)]
+                                 [prompt:in-window #t] [prompt:validate validate] [prompt:draft draft])
+                    (prompt:read! label complete (or initial directory)
+                      (box (fold-right (lambda (path recent) (cons path (remove path recent)))
+                             '() (log:history 'visit-file! cdr head:ui-actor)))
+                      #f normalize))])
+           (if (and (not s) (memq owner windows) (not (eq? owner current-window))
                  (eq? (head:window-buffer owner) before))
-            (hashtable-set! find-file-drafts owner (cons directory draft))
-            (hashtable-delete! find-file-drafts owner))
-        (when (and s ready) (ready)))))
+             (hashtable-set! find-file-drafts owner (cons directory draft))
+             (hashtable-delete! find-file-drafts owner))
+           (when (and s ready) (ready))))]))
 
   (define (local-quit-state)
     ;; Own only the facts used by state-clean?. Other head-local metadata can
@@ -3316,9 +3319,9 @@
         ((default-directory) (("procedure" . "(default-directory)")) "string"
          ("(edit)") edit "Files" #f
          "The current file's parent, an app's working directory, or the head's launch directory, absolute with home abbreviated and a trailing slash. This is the common starting directory for path prompts and browsers.")
-        ((find-file!!) (("procedure" . "(find-file!! [on-directory])")) "void"
+        ((find-file!!) (("procedure" . "(find-file!! [on-directory [initial-path]])")) "void"
          ("(edit)") edit "Files" #f
-         "Read a file path with completion, history and validation, then visit it. With an optional procedure, accepting a directory closes the prompt and calls that procedure with the absolute directory path; without it, a directory stays in path entry for completion. The files app uses this to share the ordinary opening flow.")
+         "Read a file path with completion, history and validation, then visit it. With an optional directory procedure, the prompt supports opening and creation: accepting a path creates missing parent directories, and a trailing slash creates a directory. After cleanup, the procedure receives the accepted absolute directory path; new files open as unsaved visiting buffers. An optional initial path seeds the prompt. Without the procedure, directories stay in path entry for completion and missing parents are reported. The files app uses this to share path editing and file identity.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; C-u clears the filter. Click headings or use F1 through F6 in column order to cycle ascending, descending, then off; superscripts show sort-key priority. Modified shows the last edit time for unsaved buffers and sorts by the full timestamp. A side-panel click changes the focused window without taking focus.")

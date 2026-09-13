@@ -52,7 +52,9 @@
      (check 'absolute-keeps (file:absolute "/x") "/x")
      (check 'absolute-keeps-tilde (file:absolute "~/x") "~/x")
      (check 'absolute-relative
-            (file:absolute "x") (string-append (current-directory) "/x"))
+            (list (file:absolute "x") (file:absolute "x" "/a") (file:absolute "x" "/a/")
+                  (file:absolute "~literal" "/a"))
+            (list (string-append (current-directory) "/x") "/a/x" "/a/x" "/a/~literal"))
 
      (let ([home (getenv "HOME")])
        (check 'expand-tilde (file:expand "~/x") (string-append home "/x"))
@@ -100,6 +102,9 @@
             (file:complete (path ".")) (list (path ".hidden")))
      (check 'complete-home-root-and-missing-directory
             (list (file:complete "~") (file:complete "/no/such/dir/x")) '(("~/") ()))
+     (check 'complete-relative-to-an-explicit-directory
+       (map (lambda (s) (file:complete s scratch)) '("al" "AL" "dir/../al" ".h" "nope/"))
+       '(("alpha" "alphabet") () ("dir/../alpha" "dir/../alphabet") (".hidden") ()))
 
      (check 'visit-path-existing
             (file:visit-path (string-append scratch "/./alpha")) (path "alpha"))
@@ -145,7 +150,8 @@
        (check 'directory-links-fixture
          (list ((foreign-procedure "symlink" (string string) int) root (child "small/loop"))
                ((foreign-procedure "symlink" (string string) int) (child "small") (child "alias"))
-               ((foreign-procedure "mkfifo" (string unsigned) int) (child "pipe") #o600)) '(0 0 0))
+               ((foreign-procedure "symlink" (string string) int) (child "absent") (child "dangling"))
+               ((foreign-procedure "mkfifo" (string unsigned) int) (child "pipe") #o600)) '(0 0 0 0))
        (let* ([info (sys:file-info (child "needle-root"))] [stamp (file:stamp (child "needle-root"))])
          (check 'directory-metadata-is-typed-and-full-precision
            (list (vector-ref info 0) (vector-ref info 1)
@@ -169,6 +175,12 @@
          (let ([result (scan "needle" #t 0)])
            (list (group ".private" result) (group "small" result)))
          '((1 #t ()) (2 #t ())))
+       (check 'directory-matches-full-relative-paths-and-directory-slashes
+         (let ([result (scan "ALL/NESTED/" #f 2)])
+           (list (group "small" result) (group "large" result)
+                 (map (lambda (s) (directory:matches? (entry "small" result) root s))
+                   '("small/" "ALL/" "small/nope"))))
+         '((2 #t ("NEEDLE-two" "nested")) (0 #t ()) (#t #t #f)))
        (check 'directory-cancel-has-no-late-publication
          (let ([cancel? #f] [publications '()])
            (directory:scan root "needle" #f 2 (lambda () cancel?)
@@ -184,6 +196,15 @@
        (check 'file-read-refuses-special-files-before-opening
          (map (lambda (name) (test:raises? (lambda () (file:read (child name))))) '("pipe" "small"))
          '(#t #t))
+       (check 'make-directories-reuses-directories-and-refuses-files-and-dangling-links
+         (begin
+           (for-each (lambda (name) (file:make-directories! (child name)))
+             '("created/parents/" "created/parents" "alias"))
+           (list (file-directory? (child "created/parents"))
+                 (map (lambda (name) (test:raises? (lambda () (file:make-directories! (child name)))))
+                   '("needle-root/child" "dangling/child"))
+                 (file:read (child "needle-root")) (file-exists? (child "absent"))))
+         '(#t (#t #t) "abc" #f))
        (remove-tree root))
 
      ;; One table covers the shared port scope for text and corpus data.
