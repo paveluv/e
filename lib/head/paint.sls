@@ -416,10 +416,10 @@
                    [key (car capture)] [toggle (cadr capture)])
                (append
                  (list (cons (string-append " " (substring status 0 end) " ") #f)
-                       (cons (if (head:capture-locked? w) "🔒" "🔓") toggle)
+                       (cons (if (head:full-capture? w) "●" "◐") toggle)
                        (cons (string:tail status end) #f))
                  (if (and active? (eq? toggle (keymap:event-binding context key)))
-                     (list (cons (string-append "  " key " toggle capture lock") #f)) '())))]
+                     (list (cons (string-append "  " key " toggle capture") #f)) '())))]
             [else (list (cons (string-append " " status) #f))])))
 
   (define (status-actions prefix spans visible-cells)

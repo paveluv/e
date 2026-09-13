@@ -132,16 +132,16 @@ individual decoded key events; global keymaps provide arbitrary multi-key
 chords.
 
 Buffer-mode contexts can bind command procedures and complete chords. Terminals
-also declare which keys reach e when capture is unlocked. To include `C-c` as
+also declare which keys reach e during partial capture. To include `C-c` as
 well as the default `C-x` and `M-x`, put this in `config.e`:
 
 ```scheme
 (keymap:set-context-capture! 'terminal "C-]"
-  terminal:toggle-capture-lock! '("C-x" "M-x" "C-c"))
+  terminal:toggle-capture! '("C-x" "M-x" "C-c"))
 ```
 
-`C-]` and the clickable status lock toggle the current window's capture.
-Locked capture forwards these keys to the child; ordinary mode bindings such
+`C-]` and the clickable `●` / `◐` indicator toggle the current window's capture.
+Full capture forwards these keys to the child; ordinary mode bindings such
 as `Shift-PageUp/Down` still belong to e. See [Terminal buffers](TERMINAL.md).
 
 ### `isearch`

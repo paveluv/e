@@ -1405,7 +1405,7 @@
                                        (head:window-wrap current-window))]
                   [node (head:make-layout-split orientation current-window w
                                                 first second)])
-             (head:set-capture-locked! w (head:capture-locked? current-window))
+             (head:set-full-capture! w (head:full-capture? current-window))
              (head:replace-layout-window! current-window node)
              w))))
 

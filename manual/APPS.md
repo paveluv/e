@@ -242,7 +242,7 @@ to decide capture; an unreachable or failing endpoint declines delivery.
 
 Each window initially follows the shared surface cursor. Editor commands
 and mouse navigation pause following; captured input resumes it. Focus and
-blur reports and capture-lock toggles preserve the current preference.
+blur reports and capture toggles preserve the current preference.
 Extensions can set the preference
 with `(head:follow-app! window boolean)`; `(head:app-following? window)` reports
 whether it is active. Following uses the same prepared surface generation
@@ -276,17 +276,17 @@ through naturally.
 The handler has first refusal on every key the buffer's mode context leaves
 unbound: a true result consumes the event, a false one lets it continue
 through the keymaps -- the mode context, then the global map.  A key the
-context binds, starts a binding with, or leaves to e while unlocked goes straight
-to the keymaps; the handler never sees it.  An app that embeds a complete
+context binds, starts a binding with, or leaves to e during partial capture
+goes straight to the keymaps; the handler never sees it. An app that embeds a complete
 interactive environment simply consumes everything it is offered while it
 is alive; a shared terminal declares that capture through its store facts.
 
-A capturing app can declare a lock control and the keys left to e while
-unlocked. The terminal registers:
+A capturing app can declare a capture control and the keys left to e during
+partial capture. The terminal registers:
 
 ```scheme
 (keymap:set-context-capture! 'terminal "C-]"
-  terminal:toggle-capture-lock! '("C-x" "M-x"))
+  terminal:toggle-capture! '("C-x" "M-x"))
 ```
 
 The declaration installs the toggle as a default context binding. It and the
@@ -295,13 +295,14 @@ events; a passed-through prefix such as `C-x` enters ordinary complete chord
 resolution, including any synchronous prompt. The toggle does not pause app
 following. Other context bindings remain editor controls in either state.
 
-`(head:capture-locked? window)` reads the preference and
-`(head:set-capture-locked! window boolean)` changes it. Windows start unlocked;
-splits copy the preference and named-head checkpoints retain it. This is head
+`(head:full-capture? window)` reads the preference and
+`(head:set-full-capture! window boolean)` changes it. Windows start with partial
+capture; splits copy the preference and named-head checkpoints retain it. This is head
 state: it does not change the producer's capture facts or another head's input.
-`keymap:context-capture` returns `(toggle-key toggle-procedure unlocked-key ...)`
-or `#f`. Paint inserts the clickable lock after the first token of the producer's
-status, with the toggle hint in the focused window.
+`keymap:context-capture` returns `(toggle-key toggle-procedure editor-key ...)`
+or `#f`. Paint inserts the clickable `●` (full) or `◐` (partial) indicator after
+the first token of the producer's status, with the toggle hint in the focused
+window.
 
 Status hints may also contain controls. `paint:add-buffer-status-hint!` receives
 a `(lambda (buffer active?) ...)` returning a string, `(text . style)` span, or

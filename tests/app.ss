@@ -487,7 +487,7 @@
              (check 'delivery-cannot-mutate-head-identity-or-context
                (list (car head:ui-actor) (actor:current) (app-event-buffer-position)) (list 'head identity #f))))
          (let ([before (length (received 'input))] [ran? #f] [commands 0])
-           (define (toggle!) (head:set-capture-locked! (head:current) (not (head:capture-locked? (head:current)))))
+           (define (toggle!) (head:set-full-capture! (head:current) (not (head:full-capture? (head:current)))))
            (mode:register! "adapter-test" '() '() (lambda (line) #f))
            (mode:choose! b "adapter-test")
            (keymap:bind-default! 'adapter-test "UP" (lambda () (set! ran? #t)))
@@ -503,14 +503,14 @@
                (fold-left (lambda (out event)
                             (let ([before (length (received 'input))])
                               (dispatch:key! event)
-                              (cons (list (head:capture-locked? w) commands (- (length (received 'input)) before)
+                              (cons (list (head:full-capture? w) commands (- (length (received 'input)) before)
                                           (head:app-following? w)) out)))
                  '() '("M-x" "x" "C-]" "M-x" "C-x" "C-]")))
              '((#f 1 0 #f) (#f 1 1 #t) (#t 1 0 #t) (#t 1 1 #t) (#t 1 1 #t) (#f 1 0 #t)))
            (head:follow-app! w #f)
            (dispatch:key! "C-]")
-           (check 'lock-is-per-window-and-keeps-scrollback-and-producer-status
-             (list (head:capture-locked? w) (head:capture-locked? other) (head:app-following? w)
+           (check 'capture-is-per-window-and-keeps-scrollback-and-producer-status
+             (list (head:full-capture? w) (head:full-capture? other) (head:app-following? w)
                    (head:app-cursor-visible-in? w) (head:app-status b))
              '(#t #f #f #t "working"))
            (dispatch:key! "C-]"))

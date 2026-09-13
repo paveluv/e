@@ -3,7 +3,7 @@
 (library (terminal)
   (export init! (rename (terminal!! open!!) (terminal-send! send!)
                         (terminal-yank! yank!) (terminal-close! close!)
-                        (terminal-toggle-capture-lock! toggle-capture-lock!)
+                        (terminal-toggle-capture! toggle-capture!)
                         (terminal-color-scheme! color-scheme!)
                         (vt:scrollback scrollback) (vt:shell shell)
                         (terminal-forward-clipboard-to-kill-ring forward-clipboard-to-kill-ring)))
@@ -36,9 +36,9 @@
 
   (define (terminal-send! text) (send-input! text #f) (void))
   (define (terminal-yank!) (send-input! (current-kill-ring) #t) (void))
-  (define (terminal-toggle-capture-lock!)
-    (unless (terminal-id (current-buffer)) (error 'toggle-capture-lock! "current buffer is not a terminal"))
-    (let ([w (selected-window)]) (head:set-capture-locked! w (not (head:capture-locked? w)))))
+  (define (terminal-toggle-capture!)
+    (unless (terminal-id (current-buffer)) (error 'toggle-capture! "current buffer is not a terminal"))
+    (let ([w (selected-window)]) (head:set-full-capture! w (not (head:full-capture? w)))))
   (define (terminal-close! . buffer*)
     (cond [(terminal-id (if (pair? buffer*) (car buffer*) (current-buffer))) => vt:close!])
     (void))
@@ -61,7 +61,7 @@
         (set! buffer (head:adopt-store-buffer! id))
         (head:buffer-line-numbers-setting-set! buffer #f)
         (show-buffer! buffer)
-        (head:set-capture-locked! (selected-window) #f)
+        (head:set-full-capture! (selected-window) #f)
         (void))))
 
   ;; UI effects consume published data on the head pump. Claims precede
@@ -96,18 +96,18 @@
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (head:add-pre-redraw-hook! present-notices!)
     (keymap:bind-default! "C-c t" terminal!!)
-    (keymap:set-context-capture! 'terminal "C-]" terminal-toggle-capture-lock! '("C-x" "M-x"))
+    (keymap:set-context-capture! 'terminal "C-]" terminal-toggle-capture! '("C-x" "M-x"))
     (keymap:bind-default! 'terminal "S-PAGEUP" (lambda () (page-window-fraction! -1 1)))
     (keymap:bind-default! 'terminal "S-PAGEDOWN" (lambda () (page-window-fraction! 1 1)))
     (doc:register!
       '(((terminal:open!!)
          (("procedure" . "(terminal:open!! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Open a new PTY-backed terminal buffer using the shell configured by `terminal:shell`, or interpret `command` with that shell when supplied. Capture starts unlocked: C-x and M-x run e commands; other input reaches the child. C-] or the clickable status lock toggles full capture for this window. Shift-PageUp/Down scroll in either mode.")
-        ((terminal:toggle-capture-lock!)
-         (("procedure" . "(terminal:toggle-capture-lock!)")) "void"
+         "Open a new PTY-backed terminal buffer using the shell configured by `terminal:shell`, or interpret `command` with that shell when supplied. Partial capture is the default: C-x and M-x run e commands; other input reaches the child. C-] or the clickable status indicator toggles full capture for this window. Shift-PageUp/Down scroll in either mode.")
+        ((terminal:toggle-capture!)
+         (("procedure" . "(terminal:toggle-capture!)")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Toggle capture in the selected terminal window without changing cursor following or other windows. Unlocked capture leaves C-x and M-x to e; locked capture forwards them to the child.")
+         "Toggle capture in the selected terminal window without changing cursor following or other windows. Partial capture (◐) leaves C-x and M-x to e; full capture (●) forwards them to the child.")
         ((terminal:send!)
          (("procedure" . "(terminal:send! text)")) "void"
          ("(terminal)") terminal "Terminal" #f

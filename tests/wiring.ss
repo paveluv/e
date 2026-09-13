@@ -1415,7 +1415,7 @@
            (list browser (visible? (string-append "Find file: " (prompt-path "many/")))) '(#t #t)))
        (press! "\x07;terminal-still-alive\r")
        (check 'cancelling-find-file-resumes-terminal-input
-         (list (visible? "terminal-still-alive") (visible? "▶ 🔓")) '(#t #t))
+         (list (visible? "terminal-still-alive") (visible? "▶ ◐")) '(#t #t))
        (read-editor `(begin (terminal:close!) (kill-buffer! (buffer ,terminal)) #t)))
      (check 'prompt-scenarios-finish-without-errors-or-transient-views
        (read-editor
@@ -2858,7 +2858,7 @@
             (actor:register! owner (lambda (message) (set-box! events (cons message (unbox events)))))
             (mode:register! "adapter-live" '() '() (lambda (line) #f))
             (keymap:set-context-capture! 'adapter-live "C-]"
-              (lambda () (head:set-capture-locked! (selected-window) (not (head:capture-locked? (selected-window)))))
+              (lambda () (head:set-full-capture! (selected-window) (not (head:full-capture? (selected-window)))))
               '("C-x" "M-x"))
             (let* ([id (store:create! owner "*adapter-live*" text
                          `((app . ,owner) (alive . #t) (capture . all) (status . "ready")
@@ -2878,7 +2878,7 @@
                        (head:window-line-number-width (selected-window)) 4) 1)))))
      (check 'shared-app-paints-grid-and-declared-status
        (list (screen-has? 0 "界éZ")
-             (exists (lambda (row) (screen-has? row "ready 🔓")) (iota 24))) '(#t #t))
+             (exists (lambda (row) (screen-has? row "ready ◐")) (iota 24))) '(#t #t))
      (send! "x\x1b;[200~paste\ntext\x1b;[201~")
      (pump! 250)
      (check 'shared-app-receives-real-key-and-paste-as-owned-data
@@ -2915,8 +2915,8 @@
          ("MOUSE-DRAG" (8 . 1) (8 . 2) (3 . 1) 32)
          ("MOUSE-RELEASE" (8 . 1) (8 . 2) (3 . 1) 0)
          ("WHEEL-UP" (8 . 1) (8 . 2) (3 . 1) 64)))
-     (check 'unlocked-shared-app-runs-a-complete-editor-command
-       (read-editor '(list (head:capture-locked? (selected-window)) (head:app-status (current-buffer))))
+     (check 'partial-capture-shared-app-runs-a-complete-editor-command
+       (read-editor '(list (head:full-capture? (selected-window)) (head:app-status (current-buffer))))
        '(#f "ready"))
      (read-editor '(let ([b (current-buffer)])
                      (actor:detach! '(app adapter-live))

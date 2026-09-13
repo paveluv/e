@@ -1192,10 +1192,10 @@
                        (make-list 2 (list '() (cdr (assq 'app (caddr (rpc head 'snapshot terminal-id)))))))
                      (head-read a '(begin (delete-other-windows!) (head:set-kill-ring! "screen A kill") #t))
                      (head-read b '(begin (head:set-kill-ring! "screen B kill")
-                                          (terminal:toggle-capture-lock!) #t))
-                     (test:check 'shared-terminal-capture-lock-is-local-to-each-head
-                       (list (head-read a '(head:capture-locked? (selected-window)))
-                             (and (head-sees? a "▶ 🔓") #t) (and (head-sees? b "▶ 🔒") #t)) '(#f #t #t))
+                                          (terminal:toggle-capture!) #t))
+                     (test:check 'shared-terminal-capture-is-local-to-each-head
+                       (list (head-read a '(head:full-capture? (selected-window)))
+                             (and (head-sees? a "▶ ◐") #t) (and (head-sees? b "▶ ●") #t)) '(#f #t #t))
                      (head-send! a "\x18;\x03;")
                      (head-wait 'real-head-detaches a
                        (lambda () (not (member '(head "screen A") (map car (rpc head 'actors))))))
@@ -1210,8 +1210,8 @@
                      (let ([first (connect)] [second (connect)])
                        (for-each (lambda (connection who) (hello connection who) (receive connection))
                          (list first second) '((agent "first") (agent "second")))
-                       ;; Lose SSH with capture still locked. A clean keyboard
-                       ;; detach would first unlock it and save that new choice.
+                       ;; Lose SSH with full capture. A clean keyboard detach
+                       ;; would first switch to partial capture and save that choice.
                        (unless (zero? (system (format "kill -KILL ~a" (sys:terminal-process-pid (vector-ref b 0)))))
                          (error 'wire-head "could not terminate fixture head"))
                        (set! killed-heads (cons b killed-heads))
@@ -1265,10 +1265,10 @@
                          (set! head (connect))
                          (hello head '(head "desk λ")) (receive head)
                          (set! b (start-head "screen B"))
-                         (head-wait 'named-head-restores-locked-capture b
-                           (lambda () (and (head-sees? b "through base") (head-sees? b "▶ 🔒"))))
+                         (head-wait 'named-head-restores-full-capture b
+                           (lambda () (and (head-sees? b "through base") (head-sees? b "▶ ●"))))
                          (head-send! b "\x1d;")
-                         (head-wait 'restored-lock-remains-toggleable b (lambda () (head-sees? b "▶ 🔓")))
+                         (head-wait 'restored-capture-remains-toggleable b (lambda () (head-sees? b "▶ ◐")))
                          (set! a (start-head "screen A"))
                          (head-wait 'owner-returns-to-offline-question a (lambda () (head-sees? a "through base")))
                          (test:check 'returning-owner-sees-only-the-live-session-question

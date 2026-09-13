@@ -218,9 +218,9 @@
 
   ;;; Capture controls -----------------------------------------------------------
 
-  ;; Capture belongs to the app; its lock is a window preference. A context
-  ;; declares the control and the keys left to e while unlocked. The toggle
-  ;; is an ordinary binding, but does not pause following the app's cursor.
+  ;; Capture belongs to the app; full/partial capture is a window preference.
+  ;; A context declares the control and keys left to e in partial capture.
+  ;; The toggle is an ordinary binding, but does not pause following the app's cursor.
   ;; Both declarations retract with their owning module on reload.
   (define context-captures (kernel:make-registry))
 
@@ -237,7 +237,7 @@
       (kernel:registry-add! context-captures (cons* context key toggle keys))))
 
   (define (context-capture context)
-    ;; (toggle-key toggle-procedure unlocked-key ...) or #f. Return owned
+    ;; (toggle-key toggle-procedure editor-key ...) or #f. Return owned
     ;; key strings so a caller cannot change a registered capture policy.
     (cond [(kernel:registry-find context-captures (lambda (entry) (eq? (car entry) context)))
            => (lambda (entry) (cons* (string-copy (cadr entry)) (caddr entry)

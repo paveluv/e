@@ -59,9 +59,9 @@
 ;; (file-view:show-hidden #f)     ; #t: include hidden entries in Files
 ;; (terminal:scrollback 10000)    ; retained shell lines; alternate screens excluded
 ;; (terminal:shell "/bin/bash")  ; defaults to $SHELL, then /bin/sh
-;; Capture starts unlocked: C-x and M-x reach e. C-] or the status lock toggles it.
-;; To leave additional prefixes to e while unlocked:
-;; (keymap:set-context-capture! 'terminal "C-]" terminal:toggle-capture-lock! '("C-x" "M-x" "C-c"))
+;; Partial capture is the default: C-x and M-x reach e. C-] or ●/◐ toggles capture.
+;; To leave additional prefixes to e during partial capture:
+;; (keymap:set-context-capture! 'terminal "C-]" terminal:toggle-capture! '("C-x" "M-x" "C-c"))
 ;; (terminal:forward-clipboard-to-kill-ring #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's kill ring

@@ -83,16 +83,16 @@
 
   (define (context-claims? event)
     ;; Whether the current buffer's mode context binds event, starts a
-    ;; binding with it, or leaves it to e while unlocked. Such a key belongs
+    ;; binding with it, or leaves it to e in partial capture. Such a key belongs
     ;; to the keymaps even inside a capturing app: the app's handler
     ;; sees only the keys its context leaves unbound, so a terminal
-    ;; cannot swallow its capture control or an unlocked editor prefix.
+    ;; cannot swallow its capture control or a reserved editor prefix.
     (let ([context (mode:key-context (head:window-buffer (head:current)))])
       (and context
            (let ([sequence (list event)] [capture (keymap:context-capture context)])
              (or (keymap:resolved-binding context sequence)
                  (keymap:binding-prefix? context sequence)
-                 (and capture (not (head:capture-locked? (head:current)))
+                 (and capture (not (head:full-capture? (head:current)))
                       (member event (cddr capture)))))
            #t)))
 

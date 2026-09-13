@@ -45,7 +45,7 @@
           window-xoff window-xoff-set!
           window-width window-width-set!
           window-wrap window-wrap-set!
-          (rename (window-capture-locked? capture-locked?)) set-capture-locked!
+          (rename (window-full-capture? full-capture?)) set-full-capture!
           window-status-actions-set!
           make-layout-split layout-split?
           layout-split-orientation
@@ -193,7 +193,7 @@
       (mutable view)
       ;; Input preference and painted status controls belong to this view,
       ;; never to the shared process. Only the preference is checkpointed.
-      (mutable capture-locked?)
+      (mutable full-capture?)
       (mutable status-actions)))
 
   (define-record-type view (fields owner source lines frame))
@@ -249,9 +249,9 @@
     (%make-window (free-window-index) buffer top topseg left prow pcol
                   size xoff width wrap #t #f #f '()))
 
-  (define (set-capture-locked! w locked?)
-    (unless (boolean? locked?) (error 'set-capture-locked! "expected a boolean" locked?))
-    (window-capture-locked?-set! w locked?)
+  (define (set-full-capture! w full?)
+    (unless (boolean? full?) (error 'set-full-capture! "expected a boolean" full?))
+    (window-full-capture?-set! w full?)
     (request-repaint!))
 
   (define (window-numbered n)
@@ -1666,7 +1666,7 @@
   ;;; Named screen resume ------------------------------------------------------
 
   ;; A checkpoint is (screen 2 kill-text selected-number layout buffers).
-  ;; Version 1 had no capture lock; restore those windows unlocked.
+  ;; Version 1 had no capture preference; restore those windows with partial capture.
   ;; Splits retain their ordinary orientation/weights; leaves retain a buffer
   ;; slot and window preferences. A buffer entry is (reference numbers marked
   ;; placements), where placements use window numbers instead of records.
@@ -1723,7 +1723,7 @@
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
                     (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
-                    (window-capture-locked? node))
+                    (window-full-capture? node))
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
@@ -1797,14 +1797,14 @@
                   (case (car node)
                     [(window)
                      (apply
-                       (lambda (tag index slot topseg left wrap following? locked?)
+                       (lambda (tag index slot topseg left wrap following? full?)
                          (unless (and (for-all natural? (list index slot topseg left))
                                       (< slot (vector-length buffers)) (not (memv index indices))
-                                      (boolean? following?) (boolean? locked?))
+                                      (boolean? following?) (boolean? full?))
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
                          (%make-window index (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                           0 topseg left 0 0 1 0 80 wrap following? #f locked? '()))
+                           0 topseg left 0 0 1 0 80 wrap following? #f full? '()))
                        (if (= version 1) (append node '(#f)) node))]
                     [(split)
                      (apply

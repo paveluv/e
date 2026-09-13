@@ -47,12 +47,13 @@ focus reports alone do not take control of its size or color scheme.
 
 ## Input and leaving the terminal
 
-Terminals start with capture **unlocked** (`🔓`). `C-x` and `M-x` reach e, so
-`C-x 2`, `C-x k`, and M-x work directly. Press `C-]` or click the lock in the
-status bar to **lock** capture (`🔒`), forwarding those keys to the child too.
-Use locked capture for another editor such as Emacs. `C-]` always toggles
-immediately; `Shift-PageUp/Down` remain available for local scrollback in
-either mode. Hovering over the lock makes it bold with a muted dotted underline.
+Terminals start with **partial capture** (`◐`). `C-x` and `M-x` reach e, so
+`C-x 2`, `C-x k`, and M-x work directly. Press `C-]` or click the capture
+indicator in the status bar to enable **full capture** (`●`), forwarding
+those keys to the child too. Use full capture for another editor such as Emacs.
+`C-]` always toggles immediately; `Shift-PageUp/Down` remain available for local
+scrollback in either mode. Hovering over the indicator makes it bold with a
+muted dotted underline.
 
 Printable keys, control and Meta keys, arrows, Home/End, Insert/Delete,
 PageUp/PageDown, F1–F63, application-keypad keys, their xterm modifier
@@ -66,7 +67,7 @@ window. `Shift-PageUp` and `Shift-PageDown` move by a full window;
 mouse input. Scrolling is per window when several windows mirror one terminal.
 The editor's cursor replaces the terminal cursor while that window is browsing
 history; the next input sent to the child returns it to the live cursor.
-Toggling the capture lock preserves the cursor and scrollback position.
+Toggling capture preserves the cursor and scrollback position.
 Ordinary mouse selection remains available when the child is not
 tracking the mouse. A blinking block cursor marks the terminal's live input
 position by default. Programs can change its shape and blinking behavior with
@@ -77,7 +78,7 @@ coordinates (`1005`), SGR coordinates (`1006`), and urxvt coordinates
 (`1015`); SGR takes precedence when a child enables several encodings. Focus
 reporting mode (`1004`) sends `CSI I` and `CSI O` as editor focus enters and
 leaves a terminal window. Mirrored windows share the child's terminal protocol
-modes; capture locking remains local to each e window. Each real focus
+modes; the capture preference remains local to each e window. Each real focus
 transition produces only one report.
 
 The `xterm-256color` Meta mode (`1034`) is honored dynamically. Meta keys use
@@ -96,14 +97,14 @@ headless emulator exposes both the controller state and accumulated output;
 e never invokes a host printer or command implicitly.
 
 Every terminal window shows its process indicator and capture preference:
-`▶ 🔓` or `▶ 🔒` while running, and `■ 🔓` or `■ 🔒` after exit. A focused
-window also shows `C-] toggle capture lock`. The lock belongs to the window;
+`▶ ◐` or `▶ ●` while running, and `■ ◐` or `■ ●` after exit. A focused
+window also shows `C-] toggle capture`. The preference belongs to the window;
 other windows and attached heads keep their own choice. A split copies the
 current choice into the new window, after which each is independent. Switching
 buffers preserves the window preference; opening a new terminal resets it to
-unlocked. Named-head reattachment restores the saved choice.
+partial capture. Named-head reattachment restores the saved choice.
 
-After the process exits, input is no longer captured regardless of the lock
+After the process exits, input is no longer captured regardless of the capture
 preference, and the retained terminal buffer remains a read-only transcript with
 the normal vertical read-only cursor. It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
@@ -113,7 +114,7 @@ the daemon terminates every live terminal process, including terminals whose
 buffers are not currently shown. Quitting an attached head only detaches that
 screen; the daemon's terminals keep running.
 
-While capture is unlocked:
+With partial capture:
 
 | Sequence | Action |
 |----------|--------|
@@ -121,11 +122,12 @@ While capture is unlocked:
 | `C-x 2` / `C-x 3` | Split the e window |
 | `C-x o` | Focus the next e window |
 | `C-x k` | Open the ordinary kill-buffer prompt |
-| `C-]` or click `🔓` | Lock capture for this window |
+| `C-]` or click `◐` | Enable full capture for this window |
 
 Complete editor chords and their prompts stay in e. Subsequent input follows
 the newly focused buffer. Status-bar clicks always remain editor-owned; clicking
-an unfocused window's lock focuses it and toggles only its capture preference.
+an unfocused window's capture indicator focuses it and toggles only its capture
+preference.
 
 Run `terminal:yank!` through M-x to paste the kill ring into the child.
 `C-]` is reserved for the toggle; to send its literal byte, evaluate
