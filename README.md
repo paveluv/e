@@ -23,14 +23,13 @@ Highlights:
 - `M-x` evaluates Scheme in the editor's context, with structural multiline
   input, semantic completion, parameter hints, history, and captured output
   (evaluation results, stdout, and stderr are captured separately).
-- Files and buffers have live, filterable tables with multi-column sorting
-  and keyboard or mouse navigation. Files supports recursive path matching,
-  clickable directory breadcrumbs and explicit file/directory creation.
-  Each pane fits its columns independently.
 - Besides normal editing buffers, there are app buffers. They update their
   presentation from internal structures and can optionally
   interact with the user: logs, Git history, live reference pages and rendered
   Markdown, as well as the file and buffer pickers.
+- `files` and `buffers` apps have live, filterable tables with multi-column
+  sorting and keyboard or mouse navigation. Files supports recursive path matching,
+  clickable directory breadcrumbs and explicit file/directory creation.
 - Windows form a recursive tiling layout that is easy to reshape: split in
   either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
 - `C-c t` opens a new PTY-backed terminal buffer able to run
@@ -229,7 +228,7 @@ same glyph rules as the terminal emulator.
 
 - **Current main (unreleased)** -- a persistent daemon with named screens,
   shared terminals and attributed undo; agent-ready APIs; interactive Files
-  and Buffers tables with filtering, compound sorting and per-window column
+  and Buffers apps with filtering, compound sorting and per-window column
   widths. The repository uses the settled R6RS library layout.
 - **v0.1** (2026-09-01) -- the first tagged release. The core editor:
   buffers, recursive tiling windows, incremental search and query
