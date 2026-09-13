@@ -9,6 +9,12 @@ buffers such as `<buffers>` and `<log>`, the kill ring and `config.e`. Plain
 and `e --attach` connects a head to it. Scripted clients -- agents -- connect
 to the same base under their own permissions.
 
+This iteration supplies the common protocol and Scheme APIs for agents;
+bundled agent/provider integrations are deferred. It serves one OS user on
+one host, including screens attached after logging in over SSH. Multi-user
+access and direct remote connections with mutual certificate authentication
+remain future work.
+
 Everyone who acts on shared state is an **actor** with an identity such as
 `(head "desk")`, `(agent "helper")`, `(app terminal)` or `(base e)`. Edits,
 log records, questions and undo history carry the actor that made them.

@@ -101,7 +101,7 @@
       '(((terminal:open!!)
          (("procedure" . "(terminal:open!! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Open a PTY-backed terminal app running `terminal-shell`, or interpret `command` with that shell when supplied. It captures keyboard, paste, and mouse input. C-] suspends capture for one complete global e command -- C-] C-y yanks the kill ring into the terminal as a paste; C-] C-] sends the character literally.")
+         "Open a new PTY-backed terminal buffer using the shell configured by `terminal:shell`, or interpret `command` with that shell when supplied. It captures keyboard, paste, and mouse input. C-] suspends capture for one complete global e command -- C-] C-y yanks the kill ring into the terminal as a paste; C-] C-] sends the character literally.")
         ((terminal:send!)
          (("procedure" . "(terminal:send! text)")) "void"
          ("(terminal)") terminal "Terminal" #f
@@ -113,7 +113,7 @@
         ((terminal:shell)
          (("parameter" . "(terminal:shell [path])")) "string"
          ("(terminal)") terminal "Terminal" #f
-         "Get or set the shell used by terminal!!. It defaults to $SHELL, then /bin/sh.")
+         "Get or set the shell used by terminal:open!!. It defaults to $SHELL, then /bin/sh.")
         ((terminal:color-scheme!)
          (("procedure" . "(terminal:color-scheme! scheme)")) "void"
          ("(terminal)") terminal "Terminal" #f

@@ -93,8 +93,10 @@ disabled and the retained terminal buffer remains a read-only transcript with
 the normal vertical read-only cursor. It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
 Killing this buffer terminates a process that is still running; deleting one
-of several windows displaying it does not. Exiting e terminates every live
-terminal process, including terminals whose buffers are not currently shown.
+of several windows displaying it does not. Quitting standalone e or stopping
+the daemon terminates every live terminal process, including terminals whose
+buffers are not currently shown. Quitting an attached head only detaches that
+screen; the daemon's terminals keep running.
 
 `C-]` temporarily suspends terminal capture for one complete global e command:
 
@@ -256,8 +258,8 @@ buffers; changing it does not affect processes that are already running.
 it a short, bounded cleanup period before using `SIGKILL`. It closes the PTY
 and reaps its session leader without allowing a stubborn child to hold up the
 editor. Killing a terminal buffer calls it automatically. A naturally exited
-process leaves its final screen visible and marks the status line `process
-exited`. It also stops capturing input, so ordinary editor chords such as
+process leaves its final screen visible and marks the status line `■`.
+It also stops capturing input, so ordinary editor chords such as
 `C-x b`, `C-x k`, and `C-x o` work immediately; kill the buffer normally when
 it is no longer needed.
 

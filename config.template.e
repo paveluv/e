@@ -15,9 +15,11 @@
 ;; does M-x (main:load-config!).  An error reports in the echo area and
 ;; leaves the editor running.
 ;;
-;; Everything below is commented out and shows the default: the
-;; editor behaves exactly the same with or without it.  Uncomment a
-;; line and change its value to disagree with a default.
+;; These commented examples cover common settings, not the entire API.
+;; Most show defaults; some demonstrate overrides, such as the browser,
+;; styles and key bindings. Read each comment and uncomment only the
+;; settings you want to apply. See manual/CONFIGURATION.md for startup
+;; options and the separate base-config.e used by shared services.
 
 ;; (main:modules-reload-on-save #t)    ; saving a module source reloads it in place
 ;; (main:config-reload-on-save #t)     ; saving config.e applies it on the spot
@@ -40,7 +42,7 @@
 ;; (search:fold-case #t)          ; C-s smart case: all-lowercase needles
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)
-;; (eval:copy-result #t)          ; copy non-void eval:run!/M-x results for C-y
+;; (eval:copy-result #t)          ; copy non-void eval:run! and M-x results for C-y
 ;; (undo-scope 'mine)            ; 'all: undo the latest action by any actor
 ;; (forward-kill-ring-to-system-clipboard #f)
 ;;                              ; #t: also request an OSC 52 system-clipboard
@@ -53,13 +55,15 @@
 ;; (scheme-format:tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
 ;; (scheme-format:intrusive #f)   ; #t: also fold whitespace and reflow lines
 ;; (scheme-format:width 100)      ; target columns for intrusive formatting
+;; (file-view:expansion-limit 20) ; expand recursive groups up to this many matches
+;; (file-view:show-hidden #f)     ; #t: include hidden entries in Files
 ;; (terminal:scrollback 10000)    ; retained shell lines; alternate screens excluded
 ;; (terminal:shell "/bin/bash")  ; defaults to $SHELL, then /bin/sh
 ;; (terminal:forward-clipboard-to-kill-ring #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's kill ring
-;; (head:min-window-lines 2)      ; squeezed windows keep this many text lines
-;; (prompt:in-window #t)          ; every prompt takes the current window, as
+;; (head:min-window-lines 3)      ; minimum text height allowed by a split
+;; (prompt:in-window #t)          ; default #f; every prompt takes the window, as
 ;;                                ; find-file!! does, instead of the echo area
 ;; (style:set! 'ghost '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,

@@ -30,8 +30,9 @@ library. Every expression evaluates in the same live top level as `M-x`, with
 the complete published editor API available.
 
 The file is intentionally ignored by Git. The repository ships
-`config.template.e`, containing every supported option as a commented example
-with its default value:
+`config.template.e`, with commented examples of common settings. Most show
+defaults; others demonstrate overrides, such as browser commands, styles and
+key bindings. The template does not enumerate the complete API:
 
 ```sh
 cp config.template.e config.e
@@ -114,6 +115,8 @@ and precedence rules.
 
 ## Self-contained installations
 
-Each checkout reads only the `config.e`, `base-config.e`, `lib/`, `data/`, compiled `eo/`,
-and its daemon's `.socket/` beside its own loader; nothing of e's lives elsewhere. A project can therefore vendor a customized e checkout
-without affecting a personal installation elsewhere.
+Each checkout keeps `config.e`, `base-config.e`, `lib/`, `data/` and compiled
+`eo/` beside its own loader. Its default daemon socket is `.socket/base`
+there too; `--socket` can select another location. A project can therefore
+vendor a customized e checkout without affecting a personal installation
+elsewhere.

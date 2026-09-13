@@ -1,8 +1,10 @@
 # Interactive prompts
 
-Prompts share one editing and presentation engine. File selection, buffer
-selection, `M-x`, describe, and command-specific questions therefore use the
-same movement, history, completion, wrapping, and styling behavior.
+Prompts share one editing and presentation engine. Create mode, the original
+find-file command, `M-x`, describe, and command-specific text questions use
+the same movement, history, completion, wrapping, and styling behavior.
+The default [Files](FILES.md) and [Buffers](BUFFERS.md#the-buffers-app) pickers
+are table apps with their own navigation and filtering controls.
 
 ## Editing
 
@@ -13,7 +15,7 @@ Prompt input supports the familiar bindings:
 | `C-a`, `C-e`, Home, End | Move to an input or visual-line boundary |
 | `C-b`, `C-f`, Left, Right | Move by one character |
 | Up, Down | Browse history in window prompts; move through visual lines, then history in the echo area |
-| `C-k`, `C-y` | Use the shared kill ring |
+| `C-k`, `C-y` | Use this head's kill ring |
 | Tab | Complete |
 | `C-g`, Escape | Cancel |
 | Return | Accept |

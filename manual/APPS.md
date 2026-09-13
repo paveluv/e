@@ -22,8 +22,8 @@ their text is readable through `store:`.
 ```
 
 A string is a stable tool key and its preferred initial buffer label.  If
-that label is already used, the local buffer receives a suffix such as
-`<2>`.  An ordinary buffer with the same name is preserved.  Renaming
+that label is already used, the local buffer receives a numbered label such
+as `<example 2>`. An ordinary buffer with the same name is preserved. Renaming
 the app changes its label; registering the same key again reuses the
 same local buffer and replaces its refresh and input handler.
 You can also pass an existing local buffer to attach the app directly
@@ -286,7 +286,8 @@ app's mode context names an escape prefix and may bind app-specific sequences:
 
 ```scheme
 (keymap:set-context-escape! 'terminal "C-]")
-(keymap:bind-default! 'terminal "C-] C-]" terminal-literal-escape!)
+(keymap:bind-default! 'terminal "C-] C-]"
+  (lambda () (terminal:send! "\x1d;")))
 (keymap:bind-default! 'terminal "C-] C-y" terminal:yank!)
 ```
 

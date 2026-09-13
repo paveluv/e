@@ -54,7 +54,15 @@ Named terminal keys are:
 
 - `RET`, `TAB`, `ESC`, `BACKSPACE`, `DELETE`, and `S-TAB`
 - `UP`, `DOWN`, `LEFT`, `RIGHT`, `HOME`, and `END`
-- `PAGEUP` and `PAGEDOWN`
+- `PAGEUP`, `PAGEDOWN`, `INSERT`, and `BEGIN`
+- `F1` through `F12`; higher names through `F63` are also accepted
+- Numeric-keypad names such as `KP-0`, `KP-ADD`, and `KP-ENTER`
+
+Named keys accept `C-`, `M-` and `S-` modifiers, such as `M-S-UP` and
+`C-LEFT`. The terminal must send a distinguishable sequence, and its own
+shortcuts can intercept a key before e receives it. Files and Buffers use
+`F1`–`F6` for column sorting while their app is focused; these are app controls,
+so a global binding lookup can still report the key as unbound.
 
 Three pseudo-keys are bindable like any other. `PASTE` is the event a
 bracketed paste produces. `SELF-INSERT` is what an unbound printable

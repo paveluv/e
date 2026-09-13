@@ -16,29 +16,40 @@ restart; see [the reload boundary](manual/MODULES.md#hot-reload).
 
 Highlights:
 
+- Keep an editor session running on an SSH host with `e --daemon`, then
+  reconnect with `e --attach`. Shared buffers and terminals survive detachment;
+  named screens recover their windows and positions after a disconnect.
+  Several screens can work on the same documents with independent layouts.
 - `M-x` evaluates Scheme in the editor's context, with structural multiline
   input, semantic completion, parameter hints, history, and captured output
   (evaluation results, stdout, and stderr are captured separately).
+- Files and buffers have live, filterable tables with multi-column sorting
+  and keyboard or mouse navigation. Files supports recursive path matching,
+  clickable directory breadcrumbs and explicit file/directory creation.
+  Each pane fits its columns independently.
 - Besides normal editing buffers, there are app buffers. They update their
   presentation from internal structures and can optionally
-  interact with the user (`<log>`, `<git-log>`, `<buffers>`, `*terminal*`).
+  interact with the user: logs, Git history, live reference pages and rendered
+  Markdown, as well as the file and buffer pickers.
 - Windows form a recursive tiling layout that is easy to reshape: split in
   either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
-- `C-c t` turns the current buffer into a PTY-backed terminal able to run
+- `C-c t` opens a new PTY-backed terminal buffer able to run
   shells, full-screen programs, or another editor such as
   [legmacs](https://github.com/nooga/legmacs).
 - Undo and redo describe meaningful edits: typed runs, pastes, replacements,
-  and formatter passes.
-- There are no dependencies beyond Chez Scheme, a Unix-like terminal, and the
-  system `libc.so`. The first start automatically compiles its libraries; later
-  starts are typically around 100 ms.
+  and formatter passes. Undo targets your own changes by default; choose
+  another actor's changes or opt into undoing everyone's work.
+- The same shared-state APIs are available to scripted clients for attributed
+  edits, change notifications, scoped undo and communication between actors.
+  The editor is agent-ready; bundled agent integrations remain deferred.
 
 ## Start
 
 ### Prerequisites
 
-The only dependency is [Chez Scheme](https://cisco.github.io/ChezScheme/)
-(a threaded build, which is what every package below ships):
+The core editor needs a threaded build of
+[Chez Scheme](https://cisco.github.io/ChezScheme/), a Unix-like system and a
+terminal. Package installation examples:
 
 ```sh
 # Linux (Debian/Ubuntu)
@@ -50,6 +61,12 @@ $ pkg install chez-scheme
 # macOS
 $ brew install chezscheme
 ```
+
+Cloning the repository and the Git browser use the installed `git` command.
+HTTPS features, including reference downloads, need OpenSSL's `libssl` or
+the optional `curl` backend and trusted CA certificates; see
+[HTTPS](manual/HTTPS.md). Opening web links
+uses the configured [browser command](manual/MARKDOWN.md#scheme-api).
 
 ### Install
 
@@ -72,26 +89,36 @@ $ rm -rf ~/git/project/.e/.git
 $ ~/git/project/.e/e file.txt
 ```
 
-Each installation is self-contained. It uses the `lib/`, `config.e`, `data/`,
-optional `base-config.e`, compiled `eo/`, and the daemon's `.socket/` beside
-its own loader; nothing of e's lives outside that directory, so several
-checkouts coexist without noticing each other.
+Each installation keeps its libraries, configuration, downloaded data and
+compiled objects beside its loader: `lib/`, `config.e`, `data/`, optional
+`base-config.e` and `eo/`. The default daemon socket is `.socket/base` there
+too, so checkouts have independent settings, caches and daemons.
 `lib/` groups flat-named `.sls` libraries by responsibility.
 Base and attached implementations use separate `eo/base/` and `eo/client/`
-caches of `.so` objects. Configurations retain the `.e` extension; tools use
-`.sps`. See [the module layout](manual/MODULES.md#library-architecture).
-
-e supports [daemon attachment](manual/MULTIHEAD.md#running-a-daemon-and-attaching):
-`e --daemon` keeps shared buffers and terminals alive; `e --attach` opens a
-head on it, and `C-x C-c` detaches that head. Several screens can edit together.
-Reattaching with the same `--name` restores its layout, positions and kill text,
-including after an abrupt disconnect. Scripted clients can cooperate while
-heads are absent and leave questions for a named head to answer on return.
-They share the granted read-only evaluator; an attached human can inspect
-sessions and revoke an agent's connection.
+caches of `.so` objects. The first start compiles the required libraries;
+later starts reuse them. Configurations retain the `.e` extension; tools
+use `.sps`. See [the module layout](manual/MODULES.md#library-architecture).
 
 On FreeBSD, where Chez installs a differently named script interpreter, run
 `chez-scheme --script e` or change the shebang as explained in the loader.
+
+### Keep a session across SSH logins
+
+Run both commands on the host where the files live. Start the daemon once,
+then attach whenever you log in:
+
+```sh
+$ ~/.e/e --daemon >~/.e/base.log 2>&1 &
+$ ~/.e/e --attach --name work
+```
+
+`C-x C-c` detaches that screen. Attach with the same name to restore its
+layout, positions and kill ring; use a different name for an independent
+screen. Shared edits and terminal processes continue while no screen is
+attached. State lasts for the daemon's lifetime; stopping it does not save
+the session to disk. Connections currently use a local Unix socket under
+the same OS user. See [daemon attachment](manual/MULTIHEAD.md#running-a-daemon-and-attaching)
+for configuration, lifecycle and scripted clients.
 
 ## Essential keys
 
@@ -100,9 +127,8 @@ On FreeBSD, where Chez installs a differently named script interpreter, run
 | `C-x C-f` | Browse and recursively filter files in the `<files>` app |
 | `C-x C-s` | Save |
 | `C-x C-w` | Save as |
-| `C-x C-c` | Quit safely |
-| `C-x b` | Switch buffers by name |
-| `C-x C-b` | Switch through the interactive `<buffers>` table |
+| `C-x C-c` | Quit standalone e, or detach this screen from its daemon |
+| `C-x b`, `C-x C-b` | Filter and switch buffers; Enter initially selects the previous buffer |
 | `C-x 2`, `C-x 3` | Split the current window below or right |
 | `C-x 0`, `C-x 1` | Delete this window or every other window |
 | `M-Arrows` | Move between windows along the cursor's screen ray |
@@ -117,6 +143,13 @@ On FreeBSD, where Chez installs a differently named script interpreter, run
 | `C-c t` | Open a terminal buffer |
 | `C-c a` | Answer a question another actor left for you |
 | `C-g`, Escape | Cancel the current interaction |
+
+In Files, type to filter, use Left/Right to navigate directories and Enter
+to open a row. `M-c` enters Create mode: Enter creates the typed file, or
+directories when the path ends in `/`. Existing names are refused. In both
+Files and Buffers, click column headings or use `F1`–`F6` to cycle ascending,
+descending and off, with multiple sort keys in the order you add them.
+The original path-entry command remains available as `M-x (find-file!!)`.
 
 ## Scheme at the center
 
@@ -147,7 +180,7 @@ immediately.
   completion, explicit creation, match counts and sortable filesystem metadata.
 - [Base, heads and agents](manual/MULTIHEAD.md): the daemon, attaching and
   reattaching named screens, what is shared and what is local, questions
-  between actors, agent sessions and permissions.
+  between actors, and the agent-ready session and permission APIs.
 - [Evaluation](manual/EVAL.md): M-x, `eval:run!`, multiline commands, output
   capture, interruption, history, and result copying.
 - [Terminal buffers](manual/TERMINAL.md): capture, escape, emulation, scrollback,
@@ -181,9 +214,9 @@ immediately.
 - [Modules and architecture](manual/MODULES.md): the library layout, hot
   reload, registrations, modes, highlighters, and extension conventions.
 
-Development notes live in `dev/`, apart from the manual: design notes, the
-task tracker with its tech-debt ledger, the dead-code and debugging-lessons
-ledgers, and the terminal test notes.
+Development notes live in `dev/`. Start with the
+[task tracker and tech-debt ledger](dev/V2_TASKS.md) for current status and
+links to the design, implementation records and deferred work.
 
 ## Limits
 
@@ -194,6 +227,10 @@ same glyph rules as the terminal emulator.
 
 ## Version history
 
+- **Current main (unreleased)** -- a persistent daemon with named screens,
+  shared terminals and attributed undo; agent-ready APIs; interactive Files
+  and Buffers tables with filtering, compound sorting and per-window column
+  widths. The repository uses the settled R6RS library layout.
 - **v0.1** (2026-09-01) -- the first tagged release. The core editor:
   buffers, recursive tiling windows, incremental search and query
   replace, meaningful undo, mouse support, styles. `M-x` with semantic
