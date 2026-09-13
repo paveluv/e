@@ -213,15 +213,17 @@
       (append (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) visible-dirs))
         (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) files)))))
   (define (directory-label)
-    (string-append "Directory: " (display-path location) (if (string=? location "/") "" "/")
+    (string-append "Directory: " (display-path (file:abbreviate location)) (if (string=? location "/") "" "/")
       (if (show-hidden) "  [hidden]" "")
       (if complete? "" "  Searching…")
       (if (positive? failures) (format "  ~a unreadable path~a" failures (if (= failures 1) "" "s")) "")))
   (define (breadcrumb-hit w row column)
     ;; Clicks and hover share character ranges in the actual fitted line.
+    ;; Expand displayed ancestors (including ~/) back to their real paths.
     ;; Left elision may hide ancestors, but its ellipsis is never a link.
     (and (eq? (head:window-buffer w) view) (= row 1) (not (string=? location "/"))
          (let* ([line (vector-ref (head:window-lines w) row)]
+                [path (file:abbreviate location)]
                 [clipped? (and (positive? (string-length line)) (char=? (string-ref line 0) #\…))]
                 [shift (if clipped?
                            (- (let trim ([end (string-length line)])
@@ -229,11 +231,12 @@
                                     (trim (- end 1)) end))
                               (string-length (directory-label))) 0)])
            (let find ([from 0] [start (+ 11 shift)])
-             (let ([slash (string:search location "/" from (string-length location))])
+             (let ([slash (string:search path "/" from (string-length path))])
                (and slash
-                    (let ([end (+ start (string-length (display-path (substring location from (+ slash 1)))))])
+                    (let ([end (+ start (string-length (display-path (substring path from (+ slash 1)))))])
                       (if (<= (max (if clipped? 1 0) start) column (- end 1))
-                          (list (max (if clipped? 1 0) start) end (if (zero? slash) "/" (substring location 0 slash)))
+                          (list (max (if clipped? 1 0) start) end
+                            (file:canonical (file:expand (substring path 0 (+ slash 1)))))
                           (find (+ slash 1) end)))))))))
 
   (define (render!)

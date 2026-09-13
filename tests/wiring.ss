@@ -856,16 +856,33 @@
      (delete-file (files-path "linked"))
      (files-open!)
      (files-filter! "")
-     (hover! (find-cell "tmp/"))
-     (let* ([start (find-cell "tmp/")] [slash (cons (car start) (+ (cdr start) 3))]
-            [samples (list (hover-face start) (hover-face slash)
-                           (hover-face (cons (car start) (- (cdr start) 1)))
-                           (hover-face (cons (car start) (+ (cdr start) 4))))])
-       (click! slash)
-       (files-settle!)
-       (check 'files-breadcrumb-hover-and-click-include-the-components-slash
-         (list samples (read-editor '(head:buffer-fact (current-buffer) 'directory #f)))
-         '(((#t #t) (#t #t) (#f #f) (#f #f)) "/tmp")))
+     (define (files-breadcrumb! component)
+       (let* ([start (find-cell component)] [width (string-length component)]
+              [slash (cons (car start) (+ (cdr start) (- width 1)))])
+         (hover! start)
+         (let ([samples (list (hover-face start) (hover-face slash)
+                              (hover-face (cons (car start) (- (cdr start) 1)))
+                              (hover-face (cons (car start) (+ (cdr start) width))))])
+           (click! slash) (files-settle!)
+           (list samples
+             (read-editor '(let ([path (head:buffer-fact (current-buffer) 'directory #f)])
+                             (list path (string:prefix? (string-append "Directory: " (file:absolute "" path))
+                                          (buffer-line (current-buffer) 1)))))))))
+     (let* ([outside (files-breadcrumb! "tmp/")]
+            [below (string-append "~/" (string:tail files-root 5) "/child")]
+            [home-path (read-editor '(file:canonical (file:expand "~")))])
+       ;; A read-only probe path needs no files or environment changes in
+       ;; the real home directory. Breadcrumbs also work when scanning fails.
+       (read-editor `(begin (file-view:open! ,below) #t)) (files-settle!)
+       (hover! (find-cell "child/"))
+       (let ([short? (visible? (string-append "Directory: " below "/"))]
+             [last-face (hover-face "child/")])
+         (let ([home (files-breadcrumb! "~/")])
+           (check 'files-breadcrumb-hover-and-click-include-home-and-expose-root-at-home
+             (list outside short? last-face home (files-breadcrumb! "/"))
+             (list '(((#t #t) (#t #t) (#f #f) (#f #f)) ("/tmp" #t)) #t '(#f #f)
+               (list '((#t #t) (#t #t) (#f #f) (#f #f)) (list home-path #t))
+               '(((#t #t) (#t #t) (#f #f) (#f #f)) ("/" #t)))))))
      (read-editor `(begin (file-view:open! ,(files-path "small/nested")) #t))
      (files-settle!)
      (check 'files-left-right-retraces-three-levels-with-the-return-child-selected

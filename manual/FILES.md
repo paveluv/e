@@ -6,10 +6,13 @@ directory. `M-x (file-view:open! "/some/directory")` starts elsewhere.
 `C-x C-f` still opens the existing path-entry prompt. To use the app for
 that shortcut, put `(keymap:bind! "C-x C-f" file-view:open!)` in `config.e`.
 
-The first line is the relative-path filter. The Directory line shows the full
-absolute path with a trailing slash, such as `/home/paveluv/git/e/`, plus
-scan status. Each ancestor component and its following slash is clickable:
-`git/` goes to `/home/paveluv/git/`, and the first `/` goes to the root.
+The first line is the relative-path filter. The Directory line shows the
+directory with a trailing slash, plus scan status. Below your home directory,
+its prefix becomes `~/`, as in `~/git/e/`. Each ancestor component and its
+following slash is clickable: `git/` goes to `~/git/`, and `~/` goes home.
+At home itself the full path appears, such as `/home/paveluv/`, with its
+ancestors clickable. To reach root from a home descendant, click `~/`, then
+the first `/`. Paths outside home also appear in full.
 Hover highlights just that component with bold text and a muted dotted
 underline. The final component, `e/` here, is the current directory and
 stays plain. Narrow panes elide the start of the line; the ellipsis is not
