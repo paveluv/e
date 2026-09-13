@@ -294,11 +294,12 @@ Declaring the escape alone makes it wait for the next key; an app need not
 add a binding under that prefix.
 
 A sequence starting with the escape that the context does not bind resolves,
-minus the prefix, in the global map: `C-] C-x C-f` runs `find-file!!` from
+minus the prefix, in the global map: `C-] C-x C-f` opens the files app from
 inside a captured terminal.  Multi-key bindings wait for their remaining
 keys, commands keep control through their synchronous prompts, and when the
-command returns the next key goes to the app's handler again.  The handler
-need not know about the escape: the dispatcher consults the context first.
+command returns subsequent input follows the current buffer's context.
+The handler need not know about the escape: the dispatcher consults the
+context first.
 While the escape is in progress `head:escaped-buffer` names the buffer, so a
 status hint can say so -- the terminal shows `▶ escaped` -- and the cursor
 takes the editor's shape rather than the app's.
@@ -382,7 +383,7 @@ windows showing the same app.
 
 ## The files app
 
-`C-x f` opens `<files>`: a local directory browser with incremental recursive
+`C-x C-f` opens `<files>`: a local directory browser with incremental recursive
 filename filtering, ancestor navigation, match counts and sortable metadata.
 It shares the buffers table's sort-key cycling and column fitting. Its
 directory, filter and sorting are shared within one head; formatting,

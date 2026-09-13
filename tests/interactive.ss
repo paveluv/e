@@ -266,11 +266,11 @@
      ;; the right-hand window: it opens there.
      (send! "\x18;3")                   ; C-x 3
      (settle! 500)
-     (send! "\x18;\x6;")                ; C-x C-f
+     (send! "\x1b;xfind-file!!\r")       ; direct prompt through M-x
      (settle! 500)
      (send! "\x1b;[1;3C")               ; M-RIGHT cancels the window prompt
      (settle! 500)
-     (send! "\x18;\x6;")                ; C-x C-f, now in the right window
+     (send! "\x1b;xfind-file!!\r")       ; now in the right window
      (settle! 500)
      (send! "README.md\r")
      (wait-for! 'prompt-navigation-targets-focused-window

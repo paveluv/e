@@ -379,7 +379,7 @@
                                   (string-append (string:tail full (string-length base))
                                     (if (string:suffix? "/" prefix) "/" ""))]
                                  [else #f])])
-            (cond [(not relative) (set-message! "Use C-l for paths outside this directory")]
+            (cond [(not relative) (set-message! "Use M-c for paths outside this directory")]
                   [(not (string=? relative query)) (filter! relative)]
                   [else (set-message! (if (null? (cdr matches)) "Sole completion" "Multiple path completions"))])))))
   (define (cycle! column)
@@ -470,7 +470,7 @@
                (when target (show-buffer! target)))) #t]
           [(string=? event "C-u") (filter! "") #t]
           [(string=? event "C-r") (refresh!) #t]
-          [(string=? event "C-l") (path!!) #t]
+          [(string=? event "M-c") (path!!) #t]
           [(string=? event "M-.") (show-hidden (not (show-hidden))) (filter! query) #t]
           [(member event '("BACKSPACE" "C-h"))
            (if (string=? query "") (parent!)
@@ -515,7 +515,7 @@
            (fold-left (lambda (text hint)
                         (if (<= (+ (glyph:cells text) 2 (glyph:cells hint)) room)
                             (string-append text "  " hint) text)) ""
-             '("C-l open/create" "Tab complete" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
+             '("M-c create" "Tab complete" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
   (define (ensure!)
     (unless (and view (memq view (buffer-list)) (head:app-buffer? view))
       (set! view (head:register-app! "*files*" render! handle!))
@@ -545,7 +545,7 @@
 
   (define (init!)
     (mode:register! "files" '() '() (lambda (line) #f) #f styles)
-    (keymap:bind-default! "C-x f" open!)
+    (keymap:bind-default! "C-x C-f" open!)
     (paint:add-status-hint! hints)
     (head:add-buffer-kill-hook!
       (lambda (b)
@@ -598,7 +598,7 @@
     (doc:register!
       '(((file-view:open!) (("procedure" . "(file-view:open! [directory])")) "void"
          ("(file-view)") file-view "Files" #f
-         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. C-l clears the filter and reads its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Esc returns to browsing the shown directory. Acceptance opens files, creates missing parents, or creates and enters directories for a trailing slash; new files stay unsaved. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
+         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. M-c clears the filter and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
          ("(file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")

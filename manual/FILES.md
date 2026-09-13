@@ -1,10 +1,10 @@
 # Files
 
-`C-x f` opens the `<files>` app in the current window. It starts in the
+`C-x C-f` opens the `<files>` app in the current window. It starts in the
 current file's directory, an app's working directory, or the head's launch
 directory. `M-x (file-view:open! "/some/directory")` starts elsewhere.
-`C-x C-f` still opens the existing path-entry prompt. To use the app for
-that shortcut, put `(keymap:bind! "C-x C-f" file-view:open!)` in `config.e`.
+The original path-entry prompt remains available as `M-x (find-file!!)`.
+`C-x f` has no default binding.
 
 The first line is the relative-path filter. The Directory line shows the
 directory with a trailing slash, plus scan status. Below your home directory,
@@ -39,7 +39,7 @@ Esc or C-g returns to the document from which this window opened the app.
 | `C-u` | Clear the filter. |
 | `Tab` | Complete the filter as a path, appending `/` for a directory. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
-| `C-l` | Enter Open/Create mode, with a path prompt below the live table. |
+| `M-c` | Enter Create mode, with a path prompt below the live table. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
 | `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
@@ -48,15 +48,16 @@ Tab completes the final component using the same case-sensitive filename
 prefixes as find-file. With several candidates it extends their common prefix;
 if it cannot extend it, keep typing or choose a row. Filtering itself remains a
 case-insensitive substring search. Paths completed inside the current directory
-are written back in relative form. Use C-l for arbitrary absolute, home or
+are written back in relative form. Use M-c for arbitrary absolute, home or
 parent paths; completion outside the current directory points you to that key.
 
-## Open/Create mode
+## Create mode
 
-C-l clears the Filter and puts an editable `Open/create:` prompt at the
-bottom of the window, seeded from the filter's literal path. Directory
-follows the path being edited. The table shows only immediate children
-whose names start with its final component, using the same case-sensitive
+M-c clears the Filter and opens a temporary `<create-file>` view with an
+editable `Create file:` prompt at the bottom of the window, seeded from the
+filter's literal path. Directory follows the path being edited. The table
+shows only immediate children whose names start with its final component,
+using the same case-sensitive
 matching as find-file. For example, `src/re` shows `re…` entries inside
 `src/`; it does not search below those entries. A trailing `/` shows the
 directory's children. Dot entries appear when the final component starts
@@ -67,35 +68,45 @@ directory. Candidates are already visible; repeated Tab pages through them
 only when they do not fit. PageUp/PageDown, Shift-Tab and the mouse wheel
 also page the table. Sorting by headings or F1–F6 still works and uses the
 whole matching list, before paging. Clicking a directory or breadcrumb
-updates the path and its table. Clicking a file fills the prompt; Enter
-opens that exact path. Up/Down browse file history; Left/Right edit the path.
+updates the path and its table. Clicking a file fills the prompt so you can
+edit its name. Enter refuses an existing file and shows `[file already exists]`
+as a ghost immediately after the input. The ghost disappears after two seconds
+or when you continue editing; it is not repeated in the echo area.
+Up/Down browse file history; Left/Right edit the path.
 Tab also refreshes the directory's metadata; C-r rescans without completing
 input, so external file creations and removals can be picked up in this mode.
 
 The input keeps find-file's editing, cursor, wrapping and error recovery.
 Esc or C-g removes the prompt and returns to normal files mode at the
 directory currently shown, with an empty filter. If that directory does
-not exist or cannot be read, Left still goes to its parent. No paths are
-created until Enter accepts the prompt.
+not exist or cannot be read, Left still goes to its parent. Creation starts
+only when you press Enter.
 
 ## Creating files and directories
 
 Creation is explicit and works regardless of what the filter matches. For
-example, type `notes`, press C-l, then Enter to open a new file called `notes`,
+example, type `notes`, press M-c, then Enter to create a new file called `notes`,
 even if the list contains `notes.txt`. The prompt uses the literal path rather
-than the selected search result. Existing files use the usual file identity
-and disk-conflict handling, including unsaved buffers and remembered points.
+than the selected search result. Open existing files from normal Files mode.
 
-For a new file, missing parent directories are created and an empty visiting
-buffer opens; the file is written when you save. For example, `drafts/idea.txt`
-creates `drafts/` if needed. End the path with `/` to create directories only
-and enter the last one: `drafts/research/` creates both levels if necessary.
-An existing directory is entered with or without a trailing slash.
+For a new file, Enter creates missing parent directories and an empty file on
+disk, then opens its buffer. No save is needed to create it. Creation refuses
+an existing name, including a symbolic link, without changing it. For example,
+`drafts/idea.txt` creates `drafts/` if needed. End the path with `/` to create
+directories only and enter the last one: `drafts/research/` creates both
+levels if necessary. An existing directory with a trailing slash is refused
+with the same transient inline ghost, `[directory already exists]`. Without
+a trailing slash the request is for a file, so any existing name is refused
+with `[file already exists]`. Use normal Files mode to enter existing directories.
 
-Before acceptance, cancelling leaves the filesystem alone. Errors, including
-a file where a directory is required, keep the prompt editable. Parent directories
-created before a later error remain available; existing files are never
-replaced by directory creation.
+Each newly created directory is logged as `Created directory /path/`, from
+parent to child, followed by `Created file /path/name` for a file. Existing
+directories and refused names do not produce creation entries.
+
+Cancelling before Enter leaves the filesystem alone. Errors, including a
+file where a directory is required, keep the prompt editable. Paths created
+before a later error remain available and are logged; existing files are
+never replaced by directory creation.
 
 ## Recursive filtering
 
@@ -108,7 +119,7 @@ in a group are listed individually with relative paths. Above that threshold,
 the directory and its count remain; enter it to search a smaller subtree with
 the same filter. Relative paths are measured from the new directory: entering
 `lib/` with `lib/foo` still in Filter may produce no matches. Edit or clear the
-filter to search for `foo` there, or use C-l to work with a literal path.
+filter to search for `foo` there, or use M-c to work with a literal path.
 The threshold does not limit counting or hide direct files inside the current
 directory.
 
@@ -166,7 +177,7 @@ Like `<buffers>`, `<files>` shares its directory, filter and sort order between
 windows in one head. Each window fits its own columns and retains its own
 keyboard choice and viewport. Narrow panes hide lower-priority metadata;
 names stay visible and long labels are shortened without wrapping.
-While Open/Create owns one pane, sorting can still be changed from another
+While Create owns one pane, sorting can still be changed from another
 files pane. Navigating from that other pane ends path entry and keeps the
 chosen destination, using the prompt's usual focus-loss behavior.
 

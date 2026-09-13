@@ -63,13 +63,14 @@ The repetition is command-based rather than inferred from the cursor position.
 
 ## Prompts in the window
 
-`C-x C-f` reads its input in the current window instead of the echo area.
-Each invocation creates a temporary local `<find-file>` view. The input sits at the bottom
-of the window, with the same editing keys, styles, suggestions and text
+`M-x (find-file!!)` reads its input in the current window instead of the
+echo area. Each invocation creates a temporary local `<find-file>` view.
+The input sits at the bottom of the window, with the same editing keys,
+styles, suggestions and text
 cursor as an echo-area prompt. Clicking the input moves its insertion point.
 
 `C-x b` and `C-x C-b` use the [filterable buffers app](BUFFERS.md#the-buffers-app).
-The [files app's C-l mode](FILES.md#opencreate-mode) uses the same input editor
+The [files app's M-c mode](FILES.md#create-mode) uses the same input editor
 below a live directory table, with sortable columns and paged matches.
 
 Long input wraps above the bottom row. Tab lists candidates above the input;
@@ -164,7 +165,9 @@ and `prompt:reindent`.
 `prompt:completion-label` maps a full candidate to its displayed label;
 the default preserves the value. `prompt:validate` is `#f` or a procedure
 called on normalized input when Enter is pressed. It returns `#f` to accept
-or a short explanation to keep editing. `prompt:draft` is `#f` or a box
+or a short explanation to keep editing. Returning `(prompt:transient "message")`
+instead shows only an inline `[message]` ghost, cleared after two seconds or
+on editing, in both window and echo-area prompts. `prompt:draft` is `#f` or a box
 containing `#f` or `(input . cursor)`; the prompt starts from that draft and
 updates it as input changes. The caller decides when to retain it. Validation
 and draft ownership are local to each invocation; nested reads do not inherit

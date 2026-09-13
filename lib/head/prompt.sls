@@ -26,11 +26,12 @@
                   (prompt-reindent reindent) (prompt-in-window in-window)
                   (validate-input validate) (draft-input draft)
                   (make-content-view make-content))
-          confirm? completion-label completion-highlight content line allow! interaction)
+          confirm? completion-label completion-highlight content line allow! interaction transient)
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme)
                 make-parameter parameterize box unbox set-box! format void
-                make-weak-eq-hashtable make-list list-head iota)
+                make-weak-eq-hashtable make-list list-head iota
+                current-time add-duration make-time time<?)
           (prefix (kernel) kernel:)
           (prefix (head) head:)
           (prefix (echo) echo:)
@@ -166,9 +167,9 @@
               (set! message "")
               (set! message-ghost "")))))))
 
-  (define running? (make-parameter #f))
+  (define active-refresh (make-parameter #f))
   (define window-owner (make-parameter #f))
-  (define (prompt-active?) (or (running?) (and echo-cursor #t)))
+  (define (prompt-active?) (or (and (active-refresh) #t) (and echo-cursor #t)))
 
   (define prompt-in-window (make-parameter #f))
   (define completion-label (make-parameter (lambda (value) value)))
@@ -179,8 +180,17 @@
   ;; input (#f leaves it alone, e.g. when sorting a column).
   (define-record-type content-view (fields minimum-height render handle))
   (define content (make-parameter #f))
-  ;; A validator returns #f to accept, or a short explanation to keep
-  ;; editing. A draft box carries (input . cursor) across invocations.
+  ;; A validator returns #f to accept, a short explanation to keep editing,
+  ;; or (transient text) for an inline-only notice that expires after two
+  ;; seconds. Its deadline travels with the note, so keys that retain it
+  ;; cannot restart its lifetime. Editing discards it like any other note.
+  (define-record-type (notice transient notice?)
+    (fields text deadline)
+    (protocol (lambda (new)
+                (lambda (text)
+                  (new (string-append " [" text "]")
+                    (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))))))
+  ;; A draft box carries (input . cursor) across invocations.
   (define validate-input (make-parameter #f))
   (define draft-input (make-parameter #f))
   (define prompt-ghost (make-parameter (lambda (s) #f)))
@@ -204,6 +214,7 @@
       choices))
   (define prompt-modes
     (begin
+      (head:add-pre-redraw-hook! (lambda () (when (active-refresh) ((active-refresh)))))
       (for-each
         (lambda (name)
           (mode:register! name '() '()
@@ -215,7 +226,7 @@
         (lambda ()
           (paint:hover-ranges
             (lambda (w row column)
-              (and (running?) (or (not (window-owner)) (eq? w (window-owner)))
+              (and (active-refresh) (or (not (window-owner)) (eq? w (window-owner)))
                    (let* ([line (vector-ref (head:buffer-lines (head:window-buffer w)) row)]
                           [info (hashtable-ref line-presentation line #f)]
                           [choice (and info (choice-at (cdr info) column))])
@@ -369,12 +380,12 @@
     (define (status-text b)
       (let* ([room (max 1 (- (head:window-width target) 12))]
              [short (cond [(and (or body candidates) in-window? (< (head:window-size target) 2)) "Enlarge pane"]
-                          [(and (or body candidates) (> pages 1)) (format "~a/~a Tab: next" (+ page 1) pages)]
+                          [(and (or body candidates) (> pages 1)) (format "~a/~a Tab next" (+ page 1) pages)]
                           [candidates (format "~a matches" (length candidates))]
-                          [else "Tab: complete"])]
+                          [else "Tab complete"])]
              [help (if (> room 60)
-                       (string-append short "  ↑↓: history  Enter: accept  Esc: cancel")
-                       (if (> room 35) (string-append short "  ↑↓: history  Esc: cancel") short))]
+                       (string-append short "  ↑↓ history  Enter accept  Esc cancel")
+                       (if (> room 35) (string-append short "  ↑↓ history  Esc cancel") short))]
              [name (head:buffer-name b)])
         (if (<= (+ (glyph:cells name) (glyph:cells help) 2) room)
             (string-append name "  " help) help)))
@@ -441,12 +452,25 @@
                  (if (= available 0) '()
                      (map (lambda (i) (vector-ref candidate-rows i))
                           (map (lambda (i) (+ from i)) (iota (min size (- all from))))))))]))
+    (define (note-text)
+      (cond [(not (notice? note)) note]
+            [(time<? (current-time 'time-monotonic) (notice-deadline note))
+             (head:request-frame-at! (notice-deadline note)) (notice-text note)]
+            [else (set! note "") ""]))
+    (define (render-echo!)
+      (let ([shown-note (note-text)])
+        (set! message (string-append label input shown-note))
+        (set! echo-input-end (+ (string-length label) (string-length input)))
+        (set! message-ghost (if (string=? shown-note "") (or (ghost input) "") ""))
+        (set! echo-indent (string-length label))
+        (set! echo-cursor (+ (string-length label) position))))
     (define (render!)
       (when (and view target (memq target (head:windows))
                  (eq? (head:window-buffer target) view))
         (set! borrowed (view-windows))
         (let* ([width (max 1 (head:window-content-width target))]
                [height (max 1 (head:window-size target))]
+               [note (note-text)]
                [text (string-append label input note)]
                [tail (if (string=? note "") (or (ghost input) "") "")]
                [content (string-append text tail)]
@@ -551,13 +575,7 @@
                          (let ([prefix (string:common-prefix values)])
                            (if (> (string-length prefix) len) (edited prefix (string-length prefix))
                                (begin (show-completions! values) (loop s pos ""))))])))
-              (cond [in-window? (render!)]
-                    [else
-                     (set! message (string-append label s note))
-                     (set! echo-input-end (+ (string-length label) len))
-                     (set! message-ghost (if (string=? note "") (or (ghost s) "") ""))
-                     (set! echo-indent (string-length label))
-                     (set! echo-cursor (+ (string-length label) pos))])
+              (if in-window? (render!) (render-echo!))
               (paint:redraw!)
               (let* ([event (head:read-key-event #t)]
                      [action (and (not (eof-object? event)) (keymap:event-binding 'prompt event))]
@@ -581,11 +599,12 @@
                           [problem (and validator (validator out))])
                      (if problem
                          (begin
-                           (when in-window?
+                           (clear-validation!)
+                           (when (and in-window? (not (notice? problem)))
                              (set! validation-message (list 'validation))
                              (echo:set-text! problem validation-message))
                            (loop out (if (string=? out s) pos (string-length out))
-                             (string-append " [" problem "]")))
+                             (if (notice? problem) problem (string-append " [" problem "]"))))
                          (begin (record-history! out) (set! message "") out)))]
                   [(memq action '(beginning end))
                    (set! last-edge action)
@@ -632,7 +651,9 @@
       (lambda ()
         ;; These options belong to this invocation. Nested questions must
         ;; not validate a filename, overwrite its draft or borrow its table.
-        (parameterize ([running? #t] [window-owner (if in-window? owner (window-owner))]
+        (parameterize ([active-refresh (lambda ()
+                                         (when (and (not in-window?) (notice? note)) (render-echo!)))]
+                       [window-owner (if in-window? owner (window-owner))]
                        [validate-input #f] [draft-input #f] [content #f])
           (dynamic-wind
             (lambda () (when in-window? (take-view!)))

@@ -1948,8 +1948,8 @@
     ;; Validate/acquire while the path is still editable; show it only
     ;; after the temporary view has returned the window. Focus loss keeps
     ;; a per-window draft, while acceptance and explicit cancellation end it.
-    ;; A browser also accepts directories and creates missing parents on
-    ;; acceptance. Files remain ordinary visiting buffers until saved.
+    ;; A browser's Create prompt makes missing parents and an empty file
+    ;; (or just directories for a trailing slash), refusing existing targets.
     (case-lambda
       [() (find-file!! #f #f)]
       [(directory-action) (find-file!! directory-action #f)]
@@ -1961,17 +1961,20 @@
               [saved (and (not initial) (hashtable-ref find-file-drafts owner #f))]
               [directory (if saved (car saved) (default-directory))]
               [draft (if saved (cdr saved) (box #f))]
-              [label (if directory-action "Open/create: " "Find file: ")]
+              [label (if directory-action "Create file: " "Find file: ")]
               [ready #f])
          (define (resolve s) (file:absolute s directory))
          (define (complete s) (file:complete s directory))
          (define (normalize s)
-           (if (and (> (string-length s) 0) (not (string:suffix? "/" s))
+           (if (and (not directory-action) (> (string-length s) 0) (not (string:suffix? "/" s))
                  (guard (ex [else #f]) (file-directory? (file:expand (resolve s)))))
              (string-append s "/") s))
          (define (validate s)
            (set! ready #f)
            (guard (ex [(head:interrupted? ex) "Interrupted; edit the path or try again"]
+                    [(and directory-action (i/o-file-already-exists-error? ex))
+                     (prompt:transient
+                       (if (string:suffix? "/" s) "directory already exists" "file already exists"))]
                     [(i/o-file-protection-error? ex) "Permission denied"]
                     [(kernel:refusal? ex) (condition-message ex)]
                     [else (kernel:condition-text ex)])
@@ -1979,9 +1982,10 @@
                (head:call-with-interrupt
                  (lambda ()
                    (let* ([path (file:canonical (file:expand (resolve s)))]
-                          [directory? (or (string:suffix? "/" s) (file-directory? path))])
+                          [directory? (string:suffix? "/" s)])
                      (when directory-action
-                       (file:make-directories! (if directory? path (file:directory-part path))))
+                       (file:make-directories! (file:directory-part path))
+                       (file:create! (resolve s)))
                      (cond [directory?
                             (if (not directory-action)
                               (if (file-directory? path) "Directory; Tab to list files" "Not an existing directory")
@@ -3255,7 +3259,7 @@
           ("PASTE" ,paste-into-buffer!) ("SELF-INSERT" ,self-insert-command!)
           ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!!)
           ("C-x C-w" ,save-as!!) ("C-x C-c" ,quit!!)
-          ("C-x C-f" ,find-file!!) ("C-x b" ,switch-buffer!!)
+          ("C-x b" ,switch-buffer!!)
           ("C-x k" ,kill-buffer!!) ("C-x o" ,other-window!)
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
           ("C-x 2" ,split-window!) ("C-x 3" ,split-window-right!)
@@ -3322,7 +3326,7 @@
          "The current file's parent, an app's working directory, or the head's launch directory, absolute with home abbreviated and a trailing slash. This is the common starting directory for path prompts and browsers.")
         ((find-file!!) (("procedure" . "(find-file!! [on-directory [initial-path]])")) "void"
          ("(edit)") edit "Files" #f
-         "Read a file path with completion, history and validation, then visit it. With an optional directory procedure, the prompt supports opening and creation: accepting a path creates missing parent directories, and a trailing slash creates a directory. After cleanup, the procedure receives the accepted absolute directory path; new files open as unsaved visiting buffers. An optional initial path seeds the prompt. Without the procedure, directories stay in path entry for completion and missing parents are reported. The files app uses this to share path editing and file identity.")
+         "Read a file path with completion, history and validation, then visit it. With an optional directory procedure, use a Create file prompt: acceptance creates missing parents and an empty file on disk, or just a directory for a trailing slash. Existing targets are refused, and each new path is logged with parents first. After cleanup, the procedure receives the created absolute directory path, or the new file's buffer opens. An optional initial path seeds the prompt. Without the procedure, visiting never creates files on disk, directories stay in path entry for completion, and missing parents are reported. The files app uses this to share path editing and file identity.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; C-u clears the filter. Click headings or use F1 through F6 in column order to cycle ascending, descending, then off; superscripts show sort-key priority. Modified shows the last edit time for unsaved buffers and sorts by the full timestamp. A side-panel click changes the focused window without taking focus.")

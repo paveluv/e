@@ -63,9 +63,9 @@ in that form.
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
 
-`C-x C-f` reads a path [in the window](PROMPTS.md#prompts-in-the-window).
-`C-x f` opens the [files app](FILES.md) for directory navigation and recursive
+`C-x C-f` opens the [files app](FILES.md) for directory navigation and recursive
 filename filtering, with the same column-sorting controls as buffers.
+`M-x (find-file!!)` reads a path [in the window](PROMPTS.md#prompts-in-the-window).
 Both buffer-switch shortcuts use the [live table](#the-buffers-app) below.
 An unmatched filter stays in the table; it never creates a buffer. Use
 `new-buffer!!` for creation. Empty input cancels creation; an existing name
@@ -110,9 +110,10 @@ unsaved work. Shared text and terminal processes stay in the running daemon.
 
 ## File buffers
 
-`C-x C-f` visits a path, `C-x C-s` saves, and `C-x C-w` saves under a new path.
-Find-file offers the current file's directory, a terminal's launch directory,
-or the head's working directory for other buffers. Clearing the offered path
+`C-x C-f` opens the files app, `C-x C-s` saves, and `C-x C-w` saves under a
+new path. The direct path prompt, `M-x (find-file!!)`, offers the current
+file's directory, a terminal's launch directory, or the head's working
+directory for other buffers. Clearing the offered path
 and typing a relative name still uses that starting directory. Absolute paths
 and `~/` select their own location; Tab on `~` extends it to `~/`. A terminal's
 default does not track subsequent shell `cd` commands.

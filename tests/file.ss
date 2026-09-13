@@ -14,6 +14,7 @@
 (eval
   '(begin
      (import (prefix (file) file:) (prefix (directory) directory:) (prefix (sys) sys:) (prefix (test) test:)
+             (prefix (log) log:)
              (only (chezscheme)
                    format getenv putenv current-directory
                    delete-file delete-directory mkdir chmod get-mode
@@ -199,15 +200,25 @@
        (check 'file-read-refuses-special-files-before-opening
          (map (lambda (name) (test:raises? (lambda () (file:read (child name))))) '("pipe" "small"))
          '(#t #t))
-       (check 'make-directories-reuses-directories-and-refuses-files-and-dangling-links
+       (check 'creation-reuses-directories-and-exclusively-creates-empty-files
          (begin
            (for-each (lambda (name) (file:make-directories! (child name)))
              '("created/parents/" "created/parents" "alias"))
+           (file:create! (child "created/parents/empty"))
            (list (file-directory? (child "created/parents"))
+                 (file:read (child "created/parents/empty"))
                  (map (lambda (name) (test:raises? (lambda () (file:make-directories! (child name)))))
                    '("needle-root/child" "dangling/child"))
-                 (file:read (child "needle-root")) (file-exists? (child "absent"))))
-         '(#t (#t #t) "abc" #f))
+                 (map (lambda (name)
+                        (guard (ex [(i/o-file-already-exists-error? ex) #t])
+                          (file:create! (child name)) #f))
+                   '("needle-root" "alias" "dangling" "pipe" "created/parents/empty" "created/parents/"))
+                 (file:read (child "needle-root")) (file-exists? (child "absent"))
+                 (map log:datum (reverse (log:entries 'file)))))
+         (list #t "" '(#t #t) '(#t #t #t #t #t #t) "abc" #f
+               (list (string-append "Created directory " (child "created/"))
+                     (string-append "Created directory " (child "created/parents/"))
+                     (string-append "Created file " (child "created/parents/empty")))))
        (remove-tree root))
 
      ;; One table covers the shared port scope for text and corpus data.

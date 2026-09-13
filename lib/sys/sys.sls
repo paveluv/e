@@ -798,17 +798,19 @@
       (error 'duplicate-standard-input-port "dup is unavailable"))
     (open-fd-input-port (c-dup 0) 'block (native-transcoder)))
 
-  (define (duplicate-output-port port)
-    ;; Keep an independently closeable route to an existing descriptor.  PTY
-    ;; readers use this to outlive M-x's temporary evaluation display port.
+  (define (output-file-descriptor port)
     ;; Chez may represent an interactive terminal as a combined custom port,
     ;; for which port-file-descriptor raises; outside redirected evaluation,
     ;; fd 1 is the same terminal and is the safe fallback.
+    (guard (ex [else 1]) (port-file-descriptor port)))
+
+  (define (duplicate-output-port port)
+    ;; Keep an independently closeable route to an existing descriptor.  PTY
+    ;; readers use this to outlive M-x's temporary evaluation display port.
     (unless c-dup
       (error 'duplicate-output-port "dup is unavailable"))
-    (guard (ex [else (duplicate-standard-output-port)])
-      (open-fd-output-port (c-dup (port-file-descriptor port))
-                           'block (native-transcoder))))
+    (open-fd-output-port (c-dup (output-file-descriptor port))
+                         'block (native-transcoder)))
 
   (define-record-type capture-stream
     (fields target standard emit
@@ -991,12 +993,13 @@
             (tcsetattr 0 tcsanow t))))))
 
   (define (terminal-size)
-    ;; (rows . cols) via TIOCGWINSZ, or #f.
+    ;; (rows . cols) for the display's tty via TIOCGWINSZ, or #f.
+    ;; Process stdout may be a capture pipe while M-x is running.
     (and winsize-ioctl
          (guard (ex [else #f])
            (let ([size (make-bytevector 8 0)])
              (and (= (winsize-ioctl
-                       (port-file-descriptor (standard-output-port))
+                       (output-file-descriptor (terminal-output-port))
                        winsize-request size) 0)
                   (let ([r (bytevector-u16-native-ref size 0)]
                         [c (bytevector-u16-native-ref size 2)])

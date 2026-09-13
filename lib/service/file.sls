@@ -18,7 +18,7 @@
 ;; disk).
 
 (library (file)
-  (export read read-state stamp write! call-with-port
+  (export read read-state stamp create! write! call-with-port
           lines ends-in-newline? text
           merge conflict-count
           directory-part base-name abbreviate absolute
@@ -132,10 +132,33 @@
       (unless (file-directory? path)
         (when (file-exists? path #f) (error 'make-directories! "not a directory" path))
         (create (path:canonical (directory-part path)))
-        (guard (ex [(file-directory? path) (void)] [else (raise ex)]) (mkdir path))))
+        (guard (ex [(and (i/o-file-already-exists-error? ex) (file-directory? path)) (void)]
+                   [else (raise ex)])
+          (create! (absolute "" path)))))
     (void))
 
   ;;; Reading and writing ---------------------------------------------------------
+
+  (define (create! path)
+    ;; A trailing slash requests a directory; both kinds create exclusively.
+    ;; Chez's mkdir needs its existing-directory error normalized to the
+    ;; same condition that the default output-file options already raise.
+    (let ([directory? (string:suffix? "/" path)]
+          [path (path:canonical (path:expand path))])
+      (if directory?
+          (guard (ex [(file-directory? path)
+                      (raise (condition (make-i/o-file-already-exists-error path)
+                                        (make-message-condition "directory already exists")))]
+                     [(file-exists? path #f) (error 'create! "not a directory" path)]
+                     [else (raise ex)])
+            (mkdir path))
+          (dynamic-wind disable-interrupts
+            (lambda () (close-port (open-file-output-port path)))
+            enable-interrupts))
+      (log:add! 'file
+        (string-append (if directory? "Created directory " "Created file ")
+                       (if directory? (absolute "" path) path))))
+    (void))
 
   (define (call-with-port path output? use)
     ;; Chez's file combinators close only on normal return. Own the port

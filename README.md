@@ -97,8 +97,7 @@ On FreeBSD, where Chez installs a differently named script interpreter, run
 
 | Key | Action |
 |---|---|
-| `C-x C-f` | Find a file |
-| `C-x f` | Browse and recursively filter files in the `<files>` app |
+| `C-x C-f` | Browse and recursively filter files in the `<files>` app |
 | `C-x C-s` | Save |
 | `C-x C-w` | Save as |
 | `C-x C-c` | Quit safely |
