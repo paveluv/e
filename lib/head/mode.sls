@@ -36,6 +36,7 @@
                 vector-copy void)
           (prefix (kernel) kernel:)
           (prefix (head) head:)
+          (prefix (keymap) keymap:)
           (prefix (string) string:))
 
   ;;; The registry ------------------------------------------------------------
@@ -130,9 +131,13 @@
   (define (key-context b)
     ;; A mode may carry its own key bindings under a context named
     ;; after it; they take precedence over the global map while a
-    ;; buffer of that mode is current.  #f without a mode.
+    ;; buffer of that mode is current. Capture contexts require a live app;
+    ;; an exited transcript keeps its mode's presentation, not its controls.
     (let ([name (buffer-mode-name b)])
-      (and name (string->symbol name))))
+      (and name
+           (let ([context (string->symbol name)])
+             (and (or (not (keymap:context-capture context)) (head:app-buffer? b))
+                  context)))))
 
   (define (buffer-mode-name b)
     ;; The name of b's mode, or #f without one.

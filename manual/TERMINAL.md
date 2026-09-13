@@ -47,7 +47,7 @@ focus reports alone do not take control of its size or color scheme.
 
 ## Input and leaving the terminal
 
-Terminals start with **partial capture** (`◐`). `C-x` and `M-x` reach e, so
+Live terminals start with **partial capture** (`◐`). `C-x` and `M-x` reach e, so
 `C-x 2`, `C-x k`, and M-x work directly. Press `C-]` or click the capture
 indicator in the status bar to enable **full capture** (`●`), forwarding
 those keys to the child too. Use full capture for another editor such as Emacs.
@@ -96,17 +96,19 @@ output until its termination sequence instead of echoing it to the grid. The
 headless emulator exposes both the controller state and accumulated output;
 e never invokes a host printer or command implicitly.
 
-Every terminal window shows its process indicator and capture preference:
-`▶ ◐` or `▶ ●` while running, and `■ ◐` or `■ ●` after exit. A focused
-window also shows `C-] toggle capture`. The preference belongs to the window;
-other windows and attached heads keep their own choice. A split copies the
+Every live terminal window shows its process indicator and capture preference:
+`▶ ◐` or `▶ ●`. A focused window also shows `C-] toggle capture`.
+The preference belongs to the window; other windows and attached heads keep
+their own choice. A split copies the
 current choice into the new window, after which each is independent. Switching
 buffers preserves the window preference; opening a new terminal resets it to
 partial capture. Named-head reattachment restores the saved choice.
 
-After the process exits, input is no longer captured regardless of the capture
-preference, and the retained terminal buffer remains a read-only transcript with
-the normal vertical read-only cursor. It is then an ordinary text buffer:
+After the process exits, `■` replaces the running indicator and the capture
+symbol and hint disappear. The terminal keymap becomes inactive: `C-]` is
+unbound unless you gave it a global binding. The retained terminal buffer is
+a read-only transcript with the normal vertical read-only cursor.
+It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
 Killing this buffer terminates a process that is still running; deleting one
 of several windows displaying it does not. Quitting standalone e or stopping

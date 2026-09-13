@@ -142,7 +142,9 @@ well as the default `C-x` and `M-x`, put this in `config.e`:
 
 `C-]` and the clickable `●` / `◐` indicator toggle the current window's capture.
 Full capture forwards these keys to the child; ordinary mode bindings such
-as `Shift-PageUp/Down` still belong to e. See [Terminal buffers](TERMINAL.md).
+as `Shift-PageUp/Down` still belong to e. After the child exits, the terminal
+keymap becomes inactive and the transcript uses ordinary global bindings.
+See [Terminal buffers](TERMINAL.md).
 
 ### `isearch`
 

@@ -60,7 +60,7 @@
      ;; -- choosing by hand ----------------------------------------------------
 
      (mode:choose! plain "probe")
-     (check 'chosen (mode:name-of plain) "probe")
+     (check 'chosen (list (mode:name-of plain) (mode:key-context plain)) '("probe" probe))
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
      (mode:choose! plain #f)
      (check 'unchosen (mode:of plain) #f)

@@ -294,6 +294,10 @@ declaration retract with their module. All key specifications here are single
 events; a passed-through prefix such as `C-x` enters ordinary complete chord
 resolution, including any synchronous prompt. The toggle does not pause app
 following. Other context bindings remain editor controls in either state.
+Capture contexts apply only while the buffer hosts a live app. After exit or
+detachment, the mode still supplies presentation, but its keymap is inactive:
+ordinary global bindings apply, and the capture indicator and hint disappear.
+Other live buffers using the same context keep their controls.
 
 `(head:full-capture? window)` reads the preference and
 `(head:set-full-capture! window boolean)` changes it. Windows start with partial

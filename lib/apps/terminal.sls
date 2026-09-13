@@ -37,7 +37,8 @@
   (define (terminal-send! text) (send-input! text #f) (void))
   (define (terminal-yank!) (send-input! (current-kill-ring) #t) (void))
   (define (terminal-toggle-capture!)
-    (unless (terminal-id (current-buffer)) (error 'toggle-capture! "current buffer is not a terminal"))
+    (unless (and (terminal-id (current-buffer)) (head:app-buffer? (current-buffer)))
+      (error 'toggle-capture! "current buffer is not a live terminal"))
     (let ([w (selected-window)]) (head:set-full-capture! w (not (head:full-capture? w)))))
   (define (terminal-close! . buffer*)
     (cond [(terminal-id (if (pair? buffer*) (car buffer*) (current-buffer))) => vt:close!])
@@ -107,7 +108,7 @@
         ((terminal:toggle-capture!)
          (("procedure" . "(terminal:toggle-capture!)")) "void"
          ("(terminal)") terminal "Terminal" #f
-         "Toggle capture in the selected terminal window without changing cursor following or other windows. Partial capture (◐) leaves C-x and M-x to e; full capture (●) forwards them to the child.")
+         "Toggle capture in the selected live terminal window without changing cursor following or other windows. Partial capture (◐) leaves C-x and M-x to e; full capture (●) forwards them to the child. Capture controls are unavailable after the process exits.")
         ((terminal:send!)
          (("procedure" . "(terminal:send! text)")) "void"
          ("(terminal)") terminal "Terminal" #f

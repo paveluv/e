@@ -273,9 +273,10 @@
      (send! "\x1b;[6;2~")
      (settle! 300)
      (set! transcript '())
-     (send! "exit\r")
+     (send! "\x1d;exit\r")              ; exit while full capture is selected
      (wait-for! 'shell-exit-frees-buffer
-                (lambda () (find-cell "■ ◐")) 10000)
+       (lambda () (and (find-cell "■") (not (find-cell "■ ●")) (not (find-cell "■ ◐"))
+                       (not (find-cell "C-] toggle capture")))) 10000)
      ;; The dead terminal must not log a failed refresh: its detachment
      ;; happens on the main thread, never under a frame in progress
      ;; (regression: the reader thread detached the app mid-refresh).
@@ -288,6 +289,13 @@
                 (lambda ()
                   (contains? (list->string (reverse transcript)) "\x1b;[5 q"))
                 5000)
+     (for-each
+       (lambda (case)
+         (send! (car case))
+         (wait-for! (list 'dead-terminal-capture-control-is-unavailable (cadr case))
+           (lambda () (find-cell (cadr case))) 3000))
+       '(("\x1d;" "C-] is undefined")
+         ("\x1b;xterminal:toggle-capture!\r" "not a live terminal")))
      ;; -- window navigation and a window prompt --------------------------
      ;; Split, start find-file, move focus right: the prompt, which lives
      ;; in its window, cancels as focus leaves.  Find the file again from
