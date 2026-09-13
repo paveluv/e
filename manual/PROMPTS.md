@@ -69,6 +69,8 @@ of the window, with the same editing keys, styles, suggestions and text
 cursor as an echo-area prompt. Clicking the input moves its insertion point.
 
 `C-x b` and `C-x C-b` use the [filterable buffers app](BUFFERS.md#the-buffers-app).
+The [files app's C-l mode](FILES.md#opencreate-mode) uses the same input editor
+below a live directory table, with sortable columns and paged matches.
 
 Long input wraps above the bottom row. Tab lists candidates above the input;
 repeated Tab pages through them. Every input change, including history
@@ -93,8 +95,8 @@ path editable; see [File buffers](BUFFERS.md#file-buffers). The echo area
 keeps showing messages while a window prompt is active.
 
 Any prompt can use the window: `(prompt:in-window #t)` in `config.e` makes
-every `prompt:read!` take the current window. The two buffer commands always
-do. A nested prompt uses the echo area. Its own completion view may borrow
+every `prompt:read!` take the current window. Find-file always uses the window.
+A nested prompt uses the echo area. Its own completion view may borrow
 the window temporarily, then returns to the outer prompt and its input.
 
 ## Completion
@@ -167,6 +169,27 @@ containing `#f` or `(input . cursor)`; the prompt starts from that draft and
 updates it as input changes. The caller decides when to retain it. Validation
 and draft ownership are local to each invocation; nested reads do not inherit
 those two options.
+
+An in-window prompt can replace the ordinary candidate grid with live content:
+parameterize `prompt:content` to `(prompt:make-content minimum-height render handle)`.
+The renderer receives `(input window available-height page)` on every refresh
+and returns two values: a list of `prompt:line` values and the page count.
+It must fit within the supplied height, wrapping the requested zero-based
+page into its current count. The minimum height reserves room above wrapped
+input; very small panes can still provide less. Keep filesystem work outside
+this renderer; publish background results and wake the head to refresh.
+
+`(prompt:line text styles choices [hover-face])` describes one displayed row. Styles is
+a vector indexed by character; choices is a list of `(start end value)`
+intervals. Clicking a string value fills the input. An action value is called
+and may return new input, or `#f` to keep editing unchanged, as with a sort
+heading. Hover defaults to the standard `hover` face; files rows use
+`candidate-hover` to include the subtle row tint. `handle` is `#f` or a
+key handler returning true for consumed events; editing and prompt/window
+commands otherwise retain their usual meaning. The content's table pages
+with repeated Tab, PageUp/PageDown, Shift-Tab or wheel input. Content ownership,
+like validation and drafts, is scoped to one invocation and is not inherited
+by nested prompts.
 
 Use `paint:show-prompt-message!` when a non-`prompt:read!` interaction should retain the
 same styled label and wrapped layout.

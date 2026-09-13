@@ -354,13 +354,14 @@ columns before names and paths, preserving sorted columns in priority order.
 Widening a pane restores the columns and fuller labels. Elision never changes
 which buffer a row opens.
 
-The blue `active` face marks the document in the focused window. Bold
-`candidate` marks the keyboard choice in the focused list window. Unfocused
-panes show no bold candidate unless the pointer hovers over a row. A
-mouse-hovered row uses the shared `hover` face: bold with a muted dotted
-underline, taking precedence over the keyboard candidate there. Enter accepts
-that row, and arrows continue from it with bold emphasis only. Moving the
-pointer away restores the focused list's keyboard emphasis. Hover neither
+The blue `active` face marks the document in the focused window. The
+`candidate` face marks the keyboard choice with bold text and a very subtle
+blue background, almost white in light themes and almost black in dark themes.
+Unfocused panes show no candidate emphasis unless the pointer hovers over a row.
+A mouse-hovered row uses `candidate-hover`: the same bold text and tint with a
+muted dotted underline, taking precedence over the keyboard candidate there.
+Enter accepts that row, and arrows continue from it with bold text and tint.
+Moving the pointer away restores the focused list's keyboard emphasis. Hover neither
 scrolls nor takes focus. Modified rows are italic. These faces are
 configurable through [Styles](STYLES.md).
 

@@ -6,7 +6,7 @@
           (prefix (table) table:) (prefix (glyph) glyph:) (prefix (string) string:)
           (prefix (mode) mode:) (prefix (style) style:) (prefix (paint) paint:)
           (prefix (keymap) keymap:) (prefix (tty) tty:) (prefix (kernel) kernel:)
-          (prefix (doc) doc:))
+          (prefix (doc) doc:) (prefix (prompt) prompt:))
 
   (define expansion-limit
     (make-parameter 20
@@ -20,6 +20,7 @@
   (define view #f)
   (define location #f)
   (define query "")
+  (define path-part #f)             ; #f while browsing; literal completion prefix otherwise
   (define sorts '())
   (define inventory '())
   (define rows '())                 ; (full path . entry)
@@ -34,7 +35,7 @@
   ;; One worker per module instance, replacing its pending request. Stale
   ;; results cannot mutate a new query, a killed app or a reloaded module.
   (define-record-type scan
-    (fields buffer registration path query hidden? limit (mutable update) (mutable queued?)))
+    (fields buffer registration path query hidden? limit (mutable update) (mutable started?)))
   (define scan-lock (make-mutex))
   (define request #f)
   (define running? #f)
@@ -44,55 +45,54 @@
          (eq? (scan-registration job) (head:app-of (scan-buffer job)))))
 
   (define (include-hidden?)
-    (or (show-hidden) (string:prefix? "." query)
-        (and (string:search query "/." 0 (string-length query)) #t)))
+    (if path-part (string:prefix? "." path-part)
+        (or (show-hidden) (string:prefix? "." query)
+            (and (string:search query "/." 0 (string-length query)) #t))))
 
   (define (start-scan!)
     (set! complete? #f)
     (set! failures 0)
-    (let* ([job (make-scan view (head:app-of view) location query
-                  (include-hidden?) (expansion-limit) #f #f)]
-           [start? (with-mutex scan-lock
-                     (set! request job)
-                     (and (not running?) (begin (set! running? #t) #t)))])
-      (when start?
-        ;; Registration can still be staged by config or module reload.
-        ;; Launch from the outer pump, after that transaction publishes the
-        ;; app identity against which the worker checks its lifetime.
-        (head:run-on-main!
-          (lambda ()
-            (fork-thread
-              (lambda ()
-                (let work ()
-                  (let ([job (with-mutex scan-lock request)])
-                    (define (publish entries skipped done? . failure)
-                      ;; Modal path entry can defer main-thread work indefinitely.
-                      ;; Keep one latest snapshot and at most one queued delivery,
-                      ;; rather than retaining every progress frame in its mailbox.
-                      (when (with-mutex scan-lock
-                              (and (eq? request job)
-                                (begin
-                                  (scan-update-set! job (list entries skipped done? (and (pair? failure) (car failure))))
-                                  (and (not (scan-queued? job)) (begin (scan-queued?-set! job #t) #t)))))
-                        (head:run-on-main!
-                          (lambda ()
-                            (let ([update (with-mutex scan-lock
-                                            (let ([update (scan-update job)])
-                                              (scan-update-set! job #f) (scan-queued?-set! job #f) update))])
-                              (when (live-request? job)
-                                (apply (lambda (entries skipped done? failure)
-                                         (set! inventory entries) (set! failures skipped) (set! complete? done?)
-                                         (when failure (set-message! (string-append "File scan failed: " failure)))
-                                         (render!)) update)))))))
-                    (when (and job (live-request? job))
-                      (guard (ex [else (publish '() 1 #t (kernel:condition-text ex))])
-                        (directory:scan (scan-path job) (scan-query job)
-                          (scan-hidden? job) (scan-limit job)
-                          (lambda () (not (live-request? job))) publish)))
-                    (when (with-mutex scan-lock
-                            (if (eq? request job) (begin (set! running? #f) #f) #t))
-                      (work))))))))))
+    (with-mutex scan-lock
+      (set! request (make-scan view (head:app-of view) location (if path-part "" query)
+                      (include-hidden?) (expansion-limit) #f #f)))
     (render!))
+
+  (define (scan-work!)
+    (let work ()
+      (let ([job (with-mutex scan-lock request)])
+        (define (publish entries skipped done? . failure)
+          ;; Refresh consumes the latest snapshot, even while a modal prompt
+          ;; owns input. Wakes carry no callbacks or old inventories.
+          (when (with-mutex scan-lock
+                  (and (eq? request job)
+                       (begin (scan-update-set! job
+                                (list entries skipped done? (and (pair? failure) (car failure)))) #t)))
+            (head:wake-main!)))
+        (when (and job (live-request? job))
+          (with-mutex scan-lock (scan-started?-set! job #t))
+          (guard (ex [else (publish '() 1 #t (kernel:condition-text ex))])
+            (directory:scan (scan-path job) (scan-query job)
+              (scan-hidden? job) (scan-limit job) (lambda () (not (live-request? job))) publish)))
+        (when (with-mutex scan-lock
+                (if (eq? request job) (begin (set! running? #f) #f) #t)) (work)))))
+
+  (define (collect-scan!)
+    (let ([job (with-mutex scan-lock request)])
+      (when (and job (live-request? job))
+        (let ([update (with-mutex scan-lock
+                        (let ([update (scan-update job)]) (scan-update-set! job #f) update))])
+          (when update
+            (apply (lambda (entries skipped done? failure)
+                     (set! inventory entries) (set! failures skipped) (set! complete? done?)
+                     (when failure (set-message! (string-append "File scan failed: " failure)))) update)))
+        ;; Config/reload can render before publishing registration. Launch
+        ;; only after the worker will see this same identity, never staged state.
+        (when (and (kernel:call-with-runtime-registrations
+                     (lambda () (eq? (scan-registration job) (head:app-of (scan-buffer job)))))
+                   (with-mutex scan-lock
+                     (and (not running?) (not (scan-started? job))
+                          (begin (set! running? #t) #t))))
+          (fork-thread scan-work!)))))
 
   (define (over w) (and hover (eq? (car hover) w) (cdr hover)))
   (define (at-row row)
@@ -195,6 +195,12 @@
             (and (string-ci=? (car a) (car b)) (string<? (car a) (car b))))) a b))
   (define (listing)
     (let* ([filtered? (not (string=? query ""))]
+           [inventory (if path-part
+                          (filter (lambda (e)
+                                    (and (string:prefix? path-part (file:base-name (directory:entry-path e)))
+                                         (or (include-hidden?)
+                                             (not (string:prefix? "." (file:base-name (directory:entry-path e))))))) inventory)
+                          inventory)]
            [dirs (filter directory:directory? inventory)]
            [visible-dirs
             (filter (lambda (e)
@@ -214,33 +220,37 @@
         (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) files)))))
   (define (directory-label)
     (string-append "Directory: " (display-path (file:abbreviate location)) (if (string=? location "/") "" "/")
-      (if (show-hidden) "  [hidden]" "")
+      (if (and (not path-part) (show-hidden)) "  [hidden]" "")
       (if complete? "" "  Searching…")
       (if (positive? failures) (format "  ~a unreadable path~a" failures (if (= failures 1) "" "s")) "")))
-  (define (breadcrumb-hit w row column)
+  (define (directory-links line)
     ;; Clicks and hover share character ranges in the actual fitted line.
     ;; Expand displayed ancestors (including ~/) back to their real paths.
     ;; Left elision may hide ancestors, but its ellipsis is never a link.
+    (let* ([path (file:abbreviate location)]
+           [clipped? (and (positive? (string-length line)) (char=? (string-ref line 0) #\…))]
+           [shift (if clipped?
+                      (- (let trim ([end (string-length line)])
+                           (if (and (positive? end) (char=? (string-ref line (- end 1)) #\space))
+                               (trim (- end 1)) end))
+                         (string-length (directory-label))) 0)])
+      (let find ([from 0] [start (+ 11 shift)])
+        (let ([slash (string:search path "/" from (string-length path))])
+          (if (not slash) '()
+              (let ([end (+ start (string-length (display-path (substring path from (+ slash 1)))))])
+                (if (< (max (if clipped? 1 0) start) end)
+                    (cons (list (max (if clipped? 1 0) start) end
+                                (file:canonical (file:expand (substring path 0 (+ slash 1)))))
+                          (find (+ slash 1) end))
+                    (find (+ slash 1) end))))))))
+  (define (breadcrumb-hit w row column)
     (and (eq? (head:window-buffer w) view) (= row 1) (not (string=? location "/"))
-         (let* ([line (vector-ref (head:window-lines w) row)]
-                [path (file:abbreviate location)]
-                [clipped? (and (positive? (string-length line)) (char=? (string-ref line 0) #\…))]
-                [shift (if clipped?
-                           (- (let trim ([end (string-length line)])
-                                (if (and (positive? end) (char=? (string-ref line (- end 1)) #\space))
-                                    (trim (- end 1)) end))
-                              (string-length (directory-label))) 0)])
-           (let find ([from 0] [start (+ 11 shift)])
-             (let ([slash (string:search path "/" from (string-length path))])
-               (and slash
-                    (let ([end (+ start (string-length (display-path (substring path from (+ slash 1)))))])
-                      (if (<= (max (if clipped? 1 0) start) column (- end 1))
-                          (list (max (if clipped? 1 0) start) end
-                            (file:canonical (file:expand (substring path 0 (+ slash 1)))))
-                          (find (+ slash 1) end)))))))))
+         (find (lambda (link) (<= (car link) column (- (cadr link) 1)))
+           (directory-links (vector-ref (head:window-lines w) row)))))
 
   (define (render!)
     (when (and view location (head:app-buffer? view))
+      (collect-scan!)
       (head:call-with-display-update
         (lambda ()
           (let ([saved
@@ -382,14 +392,73 @@
                   [else (set-message! (if (null? (cdr matches)) "Sole completion" "Multiple path completions"))])))))
   (define (cycle! column)
     (set! sorts (table:cycle-sort sorts column)) (set! hover #f) (render!))
+  (define (sort-event! event)
+    (and (member event '("F1" "F2" "F3" "F4" "F5" "F6"))
+         (begin (cycle! (- (char->integer (string-ref event 1)) 49)) #t)))
+  (define (path-event! event)
+    ;; Tab's filesystem lookup and the live metadata must see fresh entries.
+    (if (member event '("TAB" "C-r")) (begin (refresh!) (string=? event "C-r")) (sort-event! event)))
+  (define (follow-path! input base)
+    (let* ([full (file:expand (file:absolute (if (string=? input "~") "~/" input) base))]
+           [directory (file:canonical (file:directory-part full))])
+      (set! path-part (file:base-name full))
+      (unless (string=? directory location)
+        (set! location directory) (set! inventory '()) (set! hover #f)
+        (vector-for-each (lambda (choice) (choice-selected-set! choice #f)) (hashtable-values choices)))
+      (unless (and request (string=? (scan-path request) location)
+                   (string=? (scan-query request) "") (eq? (scan-hidden? request) (include-hidden?)))
+        (set! inventory '())
+        (start-scan!))
+      (collect-scan!)
+      (set! rows (listing))))
+  (define (path-lines input w available page base)
+    (follow-path! input base)
+    (head:buffer-facts-set! (head:window-buffer w)
+      (list (cons 'directory location) (cons 'file-filter "") (cons 'file-sorts sorts)))
+    (let* ([width (head:window-content-width w)] [size (max 1 (- available first-row))]
+           [pages (max 1 (div (+ (length rows) size -1) size))] [page (mod page pages)]
+           [from (* page size)] [shown (list-head (list-tail rows from) (min size (- (length rows) from)))])
+      (define (path-input path directory?)
+        (file:abbreviate (if directory? (file:absolute "" path) path)))
+      (define (line row text links)
+        (prompt:line text (styles view row text) links (if (< row first-row) 'hover 'candidate-hover)))
+      (let-values ([(format-row bounds) (table:layout (columns) sorts rows cell width)])
+        (values
+          (if (< available (+ first-row 1))
+              (if (zero? available) '() (list (line 0 (glyph:fit "Enlarge pane" width) '())))
+              (cons* (line 0 (glyph:fit "Filter: " width) '())
+                (let ([text (glyph:fit (directory-label) width 'left)])
+                  (line 1 text (if (string=? location "/") '()
+                                 (map (lambda (link) (list (car link) (cadr link) (path-input (caddr link) #t)))
+                                   (directory-links text)))))
+                (line 2 (format-row #f)
+                  (map (lambda (bound)
+                         (list (cadr bound) (caddr bound) (lambda () (cycle! (car bound)) #f))) bounds))
+                (if (null? rows)
+                    (list (line first-row (glyph:fit (cond [(not complete?) "Searching…"]
+                                                       [(positive? failures) "Cannot read directory"]
+                                                       [else "No matching files"]) width) '()))
+                    (map (lambda (row)
+                           (let ([text (format-row row)])
+                             (line first-row text
+                               (list (list 0 (string-length text) (path-input (car row) (directory:directory? (cdr row)))))))) shown))))
+          pages))))
   (define (path!!)
-    (find-file!! (lambda (path) (navigate! path #f #f)) (file:abbreviate (file:absolute query location))))
+    (let ([base location] [initial (file:abbreviate (file:absolute query location))])
+      (dynamic-wind
+        (lambda () (set! query "") (set! path-part "") (set! hover #f))
+        (lambda ()
+          (parameterize ([prompt:content (prompt:make-content (+ first-row 1)
+                                           (lambda (input w height page) (path-lines input w height page base)) path-event!)])
+            (find-file!! (lambda (path) (navigate! path #f #f)) initial)))
+        (lambda ()
+          (set! path-part #f) (set! query "") (set! hover #f)
+          (when (and view (memq view (buffer-list)) (head:app-buffer? view)) (start-scan!))))))
   (define (refresh!) (when view (start-scan!)) (void))
 
   (define (handle! event)
     (cond [(string=? event "FOCUS") (render!) #t]
-          [(member event '("F1" "F2" "F3" "F4" "F5" "F6"))
-           (cycle! (- (char->integer (string-ref event 1)) 49)) #t]
+          [(sort-event! event) #t]
           [(member event '("UP" "C-p" "S-TAB" "WHEEL-UP")) (move! -1) #t]
           [(member event '("DOWN" "C-n" "WHEEL-DOWN")) (move! 1) #t]
           [(string=? event "TAB") (complete!) #t]
@@ -429,9 +498,12 @@
           [(string=? event "MOUSE-CLICK")
            (let* ([at (app-event-buffer-position)] [row (and at (at-row (car at)))]
                   [breadcrumb (and at (breadcrumb-hit (selected-window) (car at) (cdr at)))]
-                  [column (column-at (selected-window) at)])
-             (cond [row (set! hover #f) (select! row) (activate! #f) 'keep-focus]
-                   [breadcrumb (up-to! (caddr breadcrumb)) 'keep-focus]
+                  [column (column-at (selected-window) at)]
+                  ;; Navigation from another pane ends path entry through the
+                  ;; prompt's normal focus-loss rule; its input must not undo it.
+                  [navigation (if path-part #t 'keep-focus)])
+             (cond [row (set! hover #f) (select! row) (activate! #f) navigation]
+                   [breadcrumb (up-to! (caddr breadcrumb)) navigation]
                    [column (cycle! (car column)) (set! hover (cons (selected-window) (car column))) 'keep-focus]
                    [else 'ignore-click]))]
           [else #f]))
@@ -505,7 +577,7 @@
                                           (min (caddr column) (+ (cadr column) (string-length (heading (car column))))) 'hover)) '())
                        (if (and row (or (eq? w (selected-window)) (string? over)))
                          (list (list w row 0 (string-length (vector-ref (head:window-lines w) row))
-                                 (if (string? over) 'hover 'candidate))) '()))))
+                                 (if (string? over) 'candidate-hover 'candidate))) '()))))
               (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))))))
     (when (head:find-tool-buffer "*files*") (ensure!) (start-scan!))
     (head:register-resume! 'file-view
@@ -533,7 +605,7 @@
     (doc:register!
       '(((file-view:open!) (("procedure" . "(file-view:open! [directory])")) "void"
          ("(file-view)") file-view "Files" #f
-         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. C-l reads a literal path prefilled from the filter: new files open unsaved, missing parents are created, and a trailing slash creates and enters directories. Click an ancestor path component to navigate there. Left selects the directory just left in its parent; Right enters it and recalls its selection. C-u clears, M-. toggles hidden entries and C-r refreshes. Click column headings or use F1–F6 for ordered ascending/descending/off sorting. Small subdirectory match groups expand; larger groups show counts. Entering a directory consumes the matching path prefix from the filter.")
+         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. C-l clears the filter and reads its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Esc returns to browsing the shown directory. Acceptance opens files, creates missing parents, or creates and enters directories for a trailing slash; new files stay unsaved. Click ancestor path components to navigate. In normal browsing, Left selects the directory just left and Right recalls its selection. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts. Entering a directory consumes the matching path prefix.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
          ("(file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")

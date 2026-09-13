@@ -91,6 +91,8 @@
     ;; a trailing slash on directories so completion can descend into them.
     ;; A leading ~ is kept in the candidates but expanded for the lookups.
     ;; Dotfiles are offered only once the component starts with a dot.
+    ;; Resolve the directory like visiting/browser navigation, while retaining
+    ;; the input's spelling in candidates (including . and .. components).
     (case-lambda
       [(s directory)
        (let* ([full (absolute s directory)] [prefix (- (string-length full) (string-length s))])
@@ -100,14 +102,10 @@
          (guard (ex [else '()])
            (let* ([dir (or (directory-part s) "")]
                   [part (string:tail s (string-length dir))]
-                  [listing (directory-list
-                             (path:expand
-                               (cond [(string=? dir "") "."]
-                                 [(string=? dir "/") "/"]
-                                 [else (substring dir 0 (- (string-length dir) 1))])))])
+                  [listing (directory-list (path:canonical (path:expand dir)))])
              (map (lambda (name)
                     (let ([full (string-append dir name)])
-                      (if (file-directory? (path:expand full))
+                      (if (file-directory? (path:canonical (path:expand full)))
                         (string-append full "/")
                         full)))
                (sort string<?

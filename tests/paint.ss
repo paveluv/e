@@ -135,10 +135,12 @@
      (check 'overlay-faces-and-hover-precedence
        (map (lambda (marks)
               (let ([out (paint-line "abc" "abc" #f marks '() 0 '#(keyword keyword keyword) #f 3 3)])
-                (map (lambda (face) (contains? out (style:code face))) '(keyword mark candidate hover active))))
+                (map (lambda (face) (contains? out (style:code face))) '(keyword mark candidate hover candidate-hover active))))
          '(((0 3 mark)) ((0 3 candidate) (0 3 hover) (0 3 active))
-           ((0 3 hover) (0 3 candidate) (0 3 active))))
-       '((#t #t #f #f #f) (#t #f #f #t #t) (#t #f #f #t #t)))
+           ((0 3 hover) (0 3 candidate) (0 3 active))
+           ((0 3 candidate) (0 3 candidate-hover)) ((0 3 candidate-hover) (0 3 candidate))))
+       '((#t #t #f #f #f #f) (#t #f #f #t #f #t) (#t #f #f #t #f #t)
+         (#t #f #f #f #t #f) (#t #f #f #f #t #f)))
 
      ;; -- emit-runs ----------------------------------------------------------------
 

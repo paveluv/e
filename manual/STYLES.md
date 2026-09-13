@@ -92,7 +92,11 @@ refresh it. If the terminal answers neither query, e uses the dark defaults.
 The `header` face has two neutral variants: light gray text on medium gray
 in a dark theme, and dark text on pale gray in a light theme. The `hover`
 face keeps text bold and gives its dotted underline a muted gray color,
-lighter in a light theme. Explicit `style:set!` overrides take
+lighter in a light theme. Candidate rows use an almost-black blue (`#080c14`)
+in dark themes and an almost-white blue (`#f4f8ff`) in light themes, with bold
+text. `candidate-hover` adds the dotted underline to that row tint; headings,
+breadcrumbs and other clickable labels retain their own backgrounds.
+Explicit `style:set!` overrides take
 precedence over the theme variants and survive theme changes. This follows
 each head's terminal independently.
 
@@ -105,7 +109,7 @@ The built-in faces available to `style:set!` are:
 | `plain` | `(reset)` | Ordinary text and fallback rendering |
 | `chrome` | `((foreground bright-black))` | Prompt labels, ghost text, log prefixes, and quiet UI furniture |
 | `header` | Dark: `((foreground 252) (background 240))`; light: `((foreground 236) (background 253))` | Neutral table heading band, distinct from muted filter labels and bold candidate rows |
-| `hover` | Dark: `(bold dotted-underline (underline-color 242))`; light: `(bold dotted-underline (underline-color 248))` | Mouse-hovered clickable text: app rows, headings, completion labels, links and window controls; preserves text foreground and background |
+| `hover` | Dark: `(bold dotted-underline (underline-color 242))`; light: `(bold dotted-underline (underline-color 248))` | Mouse-hovered clickable text: headings, completion labels, links and window controls; preserves text foreground and background |
 | `comment` | `((foreground bright-black))` | Source comments and Markdown block quotes |
 | `string` | `((foreground green))` | Strings and Markdown code |
 | `keyword` | `(bold (foreground cyan))` | Language keywords and Markdown headings |
@@ -120,7 +124,8 @@ The built-in faces available to `style:set!` are:
 | `mark` | `(underline)` | Generic highlighted ranges, including matching delimiters |
 | `selection` | `((background blue))` | The active selected region |
 | `active` | `((background 31))` | The `<buffers>` row of the buffer the selected window shows |
-| `candidate` | `(bold)` | The keyboard candidate in an app; the buffers app shows it only when focused, with a hovered row taking precedence using the `hover` face |
+| `candidate` | Dark: `(bold (background (rgb 8 12 20)))`; light: `(bold (background (rgb 244 248 255)))` | The keyboard candidate in an app; files and buffers show it only in the focused pane |
+| `candidate-hover` | The same bold text and background as `candidate`, plus `dotted-underline` and the theme's `underline-color` from `hover` | A hovered files or buffers row, taking precedence over the keyboard candidate |
 | `choice` | `(bold (foreground 135))` | The initial letters of choices in focused dialog prompts |
 | `match` | `((background cyan) (foreground black))` | Incremental-search matches |
 | `match-point` | `((background yellow) (foreground black))` | The current incremental-search match |

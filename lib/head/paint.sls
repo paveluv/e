@@ -165,7 +165,7 @@
            (fold-left (lambda (face m)
                         (let ([next (mark-style m)])
                           (cond [(not (covers? m col)) face]
-                                [(eq? next 'hover) 'hover]
+                                [(memq next '(hover candidate-hover)) next]
                                 [(or face (memq next '(match match-point active))) face]
                                 [else next])))
              #f marks)))
@@ -417,10 +417,11 @@
             (line-hyperlinks (head:window-buffer w) row (head:window-lines w) (head:window-rendition w)))))
       (kernel:registry-items highlighters)))
 
-  (define (hover-ranges hit)
+  (define (hover-ranges hit . face)
     ;; Reuse click geometry and the existing highlighter protocol. A hit
     ;; query takes (window row character-column) and returns (start end ...)
-    ;; or #f. Resolve against the current viewport on every frame, so a
+    ;; or #f. An optional face procedure maps that hit to a style.
+    ;; Resolve against the current viewport on every frame, so a
     ;; refresh, scroll, resize or buffer switch cannot leave stale ink.
     (let ([position (head:mouse-position)])
       (or (and position
@@ -437,7 +438,8 @@
                                  [lines (head:window-lines w)])
                             (and (< (car at) (vector-length lines))
                                  (let ([range (hit w (car at) (cdr at))])
-                                   (and range (list (list w (car at) (car range) (cadr range) 'hover)))))))))))
+                                   (and range (list (list w (car at) (car range) (cadr range)
+                                                      (if (null? face) 'hover ((car face) range)))))))))))))
           '())))
 
   ;; Hyperlinkers produce (start end URI [id]) ranges for one buffer line.

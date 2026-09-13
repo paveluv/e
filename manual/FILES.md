@@ -38,7 +38,7 @@ Esc or C-g returns to the document from which this window opened the app.
 | `C-u` | Clear the filter. |
 | `Tab` | Complete the filter as a path, appending `/` for a directory. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
-| `C-l` | Open/create a literal path, prefilled from the filter, with completion and file history. |
+| `C-l` | Enter Open/Create mode, with a path prompt below the live table. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
 | `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
@@ -49,6 +49,33 @@ if it cannot extend it, keep typing or choose a row. Filtering itself remains a
 case-insensitive substring search. Paths completed inside the current directory
 are written back in relative form. Use C-l for arbitrary absolute, home or
 parent paths; completion outside the current directory points you to that key.
+
+## Open/Create mode
+
+C-l clears the Filter and puts an editable `Open/create:` prompt at the
+bottom of the window, seeded from the filter's literal path. Directory
+follows the path being edited. The table shows only immediate children
+whose names start with its final component, using the same case-sensitive
+matching as find-file. For example, `src/re` shows `re…` entries inside
+`src/`; it does not search below those entries. A trailing `/` shows the
+directory's children. Dot entries appear when the final component starts
+with `.`. Normal browsing's hidden-entry preference is retained for later.
+
+Tab completes a component or extends a common prefix, adding `/` for a
+directory. Candidates are already visible; repeated Tab pages through them
+only when they do not fit. PageUp/PageDown, Shift-Tab and the mouse wheel
+also page the table. Sorting by headings or F1–F6 still works and uses the
+whole matching list, before paging. Clicking a directory or breadcrumb
+updates the path and its table. Clicking a file fills the prompt; Enter
+opens that exact path. Up/Down browse file history; Left/Right edit the path.
+Tab also refreshes the directory's metadata; C-r rescans without completing
+input, so external file creations and removals can be picked up in this mode.
+
+The input keeps find-file's editing, cursor, wrapping and error recovery.
+Esc or C-g removes the prompt and returns to normal files mode at the
+directory currently shown, with an empty filter. If that directory does
+not exist or cannot be read, Left still goes to its parent. No paths are
+created until Enter accepts the prompt.
 
 ## Creating files and directories
 
@@ -137,11 +164,18 @@ Like `<buffers>`, `<files>` shares its directory, filter and sort order between
 windows in one head. Each window fits its own columns and retains its own
 keyboard choice and viewport. Narrow panes hide lower-priority metadata;
 names stay visible and long labels are shortened without wrapping.
+While Open/Create owns one pane, sorting can still be changed from another
+files pane. Navigating from that other pane ends path entry and keeps the
+chosen destination, using the prompt's usual focus-loss behavior.
 
-Only the focused pane shows its keyboard choice in bold. Hovered rows,
-headings and breadcrumbs use the common bold, muted dotted underline.
-Hovering does not move the keyboard choice or scroll the list. The cursor
-and text selection are disabled. Status hints appear only while the app is focused.
+The focused pane's keyboard choice is bold with a very subtle blue background:
+almost white in a light theme, almost black in a dark theme. A hovered row
+gets the same tint and a muted dotted underline, taking precedence over the
+keyboard choice. Headings and breadcrumbs keep their own background and use
+bold text with the same dotted underline.
+Hovering does not move the keyboard choice or scroll the list. Normal browsing
+hides the cursor and disables text selection. Status hints appear only while
+the app is focused.
 
 A file clicked in a side panel opens in the focused window. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel

@@ -1958,7 +1958,7 @@
                     (or (not initial) (string? initial)))
          (error 'find-file!! "expected a directory action and an initial path" directory-action initial))
        (let* ([owner current-window] [before (current-buffer)]
-              [saved (hashtable-ref find-file-drafts owner #f)]
+              [saved (and (not initial) (hashtable-ref find-file-drafts owner #f))]
               [directory (if saved (car saved) (default-directory))]
               [draft (if saved (cdr saved) (box #f))]
               [label (if directory-action "Open/create: " "Find file: ")]
@@ -3355,8 +3355,8 @@
           (hashtable-clear! buffer-choices))))
     (paint:add-highlighter!
       (lambda ()
-        ;; Blue describes the focused document. Bold marks the hovered row
-        ;; or the focused list's keyboard candidate; passive lists stay quiet.
+        ;; Strong blue describes the focused document. Bold and a subtle tint
+        ;; mark the hovered row or focused list's candidate; passive lists stay quiet.
         (if (and buffers-view (memq buffers-view (buffer-list)))
             (let ([active-row (buffer-row (current-buffer))]
                   [row-range
@@ -3377,7 +3377,7 @@
                                        'hover))
                                '())
                            (if (and row (or (eq? w current-window) (memq over buffer-rows)))
-                               (list (row-range w row (if (memq over buffer-rows) 'hover 'candidate))) '()))))
+                               (list (row-range w row (if (memq over buffer-rows) 'candidate-hover 'candidate))) '()))))
                      (filter (lambda (w)
                                (eq? (head:window-buffer w) buffers-view))
                        windows))))

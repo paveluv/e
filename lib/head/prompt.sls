@@ -24,8 +24,9 @@
                   (prompt-ghost ghost) (prompt-inspector inspector)
                   (prompt-multiline multiline) (prompt-edge-motion edge-motion)
                   (prompt-reindent reindent) (prompt-in-window in-window)
-                  (validate-input validate) (draft-input draft))
-          confirm? completion-label completion-highlight allow! interaction)
+                  (validate-input validate) (draft-input draft)
+                  (make-content-view make-content))
+          confirm? completion-label completion-highlight content line allow! interaction)
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme)
                 make-parameter parameterize box unbox set-box! format void
@@ -172,6 +173,12 @@
   (define prompt-in-window (make-parameter #f))
   (define completion-label (make-parameter (lambda (value) value)))
   (define completion-highlight (make-parameter (lambda (label) #f)))
+  ;; A live completion view supplies its minimum height, renderer and key
+  ;; handler. (render input window available-height page) returns styled lines
+  ;; and a page count. Choices replace input or run an action returning new
+  ;; input (#f leaves it alone, e.g. when sorting a column).
+  (define-record-type content-view (fields minimum-height render handle))
+  (define content (make-parameter #f))
   ;; A validator returns #f to accept, or a short explanation to keep
   ;; editing. A draft box carries (input . cursor) across invocations.
   (define validate-input (make-parameter #f))
@@ -184,8 +191,11 @@
 
   ;; Rows retain their source coordinates. The same mapping places the
   ;; cursor and handles mouse input after wrapping, paging or clipping.
-  ;; input is a source interval; choices are (start end value) intervals.
+  ;; input is a source interval; choices are (start end value [hover-face]) intervals.
   (define-record-type row (fields text styles input choices))
+  (define (line text styles choices . hover-face)
+    (make-row text styles #f
+      (map (lambda (choice) (append choice (if (null? hover-face) '(hover) hover-face))) choices)))
   ;; Cache only styles and numeric choice spans: a row also owns its text,
   ;; which would keep the weak key alive after a prompt is dismissed.
   (define line-presentation (make-weak-eq-hashtable))
@@ -209,11 +219,13 @@
                    (let* ([line (vector-ref (head:buffer-lines (head:window-buffer w)) row)]
                           [info (hashtable-ref line-presentation line #f)]
                           [choice (and info (choice-at (cdr info) column))])
-                     ;; Padding accepts a click; only the label gets ink.
+                     ;; Labels leave their padding plain; row candidates tint it too.
                      (and choice
                           (let trim ([end (cadr choice)])
-                            (if (and (> end (car choice)) (char-whitespace? (string-ref line (- end 1))))
-                                (trim (- end 1)) (list (car choice) end))))))))))))
+                            (if (and (eq? (caddr choice) 'hover) (> end (car choice))
+                                     (char-whitespace? (string-ref line (- end 1))))
+                                (trim (- end 1)) (list (car choice) end (caddr choice))))))))
+            caddr)))))
 
   (define (format-columns candidates width labeler highlight?)
     (let* ([labels (map labeler candidates)]
@@ -309,6 +321,7 @@
     (define styler (paint:echo-highlight))
     (define ghost (prompt-ghost))
     (define in-window? (and (prompt-in-window) (not (window-owner))))
+    (define body (and in-window? (content)))
     (define owner (head:current))
     (define input (if (and draft (unbox draft)) (car (unbox draft)) initial))
     (define position (if (and draft (unbox draft)) (cdr (unbox draft)) (string-length input)))
@@ -355,8 +368,8 @@
                (not (memq view (head:buffers))))))
     (define (status-text b)
       (let* ([room (max 1 (- (head:window-width target) 12))]
-             [short (cond [(and candidates in-window? (< (head:window-size target) 2)) "Enlarge pane"]
-                          [(and candidates (> pages 1)) (format "~a/~a Tab: next" (+ page 1) pages)]
+             [short (cond [(and (or body candidates) in-window? (< (head:window-size target) 2)) "Enlarge pane"]
+                          [(and (or body candidates) (> pages 1)) (format "~a/~a Tab: next" (+ page 1) pages)]
                           [candidates (format "~a matches" (length candidates))]
                           [else "Tab: complete"])]
              [help (if (> room 60)
@@ -367,6 +380,8 @@
             (string-append name "  " help) help)))
     (define (mouse! event)
       (cond
+        [(and body (member event '("WHEEL-UP" "WHEEL-DOWN")))
+         (set! page (mod (+ page (if (string=? event "WHEEL-UP") -1 1)) pages)) #t]
         [(and (string=? event "MOUSE-CLICK")
               (or (not in-window?) (eq? (head:current) owner)))
          (let ([at (head:app-event-buffer-position)])
@@ -378,7 +393,9 @@
                         (cons input (min (string-length input)
                                       (max 0 (- (min (cdr source) (+ (car source) (cdr at)))
                                                 (string-length label))))))]
-                     [choice (set! clicked (cons (caddr choice) (string-length (caddr choice))))]))))
+                     [choice
+                      (let ([value (if (procedure? (caddr choice)) ((caddr choice)) (caddr choice))])
+                        (if value (set! clicked (cons value (string-length value))) (set! page 0)))]))))
          (if in-window? #t 'keep-focus)]
         [else #f]))
     (define (take-view!)
@@ -395,6 +412,7 @@
             (head:set-app-presentation! view 0 #f #f (if in-window? 'text 'default))
             (head:set-app-status-position! view status-text)
             (head:set-app-manages-viewport! view #t)
+            (when body (head:set-app-selectable! view #f))
             (head:set-window-buffer! target view)
             (set! borrowed (list target))))))
     (define (dismiss-completions!)
@@ -408,7 +426,10 @@
           (begin (set! candidates values) (set! candidate-width 0) (set! page 0)))
       (take-view!))
     (define (page-rows width available)
-      (cond [(not candidates) '()]
+      (cond [body
+             (let-values ([(lines count) ((content-view-render body) input target available page)])
+               (set! pages (max 1 count)) (set! page (mod page pages)) lines)]
+            [(not candidates) '()]
             [else
              (unless (= width candidate-width)
                (set! candidate-rows (format-columns candidates width labeler highlight?))
@@ -447,12 +468,14 @@
                     (if (or (null? rows) (null? (cdr rows))
                             (< cursor (car (row-input (cadr rows))))) i
                         (loop (cdr rows) (+ i 1))))]
-                 [count (min (length all) (max 1 (- height (if candidates 1 0))))]
+                 [count (min (length all) (max 1 (- height (cond [body (content-view-minimum-height body)]
+                                                             [candidates 1] [else 0]))))]
                  [from (min cursor-row (max 0 (- (length all) count)))]
                  [input-part (list-head (list-tail all from) count)]
                  [choices (page-rows width (- height count))]
                  [pad (if in-window? (max 0 (- height count (length choices))) 0)]
-                 [rows (append (make-list pad (make-row "" '#() #f '())) choices input-part)]
+                 [rows (if body (append choices (make-list pad (make-row "" '#() #f '())) input-part)
+                           (append (make-list pad (make-row "" '#() #f '())) choices input-part))]
                  [point (if in-window?
                             (cons (+ pad (length choices) (- cursor-row from))
                               (- cursor (car (row-input (list-ref all cursor-row))))) '(0 . 0))])
@@ -464,7 +487,9 @@
                 (let ([row (vector-ref shown-rows i)])
                   (hashtable-set! line-presentation (vector-ref lines i)
                     (cons (row-styles row)
-                          (map (lambda (choice) (list (car choice) (cadr choice))) (row-choices row)))))))))))
+                          (map (lambda (choice) (list (car choice) (cadr choice)
+                                                  (if (pair? (cdddr choice)) (cadddr choice) 'hover)))
+                            (row-choices row)))))))))))
 
     (define (record-history! s)
       (when (and history (> (string-length s) 0))
@@ -545,6 +570,11 @@
                      (set! clicked #f)
                      (if (string=? (car change) s) (loop s (cdr change) "")
                          (edited (car change) (cdr change))))]
+                  [(and body (member event '("PAGEUP" "PAGEDOWN" "S-TAB")))
+                   (set! page (mod (+ page (if (member event '("PAGEUP" "S-TAB")) -1 1)) pages))
+                   (loop s pos "")]
+                  [(and body (content-view-handle body) ((content-view-handle body) event))
+                   (set! page 0) (loop s pos "")]
                   [(eq? action 'cancel) (set! message "Quit") #f]
                   [(eq? action 'accept)
                    (let* ([out (if normalize (normalize s) s)]
@@ -600,10 +630,10 @@
                   [else (loop s pos "")]))))))
     (interaction
       (lambda ()
-        ;; These two options belong to this invocation; an inspector's
-        ;; nested question must not validate a filename or overwrite its draft.
+        ;; These options belong to this invocation. Nested questions must
+        ;; not validate a filename, overwrite its draft or borrow its table.
         (parameterize ([running? #t] [window-owner (if in-window? owner (window-owner))]
-                       [validate-input #f] [draft-input #f])
+                       [validate-input #f] [draft-input #f] [content #f])
           (dynamic-wind
             (lambda () (when in-window? (take-view!)))
             run-prompt

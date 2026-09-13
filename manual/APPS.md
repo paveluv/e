@@ -411,25 +411,29 @@ them. `<buffers>` returns `keep-focus` for content clicks because the click's
 purpose is to switch a buffer, not to enter the app.
 
 The `active` face marks the document in the focused window. The `candidate`
-face marks a keyboard choice in the focused buffers pane; unfocused panes
-retain their choices without making those rows bold. Mouse-hovered clickable
-text uses the shared `hover` face, bold with a muted gray dotted underline
-suited to the theme; in the buffers app it takes precedence over the keyboard candidate in that
-window. Headings, completion labels, Git file rows and refresh, hyperlinks,
-and status-bar window controls use the same face. These faces can be
+face marks a keyboard choice with bold text and a subtle blue background,
+almost black or white according to the theme. Unfocused files and buffers
+panes retain their choices without emphasizing those rows. Their hovered row
+uses `candidate-hover`, adding a muted dotted underline and taking precedence
+over the keyboard choice in that window. Other clickable text uses `hover`,
+with bold text and the underline while preserving its background: headings,
+breadcrumbs, completion labels, Git file rows and refresh, hyperlinks, and
+status-bar window controls. These faces can be
 customized like any other:
 
 ```scheme
 (style:set! 'active '((background 31) (foreground white)))
 (style:set! 'candidate '(bold (foreground 208)))
+(style:set! 'candidate-hover '(bold (foreground 208) dotted-underline (underline-color 242)))
 (style:set! 'hover '(bold dotted-underline (underline-color 242)))
 ```
 
 For a clickable app, register a highlighter that calls
-`(paint:hover-ranges hit)`. `hit` receives `(window row character-column)`
+`(paint:hover-ranges hit [face])`. `hit` receives `(window row character-column)`
 and returns `(start end ...)` for the clickable label or `#f` for inert text.
-Use the same hit test as the click handler. The helper supplies the shared
-face and window scope, excludes gutters and status bars, and uses the
+Use the same hit test as the click handler. The optional `face` procedure maps
+the returned hit to a face; the default is `hover`. The helper supplies window
+scope, excludes gutters and status bars, and uses the
 current viewport, including wrapping and wide characters. It does not move
 point or invoke the action. Keyboard input clears the pointer emphasis until
 another mouse report. Hyperlinks receive this feedback automatically.

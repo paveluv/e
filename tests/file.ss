@@ -103,8 +103,8 @@
      (check 'complete-home-root-and-missing-directory
             (list (file:complete "~") (file:complete "/no/such/dir/x")) '(("~/") ()))
      (check 'complete-relative-to-an-explicit-directory
-       (map (lambda (s) (file:complete s scratch)) '("al" "AL" "dir/../al" ".h" "nope/"))
-       '(("alpha" "alphabet") () ("dir/../alpha" "dir/../alphabet") (".hidden") ()))
+       (map (lambda (s) (file:complete s scratch)) '("al" "AL" "dir/../al" "nope/../al" ".h" "nope/"))
+       '(("alpha" "alphabet") () ("dir/../alpha" "dir/../alphabet") ("nope/../alpha" "nope/../alphabet") (".hidden") ()))
 
      (check 'visit-path-existing
             (file:visit-path (string-append scratch "/./alpha")) (path "alpha"))
@@ -164,8 +164,11 @@
            (list (car result) (group "small" result) (group "large" result)
                  (directory:entry-link? (entry "alias" result))
                  (directory:entry-count (entry "alias" result))
-                 (directory:entry-kind (entry "pipe" result)))
-           '(0 (4 #t ()) (3 #t ()) #t #f special)))
+                 (directory:entry-kind (entry "pipe" result))
+                 ;; Completion must use the same textual parent as opening,
+                 ;; even when a link would traverse to a different OS parent.
+                 (file:complete "small/loop/../ne" root))
+           '(0 (4 #t ()) (3 #t ()) #t #f special ("small/loop/../needle-one" "small/loop/../nested/"))))
        (let ([result (scan "needle" #f 2)])
          (check 'directory-expands-at-the-limit-and-counts-beyond-it
            (list (car result) (group "small" result) (group "large" result)
