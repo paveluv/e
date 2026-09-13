@@ -847,13 +847,13 @@
                               [(italic) (ansi "\x1b;[23m")]
                               [(red) (ansi fg)])
                             (loop (cdr values) end))))
-                      (ansi (substring text he content-end) " |")
+                      (ansi (substring text he content-end) " │")
                       (for-each
                         (lambda (button)
                           (when (eq? (car button) hovered) (ansi (style:code 'hover)))
                           (ansi (cdr button))
                           (when (eq? (car button) hovered) (ansi "\x1b;[0m" bar))
-                          (ansi "|"))
+                          (ansi "│"))
                         head:window-buttons)
                       (ansi "\x1b;[0m"))))))))
 

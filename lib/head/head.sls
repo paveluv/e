@@ -630,7 +630,7 @@
 
   (define (window-button-at x0 r0)
     ;; Paint and hit-test the same single-cell labels, flush right,
-    ;; with an inert | before each label and after the final one.
+    ;; with an inert │ before each label and after the final one.
     ;; Return (action . window), or #f outside a button.
     (window-at x0 r0
       (lambda (entry)

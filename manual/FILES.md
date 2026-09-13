@@ -20,12 +20,13 @@ clickable, and visible components still lead to their full paths.
 
 The list contains child directories first, then files. Enter or click a
 directory to enter it; Right does the same for a selected directory. Left
-goes up one level and selects the directory just left, enabling hidden
-entries if needed to show it. Each window remembers its selection in visited
-directories, so Left–Left–Left followed by
+goes up one level and selects the directory just left when it matches the
+filter, enabling hidden entries if needed to show it. Each window remembers
+its selection in visited directories for the same filter, so Left–Left–Left followed by
 Right–Right–Right retraces the route. A breadcrumb jump also selects the
 branch leading back to the previous location. Backspace goes up when the
-filter is empty.
+filter is empty. Left, Right, Enter and directory/breadcrumb clicks preserve
+the filter exactly as typed; C-u explicitly clears it.
 
 Type to filter by relative path, ignoring case. Up/Down, C-p/C-n, Home/End
 and PageUp/PageDown choose a row; Enter opens it. An exact path takes priority,
@@ -105,10 +106,11 @@ for matching. Typing a dot component, such as `lib/.git/`, includes hidden entri
 Each immediate subdirectory shows its descendant match count. Up to 20 matches
 in a group are listed individually with relative paths. Above that threshold,
 the directory and its count remain; enter it to search a smaller subtree with
-the remaining filter. Entering `lib/` consumes `lib/` from `lib/foo`, leaving
-`foo`; an unrelated query such as `needle` stays unchanged. If the directory
-itself satisfied the query, the filter clears. The threshold does not limit
-counting or hide direct files inside the current directory.
+the same filter. Relative paths are measured from the new directory: entering
+`lib/` with `lib/foo` still in Filter may produce no matches. Edit or clear the
+filter to search for `foo` there, or use C-l to work with a literal path.
+The threshold does not limit counting or hide direct files inside the current
+directory.
 
 `(file-view:expansion-limit 10)` changes the per-directory expansion threshold;
 zero keeps all nonempty groups collapsed. Use `C-r` after changing it through

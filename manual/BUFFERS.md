@@ -354,7 +354,9 @@ columns before names and paths, preserving sorted columns in priority order.
 Widening a pane restores the columns and fuller labels. Elision never changes
 which buffer a row opens.
 
-The blue `active` face marks the document in the focused window. The
+The blue `active` face marks the document in the focused window, only in
+unfocused buffers panes. A focused buffers pane does not mark its own
+`<buffers>` row as active; another pane showing the same list still can. The
 `candidate` face marks the keyboard choice with bold text and a very subtle
 blue background, almost white in light themes and almost black in dark themes.
 Unfocused panes show no candidate emphasis unless the pointer hovers over a row.
@@ -465,7 +467,7 @@ same operation with the mouse. Beside it, `↕` performs the stacked `C-x 2`
 split and `↔` performs the side-by-side `C-x 3` split. `C-x 1` retains only
 the current window. `C-x o` moves focus. Status lines and column dividers can
 be dragged to resize their local split.
-The buttons appear as `|↕|↔|×|`. Hovering a symbol makes it bold with a
+The buttons appear as `│↕│↔│×│`. Hovering a symbol makes it bold with a
 dotted underline without changing keyboard focus; the separators stay plain.
 
 Divider intersections expose the split hierarchy even when two layouts have

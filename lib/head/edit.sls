@@ -3356,8 +3356,8 @@
           (hashtable-clear! buffer-choices))))
     (paint:add-highlighter!
       (lambda ()
-        ;; Strong blue describes the focused document. Bold and a subtle tint
-        ;; mark the hovered row or focused list's candidate; passive lists stay quiet.
+        ;; Strong blue describes the focused document in other panes. Bold and
+        ;; a subtle tint mark the hovered row or focused list's candidate.
         (if (and buffers-view (memq buffers-view (buffer-list)))
             (let ([active-row (buffer-row (current-buffer))]
                   [row-range
@@ -3370,7 +3370,8 @@
                               [column (assv over (buffer-choice-columns (buffer-choice-for w)))]
                               [row (buffer-row (buffer-candidate w))])
                          (append
-                           (if active-row (list (row-range w active-row 'active)) '())
+                           (if (and active-row (not (eq? w current-window)))
+                               (list (row-range w active-row 'active)) '())
                            (if column
                                (list (list w (- buffer-first-row 1) (cadr column)
                                        (min (caddr column)

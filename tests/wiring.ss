@@ -60,7 +60,7 @@
               [line (find (lambda (line) (string:search line prefix 0 (string-length line)))
                       (vector->list (vt:emulator-screen mirror)))]
               [start (and line (+ (string:search line prefix 0 (string-length line)) (string-length prefix)))]
-              [end (and start (string:search line " |↕|↔|×|" start (string-length line)))])
+              [end (and start (string:search line " │↕│↔│×│" start (string-length line)))])
          (and end (substring line start end))))
      (define (quiet-buffers-bar? index)
        (let ([text (buffers-bar index)])
@@ -495,7 +495,7 @@
              (picker-face "<picker-g" "1") (picker-face "Buffer" "4:4")) '(#t #t #t #t))
      (press! "\x15;some-long-filter-ending-日本語")
      (check 'narrow-filter-shows-its-newest-characters-and-keeps-window-controls
-       (list (visible? "日本語") (visible? "|↕|↔|×|")) '(#t #t))
+       (list (visible? "日本語") (visible? "│↕│↔│×│")) '(#t #t))
      (resize! 24 100)
      (press! "\x15;picker-\x1b;[H")
      (read-editor '(begin (split-window-right!) (other-window!) #t))
@@ -608,7 +608,7 @@
          (press! "\x1b;[H\x1b;[B")
          (read-editor '(begin (select-window! (window 2)) (delete-window!) (select-window! (window 0)) #t))))
      ;; Only the symbols are hover/click targets, including in an inactive
-     ;; pane. The shared | separators remain neutral between controls.
+     ;; pane. The shared │ separators remain neutral between controls.
      (let* ([labels '("↕" "↔" "×")]
             [left (map find-cell labels)]
             [right (map (lambda (label cell)
@@ -666,10 +666,26 @@
                             (exists (lambda (line) (and (string:search line needle 0 (string-length line)) #t))
                               (vector->list rows))
                             (eq? rows (head:buffer-lines b))
-                            (eq? b (car (reverse (buffer-list))))))))])
+                            (eq? b (car (reverse (buffer-list))))))))]
+              [highlights
+               (let* ([columns
+                       (begin
+                         (read-editor '(begin (split-window-right!) #t))
+                         (read-editor '(map head:window-xoff (head:windows))))]
+                      [faces
+                       (picker-sequence
+                         (lambda (i)
+                           (read-editor `(begin (select-window! (window ,i)) #t))
+                           ;; Keep candidate tint off the self row so it
+                           ;; cannot hide an incorrect strong-blue highlight.
+                           (press! "\x1b;[H")
+                           (when (picker-face "<buffers>" "1") (press! "\x1b;[B"))
+                           (map (lambda (column) (picker-face (cons (car (find-cell "<buffers>")) column) "31")) columns)) '(0 1))])
+                 (read-editor '(begin (select-window! (window 0)) (delete-other-windows!) #t))
+                 faces)])
          (check 'recreated-switcher-lists-itself-with-current-metadata-and-document-recency
-           (list presentation selection inventory)
-           '((#t #f #f #f) ("<buffers>" (2 . 0)) (#t #t #t #t)))))
+           (list presentation selection highlights inventory)
+           '((#t #f #f #f) ("<buffers>" (2 . 0)) ((#f #t) (#t #f)) (#t #t #t #t)))))
      (press! "\x07;")
      (check 'retiring-a-visited-buffer-does-not-return-to-the-switcher
        (read-editor
@@ -814,13 +830,19 @@
                                (string:suffix? "  3" line))))) '(#t #f #t #t))
      (click! (find-cell "large/"))
      (files-settle!)
-     (let ([inside (read-editor '(list (head:buffer-fact (current-buffer) 'directory #f) (buffer-line (current-buffer) 0)))])
-       (press! "\x1b;[D")
-       (files-settle!)
-       (check 'files-drilldown-keeps-filter-and-parent-selects-the-branch-left
-         (list inside (read-editor '(list (head:buffer-fact (current-buffer) 'directory #f)
-                                          (string:prefix? "large/" (buffer-line (current-buffer) (car (point)))))))
-         (list (list (files-path "large") "Filter: needle") (list files-root #t))))
+     (press! "\x1b;[B") ; remember a choice beyond the filtered directory's default
+     (let ([inside (files-location)])
+       (check 'files-drilldown-and-return-preserve-filter-and-each-directorys-choice
+         (cons inside
+           (picker-sequence
+             (lambda (step)
+               (press! (car step)) (files-settle!)
+               (read-editor `(list (head:buffer-fact (current-buffer) 'directory #f)
+                                   (head:buffer-fact (current-buffer) 'file-filter #f)
+                                   (string:prefix? ,(cadr step) (buffer-line (current-buffer) (car (point)))))))
+             '(("\x1b;[D" "large/") ("\x1b;[C" "needle-b.txt") ("\x1b;[D" "large/"))))
+         (list (list (files-path "large") "needle") (list files-root "needle" #t)
+           (list (files-path "large") "needle" #t) (list files-root "needle" #t))))
      (check 'files-tab-completes-relative-components-and-selects-the-exact-case-path
        (picker-sequence
          (lambda (step)
@@ -834,24 +856,26 @@
      (press! "\x1b;[C") (files-settle!)
      (let ([inside (files-location)])
        (files-filter! "ne") (press! "\t") (files-settle!)
-       (check 'files-entering-a-completed-directory-consumes-the-prefix-and-ambiguous-tab-stays-put
+       (check 'files-entering-a-completed-directory-keeps-the-filter-and-ambiguous-tab-stays-put
          (list inside (files-location))
-         (list (list (files-path "small") "") (list (files-path "small") "ne"))))
+         (list (list (files-path "small") "small/") (list (files-path "small") "ne"))))
      (files-open!)
      (files-filter! "SMALL/NESTED/NE")
      (let ([match (read-editor '(string:prefix? "small/nested/needle-only.txt" (buffer-line (current-buffer) (car (point)))))])
-       (check 'files-path-filter-rebases-as-its-containing-directories-are-entered
-         (cons match
-           (picker-sequence
-             (lambda (name) (click! (find-cell name)) (files-settle!) (files-location)) '("small/" "nested/")))
-         (list #t (list (files-path "small") "NESTED/NE") (list (files-path "small/nested") "NE"))))
+       (click! (find-cell "small/")) (files-settle!)
+       (let ([inside (files-location)] [empty? (visible? "No matching files")])
+         (click! (find-cell (string-append (string:tail files-root 5) "/"))) (files-settle!)
+         (check 'files-path-filter-stays-literal-through-directory-and-breadcrumb-clicks
+           (list match inside empty? (files-location))
+           (list #t (list (files-path "small") "SMALL/NESTED/NE") #t
+             (list files-root "SMALL/NESTED/NE")))))
      (files-open!)
      (files-filter! "small/.") (press! "\t") (files-settle!)
      (let ([completed (files-location)] [escaped (visible? "Filter: small/.日本語\\xA;/")])
        (press! "\r") (files-settle!)
        (check 'files-tab-can-complete-a-hidden-control-character-path-with-a-safe-label
          (list completed escaped (files-location))
-         (list (list files-root "small/.日本語\n/") #t (list (files-path "small/.日本語\n") ""))))
+         (list (list files-root "small/.日本語\n/") #t (list (files-path "small/.日本語\n") "small/.日本語\n/"))))
      (files-open!)
      (files-filter! "../") (press! "\t")
      (check 'files-completion-outside-the-root-offers-explicit-path-entry
@@ -862,10 +886,10 @@
      (let ([route (files-labels)])
        (press! "\x1b;[C") (files-settle!)
        (let ([inside (files-location)])
-         (press! "\r")
+         (files-filter! "needle-only.txt") (press! "\r")
          (check 'files-completed-link-path-remains-navigable-without-recursively-following-links
            (list route inside (read-editor '(head:buffer-file (current-buffer))))
-           (list '("linked@/") (list (files-path "linked") "needle-only.txt")
+           (list '("linked@/") (list (files-path "linked") "linked/needle-only.txt")
              (files-path "small/nested/needle-only.txt")))))
      (delete-file (files-path "linked"))
      (files-open!)

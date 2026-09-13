@@ -302,14 +302,18 @@
       (when (pair? rows)
         (select! (at-row (min (+ first-row (length rows) -1) (max first-row (+ index delta))))))))
   (define (navigate! path keep-filter? selected)
-    (unless keep-filter? (set! query ""))
-    (let ([path (file:canonical (file:expand path))])
+    ;; Recall a directory's choice only for the same filter; a fresh query
+    ;; must get its own default instead of an old unfiltered container.
+    (let ([path (file:canonical (file:expand path))]
+          [next-query (if keep-filter? query "")])
       (vector-for-each
         (lambda (choice)
-          (when location (hashtable-set! (choice-history choice) location (choice-selected choice)))
+          (when location (hashtable-set! (choice-history choice) location (cons query (choice-selected choice))))
           (choice-selected-set! choice
-            (or selected (and (string=? query "") (hashtable-ref (choice-history choice) path #f)))))
+            (or selected (let ([saved (hashtable-ref (choice-history choice) path #f)])
+                           (and saved (string=? (car saved) next-query) (cdr saved))))))
         (hashtable-values choices))
+      (set! query next-query)
       (set! location path))
     (when (and selected (string:prefix? "." (file:base-name selected))) (show-hidden #t))
     (set! inventory '())
@@ -320,22 +324,12 @@
     ;; so entering it again retraces the route in each window.
     (let branch ([child location])
       (let ([parent (directory:parent child)])
-        (vector-for-each (lambda (choice) (hashtable-set! (choice-history choice) parent child))
+        (vector-for-each (lambda (choice) (hashtable-set! (choice-history choice) parent (cons query child)))
           (hashtable-values choices))
-        (if (string=? parent path) (navigate! path #f child) (branch parent)))))
+        (if (string=? parent path) (navigate! path #t child) (branch parent)))))
   (define (parent!)
     (unless (string=? location "/")
       (up-to! (directory:parent location))))
-  (define (entered-query entry)
-    ;; Filtering compares relative paths. Consume the part already matched
-    ;; by the directory being entered, including partial component matches.
-    (let ([prefix (string-append (directory:relative-path entry location) "/")])
-      (if (string:search prefix query 0 (string-length prefix) #t) ""
-          (let overlap ([n (min (string-length prefix) (string-length query))])
-            (cond [(zero? n) query]
-                  [(string-ci=? (string:tail prefix (- (string-length prefix) n)) (substring query 0 n))
-                   (string:tail query n)]
-                  [else (overlap (- n 1))])))))
   (define (activate! directories-only?)
     (let* ([choice (choice-for (selected-window))]
            [row (candidate (selected-window))] [entry (and row (cdr row))]
@@ -347,9 +341,7 @@
            [path (if row (car row) (and returning (choice-selected choice)))])
       (when path
         (set! hover #f)
-        (cond [(or returning (directory:directory? entry))
-               (set! query (if entry (entered-query entry) ""))
-               (navigate! path #t #f)]
+        (cond [(or returning (directory:directory? entry)) (navigate! path #t #f)]
               [(not directories-only?)
                (if (not (eq? (directory:entry-kind entry) 'file))
                    (set-message! "Not a readable regular file; refresh to check for changes")
@@ -606,7 +598,7 @@
     (doc:register!
       '(((file-view:open!) (("procedure" . "(file-view:open! [directory])")) "void"
          ("(file-view)") file-view "Files" #f
-         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. C-l clears the filter and reads its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Esc returns to browsing the shown directory. Acceptance opens files, creates missing parents, or creates and enters directories for a trailing slash; new files stay unsaved. Click ancestor path components to navigate. In normal browsing, Left selects the directory just left and Right recalls its selection. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts. Entering a directory consumes the matching path prefix.")
+         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. C-l clears the filter and reads its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Esc returns to browsing the shown directory. Acceptance opens files, creates missing parents, or creates and enters directories for a trailing slash; new files stay unsaved. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
          ("(file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")
