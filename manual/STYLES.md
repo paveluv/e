@@ -92,8 +92,8 @@ refresh it. If the terminal answers neither query, e uses the dark defaults.
 The `header` face has two neutral variants: light gray text on medium gray
 in a dark theme, and dark text on pale gray in a light theme. The `hover`
 face keeps text bold and gives its dotted underline a muted gray color,
-lighter in a light theme. Candidate rows use an almost-black blue (`#080c14`)
-in dark themes and an almost-white blue (`#f4f8ff`) in light themes, with bold
+lighter in a light theme. Candidate rows use a dark navy (`#1c283c`)
+in dark themes and a pale blue (`#e2ebfa`) in light themes, with bold
 text. `candidate-hover` adds the dotted underline to that row tint; headings,
 breadcrumbs and other clickable labels retain their own backgrounds.
 Explicit `style:set!` overrides take
@@ -125,7 +125,7 @@ The built-in faces available to `style:set!` are:
 | `mark` | `(underline)` | Generic highlighted ranges, including matching delimiters |
 | `selection` | `((background blue))` | The active selected region |
 | `active` | `((background 31))` | The `<buffers>` row of the buffer the selected window shows |
-| `candidate` | Dark: `(bold (background (rgb 8 12 20)))`; light: `(bold (background (rgb 244 248 255)))` | The keyboard candidate in an app; files and buffers show it only in the focused pane |
+| `candidate` | Dark: `(bold (background (rgb 28 40 60)))`; light: `(bold (background (rgb 226 235 250)))` | The keyboard candidate in an app; files and buffers show it only in the focused pane |
 | `candidate-hover` | The same bold text and background as `candidate`, plus `dotted-underline` and the theme's `underline-color` from `hover` | A hovered files or buffers row, taking precedence over the keyboard candidate |
 | `choice` | `(bold (foreground 135))` | The initial letters of choices in focused dialog prompts |
 | `match` | `((background cyan) (foreground black))` | Incremental-search matches |

@@ -183,8 +183,8 @@ While Create owns one pane, sorting can still be changed from another
 files pane. Navigating from that other pane ends path entry and keeps the
 chosen destination, using the prompt's usual focus-loss behavior.
 
-The focused pane's keyboard choice is bold with a very subtle blue background:
-almost white in a light theme, almost black in a dark theme. A hovered row
+The focused pane's keyboard choice is bold with a soft blue background:
+pale in a light theme, dark navy in a dark theme. A hovered row
 gets the same tint and a muted dotted underline, taking precedence over the
 keyboard choice. Headings and breadcrumbs keep their own background and use
 bold text with the same dotted underline.

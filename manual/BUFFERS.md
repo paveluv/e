@@ -358,8 +358,8 @@ which buffer a row opens.
 The blue `active` face marks the document in the focused window, only in
 unfocused buffers panes. A focused buffers pane does not mark its own
 `<buffers>` row as active; another pane showing the same list still can. The
-`candidate` face marks the keyboard choice with bold text and a very subtle
-blue background, almost white in light themes and almost black in dark themes.
+`candidate` face marks the keyboard choice with bold text and a soft
+blue background, pale in light themes and dark navy in dark themes.
 Unfocused panes show no candidate emphasis unless the pointer hovers over a row.
 A mouse-hovered row uses `candidate-hover`: the same bold text and tint with a
 muted dotted underline, taking precedence over the keyboard candidate there.

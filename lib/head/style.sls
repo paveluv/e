@@ -199,8 +199,8 @@
         (mark (underline))
         (selection ((background blue)))
         (active ((background 31)))
-        (candidate (bold (background (rgb 8 12 20))))
-        (candidate-hover (bold (background (rgb 8 12 20)) dotted-underline (underline-color 242)))
+        (candidate (bold (background (rgb 28 40 60))))
+        (candidate-hover (bold (background (rgb 28 40 60)) dotted-underline (underline-color 242)))
         (choice (bold (foreground 135)))
         (match ((background cyan) (foreground black)))
         (match-point ((background yellow) (foreground black))))))
@@ -209,8 +209,8 @@
     ;; Most faces use terminal colors or attributes and need no variant.
     (list (cons 'header (style-escape '((foreground 236) (background 253))))
           (cons 'hover (style-escape '(bold dotted-underline (underline-color 248))))
-          (cons 'candidate (style-escape '(bold (background (rgb 244 248 255)))))
-          (cons 'candidate-hover (style-escape '(bold (background (rgb 244 248 255)) dotted-underline (underline-color 248))))))
+          (cons 'candidate (style-escape '(bold (background (rgb 226 235 250)))))
+          (cons 'candidate-hover (style-escape '(bold (background (rgb 226 235 250)) dotted-underline (underline-color 248))))))
 
   (define (style-code style)
     (or (style-override style)
