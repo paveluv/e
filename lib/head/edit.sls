@@ -101,7 +101,7 @@
   (import (chezscheme) (prefix (sys) sys:)
           (prefix (store) store:) (prefix (text) text:) (prefix (datum) datum:)
           (prefix (property) property:)
-          (prefix (kernel) kernel:) (prefix (actor) actor:) (prefix (startup) startup:)
+          (prefix (kernel) kernel:) (prefix (actor) actor:)
           (prefix (log) log:) (prefix (style) style:)
           (prefix (keymap) keymap:) (prefix (tty) tty:)
           (prefix (echo) echo:) (prefix (head) head:)
@@ -2017,46 +2017,42 @@
 
   (define (quit!!)
     (let review ([changed? #f])
-      (let-values ([(shared accept!)
-                    (if (eq? (startup:mode) 'attach)
-                        (values '() (lambda () #t))
-                        (store:prepare-close))])
-        (let* ([local (local-quit-state)]
-               [answer
-                (if (for-all (lambda (state) (state-clean? (cadr state) (cadddr state)))
-                             (append shared local)) #\y
-                    (prompt:key!
-                      (if changed?
-                          "Buffers changed; quit anyway? y)es, n)o, v)iew"
-                          "Modified buffers exist; quit anyway? y)es, n)o, v)iew")
-                      "ynv"))])
-          (case (and answer (char-downcase answer))
-            [(#\y)
-             (unless (head:call-uninterrupted
-                       (lambda ()
-                         ;; Local changes run on this head thread. Shared
-                         ;; admission closes before signaling the main loop.
-                         (and (for-all
-                                (lambda (state)
-                                  (or (cond [(assq 'disposable (cadddr state)) => cdr] [else #f])
-                                      (let ([old (assq (car state) local)])
-                                        (and old (= (caddr state) (caddr old))
-                                             (equal? (cadddr state) (cadddr old))))))
-                                (local-quit-state))
-                              (accept!) (begin (head:quit!) #t))))
-               (review #t))]
-            [(#\v)
-             (let ([b (head:find-tool-buffer "*buffers*")])
-               (if b
-                   (let ([w (display-buffer! b)])
-                     (when w
-                       (select-window! w)
-                       ;; A direct app entry still receives the same
-                       ;; initialization opportunity as its ordinary command.
-                       (head:dispatch-app-event! "FOCUS")
-                       (set! message "")))
-                   (set-message! "The <buffers> app is not available")))]
-            [else (void)])))))
+      (let* ([local (local-quit-state)]
+             [answer
+              (if (for-all (lambda (state) (state-clean? (cadr state) (cadddr state)))
+                           local) #\y
+                  (prompt:key!
+                    (if changed?
+                        "Buffers changed; quit anyway? y)es, n)o, v)iew"
+                        "Modified buffers exist; quit anyway? y)es, n)o, v)iew")
+                    "ynv"))])
+        (case (and answer (char-downcase answer))
+          [(#\y)
+           (unless (head:call-uninterrupted
+                     (lambda ()
+                       ;; Local changes run on this head thread. Shared
+                       ;; work remains in the base when this screen leaves.
+                       (and (for-all
+                              (lambda (state)
+                                (or (cond [(assq 'disposable (cadddr state)) => cdr] [else #f])
+                                    (let ([old (assq (car state) local)])
+                                      (and old (= (caddr state) (caddr old))
+                                           (equal? (cadddr state) (cadddr old))))))
+                              (local-quit-state))
+                            (begin (head:quit!) #t))))
+             (review #t))]
+          [(#\v)
+           (let ([b (head:find-tool-buffer "*buffers*")])
+             (if b
+                 (let ([w (display-buffer! b)])
+                   (when w
+                     (select-window! w)
+                     ;; A direct app entry still receives the same
+                     ;; initialization opportunity as its ordinary command.
+                     (head:dispatch-app-event! "FOCUS")
+                     (set! message "")))
+                 (set-message! "The <buffers> app is not available")))]
+          [else (void)]))))
 
   ;;; Pasting and typed runs --------------------------------------------------
 

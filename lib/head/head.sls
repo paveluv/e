@@ -487,7 +487,7 @@
     (frame-hook)
     ;; Nested prompts can temporarily borrow windows. Only an outer pump
     ;; frame checkpoints the screen the user will return to.
-    (when (and (in-main-pump) (eq? (startup:mode) 'attach)) (checkpoint! 'idle)))
+    (when (in-main-pump) (checkpoint! 'idle)))
 
   ;; The host's color scheme: prefer DSR 997 reports, with the OSC 11
   ;; background as a fallback for older terminals. Hooks run on the main

@@ -9,14 +9,15 @@ Directories group responsibility in dependency order:
 Imports may point down or sideways; no library imports a runtime entrypoint.
 The loader locates the adjacent libraries and object caches and configures
 Chez. It admits options through `startup`, then selects the base or client runtime.
-Plain `e` subsequently imports the command layer (`edit`, bare -- the names
-M-x sees) and `main`, and runs `(main:run)`. `--daemon` runs the base without
+Plain `e` starts or connects to the base, then imports the command layer
+(`edit`, bare -- the names M-x sees) and `main`, and runs `(main:run)`.
+`--base` acquires the directory's lifetime lock and runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
 
-`--attach` selects the `lib/client` implementation tree; plain e and the
-daemon select `lib/base`. Both then search every other leaf directory under
+Plain `e` selects the `lib/client` implementation tree; `e --base` selects
+`lib/base`. Both then search every other leaf directory under
 `lib/`: `foundation`, `sys`, `core`, `service`, `head`, `apps`, `modes` and
 `run`. The loader discovers these roots from the tree instead of naming
 them; the parent directories `lib/`, `lib/base/` and `lib/client/` are not

@@ -1315,7 +1315,7 @@
      (check 'splice-whole-buffer (spliced 0 3 '("Z")) '("Z"))
      (check 'splice-empty-buffer (spliced 0 3 '()) '(""))
 
-     ;; A standalone exit reviews store truth, independent of audiences.
+     ;; A base lifetime review uses store truth, independent of audiences.
      ;; The acceptance closure owns its preconditions, and all writers share
      ;; the final lifetime guard. Keep this last: closing is irreversible.
      (let* ([id (store:create! alice "quit-hidden" '("keep") '((audience) (note . "before")))]

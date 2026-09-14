@@ -12,9 +12,10 @@
 (include "tests/roots.ss")
 (test-roots! 'base)
 
-(eval
+(define interactive-scenario
   '(begin
-     (import (prefix (sys) sys:) (prefix (vt) vt:) (prefix (glyph) glyph:))
+     (import (prefix (sys) sys:) (prefix (vt) vt:) (prefix (glyph) glyph:)
+             (prefix (wire) wire:))
 
      ;; The nested terminal must run a predictable shell.
      (putenv "SHELL" "/bin/sh")
@@ -22,7 +23,8 @@
      (define checks 0)
      (define mirror (vt:make-emulator 24 80))
      (define process
-       (sys:spawn-terminal-process "/bin/sh" "exec ./e" (current-directory) 24 80))
+       (sys:spawn-terminal-process "/bin/sh" (fixture:command test-base "--name" "interactive")
+                                   (current-directory) 24 80))
      (define from-editor
        (transcoded-port (sys:terminal-process-input process)
                         (make-transcoder (utf-8-codec) 'none 'replace)))
@@ -54,7 +56,7 @@
 
      (define (fail! label)
        (for-each (lambda (line) (display (format "|~a|\n" line)))
-                 (screen-lines))
+         (screen-lines))
        (error 'interactive-test (format "~s" label)))
 
      (define (check label true?)
@@ -79,7 +81,7 @@
          (let loop ([at 0])
            (and (<= (+ at m) n)
                 (or (string=? (substring text at (+ at m)) part)
-                    (loop (+ at 1)))))))
+                  (loop (+ at 1)))))))
 
      (define (find-cell part . start)
        ;; (row . column) of the first screen position showing part.
@@ -108,12 +110,16 @@
      ;; mirror can reflow old cells itself, so require actual frame output too.
      (define resize-question
        "This pending question expands to the new terminal width before another key.")
-     (send! (format "\x1b;xactor:ask! '(agent resize) head:ui-actor ~s '() void\r" resize-question))
+     (define asker (sys:connect-local (string-append (fixture:directory test-base) "/socket")))
+     (wire:send! (sys:connection-output asker) (list 'hello wire:version '(head "resize")))
+     (wire:receive (sys:connection-input asker))
+     (wire:send! (sys:connection-output asker) (list 'request 1 'ask '(head "interactive") resize-question '()))
+     (wire:receive (sys:connection-input asker))
      (settle! 200)
      (send! "\x1;")                    ; C-a settles the evaluation's echo log
      (settle! 150)
      (wait-for! 'resize-question-starts-elided
-       (lambda () (and (find-cell "(agent resize) asks:") (not (find-cell resize-question)))) 3000)
+       (lambda () (and (find-cell "(head") (find-cell "asks:") (not (find-cell resize-question)))) 3000)
      (for-each
        (lambda (case)
          (let ([prompt? (car case)] [rows (cadr case)] [cols (caddr case)])
@@ -127,14 +133,14 @@
                  (and (contains? (list->string (reverse transcript)) "\x1b;[?2026h")
                       buffer close (= (car buffer) (- rows 2)) (= (cdr close) (- cols 3))
                       (if prompt? (find-cell "M-x (resize-input")
-                          (find-cell resize-question))))) 3000)))
+                        (find-cell resize-question))))) 3000)))
        '((#f 18 160) (#t 24 80)))
      (settle! 200)
      (set! transcript '())
      (settle! 350)
      (check 'idle-signal-checks-do-not-paint (null? transcript))
      (send! "\x7;")
-     (send! "\x1b;xfor-each actor:cancel! (map car (actor:pending head:ui-actor))\r")
+     (sys:close-connection! asker)
      (settle! 150)
 
      ;; Invalid single-key input flashes the echo area, then restores the
@@ -169,7 +175,7 @@
        (lambda () (= 2 (length (filter (lambda (line) (contains? line "▶ ◐")) (screen-lines))))) 5000)
      (let ([status (find-cell "▶ ◐" (+ (car (find-cell "▶ ◐")) 1))])
        (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
-                (+ (cdr status) 3) (+ (car status) 1) (+ (cdr status) 3) (+ (car status) 1)))
+                      (+ (cdr status) 3) (+ (car status) 1) (+ (cdr status) 3) (+ (car status) 1)))
        (wait-for! 'click-focuses-and-toggles-only-the-pointed-terminal-window
          (lambda () (and (find-cell "▶ ●") (find-cell "▶ ◐"))) 3000)
        (send! "\x1d;"))                   ; restore partial capture in the newly focused window
@@ -186,7 +192,7 @@
      ;; uses its single painted cell, even after a wide buffer-name prefix.
      (let ([decoy (find-cell "●")])
        (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
-                (+ (cdr decoy) 1) (+ (car decoy) 1) (+ (cdr decoy) 1) (+ (car decoy) 1)))
+                      (+ (cdr decoy) 1) (+ (car decoy) 1) (+ (cdr decoy) 1) (+ (car decoy) 1)))
        (settle! 150)
        (check 'capture-symbol-in-buffer-name-is-inert (find-cell "▶ ●")))
      (for-each
@@ -196,10 +202,10 @@
            (settle! 150)
            (let ([style (string-append ";" (style-at (cons row column)) ";")])
              (check 'capture-control-is-single-cell-with-bold-dotted-hover
-               (and (= (glyph:cells (car icons)) 3) (contains? style ";1;") (contains? style ";4:4;")
-                    (not (contains? (format ";~a;" (style-at (cons row (+ column 1)))) ";4:4;")))))
+                    (and (= (glyph:cells (car icons)) 3) (contains? style ";1;") (contains? style ";4:4;")
+                      (not (contains? (format ";~a;" (style-at (cons row (+ column 1)))) ";4:4;")))))
            (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am"
-                    (+ column 1) (+ row 1) (+ column 1) (+ row 1)))
+                          (+ column 1) (+ row 1) (+ column 1) (+ row 1)))
            (wait-for! 'click-toggles-capture (lambda () (find-cell (cadr icons))) 3000)))
        '(("▶ ●" "▶ ◐") ("▶ ◐" "▶ ●")))
      (send! "\x1d;")
@@ -351,12 +357,12 @@
                 5000)
      (send!
        (format "\x1b;xlist ~s (quote describe-source-check)\r"
-         '(let* ([page (reference:page head:ui-actor)] [id (car page)]
-                 [source (head:buffer-of-store-id id)] [view (markdown:companion source)])
-            (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
-                 (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
-                 (head:buffer-read-only source) (not (head:buffer-store-id view))
-                 (eq? source (head:buffer-fact view 'markdown-input #f))))))
+               '(let* ([page (reference:page head:ui-actor)] [id (car page)]
+                       [source (head:buffer-of-store-id id)] [view (markdown:companion source)])
+                  (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
+                    (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
+                    (head:buffer-read-only source) (not (head:buffer-store-id view))
+                    (eq? source (head:buffer-fact view 'markdown-input #f))))))
      (wait-for! 'describe-source-is-shared-and-private-to-the-requester
                 (lambda ()
                   ;; M-x can wrap its result across terminal rows.
@@ -375,3 +381,11 @@
      (check 'editor-quits #t)
 
      (format #t "~a interactive checks passed\n" checks)))
+
+(eval
+  `(begin
+     (import (prefix (fixture) fixture:))
+     (fixture:call-with-base (current-directory) #f
+       (lambda (base)
+         (set-top-level-value! 'test-base base)
+         (eval ',interactive-scenario)))))

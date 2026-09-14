@@ -4,7 +4,7 @@
 ;; chain since the cached revision and applies it, so ordinary edits cost a
 ;; delta on the wire, never the buffer's text.
 (library (store)
-  (export create! visit! delete! discard! prepare-close reset! rename! buffer-list exists? visible? buffer-name find-named find-file
+  (export create! visit! delete! discard! reset! rename! buffer-list exists? visible? buffer-name find-named find-file
           snapshot snapshot-state snapshot-since revision line-count line extract
           property properties set-property! set-properties!
           edit! edit-with-snapshot! history-step! undo-authors history blame marks set-marks!
@@ -122,8 +122,6 @@
     (hashtable-delete! stale id)
     (hashtable-delete! chains id))
   (define (buffer-list) (client:request 'buffers))
-  (define (prepare-close)
-    (error 'prepare-close "an attached head does not own the base lifetime"))
   (define (exists? id) (and (cached id) #t))
   (define (buffer-name id) (string-copy (car (required id))))
   (define (find-named name)

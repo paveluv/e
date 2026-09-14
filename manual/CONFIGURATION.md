@@ -2,7 +2,7 @@
 
 ## Startup and head names
 
-Run `./e [--name NAME] [--] [file]`. A name is a nonempty string; quote it
+Run `./e [--name NAME] [--base-working-dir DIR] [--] [file]`. A name is a nonempty string; quote it
 in the shell if it contains spaces. `--name=NAME` also works. `--` allows a
 file whose name begins with `-`. Help (`-h` or `--help`) and argument errors
 are handled before loading the editor or `config.e`.
@@ -11,14 +11,15 @@ Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,
 ` 3`, and so on if occupied; an explicitly requested name must be free.
 The identity is `(head "name")`, exposed as `head:ui-actor`. It is chosen
-before shared buffers or cursor marks are created. Plain `e` keeps a base and
-one head in the same process. `--attach` connects a head to a running daemon.
+before shared buffers or cursor marks are created. Every invocation starts or
+attaches to the installation's base. Use a stable explicit name to restore the
+same screen after an SSH login whose terminal name has changed.
 
 ## Daemon and attachment
 
-`./e --daemon [--socket PATH]` runs the base alone, and
-`./e --attach [--socket PATH] [--name NAME] [--] [file]` connects a screen to
-it. Running the daemon, attaching and detaching, named screens and their
+`./e --base [--base-working-dir DIR]` runs the base alone; ordinary `./e`
+starts it automatically when necessary. `--base-working-dir` selects a private
+directory for an independent base. Running the daemon, attaching and detaching, named screens and their
 checkpoints, what is shared between heads, and agent sessions are described
 in [Base, heads and agents](MULTIHEAD.md). The daemon reads `base-config.e`
 only; a head reads `config.e` only.
@@ -41,8 +42,8 @@ cp config.template.e config.e
 Uncomment only settings that should differ from defaults.
 
 `base-config.e`, also beside the loader and ignored by Git, configures the
-base services. It runs once at startup in both plain and daemon modes, before
-any head is imported. It sees base APIs such as `store:`, `policy:`, `vt:` and
+base services. It runs once when the base starts, before accepting any head.
+It sees base APIs such as `store:`, `policy:`, `vt:` and
 `reference:`. Keep key bindings, painting and other head settings in `config.e`.
 An attached head evaluates `config.e` using client implementations of its
 service APIs; it does not evaluate `base-config.e`. The daemon does not evaluate
@@ -116,7 +117,8 @@ and precedence rules.
 ## Self-contained installations
 
 Each checkout keeps `config.e`, `base-config.e`, `lib/`, `data/` and compiled
-`eo/` beside its own loader. Its default daemon socket is `.socket/base`
-there too; `--socket` can select another location. A project can therefore
+`eo/` beside its own loader. The default base directory is `.base/`, containing
+`socket`, `lock`, `pid` and `log/`; `--base-working-dir` selects another
+directory. A project can therefore
 vendor a customized e checkout without affecting a personal installation
 elsewhere.

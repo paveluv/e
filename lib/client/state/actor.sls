@@ -5,7 +5,7 @@
           current call-as identity? audience? in-audience? send! pending answer! checkpoint checkpoint!)
   (import (chezscheme)
           (prefix (client) client:) (prefix (identity) identity:)
-          (prefix (path) path:) (prefix (startup) startup:) (prefix (datum) datum:))
+          (prefix (daemon) daemon:) (prefix (datum) datum:))
   (define current identity:current)
   (define call-as identity:call-as)
   (define identity? identity:valid?)
@@ -20,7 +20,7 @@
     (case-lambda
       [(actor deliver!) (register! actor deliver! #f)]
       [(actor deliver! capabilities)
-       (let ([identity (client:claim! actor (path:canonical (path:expand (startup:socket))))])
+       (let ([identity (client:claim! actor (daemon:socket))])
          (client:subscribe! 'event
            (lambda (message)
              (forget-pending!)

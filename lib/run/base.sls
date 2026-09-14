@@ -2,7 +2,7 @@
 (library (base)
   (export call-with-runtime run connection-policy connection-owner)
   (import (chezscheme)
-          (prefix (kernel) kernel:) (prefix (startup) startup:)
+          (prefix (kernel) kernel:) (prefix (daemon) daemon:)
           (prefix (sys) sys:) (prefix (wire) wire:)
           (prefix (store) store:) (prefix (actor) actor:)
           (prefix (policy) policy:) (prefix (text) text:) (prefix (datum) datum:)
@@ -12,7 +12,7 @@
           (prefix (surface) surface:) (prefix (reference) reference:) (prefix (doc) doc:))
 
   (define modules
-    '("actor" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
+    '("actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
       "property" "reference" "sandbox" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -29,8 +29,8 @@
     (make-parameter (lambda (actor) (and (eq? (car actor) 'head) actor))))
 
   (define (call-with-runtime thunk)
-    ;; Pin before config can start active work. Plain e owns this same base
-    ;; lifetime; ending a head connection never enters this cleanup.
+    ;; Ownership and diagnostics are already established by the loader.
+    ;; Ending a head connection never enters this cleanup.
     (kernel:pin-modules! (cons "base" modules))
     (let ([audit #f])
       (dynamic-wind void
@@ -229,10 +229,39 @@
       [(reference-url) (arity 1) (reference:browser-url (doc:from-datum (car args)))]
       [else (error 'wire "unknown request" operation)]))
 
-  (define (serve-connection connection)
-    (let ([owner (list 'connection connection)] [out (kernel:make-mailbox)]
-          [out-lock (make-mutex)] [queued-bytes 0] [queued-count 0] [closed? #f]
-          [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f])
+  ;; One participation list linearizes both admission and departure. A head
+  ;; that committed its departure is excluded before its reply is queued;
+  ;; concurrent quitters cannot both count each other as staying.
+  (define-record-type peer
+    (fields connection (mutable identity) (mutable leaving?) (mutable finish!)))
+  (define peer-lock (make-mutex))
+  (define peers '())
+  (define finished (make-condition))
+
+  (define (participants)
+    ;; Caller owns peer-lock. Never call store/actor services under it.
+    (filter values (map (lambda (peer) (and (not (peer-leaving? peer)) (peer-identity peer))) peers)))
+
+  (define (status identities)
+    (let ([facts (filter values
+                   (map (lambda (id)
+                          (let ([state (store:state id #f '(modified mode alive))])
+                            (and state (cadddr state))))
+                     (store:buffer-list)))])
+      (define (fact key facts) (cond [(assq key facts) => cdr] [else #f]))
+      (list (cons 'buffers (length facts))
+        (cons 'modified (length (filter (lambda (facts) (fact 'modified facts)) facts)))
+        (cons 'heads (length (filter (lambda (identity) (eq? (car identity) 'head)) identities)))
+        (cons 'terminals (length (filter (lambda (facts) (and (equal? (fact 'mode facts) "terminal")
+                                                           (fact 'alive facts))) facts)))
+        (cons 'agents (length (filter (lambda (identity) (eq? (car identity) 'agent)) identities)))
+        (cons 'wire-version wire:version))))
+
+  (define (serve-connection peer)
+    (let* ([connection (peer-connection peer)]
+           [owner (list 'connection connection)] [out (kernel:make-mailbox)]
+           [out-lock (make-mutex)] [queued-bytes 0] [queued-count 0] [closed? #f]
+           [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f] [closing #f])
       (define (close!)
         (when (with-mutex out-lock
                 (and (not closed?) (begin (set! closed? #t) #t)))
@@ -304,23 +333,36 @@
                 (post! (list 'hello wire:version actor capabilities))
                 (parameterize ([kernel:registering-module owner])
                   (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities)))
+              (with-mutex peer-lock
+                (peer-identity-set! peer (datum:copy actor))
+                (peer-finish!-set! peer
+                  (lambda (reason)
+                    (with-mutex out-lock (set! closing reason))
+                    (kernel:mailbox-post! out #f))))
               (set! writer
                 (fork-thread
                   (lambda ()
                     (guard (ex [else (close!)])
                       (let loop ()
                         (let ([item (kernel:mailbox-receive! out)])
-                          (when item
-                            (let ([frame
-                                   (if (bytevector? item) item
-                                       (wire:encode (list 'changed ((with-mutex out-lock changes)))))])
-                              (put-bytevector (sys:connection-output connection) frame)
-                              (flush-output-port (sys:connection-output connection)))
-                            (with-mutex out-lock
-                              (set! queued-count (- queued-count 1))
-                              (when (bytevector? item)
-                                (set! queued-bytes (- queued-bytes (bytevector-length item)))))
-                            (loop))))))))
+                          (cond
+                            [(with-mutex out-lock closing)
+                             => (lambda (reason)
+                                  ;; The control notice takes the next frame
+                                  ;; slot; presentation backlog is discarded.
+                                  (wire:send! (sys:connection-output connection) (list 'closing reason))
+                                  (close!))]
+                            [item
+                             (let ([frame
+                                    (if (bytevector? item) item
+                                      (wire:encode (list 'changed ((with-mutex out-lock changes)))))])
+                               (put-bytevector (sys:connection-output connection) frame)
+                               (flush-output-port (sys:connection-output connection)))
+                             (with-mutex out-lock
+                               (set! queued-count (- queued-count 1))
+                               (when (bytevector? item)
+                                 (set! queued-bytes (- queued-bytes (bytevector-length item)))))
+                             (loop)])))))))
               (actor:call-as actor
                 (lambda ()
                   (let loop ()
@@ -335,10 +377,18 @@
                         ;; already read still needs the same admission check,
                         ;; including reads and the subscription requests below.
                         (when (policy:revoked? session) (error 'wire "the session is revoked"))
+                        (when (peer-leaving? peer) (error 'wire "this head has already left"))
                         (post!
                           (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
                             (list 'reply (cadr message) 'ok
                               (case (caddr message)
+                                [(status leaving)
+                                 (unless (and control? (= (length message) 3))
+                                   (error 'wire "expected an all-buffer head and no arguments"))
+                                 (status
+                                   (with-mutex peer-lock
+                                     (when (eq? (caddr message) 'leaving) (peer-leaving?-set! peer #t))
+                                     (participants)))]
                                 [(watch watch-head)
                                  (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
                                  (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
@@ -356,17 +406,13 @@
           (when writer (thread-join writer))))))
 
   (define (run)
-    ;; Foreground for a supervisor or shell background job; SIGHUP leaves the
-    ;; base alive. A process stop is distinct from a connection disconnect.
-    (let* ([path (file:canonical (file:expand (startup:socket)))]
-           [directory (file:directory-part path)]
-           [control (kernel:make-mailbox)] [lock (make-mutex)] [finished (make-condition)]
-           [connections '()] [stopping? #f] [acceptor #f])
-      (unless (file-exists? directory) (mkdir directory #o700))
+    ;; Bind last, after module initialization and configuration have succeeded.
+    ;; The loader still holds the directory's lifetime lock during all cleanup.
+    (let* ([path (daemon:socket)] [control daemon:control]
+           [stopping? #f] [acceptor #f] [reason 'shutdown])
       (let ([listener (sys:listen-local path)])
         (dynamic-wind void
           (lambda ()
-            (sys:watch-daemon-signals! (lambda () (kernel:mailbox-post! control 'stop)))
             (set! acceptor
               (fork-thread
                 (lambda ()
@@ -374,34 +420,45 @@
                     (let loop ()
                       (let ([connection (sys:accept-local listener)])
                         (when connection
-                          (with-mutex lock
+                          (with-mutex peer-lock
                             (if stopping? (sys:close-connection! connection)
-                                (begin
-                                  (set! connections (cons connection connections))
+                                (let ([peer (make-peer connection #f #f
+                                              (lambda (reason) (sys:close-connection! connection)))])
+                                  (set! peers (cons peer peers))
                                   (fork-thread
                                     (lambda ()
                                       (dynamic-wind void
-                                        (lambda () (serve-connection connection))
+                                        (lambda () (serve-connection peer))
                                         (lambda ()
-                                          (with-mutex lock
-                                            (set! connections (remq connection connections))
+                                          (with-mutex peer-lock
+                                            (set! peers (remq peer peers))
                                             (condition-broadcast finished)))))))))
                           (loop))))))))
             (format #t "e: listening on ~a\n" path)
             (flush-output-port (current-output-port))
-            ;; The control owner services OS signals while idle, through the
-            ;; same mailbox wait as a head. No separate timer or polling loop.
-            (let ([message (kernel:mailbox-receive! control #f #t)])
-              (when (condition? message) (raise message))))
+            ;; The signal receiver posts here; the idle base needs no polling.
+            (let loop ()
+              (let ([message (kernel:mailbox-receive! control (daemon:log-deadline))])
+                (cond [(not message) (daemon:rotate-logs!) (loop)]
+                      [(condition? message) (raise message)]
+                      [else (set! reason message)]))))
           (lambda ()
-            (let ([active (with-mutex lock (set! stopping? #t) connections)])
+            (let ([active (with-mutex peer-lock (set! stopping? #t) peers)]
+                  [deadline (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 1))])
               (sys:close-local-listener! listener)
-              (for-each sys:close-connection! active)
+              (for-each (lambda (peer) ((peer-finish! peer) reason)) active)
+              (with-mutex peer-lock
+                (let flush ()
+                  (let ([now (current-time 'time-monotonic)])
+                    (when (and (pair? peers) (time<? now deadline))
+                      (condition-wait finished peer-lock (time-difference deadline now))
+                      (flush)))))
+              (for-each (lambda (peer) (sys:close-connection! (peer-connection peer))) active)
               (when acceptor (thread-join acceptor))
-              (with-mutex lock
+              (with-mutex peer-lock
                 (let wait ()
-                  (unless (null? connections)
+                  (unless (null? peers)
                     ;; Client owners finish their endpoint and writer cleanup.
-                    (condition-wait finished lock)
+                    (condition-wait finished peer-lock)
                     (wait))))))))))
 )

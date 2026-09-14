@@ -9,6 +9,7 @@
 (eval
   '(begin
      (import (prefix (wire) wire:) (prefix (sys) sys:) (prefix (test) test:)
+             (prefix (fixture) fixture:)
              (prefix (string) string:) (prefix (kernel) kernel:) (prefix (text) text:) (prefix (vt) vt:))
 
      (define encoded wire:encode)
@@ -31,7 +32,9 @@
      (define root (format "/tmp/e-wire-~a-~a" (get-process-id) (random 1000000000)))
      (define sources (string-append root "/lib"))
      (define objects (string-append root "/eo"))
-     (define socket (string-append root "/socket λ"))
+     (define base-directory (string-append root "/base λ"))
+     (define socket (string-append base-directory "/socket"))
+     (define test-base #f)
      (define trigger (string-append root "/continue"))
      (define terminal-pid-file (string-append root "/terminal-pid"))
      (define inventory-file (string-append root "/sessions"))
@@ -40,6 +43,7 @@
      (define edit-release (string-append root "/edit-release"))
      (define open-held (string-append root "/open-held"))
      (define open-release (string-append root "/open-release"))
+     (define automatic-control (string-append root "/automatic-control"))
      (define (quote-shell text)
        (string-append "'" (apply string-append
                             (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
@@ -55,8 +59,25 @@
          (directory-list source)))
      (define (write-forms path forms)
        (call-with-output-file path (lambda (port) (for-each (lambda (form) (pretty-print form port)) forms)) 'replace))
+     (define (remove-tree! path)
+       (if (file-directory? path #f)
+           (begin
+             (for-each (lambda (name) (remove-tree! (string-append path "/" name))) (directory-list path))
+             (delete-directory path))
+           (delete-file path)))
+     (define (base-exit directory)
+       (let ([process (sys:open-process (list "scheme-script" (string-append root "/e")
+                                          "--base" "--base-working-dir" directory))])
+         (dynamic-wind void
+           (lambda ()
+             (sys:write-process! process #f)
+             (test:await 'base-cli-exits (lambda () (sys:process-status process)))
+             (get-bytevector-all (sys:process-input process))
+             (call-with-values (lambda () (sys:process-result process)) list))
+           (lambda () (sys:close-process! process)))))
      (for-each (lambda (path) (mkdir path #o700)) (list root sources objects))
      (copy-text "e" (string-append root "/e"))
+     (chmod (string-append root "/e") (get-mode "e"))
      (copy-libraries "lib" sources)
      (write-text (string-append root "/config.e") "(error 'head-config \"daemon loaded head config\")\n")
      (write-forms (string-append root "/base-config.e")
@@ -190,15 +211,11 @@
              (collect)
              (store:reset! '(agent "background") notes '("agent work while detached"))))))
 
-     (define command (format "exec scheme-script ~a --daemon --socket ~a"
-                             (quote-shell (string-append root "/e")) (quote-shell socket)))
      (test:check 'noninteractive-head-refuses-before-base-config-starts-work
        (list (zero? (system (format "TERM=dumb scheme-script ~a > ~a 2>&1"
                                     (quote-shell (string-append root "/e"))
                                     (quote-shell (string-append root "/early-output")))))
              (file-exists? terminal-pid-file)) '(#f #f))
-     (define ready (test:gate))
-     (define output (test:recorder))
      (define clients '())
      (define heads '())
      (define killed-heads '())
@@ -239,9 +256,7 @@
      (define (start-head name . width)
        (let* ([columns (if (pair? width) (car width) 80)]
               [process (sys:spawn-terminal-process "/bin/sh"
-                         (format "exec scheme-script ~a --attach --socket ~a --name ~a"
-                           (quote-shell (string-append root "/e"))
-                           (quote-shell (string-append root "/unused/../socket λ")) (quote-shell name))
+                         (fixture:command test-base "--name" name)
                          root 24 columns)]
               [head (vector process
                       (transcoded-port (sys:terminal-process-input process) (make-transcoder (utf-8-codec) 'none 'replace))
@@ -321,32 +336,28 @@
              (let-values ([(next actual) (text:apply-edit lines (text:delta-span delta) (text:delta-inserted delta))]) next)))
          lines changes))
 
-     (let-values ([(input from errors pid) (open-process-ports command 'block (native-transcoder))])
-       (define out-done
-         (test:worker
-           (lambda ()
-             (let loop ()
-               (let ([line (get-line from)])
-                 (unless (eof-object? line)
-                   (output line)
-                   (when (string:prefix? "e: listening on " line) (ready #t))
-                   (loop)))))))
-       (define err-done (test:worker (lambda () (let ([text (get-string-all errors)]) (if (eof-object? text) "" text)))))
+     (let* ([base (fixture:start! root base-directory)]
+            [pid (sys:process-pid (fixture:process base))])
        (define (signal! signal)
-         (system (format "kill -~a ~a 2>/dev/null" signal pid)))
+         (sys:signal-process! (fixture:process base)
+           (cdr (assoc signal '(("TERM" . 15) ("KILL" . 9) ("HUP" . 1))))))
        (define (stop!)
          (unless stopped?
            (set! stopped? #t)
-           (signal! "TERM")
-           (guard (ex [else (signal! "KILL")
-                            (error 'wire-test "daemon failed to stop" last-request (kernel:condition-text ex) (err-done))])
-             (out-done)
-             (let ([text (err-done)])
-               (unless (string=? text "") (error 'wire-test "daemon stderr" text))))))
+           (fixture:stop! base)))
+       (set! test-base base)
        (dynamic-wind void
          (lambda ()
-           (guard (ex [else (error 'wire-test "daemon did not start" (output) (err-done))])
-             (test:await 'daemon ready))
+           (test:check 'contending-base-exits-three-without-changing-the-owner
+             (list (car (base-exit base-directory))
+                   (cadr (call-with-input-file (string-append base-directory "/pid") read)))
+             (list 3 pid))
+           (let ([unsafe (string-append root "/unsafe")])
+             (mkdir unsafe #o755)
+             (test:check 'nonprivate-base-directory-is-not-repaired-or-used
+               (list (car (base-exit unsafe)) (get-mode unsafe) (directory-list unsafe))
+               '(1 #o755 ()))
+             (delete-directory unsafe))
            (let* ([head (connect)] [identity '(head "desk λ")])
              (test:check 'claim-precedes-welcome-and-queued-mail
                (list (hello head identity) (receive head))
@@ -1434,8 +1445,9 @@
                ;; SIGKILL cannot run terminal cleanup; all cooperative exits can.
                (filter (lambda (head) (not (memq head killed-heads))) heads))
              (test:check 'stop-closes-idle-clients-and-releases-the-path
-               (list (eof-object? (receive idle)) (eof-object? (receive agent)) (file-exists? socket))
-               '(#t #t #f)))
+               (list (eof-object? (receive idle)) (receive agent)
+                     (eof-object? (receive agent)) (file-exists? socket))
+               '(#t (closing signal) #t #f)))
            (let ([terminal-pid (call-with-input-file terminal-pid-file read)])
              (test:check 'base-stop-reaps-its-terminal-and-revokes-every-session
                (list (zero? (system (format "kill -0 ~a 2>/dev/null" terminal-pid)))
@@ -1444,16 +1456,159 @@
            (write-text socket "ordinary file")
            (test:check 'ordinary-file-at-socket-path-is-preserved
              (list (test:raises? (lambda () (sys:listen-local socket)))
-                   (call-with-input-file socket get-string-all)) '(#t "ordinary file")))
+                   (test:raises? (lambda () (sys:connect-local socket)))
+                   (call-with-input-file socket get-string-all)) '(#t #t "ordinary file"))
+           (delete-file socket)
+
+           ;; Bound whole hello exchanges, including partial frames and a
+           ;; blocked write. This also exercises watchdog cleanup on failure.
+           (let ([listener (sys:listen-local socket)])
+             (dynamic-wind void
+               (lambda ()
+                 (test:check 'hello-deadline-covers-header-payload-and-write
+                   (map
+                     (lambda (prefix)
+                       (let* ([client (sys:connect-local socket)] [server (sys:accept-local listener)])
+                         (dynamic-wind void
+                           (lambda ()
+                             (when prefix
+                               (put-bytevector (sys:connection-output server) prefix)
+                               (flush-output-port (sys:connection-output server)))
+                             (test:raises?
+                               (lambda ()
+                                 (sys:call-with-connection-deadline client
+                                   (add-duration (current-time 'time-monotonic) (make-time 'time-duration 50000000 0))
+                                   (lambda ()
+                                     (if prefix (wire:receive (sys:connection-input client))
+                                         (wire:send! (sys:connection-output client) (make-string #x100000 #\x))))))
+                               (lambda (ex) (and (string:search (kernel:condition-text ex) "hello timed out" 0
+                                                   (string-length (kernel:condition-text ex))) #t))))
+                           (lambda () (sys:close-connection! client) (sys:close-connection! server)))))
+                     '(#vu8(0) #vu8(0 0 0 4 40) #f)) '(#t #t #t))
+                 (let ([pending '()] [timed-out? #f])
+                   (dynamic-wind void
+                     (lambda ()
+                       ;; Fill a listening socket without accepting. The
+                       ;; kernel's queue, not a guessed sleep, creates pressure.
+                       (let fill ([left 128])
+                         (unless (or timed-out? (zero? left))
+                           (guard (ex [else (set! timed-out?
+                                              (and (string:search (kernel:condition-text ex) "connection timed out" 0
+                                                     (string-length (kernel:condition-text ex))) #t))])
+                             (set! pending
+                               (cons (sys:connect-local socket
+                                       (add-duration (current-time 'time-monotonic) (make-time 'time-duration 100000000 0)))
+                                 pending)))
+                           (fill (- left 1))))
+                       (test:check 'full-listener-backlog-respects-connect-deadline timed-out? #t))
+                     (lambda () (for-each sys:close-connection! pending)))))
+               (lambda () (sys:close-local-listener! listener))))
+
+           ;; Stop immediately after the readiness probe, when an accepting
+           ;; worker can receive a signal just before blocking in I/O. The
+           ;; command also proves the base's signal mask stops at exec.
+           (write-forms (string-append root "/base-config.e")
+             '((let ([child (sys:open-process '("/bin/sh" "-c" "kill -TERM $$; exit 9"))])
+                 (dynamic-wind void
+                   (lambda ()
+                     (sys:write-process! child #f)
+                     (get-bytevector-all (sys:process-input child))
+                     (let-values ([(code errors) (sys:process-result child)])
+                       (unless (= code -15) (error 'fixture "child inherited blocked signals" code errors))))
+                   (lambda () (sys:close-process! child))))))
+           (test:check 'fresh-base-stops-on-either-signal-and-keeps-child-signals-normal
+             (map (lambda (signal)
+                    (let ([fresh (fixture:start! root (format "~a/immediate-~a" root signal))])
+                      (fixture:stop! fresh signal) #t))
+               '(15 2)) '(#t #t))
+
+           ;; Reuse this installation for the actual automatic bootstrap.
+           ;; The fixture's own config can stop or crash its own base; tests
+           ;; never signal a pid read from a possibly stale process record.
+           (write-forms (string-append root "/base-config.e")
+             `((store:create! '(base e) "bootstrap" '("ready")
+                 (list (cons 'process-id (get-process-id)) (cons 'directory (current-directory))))
+               (fork-thread
+                 (lambda ()
+                   (let wait ()
+                     (unless (file-exists? ,automatic-control)
+                       (sleep (make-time 'time-duration 5000000 0)) (wait)))
+                   (if (eq? (call-with-input-file ,automatic-control read) 'crash)
+                       (system (format "kill -KILL ~a" (get-process-id)))
+                       (kernel:mailbox-post! daemon:control 'signal))))))
+           (write-forms (string-append root "/config.e") '((main:set-startup-page! #f)))
+           (write-text (string-append base-directory "/log/2000-01-01.log") "expired")
+           (write-text (string-append base-directory "/log/keep.txt") "keep")
+           ;; A cold cache exercises concurrent compilation before both heads
+           ;; race to exec a base and contend on the same lifetime flock.
+           (remove-tree! objects)
+           (let* ([a (start-head "auto α's desk")] [b (start-head "auto B")])
+             (for-each (lambda (head) (head-wait 'automatic-head head (lambda () (head-sees? head "*scratch*"))))
+               (list a b))
+             (let* ([pid-path (string-append base-directory "/pid")]
+                    [record (call-with-input-file pid-path read)]
+                    [boot-pid '(store:property (store:find-named "bootstrap") 'process-id)])
+               (test:check 'cold-start-race-shares-one-base-and-preserves-head-directory
+                 (list (head-read a boot-pid) (head-read b boot-pid)
+                       (head-read a '(current-directory))
+                       (head-read b '(store:property (store:find-named "bootstrap") 'directory))
+                       (map get-mode (list base-directory socket pid-path (string-append base-directory "/lock")))
+                       (file-exists? (string-append base-directory "/log/2000-01-01.log"))
+                       (file-exists? (string-append base-directory "/log/keep.txt")))
+                 (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t))
+               (head-read a '(begin (insert-text! "retained")
+                                    (head:add-shutdown-hook! (lambda () (goto-point! '(0 . 3)))) #t))
+               (for-each (lambda (head) (head-send! head "\x18;\x03;")) (list a b))
+               (for-each (lambda (head)
+                           (head-wait 'automatic-detach head (lambda () (head-sees? head "e: detached")))
+                           (sys:reap-terminal-process! (vector-ref head 0))) (list a b))
+               (let* ([again (start-head "auto α's desk")] [inspector (connect)]
+                      [leavers (list (connect) (connect))])
+                 (head-wait 'automatic-resume again (lambda () (head-sees? again "retained")))
+                 (test:check 'quit-keeps-shared-edits-checkpoint-and-shell-quoted-resume
+                   (list (head-read again '(list (buffer-line (current-buffer) 0) (point)))
+                         (equal? record (call-with-input-file pid-path read))
+                         (> (occurrences (vector-ref a 3) "--name 'auto α'\\''s desk'") 0))
+                   '(("retained" (0 . 3)) #t #t))
+                 (hello inspector '(head "inspector"))
+                 (for-each (lambda (connection name) (hello connection (list 'head name))) leavers '("leave A" "leave B"))
+                 (let* ([before (cdr (assq 'heads (rpc inspector 'status)))]
+                        [departures (test:parallel 2 (lambda (index) (rpc (list-ref leavers index) 'leaving)))])
+                   (test:check 'concurrent-departures-commit-before-their-replies
+                     (list (list-sort < (map (lambda (status) (cdr (assq 'heads status))) departures))
+                           (cdr (assq 'heads (rpc inspector 'status))))
+                     (list (list (- before 2) (- before 1)) (- before 2))))
+                 (for-each sys:close-connection! (cons inspector leavers))
+                 (write-text automatic-control "crash")
+                 (head-wait 'unexpected-base-death again (lambda () (head-sees? again "e: the base is gone")))
+                 (sys:reap-terminal-process! (vector-ref again 0))
+                 (test:check 'crash-leaves-recoverable-endpoints
+                   (map file-exists? (list socket pid-path (string-append base-directory "/lock"))) '(#t #t #t))
+                 (delete-file automatic-control)
+                 (let ([fresh (start-head "after crash")])
+                   (head-wait 'stale-endpoints-recovered fresh (lambda () (head-sees? fresh "*scratch*")))
+                   (test:check 'stale-cleanup-starts-a-fresh-in-memory-session
+                     (list (not (equal? record (call-with-input-file pid-path read)))
+                           (head-read fresh '(buffer-line (current-buffer) 0))) '(#t ""))
+                   (write-text automatic-control "stop")
+                   (head-wait 'announced-base-stop fresh (lambda () (head-sees? fresh "e: the base stopped (signal)")))
+                   (sys:reap-terminal-process! (vector-ref fresh 0))
+                   (test:await 'automatic-base-cleans-up (lambda () (not (file-exists? pid-path))))
+                   (test:check 'all-automatic-exits-restore-the-terminal
+                     (map (lambda (head)
+                            (let ([state (vt:emulator-state (vector-ref head 2))])
+                              (list (> (occurrences (vector-ref head 3) "\x1b;[?1049l") 0)
+                                    (cdr (assq 'mouse-tracking state)) (cdr (assq 'sgr-mouse state)))))
+                       (list a b again fresh)) (make-list 4 '(#t #f #f))))))))
          (lambda ()
            (write-text edit-release "continue")
+           (write-text automatic-control "stop")
            (guard (ex [else (void)]) (stop!))
            (for-each sys:close-connection! clients)
            (for-each (lambda (head) (sys:close-terminal-process! (vector-ref head 0))) heads)
-           (for-each close-port (list input from errors))
-           (let remove ([path root])
-             (if (file-directory? path)
-                 (begin (for-each (lambda (name) (remove (string-append path "/" name))) (directory-list path))
-                        (delete-directory path))
-                 (delete-file path))))))
+           (test:await 'automatic-fixture-releases-ownership
+             (lambda ()
+               (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
+                 (and lock (begin (sys:release-file-lock! lock) #t)))))
+           (remove-tree! root))))
      (test:finish! 'wire)))

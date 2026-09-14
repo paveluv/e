@@ -383,7 +383,7 @@
     (equal? review (cons (buffer-revision b) (current-properties b))))
 
   (define (prepare-close)
-    ;; Standalone lifetime only: -> owned (id text revision facts) snapshots
+    ;; Base lifetime review: -> owned (id text revision facts) snapshots
     ;; and an acceptance thunk. Review runs outside the writer. Acceptance
     ;; rechecks every current non-disposable buffer, including hidden/new
     ;; work, then closes writes under that same lock. Deletion and disposable

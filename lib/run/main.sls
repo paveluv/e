@@ -13,6 +13,7 @@
   (export run set-startup-page! load-config!
           modules-reload-on-save config-reload-on-save)
   (import (chezscheme) (prefix (sys) sys:)
+          (prefix (client) client:)
           (prefix (file) file:)
           (prefix (kernel) kernel:)
           (prefix (startup) startup:)
@@ -157,7 +158,8 @@
 
   (define (run)
     (kernel:pin-modules! '("main"))
-    (actor:call-as head:ui-actor run-head))
+    (parameterize ([exit-handler (exit-handler)] [abort-handler (abort-handler)] [reset-handler (reset-handler)])
+      (actor:call-as head:ui-actor run-head)))
 
   (define (run-head)
     ;; The loader script is pure bootstrap; the extension modules are
@@ -179,7 +181,7 @@
       (load-config!)
       ;; Config loads the local view providers before resolving their plain
       ;; descriptors. An explicit file still opens in the restored selection.
-      (let ([resumed? (and (eq? (startup:mode) 'attach) (head:resume!))])
+      (let ([resumed? (head:resume!)])
         (if file
             (head:open-file! file)
             (when (and (not resumed?) startup-page)
@@ -219,11 +221,12 @@
             ;; This head's own key may have changed the screen: publish
             ;; at once. Wake frames (foreign edits) checkpoint at most once
             ;; a second, from the frame hook.
-            (when (eq? (startup:mode) 'attach) (head:checkpoint!))
+            (head:checkpoint!)
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
             ;; editor.
-            (guard (ex [(kernel:read-only-error? ex)
+            (guard (ex [(client:ended? ex) (raise ex)]
+                       [(kernel:read-only-error? ex)
                         (echo:set-text! "Buffer is read-only")]
                        [(kernel:refusal? ex)
                         (echo:set-text! (condition-message ex))]
@@ -233,14 +236,17 @@
             (head:after-key!)
             (loop))))
       (lambda ()
-        (when (eq? (startup:mode) 'attach)
-          (guard (ex [else (void)]) (head:checkpoint!)))
-        (head:run-shutdown-hooks!)
-        (paint:set-screen-live! #f)
-        (paint:reset-cursor-style!)
-        (tty:mouse-reporting! #f)
-        (paint:ansi "\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
-        (flush-output-port (sys:terminal-output-port))
-        (sys:terminal-restore!))))
+        ;; A dead connection or a failing shutdown hook must not prevent
+        ;; restoration of the shell's terminal modes.
+        (dynamic-wind void
+          head:run-shutdown-hooks!
+          (lambda ()
+            (guard (ex [else (void)]) (head:checkpoint!))
+            (paint:set-screen-live! #f)
+            (paint:reset-cursor-style!)
+            (tty:mouse-reporting! #f)
+            (paint:ansi "\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+            (flush-output-port (sys:terminal-output-port))
+            (sys:terminal-restore!))))))
 
 ) ;; library (main)

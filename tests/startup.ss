@@ -191,7 +191,9 @@
        (for-each
          (lambda (entry)
            (test:check (car entry)
-             (startup:call-with-options (car entry) options) (cadr entry)))
+             (startup:call-with-options (car entry) options)
+             (list (caadr entry)
+               (and (cadadr entry) (string-append (current-directory) "/" (cadadr entry))))))
          '((() (#f #f))
            (("notes") (#f "notes"))
            (("--name" "writing desk λ" "notes") ("writing desk λ" "notes"))
@@ -204,30 +206,30 @@
                   (startup:call-with-options args (lambda () 'initialized))))
               '(("--name") ("--name" "") ("--name=")
                 ("--name=a" "--name" "b") ("--bogus") ("one" "two")
-                ("--daemon" "--daemon") ("--daemon" "--name=desk") ("--daemon" "notes")
-                ("--socket=x") ("--daemon" "--socket") ("--daemon" "--socket=")
-                ("--daemon" "--socket=x" "--socket=y")
-                ("--attach" "--attach") ("--daemon" "--attach") ("--attach" "--daemon")))
+                ("--base" "--base") ("--base" "--name=desk") ("--base" "notes")
+                ("--base-working-dir") ("--base-working-dir=") ("--base-working-dir" "")
+                ("--base-working-dir=x" "--base-working-dir=y")
+                ("--daemon") ("--attach") ("--socket=x")))
          (make-list 16 'rejected))
-       (test:check 'daemon-options-are-scoped-and-own-the-socket-path
+       (test:check 'base-options-are-scoped-and-own-the-directory
          (let ([path (string-copy "/tmp/base λ")])
            (list
-             (startup:call-with-options (list "--socket" path "--daemon")
+             (startup:call-with-options (list "--base-working-dir" path "--base")
                (lambda ()
                  (string-set! path 0 #\X)
-                 (string-set! (startup:socket) 0 #\Y)
-                 (list (startup:mode) (startup:socket) (options)
-                       (startup:call-with-options '("--attach" "--socket=another" "--name=desk" "notes")
-                         (lambda () (list (startup:mode) (startup:socket) (options)))))))
+                 (string-set! (startup:base-working-directory) 0 #\Y)
+                 (list (startup:mode) (startup:base-working-directory) (options)
+                       (startup:call-with-options '("--base-working-dir=another" "--name=desk" "notes")
+                         (lambda () (list (startup:mode) (startup:base-working-directory) (options)))))))
              (startup:mode)))
-         '((daemon "/tmp/base λ" (#f #f) (attach "another" ("desk" "notes"))) standalone))
-       ;; Without --socket the base lives beside its loader, so two
-       ;; installations never share a socket; the path is canonical.
-       (test:check 'default-socket-lives-in-the-installation
+         `((base "/tmp/base λ" (#f #f) (head ,(string-append (current-directory) "/another")
+                                             ("desk" ,(string-append (current-directory) "/notes")))) head))
+       ;; Installations never share a default base; normalize directory aliases.
+       (test:check 'default-base-lives-in-the-installation
          (parameterize ([kernel:installation-directory "/tmp/e-install λ/unused/.."])
-           (map (lambda (args) (startup:call-with-options args startup:socket))
-                '(("--daemon") ("--attach" "--name=desk"))))
-         (make-list 2 "/tmp/e-install λ/.socket/base"))
+           (map (lambda (args) (startup:call-with-options args startup:base-working-directory))
+                '(("--base") ("--name=desk"))))
+         (make-list 2 "/tmp/e-install λ/.base"))
        (for-each
          (lambda (flag)
            (test:check (list 'help flag)
@@ -249,7 +251,8 @@
                  (string-set! (startup:name) 0 #\Y) (string-set! (startup:file) 0 #\Y)
                  (list (startup:call-with-options '("inner") options) (options))))
              (options))
-           '(((#f "inner") ("desk" "notes")) (#f #f))))
+           `(((#f ,(string-append (current-directory) "/inner"))
+              ("desk" ,(string-append (current-directory) "/notes"))) (#f #f))))
        ;; Real loader help/errors run without a terminal and do not get as
        ;; far as main's terminal check. Capture both process output streams.
        (for-each

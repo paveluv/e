@@ -2,8 +2,9 @@
 
 ;; multihead-bench.sps -- the acceptance measurement for attached editing.
 ;;
-;; Runs the installation in place: a daemon on a private socket, real
-;; heads under PTYs, and a standalone editor for the reference column.
+;; Runs the installation in place: a base in a private directory and real
+;; heads under PTYs. Historical standalone measurements remain in the design
+;; notes; the current runtime has only attached heads.
 ;; Keys are written to the PTY in one burst; a scenario settles when the
 ;; status line shows the expected position, so the number is the editor's
 ;; own cost per key.  Bytes are the head's rchar/wchar deltas from
@@ -15,38 +16,23 @@
 ;; baseline this reproduces.
 
 (import (chezscheme))
-(library-directories
-  ;; the base runtime's roots, as the loader selects them: every leaf
-  ;; directory under lib/base and under lib
-  (let ([here (current-directory)])
-    (define (leaves parent)
-      (map (lambda (name) (cons (string-append parent "/" name) (string-append here "/eo/base")))
-        (list-sort string<?
-          (filter (lambda (name)
-                    (and (not (member name '("base" "client")))
-                         (file-directory? (string-append parent "/" name))))
-                  (directory-list parent)))))
-    (append (leaves (string-append here "/lib/base")) (leaves (string-append here "/lib")))))
-(compile-imported-libraries #t)
+(include "tests/roots.ss")
+(test-roots! 'base)
 
 (eval
   '(begin
      (import (prefix (sys) sys:) (prefix (string) string:) (prefix (vt) vt:)
-             (prefix (kernel) kernel:))
+             (prefix (kernel) kernel:) (prefix (fixture) fixture:))
 
      (kernel:installation-directory (current-directory))
 
      (define here (cd))
      (define root (format "/tmp/e-bench-~a" (get-process-id)))
-     (define socket (string-append root "/socket"))
      (define big-file (string-append root "/big.txt"))
      (define rows 40)
      (define cols 120)
      (define keys 50)
 
-     (define (quote-shell text)
-       (string-append "'" (apply string-append
-                            (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
      (define (now-ms)
        (let ([t (current-time 'time-monotonic)])
          (+ (* 1000.0 (time-second t)) (/ (time-nanosecond t) 1e6))))
@@ -62,7 +48,8 @@
                           (map (lambda (root)
                                  (filter (lambda (name) (string:suffix? ".sls" name))
                                          (directory-list (car root))))
-                               (library-directories))))])
+                               (filter (lambda (root) (not (string:suffix? "/tests" (car root))))
+                                 (library-directories)))))])
          (call-with-output-file big-file
            (lambda (out)
              (do ([pass 0 (+ pass 1)]) ((= pass 2))
@@ -186,58 +173,46 @@
      (define (run!)
        (mkdir root #o700)
        (write-big-file!)
-       (let ([lines (count-lines big-file)]
-             [e (quote-shell (string-append here "/e"))])
-         (define (editor . args)
-           (spawn (format "exec scheme-script ~a ~a 2>~a" e
-                          (apply string-append (map (lambda (a) (string-append a " ")) args))
-                          (quote-shell (string-append root "/stderr")))))
-         (define (attached name file)
-           (editor "--attach" "--socket" (quote-shell socket) "--name" name (quote-shell file)))
-         (define (measure file with-kill?)
+       (let ([lines (count-lines big-file)])
+         (define (attached base name file)
+           (spawn (fixture:command base "--name" name file)))
+         (define (measure base file with-kill?)
            ;; -> (typing-ms/key typing-bytes motion-ms/key kill-ms undo-ms) for one screen kind
-           (lambda (open)
-             (let ([s (open file)])
-               (wait-for s 'editor-starts (lambda () (position s)))
-               (pause 500)
-               (let* ([typed (typing s 3)]
-                      [moved (motion s)]
-                      [killed (if with-kill? (kill-and-undo s lines) '(#f #f))])
-                 (stop! s)
-                 (append typed (list moved) killed)))))
-         (define daemon
-           (spawn (format "exec scheme-script ~a --daemon --socket ~a" e (quote-shell socket))))
-         (wait-for daemon 'daemon-starts (lambda () (file-exists? socket)) 30000)
+           (let ([s (attached base "bench" file)])
+             (wait-for s 'editor-starts (lambda () (position s)))
+             (pause 500)
+             (let* ([typed (typing s 3)]
+                    [moved (motion s)]
+                    [killed (if with-kill? (kill-and-undo s lines) '(#f #f))])
+               (stop! s)
+               (append typed (list moved) killed))))
          (dynamic-wind void
            (lambda ()
-             (let* ([vt-file (kernel:module-source "vt")]
-                    [solo-vt ((measure vt-file #f) (lambda (file) (editor "--name" "solo" (quote-shell file))))]
-                    [head-vt ((measure vt-file #f) (lambda (file) (attached "bench" file)))]
-                    [solo-big ((measure big-file #t) (lambda (file) (editor "--name" "solo" (quote-shell file))))]
-                    [head-big ((measure big-file #t) (lambda (file) (attached "bench" file)))]
-                    ;; a second head showing vt.sls while the first types
-                    [watch
-                     (let* ([typist (attached "typist" vt-file)] [watcher (attached "watcher" vt-file)])
-                       (for-each (lambda (s) (wait-for s 'editor-starts (lambda () (position s)))) (list typist watcher))
-                       (pause 500)
-                       (let ([before (io-bytes watcher)])
-                         (typing typist 3)
-                         (pause 1500)
-                         (let ([after (io-bytes watcher)])
-                           (stop! typist) (stop! watcher)
-                           (and before after (- after before)))))])
-               (printf "\n| Scenario | Standalone | Attached |\n|---|---|---|\n")
-               (printf "| Typing, vt.sls (~a keys) | ~a | ~a |\n" keys (per-key (car solo-vt)) (per-key (car head-vt)))
-               (printf "| Cursor motion, vt.sls | ~a | ~a |\n" (per-key (caddr solo-vt)) (per-key (caddr head-vt)))
-               (printf "| Typing, ~a-line file | ~a | ~a |\n" lines (per-key (car solo-big)) (per-key (car head-big)))
-               (printf "| Kill the whole ~a-line buffer | ~a | ~a |\n" lines (ms (cadddr solo-big)) (ms (cadddr head-big)))
-               (printf "| Undo that kill | ~a | ~a |\n" (ms (list-ref solo-big 4)) (ms (list-ref head-big 4)))
-               (printf "| Head I/O bytes per ~a typed keys, vt.sls | ~a | ~a |\n" keys (kb (cadr solo-vt)) (kb (cadr head-vt)))
-               (printf "| Watching head I/O bytes per ~a foreign keys | -- | ~a |\n\n" keys (kb watch))))
+             (fixture:call-with-base here (string-append root "/base")
+               (lambda (base)
+                 (let* ([vt-file (kernel:module-source "vt")]
+                        [head-vt (measure base vt-file #f)]
+                        [head-big (measure base big-file #t)]
+                        ;; a second head showing vt.sls while the first types
+                        [watch
+                         (let* ([typist (attached base "typist" vt-file)] [watcher (attached base "watcher" vt-file)])
+                           (for-each (lambda (s) (wait-for s 'editor-starts (lambda () (position s)))) (list typist watcher))
+                           (pause 500)
+                           (let ([before (io-bytes watcher)])
+                             (typing typist 3)
+                             (pause 1500)
+                             (let ([after (io-bytes watcher)])
+                               (stop! typist) (stop! watcher)
+                               (and before after (- after before)))))])
+                   (printf "\n| Scenario | Attached |\n|---|---|\n")
+                   (printf "| Typing, vt.sls (~a keys) | ~a |\n" keys (per-key (car head-vt)))
+                   (printf "| Cursor motion, vt.sls | ~a |\n" (per-key (caddr head-vt)))
+                   (printf "| Typing, ~a-line file | ~a |\n" lines (per-key (car head-big)))
+                   (printf "| Kill the whole ~a-line buffer | ~a |\n" lines (ms (cadddr head-big)))
+                   (printf "| Undo that kill | ~a |\n" (ms (list-ref head-big 4)))
+                   (printf "| Head I/O bytes per ~a typed keys, vt.sls | ~a |\n" keys (kb (cadr head-vt)))
+                   (printf "| Watching head I/O bytes per ~a foreign keys | ~a |\n\n" keys (kb watch))))))
            (lambda ()
-             (system (format "kill -TERM ~a 2>/dev/null" (sys:terminal-process-pid (screen-process daemon))))
-             (pause 500)
-             (guard (ex [else (void)]) (sys:close-terminal-process! (screen-process daemon)))
-             (system (format "rm -rf ~a" (quote-shell root)))))))
+             (system (format "rm -rf ~a" (fixture:quote-shell root)))))))
 
      (run!)))

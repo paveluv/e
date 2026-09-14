@@ -111,7 +111,7 @@ a read-only transcript with the normal vertical read-only cursor.
 It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
 Killing this buffer terminates a process that is still running; deleting one
-of several windows displaying it does not. Quitting standalone e or stopping
+of several windows displaying it does not. Stopping
 the daemon terminates every live terminal process, including terminals whose
 buffers are not currently shown. Quitting an attached head only detaches that
 screen; the daemon's terminals keep running.
@@ -356,8 +356,7 @@ app lifecycle live in `vt.sls`, with no head or painter dependency. `terminal.sl
 provides commands, escape/paging bindings, and local clipboard/diagnostic
 presentation. The shared app adapter owns each window's following and input
 projection. Killing the store buffer closes its process even when no head is
-looking at it. In the current combined process, quitting e ends the base too.
-With `--attach`, quitting detaches the head; the terminal continues in the
+looking at it. Quitting e detaches the head; the terminal continues in the
 daemon and can be displayed from another head or the next attachment.
 
 Code that runs without a head can open and address the producer directly:

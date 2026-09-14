@@ -16,8 +16,8 @@ restart; see [the reload boundary](manual/MODULES.md#hot-reload).
 
 Highlights:
 
-- Keep an editor session running on an SSH host with `e --daemon`, then
-  reconnect with `e --attach`. Shared buffers and terminals survive detachment;
+- Run `e` on an SSH host; it starts or attaches to the installation's daemon.
+  Shared buffers and terminals survive detachment;
   named screens recover their windows and positions after a disconnect.
   Several screens can work on the same documents with independent layouts.
 - `M-x` evaluates Scheme in the editor's context, with structural multiline
@@ -48,7 +48,7 @@ Highlights:
 ### Prerequisites
 
 The core editor needs a threaded build of
-[Chez Scheme](https://cisco.github.io/ChezScheme/), a Unix-like system and a
+[Chez Scheme](https://cisco.github.io/ChezScheme/) 10 or newer, a Unix-like system and a
 terminal. Package installation examples:
 
 ```sh
@@ -91,25 +91,25 @@ $ ~/git/project/.e/e file.txt
 
 Each installation keeps its libraries, configuration, downloaded data and
 compiled objects beside its loader: `lib/`, `config.e`, `data/`, optional
-`base-config.e` and `eo/`. The default daemon socket is `.socket/base` there
-too, so checkouts have independent settings, caches and daemons.
+`base-config.e` and `eo/`. The daemon owns `.base/` there, including its
+socket and daily diagnostic logs, so checkouts have independent settings,
+caches and daemons.
 `lib/` groups flat-named `.sls` libraries by responsibility.
 Base and attached implementations use separate `eo/base/` and `eo/client/`
 caches of `.so` objects. The first start compiles the required libraries;
 later starts reuse them. Configurations retain the `.e` extension; tools
 use `.sps`. See [the module layout](manual/MODULES.md#library-architecture).
 
-On FreeBSD, where Chez installs a differently named script interpreter, run
-`chez-scheme --script e` or change the shebang as explained in the loader.
+On FreeBSD, where Chez installs a differently named script interpreter,
+change the shebang as explained in the loader. Automatic base startup
+executes that same loader.
 
 ### Keep a session across SSH logins
 
-Run both commands on the host where the files live. Start the daemon once,
-then attach whenever you log in:
+Run this on the host where the files live, each time you log in:
 
 ```sh
-$ ~/.e/e --daemon >~/.e/base.log 2>&1 &
-$ ~/.e/e --attach --name work
+$ ~/.e/e --name work
 ```
 
 `C-x C-c` detaches that screen. Attach with the same name to restore its
@@ -127,7 +127,7 @@ for configuration, lifecycle and scripted clients.
 | `C-x C-f` | Browse and recursively filter files in the `<files>` app |
 | `C-x C-s` | Save |
 | `C-x C-w` | Save as |
-| `C-x C-c` | Quit standalone e, or detach this screen from its daemon |
+| `C-x C-c` | Detach this screen; keep shared buffers and terminals running |
 | `C-x b`, `C-x C-b` | Filter and switch buffers; Enter initially selects the previous buffer |
 | `C-x 2`, `C-x 3` | Split the current window below or right |
 | `C-x 0`, `C-x 1` | Delete this window or every other window |

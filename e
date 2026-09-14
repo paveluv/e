@@ -1,7 +1,7 @@
 #!/usr/bin/env scheme-script
 ;; e -- loader for the e editor.
-;; Run: ./e [--name NAME] [--] [file], ./e --daemon [--socket PATH],
-;; or ./e --attach [--socket PATH] [--name NAME] [--] [file].
+;; Run: ./e [--name NAME] [--base-working-dir DIR] [--] [file],
+;; or ./e --base [--base-working-dir DIR]. Every screen is a client.
 ;;
 ;; scheme-script is the interpreter name Chez's man page recommends for
 ;; scripts; Linux distributions and Homebrew install it under exactly
@@ -9,8 +9,8 @@
 ;; defeats Chez's dispatch on its own program name and loses script
 ;; semantics -- FreeBSD users: change the line above to
 ;; "#!/usr/bin/env -S chez-scheme --script" (FreeBSD's env and kernel
-;; both support the multi-argument form), or invoke
-;; `chez-scheme --script e` directly.
+;; both support the multi-argument form). Automatic base startup executes
+;; this same loader, so its shebang must name the installed interpreter.
 ;;
 ;; The editor lives under lib next to this script as flat-named R6RS
 ;; libraries with the .sls extension, grouped by kind. This is bootstrap --
@@ -76,34 +76,35 @@
 (compile-imported-libraries #t)
 
 (eval `(begin
-         (import (prefix (startup) startup:) (prefix (kernel) kernel:))
-         (kernel:installation-directory ,e-home)
-         (startup:call-with-options (command-line-arguments)
-           (lambda ()
-             (when (and (not (eq? (startup:mode) 'daemon))
-                        (or (not (getenv "TERM")) (string=? (getenv "TERM") "dumb")))
-               (display "e: an interactive terminal is required\n" (current-error-port))
-               (exit 1))
-             ;; Choose a service implementation before importing any head.
-             ;; Separate objects keep daemon and client library identities
-             ;; from overwriting one another in a shared installation.
-             (if (eq? (startup:mode) 'attach)
-                 (begin
-                   (library-directories
-                     ',(runtime-roots "client"))
-                   (eval '(begin
-                            (import (prefix (client) client:))
-                            (client:call-with-runtime
-                              (lambda ()
-                                (eval '(begin
-                                         (import (edit) (prefix (main) main:))
-                                         (main:run))))))))
-                 (eval '(begin
-                          (import (prefix (base) base:))
-                          (base:call-with-runtime
-                            (lambda ()
-                              (if (eq? (startup:mode) 'daemon)
-                                (base:run)
-                                (eval '(begin
-                                         (import (edit) (prefix (main) main:))
-                                         (main:run)))))))))))))
+         (import (prefix (startup) startup:) (prefix (kernel) kernel:) (prefix (sys) sys:)
+                 (prefix (daemon) daemon:))
+         (kernel:installation-directory (or (sys:canonical-file-path ,e-home) ,e-home))
+         (guard (ex [else
+                     (format (current-error-port) "e: ~a\n" (kernel:condition-text ex))
+                     (exit 1)])
+           (startup:call-with-options (command-line-arguments)
+             (lambda ()
+               (when (and (not (eq? (startup:mode) 'base))
+                       (or (not (getenv "TERM")) (string=? (getenv "TERM") "dumb")))
+                 (display "e: an interactive terminal is required\n" (current-error-port))
+                 (exit 1))
+               ;; Choose a service implementation before importing any head.
+               ;; Separate objects keep base and client library identities
+               ;; from overwriting one another in a shared installation.
+               (exit
+                 (if (eq? (startup:mode) 'base)
+                   (daemon:call-with-base
+                     (lambda ()
+                       (eval '(begin
+                                (import (prefix (base) base:))
+                                (base:call-with-runtime base:run)))))
+                   (daemon:call-with-head
+                     (lambda ()
+                       (library-directories ',(runtime-roots "client"))
+                       (eval '(begin
+                                (import (prefix (client) client:))
+                                (client:call-with-runtime
+                                  (lambda ()
+                                    (eval '(begin
+                                             (import (edit) (prefix (main) main:))
+                                             (main:run))))))))))))))))

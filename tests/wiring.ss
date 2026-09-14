@@ -2,13 +2,23 @@
 
 ;; The head-to-store wiring: shared buffers mirror into the store,
 ;; local apps do not; the head's edits arrive transactionally, and
-;; a foreign actor's store edit appears on the user's screen.  Drives
-;; a live editor over a PTY; run from the repository root.
+;; a foreign actor's store edit appears on the user's screen. Drives an
+;; in-memory head under a PTY so callbacks can deliberately interleave inside
+;; the store. Real process separation is covered by wire.ss and interactive.ss.
 
 (import (chezscheme))
 
 (include "tests/roots.ss")
 (test-roots! 'base)
+
+(when (and (pair? (command-line-arguments)) (string=? (car (command-line-arguments)) "--head"))
+  (eval '(begin
+           (import (prefix (startup) startup:) (prefix (base) base:))
+           (startup:call-with-options (cdr (command-line-arguments))
+             (lambda ()
+               (base:call-with-runtime
+                 (lambda () (eval '(begin (import (edit) (prefix (main) main:)) (main:run)))))))))
+  (exit 0))
 
 (eval
   '(begin
@@ -20,13 +30,13 @@
                                (vector->list (vt:emulator-screen mirror)))])
          (test:check label actual expected)))
 
-     (define probe (format "/tmp/e-wiring-~a" (getenv "USER")))
+     (define probe (format "/tmp/e-wiring-~a" (get-process-id)))
 
      (putenv "SHELL" "/bin/sh")
      (putenv "TZ" "UTC") ; deterministic clock display in the buffer table
      (define mirror (vt:make-emulator 24 100))
      (define process
-       (sys:spawn-terminal-process "/bin/sh" "exec ./e --name 'wired head λ'"
+       (sys:spawn-terminal-process "/bin/sh" "exec scheme-script tests/wiring.ss --head --name 'wired head λ'"
                                    (current-directory) 24 100))
      (define from (transcoded-port
                     (sys:terminal-process-input process)
@@ -1444,13 +1454,6 @@
                  (head:buffer-read-only-set! b #t)
                  (list (store:property id 'modified) (buffer-clean? b))))
             '(#t #f))
-     (send! "\x1b;xquit!!\r")
-     (pump! 500)
-     (check 'foreign-scratch-triggers-quit-protection
-            (or (screen-has? 22 "Modified buffers exist")
-                (screen-has? 23 "Modified buffers exist")) #t)
-     (send! "n")
-     (pump! 300)
      (send! "\x18;k\r")
      (pump! 500)
      (check 'foreign-read-only-scratch-triggers-kill-protection
@@ -1475,28 +1478,22 @@
      ;; The store fixture separately checks concurrent writers under its lock.
      (for-each
        (lambda (kind)
-         (define shared? (eq? kind 'shared))
          (check 'quit-review-setup
            (read-editor
-             `(let* ([who '(agent quit-race)]
-                     [target (if ,shared?
-                                 (store:create! who "hidden quit work" '("keep") '((audience)))
-                                 (head:new-local-buffer "quit work"))]
+             `(let* ([target (head:new-local-buffer "quit work")]
                      [armed? #t])
-                (unless ,shared?
-                  (head:add-buffer! target)
-                  (head:store-reset! target '("keep"))
-                  (head:buffer-modified-set! target #t)
-                  ;; Model a file replaced by an unreadable directory.
-                  (when (eq? ',kind 'local-facts) (head:buffer-file-set! target (current-directory)))
-                  (head:buffer-fact-set! target 'source (current-buffer)))
+                (head:add-buffer! target)
+                (head:store-reset! target '("keep"))
+                (head:buffer-modified-set! target #t)
+                ;; Model a file replaced by an unreadable directory.
+                (when (eq? ',kind 'local-facts) (head:buffer-file-set! target (current-directory)))
+                (head:buffer-fact-set! target 'source (current-buffer))
                 (parameterize ([kernel:registering-module 'wiring-quit])
                   (head:add-pre-redraw-hook!
                     (lambda ()
                       (when (and armed? (prompt:active?) (string:prefix? "Modified buffers exist" (echo:text)))
                         (set! armed? #f)
                         (case ',kind
-                          [(shared) (store:edit! who target 0 (text:make-span 0 4 0 4) '("!"))]
                           [(local-text) (head:store-reset! target '("keep!"))]
                           [else (head:buffer-trailing-set! target #f)])))))
                 (fork-thread
@@ -1506,8 +1503,7 @@
                              (head:wake-main!)]
                             [(zero? tries) (error 'quit-race "quit never reached review")]
                             [else (sleep (make-time 'time-duration 5000000 0)) (wait (- tries 1))]))))
-                (list (if ,shared? (not (head:buffer-of-store-id target)) (not (head:buffer-store-id target)))
-                      (if ,shared? (store:property target 'modified) (head:buffer-modified target))))) '(#t #t))
+                (list (not (head:buffer-store-id target)) (head:buffer-modified target)))) '(#t #t))
          (send! "\x1b;xquit!!\r")
          (pump! 500)
          (check 'protected-work-prompts-before-exit
@@ -1520,15 +1516,13 @@
          (pump! 200)
          (check 'cancelled-quit-keeps-work-and-the-store-open
            (read-editor
-             `(let* ([id (and ,shared? (store:find-named "hidden quit work"))]
-                     [b (and (not ,shared?) (head:buffer-named "<quit work>"))]
-                     [result (list (if id (store:line id 0) (buffer-line b 0))
-                               (if id (not (head:buffer-of-store-id id)) (not (head:buffer-store-id b)))
+             `(let* ([b (head:buffer-named "<quit work>")]
+                     [result (list (buffer-line b 0) (not (head:buffer-store-id b))
                                (head:quitting?))])
                 (kernel:retract-module! 'wiring-quit)
-                (if id (store:delete! head:ui-actor id) (kill-buffer! b))
+                (kill-buffer! b)
                 result)) (list (if (eq? kind 'local-facts) "keep" "keep!") #t #f)))
-       '(shared local-text local-facts))
+       '(local-text local-facts))
 
      ;; -- head edits mirror --------------------------------------------------
 
@@ -1544,6 +1538,10 @@
                  (set-buffer-name! (head:find-tool-buffer "*buffers*")
                                    "renamed buffer list")))
             "<renamed buffer list>")
+     (read-editor
+       '(let ([local (head:new-local-buffer "quit review")])
+          (head:add-buffer! local) (head:store-reset! local '("local work"))
+          (head:buffer-modified-set! local #t) #t))
      (send! "\x1b;xquit!!\r")
      (pump! 500)
      (send! "v")
@@ -1554,6 +1552,8 @@
             #t)
      (read-editor
        '(begin
+          (head:buffer-fact-set! (head:buffer-named "<quit review>") 'disposable #t)
+          (kill-buffer! (head:buffer-named "<quit review>"))
           (set-buffer-name! (head:find-tool-buffer "*buffers*") "buffers")
           (select-window! (window 0))
           (delete-other-windows!)
@@ -2922,17 +2922,19 @@
                      (actor:detach! '(app adapter-live))
                      (kill-buffer! b) #t))
 
-     ;; Finish through the real quit path. A shutdown hook can still read
-     ;; reviewed work, but cannot commit new work after the user's consent.
+     ;; Local work still requires review. The base remains writable while
+     ;; a quitting head runs its hooks and publishes its final checkpoint.
      (read-editor
        `(begin
+          (let ([local (head:new-local-buffer "quit review")])
+            (head:add-buffer! local) (head:store-reset! local '("local work"))
+            (head:buffer-modified-set! local #t))
           (head:add-shutdown-hook!
             (lambda ()
               (call-with-output-file ,probe
                 (lambda (p)
                   (write (list (head:quitting?) (pair? (store:buffer-list))
-                           (guard (ex [(kernel:refusal? ex) #t] [else (raise ex)])
-                             (store:create! head:ui-actor "after quit" '("lost")) #f)) p))
+                           (integer? (store:create! head:ui-actor "after quit" '("kept")))) p))
                 'replace))) #t))
      (define mouse-before-quit (bytevector? (vt:emulator-mouse-input mirror 35 2 2 #f)))
      (delete-file probe)
@@ -2941,8 +2943,8 @@
      (check 'final-quit-reaches-confirmation
        (or (screen-has? 22 "Modified buffers exist") (screen-has? 23 "Modified buffers exist")) #t)
      (send! "y")
-     (test:await 'standalone-quit-exits (lambda () (pump! 25) exited?))
-     (check 'standalone-quit-closes-admission-and-releases-mouse-reporting
+     (test:await 'head-quit-exits (lambda () (pump! 25) exited?))
+     (check 'head-quit-keeps-shared-admission-and-releases-mouse-reporting
        (list (call-with-input-file probe read) mouse-before-quit
              (map (lambda (key) (cdr (assq key (vt:emulator-state mirror)))) '(mouse-tracking sgr-mouse)))
        '((#t #t #t) #t (#f #f)))

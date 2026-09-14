@@ -5,8 +5,8 @@ what is shared: the buffer store with its text, undo history and marks,
 terminal processes, the log, describe's documentation sources and the
 permission policy. A **head** is one user's screen: windows, prompts, local
 buffers such as `<buffers>` and `<log>`, the kill ring and `config.e`. Plain
-`e` runs a base and one head in one process; `e --daemon` runs a base alone,
-and `e --attach` connects a head to it. Scripted clients -- agents -- connect
+`e` starts or attaches to the installation's base; `e --base` runs the base
+alone for a supervisor. Scripted clients -- agents -- connect
 to the same base under their own permissions.
 
 This iteration supplies the common protocol and Scheme APIs for agents;
@@ -21,37 +21,45 @@ log records, questions and undo history carry the actor that made them.
 
 ## Running a daemon and attaching
 
-`./e --daemon [--socket PATH]` starts a foreground base without a screen.
-The socket defaults to `.socket/base` inside the installation, beside the
-loader: everything of e's stays in its own directory, so two checkouts, say
-a stable editor and an experiment, never meet through a shared runtime
-directory. `--socket=PATH` also works and may point anywhere. The daemon does
-not take a head name or file argument. Run it under a supervisor or as a shell
-background job with its output redirected; SIGHUP leaves it running.
-SIGTERM or Ctrl-C stops it and its terminal processes. State is in memory
-for the life of the daemon; stopping it does not save a session to disk.
-
-Start the daemon on the SSH host, then attach each screen to it:
+Run e on the host where the files live. This command starts the base when
+necessary, then attaches a screen; repeat it after each SSH login:
 
 ```sh
-./e --daemon >e-base.log 2>&1 &
-./e --attach --name desk
+./e --name desk
 ```
 
-Use the same `--socket PATH` on both commands to choose another daemon.
-`./e --attach [--socket PATH] [--name NAME] [--] [file]` runs the usual editor:
-edits and undo are shared, while windows, prompts and local buffers belong to
-that screen. Terminal processes and describe sources belong to the base.
-File commands address the filesystem on that same host. If no base is running,
-attachment reports an error. Head names and the generated default are
+The base owns `.base/` beside the loader: its `socket`, lifetime `lock`,
+process identity record `pid`, and daily diagnostics in `log/YYYY-MM-DD.log`.
+The directory is private (mode 700), and its runtime files are mode 600.
+Logs older than fourteen days are removed at daily rotation. Use
+`--base-working-dir DIR` on each invocation to select an independent base;
+an existing directory must be private and owned by you. Directory aliases
+resolve to the same base. The head keeps your shell's working directory;
+the base runs in its own directory.
+
+`./e [--base-working-dir DIR] [--name NAME] [--] [file]` shares edits and undo
+while windows, prompts and local buffers belong to that screen. Terminal
+processes and describe sources belong to the base. Head names and the generated default are
 described under [startup](CONFIGURATION.md#startup-and-head-names).
 
-The daemon and attached heads must use compatible builds. The current wire
-protocol is version 2; after updating from version 1, save your work and
-restart the daemon before attaching the updated heads.
+For a supervisor, `./e --base [--base-working-dir DIR]` runs the same base
+without a screen. It redirects its standard input to `/dev/null` and output
+to the daily log. Exit status 3 means a base already owns the directory.
+Concurrent ordinary starts attach to the winner. Startup is bounded to two
+minutes, with a message after two seconds; a silent hello times out after ten
+seconds. Permission failures and foreign files are reported without removing
+them. A timeout does not kill or replace the existing base.
+
+SIGHUP leaves the base running. SIGTERM or SIGINT stops it and its terminal
+processes. State currently lasts only for the base's lifetime: stopping it
+does not save a session to disk. Reviewed shutdown, session saving and
+`--restart` are being implemented in later slices. The current wire protocol
+is version 2; save your work and stop the old base before changing builds.
 
 `C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
-stay alive; local unsaved text still requires confirmation. A new attachment
+stay alive; local unsaved text still requires confirmation. After restoring
+the shell, e reports the base's counts and prints a shell-quoted command to
+resume this screen. A new attachment
 with the same `--name` restores its split layout, selected window and buffers,
 points, viewports, selection, window preferences and kill text. Use distinct
 names for independent screens. An explicit file argument opens in the restored
@@ -72,9 +80,12 @@ while the daemon runs. Questions first asked while a known named head is
 offline wait for its next attachment; press `C-c a` to answer. An agent's
 disconnect withdraws its own unanswered questions.
 
-Only peers running as the same OS user connect. An existing socket path is
-never removed at startup, and a clean stop releases its path. After a crash,
-remove a stale socket explicitly after checking that no daemon still uses it.
+Only peers running as the same OS user connect. The base holds an exclusive
+lock for its whole lifetime; only that owner removes a stale socket or process
+record. A clean stop removes both, and the next start cleans up after a crash.
+The lock file stays in place. An announced base stop restores the terminal and
+exits successfully; an unexpected disconnect reports `e: the base is gone`
+and exits nonzero. A local protocol/inbox error retains its specific diagnostic.
 
 The base reads `base-config.e` and a head reads `config.e`; the daemon never
 evaluates head configuration and an attached head never evaluates base
@@ -109,8 +120,9 @@ head's latest action by default; `(undo-scope 'all)` includes every actor and
 Another actor's fresh text is tinted briefly in its own color, and
 `M-x blame:at-point!` reports authorship from the retained edit log
 ([attribution](BUFFERS.md#recent-edit-attribution)). Saving captures the
-current shared text, whoever typed it; kill and quit prompts protect other
-actors' unsaved work as they protect yours.
+current shared text, whoever typed it. Killing a shared buffer reviews its
+current unsaved work. Quitting reviews only this head's local buffers because
+shared work stays in the base.
 
 ## Questions between actors
 
@@ -119,7 +131,7 @@ the oldest pending question when no other message or prompt occupies it, and
 `C-c a` (`answer!!`) answers it, with Tab offering any supplied choices; see
 [prompts](PROMPTS.md#questions-from-other-actors) for the interaction.
 
-Extensions in the base or combined editor use
+Extensions in the base use
 `actor:ask! from to question choices reply!` to send a
 question. It returns a ticket, or `#f` for an unknown/unspecified recipient or
 an unavailable agent. A known named head retains the ticket even if its wakeup
@@ -266,7 +278,7 @@ use `log:entries`/`log:datum` to query them and `log:subscribe!` to observe them
 ## Policy API
 
 `policy:mint! actor policy [owner [close!]]` defaults the escalation owner
-to `actor:current`. Standalone callers can supply an owner explicitly or
+to `actor:current`. Base callers can supply an owner explicitly or
 use `actor:call-as`; without either, the owner is `#f` and questions have
 no implicit recipient. Session work and its audit run as the session actor and
 restore the caller's context, including when evaluation runs out of fuel.

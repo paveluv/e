@@ -99,14 +99,12 @@ The alphabetical traversal is stable: merely visiting a buffer does not move it
 in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.
 
-In plain `e`, `C-x C-c` checks all shared buffers, including those hidden from
-this head, and local unsaved work. It exits if all are clean; otherwise it
+`C-x C-c` reviews this head's local unsaved work. It detaches if all are clean; otherwise it
 offers `yes`, `no`, and `view`; `view` opens this head's `<buffers>` list and
 moves focus there.
 If protected work changes during confirmation, e reviews it again before exiting.
 Disposable generated output can keep updating without requiring new confirmation.
-With `--attach`, this command detaches the head and protects only its local
-unsaved work. Shared text and terminal processes stay in the running daemon.
+Shared unsaved text and terminal processes stay in the running daemon.
 
 ## File buffers
 
@@ -172,7 +170,7 @@ The prompt keeps focus until one of its valid keys is pressed. Invalid keyboard
 or mouse input flashes only the echo area, without sound.
 If the buffer's text or facts change while reread is being reviewed, e cancels
 that reread and preserves the newer work and history. Reopen the file to
-review again. This applies in standalone and daemon/attach sessions.
+review again. This applies in every head.
 
 Saving an externally changed file offers `overwrite`, `merge`, or `cancel`.
 If the file did not exist when visited and appeared before the first save,

@@ -16,9 +16,15 @@
           terminal-output-port
           terminal-character-width
           canonical-file-path file-info host-name terminal-name
-          listen-local accept-local connect-local close-local-listener!
+          listen-local accept-local connect-local try-connect-local close-local-listener!
+          call-with-connection-deadline
           connection-input connection-output close-connection! watch-daemon-signals!
           open-process write-process! process-input process-result close-process!
+          (rename (poll-process! process-status) (command-process-pid process-pid))
+          release-process! signal-process!
+          ensure-private-directory! acquire-file-lock release-file-lock!
+          remove-stale-socket! call-with-private-output-file redirect-daemon-ports!
+          process-identity
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
           terminal-process-pid resize-terminal-process!
@@ -163,6 +169,13 @@
   (define c-kill
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "kill" (int int) int))))
+  (define c-sigemptyset (and libc-loaded? (foreign-procedure "sigemptyset" (uptr) int)))
+  (define c-sigaddset (and libc-loaded? (foreign-procedure "sigaddset" (uptr int) int)))
+  (define c-sigprocmask (and libc-loaded? (foreign-procedure "sigprocmask" (int uptr uptr) int)))
+  (define empty-signal-mask
+    ;; sigset_t fits in 128 bytes on Linux, Darwin and FreeBSD. Only libc
+    ;; accesses its layout. This immutable mask is also safe after fork.
+    (and libc-loaded? (let ([mask (foreign-alloc 128)]) (c-sigemptyset mask) mask)))
   (define c-exit
     (and libc-loaded?
          (guard (ex [else #f]) (foreign-procedure "_exit" (int) void))))
@@ -207,7 +220,11 @@
       (bytevector-u16-native-set! size 2 cols)
       size))
 
-  (define (close-child-descriptors!)
+  (define (prepare-child!)
+    ;; A child must not inherit the base's blocked service signals.
+    (when (< (c-sigprocmask (os-case 2 3 3) empty-signal-mask 0) 0)
+      (when c-perror (c-perror "sigprocmask"))
+      (c-exit 127))
     ;; M-x temporarily owns extra stdout/stderr pipe descriptors. A PTY child
     ;; must not inherit them: otherwise the evaluator waits forever for pipe
     ;; EOF while the interactive shell keeps their hidden copies open.
@@ -283,7 +300,7 @@
              (when c-perror (c-perror "dup2"))
              (c-exit 127))
            (when (> slave-fd 2) (c-close slave-fd))
-           (close-child-descriptors!)
+           (prepare-child!)
            (when (and c-chdir (< (c-chdir directory) 0))
              (when c-perror (c-perror "chdir"))
              (c-exit 127))
@@ -375,6 +392,136 @@
          (or (guard (ex [else #f])
                (eval '(foreign-procedure (__varargs_after 2) "fcntl" (int int int) int)))
              (foreign-procedure "fcntl" (int int int) int))))
+  (define c-open
+    (and libc-loaded?
+         (or (guard (ex [else #f])
+               (eval '(foreign-procedure (__varargs_after 2) "open" (string int unsigned) int)))
+             (foreign-procedure "open" (string int unsigned) int))))
+  (define c-flock (and libc-loaded? (foreign-procedure "flock" (int int) int)))
+  (define c-fchmod (and libc-loaded? (foreign-procedure "fchmod" (int unsigned) int)))
+  (define c-strerror (and libc-loaded? (foreign-procedure "strerror" (int) string)))
+  (define c-lstat
+    (and libc-loaded? (not (eq? os 'linux))
+         (or (guard (ex [else #f])
+               (foreign-procedure (os-case "lstat" "lstat$INODE64" "lstat") (string u8*) int))
+             (foreign-procedure "lstat" (string u8*) int))))
+  (define c-fstat
+    (and libc-loaded? (not (eq? os 'linux))
+         (or (guard (ex [else #f])
+               (foreign-procedure (os-case "fstat" "fstat$INODE64" "fstat") (int u8*) int))
+             (foreign-procedure "fstat" (int u8*) int))))
+
+  (define (os-error who path code)
+    (error who (c-strerror code) path code))
+
+  (define (descriptor-check who path result)
+    (when (< result 0) (os-error who path (foreign-ref 'int (c-errno) 0)))
+    result)
+
+  (define (ownership-info path-or-fd)
+    ;; Only the type, mode and uid are needed for private runtime files.
+    ;; Linux uses statx's fixed ABI; Darwin/FreeBSD use their stat64 prefix.
+    ;; Unlike browsing metadata, errors other than absence are not hidden.
+    (let* ([out (make-bytevector 512 0)] [fd? (integer? path-or-fd)]
+           [result
+            (if (eq? os 'linux)
+                (begin
+                  (unless c-statx (error 'base "statx is required for private base ownership"))
+                  (let ([path (string->utf8 (string-append (if fd? "" path-or-fd) (string #\nul)))])
+                    (dynamic-wind (lambda () (lock-object path) (lock-object out))
+                      (lambda () (c-statx (if fd? path-or-fd -100) path
+                                   (if fd? #x1000 #x100) #xb out))
+                      (lambda () (unlock-object out) (unlock-object path)))))
+                ((if fd? c-fstat c-lstat) path-or-fd out))])
+      (if (zero? result)
+          (begin
+            (when (and (eq? os 'linux) (not (= (logand (bytevector-u32-native-ref out 0) #xb) #xb)))
+              (error 'base "filesystem did not supply ownership metadata" path-or-fd))
+            (cons (bytevector-u16-native-ref out (os-case 28 4 24))
+                  (bytevector-u32-native-ref out (os-case 20 16 28))))
+          (let ([code (foreign-ref 'int (c-errno) 0)])
+            (if (= code 2) #f (os-error 'base path-or-fd code))))))
+
+  (define (private-info! path info kind)
+    (unless (and info (= (logand (car info) #o170000) kind)
+                 (= (cdr info) (c-geteuid)) (zero? (logand (car info) #o7077)))
+      (error 'base "expected a private path owned by this user" path))
+    info)
+
+  (define (ensure-private-directory! path)
+    (unless (ownership-info path)
+      (guard (ex [(i/o-file-already-exists-error? ex) (void)] [else (raise ex)])
+        (mkdir path #o700)))
+    (private-info! path (ownership-info path) #o040000)
+    (unless (= (logand (get-mode path) #o777) #o700)
+      (error 'base "base directory must have mode 700" path)))
+
+  (define (private-file-fd path append?)
+    ;; NOFOLLOW and NONBLOCK prevent a symlink or FIFO from turning startup
+    ;; into arbitrary file writes or an unbounded open. Validate before use.
+    (let ([fd (descriptor-check 'base path
+                (c-open path (logor 2 (os-case #o100 #x200 #x200)
+                               (os-case #o400000 #x100 #x100)
+                               (os-case #o4000 #x4 #x4)
+                               (if append? (os-case #o2000 #x8 #x8) 0)) #o600))])
+      (guard (ex [else (c-close fd) (raise ex)])
+        (close-on-exec! fd)
+        (private-info! path (ownership-info fd) #o100000)
+        (descriptor-check 'base path (c-fchmod fd #o600))
+        fd)))
+
+  (define (acquire-file-lock path)
+    (let ([fd (private-file-fd path #f)])
+      (if (zero? (c-flock fd 6)) fd ; LOCK_EX | LOCK_NB
+          (let ([code (foreign-ref 'int (c-errno) 0)])
+            (c-close fd)
+            (if (= code (os-case 11 35 35)) #f (os-error 'base path code))))))
+
+  (define (release-file-lock! fd) (c-close fd)) ; Never unlink the lock inode.
+
+  (define (remove-stale-socket! path)
+    (cond [(ownership-info path)
+           => (lambda (info)
+                (private-info! path info #o140000)
+                (delete-file path))]))
+
+  (define (call-with-private-output-file path procedure)
+    (let ([port (open-fd-output-port (private-file-fd path #f) 'block (native-transcoder))])
+      (dynamic-wind void
+        (lambda () (truncate-file port 0) (procedure port) (flush-output-port port))
+        (lambda () (close-port port)))))
+
+  (define (redirect-daemon-ports! path first?)
+    (let ([fd (private-file-fd path #t)])
+      (dynamic-wind void
+        (lambda ()
+          (flush-output-port (current-output-port))
+          (flush-output-port (current-error-port))
+          (for-each (lambda (target) (descriptor-check 'base path (c-dup2 fd target))) '(1 2)))
+        (lambda () (c-close fd))))
+    (when first?
+      (c-setsid) ; A foreground process-group leader may already own its session.
+      (let ([fd (descriptor-check 'base "/dev/null" (c-open "/dev/null" 0 0))])
+        (dynamic-wind void
+          (lambda () (descriptor-check 'base "/dev/null" (c-dup2 fd 0)))
+          (lambda () (c-close fd))))))
+
+  (define (process-identity)
+    ;; Linux records boot identity and /proc's start ticks, not a reusable
+    ;; pid alone. Other systems explicitly lack a verified force target until
+    ;; their stable process-reference implementation is added with restart.
+    (list (get-process-id)
+      (and (eq? os 'linux)
+           (guard (ex [else #f])
+             (let* ([stat (call-with-input-file "/proc/self/stat" get-line)]
+                    [end (let scan ([i (- (string-length stat) 1)])
+                           (if (char=? (string-ref stat i) #\)) i (scan (- i 1))))]
+                    [in (open-string-input-port (substring stat (+ end 2) (string-length stat)))]
+                    [fields (let read-all ([out '()])
+                              (let ([field (read in)])
+                                (if (eof-object? field) (reverse out) (read-all (cons field out)))))])
+               (list 'linux (call-with-input-file "/proc/sys/kernel/random/boot_id" get-line)
+                     (list-ref fields 19)))))))
 
   (define-record-type local-listener
     (fields fd path lock (mutable closed)))
@@ -457,15 +604,87 @@
                   [(= (foreign-ref 'int (c-errno) 0) 4) (again)] ; EINTR
                   [else (socket-check 'accept-local fd)])))))
 
-  (define (connect-local path)
+  (define (try-connect-local path deadline)
+    ;; #f means absent/refused, the only failures that permit automatic start.
+    ;; AF_UNIX EAGAIN (a full backlog on Linux) needs a fresh connect attempt;
+    ;; SO_ERROR=0 after EAGAIN would falsely report an established connection.
     (unless c-socket (error 'connect-local "local sockets are unavailable"))
+    (cond [(ownership-info path) => (lambda (info) (private-info! path info #o140000))])
     (call-with-local-address path
       (lambda (address size)
-        (let ([fd (socket-check 'connect-local (c-socket 1 1 0))])
-          (guard (ex [else (c-close fd) (raise ex)])
-            (close-on-exec! fd)
-            (socket-check 'connect-local (c-connect fd address size)))
-          (connection-from-fd fd)))))
+        (let again ()
+          (when (time>=? (current-time 'time-monotonic) deadline)
+            (error 'e "the base is unresponsive (connection timed out)" path))
+          (let* ([fd (socket-check 'connect-local (c-socket 1 1 0))]
+                 [result
+                  (guard (ex [else (c-close fd) (raise ex)])
+                    (close-on-exec! fd)
+                    (socket-check 'connect-local (c-fcntl fd 4 (os-case #o4000 4 4)))
+                    (if (zero? (c-connect fd address size)) 'connected
+                        (let ([code (foreign-ref 'int (c-errno) 0)])
+                          (cond [(memv code (list 2 (os-case 111 61 61))) 'absent]
+                                [(memv code (list 4 (os-case 11 35 35))) 'retry]
+                                [(= code (os-case 115 36 36))
+                                 (let ([pollfd (foreign-alloc 8)])
+                                   (dynamic-wind void
+                                     (lambda ()
+                                       (foreign-set! 'int pollfd 0 fd)
+                                       (foreign-set! 'short pollfd 4 4) ; POLLOUT
+                                       (let wait ()
+                                         (let* ([remaining (time-difference deadline (current-time 'time-monotonic))]
+                                                [ms (+ (* (time-second remaining) 1000)
+                                                       (div (time-nanosecond remaining) 1000000))])
+                                           (when (<= ms 0) (error 'e "the base is unresponsive (connection timed out)" path))
+                                           (when (<= (c-poll pollfd 1 (min ms 50)) 0) (wait))))
+                                       (let ([error (make-bytevector 4)] [size (make-bytevector 4)])
+                                         (bytevector-u32-native-set! size 0 4)
+                                         (socket-check 'connect-local
+                                           (c-getsockopt fd (os-case 1 #xffff #xffff) (os-case 4 #x1007 #x1007) error size))
+                                         (let ([code (bytevector-s32-native-ref error 0)])
+                                           (cond [(zero? code) 'connected]
+                                                 [(memv code (list 2 (os-case 111 61 61))) 'absent]
+                                                 [else (os-error 'connect-local path code)]))))
+                                     (lambda () (foreign-free pollfd))))]
+                                [else (os-error 'connect-local path code)]))))])
+            (case result
+              [(connected)
+               (guard (ex [else (c-close fd) (raise ex)])
+                 (socket-check 'connect-local (c-fcntl fd 4 0)))
+               (connection-from-fd fd)]
+              [else
+               (c-close fd)
+               (and (eq? result 'retry)
+                    (begin (sleep (make-time 'time-duration 50000000 0)) (again)))]))))))
+
+  (define connect-local
+    (case-lambda
+      [(path) (connect-local path (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10)))]
+      [(path deadline)
+       (or (try-connect-local path deadline) (error 'connect-local "no base is listening" path))]))
+
+  (define (call-with-connection-deadline connection deadline thunk)
+    ;; A single watchdog bounds the complete exchange, including partial
+    ;; frames and blocked writes. Shutdown wakes the blocked port operation.
+    (let* ([lock (make-mutex)] [ready (make-condition)] [finished? #f] [expired? #f]
+           [watchdog
+            (fork-thread
+              (lambda ()
+                (when (with-mutex lock
+                        (let wait ()
+                          (let ([now (current-time 'time-monotonic)])
+                            (cond [finished? #f]
+                              [(time>=? now deadline) (set! expired? #t) #t]
+                              [else
+                               (condition-wait ready lock (time-difference deadline now))
+                               (wait)]))))
+                  (close-connection! connection))))])
+      (guard (ex [expired? (error 'e "the base is unresponsive (hello timed out)")]
+                 [else (raise ex)])
+        (dynamic-wind void thunk
+          (lambda ()
+            (with-mutex lock (set! finished? #t) (condition-signal ready))
+            (thread-join watchdog)
+            (when expired? (error 'e "the base is unresponsive (hello timed out)")))))))
 
   (define (close-connection! connection)
     (with-mutex (connection-lock connection)
@@ -485,9 +704,31 @@
         (delete-file (local-listener-path listener)))))
 
   (define (watch-daemon-signals! stop!)
-    (register-signal-handler 1 (lambda (signal) (void))) ; SIGHUP: keep the base
-    (register-signal-handler 15 (lambda (signal) (stop!)))
-    (keyboard-interrupt-handler stop!))
+    ;; Install before creating any worker: each inherits this blocked mask.
+    ;; Chez 10.0 queues a registered signal on whichever thread receives it;
+    ;; a worker may then block in I/O before servicing that queue. One POSIX
+    ;; receiver gives these process-lifetime events a predictable owner.
+    (let ([mask (foreign-alloc 128)] [received (foreign-alloc 4)]
+          [block (foreign-procedure "pthread_sigmask" (int uptr uptr) int)]
+          [wait (foreign-procedure __collect_safe "sigwait" (uptr uptr) int)])
+      (guard (ex [else (foreign-free mask) (foreign-free received) (raise ex)])
+        (c-sigemptyset mask)
+        (for-each (lambda (signal) (c-sigaddset mask signal)) '(1 2 15))
+        (let ([code (block (os-case 0 1 1) mask 0)])
+          (unless (zero? code) (os-error 'watch-daemon-signals! "pthread_sigmask" code)))
+        (fork-thread
+          (lambda ()
+            (dynamic-wind void
+              (lambda ()
+                (guard (ex [else
+                            (display-condition ex (current-error-port))
+                            (newline (current-error-port)) (stop!)])
+                  (let loop ()
+                    (let ([code (wait mask received)])
+                      (unless (zero? code) (os-error 'watch-daemon-signals! "sigwait" code)))
+                    (unless (= (foreign-ref 'int received 0) 1) (stop!)) ; ignore HUP
+                    (loop))))
+              (lambda () (foreign-free mask) (foreign-free received))))))))
 
   ;;; Foreground commands -----------------------------------------------------
 
@@ -540,7 +781,7 @@
                            (< (c-dup2 (cdr errors) 2) 0))
                    (when c-perror (c-perror "dup2"))
                    (c-exit 127))
-                 (close-child-descriptors!)
+                 (prepare-child!)
                  (c-execvp (cadr argv) (car argv))
                  (when c-perror (c-perror (car arguments)))
                  (c-exit 127)]
@@ -700,6 +941,36 @@
               (list (command-process-to process) (command-process-from process)
                     (command-process-errors process) (command-process-prefix process)
                     (process-input process))))))))
+
+  (define (release-process! process)
+    ;; Give up cancellation ownership without signalling the child. Bootstrap
+    ;; uses this after its head exits, or after a startup timeout. Reap by the
+    ;; owned child pid, even when the child outlives the calling runtime.
+    (with-interrupts-disabled
+      (unless (command-process-closed process)
+        (let ([done? (poll-process! process)])
+          (command-process-closed-set! process #t)
+          (unless done?
+            (fork-thread
+              (lambda ()
+                (let ([status (make-bytevector 4)]
+                      [waitpid (foreign-procedure __collect_safe "waitpid" (int u8* int) int)])
+                  (dynamic-wind (lambda () (lock-object status))
+                    (lambda ()
+                      (let wait ()
+                        (when (and (< (waitpid (command-process-pid process) status 0) 0)
+                                   (= (foreign-ref 'int (c-errno) 0) 4)) (wait))))
+                    (lambda () (unlock-object status)))))))
+          (for-each (lambda (port) (when port (guard (ex [else (void)]) (close-port port))))
+            (list (command-process-to process) (command-process-from process)
+                  (command-process-errors process) (command-process-prefix process)
+                  (process-input process)))))))
+
+  (define (signal-process! process signal)
+    (with-interrupts-disabled
+      (and (not (command-process-closed process)) (not (poll-process! process))
+           (zero? (descriptor-check 'process (command-process-pid process)
+                    (c-kill (command-process-pid process) signal))))))
 
   (define (host-name)
     (and c-gethostname

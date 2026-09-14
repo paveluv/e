@@ -3,10 +3,13 @@
 ;; mail and log presentation have the same finite budget as the base outbox.
 (library (client)
   (export call-with-runtime claim! identity request subscribe! unsubscribe!
-          set-wake! pump! close! watch!)
+          set-wake! pump! close! watch! ended?)
   (import (chezscheme)
           (prefix (kernel) kernel:) (prefix (startup) startup:)
           (prefix (wire) wire:) (prefix (sys) sys:) (prefix (datum) datum:))
+
+  (define-condition-type &ended &condition make-ended ended?)
+  (define closing-reason #f)
 
   (define connection #f)
   (define reader #f)
@@ -58,44 +61,55 @@
              [else (merge (cdr rest) (cons (car rest) out))]))))
 
   (define (receive!)
-    (guard (ex [else (close! (kernel:condition-text ex))])
+    (guard (ex [(or (ended? ex) (i/o-error? ex)) (close! 'gone)]
+               [else (close! (kernel:condition-text ex))])
       (let loop ()
         (let ([message (wire:receive (sys:connection-input connection))])
-          (when (eof-object? message) (error 'client "base closed the connection"))
+          (when (eof-object? message) (raise (make-ended)))
           (unless (and (list? message) (pair? message)) (error 'client "invalid server message"))
-          (let ([notify
-                 (with-mutex lock
-                   (case (car message)
-                     [(reply)
-                      (unless (and (= (length message) 4) (equal? (cadr message) waiting) (not reply))
-                        (error 'client "unexpected reply"))
-                      (set! reply message)
-                      (condition-signal ready)
-                      void]
-                     [(changed)
-                      (set! changes (merge-pending changes (cadr message))) wake]
-                     [(surface)
-                      (set! surfaces (merge-pending surfaces (cadr message))) wake]
-                     [(presence) (set! presence? #t) wake]
-                     [(event logged)
-                      (let ([size (bytevector-length (wire:encode message))])
-                        (when (or (>= count 256) (> (+ bytes size) #x2000000))
-                          (error 'client "pending input limit reached"))
-                        (set! notices (cons message notices))
-                        (set! count (+ count 1))
-                        (set! bytes (+ bytes size)))
-                      wake]
-                     [else (error 'client "unknown server message" (car message))]))])
-            (notify))
-          (loop)))))
+          (if (and (= (length message) 2) (eq? (car message) 'closing)
+                   (memq (cadr message) '(shutdown restart signal)))
+              (begin
+                (with-mutex lock (set! closing-reason (cadr message)))
+                (close! "The base is closing"))
+            (begin
+              (let ([notify
+                     (with-mutex lock
+                       (case (car message)
+                         [(reply)
+                          (unless (and (= (length message) 4) (equal? (cadr message) waiting) (not reply))
+                            (error 'client "unexpected reply"))
+                          (set! reply message)
+                          (condition-signal ready)
+                          void]
+                         [(changed)
+                          (set! changes (merge-pending changes (cadr message))) wake]
+                         [(surface)
+                          (set! surfaces (merge-pending surfaces (cadr message))) wake]
+                         [(presence) (set! presence? #t) wake]
+                         [(event logged)
+                          (let ([size (bytevector-length (wire:encode message))])
+                            (when (or (>= count 256) (> (+ bytes size) #x2000000))
+                              (error 'client "pending input limit reached"))
+                            (set! notices (cons message notices))
+                            (set! count (+ count 1))
+                            (set! bytes (+ bytes size)))
+                          wake]
+                         [else (error 'client "unknown server message" (car message))]))])
+                (notify))
+              (loop)))))))
 
   (define (claim! actor path)
     (when connection (error 'client "this process already has a head"))
     (let retry ([actor actor] [suffix 2])
       (let ([next (sys:connect-local path)])
         (guard (ex [else (sys:close-connection! next) (raise ex)])
-          (wire:send! (sys:connection-output next) (list 'hello wire:version actor))
-          (let ([hello (wire:receive (sys:connection-input next))])
+          (let ([hello
+                 (sys:call-with-connection-deadline next
+                   (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
+                   (lambda ()
+                     (wire:send! (sys:connection-output next) (list 'hello wire:version actor))
+                     (wire:receive (sys:connection-input next))))])
             (cond
               [(equal? hello '(error #f name-in-use))
                (sys:close-connection! next)
@@ -120,7 +134,7 @@
           (lambda ()
             (let ([id (with-mutex lock
                         (unless (and connection (not failure))
-                          (error 'client (or failure "head is not attached")))
+                          (if failure (raise (make-ended)) (error 'client "head is not attached")))
                         (set! serial (+ serial 1))
                         (set! waiting serial)
                         (set! reply #f)
@@ -129,7 +143,7 @@
               (let ([result
                      (with-mutex lock
                        (let wait ()
-                         (cond [failure (error 'client failure)]
+                         (cond [failure (raise (make-ended))]
                            [reply (set! waiting #f) reply]
                            [else (condition-wait ready lock) (wait)])))])
                 (set! completed? #t)
@@ -160,7 +174,7 @@
     (when (eqv? pump-thread (get-thread-id))
       (let ([batch
              (with-mutex lock
-               (when failure (error 'client failure))
+               (when failure (raise (make-ended)))
                (let ([batch (append
                               (if (equal? changes '()) '() (list (list 'changed changes)))
                               (if (equal? surfaces '()) '() (list (list 'surface surfaces)))
@@ -183,16 +197,41 @@
         ;; a retracted recipient, isolates failures and leaves config staging.
         (kernel:drain-deliveries! deliveries))))
 
+  (define (shell-quote text)
+    (string-append "'" (apply string-append
+                         (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
+
+  (define (farewell status)
+    (define (count key noun)
+      (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
+    (format #t "e: detached; the base holds ~a (~a modified), ~a, ~a and ~a.\n"
+      (count 'buffers "buffer") (cdr (assq 'modified status))
+      (count 'heads "other head") (count 'terminals "running terminal") (count 'agents "agent"))
+    (format #t "Resume: ~a --name ~a --base-working-dir ~a\n"
+      (shell-quote (string-append (kernel:installation-directory) "/e"))
+      (shell-quote (cadr who)) (shell-quote (startup:base-working-directory))))
+
   (define (call-with-runtime thunk)
-    (let ([modules '("actor" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
+    (let ([modules '("actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
                      "property" "reference" "startup" "store" "string" "surface" "sys" "text" "vt" "wire")])
       (kernel:pin-modules! (cons "client" modules))
-      (dynamic-wind void
-        (lambda ()
-          ;; These are the same prefixed names available to configuration
-          ;; and M-x in a standalone head, bound to client service libraries.
-          (let ([failures (kernel:load-modules! modules)])
-            (unless (null? failures) (raise (cdar failures))))
-          (thunk))
-        (lambda () (close!) (when reader (thread-join reader))))))
+      (guard (ex [(ended? ex)
+                  ;; run-head has already restored the terminal, including
+                  ;; when the connection failed inside a nested command.
+                  (display
+                    (case closing-reason
+                      [(shutdown) "e: the base shut down\n"]
+                      [(restart) "e: the base is restarting; run e to reattach\n"]
+                      [(signal) "e: the base stopped (signal)\n"]
+                      [else (if (eq? failure 'gone) "e: the base is gone\n"
+                                (format "e: ~a\n" failure))]))
+                  (if closing-reason 0 1)])
+        (dynamic-wind void
+          (lambda ()
+            (let ([failures (kernel:load-modules! modules)])
+              (unless (null? failures) (raise (cdar failures))))
+            (thunk)
+            (farewell (request 'leaving))
+            0)
+          (lambda () (close!) (when reader (thread-join reader)))))))
 )
