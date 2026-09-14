@@ -48,12 +48,15 @@
         [() (with-mutex lock (reverse items))]
         [(item) (with-mutex lock (set! items (cons item items)))])))
 
-  (define (await label ready?)
-    (let wait ([tries 1000])
-      (unless (ready?)
-        (when (zero? tries) (error 'test "worker timeout" label))
-        (sleep (make-time 'time-duration 5000000 0))
-        (wait (- tries 1)))))
+  (define await
+    (case-lambda
+      [(label ready?) (await label ready? 5)]
+      [(label ready? seconds)
+       (let wait ([tries (* seconds 200)])
+         (unless (ready?)
+           (when (zero? tries) (error 'test "worker timeout" label))
+           (sleep (make-time 'time-duration 5000000 0))
+           (wait (- tries 1))))]))
 
   (define (gate)
     (let ([lock (make-mutex)] [value #f])

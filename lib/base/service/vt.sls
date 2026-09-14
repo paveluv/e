@@ -1,7 +1,7 @@
 ;; vt.sls -- base-owned terminal emulator, PTY actors, and shared publication.
 
 (library (vt)
-  (export init! open! send! close! close-all! running
+  (export init! open! send! close! close-all! running transcript
           (rename (terminal-scrollback scrollback) (terminal-shell shell)
                   (make-terminal-emulator make-emulator) (terminal-emulator? emulator?)
                   (terminal-emulator-feed! emulator-feed!) (terminal-emulator-resize! emulator-resize!)
@@ -3233,6 +3233,16 @@
                         (lambda () (make-runtime (make-mutex) 0 '() #f)))))
 
   (define (instances) (with-mutex (runtime-lock live) (runtime-apps live)))
+
+  (define (transcript snapshot)
+    ;; Convert only a VT-owned source, including one whose process already
+    ;; ended. Save the last accepted store text, not concurrent emulator data.
+    (let* ([facts (list-ref snapshot 4)] [app (cond [(assq 'app facts) => cdr] [else #f])])
+      (if (and (list? app) (= (length app) 3) (equal? (list-head app 2) '(app terminal)))
+          (append (list-head snapshot 4)
+            (list (cons* '(disposable . #f) '(read-only . #t)
+                    (filter (lambda (entry) (not (memq (car entry) '(disposable read-only mode)))) facts))))
+          snapshot)))
 
   ;; Monotonic owner identities distinguish replacement processes. Copy the
   ;; inventory first, then inspect each emulator without nesting its locks.

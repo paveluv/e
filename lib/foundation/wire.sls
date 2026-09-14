@@ -5,9 +5,9 @@
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (datum) datum:))
 
-  ;; S2 adds the shutdown preference to leaving and keeps close reviews
-  ;; at the base. Older heads/bases must not mix these lifecycle contracts.
-  (define version 3)
+  ;; S3 requires the pre-screen startup-notice exchange. Older heads cannot
+  ;; silently attach to restored work; maintenance keeps its own version 1.
+  (define version 4)
   (define frame-limit #x1000000) ; 16 MiB, checked before reading a payload
 
   (define (frame-size! size)

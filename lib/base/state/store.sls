@@ -26,11 +26,11 @@
           set-mark! set-marks! mark drop-mark! marks
           set-property! set-properties! drop-property! property properties
           validate-properties validate-edit-context
-          subscribe! unsubscribe! watch!)
+          subscribe! unsubscribe! watch! export import! valid-import?)
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq
-                current-time time-second time-nanosecond)
+                current-time time-second time-nanosecond list-head)
           (prefix (text) text:) (prefix (property) property:)
           (prefix (actor) actor:) (prefix (activity) activity:)
           (prefix (datum) datum:)
@@ -62,7 +62,7 @@
 
   (define-record-type (store make-store store?)
     (fields lock
-            buffers              ; id -> buffer
+            (mutable buffers)    ; id -> buffer; replaced once during restore
             (mutable next-id)
             (mutable closing?)
             deliveries))         ; ordered callbacks, shared kernel mechanism
@@ -418,6 +418,95 @@
 
   (define (close!)
     (locked (lambda () (store-closing?-set! (current-store) #t))))
+
+  ;;; Saved representation -------------------------------------------------
+
+  (define persistent-keys '(file base stamp trailing mode read-only modified-at))
+  (define (integer-at-least? n minimum) (and (integer? n) (exact? n) (>= n minimum)))
+
+  (define (persistent-facts? facts)
+    (and (list? facts)
+         (let check ([rest facts] [seen '()])
+           (or (null? rest)
+               (let ([entry (car rest)])
+                 (and (pair? entry) (memq (car entry) persistent-keys) (not (memq (car entry) seen))
+                      (case (car entry)
+                        [(file mode) (or (not (cdr entry)) (and (string? (cdr entry)) (> (string-length (cdr entry)) 0)))]
+                        [(base) (or (not (cdr entry)) (string? (cdr entry)))]
+                        [(trailing read-only) (boolean? (cdr entry))]
+                        [(modified-at) (or (not (cdr entry)) (and (integer? (cdr entry)) (exact? (cdr entry))))]
+                        [(stamp)
+                         (let ([stamp (cdr entry)])
+                           (or (not stamp)
+                               (and (pair? stamp) (integer? (car stamp)) (exact? (car stamp))
+                                    (integer-at-least? (cdr stamp) 0) (< (cdr stamp) 1000000000))))])
+                      (check (cdr rest) (cons (car entry) seen))))))))
+
+  (define (valid-import? next-id states)
+    ;; A pure validation boundary. No callbacks or partial store mutation;
+    ;; session startup distinguishes bad data from a later import failure.
+    (and (integer-at-least? next-id 1) (list? states)
+         (let ([ids (make-eqv-hashtable)] [names (make-hashtable string-hash string=?)])
+           (for-all
+             (lambda (state)
+               (and (list? state) (= (length state) 5)
+                    (integer-at-least? (car state) 1) (< (car state) next-id)
+                    (integer-at-least? (cadr state) 0)
+                    (string? (caddr state)) (> (string-length (caddr state)) 0)
+                    (not (hashtable-contains? ids (car state)))
+                    (not (hashtable-contains? names (caddr state)))
+                    (vector? (cadddr state)) (> (vector-length (cadddr state)) 0)
+                    (for-all text:line? (vector->list (cadddr state)))
+                    (persistent-facts? (list-ref state 4))
+                    (begin (hashtable-set! ids (car state) #t) (hashtable-set! names (caddr state) #t) #t)))
+             states))))
+
+  (define export
+    (case-lambda
+      [() (export values)]
+      [(convert)
+       ;; Capture under this writer, then let a producer convert its plain
+       ;; snapshot outside the lock (VT makes a disposable app a transcript).
+       ;; Lifecycle pause keeps this and the checkpoint snapshot coherent.
+       (let-values ([(next-id states)
+                     (locked
+                       (lambda ()
+                         (values (store-next-id (current-store))
+                           (map (lambda (id)
+                                  (let ([b (buffer-of 'export id)])
+                                    (list id (buffer-revision b) (string-copy (buffer-label b))
+                                      (buffer-text b) (property-data b))))
+                             (list-sort < (vector->list (hashtable-keys (store-buffers (current-store)))))))))])
+         (values next-id
+           (filter values
+             (map (lambda (state)
+                    (let* ([state (convert state)] [facts (list-ref state 4)])
+                      (and (not (cond [(assq 'disposable facts) => cdr] [else #f]))
+                           (append (list-head state 4)
+                             (list (filter (lambda (entry) (memq (car entry) persistent-keys)) facts)))))) states))))]))
+
+  (define (import! next-id states)
+    (unless (valid-import? next-id states) (error 'import! "invalid saved store representation"))
+    (let ([table (make-eqv-hashtable)])
+      ;; Build privately. An unexpected failure cannot publish half a store.
+      (for-each
+        (lambda (state)
+          (let* ([state (datum:copy state)] [facts (list-ref state 4)]
+                 [b (make-buffer (caddr state) (cadddr state) (cadr state) '() '() '() '() #f #f
+                      (cond [(assq 'modified-at facts) => cdr] [else #f]))])
+            (install-properties! b (filter (lambda (entry) (not (eq? (car entry) 'modified-at))) facts))
+            (refresh-edit-facts! b #f)
+            (hashtable-set! table (car state) b))) states)
+      (activity:call-with
+        (lambda ()
+          (locked
+            (lambda ()
+              (let ([s (current-store)])
+                (unless (and (= (store-next-id s) 1) (zero? (hashtable-size (store-buffers s)))
+                             (not (store-closing? s)))
+                  (error 'import! "restore requires a fresh empty store"))
+                (store-buffers-set! s table)
+                (store-next-id-set! s next-id))))))))
 
   (define (buffer-list)
     (locked

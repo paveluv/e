@@ -108,7 +108,7 @@
                 => (lambda (entry)
                      (walk (append (imports (cdr entry)) (cdr pending)) (cons (car entry) seen)))]
                [else (walk (cdr pending) seen)])))
-     (require! (assq 'base base) "lib/run/base.sls" "missing daemon entrypoint")
+     (require! (assq 'base base) "lib/base/run/base.sls" "missing daemon entrypoint")
      (test:check 'daemon-has-no-head
        (for-all
          (lambda (name)

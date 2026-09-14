@@ -15,6 +15,12 @@ Plain `e` starts or connects to the base, then imports the command layer
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
+`--restart` performs the maintenance review before importing head libraries.
+The daemon entry point lives in `lib/base/run/base.sls`, outside client roots.
+In the base, `session` restores store IDs, revisions and opaque named
+checkpoints before module initialization and `base-config.e`; the listener
+binds last. Session serialization uses the store and VT representation
+boundaries and does not import a head.
 
 Plain `e` selects the `lib/client` implementation tree; `e --base` selects
 `lib/base`. Both then search every other leaf directory under
@@ -142,7 +148,9 @@ outside e can be picked up explicitly:
 
 `main:modules-reload-on-save` controls automatic source reload. The kernel,
 `main` (the loop), the base services (including policy, terminal runtime and
-reference corpus), and their transitive imports require a restart. Bootstrap
+reference corpus), and their transitive imports require a restart. Use
+`e --restart` to preserve shared text and named views;
+see [the recovery limits](MULTIHEAD.md#restart-and-recovery). Bootstrap
 declares these process roots with `kernel:pin-modules!`, including the attached
 connection and client seams; refusal happens before
 redefinition. A reload reinitializes only the affected module and its loaded

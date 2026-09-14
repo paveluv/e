@@ -126,6 +126,12 @@
                (set! who (datum:copy actor))
                (set! pump-thread (get-thread-id))
                (set! reader (fork-thread receive!))
+               (let ([notice (sys:call-with-connection-deadline next
+                               (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
+                               (lambda () (request 'startup-notice)))])
+                 (when notice
+                   (display notice (current-error-port))
+                   (flush-output-port (current-error-port))))
                (identity)]
               [else (error 'client "base refused attachment" hello)]))))))
 

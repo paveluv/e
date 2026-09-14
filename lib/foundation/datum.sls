@@ -1,11 +1,16 @@
 ;; datum.sls -- owned snapshots of finite, plain protocol data.
 (library (datum)
-  (export copy)
+  (export copy invalid?)
   (import (rnrs))
+
+  (define-condition-type &invalid &error make-invalid invalid?)
+  (define (invalid! message value)
+    (raise (condition (make-invalid) (make-who-condition 'datum:copy)
+             (make-message-condition message) (make-irritants-condition (list value)))))
 
   (define copy
     (case-lambda
-      [(value) (copy value (lambda (leaf) (error 'datum:copy "expected plain protocol data" leaf)))]
+      [(value) (copy value (lambda (leaf) (invalid! "expected plain protocol data" leaf)))]
       [(value copy-leaf)
        ;; Sharing is allowed, cycles and runtime objects are not. Readers own
        ;; every mutable part; no retained data changes without a seam operation.
@@ -15,7 +20,7 @@
        ;; a list spine is walked once, so long lists cost one step per pair.
        (let ([active (make-eq-hashtable)])
          (define (enter! node)
-           (when (hashtable-contains? active node) (error 'datum:copy "cyclic protocol data"))
+           (when (hashtable-contains? active node) (invalid! "cyclic protocol data" node))
            (hashtable-set! active node #t))
          (define (leave! node) (hashtable-delete! active node))
          (let walk ([value value])

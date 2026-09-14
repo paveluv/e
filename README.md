@@ -92,7 +92,7 @@ $ ~/git/project/.e/e file.txt
 Each installation keeps its libraries, configuration, downloaded data and
 compiled objects beside its loader: `lib/`, `config.e`, `data/`, optional
 `base-config.e` and `eo/`. The daemon owns `.base/` there, including its
-socket and daily diagnostic logs, so checkouts have independent settings,
+socket, recovery snapshot and daily diagnostic logs, so checkouts have independent settings,
 caches and daemons.
 `lib/` groups flat-named `.sls` libraries by responsibility.
 Base and attached implementations use separate `eo/base/` and `eo/client/`
@@ -118,9 +118,12 @@ screen. Shared edits and terminal processes continue while no screen is
 attached. `M-x (main:shutdown!!)` reviews unsaved work and live processes,
 then stops the base and all its screens. Set `(main:shutdown-on-exit #t)`
 in `config.e` to offer shutdown when the last screen quits.
-State lasts for the daemon's lifetime; stopping it does not save
-the session to disk yet. Connections currently use a local Unix socket under
-the same OS user. See [daemon attachment](manual/MULTIHEAD.md#running-a-daemon-and-attaching)
+`e --restart --name work` saves shared text and named views, restarts the base
+and reattaches. SIGTERM/SIGINT also save a recovery snapshot. Terminal
+processes, undo history and local drafts do not survive a restart; terminal
+text returns as read-only transcripts. Reviewed shutdown deletes the snapshot.
+Connections currently use a local Unix socket under
+the same OS user. See [the base and its heads](manual/MULTIHEAD.md#the-base-and-its-heads)
 for configuration, lifecycle and scripted clients.
 
 ## Essential keys
@@ -230,8 +233,9 @@ same glyph rules as the terminal emulator.
 
 ## Version history
 
-- **Current main (unreleased)** -- a persistent daemon with named screens,
-  shared terminals and attributed undo; agent-ready APIs; interactive Files
+- **Current development version (unreleased)** -- a persistent daemon with named screens,
+  saved-session recovery and reviewed restart; shared terminals and attributed undo;
+  agent-ready APIs; interactive Files
   and Buffers apps with filtering, compound sorting and per-window column
   widths. The repository uses the settled R6RS library layout.
 - **v0.1** (2026-09-01) -- the first tagged release. The core editor:

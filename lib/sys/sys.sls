@@ -17,14 +17,15 @@
           terminal-character-width
           canonical-file-path file-info host-name terminal-name
           listen-local accept-local connect-local try-connect-local close-local-listener!
-          call-with-connection-deadline
+          call-with-connection-deadline unresponsive?
           connection-input connection-output connection-alive? close-connection! watch-daemon-signals!
           open-process write-process! process-input process-result close-process!
           (rename (poll-process! process-status) (command-process-pid process-pid))
           release-process! signal-process!
           ensure-private-directory! acquire-file-lock release-file-lock!
           remove-stale-socket! call-with-private-output-file redirect-daemon-ports!
-          process-identity remove-session!
+          process-identity process-exited? remove-session! write-session! archive-session!
+          call-with-private-input-file durability-uncertain? call-with-verified-base
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
           terminal-process-pid resize-terminal-process!
@@ -487,32 +488,97 @@
                 (private-info! path info #o140000)
                 (delete-file path))]))
 
-  (define (remove-session! directory)
-    ;; Open and validate the containing directory before unlink. Its fsync
-    ;; is the durable boundary; close is never a substitute for that sync.
-    (let* ([path (string-append directory "/session")]
-           [fd (descriptor-check 'shutdown directory
-                 (c-open directory (logor (os-case #o200000 #x100000 #x20000)
-                                          (os-case #o400000 #x100 #x100)) 0))]
-           [removed? #f])
+  (define-condition-type &durability-uncertain &error make-durability-uncertain durability-uncertain?)
+
+  (define (call-with-directory-fd directory thunk)
+    (let ([fd (descriptor-check 'session directory
+                (c-open directory (logor (os-case #o200000 #x100000 #x20000)
+                                         (os-case #o400000 #x100 #x100)) 0))])
       (dynamic-wind void
         (lambda ()
           (close-on-exec! fd)
           (private-info! directory (ownership-info fd) #o040000)
-          (cond [(ownership-info path)
-                 => (lambda (info)
-                      (private-info! path info #o100000)
-                      (descriptor-check 'shutdown path
-                        ((foreign-procedure "unlinkat" (int string int) int) fd "session" 0))
-                      (set! removed? #t))])
-          (guard (ex [else
-                      (if removed?
-                          (error 'shutdown "session was removed, but directory sync failed; deletion durability is uncertain"
-                            directory)
-                          (raise ex))])
-            (descriptor-check 'shutdown directory
-              ((foreign-procedure __collect_safe "fsync" (int) int) fd))))
+          (thunk fd))
         (lambda () (c-close fd)))))
+
+  (define (sync-directory! fd directory changed)
+    (guard (ex [else
+                (if changed
+                    (raise (condition (make-durability-uncertain) (make-who-condition 'session)
+                             (make-message-condition (string-append changed "; directory sync failed and durability is uncertain"))
+                             (make-irritants-condition (list directory ex))))
+                    (raise ex))])
+      (descriptor-check 'session directory
+        ((foreign-procedure __collect_safe "fsync" (int) int) fd))))
+
+  (define (remove-session! directory)
+    (call-with-directory-fd directory
+      (lambda (fd)
+        (let* ([path (string-append directory "/session")] [info (ownership-info path)])
+          (when info
+            (private-info! path info #o100000)
+            (descriptor-check 'shutdown path
+              ((foreign-procedure "unlinkat" (int string int) int) fd "session" 0)))
+          (sync-directory! fd directory (and info "session was removed"))))))
+
+  (define (write-session! directory write!)
+    (call-with-directory-fd directory
+      (lambda (fd)
+        (let ([path (string-append directory "/session")]
+              [temporary (string-append directory "/session.tmp")]
+              [opened? #f] [renamed? #f])
+          (cond [(ownership-info path) => (lambda (info) (private-info! path info #o100000))])
+          (dynamic-wind void
+            (lambda ()
+              (call-with-private-output-file temporary
+                (lambda (port)
+                  (set! opened? #t)
+                  (write! port)
+                  (flush-output-port port)
+                  (descriptor-check 'session temporary
+                    ((foreign-procedure __collect_safe "fsync" (int) int) (port-file-descriptor port)))))
+              ;; The temporary port has closed successfully before rename.
+              (descriptor-check 'session path
+                ((foreign-procedure "renameat" (int string int string) int) fd "session.tmp" fd "session"))
+              (set! renamed? #t)
+              (sync-directory! fd directory "new session is installed"))
+            (lambda ()
+              (when (and opened? (not renamed?))
+                (guard (ex [else (void)]) (delete-file temporary)))))))))
+
+  (define (archive-session! directory)
+    ;; A genuine no-replace rename preserves earlier recovery evidence.
+    ;; If the OS cannot provide it, startup refuses instead of overwriting.
+    (let ([rename (guard (ex [else (error 'session "atomic recovery-file preservation is unavailable" directory)])
+                    (foreign-procedure (os-case "renameat2" "renameatx_np" "renameat2")
+                      (int string int string unsigned) int))])
+      (call-with-directory-fd directory
+        (lambda (fd)
+          (private-info! directory (ownership-info (string-append directory "/session")) #o100000)
+          (let choose ([suffix 0])
+            (let ([name (if (zero? suffix) "session.incompatible" (format "session.incompatible.~a" suffix))])
+              (if (zero? (rename fd "session" fd name (os-case 1 4 1)))
+                  (begin
+                    (sync-directory! fd directory (string-append "saved session was preserved at " name))
+                    (string-append directory "/" name))
+                  (let ([code (foreign-ref 'int (c-errno) 0)])
+                    (if (= code 17) (choose (+ suffix 1)) (os-error 'session name code))))))))))
+
+  (define (call-with-private-input-file path read!)
+    ;; Return #f only for absence. Type, ownership, permission and read
+    ;; errors remain startup errors, never evidence of malformed data.
+    (let ([fd (c-open path (logor (os-case #o400000 #x100 #x100) (os-case #o4000 #x4 #x4)) 0)])
+      (if (< fd 0)
+          (let ([code (foreign-ref 'int (c-errno) 0)])
+            (if (= code 2) #f (os-error 'session path code)))
+          (let ([port #f])
+            (dynamic-wind void
+              (lambda ()
+                (close-on-exec! fd)
+                (private-info! path (ownership-info fd) #o100000)
+                (set! port (open-fd-input-port fd 'block #f))
+                (read! port))
+              (lambda () (if port (close-port port) (c-close fd))))))))
 
   (define (call-with-private-output-file path procedure)
     (let ([port (open-fd-output-port (private-file-fd path #f) 'block (native-transcoder))])
@@ -535,22 +601,136 @@
           (lambda () (descriptor-check 'base "/dev/null" (c-dup2 fd 0)))
           (lambda () (c-close fd))))))
 
+  (define (process-record pid)
+    (and (eq? os 'linux)
+         (guard (ex [else #f])
+           (let* ([stat (call-with-input-file (format "/proc/~a/stat" pid) get-line)]
+                  [end (let scan ([i (- (string-length stat) 1)])
+                         (cond [(< i 0) (error 'base "invalid process stat")]
+                               [(char=? (string-ref stat i) #\)) i] [else (scan (- i 1))]))]
+                  [in (open-string-input-port (substring stat (+ end 2) (string-length stat)))]
+                  [fields (let read-all ([out '()])
+                            (let ([field (read in)])
+                              (if (eof-object? field) (reverse out) (read-all (cons field out)))))])
+             (cons (list 'linux (call-with-input-file "/proc/sys/kernel/random/boot_id" get-line)
+                     (list-ref fields 19)) (car fields))))))
+
+  (define (process-generation pid)
+    (let ([record (process-record pid)]) (and record (car record))))
+
   (define (process-identity)
     ;; Linux records boot identity and /proc's start ticks, not a reusable
     ;; pid alone. Other systems explicitly lack a verified force target until
     ;; their stable process-reference implementation is added with restart.
-    (list (get-process-id)
-      (and (eq? os 'linux)
-           (guard (ex [else #f])
-             (let* ([stat (call-with-input-file "/proc/self/stat" get-line)]
-                    [end (let scan ([i (- (string-length stat) 1)])
-                           (if (char=? (string-ref stat i) #\)) i (scan (- i 1))))]
-                    [in (open-string-input-port (substring stat (+ end 2) (string-length stat)))]
-                    [fields (let read-all ([out '()])
-                              (let ([field (read in)])
-                                (if (eof-object? field) (reverse out) (read-all (cons field out)))))])
-               (list 'linux (call-with-input-file "/proc/sys/kernel/random/boot_id" get-line)
-                     (list-ref fields 19)))))))
+    (list (get-process-id) (process-generation (get-process-id))))
+
+  (define (process-exited? identity)
+    ;; Read-only waiting for an announced stop. A reused pid is already a
+    ;; different instance; platforms without generation data may time out
+    ;; conservatively. Forced signals instead require the pidfd proof below.
+    (let ([pid (car identity)])
+      (if (zero? (c-kill pid 0))
+          (and (cadr identity)
+               (let ([current (process-record pid)])
+                 (and current (or (eq? (cdr current) 'Z) (eq? (cdr current) 'X)
+                                  (not (equal? (car current) (cadr identity)))))))
+          (let ([code (foreign-ref 'int (c-errno) 0)])
+            (if (= code 3) #t (os-error 'restart pid code))))))
+
+  (define (split-fields text separator?)
+    (let loop ([start 0] [end 0] [out '()])
+      (cond [(= end (string-length text))
+             (reverse (if (= start end) out (cons (substring text start end) out)))]
+            [(separator? (string-ref text end))
+             (loop (+ end 1) (+ end 1) (if (= start end) out (cons (substring text start end) out)))]
+            [else (loop start (+ end 1) out)])))
+
+  (define (lock-identity fd)
+    (let ([out (make-bytevector 256 0)] [path #vu8(0)])
+      (dynamic-wind (lambda () (lock-object path) (lock-object out))
+        (lambda ()
+          (descriptor-check 'restart fd (c-statx fd path #x1000 #x100 out))
+          (unless (logtest #x100 (bytevector-u32-native-ref out 0))
+            (error 'restart "filesystem did not identify the ownership lock"))
+          (list (bytevector-u32-native-ref out 136) (bytevector-u32-native-ref out 140)
+            (bytevector-u64-native-ref out 32)))
+        (lambda () (unlock-object out) (unlock-object path)))))
+
+  (define (holds-lock? pid identity)
+    (call-with-input-file "/proc/locks"
+      (lambda (port)
+        (let scan ()
+          (let ([line (get-line port)])
+            (and (not (eof-object? line))
+                 (let ([fields (split-fields line char-whitespace?)])
+                   (or (and (= (length fields) 8)
+                            (equal? (list-head (cdr fields) 3) '("FLOCK" "ADVISORY" "WRITE"))
+                            (equal? (string->number (list-ref fields 4)) pid)
+                            (let ([device (split-fields (list-ref fields 5) (lambda (c) (char=? c #\:)))])
+                              (and (= (length device) 3)
+                                   (equal? (map string->number device '(16 16 10)) identity))))
+                       (scan)))))))))
+
+  (define (call-with-verified-base directory thunk)
+    ;; Keep a pidfd, not a numeric pid, from proof through both signals.
+    ;; /proc/locks ties the record to this actual flock inode and holder;
+    ;; process generation and a live pidfd exclude a recycled process id.
+    (let ([lock (private-file-fd (string-append directory "/lock") #f)])
+      (dynamic-wind void
+        (lambda ()
+          (if (zero? (c-flock lock 6)) #f
+              (begin
+                (unless (= (foreign-ref 'int (c-errno) 0) (os-case 11 35 35))
+                  (os-error 'restart directory (foreign-ref 'int (c-errno) 0)))
+                (unless (and (eq? os 'linux) c-statx)
+                  (error 'restart "cannot verify a force target on this OS; manual recovery is required"))
+                (let* ([record (call-with-private-input-file (string-append directory "/pid")
+                                 (lambda (port)
+                                   (let* ([bytes (get-bytevector-all port)]
+                                          [in (open-bytevector-input-port (if (eof-object? bytes) #vu8() bytes) (native-transcoder))]
+                                          [value (read in)])
+                                     (and (eof-object? (read in)) value))))]
+                       [pid (and (list? record) (= (length record) 3) (eq? (car record) 'base) (cadr record))]
+                       [open (guard (ex [else (error 'restart "pidfd support is unavailable; manual recovery is required")])
+                               (foreign-procedure "pidfd_open" (int unsigned) int))]
+                       [send (guard (ex [else (error 'restart "pidfd signals are unavailable; manual recovery is required")])
+                               (foreign-procedure "pidfd_send_signal" (int int uptr unsigned) int))])
+                  (unless (and (integer? pid) (exact? pid) (> pid 0) (caddr record))
+                    (error 'restart "incomplete base identity; manual recovery is required"))
+                  (let ([fd (descriptor-check 'restart directory (open pid 0))] [pollfd (foreign-alloc 8)])
+                    (dynamic-wind void
+                      (lambda ()
+                        (define (wait! deadline)
+                          (let loop ()
+                            (foreign-set! 'int pollfd 0 fd)
+                            (foreign-set! 'short pollfd 4 1)
+                            (foreign-set! 'short pollfd 6 0)
+                            (let* ([remaining (time-difference deadline (current-time 'time-monotonic))]
+                                   [ms (max 0 (min 50 (+ (* (time-second remaining) 1000)
+                                                        (div (time-nanosecond remaining) 1000000))))]
+                                   [result (c-poll pollfd 1 ms)])
+                              (when (and (< result 0) (not (= (foreign-ref 'int (c-errno) 0) 4)))
+                                (os-error 'restart directory (foreign-ref 'int (c-errno) 0)))
+                              (cond [(logtest #x20 (foreign-ref 'short pollfd 6)) (error 'restart "lost process reference")]
+                                    [(logtest #x11 (foreign-ref 'short pollfd 6)) #t]
+                                    [(time>=? (current-time 'time-monotonic) deadline) #f]
+                                    [else (loop)]))))
+                        (unless (and (equal? (process-generation pid) (caddr record))
+                                     (holds-lock? pid (lock-identity lock))
+                                     (not (wait! (current-time 'time-monotonic))))
+                          (error 'restart "base identity does not match the live ownership lock; manual recovery is required"))
+                        (thunk
+                          (lambda (signal)
+                            (let ([result (send fd signal 0 0)])
+                              (when (and (< result 0) (not (= (foreign-ref 'int (c-errno) 0) 3)))
+                                (os-error 'restart directory (foreign-ref 'int (c-errno) 0)))))
+                          wait!))
+                      (lambda () (c-close fd) (foreign-free pollfd))))))))
+        (lambda () (c-close lock)))))
+
+  (define-condition-type &unresponsive &error make-unresponsive unresponsive?)
+  (define (unresponsive! message)
+    (raise (condition (make-unresponsive) (make-who-condition 'e) (make-message-condition message))))
 
   (define-record-type local-listener
     (fields fd path lock (mutable closed)))
@@ -643,7 +823,7 @@
       (lambda (address size)
         (let again ()
           (when (time>=? (current-time 'time-monotonic) deadline)
-            (error 'e "the base is unresponsive (connection timed out)" path))
+            (unresponsive! "the base is unresponsive (connection timed out)"))
           (let* ([fd (socket-check 'connect-local (c-socket 1 1 0))]
                  [result
                   (guard (ex [else (c-close fd) (raise ex)])
@@ -663,7 +843,7 @@
                                          (let* ([remaining (time-difference deadline (current-time 'time-monotonic))]
                                                 [ms (+ (* (time-second remaining) 1000)
                                                        (div (time-nanosecond remaining) 1000000))])
-                                           (when (<= ms 0) (error 'e "the base is unresponsive (connection timed out)" path))
+                                           (when (<= ms 0) (unresponsive! "the base is unresponsive (connection timed out)"))
                                            (when (<= (c-poll pollfd 1 (min ms 50)) 0) (wait))))
                                        (let ([error (make-bytevector 4)] [size (make-bytevector 4)])
                                          (bytevector-u32-native-set! size 0 4)
@@ -707,13 +887,13 @@
                                (condition-wait ready lock (time-difference deadline now))
                                (wait)]))))
                   (close-connection! connection))))])
-      (guard (ex [expired? (error 'e "the base is unresponsive (hello timed out)")]
+      (guard (ex [expired? (unresponsive! "the base is unresponsive (exchange timed out)")]
                  [else (raise ex)])
         (dynamic-wind void thunk
           (lambda ()
             (with-mutex lock (set! finished? #t) (condition-signal ready))
             (thread-join watchdog)
-            (when expired? (error 'e "the base is unresponsive (hello timed out)")))))))
+            (when expired? (unresponsive! "the base is unresponsive (exchange timed out)")))))))
 
   (define (close-connection! connection)
     (with-mutex (connection-lock connection)

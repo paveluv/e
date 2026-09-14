@@ -1350,6 +1350,39 @@
      (check 'splice-whole-buffer (spliced 0 3 '("Z")) '("Z"))
      (check 'splice-empty-buffer (spliced 0 3 '()) '(""))
 
+     ;; Saved data is untrusted input, but gaps and old revisions are valid.
+     (let ([state '(2 8 "saved" #("text") ((file . "/tmp/file") (base . "disk\n") (stamp 10 . 999999999)
+                                           (trailing . #t) (mode . "scheme") (read-only . #f) (modified-at . 123)))])
+       (check 'saved-store-validation
+         (map (lambda (entry) (apply store:valid-import? entry))
+           (list (list 20 (list state)) '(1 ()) (list 2 (list state)) (list 0 '())
+             (list 20 (list state state))
+             (list 20 (list state (cons 3 (cdr state))))
+             '(20 ((2 -1 "saved" #("text") ())))
+             '(20 ((2 1.0 "saved" #("text") ())))
+             '(20 ((2 8 "" #("text") ())))
+             '(20 ((2 8 "saved" #() ())))
+             '(20 ((2 8 "saved" #("two\nlines") ())))
+             '(20 ((2 8 "saved" #("text") ((modified . #t)))) )
+             '(20 ((2 8 "saved" #("text") ((read-only . yes)))) )
+             '(20 ((2 8 "saved" #("text") ((stamp 10 . 1000000000)))))
+             '(20 ((2 8 "saved" #("text") ((file . "/a") (file . "/b")))))))
+         (append '(#t #t) (make-list 13 #f))))
+     (let* ([id (store:create! alice "persistent" '("kept") '((trailing . #t) (mode . "scheme") (transient . ignored)))]
+            [omitted (store:create! alice "generated" '("not kept") '((disposable . #t)))]
+            [gap (store:create! alice "gone" '(""))])
+       (store:delete! alice gap)
+       (let-values ([(next-id states) (store:export)])
+         (let ([saved (assv id states)] [before (call-with-values (lambda () (store:snapshot-state id)) list)])
+           (check 'export-preserves-identities-without-runtime-facts
+             (list (> next-id gap) (cadr saved) (list-ref saved 3) (assv omitted states)
+                   (assq 'transient (list-ref saved 4)) (assq 'modified (list-ref saved 4))
+                   (cdr (assq 'modified-at (list-ref saved 4))))
+             (list #t (store:revision id) '#("kept") #f #f #f (store:property id 'modified-at)))
+           (check 'import-never-overlays-a-running-store
+             (list (test:raises? (lambda () (store:import! next-id (list saved))))
+                   (equal? before (call-with-values (lambda () (store:snapshot-state id)) list))) '(#t #t)))))
+
      ;; A base lifetime review uses store truth, independent of audiences.
      ;; The acceptance closure owns its preconditions, and all writers share
      ;; the final lifetime guard. Keep this last: closing is irreversible.

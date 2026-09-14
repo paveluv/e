@@ -108,6 +108,9 @@ Shared unsaved text and terminal processes stay in the running daemon.
 `M-x (main:shutdown!!)` also reviews that shared work and the base's live
 processes before stopping it. With `(main:shutdown-on-exit #t)`, quitting
 the last head enters this review; cancelling keeps the head open.
+`e --restart` instead saves shared text and named views before stopping. IDs,
+revisions and modification times survive, while undo history and local draft
+text do not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 
 ## File buffers
 

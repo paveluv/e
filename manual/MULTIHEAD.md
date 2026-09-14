@@ -19,7 +19,7 @@ Everyone who acts on shared state is an **actor** with an identity such as
 `(head "desk")`, `(agent "helper")`, `(app terminal)` or `(base e)`. Edits,
 log records, questions and undo history carry the actor that made them.
 
-## Running a daemon and attaching
+## The base and its heads
 
 Run e on the host where the files live. This command starts the base when
 necessary, then attaches a screen; repeat it after each SSH login:
@@ -29,7 +29,7 @@ necessary, then attaches a screen; repeat it after each SSH login:
 ```
 
 The base owns `.base/` beside the loader: its `socket`, lifetime `lock`,
-process identity record `pid`, and daily diagnostics in `log/YYYY-MM-DD.log`.
+process identity record `pid`, recovery snapshot `session`, and daily diagnostics in `log/YYYY-MM-DD.log`.
 The directory is private (mode 700), and its runtime files are mode 600.
 Logs older than fourteen days are removed at daily rotation. Use
 `--base-working-dir DIR` on each invocation to select an independent base;
@@ -50,11 +50,10 @@ minutes, with a message after two seconds; a silent hello times out after ten
 seconds. Permission failures and foreign files are reported without removing
 them. A timeout does not kill or replace the existing base.
 
-SIGHUP leaves the base running. SIGTERM or SIGINT stops it and its terminal
-processes. State currently lasts only for the base's lifetime: stopping it
-does not save a session to disk. Session saving and `--restart` are being
-implemented in later slices. The current wire protocol
-is version 3; save your work and stop the old base before changing builds.
+SIGHUP leaves the base running. SIGTERM or SIGINT pauses and saves the shared
+session before stopping the base and its terminal processes. A failed save
+resumes service and reports the error to attached heads and the diagnostic
+log. Further signals during the save coalesce with that operation.
 
 `C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
 stay alive; local unsaved text still requires confirmation. After restoring
@@ -96,8 +95,8 @@ Existing registered tools reopen by identity. A missing or hidden source, or a
 local view without a restore provider, uses the startup buffer in that window.
 Arbitrary local buffer text and query settings of tools without a restore
 provider are not saved. Very
-small terminals use the editor's usual layout fitting. Checkpoints last only
-while the daemon runs. Questions first asked while a known named head is
+small terminals use the editor's usual layout fitting. Named checkpoints also
+survive saved-session recovery. Questions first asked while a known named head is
 offline wait for its next attachment; press `C-c a` to answer. An agent's
 disconnect withdraws its own unanswered questions.
 
@@ -111,6 +110,64 @@ and exits nonzero. A local protocol/inbox error retains its specific diagnostic.
 The base reads `base-config.e` and a head reads `config.e`; the daemon never
 evaluates head configuration and an attached head never evaluates base
 configuration. See [the configuration file](CONFIGURATION.md#configuration-file).
+
+## Restart and recovery
+
+Run `./e --restart [--name NAME] [file]` to save shared work, stop the base,
+start its replacement and attach. Before opening a screen it lists what will
+be lost and asks `[y/N]` if heads, terminal processes, agent sessions or
+pending interactions are live. `n` or EOF cancels. It can use a name that is
+still attached: the maintenance connection does not claim that screen.
+New live work during the question requires a fresh review. Ordinary shared
+edits continue and the save captures their latest accepted state. With no
+live work the omission notice remains, but no question is needed.
+
+The snapshot keeps shared text, names, buffer IDs and revisions, file
+baselines and modification times, and named screen checkpoints. Generated
+tool buffers are omitted. Live and ended terminal buffers become ordinary
+read-only text containing their last published output; shells and other
+processes are not restarted. Undo/redo history, old deltas and blame, the
+structured log, local draft text and pending interactions are not saved.
+Older checkpoints without an edit chain clamp their positions to restored text.
+
+Saving replaces `.base/session` only after the new file is written, flushed
+and synced, then syncs the directory. A failure resumes the existing base.
+If replacement happened but directory sync failed, the error says the new
+session is installed with uncertain durability. The file is retained.
+An interrupted restart whose outcome is unknown is reported without replay
+or automatic escalation; inspect the base before retrying.
+
+The next base restores before configuration creates buffers or starts work.
+It retains the snapshot until a later save replaces it or reviewed shutdown
+deletes it. This is recovery from the last stop-time snapshot, not continuous
+autosave. The first attached screen prints the snapshot's age before entering
+the terminal screen, including when it resumes a named layout.
+`M-x (client:request 'status)` reports `saved-at` and `restored-at` (UTC
+nanoseconds or `#f`, for the current snapshot and the one imported at startup),
+`session-uncertain?`, and `recovery-archives`, alongside the live counts and phase.
+
+An unreadable file or failed import stops startup and preserves recovery
+evidence. A successfully read but malformed or unsupported snapshot is moved
+without overwriting to `session.incompatible`, then `.1`, `.2`, and so on.
+Only durable preservation permits an empty start. The first head prints the
+archive paths; later starts rediscover them. Saving, shutdown and log rotation
+never delete these archives. If the OS cannot perform the required no-replace
+rename, startup refuses and leaves the session for manual recovery.
+
+`--restart --force` is for an unresponsive base. It never bypasses a live
+review or turns a reported save error into a kill. On Linux it verifies the
+recorded process generation against the actual ownership-lock holder, then
+keeps a pidfd through SIGTERM, a ten-second wait and, if needed, SIGKILL of
+that same instance. It warns that newer work is lost. Unverifiable identity
+or missing OS support refuses with a manual-recovery diagnostic. Darwin and
+FreeBSD currently require manual recovery for an unresponsive base.
+An ordinary launcher never signals another base.
+
+Normal wire version is 4; the maintenance exchange has independent version 1
+and remains available across normal protocol changes. Bases from before this
+slice cannot save sessions. For that first upgrade, save files and export any
+other wanted text before manually stopping the older base; `--force` does not
+bypass an explicit unsupported-maintenance reply.
 
 ## What is shared and what is local
 

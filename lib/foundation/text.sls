@@ -20,7 +20,7 @@
 ;; (text:rebase-position ...).
 
 (library (text)
-  (export normalize from-string to-string content=? splice
+  (export line? normalize from-string to-string content=? splice
           make-span span? span-start span-end
           span->datum datum->span delta->datum datum->delta
           normalize-span span-empty? contains? overlap?

@@ -1,14 +1,41 @@
 ;; daemon.sls -- installation-local process ownership and head bootstrap.
 ;; No store or head state: enter this lifetime before importing either runtime.
 (library (daemon)
-  (export call-with-base call-with-head socket rotate-logs! log-deadline control)
+  (export call-with-base call-with-head socket rotate-logs! log-deadline control
+          call-with-stop take-stop-signal!)
   (import (chezscheme) (prefix (startup) startup:) (prefix (sys) sys:)
-          (prefix (kernel) kernel:) (prefix (string) string:))
+          (prefix (kernel) kernel:) (prefix (string) string:) (prefix (wire) wire:))
 
   (define (socket) (string-append (startup:base-working-directory) "/socket"))
   (define log-day #f)
   (define next-rotation #f)
   (define control (kernel:make-mailbox))
+  (define signal-lock (make-mutex))
+  (define signal-generation 0)
+  (define signal-pending? #f)
+  (define stop-accepted? #f)
+
+  (define (post-stop-signal!)
+    (with-mutex signal-lock
+      (unless (or signal-pending? stop-accepted?)
+        (set! signal-pending? #t)
+        (kernel:mailbox-post! control (cons 'signal signal-generation)))))
+
+  (define (take-stop-signal! message)
+    (with-mutex signal-lock
+      (and (equal? message (cons 'signal signal-generation)) signal-pending?
+           (begin (set! signal-pending? #f) #t))))
+
+  (define (call-with-stop thunk)
+    ;; Acceptance absorbs queued signals too. On failure a later, newly
+    ;; received signal may retry, but a burst never starts a second writer.
+    (dynamic-wind
+      (lambda ()
+        (with-mutex signal-lock
+          (set! stop-accepted? #t) (set! signal-pending? #f)
+          (set! signal-generation (+ signal-generation 1))))
+      thunk
+      (lambda () (with-mutex signal-lock (set! stop-accepted? #f)))))
   (define (log-deadline) next-rotation)
 
   (define (day-name date)
@@ -52,7 +79,7 @@
             (begin (format (current-error-port) "e: a base already owns ~a\n" directory) 3)
             (dynamic-wind void
               (lambda ()
-                (sys:watch-daemon-signals! (lambda () (kernel:mailbox-post! control 'signal)))
+                (sys:watch-daemon-signals! post-stop-signal!)
                 (sys:remove-stale-socket! (socket))
                 ;; The record is diagnostic identity, never ownership proof:
                 ;; only this still-open flock permits endpoint changes.
@@ -84,7 +111,115 @@
                     (if (eof-object? line) (string:join (reverse lines) "\n")
                         (read-tail (cons line (if (>= (length lines) 20) (list-head lines 19) lines))))))))))))
 
-  (define (call-with-head thunk)
+  (define (after seconds)
+    (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 seconds)))
+
+  (define (lock-free? directory)
+    (let ([lock (sys:acquire-file-lock (string-append directory "/lock"))])
+      (and lock (begin (sys:release-file-lock! lock) #t))))
+
+  (define (wait-for-exit! instance deadline)
+    (let wait ()
+      (unless (sys:process-exited? instance)
+        (when (time>=? (current-time 'time-monotonic) deadline)
+          (error 'restart "the stopped base has not exited; inspect its diagnostics before retrying"))
+        (sleep (make-time 'time-duration 50000000 0)) (wait))))
+
+  (define (force-restart! directory)
+    (let ([deadline (after 120)])
+      (sys:call-with-verified-base directory
+        (lambda (signal! wait!)
+          (display "e: the base is unresponsive; sending SIGTERM to the verified instance\n" (current-error-port))
+          (flush-output-port (current-error-port))
+          (signal! 15)
+          (unless (wait! (after 10))
+            (display "e: sending SIGKILL to that same instance; work newer than the last snapshot is lost\n" (current-error-port))
+            (flush-output-port (current-error-port))
+            (signal! 9)
+            (unless (wait! deadline) (error 'restart "the verified base did not exit; manual recovery is required")))))))
+
+  (define-condition-type &unanswered &error make-unanswered unanswered?)
+
+  (define (restart! directory)
+    (let ([connection #f] [token #f] [accepting? #f] [serial 0] [instance #f])
+      (define (read!)
+        (let ([message (wire:receive (sys:connection-input connection))])
+          (when (eof-object? message)
+            (raise (condition (make-unanswered) (make-message-condition "the base closed the maintenance connection"))))
+          message))
+      (define (exchange! message seconds)
+        (guard (ex [(i/o-error? ex)
+                    (raise (condition (make-unanswered) (make-message-condition (kernel:condition-text ex))))]
+                   [else (raise ex)])
+          (sys:call-with-connection-deadline connection (after seconds)
+            (lambda () (wire:send! (sys:connection-output connection) message) (read!)))))
+      (define (request! operation . args)
+        (set! serial (+ serial 1))
+        (let ([reply (exchange! (append (list 'request serial operation) args)
+                       (if (eq? operation 'restart) 120 10))])
+          (cond [(equal? reply '(closing restart)) 'stopped]
+                [(and (list? reply) (= (length reply) 4) (eq? (car reply) 'reply) (equal? (cadr reply) serial))
+                 (set! accepting? #f)
+                 (if (eq? (caddr reply) 'ok) (cadddr reply)
+                     (error operation "the base refused the operation" (cadddr reply)))]
+                [else (error 'restart "unexpected maintenance reply; inspect the base before retrying" reply)])))
+      (define (review! review)
+        (unless (and (list? review) (= (length review) 4) (eq? (car review) 'review))
+          (error 'restart "invalid restart review" review))
+        (set! token (cadr review))
+        (let* ([status (cadddr review)]
+               [counts (map (lambda (key)
+                              (let ([entry (assq key status)])
+                                (unless (and entry (integer? (cdr entry)) (exact? (cdr entry)) (>= (cdr entry) 0))
+                                  (error 'restart "invalid maintenance status" status))
+                                (cdr entry))) '(heads terminals agents pending))])
+          (format (current-error-port)
+            "e: restart keeps shared text and named views. Undo/redo history, local drafts and pending interactions are not kept; terminal processes and agent sessions end.\n")
+          (let ([agreed?
+                 (or (for-all zero? counts)
+                     (begin
+                       (apply format (current-error-port)
+                         "The base has ~a head(s), ~a terminal process(es), ~a agent session(s) and ~a pending interaction(s). Restart anyway? [y/N] " counts)
+                       (flush-output-port (current-error-port))
+                       (let ([answer (get-line (current-input-port))])
+                         (and (string? answer) (member (string-downcase answer) '("y" "yes"))))))])
+            (flush-output-port (current-error-port))
+            (and agreed?
+                 (begin
+                   ;; From this write until an explicit reply, transport loss
+                   ;; has an unknown outcome. Neither replay nor force is safe.
+                   (set! accepting? #t)
+                   (let ([result (request! 'restart token)])
+                     (if (eq? result 'stopped)
+                         (begin (set! accepting? #f) (set! token #f) (wait-for-exit! instance (after 120)) #t)
+                         (begin
+                           (display "e: new live work appeared; review the restart again\n" (current-error-port))
+                           (review! result)))))))))
+      (guard (ex [(and (not accepting?) (or (sys:unresponsive? ex) (unanswered? ex)))
+                  (if (startup:force?) (begin (force-restart! directory) #t) (raise ex))]
+                 [accepting? (error 'restart "restart outcome is unknown; inspect the base before retrying" (kernel:condition-text ex))]
+                 [else (raise ex)])
+        (dynamic-wind void
+          (lambda ()
+            (set! connection (sys:try-connect-local (socket) (after 10)))
+            (if (not connection)
+                (begin (when (startup:force?) (force-restart! directory)) #t)
+                (let ([hello (exchange! (list 'maintenance 1 (list 'head (or (startup:name) (startup:default-name)))) 10)])
+                  (unless (and (list? hello) (= (length hello) 3) (equal? (list-head hello 2) '(maintenance 1))
+                               (list? (caddr hello)) (assq 'instance (caddr hello)))
+                    (error 'restart "base refused maintenance" hello))
+                  (set! instance (cdr (assq 'instance (caddr hello))))
+                  (unless (and (list? instance) (= (length instance) 2)
+                               (integer? (car instance)) (exact? (car instance)) (> (car instance) 0))
+                    (error 'restart "invalid base instance" instance))
+                  (review! (request! 'prepare-restart)))))
+          (lambda ()
+            (when connection
+              (unless (or accepting? (not token))
+                (guard (ex [else (void)]) (request! 'cancel-review token)))
+              (sys:close-connection! connection)))))))
+
+  (define (attach-or-start thunk)
     (let* ([directory (startup:base-working-directory)] [child #f]
            [started (current-time 'time-monotonic)]
            [deadline (add-duration started (make-time 'time-duration 0 120))]
@@ -99,17 +234,19 @@
               (if connection
                   (sys:close-connection! connection)
                   (begin
-                    (unless child
+                    (when (and (not child) (lock-free? directory))
                       (set! child (sys:open-process
                                     (list (string-append (kernel:installation-directory) "/e")
                                       "--base" "--base-working-dir" directory)))
                       (sys:write-process! child #f))
-                    (cond [(sys:process-status child)
+                    (cond [(and child (sys:process-status child))
                            => (lambda (status)
                                 (unless (= status 3)
                                   (get-bytevector-all (sys:process-input child))
                                   (let-values ([(code errors) (sys:process-result child)])
-                                    (error 'e "could not start the base" code errors (latest-diagnostics)))))])
+                                    (error 'e "could not start the base" code errors (latest-diagnostics))))
+                                (sys:release-process! child)
+                                (set! child #f))])
                     (when (and (not noticed?) (time>=? (current-time 'time-monotonic) notice-at))
                       (display "e: starting the base ...\n" (current-error-port))
                       (flush-output-port (current-error-port))
@@ -118,4 +255,9 @@
                     (wait)))))
           (thunk))
         (lambda () (when child (sys:release-process! child))))))
+
+  (define (call-with-head thunk)
+    (sys:ensure-private-directory! (startup:base-working-directory))
+    (if (and (startup:restart?) (not (restart! (startup:base-working-directory)))) 0
+        (attach-or-start thunk)))
 )

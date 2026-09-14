@@ -209,8 +209,15 @@
                 ("--base" "--base") ("--base" "--name=desk") ("--base" "notes")
                 ("--base-working-dir") ("--base-working-dir=") ("--base-working-dir" "")
                 ("--base-working-dir=x" "--base-working-dir=y")
-                ("--daemon") ("--attach") ("--socket=x")))
-         (make-list 16 'rejected))
+                ("--daemon") ("--attach") ("--socket=x")
+                ("--force") ("--base" "--restart") ("--restart" "--restart")
+                ("--restart" "--force" "--force")))
+         (make-list 20 'rejected))
+       (test:check 'restart-is-a-pre-attachment-option
+         (list (startup:call-with-options '("--force" "--restart" "--name=desk" "notes")
+                 (lambda () (list (startup:mode) (startup:restart?) (startup:force?) (startup:name))))
+               (startup:restart?) (startup:force?))
+         '((head #t #t "desk") #f #f))
        (test:check 'base-options-are-scoped-and-own-the-directory
          (let ([path (string-copy "/tmp/base λ")])
            (list

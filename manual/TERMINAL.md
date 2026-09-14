@@ -115,6 +115,11 @@ of several windows displaying it does not. Stopping
 the daemon terminates every live terminal process, including terminals whose
 buffers are not currently shown. Quitting an attached head only detaches that
 screen; the daemon's terminals keep running.
+On a successful restart or SIGTERM/SIGINT stop, the last published terminal
+text is saved as an ordinary read-only buffer. Processes, emulator state and
+terminal colors are not restored. Output arriving during the save or process
+termination may be absent. A failed save leaves the same terminal process
+running and publication resumes.
 
 With partial capture:
 

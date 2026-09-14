@@ -46,6 +46,7 @@
      (define automatic-control (string-append root "/automatic-control"))
      (define sync-failure (string-append root "/fail-session-sync"))
      (define sync-held (string-append root "/session-sync-held"))
+     (define lost-closing (string-append root "/lose-closing"))
      (define (quote-shell text)
        (string-append "'" (apply string-append
                             (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
@@ -77,6 +78,10 @@
              (call-with-values (lambda () (sys:process-result process)) list))
            (lambda () (sys:close-process! process)))))
      (define (base-exit directory) (loader-exit (list "--base" "--base-working-dir" directory)))
+     (define (fresh-session!)
+       ;; Only between unrelated, fully stopped fixture scenarios.
+       (let ([path (string-append base-directory "/session")])
+         (when (file-exists? path) (delete-file path))))
      (for-each (lambda (path) (mkdir path #o700)) (list root sources objects))
      (copy-text "e" (string-append root "/e"))
      (chmod (string-append root "/e") (get-mode "e"))
@@ -100,8 +105,22 @@
                                 (when (file-exists? ~s)
                                   (when (zero? left) (error 'fixture \"sync hold timed out\"))
                                   (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))
-                            (if (string=? mode \"hold\") (sync) -1))))"
+                            (if (string=? mode \"hold\") (sync)
+                                (begin
+                                  (when (string=? mode \"hold-fail-log\") (close-port (current-error-port)))
+                                  -1)))))"
              call sync-failure sync-failure sync-held sync-failure)
+           (substring text (+ at (string-length call)) (string-length text)))))
+     ;; Lose an accepted restart's response in the private transport copy;
+     ;; the real durable save/stop still runs and must never be replayed.
+     (let* ([path (string-append sources "/base/run/base.sls")]
+            [text (call-with-input-file path get-string-all)]
+            [call "(wire:send! (sys:connection-output connection) (list 'closing reason))"]
+            [at (string:search text call 0 (string-length text))])
+       (unless at (error 'wire-test "closing send not found"))
+       (write-text path
+         (string-append (substring text 0 at)
+           (format "(if (file-exists? ~s) (sys:close-connection! connection) ~a)" lost-closing call)
            (substring text (+ at (string-length call)) (string-length text)))))
      (write-text (string-append root "/config.e") "(error 'head-config \"daemon loaded head config\")\n")
      (write-forms (string-append root "/base-config.e")
@@ -274,21 +293,29 @@
        (cadddr reply))
      (define (rpc connection operation . args)
        (reply-value (exchange connection (append (list 'request 7 operation) args))))
+     (define (reject connection operation . args)
+       (let ([reply (exchange connection (append (list 'request 7 operation) args))])
+         (and (eq? (caddr reply) 'error) (cadddr reply))))
+     (define (cancel connection review) (rpc connection 'cancel-review (cadr review)))
+     (define (terminal connection)
+       (rpc connection 'vt-open "printf ready; while read value; do printf '<%s>' \"$value\"; done"
+         root 3 32 'dark))
      (define (inventory connection)
        (cdr (assq 'sessions (caddr (rpc connection 'snapshot 1)))))
 
      ;; Drive the real editor in the daemon's installation. All heads use
      ;; the same object cache, which also exercises repeated client loading.
      (define probe (string-append root "/head-result"))
-     (define (start-head name . width)
-       (let* ([columns (if (pair? width) (car width) 80)]
-              [process (sys:spawn-terminal-process "/bin/sh"
-                         (fixture:command test-base "--name" name)
+     (define (start-command args columns)
+       (let* ([process (sys:spawn-terminal-process "/bin/sh"
+                         (apply fixture:command test-base args)
                          root 24 columns)]
               [head (vector process
                       (transcoded-port (sys:terminal-process-input process) (make-transcoder (utf-8-codec) 'none 'replace))
                       (vt:make-emulator 24 columns) "")])
          (set! heads (cons head heads)) head))
+     (define (start-head name . width)
+       (start-command (list "--name" name) (if (pair? width) (car width) 80)))
      (define (pump-head! head)
        (let drain ()
          (when (guard (ex [else #f]) (char-ready? (vector-ref head 1)))
@@ -305,14 +332,14 @@
      (define (head-send! head text)
        (put-bytevector (sys:terminal-process-output (vector-ref head 0)) (string->utf8 text))
        (flush-output-port (sys:terminal-process-output (vector-ref head 0))))
-     (define (head-wait label head predicate)
+     (define (head-wait label head predicate . seconds)
        (guard (ex [else (error 'wire-head (format "~a" label)
                           (kernel:condition-text ex)
                           (vector->list (vt:emulator-screen (vector-ref head 2)))
                           (let ([text (vector-ref head 3)])
                             (string:tail text (max 0 (- (string-length text) 1200)))))])
          ;; Every live PTY needs a reader, even while another head is active.
-         (test:await label (lambda () (for-each pump-head! heads) (predicate)))))
+         (apply test:await label (lambda () (for-each pump-head! heads) (predicate)) seconds)))
      (define (head-read head expression . prefix)
        (when (file-exists? probe) (delete-file probe))
        (head-send! head (format "~a\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
@@ -364,6 +391,7 @@
          lines changes))
 
      (define (shutdown-scenarios!)
+       (fresh-session!)
        (let ([held (string-append root "/pause-held")]
              [release (string-append root "/pause-release")]
              [session (string-append base-directory "/session")]
@@ -395,13 +423,6 @@
              (set! test-base base)
              (let ([a (connect)] [b (connect)] [restricted (connect)] [agent (connect)])
                (define (phase) (cdr (assq 'phase (rpc agent 'status))))
-               (define (reject connection operation . args)
-                 (let ([reply (exchange connection (append (list 'request 7 operation) args))])
-                   (and (eq? (caddr reply) 'error) (cadddr reply))))
-               (define (cancel connection review) (rpc connection 'cancel-review (cadr review)))
-               (define (terminal connection)
-                 (rpc connection 'vt-open "printf ready; while read value; do printf '<%s>' \"$value\"; done"
-                   root 3 32 'dark))
                (for-each (lambda (connection who) (hello connection who))
                  (list a b restricted agent)
                  '((head "shutdown A") (head "shutdown B") (head "restricted") (agent "observer")))
@@ -618,6 +639,479 @@
                                (car (hello next '(head "after failed durable step"))) 'hello)
                              (sys:close-connection! next)))))))))
          '(clean accepted failed)))
+
+     (define (session-scenarios!)
+       (fresh-session!)
+       (let ([path (string-append base-directory "/session")]
+             [temporary (string-append base-directory "/session.tmp")]
+             [disk (string-append root "/persistent-file")]
+             [initialized (string-append root "/restored-before-config")]
+             [saved #f] [note #f] [file #f] [term #f] [ended #f] [omitted #f] [gap #f]
+             [checkpoint #f] [expected #f])
+         (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
+         (write-forms (string-append root "/base-config.e")
+           `((vt:shell "/bin/sh")
+             (define default-policy (base:connection-policy))
+             (base:connection-policy
+               (lambda (who) (if (equal? who '(head "restricted")) (policy:reader) (default-policy who))))
+             (define replacement #f)
+             (actor:register! '(base session-fixture)
+               (lambda (message)
+                 (when replacement (policy:revoke! replacement))
+                 (set! replacement (policy:mint! '(agent "replacement") (policy:reader)))))
+             (call-with-output-file ,initialized
+               (lambda (port)
+                 (write (list (store:buffer-list)
+                          (store:create! '(base e) "configured" '("") '((disposable . #t)))) port)) 'replace)))
+         (fixture:call-with-base root base-directory
+           (lambda (base)
+             (set! test-base base)
+             (let ([head (connect)] [control (connect)] [agent (connect)])
+               (hello head '(head "kept desk"))
+               (hello agent '(agent "pending actor"))
+               (test:check 'maintenance-neither-claims-names-nor-adds-participants
+                 (let ([hello (exchange control '(maintenance 1 (head "kept desk")))])
+                   (list (list-head hello 2) (cdr (assq 'heads (caddr hello)))
+                         (length (rpc head 'actors)) (length (rpc head 'sessions))))
+                 '((maintenance 1) 1 3 2))
+               (test:check 'maintenance-permission-and-operation-boundaries
+                 (list (map (lambda (identity)
+                              (let ([connection (connect)])
+                                (car (exchange connection (list 'maintenance 1 identity)))))
+                         '((agent "refused") (head "restricted")))
+                       (and (reject control 'create "forbidden" '("")) #t)
+                       (and (reject head 'prepare-restart) #t))
+                 '((error error) #t #t))
+               (set! note (rpc head 'create "persistent notes" '("initial")))
+               (write-text disk "disk baseline\n")
+               (set! file (rpc head 'create "persistent file" '("disk baseline")
+                            `((file . ,disk) (base . "disk baseline\n") (stamp 10 . 9) (trailing . #t) (mode . "scheme"))))
+               (set! omitted (rpc head 'create "generated result" '("temporary") '((disposable . #t))))
+               (set! term (terminal head))
+               (set! ended (terminal head))
+               (rpc head 'vt-close ended)
+               (test:await 'ended-source-ready
+                 (lambda () (not (cdr (assq 'alive (caddr (rpc head 'snapshot ended)))))))
+               (set! gap (rpc head 'create "deleted before save" '("")))
+               (rpc head 'delete gap)
+               (let ([review (rpc control 'prepare-restart)] [extra (connect)])
+                 (test:check 'restart-review-refuses-new-screen-admission
+                   (hello extra '(head "new participant")) '(error #f (busy reviewing)))
+                 (cancel control review))
+               (rpc head 'send '(base session-fixture) 'replace)
+               (for-each
+                 (lambda (kind)
+                   (let ([review (rpc control 'prepare-restart)])
+                     (case kind
+                       [(terminal) (rpc head 'vt-close term) (set! term (terminal head))]
+                       [(agent) (rpc head 'send '(base session-fixture) 'replace)]
+                       [(pending) (rpc agent 'ask '(head "kept desk") "Omitted on restart?" '()) (receive head)])
+                     (let ([next (rpc control 'restart (cadr review))])
+                       (test:check (list 'restart-reviews-new-incarnations kind)
+                         (list (car next) (not (= (cadr next) (cadr review)))
+                               (and (reject control 'cancel-review (cadr review)) #t)
+                               (cdr (assq 'phase (rpc control 'status)))) '(review #t #t reviewing))
+                       (cancel control next)))) '(terminal agent pending))
+               (let ([review (rpc control 'prepare-restart)])
+                 (sys:close-connection! control)
+                 (test:await 'maintenance-disconnect-releases-review
+                   (lambda () (eq? (cdr (assq 'phase (rpc head 'status))) 'running)))
+                 (set! control (connect)) (exchange control '(maintenance 1 (head "kept desk"))))
+               ;; One durable failure table checks both sides of rename and
+               ;; keeps the same live PTY through both failures.
+               (write-forms path '((session 1 7 1 (buffers) (checkpoints)))) (chmod path #o600)
+               (for-each
+                 (lambda (failure)
+                   (let ([previous (call-with-input-file path get-string-all)])
+                     (if (eq? failure 'temporary) (mkdir temporary #o700) (write-text sync-failure "fail"))
+                     (dynamic-wind void
+                       (lambda ()
+                         (let* ([review (rpc control 'prepare-restart)] [error (reject control 'restart (cadr review))]
+                                [status (rpc control 'status)])
+                           (test:check (list 'failed-save-preserves-service failure)
+                             (list (and error #t) (cdr (assq 'phase status))
+                                   (equal? previous (call-with-input-file path get-string-all))
+                                   (cdr (assq 'session-uncertain? status))
+                                   (cdr (assq 'alive (caddr (rpc head 'snapshot term))))
+                                   (if (eq? failure 'sync) (> (occurrences error "new session is installed") 0) #t))
+                             (list #t 'running (eq? failure 'temporary) (eq? failure 'sync) #t #t))))
+                       (lambda ()
+                         (if (eq? failure 'temporary) (delete-directory temporary) (delete-file sync-failure))))))
+                 '(temporary sync))
+               ;; A signal steals a pending review; later signals in the held
+               ;; save coalesce even when that save ultimately fails.
+               (let ([review (rpc control 'prepare-restart)])
+                 (when (file-exists? sync-held) (delete-file sync-held))
+                 (write-text sync-failure "hold-fail-log")
+                 (dynamic-wind void
+                   (lambda ()
+                     (sys:signal-process! (fixture:process base) 15)
+                     (test:await 'signal-save-paused (lambda () (file-exists? sync-held)))
+                     (let ([observer (connect)])
+                       (test:check 'maintenance-status-stays-readable-during-save
+                         (cdr (assq 'phase (caddr (exchange observer '(maintenance 1 (head "save status")))))) 'paused))
+                     (for-each (lambda (signal) (sys:signal-process! (fixture:process base) signal)) '(2 15 2))
+                     (sleep (make-time 'time-duration 30000000 0)))
+                   (lambda () (delete-file sync-failure)))
+                 (test:await 'signal-save-failure-resumes
+                   (lambda () (eq? (cdr (assq 'phase (rpc control 'status))) 'running)))
+                 (test:check 'signal-failure-releases-review-and-reports-durability
+                   (list (and (reject control 'restart (cadr review)) #t)
+                         (> (occurrences (fixture:diagnostics base) "durability is uncertain") 0)
+                         (sys:process-status (fixture:process base))) '(#t #t #f)))
+               (rpc head 'vt-send term "recovered\n" '(3 32) #f #f)
+               (test:await 'terminal-resumes-after-save-failures
+                 (lambda () (exists (lambda (line) (> (occurrences line "<recovered>") 0))
+                              (vector->list (car (rpc head 'snapshot term))))))
+               (let ([review (rpc control 'prepare-restart)])
+                 ;; Shared edits and checkpoint updates during review are
+                 ;; saved at acceptance and do not require another question.
+                 (do ([n 0 (+ n 1)]) ((= n 3))
+                   (rpc head 'edit note (cadr (rpc head 'snapshot note)) '(0 0 0 0) '("latest ")))
+                 (set! checkpoint `(future-view (,note 1) (,gap missing) (,omitted unsupported)))
+                 (rpc head 'checkpoint checkpoint)
+                 (set! expected (rpc head 'snapshot note))
+                 (test:check 'restart-saves-latest-shared-edits-without-reprompt
+                   (exchange control (list 'request 7 'restart (cadr review))) '(closing restart)))
+               (test:await 'saved-base-exits (lambda () (sys:process-status (fixture:process base))))
+               (set! saved (call-with-input-file path read))
+               (test:check 'snapshot-has-private-mode-and-no-temporary-file
+                 (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 1))))))
+         (write-text disk "changed while stopped\n")
+         (let ([base (fixture:start! root base-directory)])
+           (dynamic-wind void
+             (lambda ()
+               (set! test-base base)
+               (let* ([head (connect)] [states (cdr (list-ref saved 4))]
+                      [before (call-with-input-file initialized read)])
+                 (hello head '(head "kept desk"))
+                 (test:check 'restore-precedes-configuration-and-preserves-allocator-gaps
+                   (list (list-sort < (car before)) (cadr before)
+                     (assv omitted states) (assv gap states) (rpc head 'checkpoint))
+                   (list (map car states) (cadddr saved) #f #f checkpoint))
+                 (test:check 'restore-preserves-text-revisions-baselines-and-edit-time
+                   (list (rpc head 'snapshot note)
+                     (let ([facts (caddr (rpc head 'snapshot file))])
+                       (map (lambda (key) (cdr (assq key facts))) '(base stamp modified)))
+                     (rpc head 'history note) (rpc head 'read-marks note))
+                   (list expected '("disk baseline\n" (10 . 9) #f) '() '()))
+                 (test:check 'live-and-ended-terminals-restore-as-ordinary-read-only-transcripts
+                   (map (lambda (id)
+                          (let ([facts (caddr (rpc head 'snapshot id))])
+                            (list (car (rpc head 'snapshot id)) (cdr (assq 'read-only facts))
+                              (filter (lambda (entry) (memq (car entry) '(app mode alive disposable))) facts))))
+                     (list term ended))
+                   (map (lambda (id) (list (list-ref (assv id states) 3) #t '())) (list term ended)))
+                 (let* ([revision (cadr expected)] [notice (rpc head 'startup-notice)])
+                   (rpc head 'edit note revision '(0 0 0 0) '("new base "))
+                   (test:check 'restored-revisions-cannot-reuse-unrelated-deltas
+                     (list (cadddr (rpc head 'snapshot note (- revision 1)))
+                       (length (cadddr (rpc head 'snapshot note revision)))
+                       (> (occurrences notice "restored a session saved") 0)
+                       (rpc head 'startup-notice) (cdr (assq 'saved-at (rpc head 'status)))
+                       (equal? saved (call-with-input-file path read)))
+                     (list #f 1 #t #f (caddr saved) #t)))
+                 (test:check 'restore-does-not-overwrite-externally-changed-file
+                   (call-with-input-file disk get-string-all) "changed while stopped\n")
+                 ;; A crash after import leaves the previous snapshot intact.
+                 (sys:signal-process! (fixture:process base) 9)
+                 (test:await 'crash-after-import (lambda () (sys:process-status (fixture:process base))))
+                 (test:check 'crash-keeps-last-recovery-snapshot (call-with-input-file path read) saved)))
+             (lambda () (sys:close-process! (fixture:process base)))))
+         (fixture:call-with-base root base-directory
+           (lambda (base)
+             (set! test-base base)
+             (let ([head (connect)])
+               (hello head '(head "kept desk"))
+               (test:check 'crash-recovery-restores-the-last-snapshot-again (rpc head 'snapshot note) expected)
+               (let ([review (rpc head 'prepare-close)])
+                 (test:check 'reviewed-shutdown-discards-the-recovery-snapshot
+                   (list (exchange head (list 'request 7 'shutdown (cadr review))) (file-exists? path))
+                   '((closing shutdown) #f))))))))
+
+     (define (recovery-scenarios!)
+       (fresh-session!)
+       (let* ([path (string-append base-directory "/session")]
+              [initialized (string-append root "/recovery-initialized")]
+              [bad '("" "(" "#0=(a . #0#)" "(session 99 0 1 (buffers) (checkpoints))"
+                     "(session 1 0 1 (buffers) (checkpoints)) extra"
+                     "(session 1 0 3 (buffers (1 7 \"valid first\" #(\"text\") ()) (1 0 \"duplicate id\" #(\"\") ())) (checkpoints))"
+                     "(session 1 0 1 (buffers) (checkpoints (\"desk\" opaque) (\"desk\" another)))")]
+              [retained '()])
+         (define (archive-paths)
+           (map (lambda (name) (string-append base-directory "/" name))
+             (list-sort string<? (filter (lambda (name) (string:prefix? "session.incompatible" name))
+                                   (directory-list base-directory)))))
+         (define (stop-reviewed head)
+           (let ([review (rpc head 'prepare-close)])
+             (exchange head (list 'request 7 'shutdown (cadr review)))))
+         (write-forms (string-append root "/base-config.e")
+           `((call-with-output-file ,initialized (lambda (port) (write (store:buffer-list) port)) 'replace)))
+         (for-each
+           (lambda (text)
+             (write-text path text) (chmod path #o600)
+             (fixture:call-with-base root base-directory
+               (lambda (base)
+                 (set! test-base base)
+                 (let* ([head (connect)] [paths (archive-paths)])
+                   (hello head '(head "recovery"))
+                   (set! retained (append retained (list (if (string=? text "") (eof-object) text))))
+                   (test:check (list 'invalid-snapshot-is-preserved-before-empty-start (length retained))
+                     (list (rpc head 'buffers) (call-with-input-file initialized read)
+                           (map (lambda (path) (call-with-input-file path get-string-all)) paths)
+                           (cdr (assq 'recovery-archives (rpc head 'status)))
+                           (> (occurrences (rpc head 'startup-notice) (car (last-pair paths))) 0)
+                           (file-exists? path))
+                     (list '() '() retained paths #t #f))
+                   (stop-reviewed head))))) bad)
+         ;; Successfully read bad data may be archived. An unreadable file,
+         ;; unsafe permissions or later configuration failure must stay put.
+         (write-forms path '((session 1 0 1 (buffers) (checkpoints))))
+         (let ([original (call-with-input-file path get-string-all)] [paths (archive-paths)])
+           (test:check 'read-and-startup-errors-preserve-session-evidence
+             (map (lambda (mode)
+                    (when (file-exists? initialized) (delete-file initialized))
+                    (chmod path mode)
+                    (let ([code (car (base-exit base-directory))])
+                      (chmod path #o600)
+                      (list code (call-with-input-file path get-string-all)
+                            (archive-paths) (file-exists? initialized)))) '(0 #o644))
+             (make-list 2 (list 1 original paths #f)))
+           (write-forms (string-append root "/base-config.e") '((error 'fixture "failed after import")))
+           (test:check 'failed-start-after-import-keeps-the-snapshot
+             (list (car (base-exit base-directory)) (call-with-input-file path get-string-all) (archive-paths))
+             (list 1 original paths)))
+         (write-forms (string-append root "/base-config.e")
+           `((call-with-output-file ,initialized (lambda (port) (write (store:buffer-list) port)) 'replace)))
+         (when (file-exists? initialized) (delete-file initialized))
+         (write-text path "(malformed saved session)")
+         (chmod path #o600)
+         (write-text sync-failure "fail")
+         (dynamic-wind void
+           (lambda ()
+             (test:check 'uncertain-archive-fails-startup-with-evidence-in-place
+               (list (car (base-exit base-directory)) (file-exists? path) (file-exists? initialized)
+                     (call-with-input-file (car (last-pair (archive-paths))) get-string-all))
+               '(1 #f #f "(malformed saved session)")))
+           (lambda () (delete-file sync-failure)))
+         (fixture:call-with-base root base-directory
+           (lambda (base)
+             (set! test-base base)
+             (let ([head (connect)])
+               (hello head '(head "after failed start"))
+               (let ([control (connect)])
+                 (exchange control '(maintenance 1 (head "after failed start")))
+                 (write-text sync-failure "fail")
+                 (dynamic-wind void
+                   (lambda ()
+                     (let ([review (rpc control 'prepare-restart)]) (reject control 'restart (cadr review))))
+                   (lambda () (delete-file sync-failure)))
+                 (let ([status (rpc control 'status)] [notice (rpc head 'startup-notice)])
+                   (test:check 'a-later-save-does-not-invent-a-restore-notice
+                     (list (number? (cdr (assq 'saved-at status))) (cdr (assq 'restored-at status))
+                           (occurrences notice "restored a session saved")
+                           (> (occurrences notice (car (last-pair (archive-paths)))) 0)) '(#t #f 0 #t))))
+               (test:check 'retained-archives-are-rediscovered-after-failed-startup
+                 (list (cdr (assq 'recovery-archives (rpc head 'status)))
+                       (rpc head 'startup-notice)
+                       (stop-reviewed head) (length (archive-paths)))
+                 (list (archive-paths) #f '(closing shutdown) (+ 1 (length bad)))))))))
+
+     (define (restart-scenarios!)
+       (fresh-session!)
+       (when (file-exists? automatic-control) (delete-file automatic-control))
+       (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
+       ;; The replacement is launched by the real CLI. This fixture-owned
+       ;; config also gives failure cleanup a cooperative stop for that child.
+       (write-forms (string-append root "/base-config.e")
+         `((fork-thread
+             (lambda ()
+               (let wait ()
+                 (unless (file-exists? ,automatic-control)
+                   (sleep (make-time 'time-duration 5000000 0)) (wait)))
+               (system (format "kill -TERM ~a" (get-process-id)))))))
+       (let* ([base (fixture:start! root base-directory)]
+              [pid-path (string-append base-directory "/pid")]
+              [original (call-with-input-file pid-path read)]
+              [path (string-append base-directory "/session")]
+              [temporary (string-append base-directory "/session.tmp")]
+              [file (string-append root "/restart-argument")])
+         (set! test-base base)
+         (dynamic-wind void
+           (lambda ()
+             (let ([head (start-head "restart desk")] [control (connect)])
+               (exchange control '(maintenance 1 (head "restart desk")))
+               (head-wait 'restart-source-ready head (lambda () (head-sees? head "*scratch*")))
+               (head-read head
+                 '(begin
+                    (insert-text! "kept after restart")
+                    (head:window-pcol-set! (head:current) 4)
+                    (let ([b (head:new-local-buffer "local draft omitted")])
+                      (head:add-buffer! b) (head:store-reset! b '("draft")) (head:buffer-modified-set! b #t))
+                    #t))
+               (for-each
+                 (lambda (answer)
+                   (let ([launcher (start-command '("--restart" "--name" "restart desk") 100)])
+                     (head-wait 'restart-question-before-screen launcher
+                       (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
+                     (test:check (list 'restart-review-before-raw-mode answer)
+                       (list (occurrences (vector-ref launcher 3) "\x1b;[?1049h")
+                             (cdr (assq 'heads (rpc control 'status)))) '(0 1))
+                     (head-send! launcher answer)
+                     (test:await 'cancelled-restart-keeps-original-base
+                       (lambda () (eq? (cdr (assq 'phase (rpc control 'status))) 'running)))
+                     (sys:reap-terminal-process! (vector-ref launcher 0))
+                     (test:check 'restart-cancellation-is-inert
+                       (list (equal? original (call-with-input-file pid-path read))
+                             (head-read head '(buffer-line (current-buffer) 0))) '(#t "kept after restart"))))
+                 '("n\n" "\x04;"))
+               (mkdir temporary #o700)
+               (dynamic-wind void
+                 (lambda ()
+                   (let ([launcher (start-command '("--restart" "--force" "--name" "restart desk") 100)])
+                     (head-wait 'force-still-reviews-responsive-base launcher
+                       (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
+                     (head-send! launcher "y\n")
+                     (head-wait 'explicit-save-error-is-not-forced launcher
+                       (lambda () (> (occurrences (vector-ref launcher 3) "base refused the operation") 0)))
+                     (test:check 'force-never-turns-a-save-error-into-a-kill
+                       (list (occurrences (vector-ref launcher 3) "sending SIG")
+                             (sys:process-status (fixture:process base))
+                             (cdr (assq 'phase (rpc control 'status)))) '(0 #f running))))
+                 (lambda () (delete-directory temporary)))
+               (let* ([expected (head-read head '(list (buffer-line (current-buffer) 0) (point)))]
+                      [launcher (start-command '("--restart" "--name" "restart desk") 100)])
+                 (head-wait 'accepted-restart-question launcher
+                   (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
+                 (head-send! launcher "yes\n")
+                 (head-wait 'restart-resumes-named-screen launcher
+                   (lambda () (head-sees? launcher "kept after restart")))
+                 (test:check 'restart-restores-named-view-after-pre-screen-notice
+                   (let* ([output (vector-ref launcher 3)]
+                          [notice (string:search output "restored a session saved" 0 (string-length output))]
+                          [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
+                     (list (and notice screen (< notice screen))
+                           (not (equal? original (call-with-input-file pid-path read)))
+                           (head-read launcher '(list (buffer-line (current-buffer) 0) (point)))
+                           (head-read launcher '(and (head:buffer-named "<local draft omitted>") #t))))
+                   (list #t #t expected #f))
+                 (head-wait 'old-screen-gets-restart-farewell head
+                   (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
+                 (head-send! launcher "\x18;\x03;")
+                 (head-wait 'restart-screen-detaches launcher (lambda () (head-sees? launcher "e: detached")))
+                 (sys:reap-terminal-process! (vector-ref launcher 0)))
+               (write-text file "file argument after restart\n")
+               (let ([launcher (start-command (list "--restart" "--name" "restart desk" file) 100)])
+                 (head-wait 'no-live-work-restarts-without-question launcher
+                   (lambda () (head-sees? launcher "file argument after restart")))
+                 (test:check 'no-live-restart-keeps-omission-notice-and-opens-file-argument
+                   (list (occurrences (vector-ref launcher 3) "Restart anyway?")
+                         (> (occurrences (vector-ref launcher 3) "Undo/redo history") 0)
+                         (head-read launcher '(head:buffer-file (current-buffer)))) (list 0 #t file))
+                 (head-send! launcher "\x18;\x03;")
+                 (head-wait 'detach-before-lost-reply launcher (lambda () (head-sees? launcher "e: detached")))
+                 (sys:reap-terminal-process! (vector-ref launcher 0)))
+               (write-text lost-closing "lose this response")
+               (dynamic-wind void
+                 (lambda ()
+                   (let ([launcher (start-command '("--restart" "--force" "--name" "restart desk") 100)])
+                     (head-wait 'unknown-restart-outcome-is-reported launcher
+                       (lambda () (> (occurrences (vector-ref launcher 3) "restart outcome is unknown") 0)))
+                     (test:await 'unacknowledged-restart-exits (lambda () (not (file-exists? pid-path))))
+                     (test:check 'unknown-restart-is-neither-replayed-nor-forced
+                       (list (file-exists? path) (occurrences (vector-ref launcher 3) "sending SIG")
+                             (occurrences (vector-ref launcher 3) "\x1b;[?1049h")) '(#t 0 0))))
+                 (lambda () (delete-file lost-closing)))))
+           (lambda ()
+             (write-text automatic-control "stop")
+             (test:await 'restart-fixture-releases-ownership
+               (lambda () (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
+                            (and lock (begin (sys:release-file-lock! lock) #t)))))
+             (sys:close-process! (fixture:process base))))))
+
+     (define (force-scenarios!)
+       ;; Linux supplies the actual flock holder and pidfd reference. Other
+       ;; OSes intentionally refuse force until equivalent proof is available.
+       (when (file-exists? "/proc/sys/kernel/random/boot_id")
+         (fresh-session!)
+         (when (file-exists? automatic-control) (delete-file automatic-control))
+         (write-forms (string-append root "/base-config.e") '())
+         (set! test-base (fixture:start! root base-directory))
+         (fixture:stop! test-base)
+         (let ([held (string-append root "/force-held")]
+               [pid-path (string-append base-directory "/pid")])
+           ;; The first base gets stuck in configuration, after publishing its
+           ;; identity but before serving. The replacement starts normally.
+           (write-forms (string-append root "/base-config.e")
+             `((unless (file-exists? ,held)
+                 (call-with-output-file ,held (lambda (port) (write #t port)))
+                 (let stuck () (sleep (make-time 'time-duration 50000000 0)) (stuck)))
+               (fork-thread
+                 (lambda ()
+                   (let wait ()
+                     (unless (file-exists? ,automatic-control)
+                       (sleep (make-time 'time-duration 5000000 0)) (wait)))
+                   (system (format "kill -TERM ~a" (get-process-id)))))))
+           (let ([process (sys:open-process (list "scheme-script" (string-append root "/e")
+                                                  "--base" "--base-working-dir" base-directory))])
+             (dynamic-wind void
+               (lambda ()
+                 (sys:write-process! process #f)
+                 (test:await 'owned-base-is-unresponsive (lambda () (file-exists? held)))
+                 (let ([original (call-with-input-file pid-path read)])
+                   (fixture:call-with-base root (string-append root "/unrelated-base")
+                     (lambda (other)
+                       (let ([unrelated (call-with-input-file (string-append (fixture:directory other) "/pid") read)])
+                         (test:check 'force-refuses-incomplete-stale-and-wrong-lock-identities
+                           (map (lambda (record)
+                                  (write-forms pid-path (list record)) (chmod pid-path #o600)
+                                  (let ([entered? #f] [before (test:fd-count)])
+                                    (let ([refused? (test:raises?
+                                                      (lambda ()
+                                                        (sys:call-with-verified-base base-directory
+                                                          (lambda (signal! wait!) (set! entered? #t)))))])
+                                      (list refused? entered? (sys:process-status process)
+                                            (sys:process-status (fixture:process other)) (= before (test:fd-count))))))
+                             (list (list 'base (cadr original) #f)
+                                   (list 'base (cadr original) '(linux "wrong generation" 0)) unrelated))
+                           (make-list 3 '(#t #f #f #f #t)))
+                         (let ([launcher (start-command '("--restart" "--force") 100)])
+                           (head-wait 'force-cli-refuses-unverified-instance launcher
+                             (lambda () (> (occurrences (vector-ref launcher 3) "manual recovery is required") 0)))
+                           (test:check 'unverified-force-does-not-signal-or-open-a-screen
+                             (list (sys:process-status process) (sys:process-status (fixture:process other))
+                                   (occurrences (vector-ref launcher 3) "sending SIG")
+                                   (occurrences (vector-ref launcher 3) "\x1b;[?1049h")) '(#f #f 0 0))))))
+                   (write-forms pid-path (list original)) (chmod pid-path #o600)
+                   (sys:call-with-verified-base base-directory
+                     (lambda (signal! wait!)
+                       (test:check 'verified-reference-waits-for-the-live-instance
+                         (list (sys:process-exited? (cdr original)) (wait! (current-time 'time-monotonic))) '(#f #f))
+                       (let ([launcher (start-command '("--restart" "--force" "--name" "forced recovery") 100)])
+                         (head-wait 'force-escalates-and-starts-replacement launcher
+                           (lambda () (head-sees? launcher "*scratch*")) 30)
+                         (test:check 'force-escalation-is-bounded-and-explicit
+                           (list (> (occurrences (vector-ref launcher 3) "sending SIGTERM") 0)
+                                 (> (occurrences (vector-ref launcher 3) "sending SIGKILL") 0)
+                                 (sys:process-status process) (wait! (current-time 'time-monotonic))
+                                 (not (equal? original (call-with-input-file pid-path read)))) '(#t #t -9 #t #t))
+                         ;; Even after a replacement has taken ownership, the
+                         ;; retained old reference cannot signal its new pid.
+                         (signal! 9)
+                         (let ([head (connect)])
+                           (hello head '(head "force inspector"))
+                           (test:check 'old-process-reference-cannot-retarget-the-replacement
+                             (cdr (assq 'phase (rpc head 'status))) 'running)
+                           (let ([review (rpc head 'prepare-close)])
+                             (exchange head (list 'request 7 'shutdown (cadr review)))))
+                         (head-wait 'forced-replacement-stops-normally launcher
+                           (lambda () (head-sees? launcher "e: the base shut down"))))))))
+               (lambda ()
+                 (write-text automatic-control "stop")
+                 (sys:close-process! process)
+                 (test:await 'force-fixture-releases-ownership
+                   (lambda () (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
+                                (and lock (begin (sys:release-file-lock! lock) #t)))))))))))
 
      (let* ([base (fixture:start! root base-directory)]
             [pid (sys:process-pid (fixture:process base))])
@@ -1764,8 +2258,7 @@
                                    (lambda ()
                                      (if prefix (wire:receive (sys:connection-input client))
                                          (wire:send! (sys:connection-output client) (make-string #x100000 #\x))))))
-                               (lambda (ex) (and (string:search (kernel:condition-text ex) "hello timed out" 0
-                                                   (string-length (kernel:condition-text ex))) #t))))
+                               sys:unresponsive?))
                            (lambda () (sys:close-connection! client) (sys:close-connection! server)))))
                      '(#vu8(0) #vu8(0 0 0 4 40) #f)) '(#t #t #t))
                  (let ([pending '()] [timed-out? #f])
@@ -1808,6 +2301,7 @@
            ;; Reuse this installation for the actual automatic bootstrap.
            ;; The fixture's own config can stop or crash its own base; tests
            ;; never signal a pid read from a possibly stale process record.
+           (fresh-session!)
            (write-forms (string-append root "/base-config.e")
              `((store:create! '(base e) "bootstrap" '("ready")
                  (list (cons 'process-id (get-process-id)) (cons 'directory (current-directory))))
@@ -1816,9 +2310,9 @@
                    (let wait ()
                      (unless (file-exists? ,automatic-control)
                        (sleep (make-time 'time-duration 5000000 0)) (wait)))
-                   (if (eq? (call-with-input-file ,automatic-control read) 'crash)
-                       (system (format "kill -KILL ~a" (get-process-id)))
-                       (kernel:mailbox-post! daemon:control 'signal))))))
+                   (system (format "kill -~a ~a"
+                             (if (eq? (call-with-input-file ,automatic-control read) 'crash) "KILL" "TERM")
+                             (get-process-id)))))))
            (write-forms (string-append root "/config.e") '((main:set-startup-page! #f)))
            (write-text (string-append base-directory "/log/2000-01-01.log") "expired")
            (write-text (string-append base-directory "/log/keep.txt") "keep")
@@ -1889,7 +2383,11 @@
                                     (cdr (assq 'mouse-tracking state)) (cdr (assq 'sgr-mouse state)))))
                        (list a b again fresh)) (make-list 4 '(#t #f #f)))))))
            (shutdown-scenarios!)
-           (final-shutdown-scenarios!))
+           (final-shutdown-scenarios!)
+           (session-scenarios!)
+           (recovery-scenarios!)
+           (restart-scenarios!)
+           (force-scenarios!))
          (lambda ()
            (write-text edit-release "continue")
            (write-text automatic-control "stop")

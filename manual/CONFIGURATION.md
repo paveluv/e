@@ -2,7 +2,7 @@
 
 ## Startup and head names
 
-Run `./e [--name NAME] [--base-working-dir DIR] [--] [file]`. A name is a nonempty string; quote it
+Run `./e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]`. A name is a nonempty string; quote it
 in the shell if it contains spaces. `--name=NAME` also works. `--` allows a
 file whose name begins with `-`. Help (`-h` or `--help`) and argument errors
 are handled before loading the editor or `config.e`.
@@ -14,6 +14,9 @@ The identity is `(head "name")`, exposed as `head:ui-actor`. It is chosen
 before shared buffers or cursor marks are created. Every invocation starts or
 attaches to the installation's base. Use a stable explicit name to restore the
 same screen after an SSH login whose terminal name has changed.
+`--restart` reviews and saves the existing base before restarting and claiming
+the requested name. `--force` requires `--restart`; neither combines with
+`--base`. See [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 
 ## Daemon and attachment
 
@@ -49,7 +52,9 @@ cp config.template.e config.e
 Uncomment only settings that should differ from defaults.
 
 `base-config.e`, also beside the loader and ignored by Git, configures the
-base services. It runs once when the base starts, before accepting any head.
+base services. It runs once when the base starts, after restoring a saved
+session and before accepting any head. Initialization that creates a named
+shared buffer can therefore find and reuse a restored one.
 It sees base APIs such as `store:`, `policy:`, `vt:` and
 `reference:`. Keep key bindings, painting and other head settings in `config.e`.
 An attached head evaluates `config.e` using client implementations of its
@@ -125,7 +130,7 @@ and precedence rules.
 
 Each checkout keeps `config.e`, `base-config.e`, `lib/`, `data/` and compiled
 `eo/` beside its own loader. The default base directory is `.base/`, containing
-`socket`, `lock`, `pid` and `log/`; `--base-working-dir` selects another
+`socket`, `lock`, `pid`, `session` and `log/`; `--base-working-dir` selects another
 directory. A project can therefore
 vendor a customized e checkout without affecting a personal installation
 elsewhere.

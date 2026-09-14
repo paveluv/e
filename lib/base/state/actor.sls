@@ -16,7 +16,8 @@
 (library (actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
           current call-as identity? audience? in-audience? send!
-          ask! answer! cancel! cancel-owned! pending checkpoint checkpoint!)
+          ask! answer! cancel! cancel-owned! pending pending-tickets checkpoint checkpoint!
+          export import! valid-import?)
   (import (rnrs)
           (only (chezscheme) void make-mutex with-mutex
                 current-time time-second parameterize)
@@ -139,6 +140,41 @@
   (define (checkpoint actor)
     (let ([entry (known-head actor)])
       (and entry (datum:copy (with-mutex protocol-lock (head-state-checkpoint entry))))))
+
+  (define (export)
+    ;; The lifecycle barrier stabilizes the directory before this read.
+    ;; Checkpoint bodies stay opaque: missing targets and old views are valid.
+    (let ([heads (kernel:registry-items known-heads)])
+      (with-mutex protocol-lock
+        (map (lambda (entry) (datum:copy (list (cadr (head-state-identity entry)) (head-state-checkpoint entry)))) heads))))
+
+  (define (valid-import? entries)
+    (and (list? entries)
+         (let ([names (make-hashtable string-hash string=?)])
+           (for-all
+             (lambda (entry)
+               (and (list? entry) (= (length entry) 2)
+                    (string? (car entry)) (> (string-length (car entry)) 0)
+                    (not (hashtable-contains? names (car entry)))
+                    (guard (ex [(datum:invalid? ex) #f] [else (raise ex)]) (datum:copy (cadr entry)) #t)
+                    (begin (hashtable-set! names (car entry) #t) #t))) entries))))
+
+  (define (import! entries)
+    (unless (valid-import? entries) (error 'import! "invalid checkpoint directory"))
+    (let ([entries (datum:copy entries)])
+      (activity:call-with
+        (lambda ()
+          (parameterize ([kernel:registering-module #f])
+            (kernel:call-with-registration-update
+              (lambda ()
+                (unless (null? (kernel:registry-items known-heads))
+                  (error 'import! "restore requires an empty checkpoint directory"))
+                (for-each (lambda (entry)
+                            (kernel:registry-add! known-heads (make-head-state (list 'head (car entry)) (cadr entry))))
+                  entries))))))))
+
+  (define (pending-tickets)
+    (with-mutex protocol-lock (map (lambda (entry) (vector-ref entry 0)) pending-asks)))
 
   (define (checkpoint! actor state)
     (activity:call-with
