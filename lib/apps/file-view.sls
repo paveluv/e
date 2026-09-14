@@ -120,7 +120,7 @@
                     (and (directory:directory? (cdr row)) (same? (string-append path "/") text))))) rows))
     (or (find-path string=?) (find-path string-ci=?)))
   (define (default-row)
-    ;; Exact paths take precedence, including a Tab-completed directory.
+    ;; Exact paths take precedence, including a typed directory path.
     ;; Otherwise select a filename ahead of its containing match group.
     (or (exact-row query)
         (and (not (string=? query ""))
@@ -369,20 +369,6 @@
     (set! query text)
     (set! hover #f)
     (start-scan!))
-  (define (complete!)
-    (let ([matches (head:call-with-interrupt (lambda () (file:complete query location)))])
-      (if (null? matches) (set-message! "No path completion")
-          (let* ([prefix (string:common-prefix matches)]
-                 [full (file:canonical (file:expand (file:absolute prefix location)))]
-                 [base (file:absolute "" location)]
-                 [relative (cond [(string=? full location) ""]
-                                 [(string:prefix? base full)
-                                  (string-append (string:tail full (string-length base))
-                                    (if (string:suffix? "/" prefix) "/" ""))]
-                                 [else #f])])
-            (cond [(not relative) (set-message! "Use M-c for paths outside this directory")]
-                  [(not (string=? relative query)) (filter! relative)]
-                  [else (set-message! (if (null? (cdr matches)) "Sole completion" "Multiple path completions"))])))))
   (define (cycle! column)
     (set! sorts (table:cycle-sort sorts column)) (set! hover #f) (render!))
   (define (sort-event! event)
@@ -436,15 +422,19 @@
                                (list (list 0 (string-length text) (path-input (car row) (directory:directory? (cdr row)))))))) shown))))
           pages))))
   (define (path!!)
-    (let ([base location] [initial (file:abbreviate (file:absolute query location))])
+    ;; The prompt owns the literal path; the browsing filter is set aside
+    ;; and comes back when path entry is cancelled or a file is created.
+    ;; A created directory is entered fresh: the filter seeded its path.
+    (let ([base location] [saved query] [entered? #f]
+          [initial (file:abbreviate (file:absolute query location))])
       (dynamic-wind
         (lambda () (set! query "") (set! path-part "") (set! hover #f))
         (lambda ()
           (parameterize ([prompt:content (prompt:make-content (+ first-row 1)
                                            (lambda (input w height page) (path-lines input w height page base)) path-event!)])
-            (find-file!! (lambda (path) (navigate! path #f #f)) initial)))
+            (find-file!! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
         (lambda ()
-          (set! path-part #f) (set! query "") (set! hover #f)
+          (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
           (when (and view (memq view (buffer-list)) (head:app-buffer? view)) (start-scan!))))))
   (define (refresh!) (when view (start-scan!)) (void))
 
@@ -452,8 +442,7 @@
     (cond [(string=? event "FOCUS") (render!) #t]
           [(sort-event! event) #t]
           [(member event '("UP" "C-p" "S-TAB" "WHEEL-UP")) (move! -1) #t]
-          [(member event '("DOWN" "C-n" "WHEEL-DOWN")) (move! 1) #t]
-          [(string=? event "TAB") (complete!) #t]
+          [(member event '("DOWN" "C-n" "TAB" "WHEEL-DOWN")) (move! 1) #t]
           [(member event '("HOME" "C-a" "M-<")) (move! (- (length rows))) #t]
           [(member event '("END" "C-e" "M->")) (move! (length rows)) #t]
           [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
@@ -515,7 +504,7 @@
            (fold-left (lambda (text hint)
                         (if (<= (+ (glyph:cells text) 2 (glyph:cells hint)) room)
                             (string-append text "  " hint) text)) ""
-             '("M-c create" "Tab complete" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
+             '("M-c create" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
   (define (ensure!)
     (unless (and view (memq view (buffer-list)) (head:app-buffer? view))
       (set! view (head:register-app! "*files*" render! handle!))
@@ -598,7 +587,7 @@
     (doc:register!
       '(((file-view:open!) (("procedure" . "(file-view:open! [directory])")) "void"
          ("(file-view)") file-view "Files" #f
-         "Open `<files>` in this window. Type to filter relative paths recursively; Tab completes a path component and Enter opens the selected file or directory. M-c clears the filter and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
+         "Open `<files>` in this window. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. M-c sets the filter aside and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory with the previous filter. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
          ("(file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")

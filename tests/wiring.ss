@@ -821,6 +821,19 @@
      (press! "\r")
      (check 'files-reopening-reuses-unsaved-buffer-and-window-point
        (read-editor '(list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer)))) files-visited)
+     ;; A filter names entries unless it contains a slash: a directory whose
+     ;; name matches does not claim its contents, while its path does.
+     (define (files-group-count name)
+       (read-editor `(let ([line (find (lambda (s) (string:prefix? ,name s))
+                                   (vector->list (head:buffer-lines (current-buffer))))])
+                       (and line (substring line (- (string-length line) 3) (string-length line))))))
+     (files-open!)
+     (files-filter! "small")
+     (let ([named (list (visible? "small/") (visible? "small/needle-one.txt") (files-group-count "small/"))])
+       (files-filter! "small/")
+       (check 'files-name-filters-match-entries-and-slash-filters-match-paths
+         (list named (visible? "small/needle-one.txt") (files-group-count "small/"))
+         '((#t #f "  0") #f "  3")))
      (files-open!)
      (files-filter! "needle")
      (check 'files-groups-remain-stable-through-filter-changes
@@ -859,22 +872,17 @@
              '(("\x1b;[D" "large/") ("\x1b;[C" "needle-b.txt") ("\x1b;[D" "large/"))))
          (list (list (files-path "large") "needle") (list files-root "needle" #t)
            (list (files-path "large") "needle" #t) (list files-root "needle" #t))))
-     (check 'files-tab-completes-relative-components-and-selects-the-exact-case-path
-       (picker-sequence
-         (lambda (step)
-           (files-filter! (car step)) (press! "\t") (files-settle!)
-           (read-editor `(list (buffer-line (current-buffer) 0)
-                               (string:prefix? ,(cadr step) (buffer-line (current-buffer) (car (point)))))))
-         (list '("apple" "apple.txt") '("APP" "APPLE.txt") '("./sm" "small/")
-           (list (files-path "sm") "small/") '("sm" "small/")))
-       '(("Filter: apple.txt" #t) ("Filter: APPLE.txt" #t)
-         ("Filter: small/" #t) ("Filter: small/" #t) ("Filter: small/" #t)))
-     (press! "\x1b;[C") (files-settle!)
+     ;; The filter is never completed: Tab moves the row like Down.
+     (files-filter! "small/") (press! "\x1b;[C") (files-settle!)
      (let ([inside (files-location)])
-       (files-filter! "ne") (press! "\t") (files-settle!)
-       (check 'files-entering-a-completed-directory-keeps-the-filter-and-ambiguous-tab-stays-put
-         (list inside (files-location))
-         (list (list (files-path "small") "small/") (list (files-path "small") "ne"))))
+       (files-filter! "ne")
+       ;; The empty filter's default row, nested/, still matches and stays chosen.
+       (let ([before (read-editor '(string:prefix? "nested/" (buffer-line (current-buffer) (car (point)))))])
+         (press! "\t") (files-settle!)
+         (check 'files-entering-a-typed-directory-path-keeps-the-filter-and-tab-moves-the-row
+           (list inside before (files-location)
+                 (read-editor '(string:prefix? "needle-one.txt" (buffer-line (current-buffer) (car (point))))))
+           (list (list (files-path "small") "small/") #t (list (files-path "small") "ne") #t))))
      (files-open!)
      (files-filter! "SMALL/NESTED/NE")
      (let ([match (read-editor '(string:prefix? "small/nested/needle-only.txt" (buffer-line (current-buffer) (car (point)))))])
@@ -886,26 +894,22 @@
            (list #t (list (files-path "small") "SMALL/NESTED/NE") #t
              (list files-root "SMALL/NESTED/NE")))))
      (files-open!)
-     (files-filter! "small/.") (press! "\t") (files-settle!)
-     (let ([completed (files-location)] [escaped (visible? "Filter: small/.日本語\\xA;/")])
+     (files-filter! "small/.日本語") (press! "\x1b;[B") (files-settle!)
+     (let ([shown (files-location)] [escaped (visible? "small/.日本語\\xA;/")])
        (press! "\r") (files-settle!)
-       (check 'files-tab-can-complete-a-hidden-control-character-path-with-a-safe-label
-         (list completed escaped (files-location))
-         (list (list files-root "small/.日本語\n/") #t (list (files-path "small/.日本語\n") "small/.日本語\n/"))))
-     (files-open!)
-     (files-filter! "../") (press! "\t")
-     (check 'files-completion-outside-the-root-offers-explicit-path-entry
-       (list (visible? "Use M-c") (files-location)) (list #t (list files-root "../")))
+       (check 'files-filter-shows-a-safe-label-for-a-hidden-control-character-path-and-enters-it
+         (list shown escaped (files-location))
+         (list (list files-root "small/.日本語") #t (list (files-path "small/.日本語\n") "small/.日本語"))))
      (unless (zero? ((foreign-procedure "symlink" (string string) int) (files-path "small/nested") (files-path "linked")))
        (error 'files "cannot create directory-link fixture"))
-     (files-open!) (files-filter! "linked/needle") (press! "\t") (files-settle!)
+     (files-open!) (files-filter! "linked/needle")
      (let ([route (files-labels)])
        (press! "\x1b;[C") (files-settle!)
        (let ([inside (files-location)])
          (files-filter! "needle-only.txt") (press! "\r")
-         (check 'files-completed-link-path-remains-navigable-without-recursively-following-links
+         (check 'files-typed-link-path-remains-navigable-without-recursively-following-links
            (list route inside (read-editor '(head:buffer-file (current-buffer))))
-           (list '("linked@/") (list (files-path "linked") "linked/needle-only.txt")
+           (list '("linked@/") (list (files-path "linked") "linked/needle")
              (files-path "small/nested/needle-only.txt")))))
      (delete-file (files-path "linked"))
      (files-open!)
@@ -1117,17 +1121,20 @@
                (list inside face file-face exact (visible? "<create-file>"))
                '(#t (#t #t) (#t #t #t #t #f) #t #t))
              (press! "\x07;")))))
-     (files-open!) (press! "\x1b;c")
+     (files-open!) (files-filter! "needle") (press! "\x1b;c")
      (prompt-input! (files-path "small/nested/")) (files-settle!) (resize! 5 28)
      (let ([small (and (visible? "Enlarge pane") (cdr (assq 'cursor-visible (vt:emulator-state mirror))))])
        (resize! 24 100)
        (let ([restored (and (path-table? "needle-only.txt")
                             (visible? (string-append "Create file: " (files-path "small/nested/"))))])
          (press! "\x1b;") (files-settle!)
-         (check 'files-escape-leaves-path-entry-in-the-visible-directory-after-resize
+         ;; Cancelling returns to the shown directory with the filter set
+         ;; aside by M-c, already applied to that directory's entries.
+         (check 'files-escape-leaves-path-entry-in-the-visible-directory-with-the-filter-restored
            (list small restored (visible? "<files>") (visible? "Create file:")
-                 (files-location) (read-editor '(head:app-cursor-visible-in? (selected-window))))
-           (list #t #t #t #f (list (files-path "small/nested") "") #f))))
+                 (files-location) (read-editor '(head:app-cursor-visible-in? (selected-window)))
+                 (read-editor '(string:prefix? "needle-only.txt" (buffer-line (current-buffer) (car (point))))))
+           (list #t #t #t #f (list (files-path "small/nested") "needle") #f #t))))
      (read-editor '(begin (split-window-right!) #t))
      (press! "\x1b;c") (prompt-input! (files-path "small/nested/")) (files-settle!)
      (click! (cons 1 (or (string:search (screen-line 1) "small/" 50 (string-length (screen-line 1)))

@@ -28,32 +28,28 @@ branch leading back to the previous location. Backspace goes up when the
 filter is empty. Left, Right, Enter and directory/breadcrumb clicks preserve
 the filter exactly as typed; C-u explicitly clears it.
 
-Type to filter by relative path, ignoring case. Up/Down, C-p/C-n, Home/End
-and PageUp/PageDown choose a row; Enter opens it. An exact path takes priority,
-including a directory completed with Tab. Otherwise a unique nested file match
-is selected directly. Enter on an empty result stays in the current directory.
+Type to filter by name, ignoring case; a filter containing `/` matches
+relative paths instead. Up/Down, C-p/C-n, Shift-Tab/Tab, Home/End
+and PageUp/PageDown choose a row; Enter opens it. An exact path takes priority.
+Otherwise a unique nested file match is selected directly. Enter on an empty result stays in the current directory.
 Esc or C-g returns to the document from which this window opened the app.
 
 | Key | Action |
 |---|---|
 | `C-u` | Clear the filter. |
-| `Tab` | Complete the filter as a path, appending `/` for a directory. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
 | `M-c` | Enter Create mode, with a path prompt below the live table. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
 | `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
 
-Tab completes the final component using the same case-sensitive filename
-prefixes as find-file. With several candidates it extends their common prefix;
-if it cannot extend it, keep typing or choose a row. Filtering itself remains a
-case-insensitive substring search. Paths completed inside the current directory
-are written back in relative form. Use M-c for arbitrary absolute, home or
-parent paths; completion outside the current directory points you to that key.
+Filtering is a case-insensitive substring search, and the filter is never
+completed: Tab moves the row like Down. Use M-c to enter a literal path,
+including absolute, home or parent paths; its prompt completes components.
 
 ## Create mode
 
-M-c clears the Filter and opens a temporary `<create-file>` view with an
+M-c sets the Filter aside and opens a temporary `<create-file>` view with an
 editable `Create file:` prompt at the bottom of the window, seeded from the
 filter's literal path. Directory follows the path being edited. The table
 shows only immediate children whose names start with its final component,
@@ -78,8 +74,8 @@ input, so external file creations and removals can be picked up in this mode.
 
 The input keeps find-file's editing, cursor, wrapping and error recovery.
 Esc or C-g removes the prompt and returns to normal files mode at the
-directory currently shown, with an empty filter. If that directory does
-not exist or cannot be read, Left still goes to its parent. Creation starts
+directory currently shown, with the filter you had before M-c. If that
+directory does not exist or cannot be read, Left still goes to its parent. Creation starts
 only when you press Enter.
 
 ## Creating files and directories
@@ -94,7 +90,7 @@ disk, then opens its buffer. No save is needed to create it. Creation refuses
 an existing name, including a symbolic link, without changing it. For example,
 `drafts/idea.txt` creates `drafts/` if needed. End the path with `/` to create
 directories only and enter the last one: `drafts/research/` creates both
-levels if necessary. An existing directory with a trailing slash is refused
+levels if necessary. The new directory opens with an empty filter. An existing directory with a trailing slash is refused
 with the same transient inline ghost, `[directory already exists]`. Without
 a trailing slash the request is for a file, so any existing name is refused
 with `[file already exists]`. Use normal Files mode to enter existing directories.
@@ -110,8 +106,11 @@ never replaced by directory creation.
 
 ## Recursive filtering
 
-A nonempty filter searches full relative paths as well as immediate entries.
-Slashes are literal: `lib/` matches that part of a path, including descendants
+A nonempty filter searches the whole tree below the directory. Without a
+slash it matches file and directory names only: `lib` finds every entry
+whose name contains `lib`, and a matching directory does not claim its
+contents. A filter containing `/` matches full relative paths instead, and
+slashes are literal: `lib/` matches that part of a path, including descendants
 whose own names do not contain `lib`. Directories include their trailing `/`
 for matching. Typing a dot component, such as `lib/.git/`, includes hidden entries.
 Each immediate subdirectory shows its descendant match count. Up to 20 matches

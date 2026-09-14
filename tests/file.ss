@@ -217,6 +217,17 @@
                  (map (lambda (s) (directory:matches? (entry "small" result) root s))
                    '("small/" "ALL/" "small/nope"))))
          '((2 #t ("NEEDLE-two" "nested")) (0 #t ()) (#t #t #f)))
+       ;; A filter without a slash names entries, so a directory whose own
+       ;; name matches does not claim its whole subtree. Adding a slash
+       ;; switches to path matching, and a preview must not carry the
+       ;; name-mode count across as exact evidence.
+       (check 'directory-name-filters-ignore-matching-ancestors
+         (let ([result (scan "small" #f 2)])
+           (list (group "small" result) (group "large" result) (car result)
+                 (map (lambda (s) (directory:matches? (entry "small" result) root s)) '("MALL" "small/" "all/"))
+                 (group "small" (cons 0 (directory:refilter (cdr result) root "small" "small/" #f #f 2)))
+                 (group "small" (scan "small/" #f 2))))
+         '((0 #t ()) (0 #t ()) 0 (#t #t #t) (0 #f ()) (5 #t ())))
        (check 'directory-cancel-has-no-late-publication
          (let ([cancel? #f] [publications '()])
            (directory:scan root "needle" #f 2 (lambda () cancel?)

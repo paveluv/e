@@ -18,9 +18,20 @@
   (define (relative-path entry root)
     (string:tail (entry-path entry) (if (string=? root "/") 1 (+ 1 (string-length root)))))
 
-  (define (matches? entry root query)
-    (let ([name (string-append (relative-path entry root) (if (directory? entry) "/" ""))])
-      (and (string:search name query 0 (string-length name) #t) #t)))
+  (define (path-query? query)
+    (and (string:search query "/" 0 (string-length query)) #t))
+
+  (define (matcher root query)
+    ;; A filter with a slash matches the path relative to root; one without
+    ;; matches only the entry's own name, so a matching ancestor does not
+    ;; claim every descendant. Directories carry their trailing slash.
+    (let ([path? (path-query? query)])
+      (lambda (entry)
+        (let ([name (string-append (if path? (relative-path entry root) (file:base-name (entry-path entry)))
+                      (if (directory? entry) "/" ""))])
+          (and (string:search name query 0 (string-length name) #t) #t)))))
+
+  (define (matches? entry root query) ((matcher root query) entry))
 
   (define (inspect-entry path)
     (let* ([info (sys:file-info path)]
@@ -46,18 +57,22 @@
     ;; match. Otherwise keep the known subset, with a lower bound or an
     ;; unknown count, until a fresh scan replaces it. Empty queries count
     ;; immediate children, so their counts cannot stand in for search counts.
-    (let ([same? (and (string=? previous query) (eq? was-hidden? hidden?))]
-          [narrower? (and (not (string=? query ""))
-                          (or (not hidden?) was-hidden?)
-                          (string:search query previous 0 (string-length query) #t))]
-          [wider? (and (not (string=? previous "")) (not (string=? query ""))
-                       (or hidden? (not was-hidden?))
-                       (string:search previous query 0 (string-length previous) #t))])
+    (let* ([match? (matcher root query)]
+           ;; Containment implies a subset only within one matching mode: a
+           ;; name filter gaining a slash starts matching different text.
+           [same-kind? (eq? (path-query? previous) (path-query? query))]
+           [same? (and (string=? previous query) (eq? was-hidden? hidden?))]
+           [narrower? (and same-kind? (not (string=? query ""))
+                           (or (not hidden?) was-hidden?)
+                           (string:search query previous 0 (string-length query) #t))]
+           [wider? (and same-kind? (not (string=? previous "")) (not (string=? query ""))
+                        (or hidden? (not was-hidden?))
+                        (string:search previous query 0 (string-length previous) #t))])
       (map (lambda (entry)
              (if (or (not (directory? entry)) (entry-link? entry)) entry
                  (let* ([old (entry-count entry)]
                         [matches (if (string=? query "") '()
-                                     (filter (lambda (e) (and (visible? e root hidden?) (matches? e root query)))
+                                     (filter (lambda (e) (and (visible? e root hidden?) (match? e)))
                                        (entry-matches entry)))]
                         [exact? (and (entry-complete? entry)
                                      (or same? (and narrower? old (= old (length (entry-matches entry))))))]
@@ -105,6 +120,7 @@
     (call/cc
       (lambda (cancel)
         (define failures 0)
+        (define match? (matcher path query))
         (define next-update (current-time 'time-monotonic))
         (define entries '#())
         (define (check!) (when (cancelled?) (cancel (void))))
@@ -138,7 +154,7 @@
                     (for-each
                       (lambda (name)
                         (let ([entry (child (car pending) name)])
-                          (when (matches? entry path query)
+                          (when (match? entry)
                             (set! count (+ count 1))
                             (set! found (if (<= count limit) (cons entry found) '())))
                           (when (eq? (entry-kind entry) 'unavailable)
