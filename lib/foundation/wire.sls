@@ -5,9 +5,9 @@
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (datum) datum:))
 
-  ;; S3 requires the pre-screen startup-notice exchange. Older heads cannot
-  ;; silently attach to restored work; maintenance keeps its own version 1.
-  (define version 4)
+  ;; S4 requires the source fingerprint in every normal hello. Maintenance
+  ;; retains its version 1 contract so mismatched builds can still restart.
+  (define version 5)
   (define frame-limit #x1000000) ; 16 MiB, checked before reading a payload
 
   (define (frame-size! size)

@@ -14,7 +14,7 @@
           module-source loaded-modules
           init-module! load-module! load-modules! module-requires? pin-modules!
           reload-module! add-after-reload-hook!
-          installation-directory config-file load-config!
+          installation-directory fingerprint config-file load-config!
           make-read-only-error read-only-error? make-refusal refusal?
           make-mailbox mailbox-post! mailbox-receive!
           make-delivery-queue enqueue-delivery! drain-deliveries!
@@ -24,7 +24,7 @@
                 box unbox make-hashtable equal-hash
                 make-parameter make-thread-parameter current-directory format interaction-environment eval
                 library-exports library-requirements library-requirements-options
-                library-directories load
+                library-directories load directory-list file-directory? file-regular? path-extension
                 parameterize make-mutex with-mutex make-condition
                 condition-wait condition-signal condition-broadcast
                 with-interrupts-disabled make-time
@@ -588,6 +588,47 @@
   ;; lookup and runtime overlays. Direct library users default to their
   ;; initial working directory; capture an absolute name when it is set.
   (define installation-directory (make-parameter (current-directory) path:canonical))
+
+  (define (fingerprint)
+    ;; Source consistency, independent of runtime roots, timestamps and cache.
+    ;; FNV-1a/64 over sorted relative paths and raw contents, each prefixed by
+    ;; its byte length (u64 little-endian). This is not an authentication hash.
+    (let ([root (string-append (installation-directory) "/lib/")]
+          [high #xcbf29ce4] [low #x84222325] [length-bytes (make-bytevector 8)])
+      (define (sources relative)
+        (apply append
+          (map (lambda (name)
+                 (let ([path (string-append relative name)])
+                   (cond [(file-directory? (string-append root path)) (sources (string-append path "/"))]
+                         [(equal? (path-extension name) "sls") (list path)]
+                         [else '()])))
+            (directory-list (string-append root relative)))))
+      (define (add! bytes)
+        (do ([i 0 (+ i 1)]) ((= i (bytevector-length bytes)))
+          ;; Two 32-bit limbs avoid allocating bignums for every source byte
+          ;; on 64-bit Chez. The FNV prime is 2^40 + 435.
+          (let* ([next (bitwise-xor low (bytevector-u8-ref bytes i))] [product (* next 435)])
+            (set! high (bitwise-and #xffffffff
+                         (+ (* high 435) (bitwise-arithmetic-shift-left next 8)
+                            (bitwise-arithmetic-shift-right product 32))))
+            (set! low (bitwise-and #xffffffff product)))))
+      (define (part! bytes)
+        (bytevector-u64-set! length-bytes 0 (bytevector-length bytes) (endianness little))
+        (add! length-bytes) (add! bytes))
+      (for-each
+        (lambda (relative)
+          (let ([path (string-append root relative)])
+            (unless (file-regular? path) (error 'fingerprint "expected a regular library source" path))
+            (part! (string->utf8 relative))
+            (let ([port (open-file-input-port path)])
+              (dynamic-wind void
+                (lambda ()
+                  (let ([bytes (get-bytevector-all port)])
+                    (part! (if (eof-object? bytes) #vu8() bytes))))
+                (lambda () (close-port port))))))
+        (list-sort string<? (sources "")))
+      (let ([hex (string-downcase (number->string (+ (bitwise-arithmetic-shift-left high 32) low) 16))])
+        (string-append "fnv1a64:" (make-string (- 16 (string-length hex)) #\0) hex))))
 
   (define (config-owner side)
     (case side

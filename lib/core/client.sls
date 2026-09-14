@@ -2,13 +2,14 @@
 ;; Replies never wait behind UI callbacks. Invalidations coalesce; actor
 ;; mail and log presentation have the same finite budget as the base outbox.
 (library (client)
-  (export call-with-runtime claim! identity request subscribe! unsubscribe!
+  (export call-with-runtime identity request subscribe! unsubscribe!
           set-wake! pump! close! watch! ended? leave!)
   (import (chezscheme)
-          (prefix (kernel) kernel:) (prefix (startup) startup:)
+          (prefix (kernel) kernel:) (prefix (startup) startup:) (prefix (daemon) daemon:)
           (prefix (wire) wire:) (prefix (sys) sys:) (prefix (datum) datum:))
 
   (define-condition-type &ended &condition make-ended ended?)
+  (define-condition-type &stale-base &error make-stale-base stale-base? (status stale-status))
   (define closing-reason #f)
   (define departure #f)
 
@@ -102,38 +103,42 @@
 
   (define (claim! actor path)
     (when connection (error 'client "this process already has a head"))
-    (let retry ([actor actor] [suffix 2])
-      (let ([next (sys:connect-local path)])
-        (guard (ex [else (sys:close-connection! next) (raise ex)])
-          (let ([hello
-                 (sys:call-with-connection-deadline next
-                   (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
-                   (lambda ()
-                     (wire:send! (sys:connection-output next) (list 'hello wire:version actor))
-                     (wire:receive (sys:connection-input next))))])
-            (cond
-              [(equal? hello '(error #f name-in-use))
-               (sys:close-connection! next)
-               (if (startup:name) (error 'e "head name already in use" (startup:name))
+    (let ([fingerprint (kernel:fingerprint)])
+      (let retry ([actor actor] [suffix 2])
+        (let ([next (sys:connect-local path)])
+          (guard (ex [else (sys:close-connection! next) (raise ex)])
+            (let ([hello
+                   (sys:call-with-connection-deadline next
+                     (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
+                     (lambda ()
+                       (wire:send! (sys:connection-output next) (list 'hello wire:version actor fingerprint))
+                       (wire:receive (sys:connection-input next))))])
+              (cond
+                [(and (list? hello) (= (length hello) 3) (eq? (car hello) 'error)
+                   (list? (caddr hello)) (= (length (caddr hello)) 2) (eq? (caaddr hello) 'stale-base))
+                 (raise (make-stale-base (cadr (caddr hello))))]
+                [(equal? hello '(error #f name-in-use))
+                 (sys:close-connection! next)
+                 (if (startup:name) (error 'e "head name already in use" (startup:name))
                    (retry (list 'head (string-append (startup:default-name) " " (number->string suffix)))
                           (+ suffix 1)))]
-              [(and (list? hello) (= (length hello) 3) (eq? (car hello) 'error)
-                    (list? (caddr hello)) (= (length (caddr hello)) 2) (eq? (caaddr hello) 'busy))
-               (error 'e (format "the base is ~a; retry after the review finishes" (cadr (caddr hello))))]
-              [(and (list? hello) (= (length hello) 4)
-                    (equal? (list-head hello 3) (list 'hello wire:version actor)))
-               (set! connection next)
-               (set! who (datum:copy actor))
-               (set! pump-thread (get-thread-id))
-               (set! reader (fork-thread receive!))
-               (let ([notice (sys:call-with-connection-deadline next
-                               (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
-                               (lambda () (request 'startup-notice)))])
-                 (when notice
-                   (display notice (current-error-port))
-                   (flush-output-port (current-error-port))))
-               (identity)]
-              [else (error 'client "base refused attachment" hello)]))))))
+                [(and (list? hello) (= (length hello) 3) (eq? (car hello) 'error)
+                   (list? (caddr hello)) (= (length (caddr hello)) 2) (eq? (caaddr hello) 'busy))
+                 (error 'e (format "the base is ~a; retry after the review finishes" (cadr (caddr hello))))]
+                [(and (list? hello) (= (length hello) 4)
+                   (equal? (list-head hello 3) (list 'hello wire:version actor)))
+                 (set! connection next)
+                 (set! who (datum:copy actor))
+                 (set! pump-thread (get-thread-id))
+                 (set! reader (fork-thread receive!))
+                 (let ([notice (sys:call-with-connection-deadline next
+                                 (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
+                                 (lambda () (request 'startup-notice)))])
+                   (when notice
+                     (display notice (current-error-port))
+                     (flush-output-port (current-error-port))))
+                 (identity)]
+                [else (error 'client "base refused attachment" hello)])))))))
 
   (define (request operation . args)
     ;; Exactly one call in flight. An interrupted call closes the socket:
@@ -211,27 +216,45 @@
     (string-append "'" (apply string-append
                          (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
 
+  (define (head-command name restart?)
+    (format "~a~a --name ~a --base-working-dir ~a"
+      (shell-quote (string-append (kernel:installation-directory) "/e"))
+      (if restart? " --restart" "") (shell-quote name)
+      (shell-quote (startup:base-working-directory))))
+
+  (define (status-count status key noun)
+    (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
+
+  (define (report-stale! status)
+    (format (current-error-port)
+      "e: ~a\n   Restart it with ~a\n   (the base holds ~a, ~a modified; ~a attached).\n"
+      (let ([version (cdr (assq 'wire-version status))])
+        (if (equal? version wire:version) "the running base was built from other sources than this head."
+            (format "the running base uses wire version ~a; this head uses ~a." version wire:version)))
+      (head-command (or (startup:name) (startup:default-name)) #t)
+      (status-count status 'buffers "buffer") (cdr (assq 'modified status))
+      (status-count status 'heads "other head"))
+    (flush-output-port (current-error-port)))
+
   (define (leave! shutdown-on-exit?)
     (let ([result (request 'leaving shutdown-on-exit?)])
       (unless (and (pair? result) (eq? (car result) 'last)) (set! departure result))
       result))
 
   (define (farewell status)
-    (define (count key noun)
-      (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
     (format #t "e: detached; the base holds ~a (~a modified), ~a, ~a and ~a.\n"
-      (count 'buffers "buffer") (cdr (assq 'modified status))
-      (count 'heads "other head") (count 'terminals "running terminal") (count 'agents "agent"))
-    (format #t "Resume: ~a --name ~a --base-working-dir ~a\n"
-      (shell-quote (string-append (kernel:installation-directory) "/e"))
-      (shell-quote (cadr who)) (shell-quote (startup:base-working-directory)))
+      (status-count status 'buffers "buffer") (cdr (assq 'modified status))
+      (status-count status 'heads "other head") (status-count status 'terminals "running terminal")
+      (status-count status 'agents "agent"))
+    (format #t "Resume: ~a\n" (head-command (cadr who) #f))
     (display "Stop the base: M-x (main:shutdown!!)\n"))
 
   (define (call-with-runtime thunk)
     (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
                      "property" "reference" "startup" "store" "string" "surface" "sys" "text" "vt" "wire")])
       (kernel:pin-modules! (cons* "client" "cache" modules))
-      (guard (ex [(ended? ex)
+      (guard (ex [(stale-base? ex) (report-stale! (stale-status ex)) 1]
+                 [(ended? ex)
                   ;; run-head has already restored the terminal, including
                   ;; when the connection failed inside a nested command.
                   (display
@@ -244,6 +267,9 @@
                   (if closing-reason 0 1)])
         (dynamic-wind void
           (lambda ()
+            ;; Negotiate once before any head import or configuration. The
+            ;; client actor seam later binds its callback to this identity.
+            (claim! (list 'head (or (startup:name) (startup:default-name))) (daemon:socket))
             (let ([failures (kernel:load-modules! modules)])
               (unless (null? failures) (raise (cdar failures))))
             (thunk)

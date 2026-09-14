@@ -9,12 +9,16 @@ Directories group responsibility in dependency order:
 Imports may point down or sideways; no library imports a runtime entrypoint.
 The loader locates the adjacent libraries and object caches and configures
 Chez. It admits options through `startup`, then selects the base or client runtime.
-Plain `e` starts or connects to the base, then imports the command layer
+Plain `e` starts or connects to the base, checks source and wire compatibility,
+and claims the connection before importing the command layer
 (`edit`, bare -- the names M-x sees) and `main`, and runs `(main:run)`.
 `--base` acquires the directory's lifetime lock and runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
+`kernel:fingerprint` reads every `.sls` below this installation's `lib/`,
+independent of runtime roots. A new head must match the base's startup
+fingerprint; see [attachment](MULTIHEAD.md#the-base-and-its-heads).
 `--restart` performs the maintenance review before importing head libraries.
 The daemon entry point lives in `lib/base/run/base.sls`, outside client roots.
 In the base, `session` restores store IDs, revisions and opaque named

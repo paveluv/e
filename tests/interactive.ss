@@ -15,7 +15,7 @@
 (define interactive-scenario
   '(begin
      (import (prefix (sys) sys:) (prefix (vt) vt:) (prefix (glyph) glyph:)
-             (prefix (wire) wire:))
+             (prefix (wire) wire:) (prefix (kernel) kernel:))
 
      ;; The nested terminal must run a predictable shell.
      (putenv "SHELL" "/bin/sh")
@@ -111,7 +111,7 @@
      (define resize-question
        "This pending question expands to the new terminal width before another key.")
      (define asker (sys:connect-local (string-append (fixture:directory test-base) "/socket")))
-     (wire:send! (sys:connection-output asker) (list 'hello wire:version '(head "resize")))
+     (wire:send! (sys:connection-output asker) (list 'hello wire:version '(head "resize") (kernel:fingerprint)))
      (wire:receive (sys:connection-input asker))
      (wire:send! (sys:connection-output asker) (list 'request 1 'ask '(head "interactive") resize-question '()))
      (wire:receive (sys:connection-input asker))

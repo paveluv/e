@@ -69,13 +69,15 @@
              (delete-directory path))
            (delete-file path)))
      (define (loader-exit arguments)
-       (let ([process (sys:open-process (append (list "scheme-script" (string-append root "/e")) arguments))])
+       (let ([process (sys:open-process (append (list "env" "TERM=xterm-256color" "scheme-script"
+                                                  (string-append root "/e")) arguments))])
          (dynamic-wind void
            (lambda ()
              (sys:write-process! process #f)
              (test:await 'base-cli-exits (lambda () (sys:process-status process)))
-             (get-bytevector-all (sys:process-input process))
-             (call-with-values (lambda () (sys:process-result process)) list))
+             (let ([output (get-bytevector-all (sys:process-input process))])
+               (let-values ([(code errors) (sys:process-result process)])
+                 (list code errors (if (eof-object? output) "" (utf8->string output))))))
            (lambda () (sys:close-process! process)))))
      (define (base-exit directory) (loader-exit (list "--base" "--base-working-dir" directory)))
      (define (fresh-session!)
@@ -285,7 +287,9 @@
        (let ([connection (sys:connect-local socket)])
          (set! clients (cons connection clients)) connection))
      (define (hello connection actor)
-       (exchange connection (list 'hello wire:version actor)))
+       (exchange connection (list 'hello wire:version actor (fingerprint))))
+     (define (fingerprint)
+       (parameterize ([kernel:installation-directory root]) (kernel:fingerprint)))
      (define (reply-value reply . id)
        (unless (and (list? reply) (= (length reply) 4)
                     (equal? (list-head reply 3) (list 'reply (if (pair? id) (car id) 7) 'ok)))
@@ -930,7 +934,12 @@
                  (unless (file-exists? ,automatic-control)
                    (sleep (make-time 'time-duration 5000000 0)) (wait)))
                (system (format "kill -TERM ~a" (get-process-id)))))))
-       (let* ([base (fixture:start! root base-directory)]
+       (let* ([source-path (string-append sources "/head/head.sls")]
+              [source (call-with-input-file source-path get-string-all)]
+              [wire-path (string-append sources "/foundation/wire.sls")]
+              [wire-source (call-with-input-file wire-path get-string-all)]
+              [original-fingerprint (fingerprint)]
+              [base (fixture:start! root base-directory)]
               [pid-path (string-append base-directory "/pid")]
               [original (call-with-input-file pid-path read)]
               [path (string-append base-directory "/session")]
@@ -949,6 +958,47 @@
                     (let ([b (head:new-local-buffer "local draft omitted")])
                       (head:add-buffer! b) (head:store-reset! b '("draft")) (head:buffer-modified-set! b #t))
                     #t))
+               ;; An invalid head source must still reach the stale refusal:
+               ;; hello happens before importing or compiling any head code.
+               ;; Keep valid source and normal-wire changes afterward so all
+               ;; restart cases also exercise maintenance across both differences.
+               (let ([before (rpc control 'status)]
+                     [policy-before (head-read head '(length (log:entries 'policy 100)))])
+                 (write-text source-path "this is deliberately not a library\n")
+                 (test:check 'source-and-version-refusals-keep-the-owner-and-startup-fingerprint
+                   (list
+                     (map (lambda (message)
+                            (let ([connection (connect)])
+                              (list (exchange connection message) (eof-object? (receive connection)))))
+                       (append (map (lambda (who) (list 'hello wire:version who (fingerprint)))
+                                 '((head "restart desk") (agent "mismatched")))
+                         (list (list 'hello (- wire:version 1) '(head "restart desk") original-fingerprint))))
+                     (equal? original-fingerprint (cdr (assq 'fingerprint before)))
+                     (not (equal? original-fingerprint (fingerprint))))
+                   (list (make-list 3 (list (list 'error #f (list 'stale-base before)) #t)) #t #t))
+                 (let* ([needle (format "(define version ~a)" wire:version)]
+                        [at (string:search wire-source needle 0 (string-length wire-source))])
+                   (unless at (error 'fixture "wire version declaration not found"))
+                   (test:check 'stale-launcher-refuses-before-head-import-and-screen
+                     (map (lambda (version)
+                            (when version
+                              (write-text wire-path
+                                (string-append (substring wire-source 0 at) (format "(define version ~a)" version)
+                                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
+                            (let* ([result (loader-exit (list "--name" "restart desk" "--base-working-dir" base-directory))]
+                                   [errors (cadr result)])
+                              (list (car result)
+                                    (occurrences errors (if version (format "wire version ~a; this head uses ~a" wire:version version)
+                                                            "the running base was built from other sources than this head"))
+                                    (occurrences errors (string-append (quote-shell (string-append root "/e")) " --restart --name "
+                                                          (quote-shell "restart desk") " --base-working-dir " (quote-shell base-directory)))
+                                    (occurrences errors (format "~a modified" (cdr (assq 'modified before))))
+                                    (occurrences (caddr result) "\x1b;")
+                                    (equal? before (rpc control 'status))
+                                    (head-read head '(list (buffer-line (current-buffer) 0) (length (log:entries 'policy 100)))))))
+                       (list #f (+ wire:version 1)))
+                     (make-list 2 (list 1 1 1 1 0 #t (list "kept after restart" policy-before)))))
+                 (write-text source-path (string-append source "\n; changed source for maintenance restart\n")))
                (for-each
                  (lambda (answer)
                    (let ([launcher (start-command '("--restart" "--name" "restart desk") 100)])
@@ -993,8 +1043,10 @@
                      (list (and notice screen (< notice screen))
                            (not (equal? original (call-with-input-file pid-path read)))
                            (head-read launcher '(list (buffer-line (current-buffer) 0) (point)))
-                           (head-read launcher '(and (head:buffer-named "<local draft omitted>") #t))))
-                   (list #t #t expected #f))
+                           (head-read launcher '(and (head:buffer-named "<local draft omitted>") #t))
+                           (head-read launcher '(let ([status (client:request 'status)])
+                                                  (list (cdr (assq 'fingerprint status)) (cdr (assq 'wire-version status)))))))
+                   (list #t #t expected #f (list (fingerprint) (+ wire:version 1))))
                  (head-wait 'old-screen-gets-restart-farewell head
                    (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
                  (head-send! launcher "\x18;\x03;")
@@ -1023,6 +1075,8 @@
                              (occurrences (vector-ref launcher 3) "\x1b;[?1049h")) '(#t 0 0))))
                  (lambda () (delete-file lost-closing)))))
            (lambda ()
+             (write-text source-path source)
+             (write-text wire-path wire-source)
              (write-text automatic-control "stop")
              (test:await 'restart-fixture-releases-ownership
                (lambda () (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
@@ -1152,15 +1206,18 @@
                (string-set! (vector-ref (car snapshot) 0) 0 #\X)
                (test:check 'client-mutation-cannot-change-the-base
                  (car (rpc head 'snapshot (car ids))) '#("hello λ")))
-             (test:check 'bad-version-and-duplicate-name-preserve-the-owner
-               (map (lambda (version)
+             (test:check 'bad-hello-and-duplicate-name-preserve-the-owner
+               (map (lambda (message)
                       (let ([duplicate (connect)])
-                        (list (car (exchange duplicate (list 'hello version identity)))
+                        (list (car (exchange duplicate message))
                               (eof-object? (receive duplicate))
                               (and (member identity (map car (rpc head 'actors))) #t)
                               (inventory head))))
-                    (list 0 (- wire:version 1) wire:version))
-               (make-list 3 (list 'error #t #t (list (list identity identity)))))
+                    (append (map (lambda (version) (list 'hello version identity (fingerprint)))
+                              (list 0 (- wire:version 1) wire:version))
+                      (list (list 'hello wire:version identity) (list 'hello wire:version identity #f)
+                            (list 'hello wire:version identity "mismatched"))))
+               (make-list 6 (list 'error #t #t (list (list identity identity)))))
              (test:check 'request-errors-preserve-the-connection
                (map (lambda (message) (list-head (exchange head message) 3))
                  '((request 1 edit) (request 2 snapshot 999) (request 3 buffers extra)
@@ -1369,7 +1426,7 @@
                  '(("stalled count" . 512) ("stalled bytes" . 32)))
                '((#t #t) (#t #t)))
              (let ([slow (connect)] [who '(agent "stalled mail")])
-               (wire:send! (sys:connection-output slow) (list 'hello wire:version who))
+               (wire:send! (sys:connection-output slow) (list 'hello wire:version who (fingerprint)))
                (test:await 'publication-mail-refused
                  (lambda () (assq 'mail-refused (caddr (rpc agent 'snapshot 1)))))
                (test:await 'publication-overload-detached
@@ -1463,10 +1520,11 @@
                                      (vector-length (head:buffer-lines (head:find-tool-buffer "*log*")))
                                      (kernel:module-source "store")
                                      (kernel:module-requires? "main" "base")
-                                     (guard (ex [else #t]) (kernel:reload-module! "store") #f)))) (list a b))
+                                     (guard (ex [else #t]) (kernel:reload-module! "store") #f)
+                                     (guard (ex [else #t]) (actor:register! head:ui-actor (lambda (message) #f)) #f)))) (list a b))
                      (map (lambda (name)
                             (list (list 'head name) (list 'head name) "<log>" 4096
-                                  (string-append sources "/client/state/store.sls") #f #t)) '("screen A" "screen B")))
+                                  (string-append sources "/client/state/store.sls") #f #t #t)) '("screen A" "screen B")))
                    ;; Exercise the installed save hook, including first load,
                    ;; reload, inactive roots, old extensions and pinned code.
                    (let* ([probe (string-append sources "/apps/layout-probe.sls")]
@@ -1495,7 +1553,10 @@
                                                                "layout-inactive" "layout-outside")))
                                               (kernel:loaded-modules))
                                       (eq? before (top-level-value 'store:exists?))))))
-                         '(1 (2 ("layout-probe") #t)))))
+                         '(1 (2 ("layout-probe") #t))))
+                     ;; Existing heads may reload; later heads compare the
+                     ;; whole source tree. Retire this reload-only fixture.
+                     (for-each delete-file (cons probe (map car ignored))))
                    (test:check 'client-log-delivery-stays-on-main-through-workers-reentry-and-retraction
                      (head-read a
                        '(let ([seen '()] [main-thread (get-thread-id)])
@@ -2321,7 +2382,7 @@
            (test:check 'concurrent-cold-compilers-share-a-consistent-cache
              (map (lambda (round)
                     (remove-tree! objects)
-                    (test:parallel 3 (lambda (index) (loader-exit '("--help"))))) '(1 2 3 4))
+                    (test:parallel 3 (lambda (index) (list-head (loader-exit '("--help")) 2)))) '(1 2 3 4))
              (make-list 4 (make-list 3 '(0 ""))))
            (remove-tree! objects)
            (let* ([a (start-head "auto α's desk")] [b (start-head "auto B")])

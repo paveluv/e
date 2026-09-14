@@ -30,6 +30,8 @@
   (define connection-owner
     (make-parameter (lambda (actor) (and (eq? (car actor) 'head) actor))))
 
+  (define source-fingerprint #f)
+
   (define (call-with-runtime thunk)
     ;; Ownership and diagnostics are already established by the loader.
     ;; Ending a head connection never enters this cleanup.
@@ -37,6 +39,7 @@
     (let ([audit #f])
       (dynamic-wind void
         (lambda ()
+          (set! source-fingerprint (kernel:fingerprint))
           (session:restore!)
           ;; One producer for every head and for work while all heads are
           ;; absent. Log small operation facts, never retained text/deltas.
@@ -254,6 +257,7 @@
   (define-record-type review
     (fields token states valid? summary heads terminals agents tickets))
   (define-condition-type &busy &error make-busy busy? (phase busy-phase))
+  (define-condition-type &stale-base &error make-stale-base stale-base?)
 
   (define (phase)
     (if (eq? (activity:phase) 'running)
@@ -453,7 +457,8 @@
                                  (cons 'pending (length (actor:pending-tickets)))
                                  (cons 'instance instance)
                                  (cons 'phase (with-mutex peer-lock (phase)))
-                                 (cons 'wire-version wire:version)))))
+                                 (cons 'wire-version wire:version)
+                                 (cons 'fingerprint source-fingerprint)))))
 
   (define (serve-connection peer)
     (let* ([connection (peer-connection peer)]
@@ -533,16 +538,24 @@
                             (list 'error #f
                               (cond [(kernel:registration-conflict? ex) 'name-in-use]
                                     [(busy? ex) (list 'busy (busy-phase ex))]
+                                    [(stale-base? ex) (list 'stale-base (status (with-mutex peer-lock (participants))))]
                                     [else (kernel:condition-text ex)])))))])
             (let* ([hello (wire:receive (sys:connection-input connection))]
                    [maintenance? (and (list? hello) (= (length hello) 3)
                                       (eq? (car hello) 'maintenance) (equal? (cadr hello) 1))]
-                   [actor (and (list? hello) (= (length hello) 3)
-                               (or maintenance? (and (eq? (car hello) 'hello) (equal? (cadr hello) wire:version)))
+                   [actor (and (or maintenance?
+                                   (and (list? hello) (= (length hello) 4) (eq? (car hello) 'hello)
+                                        (integer? (cadr hello)) (exact? (cadr hello)) (>= (cadr hello) 0)
+                                        (string? (cadddr hello))))
                                (caddr hello))])
               (unless (and (actor:identity? actor) (= (length actor) 2)
                            (memq (car actor) (if maintenance? '(head) '(head agent))) (string? (cadr actor)))
-                (error 'wire (format "expected (hello ~a (head-or-agent name)) or (maintenance 1 (head name))" wire:version)))
+                (error 'wire (format "expected (hello ~a (head-or-agent name) fingerprint) or (maintenance 1 (head name))" wire:version)))
+              ;; Refuse before admission, policy sessions, actor registration
+              ;; and callbacks. Existing owners and the recovery notice stay put.
+              (when (and (not maintenance?)
+                         (or (not (= (cadr hello) wire:version)) (not (equal? (cadddr hello) source-fingerprint))))
+                (raise (make-stale-base)))
               (if maintenance?
                   (begin
                     (unless (eq? (policy:buffers ((connection-policy) (datum:copy actor))) 'any)

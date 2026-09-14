@@ -50,6 +50,18 @@ minutes, with a message after two seconds; a silent hello times out after ten
 seconds. Permission failures and foreign files are reported without removing
 them. A timeout does not kill or replace the existing base.
 
+Before importing the head or loading its configuration, a new head compares
+its wire version and library fingerprint with the running base. Every `.sls`
+under `lib/` counts, including modes and both runtime trees. Any library edit
+therefore requires `e --restart` before a new head can attach. Configuration,
+compiled objects and Git metadata are excluded. Existing heads keep working
+and can still reload their own modules.
+
+A mismatch exits before entering the screen. It reports what the base holds
+and prints a restart command for that installation, head name and base
+directory. It does not register another actor or stop the base. This checks
+source consistency; permissions still come from the OS user and base policy.
+
 SIGHUP leaves the base running. SIGTERM or SIGINT pauses and saves the shared
 session before stopping the base and its terminal processes. A failed save
 resumes service and reports the error to attached heads and the diagnostic
@@ -163,11 +175,17 @@ or missing OS support refuses with a manual-recovery diagnostic. Darwin and
 FreeBSD currently require manual recovery for an unresponsive base.
 An ordinary launcher never signals another base.
 
-Normal wire version is 4; the maintenance exchange has independent version 1
-and remains available across normal protocol changes. Bases from before this
-slice cannot save sessions. For that first upgrade, save files and export any
-other wanted text before manually stopping the older base; `--force` does not
-bypass an explicit unsupported-maintenance reply.
+Normal wire version is 5; the maintenance exchange has independent version 1
+and remains available across normal protocol changes and source mismatches.
+Status includes the base's startup `fingerprint` alongside `wire-version`.
+Scripted clients send `(hello version actor fingerprint)` using the installation's
+`kernel:fingerprint`; the fingerprint grants no permissions.
+
+S3 bases (wire version 4) already support `e --restart`, even though their
+normal attachment refusal predates the fingerprint diagnostic. Earlier bases
+cannot save sessions: save files and export any other wanted text before
+manually stopping them. `--force` does not bypass an explicit
+unsupported-maintenance reply.
 
 ## What is shared and what is local
 

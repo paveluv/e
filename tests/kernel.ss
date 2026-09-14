@@ -11,6 +11,7 @@
   '(begin
      (import (prefix (test) test:)
              (prefix (kernel) kernel:)
+             (prefix (sys) sys:)
              (prefix (store) store:)
              (prefix (actor) actor:))
 
@@ -523,7 +524,7 @@
        void
        (lambda ()
          ;; Source overlays do not select the installation's configuration.
-         (parameterize ([kernel:installation-directory (string-append scratch "/unused/..")]
+         (parameterize ([kernel:installation-directory (string-append (sys:canonical-file-path scratch) "/unused/..")]
                         [library-directories (cons (cons sources objects) (library-directories))])
            (test:check 'configuration-follows-installation-not-source-roots
              (parameterize ([library-directories '()])
@@ -531,6 +532,61 @@
                      (kernel:config-file) (kernel:config-file 'base)))
              (list scratch (string-append scratch "/config.e")
                    (string-append scratch "/base-config.e")))
+           ;; The fingerprint reads the installation, including inactive
+           ;; runtime kinds and hidden sources. No compiler or Git is involved.
+           (let* ([directories '("base" "base/state" "client" "client/state" "modes")]
+                  [entries (list (cons "base/state/shared.sls" #vu8(0 255 10 65))
+                                 (cons "client/state/shared.sls" (string->utf8 "λ"))
+                                 (cons "modes/empty.sls" #vu8()) (cons "modes/.hidden.sls" #vu8(7)))]
+                  [ignored (list (string-append scratch "/config.e") (string-append objects "/outside.sls")
+                                 (string-append sources "/modes/old.e"))]
+                  [baseline "fnv1a64:8b8ed455c568c033"])
+             (define (path name) (string-append sources "/" name))
+             (define (write-bytes path bytes)
+               (call-with-port (open-file-output-port path (file-options no-fail))
+                 (lambda (port) (put-bytevector port bytes))))
+             (define (write-entry entry) (write-bytes (path (car entry)) (cdr entry)))
+             (dynamic-wind
+               (lambda () (for-each (lambda (name) (mkdir (path name))) directories))
+               (lambda ()
+                 (for-each write-entry entries)
+                 ;; The fixed vector covers exact bytes and length framing,
+                 ;; independent of this random installation's absolute path.
+                 (test:check 'fingerprint-covers-raw-sorted-sources (kernel:fingerprint) baseline)
+                 (for-each (lambda (path) (write-bytes path #vu8(1))) ignored)
+                 (for-each (lambda (entry) (delete-file (path (car entry)))) entries)
+                 (for-each write-entry (reverse entries))
+                 (test:check 'fingerprint-ignores-cache-config-roots-and-discovery-order
+                   (parameterize ([library-directories '()]) (kernel:fingerprint)) baseline)
+                 (test:check 'fingerprint-covers-every-content-and-relative-path
+                   (append
+                     (map (lambda (entry)
+                            (write-bytes (path (car entry)) #vu8(42))
+                            (let ([changed? (not (equal? baseline (kernel:fingerprint)))])
+                              (write-entry entry) changed?)) entries)
+                     (let ([empty (path "modes/empty.sls")] [renamed (path "modes/renamed.sls")])
+                       (rename-file empty renamed)
+                       (let ([moved? (not (equal? baseline (kernel:fingerprint)))])
+                         (delete-file renamed)
+                         (let ([removed? (not (equal? baseline (kernel:fingerprint)))])
+                           (write-bytes empty #vu8()) (write-bytes renamed #vu8())
+                           (let ([added? (not (equal? baseline (kernel:fingerprint)))])
+                             (delete-file renamed) (list moved? removed? added?))))))
+                   (make-list 7 #t))
+                 (let ([before (test:fd-count)])
+                   (unless (zero? ((foreign-procedure "symlink" (string string) int)
+                                   (path "absent") (path "broken.sls")))
+                     (error 'fixture "could not create broken source link"))
+                   (test:check 'fingerprint-read-failure-never-returns-a-partial-checksum
+                     (list (test:raises? kernel:fingerprint)
+                           (parameterize ([kernel:installation-directory (path "absent")])
+                             (test:raises? kernel:fingerprint))
+                           (equal? before (test:fd-count))) '(#t #t #t))))
+               (lambda ()
+                 (for-each (lambda (name) (delete-file (path name)))
+                   (append (map car entries) '("modes/renamed.sls" "broken.sls")))
+                 (for-each delete-file ignored)
+                 (for-each (lambda (name) (delete-directory (path name))) (reverse directories)))))
            (write-fixture "kernel-child" 'child)
            (write-fixture "kernel-parent" 'parent)
            (write-fixture "kernel-fixture" 'version-one)

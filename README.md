@@ -122,6 +122,8 @@ in `config.e` to offer shutdown when the last screen quits.
 and reattaches. SIGTERM/SIGINT also save a recovery snapshot. Terminal
 processes, undo history and local drafts do not survive a restart; terminal
 text returns as read-only transcripts. Reviewed shutdown deletes the snapshot.
+New heads check library sources and protocol compatibility against the running
+base and ask for `e --restart` when they differ.
 Connections currently use a local Unix socket under
 the same OS user. See [the base and its heads](manual/MULTIHEAD.md#the-base-and-its-heads)
 for configuration, lifecycle and scripted clients.

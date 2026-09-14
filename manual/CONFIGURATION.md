@@ -6,6 +6,9 @@ Run `./e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file
 in the shell if it contains spaces. `--name=NAME` also works. `--` allows a
 file whose name begins with `-`. Help (`-h` or `--help`) and argument errors
 are handled before loading the editor or `config.e`.
+Compatibility with a running base is also checked before head imports and
+`config.e`; a library-source or wire mismatch prints a restart command and
+exits. Configuration files themselves do not participate in the fingerprint.
 
 Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,

@@ -5,12 +5,13 @@
           current call-as identity? audience? in-audience? send! pending answer! checkpoint checkpoint!)
   (import (chezscheme)
           (prefix (client) client:) (prefix (identity) identity:)
-          (prefix (daemon) daemon:) (prefix (datum) datum:))
+          (prefix (startup) startup:) (prefix (datum) datum:))
   (define current identity:current)
   (define call-as identity:call-as)
   (define identity? identity:valid?)
   (define audience? identity:audience?)
   (define in-audience? identity:in-audience?)
+  (define bound? #f)
   ;; The head's open questions, read once per change: every delivered event
   ;; (a question, a pending notice, an answer) may have changed them.
   (define pending-known? #f)
@@ -20,11 +21,16 @@
     (case-lambda
       [(actor deliver!) (register! actor deliver! #f)]
       [(actor deliver! capabilities)
-       (let ([identity (client:claim! actor (daemon:socket))])
+       ;; The runtime claims before importing a head. Binding its callback
+       ;; adopts any negotiated default-name suffix without a second hello.
+       (let ([identity (client:identity)])
+         (unless (and identity (not bound?) (equal? actor (list 'head (or (startup:name) (startup:default-name)))))
+           (error 'register! "a head binds its negotiated actor once" actor))
          (client:subscribe! 'event
            (lambda (message)
              (forget-pending!)
              (call-as identity (lambda () (deliver! message)))))
+         (set! bound? #t)
          identity)]))
   (define (attached) (client:request 'actors))
   (define (describe actor) (find (lambda (entry) (equal? (car entry) actor)) (attached)))
