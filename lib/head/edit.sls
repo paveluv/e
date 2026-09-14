@@ -1121,20 +1121,7 @@
     ;; Generated tools explicitly opt into disposal; failed reads fail closed.
     (guard (ex [else #f])
       (let-values ([(text revision facts) (head:buffer-state b)])
-        (state-clean? text facts))))
-
-  (define (state-clean? text facts)
-    (define (fact key fallback) (cond [(assq key facts) => cdr] [else fallback]))
-    ;; A failed disk comparison still requires consent; it must not prevent
-    ;; the user from deciding about the successfully captured buffer state.
-    (guard (ex [else #f])
-      (or (fact 'disposable #f)
-          (not (fact 'modified #f))
-          (let ([path (fact 'file #f)])
-            (if path
-                (and (file-exists? path)
-                     (string=? (file:text text (fact 'trailing #t)) (file:read path)))
-                (and (= (vector-length text) 1) (string=? (vector-ref text 0) "")))))))
+        (file:state-clean? text facts))))
 
   ;;; Buffer and window commands ---------------------------------------------
 
@@ -1326,7 +1313,7 @@
           (if (not b) (set! message (format "No buffer named ~a" s))
               (let review ()
                 (let-values ([(text revision facts) (head:buffer-state b)])
-                  (when (or (state-clean? text facts)
+                  (when (or (file:state-clean? text facts)
                             (prompt:confirm? (format "Buffer ~a modified; kill anyway?"
                                                (head:buffer-name b))))
                     (unless (discard-reviewed! b revision facts) (review))))))))))
@@ -1885,7 +1872,7 @@
     (let ([b (current-buffer)])
       (guard (ex [else (string-append "  " (kernel:condition-text ex))])
         (let-values ([(text revision facts) (head:buffer-state b)])
-          (cond [(not (state-clean? text facts)) (format "  ~a has unsaved changes" (head:buffer-name b))]
+          (cond [(not (file:state-clean? text facts)) (format "  ~a has unsaved changes" (head:buffer-name b))]
             [(discard-reviewed! b revision facts) ""]
             [else "  Buffer changed; review it again"])))))
 
@@ -2005,54 +1992,31 @@
              (hashtable-delete! find-file-drafts owner))
            (when (and s ready) (ready))))]))
 
-  (define (local-quit-state)
-    ;; Own only the facts used by state-clean?. Other head-local metadata can
-    ;; contain runtime handles or cycles; it is not part of a discard decision.
-    (map (lambda (b)
-           (let-values ([(text revision facts) (head:buffer-state b)])
-             (list b text revision
-               (datum:copy (filter (lambda (entry) (memq (car entry) '(disposable modified file trailing)))
-                                   facts)))))
-         (filter (lambda (b) (not (head:buffer-store-id b))) buffers)))
+  (define (view-quit-buffers!)
+    (let ([b (head:find-tool-buffer "*buffers*")])
+      (if b
+          (let ([w (display-buffer! b)])
+            (when w
+              (select-window! w)
+              (head:dispatch-app-event! "FOCUS")
+              (set! message "")))
+          (set-message! "The <buffers> app is not available"))))
 
   (define (quit!!)
     (let review ([changed? #f])
-      (let* ([local (local-quit-state)]
-             [answer
-              (if (for-all (lambda (state) (state-clean? (cadr state) (cadddr state)))
-                           local) #\y
-                  (prompt:key!
-                    (if changed?
-                        "Buffers changed; quit anyway? y)es, n)o, v)iew"
-                        "Modified buffers exist; quit anyway? y)es, n)o, v)iew")
-                    "ynv"))])
-        (case (and answer (char-downcase answer))
-          [(#\y)
-           (unless (head:call-uninterrupted
-                     (lambda ()
-                       ;; Local changes run on this head thread. Shared
-                       ;; work remains in the base when this screen leaves.
-                       (and (for-all
-                              (lambda (state)
-                                (or (cond [(assq 'disposable (cadddr state)) => cdr] [else #f])
-                                    (let ([old (assq (car state) local)])
-                                      (and old (= (caddr state) (caddr old))
-                                           (equal? (cadddr state) (cadddr old))))))
-                              (local-quit-state))
-                            (begin (head:quit!) #t))))
-             (review #t))]
-          [(#\v)
-           (let ([b (head:find-tool-buffer "*buffers*")])
-             (if b
-                 (let ([w (display-buffer! b)])
-                   (when w
-                     (select-window! w)
-                     ;; A direct app entry still receives the same
-                     ;; initialization opportunity as its ordinary command.
-                     (head:dispatch-app-event! "FOCUS")
-                     (set! message "")))
-                 (set-message! "The <buffers> app is not available")))]
-          [else (void)]))))
+      (let-values ([(unsaved valid?) (head:prepare-quit)])
+        (let ([answer
+               (if (zero? unsaved) #\y
+                 (prompt:key!
+                   (if changed?
+                       "Buffers changed; quit anyway? y)es, n)o, v)iew"
+                       "Modified buffers exist; quit anyway? y)es, n)o, v)iew")
+                   "ynv"))])
+          (case (and answer (char-downcase answer))
+            [(#\y)
+             (if (head:call-uninterrupted valid?) (head:depart!) (review #t))]
+            [(#\v) (head:view-review!)]
+            [else (void)])))))
 
   ;;; Pasting and typed runs --------------------------------------------------
 
@@ -3281,6 +3245,7 @@
     (begin
       (head:set-file-opener! visit-file!)
       (head:set-quit-command! quit!!)
+      (head:set-review-viewer! view-quit-buffers!)
       (head:set-after-key! clamp-point!))
 
     (mode:register! "buffers" '() '() (lambda (line) #f) #f buffers-styles)

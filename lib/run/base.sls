@@ -3,6 +3,7 @@
   (export call-with-runtime run connection-policy connection-owner)
   (import (chezscheme)
           (prefix (kernel) kernel:) (prefix (daemon) daemon:)
+          (prefix (activity) activity:) (prefix (startup) startup:)
           (prefix (sys) sys:) (prefix (wire) wire:)
           (prefix (store) store:) (prefix (actor) actor:)
           (prefix (policy) policy:) (prefix (text) text:) (prefix (datum) datum:)
@@ -12,7 +13,7 @@
           (prefix (surface) surface:) (prefix (reference) reference:) (prefix (doc) doc:))
 
   (define modules
-    '("actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
+    '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
       "property" "reference" "sandbox" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -31,7 +32,7 @@
   (define (call-with-runtime thunk)
     ;; Ownership and diagnostics are already established by the loader.
     ;; Ending a head connection never enters this cleanup.
-    (kernel:pin-modules! (cons "base" modules))
+    (kernel:pin-modules! (cons* "base" "cache" modules))
     (let ([audit #f])
       (dynamic-wind void
         (lambda ()
@@ -47,7 +48,9 @@
           (thunk))
         (lambda ()
           (dynamic-wind void vt:close-all!
-            (lambda () (when audit (store:unsubscribe! audit))))))))
+            (lambda ()
+              (for-each policy:revoke! (policy:live))
+              (when audit (store:unsubscribe! audit))))))))
 
   (define (audit-store-event! event)
     (let* ([kind (car event)] [id (cadr event)]
@@ -233,14 +236,188 @@
   ;; that committed its departure is excluded before its reply is queued;
   ;; concurrent quitters cannot both count each other as staying.
   (define-record-type peer
-    (fields connection (mutable identity) (mutable leaving?) (mutable finish!)))
-  (define peer-lock (make-mutex))
+    (fields connection (mutable identity) (mutable leaving?) (mutable connected?) (mutable pending) (mutable finish!)))
+  (define peer-lock activity:lock)
   (define peers '())
   (define finished (make-condition))
 
+  ;; The control loop is the sole lifecycle executor. Its owner and current
+  ;; review share admission's mutex; producer coordination lives below the
+  ;; services, so retained in-process callers use the same pause as the wire.
+  (define-record-type lifecycle
+    (fields (mutable operation) (mutable owner) (mutable review) (mutable serial)))
+  (define lifecycle-state (make-lifecycle #f #f #f 0))
+  (define-record-type review
+    (fields token states valid? summary heads terminals agents))
+  (define-condition-type &busy &error make-busy busy? (phase busy-phase))
+
+  (define (phase)
+    (if (eq? (activity:phase) 'running)
+        (if (lifecycle-owner lifecycle-state) 'reviewing 'running)
+        (activity:phase)))
+  (define (busy!)
+    (raise (condition (make-busy (phase))
+             (make-message-condition (format "The base is ~a; retry after the review finishes" (phase))))))
+
+  (define (participating-heads)
+    ;; Caller owns peer-lock, including during a handshake reservation.
+    (filter (lambda (peer)
+              (and (peer-connected? peer) (not (peer-leaving? peer))
+                   (peer-identity peer) (eq? (car (peer-identity peer)) 'head))) peers))
+
+  (define (agent-sessions)
+    (filter (lambda (s) (eq? (car (policy:session-actor s)) 'agent)) (policy:live)))
+
+  (define (release-review! peer)
+    (with-mutex peer-lock
+      (when (and (eq? (activity:phase) 'running) (eq? peer (lifecycle-owner lifecycle-state)))
+        (lifecycle-owner-set! lifecycle-state #f)
+        (lifecycle-operation-set! lifecycle-state #f)
+        (lifecycle-review-set! lifecycle-state #f))))
+
+  (define (claim-review! peer operation)
+    ;; Caller owns peer-lock. Taking or reusing a reservation performs no I/O.
+    (unless (and (peer-connected? peer) (not (peer-leaving? peer)))
+      (error operation "this head has left"))
+    (unless (and (eq? (activity:phase) 'running)
+                 (or (not (lifecycle-owner lifecycle-state))
+                     (and (eq? peer (lifecycle-owner lifecycle-state))
+                          (eq? operation (lifecycle-operation lifecycle-state)))))
+      (busy!))
+    (lifecycle-owner-set! lifecycle-state peer)
+    (lifecycle-operation-set! lifecycle-state operation))
+
+  (define (prepare-close! peer)
+    (with-mutex peer-lock (claim-review! peer 'shutdown))
+    (let-values ([(states valid?) (store:prepare-close)])
+      (let* ([heads (with-mutex peer-lock (participating-heads))]
+             [terminals (vt:running)] [agents (agent-sessions)]
+             [summary (map (lambda (state)
+                             (list (car state)
+                               (let ([current (store:state (car state) #f '())])
+                                 (if current (car current) "<deleted>"))
+                               (not (file:state-clean? (cadr state) (cadddr state))))) states)]
+             [token (with-mutex peer-lock
+                      (unless (peer-connected? peer) (error 'shutdown "reviewing head disconnected"))
+                      (lifecycle-serial-set! lifecycle-state (+ 1 (lifecycle-serial lifecycle-state)))
+                      (lifecycle-serial lifecycle-state))]
+             [review (make-review token states valid? summary heads terminals agents)]
+             [counts (status (map peer-identity heads))])
+        (with-mutex peer-lock (lifecycle-review-set! lifecycle-state review))
+        ;; Counts refer to the same incarnations as the consent, not to a
+        ;; later inventory that could hide replacement work behind a count.
+        (list 'review token summary
+          (cons* (cons 'terminals (length terminals)) (cons 'agents (length agents))
+                 (filter (lambda (entry) (not (memq (car entry) '(terminals agents)))) counts))))))
+
+  (define (current-review peer token)
+    (with-mutex peer-lock
+      (let ([review (lifecycle-review lifecycle-state)])
+        (unless (and (eq? peer (lifecycle-owner lifecycle-state))
+                     (peer-connected? peer) (not (peer-leaving? peer))
+                     (eq? (lifecycle-operation lifecycle-state) 'shutdown)
+                     review (equal? token (review-token review)))
+          (error 'shutdown "review token is no longer current for this connection"))
+        review)))
+
+  (define (commit-stop!)
+    (store:close!)
+    (activity:stop!)
+    ;; Mark the priority notice before waking an accepting RPC's worker;
+    ;; success is delivered as closing, never as an ordinary detach reply.
+    (for-each (lambda (peer) ((peer-finish! peer) (lifecycle-operation lifecycle-state)))
+      (with-mutex peer-lock peers)))
+
+  (define (shutdown! peer token)
+    (let ([review (current-review peer token)])
+      (dynamic-wind void
+        (lambda ()
+          (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+          (if (and ((review-valid? review))
+                   (for-all (lambda (p) (memq p (review-heads review)))
+                     (with-mutex peer-lock (participating-heads)))
+                   (for-all (lambda (owner) (member owner (review-terminals review))) (vt:running))
+                   (for-all (lambda (s) (memq s (review-agents review))) (agent-sessions))
+                   ;; A disk change can make formerly clean text unsaved even
+                   ;; without a store edit. It needs consent too.
+                   (for-all (lambda (state summary)
+                              (or (caddr summary) (not (store:exists? (car state)))
+                                  (store:property (car state) 'disposable #f)
+                                  (file:state-clean? (cadr state) (cadddr state))))
+                     (review-states review) (review-summary review)))
+              (begin
+                (unless (and (with-mutex peer-lock (peer-connected? peer))
+                             (sys:connection-alive? (peer-connection peer)))
+                  (error 'shutdown "reviewing head disconnected before acceptance"))
+                ;; This is the acceptance point. The control loop now owns
+                ;; the durable operation, independently of socket lifetime.
+                (sys:remove-session! (startup:base-working-directory))
+                (commit-stop!)
+                #t)
+              (begin
+                (activity:resume!)
+                (prepare-close! peer))))
+        ;; A durable failure resumes the existing processes, even after the
+        ;; requesting socket has gone. Only commit-stop! is irreversible.
+        (lambda () (unless (eq? (activity:phase) 'stopping) (activity:resume!))))))
+
+  (define (lifecycle-request peer control? operation args)
+    (unless (eq? (car (peer-identity peer)) 'head) (error operation "expected a head connection"))
+    (unless (or (eq? operation 'leaving) control?)
+      (error operation "operation requires an all-buffer head connection"))
+    ;; A superseded token cannot cancel or accept the replacement review.
+    ;; Validate it before the failure cleanup for an owned operation.
+    (when (memq operation '(shutdown cancel-review))
+      (unless (= (length args) 1) (error operation "expected a review token"))
+      (current-review peer (car args)))
+    (guard (ex [else
+                (release-review! peer)
+                (when (eq? operation 'shutdown)
+                  (log:add! 'base (kernel:condition-text ex) #f))
+                (raise ex)])
+      (case operation
+        [(leaving)
+         (unless (and (= (length args) 1) (boolean? (car args))) (error 'leaving "expected shutdown-on-exit boolean"))
+         (let-values ([(last? identities)
+                       (with-mutex peer-lock
+                         (unless (eq? (activity:phase) 'running) (busy!))
+                         (let ([last? (and control? (car args) (= (length (participating-heads)) 1))])
+                           (if last? (claim-review! peer 'shutdown) (peer-leaving?-set! peer #t))
+                           (values last? (participants))))])
+           (let ([counts (status identities)]) (if last? (list 'last counts) counts)))]
+        [(prepare-close)
+         (unless (null? args) (error operation "expected no arguments"))
+         (prepare-close! peer)]
+        [(shutdown)
+         (shutdown! peer (car args))]
+        [(cancel-review)
+         (release-review! peer) #t])))
+
+  (define (control-call peer control? operation args)
+    (let ([answer (kernel:make-mailbox)])
+      (dynamic-wind
+        (lambda ()
+          (with-mutex peer-lock
+            (unless (peer-connected? peer) (error operation "head disconnected"))
+            (unless (and (eq? (activity:phase) 'running)
+                         (or (eq? operation 'leaving)
+                             (not (lifecycle-owner lifecycle-state))
+                             (eq? peer (lifecycle-owner lifecycle-state))))
+              (busy!))
+            (peer-pending-set! peer answer)))
+        (lambda ()
+          (kernel:mailbox-post! daemon:control
+            (lambda ()
+              (kernel:mailbox-post! answer
+                (guard (ex [else (cons #f ex)])
+                  (cons #t (lifecycle-request peer control? operation args))))))
+          (let ([result (kernel:mailbox-receive! answer)])
+            (if (car result) (cdr result) (raise (cdr result)))))
+        (lambda () (with-mutex peer-lock (peer-pending-set! peer #f))))))
+
   (define (participants)
     ;; Caller owns peer-lock. Never call store/actor services under it.
-    (filter values (map (lambda (peer) (and (not (peer-leaving? peer)) (peer-identity peer))) peers)))
+    (filter values (map (lambda (peer) (and (peer-connected? peer) (not (peer-leaving? peer)) (peer-identity peer))) peers)))
 
   (define (status identities)
     (let ([facts (filter values
@@ -254,7 +431,8 @@
         (cons 'heads (length (filter (lambda (identity) (eq? (car identity) 'head)) identities)))
         (cons 'terminals (length (filter (lambda (facts) (and (equal? (fact 'mode facts) "terminal")
                                                            (fact 'alive facts))) facts)))
-        (cons 'agents (length (filter (lambda (identity) (eq? (car identity) 'agent)) identities)))
+        (cons 'agents (length (agent-sessions)))
+        (cons 'phase (with-mutex peer-lock (phase)))
         (cons 'wire-version wire:version))))
 
   (define (serve-connection peer)
@@ -266,7 +444,14 @@
         (when (with-mutex out-lock
                 (and (not closed?) (begin (set! closed? #t) #t)))
           (sys:close-connection! connection)
-          (kernel:mailbox-post! out #f)))
+          (kernel:mailbox-post! out #f)
+          (let ([pending (with-mutex peer-lock
+                           (peer-connected?-set! peer #f)
+                           (peer-pending peer))])
+            (when pending
+              (kernel:mailbox-post! pending
+                (cons #f (condition (make-error) (make-message-condition "Head disconnected"))))))
+          (kernel:mailbox-post! daemon:control (lambda () (release-review! peer)))))
       (define (post! message)
         (guard (ex [else (close!) (raise ex)])
           (when (with-mutex out-lock closed?) (error 'wire "connection is closed"))
@@ -315,8 +500,10 @@
                       (unless writer
                         (guard (ignored [else (void)])
                           (wire:send! (sys:connection-output connection)
-                            (list 'error #f (if (kernel:registration-conflict? ex) 'name-in-use
-                                              (kernel:condition-text ex))))))])
+                            (list 'error #f
+                              (cond [(kernel:registration-conflict? ex) 'name-in-use]
+                                    [(busy? ex) (list 'busy (busy-phase ex))]
+                                    [else (kernel:condition-text ex)])))))])
             (let* ([hello (wire:receive (sys:connection-input connection))]
                    [actor (and (list? hello) (= (length hello) 3)
                                (eq? (car hello) 'hello) (equal? (cadr hello) wire:version)
@@ -324,21 +511,26 @@
               (unless (and (actor:identity? actor) (= (length actor) 2)
                            (memq (car actor) '(head agent)) (string? (cadr actor)))
                 (error 'wire (format "expected (hello ~a (head-or-agent name))" wire:version)))
-              (let* ([p ((connection-policy) (datum:copy actor))]
-                     [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo redo))])
-                (set! session (policy:mint! actor p ((connection-owner) (datum:copy actor)) close!))
-                (set! control? (and (eq? (car actor) 'head) (eq? (policy:buffers p) 'any)))
-                ;; Queue hello before publishing; name refusal still revokes
-                ;; this connection's session without touching the old owner.
-                (post! (list 'hello wire:version actor capabilities))
-                (parameterize ([kernel:registering-module owner])
-                  (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities)))
-              (with-mutex peer-lock
-                (peer-identity-set! peer (datum:copy actor))
-                (peer-finish!-set! peer
-                  (lambda (reason)
-                    (with-mutex out-lock (set! closing reason))
-                    (kernel:mailbox-post! out #f))))
+              (activity:call-with
+                (lambda ()
+                  (let* ([p ((connection-policy) (datum:copy actor))]
+                         [capabilities (if (null? (policy:buffers p)) '(read) '(read edit undo redo))])
+                    (set! session (policy:mint! actor p ((connection-owner) (datum:copy actor)) close!))
+                    (set! control? (and (eq? (car actor) 'head) (eq? (policy:buffers p) 'any)))
+                    ;; Queue hello before publishing; name refusal still revokes
+                    ;; this connection's session without touching the old owner.
+                    (post! (list 'hello wire:version actor capabilities))
+                    (parameterize ([kernel:registering-module owner])
+                      (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities))))
+                (lambda ()
+                  ;; Reservation and review ownership linearize here. The
+                  ;; handshake finishes outside the mutex as admitted work.
+                  (unless (eq? (phase) 'running) (busy!))
+                  (peer-identity-set! peer (datum:copy actor))
+                  (peer-finish!-set! peer
+                    (lambda (reason)
+                      (with-mutex out-lock (set! closing reason))
+                      (kernel:mailbox-post! out #f)))))
               (set! writer
                 (fork-thread
                   (lambda ()
@@ -382,13 +574,11 @@
                           (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
                             (list 'reply (cadr message) 'ok
                               (case (caddr message)
-                                [(status leaving)
-                                 (unless (and control? (= (length message) 3))
-                                   (error 'wire "expected an all-buffer head and no arguments"))
-                                 (status
-                                   (with-mutex peer-lock
-                                     (when (eq? (caddr message) 'leaving) (peer-leaving?-set! peer #t))
-                                     (participants)))]
+                                [(status)
+                                 (unless (= (length message) 3) (error 'wire "status takes no arguments"))
+                                 (status (with-mutex peer-lock (participants)))]
+                                [(leaving prepare-close shutdown cancel-review)
+                                 (control-call peer control? (caddr message) (cdddr message))]
                                 [(watch watch-head)
                                  (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
                                  (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
@@ -401,8 +591,10 @@
                         (loop)))))))))
         (lambda ()
           (close!)
-          (when session (policy:revoke! session))
-          (kernel:retract-module! owner)
+          (activity:call-with-retirement
+            (lambda ()
+              (when session (policy:revoke! session))
+              (kernel:retract-module! owner)))
           (when writer (thread-join writer))))))
 
   (define (run)
@@ -422,7 +614,7 @@
                         (when connection
                           (with-mutex peer-lock
                             (if stopping? (sys:close-connection! connection)
-                                (let ([peer (make-peer connection #f #f
+                                (let ([peer (make-peer connection #f #f #t #f
                                               (lambda (reason) (sys:close-connection! connection)))])
                                   (set! peers (cons peer peers))
                                   (fork-thread
@@ -441,7 +633,30 @@
               (let ([message (kernel:mailbox-receive! control (daemon:log-deadline))])
                 (cond [(not message) (daemon:rotate-logs!) (loop)]
                       [(condition? message) (raise message)]
-                      [else (set! reason message)]))))
+                      [(procedure? message)
+                       (message)
+                       (if (eq? (activity:phase) 'stopping)
+                           (set! reason (lifecycle-operation lifecycle-state))
+                           (loop))]
+                      [else
+                       ;; S3 supplies durable save here. Until then signals
+                       ;; keep S1's explicit no-save behavior, through this
+                       ;; same pause and stop boundary; no session is deleted.
+                       (guard (ex [else
+                                   (activity:resume!)
+                                   (with-mutex peer-lock
+                                     (lifecycle-owner-set! lifecycle-state #f)
+                                     (lifecycle-review-set! lifecycle-state #f)
+                                     (lifecycle-operation-set! lifecycle-state #f))
+                                   (log:add! 'base (kernel:condition-text ex) #f)
+                                   (loop)])
+                         (with-mutex peer-lock
+                           (lifecycle-operation-set! lifecycle-state message)
+                           (lifecycle-owner-set! lifecycle-state 'base)
+                           (lifecycle-review-set! lifecycle-state #f))
+                         (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+                         (commit-stop!)
+                         (set! reason message))]))))
           (lambda ()
             (let ([active (with-mutex peer-lock (set! stopping? #t) peers)]
                   [deadline (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 1))])

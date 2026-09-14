@@ -3,13 +3,14 @@
 ;; mail and log presentation have the same finite budget as the base outbox.
 (library (client)
   (export call-with-runtime claim! identity request subscribe! unsubscribe!
-          set-wake! pump! close! watch! ended?)
+          set-wake! pump! close! watch! ended? leave!)
   (import (chezscheme)
           (prefix (kernel) kernel:) (prefix (startup) startup:)
           (prefix (wire) wire:) (prefix (sys) sys:) (prefix (datum) datum:))
 
   (define-condition-type &ended &condition make-ended ended?)
   (define closing-reason #f)
+  (define departure #f)
 
   (define connection #f)
   (define reader #f)
@@ -116,6 +117,9 @@
                (if (startup:name) (error 'e "head name already in use" (startup:name))
                    (retry (list 'head (string-append (startup:default-name) " " (number->string suffix)))
                           (+ suffix 1)))]
+              [(and (list? hello) (= (length hello) 3) (eq? (car hello) 'error)
+                    (list? (caddr hello)) (= (length (caddr hello)) 2) (eq? (caaddr hello) 'busy))
+               (error 'e (format "the base is ~a; retry after the review finishes" (cadr (caddr hello))))]
               [(and (list? hello) (= (length hello) 4)
                     (equal? (list-head hello 3) (list 'hello wire:version actor)))
                (set! connection next)
@@ -201,6 +205,11 @@
     (string-append "'" (apply string-append
                          (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
 
+  (define (leave! shutdown-on-exit?)
+    (let ([result (request 'leaving shutdown-on-exit?)])
+      (unless (and (pair? result) (eq? (car result) 'last)) (set! departure result))
+      result))
+
   (define (farewell status)
     (define (count key noun)
       (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
@@ -209,12 +218,13 @@
       (count 'heads "other head") (count 'terminals "running terminal") (count 'agents "agent"))
     (format #t "Resume: ~a --name ~a --base-working-dir ~a\n"
       (shell-quote (string-append (kernel:installation-directory) "/e"))
-      (shell-quote (cadr who)) (shell-quote (startup:base-working-directory))))
+      (shell-quote (cadr who)) (shell-quote (startup:base-working-directory)))
+    (display "Stop the base: M-x (main:shutdown!!)\n"))
 
   (define (call-with-runtime thunk)
-    (let ([modules '("actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
+    (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
                      "property" "reference" "startup" "store" "string" "surface" "sys" "text" "vt" "wire")])
-      (kernel:pin-modules! (cons "client" modules))
+      (kernel:pin-modules! (cons* "client" "cache" modules))
       (guard (ex [(ended? ex)
                   ;; run-head has already restored the terminal, including
                   ;; when the connection failed inside a nested command.
@@ -231,7 +241,7 @@
             (let ([failures (kernel:load-modules! modules)])
               (unless (null? failures) (raise (cdar failures))))
             (thunk)
-            (farewell (request 'leaving))
+            (farewell (or departure (leave! #f)))
             0)
           (lambda () (close!) (when reader (thread-join reader)))))))
 )

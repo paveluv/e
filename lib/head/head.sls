@@ -62,8 +62,8 @@
           dividers set-dividers!
           read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
           run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
-          set-file-opener! set-quit-command! set-after-key!
-          open-file! quit-command! after-key!
+          set-file-opener! set-quit-command! set-after-key! set-departure! set-review-viewer!
+          open-file! quit-command! after-key! depart! view-review! prepare-quit
           quit! quitting? last-command set-last-command!
           current-keys set-current-keys!
           dispatch-app-event! app-event-position app-event-buffer-position app-event-button
@@ -117,6 +117,7 @@
           (prefix (tty) tty:)
           (prefix (store) store:)
           (prefix (property) property:)
+          (prefix (file) file:)
           (prefix (surface) surface:)
           (prefix (render) render:)
           (prefix (text) text:)
@@ -473,14 +474,20 @@
   (define file-opener (lambda (path) (void)))
   (define quit-command (lambda () (quit!)))
   (define after-key-hook void)
+  (define departure (lambda () (quit!)))
+  (define review-viewer void)
 
   (define (set-file-opener! proc) (set! file-opener proc))
   (define (set-quit-command! proc) (set! quit-command proc))
   (define (set-after-key! proc) (set! after-key-hook proc))
+  (define (set-departure! proc) (set! departure proc))
+  (define (set-review-viewer! proc) (set! review-viewer proc))
 
   (define (open-file! path) (file-opener path))
   (define (quit-command!) (quit-command))
   (define (after-key!) (after-key-hook))
+  (define (depart!) (departure))
+  (define (view-review!) (review-viewer))
 
   (define (frame!)
     ;; Wakes and deadlines use the same preparation as direct redraws.
@@ -516,6 +523,32 @@
   (define quit-requested #f)
   (define (quit!) (set! quit-requested #t))
   (define (quitting?) quit-requested)
+
+  (define (local-quit-state)
+    ;; Own only discard facts. Local metadata may contain runtime handles
+    ;; and cycles; none belongs in consent data or a wire message.
+    (map (lambda (b)
+           (let-values ([(text revision facts) (buffer-state b)])
+             (list b text revision
+               (datum:copy (filter (lambda (entry) (memq (car entry) '(disposable modified file trailing))) facts)))))
+      (filter (lambda (b) (not (buffer-store-id b))) (buffers))))
+
+  (define (prepare-quit)
+    ;; Ordinary quit and base shutdown use one local snapshot/recheck rule.
+    (let* ([local (local-quit-state)]
+           [clean (map (lambda (state)
+                         (cons (car state) (file:state-clean? (cadr state) (cadddr state)))) local)])
+      (values
+        (length (filter (lambda (entry) (not (cdr entry))) clean))
+        (lambda ()
+          (for-all
+            (lambda (state)
+              (or (cond [(assq 'disposable (cadddr state)) => cdr] [else #f])
+                  (let ([old (assq (car state) local)])
+                    (and old (= (caddr state) (caddr old)) (equal? (cadddr state) (cadddr old))
+                         (or (not (cdr (assq (car state) clean)))
+                             (file:state-clean? (cadr state) (cadddr state)))))))
+            (local-quit-state))))))
 
   (define the-last-command #f)
   (define (last-command) the-last-command)

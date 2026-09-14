@@ -24,7 +24,7 @@
   (export (rename (make-policy make)) policy?
           (rename (policy-grants grants)) (rename (policy-fuel fuel)) (rename (policy-buffers buffers))
           (rename (policy-cap cap)) (rename (reader-policy reader))
-          mint! session? session-actor session-owner sessions
+          mint! session? session-actor session-owner sessions live
           revoke! revoke-actor! revoked?
           session-eval! session-edit! session-undo! session-redo! session-history-step!
           session-send! session-ask! session-answer! session-cancel!)
@@ -35,7 +35,7 @@
                 make-engine parameterize print-graph remq make-mutex with-mutex void
                 open-string-input-port open-output-string
                 get-output-string)
-          (prefix (store) store:)
+          (prefix (store) store:) (prefix (activity) activity:)
           (prefix (text) text:)
           (prefix (actor) actor:)
           (prefix (datum) datum:)
@@ -105,40 +105,43 @@
                      `(only (sandbox) ,@grants))))
 
   (define mint!
-    ;; Mint a session for the actor under a policy. The optional owner is
-    ;; consulted for anything beyond the grant (default: actor:current,
-    ;; or #f outside actor work). A connection supplies its close procedure;
-    ;; revocation invokes it once without exposing that resource to callers.
-    (case-lambda
-      [(actor p) (mint! actor p (actor:current))]
-      [(actor p owner) (mint! actor p owner void)]
-      [(actor p owner close!)
-       (unless (policy? p) (error 'mint! "expected a policy" p))
-       (unless (and (actor:identity? actor) (or (not owner) (actor:identity? owner)))
-         (error 'mint! "expected actor and optional owner identities" actor owner))
-       (unless (procedure? close!) (error 'mint! "expected a close procedure"))
-       (let ([s (mint (datum:copy actor) p (datum:copy owner)
-                  (grant-environment (policy-grants-raw p)) (box #f) close!)])
-         (with-mutex session-lock (set! live-sessions (cons s live-sessions)))
-         (audit! (list 'mint (session-actor s) (session-owner s)))
-         s)]))
+    (activity:wrap
+      ;; Mint a session for the actor under a policy. The optional owner is
+      ;; consulted for anything beyond the grant (default: actor:current,
+      ;; or #f outside actor work). A connection supplies its close procedure;
+      ;; revocation invokes it once without exposing that resource to callers.
+      (case-lambda
+        [(actor p) (mint! actor p (actor:current))]
+        [(actor p owner) (mint! actor p owner void)]
+        [(actor p owner close!)
+         (unless (policy? p) (error 'mint! "expected a policy" p))
+         (unless (and (actor:identity? actor) (or (not owner) (actor:identity? owner)))
+           (error 'mint! "expected actor and optional owner identities" actor owner))
+         (unless (procedure? close!) (error 'mint! "expected a close procedure"))
+         (let ([s (mint (datum:copy actor) p (datum:copy owner)
+                        (grant-environment (policy-grants-raw p)) (box #f) close!)])
+           (with-mutex session-lock (set! live-sessions (cons s live-sessions)))
+           (audit! (list 'mint (session-actor s) (session-owner s)))
+           s)])))
 
   (define (revoke! s)
-    ;; Admission/inventory commit together; logging and all user callbacks
-    ;; run outside this owner. An operation already admitted may finish.
-    (let ([close!
-           (with-mutex session-lock
-             (and (not (revoked? s))
-                  (let ([close! (session-close s)])
-                    (set-box! (session-revoked s) #t)
-                    (session-close-set! s void)
-                    (set! live-sessions (remq s live-sessions)) close!)))])
-      (when close!
-        (actor:cancel-owned! s)
-        (guard (ex [else (audit! (list 'revoke-error (session-actor s) (kernel:condition-text ex)))])
-          (close!))
-        (audit! (list 'revoke (session-actor s)))))
-    #t)
+    (activity:call-with-retirement
+      (lambda ()
+        ;; Admission/inventory commit together; logging and all user callbacks
+        ;; run outside this owner. An operation already admitted may finish.
+        (let ([close!
+               (with-mutex session-lock
+                 (and (not (revoked? s))
+                      (let ([close! (session-close s)])
+                        (set-box! (session-revoked s) #t)
+                        (session-close-set! s void)
+                        (set! live-sessions (remq s live-sessions)) close!)))])
+          (when close!
+            (actor:cancel-owned! s)
+            (guard (ex [else (audit! (list 'revoke-error (session-actor s) (kernel:condition-text ex)))])
+              (close!))
+            (audit! (list 'revoke (session-actor s)))))
+        #t)))
 
   (define (revoked? s) (unbox (session-revoked s)))
 
@@ -158,6 +161,10 @@
     (map (lambda (s)
            (list (session-actor s) (session-owner s)))
          (with-mutex session-lock live-sessions)))
+
+  ;; Opaque incarnations for lifecycle consent. A reused actor name is a
+  ;; different session, even when directory counts happen to match.
+  (define (live) (with-mutex session-lock live-sessions))
 
   ;;; Fueled evaluation ---------------------------------------------------------
 

@@ -1,7 +1,7 @@
 ;; vt.sls -- base-owned terminal emulator, PTY actors, and shared publication.
 
 (library (vt)
-  (export init! open! send! close! close-all!
+  (export init! open! send! close! close-all! running
           (rename (terminal-scrollback scrollback) (terminal-shell shell)
                   (make-terminal-emulator make-emulator) (terminal-emulator? emulator?)
                   (terminal-emulator-feed! emulator-feed!) (terminal-emulator-resize! emulator-resize!)
@@ -11,6 +11,7 @@
                   (terminal-emulator-mouse-input emulator-mouse-input) (terminal-emulator-replies emulator-replies)
                   (terminal-emulator-unsupported emulator-unsupported) (terminal-color-scheme! color-scheme!)))
   (import (chezscheme) (prefix (kernel) kernel:) (prefix (string) string:)
+          (prefix (activity) activity:)
           (prefix (datum) datum:) (prefix (sys) sys:) (prefix (actor) actor:)
           (prefix (store) store:) (prefix (surface) surface:) (prefix (text) text:)
           (prefix (glyph) glyph:) (prefix (color) color:))
@@ -3232,6 +3233,15 @@
                         (lambda () (make-runtime (make-mutex) 0 '() #f)))))
 
   (define (instances) (with-mutex (runtime-lock live) (runtime-apps live)))
+
+  ;; Monotonic owner identities distinguish replacement processes. Copy the
+  ;; inventory first, then inspect each emulator without nesting its locks.
+  (define (running)
+    (filter values
+      (map (lambda (state)
+             (with-mutex (terminal-state-lock state)
+               (and (terminal-state-alive state) (datum:copy (terminal-state-owner state)))))
+        (instances))))
   (define (instance id)
     (find (lambda (state) (eqv? id (terminal-state-buffer state))) (instances)))
   (define (fact facts key fallback)
@@ -3248,17 +3258,23 @@
       (kernel:mailbox-post! (terminal-state-mailbox state) '(wake))))
 
   (define (close-state! state)
-    (with-mutex (terminal-state-lock state) (terminal-state-alive-set! state #f))
-    (sys:close-terminal-process! (terminal-state-process state))
-    (wake! state))
+    ;; Every close path, including a failed publisher or a deleted source,
+    ;; waits out a reversible pause. Retirement can finish after commit.
+    (activity:call-with-retirement
+      (lambda ()
+        (with-mutex (terminal-state-lock state) (terminal-state-alive-set! state #f))
+        (sys:close-terminal-process! (terminal-state-process state))
+        (wake! state))))
 
   (define (close! id)
-    (cond [(instance id) => close-state!])
-    (void))
+    (activity:call-with
+      (lambda ()
+        (cond [(instance id) => close-state!])
+        (void))))
 
   (define (close-all!)
     ;; Called by the base runtime owner, independent of head attachment.
-    (for-each close-state! (instances)))
+    (activity:call-with-retirement (lambda () (for-each close-state! (instances)))))
 
   (define (terminal-color-scheme! scheme . source)
     (unless (memq scheme '(dark light #f))
@@ -3313,42 +3329,44 @@
                          "WHEEL-UP" "WHEEL-DOWN" "WHEEL-LEFT" "WHEEL-RIGHT"))
 
   (define (handle-message! state message)
-    (let ([from (cadr message)] [what (cadddr message)] [data (list-ref message 4)])
-      (if (and (eq? (car message) 'request) (eq? what 'close))
-          (close-state! state)
-          (with-mutex (terminal-state-lock state)
-            (when (terminal-state-alive state)
-              (case (car message)
-                [(request)
-                 (when (equal? from (terminal-state-controller state))
-                   (case what
-                     [(resize) (resize-screen! state (car data) (cadr data))]
-                     [(color-scheme) (set-scheme! state data)]))]
-                [(input)
-                 (let* ([mouse? (member what mouse-events)] [cell (fact data 'cell #f)]
-                        [frame (terminal-state-rendered state)]
-                        [y (and mouse? cell frame (+ 1 (- (car cell) (frame-top frame))))])
-                   ;; A pointer addresses the published grid, not an arbitrary
-                   ;; scrollback row or a newer frame the sender has not seen.
-                   (when (or (not mouse?)
-                             (and (terminal-state-mouse state) y
-                                  (equal? (fact data 'revision #f) (terminal-state-revision state))
-                                  (equal? (fact data 'generation #f) (terminal-state-generation state))
-                                  (<= 1 y (car (frame-size frame)))
-                                  (< (cdr cell) (cadr (frame-size frame)))))
-                     (unless (member what '("FOCUS" "BLUR"))
-                       (terminal-state-controller-set! state from)
-                       (let ([size (fact data 'size #f)])
-                         (resize-screen! state (car size) (cadr size)))
-                       (set-scheme! state (fact data 'color-scheme #f)))
-                     (cond
-                       [mouse?
-                        (cond [(mouse-bytes state (or (fact data 'button #f) 0)
-                                            (+ 1 (cdr cell)) y (string=? what "MOUSE-RELEASE"))
-                               => (lambda (bytes) (write-bytes! state bytes))])]
-                       [(string=? what "PASTE") (send-paste! state (fact data 'paste ""))]
-                       [(string=? what "TEXT") (write-bytes! state (string->utf8 (fact data 'text "")))]
-                       [(event-bytes state what) => (lambda (bytes) (write-bytes! state bytes))])))]))))))
+    (activity:call-with
+      (lambda ()
+        (let ([from (cadr message)] [what (cadddr message)] [data (list-ref message 4)])
+          (if (and (eq? (car message) 'request) (eq? what 'close))
+              (close-state! state)
+              (with-mutex (terminal-state-lock state)
+                (when (terminal-state-alive state)
+                  (case (car message)
+                    [(request)
+                     (when (equal? from (terminal-state-controller state))
+                       (case what
+                         [(resize) (resize-screen! state (car data) (cadr data))]
+                         [(color-scheme) (set-scheme! state data)]))]
+                    [(input)
+                     (let* ([mouse? (member what mouse-events)] [cell (fact data 'cell #f)]
+                            [frame (terminal-state-rendered state)]
+                            [y (and mouse? cell frame (+ 1 (- (car cell) (frame-top frame))))])
+                       ;; A pointer addresses the published grid, not an arbitrary
+                       ;; scrollback row or a newer frame the sender has not seen.
+                       (when (or (not mouse?)
+                                 (and (terminal-state-mouse state) y
+                                      (equal? (fact data 'revision #f) (terminal-state-revision state))
+                                      (equal? (fact data 'generation #f) (terminal-state-generation state))
+                                      (<= 1 y (car (frame-size frame)))
+                                      (< (cdr cell) (cadr (frame-size frame)))))
+                         (unless (member what '("FOCUS" "BLUR"))
+                           (terminal-state-controller-set! state from)
+                           (let ([size (fact data 'size #f)])
+                             (resize-screen! state (car size) (cadr size)))
+                           (set-scheme! state (fact data 'color-scheme #f)))
+                         (cond
+                           [mouse?
+                            (cond [(mouse-bytes state (or (fact data 'button #f) 0)
+                                                (+ 1 (cdr cell)) y (string=? what "MOUSE-RELEASE"))
+                                   => (lambda (bytes) (write-bytes! state bytes))])]
+                           [(string=? what "PASTE") (send-paste! state (fact data 'paste ""))]
+                           [(string=? what "TEXT") (write-bytes! state (string->utf8 (fact data 'text "")))]
+                           [(event-bytes state what) => (lambda (bytes) (write-bytes! state bytes))])))]))))))))
 
   (define (app-facts state)
     (let* ([alive? (terminal-state-alive state)] [mouse (terminal-state-mouse state)]
@@ -3393,79 +3411,84 @@
                   (or (not old) (not (equal? (cdr old) (cdr entry)))))) facts)))
 
   (define (publish-output! state final?)
-    (let* ([id (terminal-state-buffer state)] [owner (terminal-state-owner state)]
-           [captured
-            (with-mutex (terminal-state-lock state)
-              (let ([now (current-time 'time-monotonic)])
-                (when (terminal-state-bell state)
-                  (terminal-state-bell-set! state #f)
-                  (terminal-state-bell-visible-set! state #t)
-                  (terminal-state-bell-deadline-set! state
-                    (add-duration now (make-time 'time-duration 500000000 0))))
-                (when (and (terminal-state-bell-visible state)
-                           (not (time<? now (terminal-state-bell-deadline state))))
-                  (terminal-state-bell-visible-set! state #f)
-                  (terminal-state-dirty-set! state #t)))
-              (and (or final? (terminal-state-dirty state))
-                   (or final? (not (synchronized-update-pending? state)))
-                   (begin
-                     (terminal-state-dirty-set! state #f)
-                     (list (capture-frame state #t) (app-facts state)))))])
-      (when (and captured (store:exists? id))
-        (let* ([frame (car captured)] [facts (cadr captured)]
-               [text (vector-map rendition-text (frame-rows frame))]
-               [live-facts (changed-facts id
-                             (if final? (filter (lambda (entry) (not (memq (car entry) '(alive capture status)))) facts) facts))]
-               [before (terminal-state-rendered state)]
-               [old-title (store:property id 'title)])
-          ;; The live read-only grid is authoritative. A forced external edit
-          ;; is reconciled through an attributed edit, never a destructive reset.
-          (let-values ([(old revision) (store:snapshot id)])
-            (let-values ([(status receipt)
-                          (if (equal? old text)
-                              (begin
-                                (when (pair? live-facts) (store:set-properties! owner id live-facts))
-                                (values 'applied (list revision old '())))
-                              (let-values ([(span replacement) (text:difference old text)])
-                                (store:edit-with-snapshot! owner id revision span replacement
-                                  (list (list owner 'output) "terminal output" '() live-facts))))])
-              (cond
-                [(or (not (eq? status 'applied)) (not (equal? text (cadr receipt)))
-                     (not (= (car receipt) (store:revision id))))
-                 (with-mutex (terminal-state-lock state) (terminal-state-dirty-set! state #t))]
-                [final?
-                 ;; Withdraw before announcing death so observers of alive=#f
-                 ;; already see ordinary text and no remaining surface layer.
-                 (let ([surface (surface:snapshot id)])
-                   (surface:withdraw! id (and surface (car surface))))
-                 ;; Withdrawal callbacks can also supersede the receipt.
-                 (if (and (= (car receipt) (store:revision id)) (not (surface:snapshot id)))
-                     (store:set-properties! owner id (changed-facts id facts))
-                     (with-mutex (terminal-state-lock state) (terminal-state-dirty-set! state #t)))]
-                [else
-                 (let* ([surface (surface:snapshot id)]
-                        [same? (equal? (and surface (car surface)) (terminal-state-generation state))]
-                        ;; An intervening publisher may have added rows that
-                        ;; our previous frame does not describe. Start a full
-                        ;; replacement from absence, under the same CAS rule.
-                        [basis (if same? (and surface (car surface))
-                                   (begin
-                                     (when surface (surface:withdraw! id (car surface)))
-                                     #f))])
-                   (let-values ([(result generation)
-                                 (surface:publish! id basis (car receipt)
-                                   (frame-changes (and same? before) frame) (frame-cursor frame) (frame-size frame))])
-                     (if (eq? result 'applied)
-                         (begin (terminal-state-rendered-set! state frame)
-                                (terminal-state-generation-set! state generation)
-                                (terminal-state-revision-set! state (car receipt)))
-                         (with-mutex (terminal-state-lock state) (terminal-state-dirty-set! state #t)))))]))
-            (let ([title (fact facts 'title #f)])
-              (when (and title (not (equal? title old-title)))
-                (store:rename! owner id (format "*~a*" title)))))))))
+    (activity:call-with
+      (lambda ()
+        ;; The process may have exited while this publisher waited for resume.
+        (set! final? (or final? (with-mutex (terminal-state-lock state) (not (terminal-state-alive state)))))
+        (let* ([id (terminal-state-buffer state)] [owner (terminal-state-owner state)]
+               [captured
+                (with-mutex (terminal-state-lock state)
+                  (let ([now (current-time 'time-monotonic)])
+                    (when (terminal-state-bell state)
+                      (terminal-state-bell-set! state #f)
+                      (terminal-state-bell-visible-set! state #t)
+                      (terminal-state-bell-deadline-set! state
+                                                         (add-duration now (make-time 'time-duration 500000000 0))))
+                    (when (and (terminal-state-bell-visible state)
+                               (not (time<? now (terminal-state-bell-deadline state))))
+                      (terminal-state-bell-visible-set! state #f)
+                      (terminal-state-dirty-set! state #t)))
+                  (and (or final? (terminal-state-dirty state))
+                       (or final? (not (synchronized-update-pending? state)))
+                       (begin
+                         (terminal-state-dirty-set! state #f)
+                         (list (capture-frame state #t) (app-facts state)))))])
+          (when (and captured (store:exists? id))
+            (let* ([frame (car captured)] [facts (cadr captured)]
+                   [text (vector-map rendition-text (frame-rows frame))]
+                   [live-facts (changed-facts id
+                                              (if final? (filter (lambda (entry) (not (memq (car entry) '(alive capture status)))) facts) facts))]
+                   [before (terminal-state-rendered state)]
+                   [old-title (store:property id 'title)])
+              ;; The live read-only grid is authoritative. A forced external edit
+              ;; is reconciled through an attributed edit, never a destructive reset.
+              (let-values ([(old revision) (store:snapshot id)])
+                (let-values ([(status receipt)
+                              (if (equal? old text)
+                                  (begin
+                                    (when (pair? live-facts) (store:set-properties! owner id live-facts))
+                                    (values 'applied (list revision old '())))
+                                  (let-values ([(span replacement) (text:difference old text)])
+                                    (store:edit-with-snapshot! owner id revision span replacement
+                                                               (list (list owner 'output) "terminal output" '() live-facts))))])
+                  (cond
+                    [(or (not (eq? status 'applied)) (not (equal? text (cadr receipt)))
+                         (not (= (car receipt) (store:revision id))))
+                     (with-mutex (terminal-state-lock state) (terminal-state-dirty-set! state #t))]
+                    [final?
+                     ;; Withdraw before announcing death so observers of alive=#f
+                     ;; already see ordinary text and no remaining surface layer.
+                     (let ([surface (surface:snapshot id)])
+                       (surface:withdraw! id (and surface (car surface))))
+                     ;; Withdrawal callbacks can also supersede the receipt.
+                     (if (and (= (car receipt) (store:revision id)) (not (surface:snapshot id)))
+                         (store:set-properties! owner id (changed-facts id facts))
+                         (with-mutex (terminal-state-lock state) (terminal-state-dirty-set! state #t)))]
+                    [else
+                     (let* ([surface (surface:snapshot id)]
+                            [same? (equal? (and surface (car surface)) (terminal-state-generation state))]
+                            ;; An intervening publisher may have added rows that
+                            ;; our previous frame does not describe. Start a full
+                            ;; replacement from absence, under the same CAS rule.
+                            [basis (if same? (and surface (car surface))
+                                       (begin
+                                         (when surface (surface:withdraw! id (car surface)))
+                                         #f))])
+                       (let-values ([(result generation)
+                                     (surface:publish! id basis (car receipt)
+                                                       (frame-changes (and same? before) frame) (frame-cursor frame) (frame-size frame))])
+                         (if (eq? result 'applied)
+                             (begin (terminal-state-rendered-set! state frame)
+                                    (terminal-state-generation-set! state generation)
+                                    (terminal-state-revision-set! state (car receipt)))
+                             (with-mutex (terminal-state-lock state) (terminal-state-dirty-set! state #t)))))]))
+                (let ([title (fact facts 'title #f)])
+                  (when (and title (not (equal? title old-title)))
+                    (store:rename! owner id (format "*~a*" title)))))))))))
 
   (define (retire! state)
-    (guard (ex [else
+    (guard (ex [(activity:stopped? ex) (void)]
+               [else
                 ;; A failed final commit must not leave a phantom live app.
                 ;; Preserve the last accepted text and report the failure as data.
                 (guard (ignored [else (void)])
@@ -3489,7 +3512,8 @@
       (runtime-apps-set! live (remq state (runtime-apps live)))))
 
   (define (publisher-loop state)
-    (guard (ex [else
+    (guard (ex [(activity:stopped? ex) (close-state! state) (retire! state)]
+               [else
                 (with-mutex (terminal-state-lock state)
                   (terminal-state-failure-set! state (string-append "Publisher failed: " (kernel:condition-text ex))))
                 (close-state! state)
@@ -3511,7 +3535,7 @@
                 (when message
                   (case (car message)
                     [(wake) (with-mutex (terminal-state-lock state) (terminal-state-queued?-set! state #f))]
-                    [(close) (close-state! state)]
+                    [(close) (activity:call-with (lambda () (close-state! state)))]
                     [else (handle-message! state message)]))
                 (loop next))))))))
 
@@ -3542,40 +3566,42 @@
                   (loop))))))))
 
   (define (open! from command directory rows cols . scheme)
-    (unless (and (actor:identity? from) (or (not command) (string? command))
-                 (string? directory) (size? (list rows cols))
-                 (or (null? scheme) (memq (car scheme) '(dark light #f))))
-      (error 'open! "expected actor, command, directory, size, and optional scheme"))
-    (let* ([serial (with-mutex (runtime-lock live)
-                     (runtime-serial-set! live (+ 1 (runtime-serial live))) (runtime-serial live))]
-           [owner (list 'app 'terminal serial)] [process #f] [id #f] [state #f] [registered? #f])
-      (guard (ex [else
-                  (when process (guard (ignored [else (void)]) (sys:close-terminal-process! process)))
-                  (when registered? (actor:detach! owner))
-                  (when id (guard (ignored [else (void)]) (store:delete! owner id)))
-                  (with-mutex (runtime-lock live) (runtime-apps-set! live (remq state (runtime-apps live))))
-                  (raise ex)])
-        (set! process (sys:spawn-terminal-process (terminal-shell) command directory rows cols))
-        (set! id (store:create! owner (if (= serial 1) "*terminal*" (format "*terminal ~a*" serial))
-                   (make-vector rows (make-string cols #\space))
-                   `((app . ,owner) (alive . #f) (capture . #f) (status . "starting")
-                     (read-only . #t) (disposable . #t) (mode . "terminal") (directory . ,directory)
-                     (wrap . #f) (scrollbar . #f) (manages-viewport . #t))))
-        (set! state (blank-terminal-state owner id process rows cols #t))
-        (terminal-state-controller-set! state (datum:copy from))
-        (terminal-state-scheme-set! state (if (pair? scheme) (car scheme) (unbox default-scheme)))
-        (kernel:call-with-runtime-registrations
-          (lambda ()
-            (actor:register! owner
-              (lambda (message)
-                (unless (valid-message? state message) (error 'terminal "invalid message" message))
-                (kernel:mailbox-post! (terminal-state-mailbox state) message)))))
-        (set! registered? #t)
-        (with-mutex (runtime-lock live) (runtime-apps-set! live (cons state (runtime-apps live))))
-        (publish-output! state #f)
-        (fork-thread (lambda () (actor:call-as owner (lambda () (publisher-loop state)))))
-        (fork-thread (lambda () (actor:call-as owner (lambda () (reader-loop state)))))
-        id)))
+    (activity:call-with
+      (lambda ()
+        (unless (and (actor:identity? from) (or (not command) (string? command))
+                     (string? directory) (size? (list rows cols))
+                     (or (null? scheme) (memq (car scheme) '(dark light #f))))
+          (error 'open! "expected actor, command, directory, size, and optional scheme"))
+        (let* ([serial (with-mutex (runtime-lock live)
+                         (runtime-serial-set! live (+ 1 (runtime-serial live))) (runtime-serial live))]
+               [owner (list 'app 'terminal serial)] [process #f] [id #f] [state #f] [registered? #f])
+          (guard (ex [else
+                      (when process (guard (ignored [else (void)]) (sys:close-terminal-process! process)))
+                      (when registered? (actor:detach! owner))
+                      (when id (guard (ignored [else (void)]) (store:delete! owner id)))
+                      (with-mutex (runtime-lock live) (runtime-apps-set! live (remq state (runtime-apps live))))
+                      (raise ex)])
+            (set! process (sys:spawn-terminal-process (terminal-shell) command directory rows cols))
+            (set! id (store:create! owner (if (= serial 1) "*terminal*" (format "*terminal ~a*" serial))
+                                    (make-vector rows (make-string cols #\space))
+                                    `((app . ,owner) (alive . #f) (capture . #f) (status . "starting")
+                                      (read-only . #t) (disposable . #t) (mode . "terminal") (directory . ,directory)
+                                      (wrap . #f) (scrollbar . #f) (manages-viewport . #t))))
+            (set! state (blank-terminal-state owner id process rows cols #t))
+            (terminal-state-controller-set! state (datum:copy from))
+            (terminal-state-scheme-set! state (if (pair? scheme) (car scheme) (unbox default-scheme)))
+            (kernel:call-with-runtime-registrations
+              (lambda ()
+                (actor:register! owner
+                                 (lambda (message)
+                                   (unless (valid-message? state message) (error 'terminal "invalid message" message))
+                                   (kernel:mailbox-post! (terminal-state-mailbox state) message)))))
+            (set! registered? #t)
+            (with-mutex (runtime-lock live) (runtime-apps-set! live (cons state (runtime-apps live))))
+            (publish-output! state #f)
+            (fork-thread (lambda () (actor:call-as owner (lambda () (publisher-loop state)))))
+            (fork-thread (lambda () (actor:call-as owner (lambda () (reader-loop state)))))
+            id)))))
 
   (define (init!)
     (kernel:call-with-runtime-registrations

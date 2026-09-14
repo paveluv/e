@@ -44,6 +44,8 @@
      (define open-held (string-append root "/open-held"))
      (define open-release (string-append root "/open-release"))
      (define automatic-control (string-append root "/automatic-control"))
+     (define sync-failure (string-append root "/fail-session-sync"))
+     (define sync-held (string-append root "/session-sync-held"))
      (define (quote-shell text)
        (string-append "'" (apply string-append
                             (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
@@ -65,9 +67,8 @@
              (for-each (lambda (name) (remove-tree! (string-append path "/" name))) (directory-list path))
              (delete-directory path))
            (delete-file path)))
-     (define (base-exit directory)
-       (let ([process (sys:open-process (list "scheme-script" (string-append root "/e")
-                                          "--base" "--base-working-dir" directory))])
+     (define (loader-exit arguments)
+       (let ([process (sys:open-process (append (list "scheme-script" (string-append root "/e")) arguments))])
          (dynamic-wind void
            (lambda ()
              (sys:write-process! process #f)
@@ -75,10 +76,33 @@
              (get-bytevector-all (sys:process-input process))
              (call-with-values (lambda () (sys:process-result process)) list))
            (lambda () (sys:close-process! process)))))
+     (define (base-exit directory) (loader-exit (list "--base" "--base-working-dir" directory)))
      (for-each (lambda (path) (mkdir path #o700)) (list root sources objects))
      (copy-text "e" (string-append root "/e"))
      (chmod (string-append root "/e") (get-mode "e"))
      (copy-libraries "lib" sources)
+     ;; Fault the OS sync in this owned installation only. Production has
+     ;; no testing option or alternate lifecycle path; the ordinary syscall
+     ;; still runs except during the one post-unlink failure scenario.
+     (let* ([path (string-append sources "/sys/sys.sls")]
+            [text (call-with-input-file path get-string-all)]
+            [call "((foreign-procedure __collect_safe \"fsync\" (int) int) fd)"]
+            [at (string:search text call 0 (string-length text))])
+       (unless at (error 'wire-test "session sync syscall not found"))
+       (write-text path
+         (string-append (substring text 0 at)
+           (format "(let ([sync (lambda () ~a)])
+                      (if (not (file-exists? ~s)) (sync)
+                          (let ([mode (call-with-input-file ~s get-string-all)])
+                            (unless (string=? mode \"fail\")
+                              (call-with-output-file ~s (lambda (p) (write #t p)) 'replace)
+                              (let wait ([left 1000])
+                                (when (file-exists? ~s)
+                                  (when (zero? left) (error 'fixture \"sync hold timed out\"))
+                                  (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))
+                            (if (string=? mode \"hold\") (sync) -1))))"
+             call sync-failure sync-failure sync-held sync-failure)
+           (substring text (+ at (string-length call)) (string-length text)))))
      (write-text (string-append root "/config.e") "(error 'head-config \"daemon loaded head config\")\n")
      (write-forms (string-append root "/base-config.e")
        `((define footprint
@@ -182,8 +206,11 @@
                      (unless (file-exists? ,edit-release) (sleep (make-time 'time-duration 5000000 0)) (wait))))
                  (when (memq (car event) '(mint revoke))
                    (let ([inventory (policy:sessions)])
-                     (store:set-property! '(base e) notes 'sessions inventory)
-                     (call-with-output-file ,inventory-file (lambda (out) (write inventory out)) 'replace)))))))
+                     (call-with-output-file ,inventory-file (lambda (out) (write inventory out)) 'replace)
+                     ;; Committed stop closes canonical writes before retiring
+                     ;; sessions. Observe retirement even when this probe's
+                     ;; optional store projection is consequently refused.
+                     (store:set-property! '(base e) notes 'sessions inventory)))))))
          (actor:subscribe!
            (lambda (batch)
              (for-each (lambda (event)
@@ -336,6 +363,262 @@
              (let-values ([(next actual) (text:apply-edit lines (text:delta-span delta) (text:delta-inserted delta))]) next)))
          lines changes))
 
+     (define (shutdown-scenarios!)
+       (let ([held (string-append root "/pause-held")]
+             [release (string-append root "/pause-release")]
+             [session (string-append base-directory "/session")]
+             [disk (string-append root "/reviewed-file")])
+         (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
+         (write-forms (string-append root "/base-config.e")
+           `((base:connection-policy
+               (lambda (who)
+                 (if (and (eq? (car who) 'head) (not (equal? who '(head "restricted"))))
+                     (policy:make 'all 100000000 'any 8000) (policy:reader))))
+             (define replacement #f)
+             (actor:register! '(base lifecycle)
+               (lambda (message)
+                 (case message
+                   [(replace)
+                    (when replacement (policy:revoke! replacement))
+                    (set! replacement (policy:mint! '(agent "replacement") (policy:reader)))]
+                   [(hold)
+                    (fork-thread
+                      (lambda ()
+                        (activity:call-with
+                          (lambda ()
+                            (call-with-output-file ,held (lambda (p) (write #t p)))
+                            (let wait ()
+                              (unless (file-exists? ,release)
+                                (sleep (make-time 'time-duration 5000000 0)) (wait)))))))])))))
+         (fixture:call-with-base root base-directory
+           (lambda (base)
+             (set! test-base base)
+             (let ([a (connect)] [b (connect)] [restricted (connect)] [agent (connect)])
+               (define (phase) (cdr (assq 'phase (rpc agent 'status))))
+               (define (reject connection operation . args)
+                 (let ([reply (exchange connection (append (list 'request 7 operation) args))])
+                   (and (eq? (caddr reply) 'error) (cadddr reply))))
+               (define (cancel connection review) (rpc connection 'cancel-review (cadr review)))
+               (define (terminal connection)
+                 (rpc connection 'vt-open "printf ready; while read value; do printf '<%s>' \"$value\"; done"
+                   root 3 32 'dark))
+               (for-each (lambda (connection who) (hello connection who))
+                 (list a b restricted agent)
+                 '((head "shutdown A") (head "shutdown B") (head "restricted") (agent "observer")))
+               (write-text disk "on disk\n")
+               (let* ([clean (rpc a 'create "matches disk" '("on disk") `((file . ,disk) (trailing . #t)))]
+                      [empty (rpc a 'create "empty" '(""))]
+                      [output (rpc a 'create "disposable" '("output") '((disposable . #t)))]
+                      [large (map (lambda (i) (rpc a 'create (format "large ~a" i)
+                                                (list (make-string (* 6 1024 1024) #\x)))) '(1 2 3))]
+                      [review (rpc a 'prepare-close)] [token (cadr review)])
+                 (test:check 'compact-review-retains-large-text-and-exact-cleanliness-at-the-base
+                   (list (< (bytevector-length (encoded review)) 4096)
+                         (map (lambda (id) (caddr (assv id (caddr review)))) (cons clean (cons empty large)))
+                         (assv output (caddr review))) '(#t (#f #f #t #t #t) #f))
+                 (test:check 'review-owns-admission-but-leaves-status-and-existing-work-live
+                   (list (phase)
+                         (map (lambda (who)
+                                (let ([new (connect)])
+                                  (let ([reply (hello new who)]) (sys:close-connection! new) reply)))
+                           '((head "busy head") (agent "busy agent")))
+                         (and (reject b 'prepare-close) (reject b 'shutdown token)
+                              (reject restricted 'prepare-close) (reject agent 'prepare-close)
+                              (reject agent 'leaving #t) #t))
+                   '(reviewing ((error #f (busy reviewing)) (error #f (busy reviewing))) #t))
+                 (let ([next (rpc a 'prepare-close)])
+                   (test:check 'replacement-tokens-cannot-be-used-to-stop-or-cancel
+                     (list (not (= token (cadr next))) (and (reject a 'shutdown token) #t)
+                           (and (reject a 'cancel-review token) #t) (phase)) '(#t #t #t reviewing))
+                   (cancel a next))
+                 (test:check 'restricted-head-detaches-even-with-shutdown-preference
+                   (eq? (car (rpc restricted 'leaving #t)) 'last) #f)
+                 (sys:close-connection! restricted)
+                 (for-each (lambda (id) (rpc a 'delete id)) large)
+                 ;; Disk changes can turn unchanged store text into unsaved work.
+                 (let* ([review (rpc a 'prepare-close)]
+                        [next (begin (write-text disk "changed on disk\n")
+                                     (rpc a 'shutdown (cadr review)))])
+                   (test:check 'disk-change-needs-new-consent
+                     (list (car next) (caddr (assv clean (caddr next)))) '(review #t))
+                   (cancel a next))
+                 (for-each
+                   (lambda (change)
+                     (let* ([review (rpc a 'prepare-close)]
+                            [next (begin
+                                    (case change
+                                      [(edit) (rpc a 'edit clean 0 '(0 0 0 0) '("new "))]
+                                      [(facts) (rpc a 'properties clean '((read-only . #t)))]
+                                      [(new) (rpc a 'create "new hidden work" '("kept") '((audience)))])
+                                    (rpc a 'shutdown (cadr review)))])
+                       (test:check (list 'stale-shutdown change)
+                         (list (car next) (not (= (cadr review) (cadr next))) (phase)) '(review #t reviewing))
+                       (cancel a next))) '(edit facts new))
+                 (let ([abandoned (connect)])
+                   (hello abandoned '(head "abandoned review"))
+                   (rpc abandoned 'prepare-close)
+                   (sys:close-connection! abandoned)
+                   (test:await 'disconnect-releases-review (lambda () (eq? (phase) 'running))))
+                 ;; A bounded pause failure must release ownership as well as
+                 ;; reopen writes. The fixture holds an admitted callback.
+                 (rpc a 'send '(base lifecycle) 'hold)
+                 (test:await 'held-producer (lambda () (file-exists? held)))
+                 (dynamic-wind void
+                   (lambda ()
+                     (let* ([review (rpc a 'prepare-close)]
+                            [error (reject a 'shutdown (cadr review))])
+                       (test:check 'quiescence-timeout-reopens-the-base
+                         (list (and error (> (occurrences error "timed out") 0)) (phase)) '(#t running)))
+                     (let ([abandoned (connect)])
+                       (hello abandoned '(head "disconnect while pausing"))
+                       (let ([review (rpc abandoned 'prepare-close)])
+                         (wire:send! (sys:connection-output abandoned) (list 'request 7 'shutdown (cadr review))))
+                       (test:await 'acceptance-is-pausing (lambda () (eq? (phase) 'paused)))
+                       (test:check 'competing-review-refuses-during-pause
+                         (and (reject b 'prepare-close) #t) #t)
+                       (sys:close-connection! abandoned)
+                       (write-text release "continue")
+                       (test:await 'lost-requester-cancels-before-acceptance (lambda () (eq? (phase) 'running)))
+                       (test:check 'disconnect-before-acceptance-keeps-work (car (rpc a 'snapshot clean)) '#("new on disk"))))
+                   (lambda () (write-text release "continue")))
+                 (let ([term (terminal a)])
+                   (rpc a 'send '(base lifecycle) 'replace)
+                   (for-each
+                     (lambda (kind)
+                       (let* ([review (rpc a 'prepare-close)]
+                              [next
+                               (begin
+                                 (case kind
+                                   [(terminal)
+                                    (rpc a 'vt-close term)
+                                    (test:await 'old-terminal-ended
+                                      (lambda () (not (cdr (assq 'alive (caddr (rpc a 'snapshot term)))))))
+                                    (set! term (terminal a))]
+                                   [(agent) (rpc a 'send '(base lifecycle) 'replace)])
+                                 (rpc a 'shutdown (cadr review)))])
+                         (test:check (list 'same-count-replacement-needs-review kind)
+                           (list (car next) (cdr (assq (if (eq? kind 'terminal) 'terminals 'agents) (cadddr next))))
+                           (list 'review (cdr (assq (if (eq? kind 'terminal) 'terminals 'agents) (cadddr review)))))
+                         (cancel a next))) '(terminal agent))
+                   (let* ([leavers (list a b)]
+                          [answers (test:parallel 2 (lambda (i) (rpc (list-ref leavers i) 'leaving #t)))]
+                          [last (if (eq? (caar answers) 'last) 0 1)])
+                     (test:check 'simultaneous-shutdown-quitters-have-exactly-one-last-head
+                       (list (length (filter (lambda (answer) (eq? (car answer) 'last)) answers))
+                             (cdr (assq 'heads (rpc agent 'status)))) '(1 1))
+                     (set! a (list-ref leavers last))
+                     (sys:close-connection! (list-ref leavers (- 1 last)))
+                     (cancel a (rpc a 'prepare-close))
+                     (test:check 'cancelled-last-head-remains-present
+                       (list (phase) (cdr (assq 'heads (rpc agent 'status)))) '(running 1)))
+                   ;; Deletions and disposable output need no fresh consent.
+                   ;; An invalid session path then fails before unlink, while
+                   ;; the injected sync failure is after unlink: both resume.
+                   (for-each
+                     (lambda (failure)
+                       (if (eq? failure 'unlink) (mkdir session #o700)
+                           (begin (write-text session "saved session") (chmod session #o600)
+                                  (write-text sync-failure "fail")))
+                       (let* ([review (rpc a 'prepare-close)]
+                              [error (begin
+                                       (when (eq? failure 'unlink)
+                                         (rpc a 'delete empty)
+                                         (rpc a 'reset output '("new disposable output")))
+                                       (reject a 'shutdown (cadr review)))])
+                         (test:check (list 'durable-failure-resumes-before-ending-processes failure)
+                           (list (and error #t) (phase) (file-exists? session)
+                                 (cdr (assq 'alive (caddr (rpc a 'snapshot term))))
+                                 (if (eq? failure 'sync) (> (occurrences error "uncertain") 0) #t))
+                           (list #t 'running (eq? failure 'unlink) #t #t)))
+                       (if (eq? failure 'unlink) (delete-directory session) (delete-file sync-failure)))
+                     '(unlink sync))
+                   (rpc a 'vt-send term "recovered\n" '(3 32) #f #f)
+                   (test:await 'terminal-works-after-failed-stop
+                     (lambda () (exists (lambda (line) (> (occurrences line "<recovered>") 0))
+                                  (vector->list (car (rpc a 'snapshot term))))))
+                   (write-text session "saved session") (chmod session #o600)
+                   (let ([ui (start-head "shutdown UI")])
+                     (head-wait 'shutdown-ui-ready ui (lambda () (head-sees? ui "*scratch*")))
+                     (head-read ui
+                       '(let ([b (head:new-local-buffer "local shutdown work")])
+                          (head:add-buffer! b) (head:store-reset! b '("local draft"))
+                          (head:buffer-modified-set! b #t) #t))
+                     (for-each
+                       (lambda (key)
+                         (head-send! ui "\x1b;xmain:shutdown!!\r")
+                         (head-wait 'shutdown-review-question ui (lambda () (head-sees? ui "Stop the base?")))
+                         (head-send! ui key)
+                         (test:await 'ui-cancel-releases-review (lambda () (eq? (phase) 'running)))
+                         (test:check (list 'shutdown-cancellation key)
+                           (head-read ui '(list (head:quitting?)
+                                            (buffer-line (head:buffer-named "<local shutdown work>") 0)))
+                           '(#f "local draft"))) '("n" "v" "\x1b;" "\x07;"))
+                     (head-read ui '(begin (main:shutdown-on-exit #t)
+                                           (head:buffer-fact-set! (head:buffer-named "<local shutdown work>") 'disposable #t) #t))
+                     (rpc a 'leaving #f) (sys:close-connection! a)
+                     (head-send! ui "\x18;\x03;")
+                     (head-wait 'last-head-reviews-before-exit ui (lambda () (head-sees? ui "Stop the base?")))
+                     (head-send! ui "n")
+                     (test:await 'cancelled-last-head-keeps-editing (lambda () (eq? (phase) 'running)))
+                     (test:check 'last-head-cancellation-retains-head-and-preference
+                       (head-read ui '(list (head:quitting?) (main:shutdown-on-exit))) '(#f #t))
+                     (head-send! ui "\x18;\x03;")
+                     (head-wait 'last-head-acceptance-question ui (lambda () (head-sees? ui "Stop the base?")))
+                     (head-send! ui "y")
+                     (head-wait 'reviewed-shutdown-announced ui (lambda () (head-sees? ui "e: the base shut down")))
+                     (test:await 'accepted-base-exits (lambda () (sys:process-status (fixture:process base))))
+                     (test:check 'durable-shutdown-removes-session-and-restores-terminal
+                       (list (file-exists? session) (receive agent)
+                             (map (lambda (key) (cdr (assq key (vt:emulator-state (vector-ref ui 2)))))
+                               '(mouse-tracking sgr-mouse))) '(#f (closing shutdown) (#f #f)))))))))))
+
+     (define (final-shutdown-scenarios!)
+       (for-each
+         (lambda (mode)
+           (fixture:call-with-base root base-directory
+             (lambda (base)
+               (set! test-base base)
+               (if (eq? mode 'clean)
+                   (let ([ui (start-head "clean shutdown")])
+                     (head-wait 'clean-head-ready ui (lambda () (head-sees? ui "*scratch*")))
+                     (head-send! ui "\x1b;xmain:shutdown!!\r")
+                     (head-wait 'clean-shutdown-needs-no-question ui (lambda () (head-sees? ui "e: the base shut down")))
+                     (test:check 'clean-base-stops-without-a-question
+                       (occurrences (vector-ref ui 3) "Stop the base?") 0))
+                   (let ([owner (connect)] [observer (connect)]
+                         [session (string-append base-directory "/session")])
+                     (hello owner '(head "durable owner"))
+                     (hello observer '(agent "durable observer"))
+                     (write-text session "old session") (chmod session #o600)
+                     (when (file-exists? sync-held) (delete-file sync-held))
+                     (write-text sync-failure (if (eq? mode 'accepted) "hold" "hold-fail"))
+                     (dynamic-wind void
+                       (lambda ()
+                         (let ([review (rpc owner 'prepare-close)])
+                           (wire:send! (sys:connection-output owner) (list 'request 7 'shutdown (cadr review))))
+                         (test:await 'durable-step-entered (lambda () (file-exists? sync-held)))
+                         (let ([late (connect)])
+                           (test:check (list 'acceptance-pauses-before-stop mode)
+                             (list (hello late '(head "during durable step"))
+                                   (cdr (assq 'phase (rpc observer 'status)))
+                                   (file-exists? session) (sys:process-status (fixture:process base)))
+                             '((error #f (busy paused)) paused #f #f))
+                           (sys:close-connection! late))
+                         (sys:close-connection! owner))
+                       (lambda () (when (file-exists? sync-failure) (delete-file sync-failure))))
+                     (if (eq? mode 'accepted)
+                         (begin
+                           (test:await 'disconnected-acceptance-completes (lambda () (sys:process-status (fixture:process base))))
+                           (test:check 'base-completes-after-requester-disconnects (receive observer) '(closing shutdown)))
+                         (begin
+                           (test:await 'disconnected-durable-failure-resumes
+                             (lambda () (eq? (cdr (assq 'phase (rpc observer 'status))) 'running)))
+                           (let ([next (connect)])
+                             (test:check 'failed-durable-operation-reopens-admission-without-owner
+                               (car (hello next '(head "after failed durable step"))) 'hello)
+                             (sys:close-connection! next)))))))))
+         '(clean accepted failed)))
+
      (let* ([base (fixture:start! root base-directory)]
             [pid (sys:process-pid (fixture:process base))])
        (define (signal! signal)
@@ -382,8 +665,8 @@
                               (eof-object? (receive duplicate))
                               (and (member identity (map car (rpc head 'actors))) #t)
                               (inventory head))))
-                    (list 0 wire:version))
-               (make-list 2 (list 'error #t #t (list (list identity identity)))))
+                    (list 0 (- wire:version 1) wire:version))
+               (make-list 3 (list 'error #t #t (list (list identity identity)))))
              (test:check 'request-errors-preserve-the-connection
                (map (lambda (message) (list-head (exchange head message) 3))
                  '((request 1 edit) (request 2 snapshot 999) (request 3 buffers extra)
@@ -1541,6 +1824,11 @@
            (write-text (string-append base-directory "/log/keep.txt") "keep")
            ;; A cold cache exercises concurrent compilation before both heads
            ;; race to exec a base and contend on the same lifetime flock.
+           (test:check 'concurrent-cold-compilers-share-a-consistent-cache
+             (map (lambda (round)
+                    (remove-tree! objects)
+                    (test:parallel 3 (lambda (index) (loader-exit '("--help"))))) '(1 2 3 4))
+             (make-list 4 (make-list 3 '(0 ""))))
            (remove-tree! objects)
            (let* ([a (start-head "auto α's desk")] [b (start-head "auto B")])
              (for-each (lambda (head) (head-wait 'automatic-head head (lambda () (head-sees? head "*scratch*"))))
@@ -1573,7 +1861,7 @@
                  (hello inspector '(head "inspector"))
                  (for-each (lambda (connection name) (hello connection (list 'head name))) leavers '("leave A" "leave B"))
                  (let* ([before (cdr (assq 'heads (rpc inspector 'status)))]
-                        [departures (test:parallel 2 (lambda (index) (rpc (list-ref leavers index) 'leaving)))])
+                        [departures (test:parallel 2 (lambda (index) (rpc (list-ref leavers index) 'leaving #f)))])
                    (test:check 'concurrent-departures-commit-before-their-replies
                      (list (list-sort < (map (lambda (status) (cdr (assq 'heads status))) departures))
                            (cdr (assq 'heads (rpc inspector 'status))))
@@ -1599,7 +1887,9 @@
                             (let ([state (vt:emulator-state (vector-ref head 2))])
                               (list (> (occurrences (vector-ref head 3) "\x1b;[?1049l") 0)
                                     (cdr (assq 'mouse-tracking state)) (cdr (assq 'sgr-mouse state)))))
-                       (list a b again fresh)) (make-list 4 '(#t #f #f))))))))
+                       (list a b again fresh)) (make-list 4 '(#t #f #f)))))))
+           (shutdown-scenarios!)
+           (final-shutdown-scenarios!))
          (lambda ()
            (write-text edit-release "continue")
            (write-text automatic-control "stop")

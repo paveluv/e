@@ -5,7 +5,9 @@
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (datum) datum:))
 
-  (define version 2)
+  ;; S2 adds the shutdown preference to leaving and keeps close reviews
+  ;; at the base. Older heads/bases must not mix these lifecycle contracts.
+  (define version 3)
   (define frame-limit #x1000000) ; 16 MiB, checked before reading a payload
 
   (define (frame-size! size)

@@ -5,7 +5,7 @@
   (export init! publish! withdraw! snapshot rows subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void)
-          (prefix (kernel) kernel:)
+          (prefix (kernel) kernel:) (prefix (activity) activity:)
           (prefix (store) store:)
           (prefix (datum) datum:))
 
@@ -77,53 +77,55 @@
         changes)))
 
   (define (publish! id basis revision changes cursor size)
-    ;; basis is the previous frame generation, or #f for first publication.
-    ;; Coordinates describe the RESULT at revision, never a rebased patch:
-    ;; omitted rows are explicitly retained, and removed rows must be dropped.
-    ;; -> applied generation | stale frame-changed|text-changed.
-    (unless (and (positive-integer? id) (or (not basis) (positive-integer? basis)) (natural? revision))
-      (error 'publish! "expected buffer id, frame generation or #f, and text revision" id basis revision))
-    (unless (and (list? size) (= (length size) 2) (for-all positive-integer? size)
-                 (or (not cursor)
-                     (and (list? cursor) (= (length cursor) 3)
-                          (natural? (car cursor)) (natural? (cadr cursor))
-                          (boolean? (caddr cursor)) (< (cadr cursor) (cadr size)))))
-      (error 'publish! "expected size (rows cols) and cursor (row col visible?) or #f" cursor size))
-    (let ([changes (own-changes changes)] [cursor (datum:copy cursor)] [size (datum:copy size)])
-      (let-values ([(status detail)
-                    (with-mutex (state-lock data)
-                      (let ([old (frame-of id)])
-                        (let-values ([(text current) (store:snapshot id)])
-                          (cond
-                            [(not (same-basis? old basis)) (values 'stale 'frame-changed)]
-                            [(not (= revision current)) (values 'stale 'text-changed)]
-                            [else
-                             (let ([table (if old (hashtable-copy (frame-table old) #t) (make-eqv-hashtable))]
-                                   [changed '()] [count (vector-length text)])
-                               (for-each
-                                 (lambda (entry)
-                                   (let ([row (car entry)] [value (cdr entry)])
-                                     (unless (equal? value (hashtable-ref table row #f))
-                                       (set! changed (cons row changed))
-                                       (if value (hashtable-set! table row value) (hashtable-delete! table row)))))
-                                 changes)
-                               (unless (and (or (not cursor) (< (car cursor) count))
-                                            (for-all (lambda (row) (< row count))
-                                                     (vector->list (hashtable-keys table))))
-                                 (error 'publish! "frame coordinates exceed its text" id revision))
-                               (if (and old (= revision (frame-revision old)) (null? changed)
-                                        (equal? cursor (frame-cursor old)) (equal? size (frame-size old)))
-                                   (values 'applied (frame-generation old))
-                                   (let* ([generation (next-serial!)]
-                                          [frame (make-frame generation revision count table cursor size)])
-                                     (hashtable-set! (state-frames data) id frame)
-                                     (enqueue! (list 'surface id generation revision
-                                                     (if (and old (= revision (frame-revision old)))
-                                                         (list-sort < changed) 'all)
-                                                     cursor size))
-                                     (values 'applied generation))))]))))])
-        (drain!)
-        (values status detail))))
+    (activity:call-with
+      (lambda ()
+        ;; basis is the previous frame generation, or #f for first publication.
+        ;; Coordinates describe the RESULT at revision, never a rebased patch:
+        ;; omitted rows are explicitly retained, and removed rows must be dropped.
+        ;; -> applied generation | stale frame-changed|text-changed.
+        (unless (and (positive-integer? id) (or (not basis) (positive-integer? basis)) (natural? revision))
+          (error 'publish! "expected buffer id, frame generation or #f, and text revision" id basis revision))
+        (unless (and (list? size) (= (length size) 2) (for-all positive-integer? size)
+                     (or (not cursor)
+                         (and (list? cursor) (= (length cursor) 3)
+                              (natural? (car cursor)) (natural? (cadr cursor))
+                              (boolean? (caddr cursor)) (< (cadr cursor) (cadr size)))))
+          (error 'publish! "expected size (rows cols) and cursor (row col visible?) or #f" cursor size))
+        (let ([changes (own-changes changes)] [cursor (datum:copy cursor)] [size (datum:copy size)])
+          (let-values ([(status detail)
+                        (with-mutex (state-lock data)
+                          (let ([old (frame-of id)])
+                            (let-values ([(text current) (store:snapshot id)])
+                              (cond
+                                [(not (same-basis? old basis)) (values 'stale 'frame-changed)]
+                                [(not (= revision current)) (values 'stale 'text-changed)]
+                                [else
+                                 (let ([table (if old (hashtable-copy (frame-table old) #t) (make-eqv-hashtable))]
+                                       [changed '()] [count (vector-length text)])
+                                   (for-each
+                                     (lambda (entry)
+                                       (let ([row (car entry)] [value (cdr entry)])
+                                         (unless (equal? value (hashtable-ref table row #f))
+                                           (set! changed (cons row changed))
+                                           (if value (hashtable-set! table row value) (hashtable-delete! table row)))))
+                                     changes)
+                                   (unless (and (or (not cursor) (< (car cursor) count))
+                                                (for-all (lambda (row) (< row count))
+                                                         (vector->list (hashtable-keys table))))
+                                     (error 'publish! "frame coordinates exceed its text" id revision))
+                                   (if (and old (= revision (frame-revision old)) (null? changed)
+                                            (equal? cursor (frame-cursor old)) (equal? size (frame-size old)))
+                                       (values 'applied (frame-generation old))
+                                       (let* ([generation (next-serial!)]
+                                              [frame (make-frame generation revision count table cursor size)])
+                                         (hashtable-set! (state-frames data) id frame)
+                                         (enqueue! (list 'surface id generation revision
+                                                         (if (and old (= revision (frame-revision old)))
+                                                             (list-sort < changed) 'all)
+                                                         cursor size))
+                                         (values 'applied generation))))]))))])
+            (drain!)
+            (values status detail))))))
 
   (define (retire! id)
     ;; Caller holds state-lock; repeated withdrawal is inert. A global serial
@@ -135,16 +137,18 @@
            generation)))
 
   (define (withdraw! id basis)
-    (unless (and (positive-integer? id) (or (not basis) (positive-integer? basis)))
-      (error 'withdraw! "expected buffer id and frame generation or #f" id basis))
-    (let-values ([(status detail)
-                  (with-mutex (state-lock data)
-                    (let ([old (frame-of id)])
-                      (cond [(not old) (values 'applied #f)]
-                            [(not (same-basis? old basis)) (values 'stale 'frame-changed)]
-                            [else (values 'applied (retire! id))])))])
-      (drain!)
-      (values status detail)))
+    (activity:call-with
+      (lambda ()
+        (unless (and (positive-integer? id) (or (not basis) (positive-integer? basis)))
+          (error 'withdraw! "expected buffer id and frame generation or #f" id basis))
+        (let-values ([(status detail)
+                      (with-mutex (state-lock data)
+                        (let ([old (frame-of id)])
+                          (cond [(not old) (values 'applied #f)]
+                                [(not (same-basis? old basis)) (values 'stale 'frame-changed)]
+                                [else (values 'applied (retire! id))])))])
+          (drain!)
+          (values status detail)))))
 
   (define (live-frame id)
     ;; A delete may have committed while its cleanup notification is queued.

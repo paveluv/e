@@ -52,9 +52,9 @@ them. A timeout does not kill or replace the existing base.
 
 SIGHUP leaves the base running. SIGTERM or SIGINT stops it and its terminal
 processes. State currently lasts only for the base's lifetime: stopping it
-does not save a session to disk. Reviewed shutdown, session saving and
-`--restart` are being implemented in later slices. The current wire protocol
-is version 2; save your work and stop the old base before changing builds.
+does not save a session to disk. Session saving and `--restart` are being
+implemented in later slices. The current wire protocol
+is version 3; save your work and stop the old base before changing builds.
 
 `C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
 stay alive; local unsaved text still requires confirmation. After restoring
@@ -64,6 +64,27 @@ with the same `--name` restores its split layout, selected window and buffers,
 points, viewports, selection, window preferences and kill text. Use distinct
 names for independent screens. An explicit file argument opens in the restored
 selected window. Without a saved screen, normal startup configuration applies.
+
+`M-x (main:shutdown!!)` stops the base and every attached screen. It reviews
+unsaved shared and local text, running terminals, agent sessions and other
+heads before asking for consent. `n`, `v`, Esc or C-g cancels; `v` opens
+the buffers app. If relevant work changes while the question is open, e
+asks again. A modified file whose current text matches disk is clean;
+read-only text still needs review when unsaved. New attachments receive a
+temporary busy refusal while a review is open and can retry after it ends.
+Existing heads and terminals keep working during the question.
+
+When you confirm, the base briefly pauses mutations and publication and
+rechecks the review before accepting shutdown. It durably removes any saved
+session before ending processes. A failed pause or disk operation resumes service. If deletion
+succeeded but directory sync failed, the error reports that durability is
+uncertain; it does not claim the old session file remains.
+
+To use this review when the last head quits, put
+`(main:shutdown-on-exit #t)` in `config.e`. The base decides which head is
+last atomically, even when two quit together. Cancelling keeps the last
+head open. The default is `#f`. Restricted heads can always detach, but
+only an all-buffer head may prepare or accept shutdown.
 
 The daemon retains the latest completed screen checkpoint, including after an
 abrupt SSH disconnect. Shared edits made while absent move the saved positions;

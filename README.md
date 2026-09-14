@@ -115,8 +115,11 @@ $ ~/.e/e --name work
 `C-x C-c` detaches that screen. Attach with the same name to restore its
 layout, positions and kill ring; use a different name for an independent
 screen. Shared edits and terminal processes continue while no screen is
-attached. State lasts for the daemon's lifetime; stopping it does not save
-the session to disk. Connections currently use a local Unix socket under
+attached. `M-x (main:shutdown!!)` reviews unsaved work and live processes,
+then stops the base and all its screens. Set `(main:shutdown-on-exit #t)`
+in `config.e` to offer shutdown when the last screen quits.
+State lasts for the daemon's lifetime; stopping it does not save
+the session to disk yet. Connections currently use a local Unix socket under
 the same OS user. See [daemon attachment](manual/MULTIHEAD.md#running-a-daemon-and-attaching)
 for configuration, lifecycle and scripted clients.
 

@@ -105,6 +105,9 @@ moves focus there.
 If protected work changes during confirmation, e reviews it again before exiting.
 Disposable generated output can keep updating without requiring new confirmation.
 Shared unsaved text and terminal processes stay in the running daemon.
+`M-x (main:shutdown!!)` also reviews that shared work and the base's live
+processes before stopping it. With `(main:shutdown-on-exit #t)`, quitting
+the last head enters this review; cancelling keeps the head open.
 
 ## File buffers
 

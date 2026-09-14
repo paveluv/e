@@ -75,6 +75,13 @@
 (library-directories (runtime-roots "base"))
 (compile-imported-libraries #t)
 
+;; Coordinate cache readers and compilers before any cached import. This
+;; dependency-free bootstrap library is loaded directly from source once;
+;; its library identity is never a dependency of cached runtime code.
+(load (string-append e-home "/lib/sys/cache.sls"))
+(eval `(begin (import (prefix (cache) cache:))
+              (cache:install! ,(string-append e-home "/eo"))))
+
 (eval `(begin
          (import (prefix (startup) startup:) (prefix (kernel) kernel:) (prefix (sys) sys:)
                  (prefix (daemon) daemon:))

@@ -19,7 +19,7 @@
 ;; (store:snapshot ...).
 
 (library (store)
-  (export create! visit! delete! discard! prepare-close reset! rename! publication publish!
+  (export create! visit! delete! discard! prepare-close close! reset! rename! publication publish!
           buffer-list exists? visible? buffer-name find-named find-file
           snapshot snapshot-since snapshot-state state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
@@ -32,7 +32,7 @@
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq
                 current-time time-second time-nanosecond)
           (prefix (text) text:) (prefix (property) property:)
-          (prefix (actor) actor:)
+          (prefix (actor) actor:) (prefix (activity) activity:)
           (prefix (datum) datum:)
           (prefix (kernel) kernel:))
 
@@ -158,12 +158,14 @@
   (define (transact! actor thunk)
     ;; Mutation and its event enter the same critical section.  Only
     ;; after releasing it may this writer become the event drainer.
-    (let ([actor (own-actor actor)])
-      (call-with-values
-        (lambda () (locked (lambda () (ensure-open!) (thunk actor))))
-        (lambda result
-          (kernel:drain-deliveries! (store-deliveries (current-store)))
-          (apply values result)))))
+    (activity:call-with
+      (lambda ()
+        (let ([actor (own-actor actor)])
+          (call-with-values
+            (lambda () (locked (lambda () (ensure-open!) (thunk actor))))
+            (lambda result
+              (kernel:drain-deliveries! (store-deliveries (current-store)))
+              (apply values result)))))))
 
   (define (buffer-of who id)
     (or (hashtable-ref (store-buffers (current-store)) id #f)
@@ -384,10 +386,11 @@
 
   (define (prepare-close)
     ;; Base lifetime review: -> owned (id text revision facts) snapshots
-    ;; and an acceptance thunk. Review runs outside the writer. Acceptance
+    ;; and a validation thunk. Review runs outside the writer. Validation
     ;; rechecks every current non-disposable buffer, including hidden/new
-    ;; work, then closes writes under that same lock. Deletion and disposable
-    ;; output need no new consent. Reads and normal runtime cleanup continue.
+    ;; work, without closing writes. The lifecycle owner pauses producers,
+    ;; validates, performs its durable operation, and only then calls close!.
+    ;; Deletion and disposable output need no new consent.
     (let ([reviewed (make-eqv-hashtable)])
       (let ([states
              (locked
@@ -406,13 +409,15 @@
           (lambda ()
             (locked
               (lambda ()
-                (and (for-all
-                       (lambda (id)
-                         (let ([b (buffer-of 'prepare-close id)] [state (hashtable-ref reviewed id #f)])
-                           (or (property-value b 'disposable #f)
-                               (and state (reviewed-state? b (cons (caddr state) (cadddr state)))))))
-                       (vector->list (hashtable-keys (store-buffers (current-store)))))
-                     (begin (store-closing?-set! (current-store) #t) #t)))))))))
+                (for-all
+                  (lambda (id)
+                    (let ([b (buffer-of 'prepare-close id)] [state (hashtable-ref reviewed id #f)])
+                      (or (property-value b 'disposable #f)
+                          (and state (reviewed-state? b (cons (caddr state) (cadddr state)))))))
+                  (vector->list (hashtable-keys (store-buffers (current-store))))))))))))
+
+  (define (close!)
+    (locked (lambda () (store-closing?-set! (current-store) #t))))
 
   (define (buffer-list)
     (locked

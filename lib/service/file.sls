@@ -19,7 +19,7 @@
 
 (library (file)
   (export read read-state stamp create! write! call-with-port
-          lines ends-in-newline? text
+          lines ends-in-newline? text state-clean?
           merge conflict-count
           directory-part base-name abbreviate absolute
           (rename (path:expand expand) (path:canonical canonical))
@@ -36,6 +36,19 @@
           (prefix (text) text:)
           (prefix (log) log:)
           (prefix (kernel) kernel:))
+
+  ;; Discard consent is the same for local and shared buffers. Compare the
+  ;; captured text outside its writer lock; an unreadable disk is not clean.
+  (define (state-clean? lines facts)
+    (define (fact key fallback) (cond [(assq key facts) => cdr] [else fallback]))
+    (guard (ex [else #f])
+      (or (fact 'disposable #f)
+          (not (fact 'modified #f))
+          (let ([path (fact 'file #f)])
+            (if path
+                (and (file-exists? path)
+                     (string=? (text lines (fact 'trailing #t)) (read path)))
+                (and (= (vector-length lines) 1) (string=? (vector-ref lines 0) "")))))))
 
   ;;; Paths ---------------------------------------------------------------------
 

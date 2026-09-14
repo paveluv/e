@@ -23,7 +23,10 @@ Plain `e` selects the `lib/client` implementation tree; `e --base` selects
 them; the parent directories `lib/`, `lib/base/` and `lib/client/` are not
 source roots. Attached heads import the same `edit` and `main` consumers.
 Chez's `.so` objects live in `eo/client` or `eo/base`, with one flat cache
-per runtime. Source lookup and reload follow the active implementation. The loader sets
+per runtime. An installation-wide `eo/lock` serializes expansion, dependency
+checks and automatic compilation across processes. The small `cache` library
+loads directly from source before the first cached import; it holds no lock
+while editor commands run. Source lookup and reload follow the active implementation. The loader sets
 `kernel:installation-directory` to its own directory; `config.e`,
 `base-config.e` and `data/` are located there independently of source roots.
 Direct library users can set this parameter before starting their runtime.

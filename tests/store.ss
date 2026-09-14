@@ -15,6 +15,7 @@
              (prefix (property) property:)
              (prefix (text) text:)
              (prefix (kernel) kernel:)
+             (prefix (activity) activity:)
              (prefix (test) test:)
              (only (chezscheme)
                    box unbox set-box! parameterize))
@@ -42,6 +43,40 @@
      (check 'content (map (lambda (n) (store:line b n)) '(0 1 2))
             '("alpha" "bravo" "charlie"))
      (check 'fresh-revision (store:revision b) 0)
+
+     ;; Pause drains a whole mutation/callback scope. Reentry on its thread
+     ;; finishes, while a fork inheriting its parameters must wait as new work.
+     (let* ([started (test:gate)] [child-entered (test:gate)] [child #f]
+            [parent
+             (test:worker
+               (lambda ()
+                 (activity:call-with
+                   (lambda ()
+                     (started #t)
+                     (test:await 'pausing (lambda () (eq? (activity:phase) 'paused)))
+                     (set! child (test:worker (lambda () (store:set-property! alice b 'child #t) (child-entered #t))))
+                     (store:set-property! alice b 'parent #t)))))])
+       (test:await 'admitted-parent started)
+       (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+       (parent)
+       (check 'pause-drains-reentry-and-keeps-reads-live
+         (list (store:property b 'parent) (child-entered) (store:line b 0)) '(#t #f "alpha"))
+       (activity:resume!) (child)
+       (check 'resume-admits-inherited-worker (child-entered) #t))
+
+     (let* ([entered (test:gate)] [release (test:gate)]
+            [held (test:worker (lambda () (activity:call-with
+                                            (lambda () (entered #t) (test:await 'release release)))))])
+       (test:await 'active-before-timeout entered)
+       (check 'pause-timeout-reopens-admission
+         (list (test:raises? (lambda ()
+                               (activity:pause! (add-duration (current-time 'time-monotonic)
+                                                  (make-time 'time-duration 20000000 0)))))
+               (activity:phase)) '(#t running))
+       (release #t) (held))
+     (test:raises? (lambda () (activity:call-with (lambda () (error 'fixture "unwind")))))
+     (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+     (activity:resume!)
 
      ;; One review/race table covers full-state and selected-fact decisions.
      ;; Refusal preserves text, facts, history and marks, with no notifications.
@@ -1348,7 +1383,10 @@
            (store:rename! alice id "still-reviewed")
            (store:set-mark! alice id 'point '(0 . 1))
            ((test:worker (lambda () (store:reset! bot output '("new output")) #t)))
-           (check 'close-accepts-after-deletion-rename-marks-and-disposable-output (accept!) #t))
+           (check 'close-accepts-after-deletion-rename-marks-and-disposable-output (accept!) #t)
+           (check 'validation-is-reversible
+             (begin (store:set-property! bot id 'note "still writable") (accept!)) #f))
+         (store:close!)
          (let ([before (call-with-values (lambda () (store:snapshot-state id)) list)]
                [before-events (events)])
            (check 'accepted-close-refuses-every-writer-without-changing-readable-state

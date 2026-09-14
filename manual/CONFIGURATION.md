@@ -24,6 +24,13 @@ checkpoints, what is shared between heads, and agent sessions are described
 in [Base, heads and agents](MULTIHEAD.md). The daemon reads `base-config.e`
 only; a head reads `config.e` only.
 
+Quitting normally detaches the screen and keeps the base running.
+Set `(main:shutdown-on-exit #t)` in `config.e` to review shutting down the
+base when this is the last attached head. Cancelling the review keeps that
+head open. The default is `#f`; the setting accepts only booleans.
+`M-x (main:shutdown!!)` requests the same review explicitly, regardless of
+the setting. Shutdown requires an all-buffer head connection.
+
 ## Configuration file
 
 `config.e`, beside the loader script, is plain Scheme rather than an R6RS

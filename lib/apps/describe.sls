@@ -248,6 +248,14 @@
          (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
          ("(head)") head "Editor lifecycle" #f
          "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
+        ((main:shutdown!!)
+         (("procedure" . "(main:shutdown!!)")) "does not return after acceptance"
+         ("(main)") main "Editor lifecycle" #f
+         "Review unsaved shared and local work, other heads, terminals and agent sessions, then stop the base and every head. Requires an all-buffer head. No, View, Esc and C-g cancel; View opens the buffers app. Changed work receives a fresh review. A failed pause or durable session deletion resumes service.")
+        ((main:shutdown-on-exit)
+         (("thread parameter" . "main:shutdown-on-exit")) "boolean"
+         ("(main)") main "Editor lifecycle" #f
+         "Default #f: quitting detaches this screen. Set #t to review shutting down the base when this is the last participating head. The base decides atomically; cancelling keeps the last head open. Restricted heads always detach normally.")
         ((paint:add-buffer-status-hint!)
          (("procedure" . "(paint:add-buffer-status-hint! procedure)")) "unspecified"
          ("(paint)") paint "Buffer lifecycle" #f

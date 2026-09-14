@@ -11,6 +11,7 @@
              (prefix (head) head:) (prefix (paint) paint:) (prefix (render) render:)
              (prefix (actor) actor:) (prefix (store) store:) (prefix (surface) surface:)
              (prefix (kernel) kernel:) (prefix (text) text:)
+             (prefix (activity) activity:)
              (prefix (test) test:))
 
      (define (check label true?)
@@ -261,8 +262,14 @@
                           (do ([i 0 (+ i 1)]) ((= i 3)) (get-char (current-input-port)))
                           (system "stty size")]
                          [(finish)
-                          (display "\x1b;[?2026h\x1b;[2J\x1b;[H\x1b;[35m界q\x301;FINAL")
+                          (note 'finish-ready)
+                          (let wait ()
+                            (unless (equal? (call-with-input-file ,marker read) 'finish-release)
+                              (sleep (make-time 'time-duration 5000000 0)) (wait)))
+                          (display "\x1b;[?2026h\x1b;[2J\x1b;[H\x1b;[35m界q\x301;FINAL\x1b;[6n")
                           (flush-output-port)
+                          (reply-through #\R)
+                          (note 'finish-parsed)
                           (exit)])
                        (flush-output-port)
                        (loop)))))) 'replace)
@@ -390,6 +397,42 @@
            (test:check 'engine-and-facade-reload-retain-the-base-actor (store:property id 'app) owner)
            (head:set-window-buffer! (head:current) previous)
            (send second "finish\n" '(4 26))
+           (wait-stage 'finish-ready)
+           (actor:register! '(head "pause checkpoint") void)
+           (actor:checkpoint! '(head "pause checkpoint") 'before)
+           (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+           (let* ([before (transcript)] [frame (surface:snapshot id)]
+                  [started (test:recorder)] [completed (test:recorder)]
+                  [workers
+                   (map (lambda (operation)
+                          (test:worker
+                            (lambda ()
+                              (started operation)
+                              (case operation
+                                [(checkpoint) (actor:checkpoint! '(head "pause checkpoint") 'after)]
+                                [(input) (offer second '(3 24))]
+                                [(process)
+                                 (with-command '("/bin/true") #f
+                                   (lambda (p)
+                                     (get-bytevector-all (sys:process-input p))
+                                     (test:check 'resumed-child-exits
+                                       (call-with-values (lambda () (sys:process-result p)) list) '(0 ""))))])
+                              (completed operation)))) '(checkpoint input process))])
+             (dynamic-wind void
+               (lambda ()
+                 (test:await 'paused-callers (lambda () (= (length (started)) 3)))
+                 (call-with-output-file marker (lambda (p) (write 'finish-release p)) 'replace)
+                 (wait-stage 'finish-parsed)
+                 (test:await 'natural-exit-during-pause (lambda () (not (member owner (vt:running)))))
+                 (test:check 'pause-keeps-parsing-without-publishing-or-admitting-side-effects
+                   (list (transcript) (surface:snapshot id) (completed)
+                         (actor:checkpoint '(head "pause checkpoint")))
+                   (list before frame '() 'before)))
+               activity:resume!)
+             (for-each (lambda (finish) (finish)) workers)
+             (test:check 'resume-admits-checkpoint-input-and-process
+               (list (length (completed)) (actor:checkpoint '(head "pause checkpoint"))) '(3 after)))
+           (actor:detach! '(head "pause checkpoint"))
            (test:await 'offscreen-exit (lambda () (not (store:property id 'alive))))
            (test:await 'actor-retired (lambda () (not (actor:send! owner (list 'request second id 'resize '(4 26))))))
            (test:check 'exit-publishes-final-held-text-before-retiring-capture-and-rendition

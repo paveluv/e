@@ -23,6 +23,7 @@
 
 ;; (main:modules-reload-on-save #t)    ; saving a module source reloads it in place
 ;; (main:config-reload-on-save #t)     ; saving config.e applies it on the spot
+;; (main:shutdown-on-exit #f)          ; #t: last screen's quit reviews stopping the base
 ;; (scheme-mode:format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (scroll-margin 8)              ; rows kept between the cursor and the edges
 ;; (scrollbar #f)                 ; #t: show position bars in ordinary buffers
