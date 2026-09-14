@@ -433,14 +433,15 @@
                (write-text disk "on disk\n")
                (let* ([clean (rpc a 'create "matches disk" '("on disk") `((file . ,disk) (trailing . #t)))]
                       [empty (rpc a 'create "empty" '(""))]
+                      [unreadable (rpc a 'create "unreadable disk" '("keep") `((file . ,root)))]
                       [output (rpc a 'create "disposable" '("output") '((disposable . #t)))]
                       [large (map (lambda (i) (rpc a 'create (format "large ~a" i)
                                                 (list (make-string (* 6 1024 1024) #\x)))) '(1 2 3))]
                       [review (rpc a 'prepare-close)] [token (cadr review)])
                  (test:check 'compact-review-retains-large-text-and-exact-cleanliness-at-the-base
                    (list (< (bytevector-length (encoded review)) 4096)
-                         (map (lambda (id) (caddr (assv id (caddr review)))) (cons clean (cons empty large)))
-                         (assv output (caddr review))) '(#t (#f #f #t #t #t) #f))
+                         (map (lambda (id) (caddr (assv id (caddr review)))) (cons* clean empty unreadable large))
+                         (assv output (caddr review))) '(#t (#f #f #t #t #t #t) #f))
                  (test:check 'review-owns-admission-but-leaves-status-and-existing-work-live
                    (list (phase)
                          (map (lambda (who)
@@ -922,6 +923,8 @@
                  (list (archive-paths) #f '(closing shutdown) (+ 1 (length bad)))))))))
 
      (define (restart-scenarios!)
+       (define restoring (string-append root "/replacement-restoring"))
+       (define hold (string-append root "/replacement-hold"))
        (fresh-session!)
        (when (file-exists? automatic-control) (delete-file automatic-control))
        (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
@@ -933,7 +936,15 @@
                (let wait ()
                  (unless (file-exists? ,automatic-control)
                    (sleep (make-time 'time-duration 5000000 0)) (wait)))
-               (system (format "kill -TERM ~a" (get-process-id)))))))
+               (system (format "kill -TERM ~a" (get-process-id)))))
+           ;; Hold only the replacement before listening. A concurrent plain
+           ;; launcher must wait for this owner instead of starting another.
+           (when (file-exists? ,hold)
+             (call-with-output-file ,restoring (lambda (p) (write #t p)) 'replace)
+             (let wait ([left 4000])
+               (when (file-exists? ,hold)
+                 (when (zero? left) (error 'fixture "replacement restore hold timed out"))
+                 (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))))
        (let* ([source-path (string-append sources "/head/head.sls")]
               [source (call-with-input-file source-path get-string-all)]
               [wire-path (string-append sources "/foundation/wire.sls")]
@@ -1033,25 +1044,49 @@
                       [launcher (start-command '("--restart" "--name" "restart desk") 100)])
                  (head-wait 'accepted-restart-question launcher
                    (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
+                 (write-text hold "wait for the concurrent launcher")
                  (head-send! launcher "yes\n")
-                 (head-wait 'restart-resumes-named-screen launcher
-                   (lambda () (head-sees? launcher "kept after restart")))
-                 (test:check 'restart-restores-named-view-after-pre-screen-notice
-                   (let* ([output (vector-ref launcher 3)]
-                          [notice (string:search output "restored a session saved" 0 (string-length output))]
-                          [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
-                     (list (and notice screen (< notice screen))
-                           (not (equal? original (call-with-input-file pid-path read)))
-                           (head-read launcher '(list (buffer-line (current-buffer) 0) (point)))
-                           (head-read launcher '(and (head:buffer-named "<local draft omitted>") #t))
-                           (head-read launcher '(let ([status (client:request 'status)])
-                                                  (list (cdr (assq 'fingerprint status)) (cdr (assq 'wire-version status)))))))
-                   (list #t #t expected #f (list (fingerprint) (+ wire:version 1))))
-                 (head-wait 'old-screen-gets-restart-farewell head
-                   (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
-                 (head-send! launcher "\x18;\x03;")
-                 (head-wait 'restart-screen-detaches launcher (lambda () (head-sees? launcher "e: detached")))
-                 (sys:reap-terminal-process! (vector-ref launcher 0)))
+                 (test:await 'replacement-restores-before-listening (lambda () (file-exists? restoring)))
+                 (let* ([replacement (call-with-input-file pid-path read)]
+                        [joining (start-head "joining during restart")]
+                        [heads (list launcher joining)])
+                   (dynamic-wind void
+                     (lambda ()
+                       (head-wait 'plain-start-waits-for-restoring-owner joining
+                         (lambda () (> (occurrences (vector-ref joining 3) "starting the base") 0)))
+                       (test:check 'start-during-restart-waits-without-replacing-the-owner
+                         (list (equal? replacement (call-with-input-file pid-path read))
+                               (file-exists? socket) (occurrences (vector-ref joining 3) "\x1b;[?1049h"))
+                         '(#t #f 0)))
+                     (lambda () (delete-file hold)))
+                   (for-each
+                     (lambda (screen)
+                       (head-wait 'restart-resumes-shared-work screen
+                         (lambda () (head-sees? screen "kept after restart")))) heads)
+                   (test:check 'restart-restores-named-view-after-pre-screen-notice
+                     (list
+                       (length
+                         (filter values
+                           (map (lambda (head)
+                                  (let* ([output (vector-ref head 3)]
+                                         [notice (string:search output "restored a session saved" 0 (string-length output))]
+                                         [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
+                                    (and notice screen (< notice screen)))) heads)))
+                       (not (equal? original replacement))
+                       (head-read launcher '(list (buffer-line (current-buffer) 0) (point)))
+                       (head-read launcher '(and (head:buffer-named "<local draft omitted>") #t))
+                       (map (lambda (head)
+                              (head-read head '(let ([status (client:request 'status)])
+                                                 (map (lambda (key) (cdr (assq key status))) '(fingerprint wire-version instance)))))
+                         heads))
+                     (list 1 #t expected #f (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
+                   (head-wait 'old-screen-gets-restart-farewell head
+                     (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
+                   (for-each
+                     (lambda (head)
+                       (head-send! head "\x18;\x03;")
+                       (head-wait 'restart-screen-detaches head (lambda () (head-sees? head "e: detached")))
+                       (sys:reap-terminal-process! (vector-ref head 0))) heads)))
                (write-text file "file argument after restart\n")
                (let ([launcher (start-command (list "--restart" "--name" "restart desk" file) 100)])
                  (head-wait 'no-live-work-restarts-without-question launcher
@@ -1075,6 +1110,7 @@
                              (occurrences (vector-ref launcher 3) "\x1b;[?1049h")) '(#t 0 0))))
                  (lambda () (delete-file lost-closing)))))
            (lambda ()
+             (when (file-exists? hold) (delete-file hold))
              (write-text source-path source)
              (write-text wire-path wire-source)
              (write-text automatic-control "stop")

@@ -390,7 +390,7 @@
             '(#t #t #f #t))
 
      ;; Resume follows the saved basis, not the fresh process's initial
-     ;; cache. The same table covers a complete chain, a reset and expiry.
+     ;; cache. The table covers rebasing, old versions and unavailable views.
      (let ([b (head:new-buffer "resume positions")])
        (head:set-buffers! (list b))
        (head:set-layout-root! (head:current))
@@ -412,6 +412,10 @@
              (head:set-full-capture! w #t)
              (head:checkpoint!)
              (case kind
+               [(missing-provider)
+                (let ([state (actor:checkpoint head:ui-actor)])
+                  (set-car! (car (list-ref state 5)) '(uninstalled-view "old view"))
+                  (actor:checkpoint! head:ui-actor state))]
                [(legacy)
                 (let ([state (actor:checkpoint head:ui-actor)])
                   (actor:checkpoint! head:ui-actor
@@ -431,11 +435,12 @@
                        (head:full-capture? (head:current))
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
                  (list #t expected #t "saved kill" (not (eq? kind 'legacy)) #t)))))
-         '(edit reset expired legacy)
+         '(edit reset expired legacy missing-provider)
          '(((3 . 4) (2 . 0) (3 . 2) (2 . 3) (2 . 0))
            ((0 . 1) (0 . 0) (0 . 1) (0 . 1) (0 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
-           ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))))
+           ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
+           ((2 . 4) (1 . 0) (2 . 2) (0 . 0) (0 . 0))))
        ;; The unchanged-frame comparison owns its data too.
        (string-set! (head:kill-ring) 0 #\X)
        (head:checkpoint!)
