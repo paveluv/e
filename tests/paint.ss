@@ -171,8 +171,8 @@
             (paint:detect-hyperlinks "see http://a.example/x here")
             '((4 22 "http://a.example/x")))
      (check 'trims-trailing-punctuation
-            (paint:detect-hyperlinks "at https://e.dev/p, then")
-            '((3 18 "https://e.dev/p")))
+            (map paint:detect-hyperlinks '("at https://e.dev/p, then" "See https://example.com/path."))
+            '(((3 18 "https://e.dev/p")) ((4 28 "https://example.com/path"))))
      (check 'angle-brackets-end-a-url
             (paint:detect-hyperlinks "<http://a.example>")
             '((1 17 "http://a.example")))

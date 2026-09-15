@@ -10,15 +10,12 @@
 
 (eval
   '(begin
-     (import (prefix (tty) tty:)
+     (import (prefix (test) test:)
+             (prefix (tty) tty:)
              (only (chezscheme) format open-string-input-port))
 
-     (define checks 0)
 
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'tty-test label actual expected)))
+     (define check test:check)
 
      (define (events text)
        ;; decode the whole byte string
@@ -111,4 +108,4 @@
      (check 'control-has-no-character (tty:key-event-character "C-a") #f)
      (check 'character-event (tty:character-event #\x2) "C-b")
 
-     (format #t "~a tty checks passed\n" checks)))
+     (test:finish! 'tty)))

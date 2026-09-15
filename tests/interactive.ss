@@ -25,19 +25,13 @@
      (define process
        (sys:spawn-terminal-process "/bin/sh" (fixture:command test-base "--name" "interactive")
                                    (current-directory) 24 80))
-     (define from-editor
-       (transcoded-port (sys:terminal-process-input process)
-                        (make-transcoder (utf-8-codec) 'none 'replace)))
      (define transcript '())
 
-     (define (drain!)
-       (when (guard (ex [else #f]) (char-ready? from-editor))
-         (let ([character (guard (ex [else (eof-object)])
-                            (get-char from-editor))])
-           (unless (eof-object? character)
-             (set! transcript (cons character transcript))
-             (vt:emulator-feed! mirror (string character))
-             (drain!)))))
+     (define drain!
+       (fixture:terminal-reader process
+         (lambda (text)
+           (set! transcript (cons text transcript))
+           (vt:emulator-feed! mirror text))))
 
      (define (settle! milliseconds)
        (let loop ([left (div milliseconds 25)])
@@ -130,7 +124,7 @@
            (wait-for! (list 'idle-resize-refreshes-the-screen prompt?)
              (lambda ()
                (let ([buffer (find-cell "*scratch*")] [close (find-cell "│×│")])
-                 (and (contains? (list->string (reverse transcript)) "\x1b;[?2026h")
+                 (and (contains? (apply string-append (reverse transcript)) "\x1b;[?2026h")
                       buffer close (= (car buffer) (- rows 2)) (= (cdr close) (- cols 3))
                       (if prompt? (find-cell "M-x (resize-input")
                         (find-cell resize-question))))) 3000)))
@@ -153,7 +147,7 @@
      (send! "x")
      (wait-for! 'invalid-question-key-flashes-and-restores-without-input
        (lambda ()
-         (and (contains? (list->string (reverse transcript))
+         (and (contains? (apply string-append (reverse transcript))
                 (string-append "\x1b;[7m" (make-string 80 #\space) "\x1b;[0m"))
               (find-cell "Bell check: yes or no"))) 5000)
      (send! "n")
@@ -236,7 +230,7 @@
        (send! "printf '\\033]4;1;#0055ff\\007'\r")
        (wait-for! 'recolor-uses-new-palette-rgb
                   (lambda ()
-                    (contains? (list->string (reverse transcript))
+                    (contains? (apply string-append (reverse transcript))
                                "38;2;0;85;255"))
                   5000)
        (send! "\x1b;[5;2~")             ; S-PAGEUP into history again
@@ -293,7 +287,7 @@
      ;; facts apply only while an app owns the buffer.
      (wait-for! 'dead-terminal-shows-the-read-only-cursor
                 (lambda ()
-                  (contains? (list->string (reverse transcript)) "\x1b;[5 q"))
+                  (contains? (apply string-append (reverse transcript)) "\x1b;[5 q"))
                 5000)
      (for-each
        (lambda (case)
@@ -373,10 +367,7 @@
                     "(#tdescribe-source-check)")) 5000)
 
      (send! "\x18;\x3;")                ; C-x C-c
-     (let loop ()                       ; block until the editor exits
-       (let ([character (guard (ex [else (eof-object)])
-                          (get-char from-editor))])
-         (unless (eof-object? character) (loop))))
+     (test:await 'editor-exits drain!)
      (sys:reap-terminal-process! process)
      (check 'editor-quits #t)
 
@@ -384,7 +375,7 @@
 
 (eval
   `(begin
-     (import (prefix (fixture) fixture:))
+     (import (prefix (fixture) fixture:) (prefix (test) test:))
      (fixture:call-with-base (current-directory) #f
        (lambda (base)
          (set-top-level-value! 'test-base base)

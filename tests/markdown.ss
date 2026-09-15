@@ -10,16 +10,13 @@
 
 (eval
   '(begin
-     (import (prefix (markdown) markdown:) (prefix (scheme-mode) scheme-mode:))
+     (import (prefix (test) test:)
+             (prefix (markdown) markdown:) (prefix (scheme-mode) scheme-mode:))
 
      (scheme-mode:init!)
 
-     (define checks 0)
 
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'markdown-test label actual expected)))
+     (define check test:check)
 
      (define (render lines)
        (let-values ([(text styles links rows) (markdown:render lines)])
@@ -129,4 +126,4 @@
             [rows (cadddr r)])
        (check 'source-rows-tracked rows '(0 1 2)))
 
-     (format #t "~a markdown checks passed\n" checks)))
+     (test:finish! 'markdown)))

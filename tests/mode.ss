@@ -12,17 +12,14 @@
 
 (eval
   '(begin
-     (import (prefix (mode) mode:)
+     (import (prefix (test) test:)
+             (prefix (mode) mode:)
              (prefix (head) head:)
              (prefix (store) store:)
              (only (chezscheme) format box unbox set-box!))
 
-     (define checks 0)
 
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'mode-test (symbol->string label) actual expected)))
+     (define check test:check)
 
      ;; -- registration and lookup -------------------------------------
 
@@ -169,4 +166,4 @@
      (check 'refresh-resolves-to-new (eq? (mode:of by-file) (mode:find "probe")) #t)
      (check 'refresh-keeps-name (mode:name-of by-file) "probe")
 
-     (format #t "~a mode checks passed\n" checks)))
+     (test:finish! 'mode)))

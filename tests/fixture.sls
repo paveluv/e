@@ -1,6 +1,7 @@
-;; One owner for a process fixture's private base directory and child.
+;; Shared process fixtures: private bases, PTY readers and editor queries.
 (library (fixture)
-  (export start! stop! call-with-base command directory process diagnostics quote-shell)
+  (export start! stop! call-with-base command directory process diagnostics quote-shell
+          terminal-reader query)
   (import (except (chezscheme) process) (prefix (sys) sys:) (prefix (string) string:))
 
   (define-record-type base (fields installation directory process))
@@ -10,6 +11,37 @@
   (define (quote-shell text)
     (string-append "'" (apply string-append
                          (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
+
+  (define (terminal-reader process consume!)
+    ;; Feed available output as a chunk. Per-character emulator calls and
+    ;; transcript concatenation made the PTY drivers unnecessarily expensive.
+    ;; Remember EOF so callers can await exit without a separate blocking read.
+    (let ([input (transcoded-port (sys:terminal-process-input process)
+                   (make-transcoder (utf-8-codec) 'none 'replace))]
+          [ended? #f])
+      (lambda ()
+        (let ([text
+               (call-with-string-output-port
+                 (lambda (output)
+                   (let drain ()
+                     (when (and (not ended?)
+                                (guard (ex [else (set! ended? #t) #f]) (char-ready? input)))
+                       (let ([c (guard (ex [else (eof-object)]) (get-char input))])
+                         (if (eof-object? c) (set! ended? #t)
+                             (begin (put-char output c) (drain))))))))])
+          (unless (string=? text "") (consume! text))
+          ended?))))
+
+  (define (query path expression send! await!)
+    ;; A rename publishes one complete datum, including #f, without accepting
+    ;; an empty file or a partially written atom. Keep UI diagnostics with the
+    ;; caller, which owns the screen(s) that must be drained while waiting.
+    (let ([pending (string-append path ".pending")])
+      (when (file-exists? path) (delete-file path))
+      (send! (format "\x1b;x\x1b;[200~~begin (call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)) (rename-file ~s ~s)\x1b;[201~~\r"
+               pending expression pending path))
+      (await! (list 'editor-query expression) (lambda () (file-exists? path)))
+      (call-with-input-file path read)))
 
   (define (command base . args)
     (string-append "exec "

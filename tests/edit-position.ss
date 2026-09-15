@@ -9,19 +9,16 @@
 
 (eval
   '(begin
-     (import (except (edit) init!)
+     (import (prefix (test) test:)
+             (except (edit) init!)
              (prefix (head) head:)
              (prefix (store) store:)
              (prefix (text) text:)
              (prefix (mode) mode:)
              (prefix (kernel) kernel:))
 
-     (define checks 0)
      (define bot '(agent position-test))
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'edit-position-test (symbol->string label) actual expected)))
+     (define check test:check)
      (define (fresh name lines . local?)
        (let ([b ((if (and (pair? local?) (car local?)) head:new-local-buffer head:new-buffer) name)])
          (head:buffer-lines-set! b (list->vector lines))
@@ -298,4 +295,4 @@
            (check 'selection-keeps-the-surviving-text (current-kill-ring) "cf")))
        '(#f #t))
 
-     (format #t "~a edit position checks passed\n" checks)))
+     (test:finish! 'edit-position)))

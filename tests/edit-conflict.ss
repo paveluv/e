@@ -10,19 +10,16 @@
 
 (eval
   '(begin
-     (import (except (edit) init!)
+     (import (prefix (test) test:)
+             (except (edit) init!)
              (prefix (head) head:)
              (prefix (store) store:)
              (prefix (text) text:)
              (prefix (mode) mode:)
              (prefix (kernel) kernel:))
 
-     (define checks 0)
      (define bot '(agent conflict-test))
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'edit-conflict-test (symbol->string label) actual expected)))
+     (define check test:check)
      (define (fresh name lines)
        (let ([b (head:new-buffer name)])
          (head:buffer-lines-set! b (list->vector lines))
@@ -229,4 +226,4 @@
      (check 'refused-indent-only-follows-foreign-delta (point) '(0 . 1))
      (check 'refused-indent-records-no-entry (vector-ref (head:buffer-history indented) 0) '())
 
-     (format #t "~a edit conflict checks passed\n" checks)))
+     (test:finish! 'edit-conflict)))

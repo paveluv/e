@@ -9,7 +9,8 @@
 
 (eval
   '(begin
-     (import (except (edit) init!)
+     (import (prefix (test) test:)
+             (except (edit) init!)
              (prefix (head) head:)
              (prefix (store) store:)
              (prefix (property) property:)
@@ -20,13 +21,9 @@
              (prefix (mode) mode:)
              (prefix (kernel) kernel:))
 
-     (define checks 0)
      (define bot '(agent state-test))
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'edit-state-test (format "~s" label) actual expected)))
-     (define (raises? thunk) (guard (ex [else #t]) (thunk) #f))
+     (define check test:check)
+     (define raises? test:raises?)
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer head:new-local-buffer) name)])
          (show-buffer! b)
@@ -513,4 +510,4 @@
              '((#t #t) (#t #t))))
          (lambda () (when (file-exists? path) (delete-file path)))))
 
-     (display checks) (display " edit state checks passed\n")))
+     (test:finish! 'edit-state)))

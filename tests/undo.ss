@@ -10,7 +10,8 @@
 
 (eval
   '(begin
-     (import (except (edit) init!)
+     (import (prefix (test) test:)
+             (except (edit) init!)
              (prefix (head) head:)
              (prefix (store) store:)
              (prefix (text) text:)
@@ -18,11 +19,7 @@
              (prefix (mode) mode:)
              (prefix (kernel) kernel:))
 
-     (define checks 0)
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'undo-test (symbol->string label) actual expected)))
+     (define check test:check)
      (define bot '(agent undo-test))
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer head:new-local-buffer) name)])
@@ -257,4 +254,4 @@
      (undo!)
      (check 'local-format-undo-restores-final-newline (buffer-text local) "base\nother")
 
-     (format #t "~a undo checks passed\n" checks)))
+     (test:finish! 'undo)))

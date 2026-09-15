@@ -314,21 +314,20 @@
        (let* ([process (sys:spawn-terminal-process "/bin/sh"
                          (apply fixture:command test-base args)
                          root 24 columns)]
-              [head (vector process
-                      (transcoded-port (sys:terminal-process-input process) (make-transcoder (utf-8-codec) 'none 'replace))
-                      (vt:make-emulator 24 columns) "")])
+              [head (vector process #f (vt:make-emulator 24 columns) "")])
+         (vector-set! head 1
+           (fixture:terminal-reader process
+             (lambda (chunk)
+               (vt:emulator-feed! (vector-ref head 2) chunk)
+               (let ([text (string-append (vector-ref head 3) chunk)])
+                 (vector-set! head 3
+                   (if (> (string-length text) 32768)
+                       (string:tail text (- (string-length text) 16384)) text))))))
          (set! heads (cons head heads)) head))
      (define (start-head name . width)
        (start-command (list "--name" name) (if (pair? width) (car width) 80)))
      (define (pump-head! head)
-       (let drain ()
-         (when (guard (ex [else #f]) (char-ready? (vector-ref head 1)))
-           (let ([c (guard (ex [else (eof-object)]) (get-char (vector-ref head 1)))])
-             (unless (eof-object? c)
-               (vt:emulator-feed! (vector-ref head 2) (string c))
-               (let ([text (string-append (vector-ref head 3) (string c))])
-                 (vector-set! head 3 (if (> (string-length text) 32768) (string:tail text 16384) text)))
-               (drain))))))
+       ((vector-ref head 1)))
      (define (head-sees? head text)
        (pump-head! head)
        (exists (lambda (line) (string:search line text 0 (string-length line)))
@@ -345,16 +344,9 @@
          ;; Every live PTY needs a reader, even while another head is active.
          (apply test:await label (lambda () (for-each pump-head! heads) (predicate)) seconds)))
      (define (head-read head expression . prefix)
-       (when (file-exists? probe) (delete-file probe))
-       (head-send! head (format "~a\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
-                          (if (pair? prefix) (car prefix) "") probe expression))
-       (let ([result (eof-object)])
-         (head-wait 'head-evaluation head
-           (lambda ()
-             (guard (ex [else #f])
-               (and (file-exists? probe)
-                    (begin (set! result (call-with-input-file probe read)) (not (eof-object? result)))))))
-         result))
+       (fixture:query probe expression
+         (lambda (text) (head-send! head (string-append (if (pair? prefix) (car prefix) "") text)))
+         (lambda (label ready?) (head-wait label head ready?))))
      (define (head-blame head)
        (head-read head
          '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])

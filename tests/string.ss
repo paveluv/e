@@ -10,15 +10,12 @@
 
 (eval
   '(begin
-     (import (prefix (string) string:)
+     (import (prefix (test) test:)
+             (prefix (string) string:)
              (only (chezscheme) format))
 
-     (define checks 0)
 
-     (define (check label actual expected)
-       (set! checks (+ checks 1))
-       (unless (equal? actual expected)
-         (error 'string-test label actual expected)))
+     (define check test:check)
 
      ;; -- tail, prefix, suffix ------------------------------------------
 
@@ -62,4 +59,4 @@
      (check 'common-prefix-one (string:common-prefix '("solo")) "solo")
      (check 'common-prefix-none (string:common-prefix '("a" "b")) "")
 
-     (format #t "~a string checks passed\n" checks)))
+     (test:finish! 'string)))

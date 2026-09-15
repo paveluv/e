@@ -23,7 +23,7 @@
 (eval
   '(begin
      (import (prefix (sys) sys:) (prefix (vt) vt:)
-             (prefix (string) string:) (prefix (test) test:))
+             (prefix (string) string:) (prefix (test) test:) (prefix (fixture) fixture:))
 
      (define (check label actual expected)
        (guard (ex [else (error 'wiring-test (format "~s" label) actual expected
@@ -38,17 +38,11 @@
      (define process
        (sys:spawn-terminal-process "/bin/sh" "exec scheme-script tests/wiring.ss --head --name 'wired head λ'"
                                    (current-directory) 24 100))
-     (define from (transcoded-port
-                    (sys:terminal-process-input process)
-                    (make-transcoder (utf-8-codec) 'none 'replace)))
+     (define drain! (fixture:terminal-reader process (lambda (text) (vt:emulator-feed! mirror text))))
      (define exited? #f)
      (define (pump! ms)
        (let loop ([left (div ms 25)])
-         (let drain ()
-           (when (guard (ex [else (set! exited? #t) #f]) (char-ready? from))
-             (let ([c (guard (ex [else (eof-object)]) (get-char from))])
-               (if (eof-object? c) (set! exited? #t)
-                   (begin (vt:emulator-feed! mirror (string c)) (drain))))))
+         (set! exited? (drain!))
          (when (> left 0)
            (sleep (make-time 'time-duration 25000000 0))
            (loop (- left 1)))))
@@ -76,26 +70,30 @@
        (let ([text (buffers-bar index)])
          (and text (for-all char-whitespace? (string->list text)))))
 
-     ;; ask the editor whether the current buffer's lines equal its
-     ;; store twin's, writing the verdict to the probe file
-     (define (mirror-agrees? label)
-       (send! (format "\x1b;xcall-with-output-file \"~a\" (lambda (p) (write (let* ([b (current-buffer)] [id (head:buffer-store-id b)] [n (buffer-line-count b)]) (and (= n (store:line-count id)) (let all ([i 0]) (or (= i n) (and (string=? (buffer-line b i) (store:line id i)) (all (+ i 1))))))) p)) (quote replace)\r"
-                      probe))
-       (pump! 900)
-       (equal? (call-with-input-file probe read) #t))
+     (define (await! label ready?)
+       (guard (ex [else (error 'wiring-test "waiting for editor" label ex
+                               (vector->list (vt:emulator-screen mirror)))])
+         (test:await label (lambda () (pump! 0) (ready?)))))
 
      (define (read-editor expression)
-       (when (file-exists? probe) (delete-file probe))
-       (send! (format "\x1b;x\x1b;[200~~call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)\x1b;[201~~\r"
-                      probe expression))
-       (pump! 900)
-       (guard (ex [else (error 'read-editor "probe did not return a datum" expression
-                               (map screen-line '(20 21 22 23)))])
-         (let ([result (call-with-input-file probe read)])
-           (when (eof-object? result) (error 'read-editor "empty result" expression))
-           result)))
+       (let ([result (fixture:query probe expression send! await!)])
+         ;; M-x keeps its prompt visible until evaluation finishes. A complete
+         ;; reply precedes that frame, so also await the ordinary presentation
+         ;; path before callers inspect cells or send the next command.
+         (await! 'evaluation-presented
+           (lambda ()
+             (not (exists (lambda (line) (string:prefix? "M-x " line))
+                    (vector->list (vt:emulator-screen mirror))))))
+         result))
 
-     (pump! 3000)
+     (define (mirror-agrees?)
+       (read-editor
+         '(let* ([b (current-buffer)] [id (head:buffer-store-id b)])
+            (and (= (buffer-line-count b) (store:line-count id))
+                 (for-all (lambda (i) (string=? (buffer-line b i) (store:line id i)))
+                   (iota (buffer-line-count b)))))))
+
+     (await! 'head-starts (lambda () (screen-has? 22 "*scratch*")))
 
      ;; -- generated head views stay out of the store ---------------------
      (check 'startup-identity-and-store
@@ -1528,7 +1526,7 @@
 
      (send! "hello")
      (pump! 400)
-     (check 'typing-mirrors (mirror-agrees? 'typing) #t)
+     (check 'typing-mirrors (mirror-agrees?) #t)
 
      ;; Quit's review option must find the buffer app by identity even
      ;; after a user rename.  Restore the original window after review.
@@ -1561,15 +1559,15 @@
 
      (send! "\rworld")                 ; RET: the splice path
      (pump! 400)
-     (check 'newline-splice-mirrors (mirror-agrees? 'newline) #t)
+     (check 'newline-splice-mirrors (mirror-agrees?) #t)
 
      (send! "\x1;\xb;")               ; C-a C-k: kill to end of line
      (pump! 400)
-     (check 'kill-mirrors (mirror-agrees? 'kill) #t)
+     (check 'kill-mirrors (mirror-agrees?) #t)
 
      (send! "\x1f;")                   ; C-_: undo (the inverse path)
      (pump! 400)
-     (check 'undo-mirrors (mirror-agrees? 'undo) #t)
+     (check 'undo-mirrors (mirror-agrees?) #t)
 
      ;; -- a foreign actor's edit reaches the screen ---------------------------
 
@@ -1579,12 +1577,12 @@
             (let ([line (screen-line 0)])
               (substring line 0 6))
             "AGENT ")
-     (check 'foreign-edit-mirrors (mirror-agrees? 'foreign) #t)
+     (check 'foreign-edit-mirrors (mirror-agrees?) #t)
 
      ;; typing keeps working, and keeps agreeing, after the sync
      (send! "\x5;!")                   ; C-e then a character
      (pump! 400)
-     (check 'typing-after-sync-mirrors (mirror-agrees? 'after) #t)
+     (check 'typing-after-sync-mirrors (mirror-agrees?) #t)
 
      ;; Adoption does not produce another operation audit. The base records
      ;; this edit once, under its author even though M-x ran as this head.
@@ -1946,7 +1944,7 @@
      (send! "\x5;")                    ; C-e
      (send! "\x1b;[200~[pasted]\x1b;[201~")
      (pump! 600)
-     (check 'bracketed-paste-inserts (mirror-agrees? 'paste) #t)
+     (check 'bracketed-paste-inserts (mirror-agrees?) #t)
      (check 'paste-content-on-screen
             (or (screen-has? 0 "[pasted]") (screen-has? 1 "[pasted]")
                 (screen-has? 2 "[pasted]"))
@@ -2246,7 +2244,8 @@
            (let ([tinted (blame-screen-style "ink!")])
              (when nested? (send! "\x1b;x") (pump! 100))
              (let ([echo (map screen-line '(22 23))])
-               (pump! 900)
+               (await! (list 'blame-fades-without-input nested?)
+                 (lambda () (equal? (blame-screen-style "ink!") plain)))
                (check (list 'blame-fades-on-idle-screen nested?)
                  (list (and plain tinted (not (equal? plain tinted)))
                        (equal? (blame-screen-style "ink!") plain)
@@ -2699,24 +2698,30 @@
                          (terminal:open!! ,(string-append "exec scheme-script " child))
                          (head:buffer-store-id (current-buffer))))]
               [live
-               (read-editor
-                 '(let* ([name (head:buffer-name (current-buffer))]
-                         [text (sandbox:read-buffer name 0 1)]
-                         [ready (list (head:buffer-fact (current-buffer) 'alive #f)
-                                      (and (string:search text "界éZ" 0 (string-length text)) #t))])
-                    (terminal:send! "\n") ready))]
+               (begin
+                 (await! 'terminal-produces-readable-text (lambda () (screen-has? 0 "界éZ")))
+                 (read-editor
+                   '(let* ([name (head:buffer-name (current-buffer))]
+                           [text (sandbox:read-buffer name 0 1)]
+                           [ready (list (head:buffer-fact (current-buffer) 'alive #f)
+                                    (and (string:search text "界éZ" 0 (string-length text)) #t))])
+                      (terminal:send! "\n") ready)))]
               [split
-               (read-editor
-                 `(let ([terminal (head:buffer-of-store-id ,terminal-id)])
-                    (set-buffer-wrap! terminal #f)
-                    (split-window-right!) (other-window!) (visit-file! ,path)
-                    (set-buffer-wrap! (current-buffer) #f)
-                    (head:buffer-line-numbers-setting-set! (current-buffer) #f)
-                    (head:before-frame!)
-                    (list (head:buffer-fact terminal 'alive #t)
-                          (surface:snapshot ,terminal-id)
-                          (head:buffer-store-id (current-buffer))
-                          (map head:window-xoff (head:windows)))))]
+               (begin
+                 (await! 'terminal-exits
+                   (lambda ()
+                     (read-editor `(not (head:buffer-fact (head:buffer-of-store-id ,terminal-id) 'alive #t)))))
+                 (read-editor
+                   `(let ([terminal (head:buffer-of-store-id ,terminal-id)])
+                      (set-buffer-wrap! terminal #f)
+                      (split-window-right!) (other-window!) (visit-file! ,path)
+                      (set-buffer-wrap! (current-buffer) #f)
+                      (head:buffer-line-numbers-setting-set! (current-buffer) #f)
+                      (head:before-frame!)
+                      (list (head:buffer-fact terminal 'alive #t)
+                        (surface:snapshot ,terminal-id)
+                        (head:buffer-store-id (current-buffer))
+                        (map head:window-xoff (head:windows))))))]
               [file-id (caddr split)] [offsets (cadddr split)])
          (check 'live-terminal-has-readable-shared-text live '(#t #t))
          (check 'terminal-death-withdraws-rendition (list (car split) (cadr split)) '(#f #f))
@@ -2798,6 +2803,9 @@
                 '((0 #("32" "32" "1" #f)
                    #(("https://updated.example" #f) ("https://updated.example" #f) #f #f)
                    ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4)))) #t))
+     (await! 'surface-published-without-input
+       (lambda () (equal? (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1)
+                          '("https://updated.example" #f))))
      (check 'surface-only-worker-wakes-idle-head
        (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1)
        '("https://updated.example" #f))
