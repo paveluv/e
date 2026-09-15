@@ -81,10 +81,10 @@ and prints a restart command for that installation, head name and base
 directory. It does not register another actor or stop the base. This checks
 source consistency; permissions still come from the OS user and base policy.
 
-Help offers two ways to stop the base: `M-x (main:shutdown!!)` for a reviewed
-shutdown, or `kill -TERM PID` with the displayed pid to save the session for
-recovery and stop. SIGTERM pauses and saves the shared session before stopping
-the base and its terminal processes. SIGINT uses the same path; SIGHUP leaves
+Help offers two ways to stop the base: `M-x (main:shutdown!!)` or
+`kill -TERM PID` with the displayed pid. Both pause and save the shared
+session before stopping the base and its terminal processes. SIGINT uses
+the same path; SIGHUP leaves
 the base running. A failed save resumes service and reports the error to
 attached heads and the diagnostic log. Further signals during the save
 coalesce with that operation.
@@ -99,20 +99,24 @@ points, viewports, selection, window preferences and kill text. Use distinct
 names for independent screens. An explicit file argument opens in the restored
 selected window. Without a saved screen, normal startup configuration applies.
 
-`M-x (main:shutdown!!)` stops the base and every attached screen. It reviews
-unsaved shared and local text, running terminals, agent sessions and other
-heads before asking for consent. `n`, `v`, Esc or C-g cancels; `v` opens
-the buffers app. If relevant work changes while the question is open, e
-asks again. A modified file whose current text matches disk is clean;
-read-only text still needs review when unsaved. New attachments receive a
-temporary busy refusal while a review is open and can retry after it ends.
-Existing heads and terminals keep working during the question.
+`M-x (main:shutdown!!)` saves the session and stops the base and every attached
+screen. It asks for consent when there are local unsaved drafts, running
+terminals, agent sessions, pending interactions or other heads. Shared
+unsaved text is saved automatically and needs no confirmation. With no
+transient work to review, shutdown proceeds immediately. `n`, `v`, Esc or C-g
+cancels; `v` opens the buffers app. New transient work while the question is
+open requires a fresh review; shared edits are included in the save without
+another question. New attachments receive a temporary busy refusal while a
+review is open and can retry after it ends. Existing heads and terminals
+keep working during the question.
 
 When you confirm, the base briefly pauses mutations and publication and
-rechecks the review before accepting shutdown. It durably removes any saved
-session before ending processes. A failed pause or disk operation resumes service. If deletion
-succeeded but directory sync failed, the error reports that durability is
-uncertain; it does not claim the old session file remains.
+rechecks the review before accepting shutdown. It saves through the same
+routine as restart and SIGTERM, before ending any process. A failed pause or
+save resumes service. If replacement succeeded but directory sync failed,
+the error reports that the new session is installed with uncertain durability.
+The next start restores the saved shared text and named views. Undo history,
+local drafts and processes are omitted, as described below.
 
 To use this review when the last head quits, put
 `(main:shutdown-on-exit #t)` in `config.e`. The base decides which head is
@@ -173,8 +177,9 @@ An interrupted restart whose outcome is unknown is reported without replay
 or automatic escalation; inspect the base before retrying.
 
 The next base restores before configuration creates buffers or starts work.
-It retains the snapshot until a later save replaces it or reviewed shutdown
-deletes it. This is recovery from the last stop-time snapshot, not continuous
+It retains the snapshot until a later save replaces it. Every graceful stop,
+including interactive shutdown, refreshes this recovery snapshot. This is
+recovery from the last stop-time snapshot, not continuous
 autosave. The first attached screen prints the snapshot's age before entering
 the terminal screen, including when it resumes a named layout.
 `M-x (client:request 'status)` reports `saved-at` and `restored-at` (UTC

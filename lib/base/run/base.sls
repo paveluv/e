@@ -255,7 +255,7 @@
     (fields (mutable operation) (mutable owner) (mutable review) (mutable serial)))
   (define lifecycle-state (make-lifecycle #f #f #f 0))
   (define-record-type review
-    (fields token states valid? summary heads terminals agents tickets))
+    (fields token heads terminals agents tickets))
   (define-condition-type &busy &error make-busy busy? (phase busy-phase))
   (define-condition-type &stale-base &error make-stale-base stale-base?)
 
@@ -298,27 +298,20 @@
 
   (define (prepare-review! peer operation)
     (with-mutex peer-lock (claim-review! peer operation))
-    (let-values ([(states valid?) (if (eq? operation 'shutdown) (store:prepare-close)
-                                    (values '() (lambda () #t)))])
-      (let* ([heads (with-mutex peer-lock (participating-heads))]
-             [terminals (vt:running)] [agents (agent-sessions)] [tickets (actor:pending-tickets)]
-             [summary (map (lambda (state)
-                             (list (car state)
-                               (let ([current (store:state (car state) #f '())])
-                                 (if current (car current) "<deleted>"))
-                               (not (file:state-clean? (cadr state) (cadddr state))))) states)]
-             [token (with-mutex peer-lock
-                      (unless (peer-connected? peer) (error operation "reviewing head disconnected"))
-                      (lifecycle-serial-set! lifecycle-state (+ 1 (lifecycle-serial lifecycle-state)))
-                      (lifecycle-serial lifecycle-state))]
-             [review (make-review token states valid? summary heads terminals agents tickets)]
-             [counts (status (map peer-identity heads))])
-        (with-mutex peer-lock (lifecycle-review-set! lifecycle-state review))
-        ;; Counts refer to the same incarnations as the consent, not to a
-        ;; later inventory that could hide replacement work behind a count.
-        (list 'review token summary
-          (cons* (cons 'terminals (length terminals)) (cons 'agents (length agents)) (cons 'pending (length tickets))
-                 (filter (lambda (entry) (not (memq (car entry) '(terminals agents pending)))) counts))))))
+    (let* ([heads (with-mutex peer-lock (participating-heads))]
+           [terminals (vt:running)] [agents (agent-sessions)] [tickets (actor:pending-tickets)]
+           [token (with-mutex peer-lock
+                    (unless (peer-connected? peer) (error operation "reviewing head disconnected"))
+                    (lifecycle-serial-set! lifecycle-state (+ 1 (lifecycle-serial lifecycle-state)))
+                    (lifecycle-serial lifecycle-state))]
+           [review (make-review token heads terminals agents tickets)]
+           [counts (status (map peer-identity heads))])
+      (with-mutex peer-lock (lifecycle-review-set! lifecycle-state review))
+      ;; Keep the maintenance review envelope; shared text is always saved
+      ;; and no longer needs a separate discard summary or retained copy.
+      (list 'review token '()
+        (cons* (cons 'terminals (length terminals)) (cons 'agents (length agents)) (cons 'pending (length tickets))
+               (filter (lambda (entry) (not (memq (car entry) '(terminals agents pending)))) counts)))))
 
   (define (current-review peer token operation)
     (with-mutex peer-lock
@@ -330,7 +323,10 @@
           (error 'review "review token is no longer current for this connection"))
         review)))
 
-  (define (commit-stop!)
+  (define (save-and-stop!)
+    ;; Every graceful stop saves under the same pause before closing any
+    ;; producer. A failed save leaves the existing session usable.
+    (session:save!)
     (store:close!)
     (activity:stop!)
     ;; Mark the priority notice before waking an accepting RPC's worker;
@@ -343,35 +339,24 @@
       (dynamic-wind void
         (lambda ()
           (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
-          (if (and ((review-valid? review))
-                   (for-all (lambda (p) (memq p (review-heads review)))
+          (if (and (for-all (lambda (p) (memq p (review-heads review)))
                      (with-mutex peer-lock (participating-heads)))
                    (for-all (lambda (owner) (member owner (review-terminals review))) (vt:running))
                    (for-all (lambda (s) (memq s (review-agents review))) (agent-sessions))
-                   (for-all (lambda (ticket) (memv ticket (review-tickets review))) (actor:pending-tickets))
-                   ;; A disk change can make formerly clean text unsaved even
-                   ;; without a store edit. It needs consent too.
-                   (for-all (lambda (state summary)
-                              (or (caddr summary) (not (store:exists? (car state)))
-                                  (store:property (car state) 'disposable #f)
-                                  (file:state-clean? (cadr state) (cadddr state))))
-                     (review-states review) (review-summary review)))
+                   (for-all (lambda (ticket) (memv ticket (review-tickets review))) (actor:pending-tickets)))
               (begin
                 (unless (and (with-mutex peer-lock (peer-connected? peer))
                              (sys:connection-alive? (peer-connection peer)))
                   (error operation "reviewing head disconnected before acceptance"))
                 ;; This is the acceptance point. The control loop now owns
                 ;; the durable operation, independently of socket lifetime.
-                (daemon:call-with-stop
-                  (lambda ()
-                    (if (eq? operation 'shutdown) (session:discard!) (session:save!))
-                    (commit-stop!)))
+                (daemon:call-with-stop save-and-stop!)
                 #t)
               (begin
                 (activity:resume!)
                 (prepare-review! peer operation))))
         ;; A durable failure resumes the existing processes, even after the
-        ;; requesting socket has gone. Only commit-stop! is irreversible.
+        ;; requesting socket has gone. Only a successful save commits the stop.
         (lambda () (unless (eq? (activity:phase) 'stopping) (activity:resume!))))))
 
   (define (lifecycle-request peer control? operation args)
@@ -400,8 +385,7 @@
         [(prepare-close prepare-restart)
          (unless (null? args) (error operation "expected no arguments"))
          (prepare-review! peer (if (eq? operation 'prepare-close) 'shutdown 'restart))]
-        [(shutdown restart)
-         (stop! peer (car args) operation)]
+        [(shutdown restart) (stop! peer (car args) operation)]
         [(cancel-review)
          (release-review! peer) #t])))
 
@@ -708,8 +692,7 @@
                          (daemon:call-with-stop
                            (lambda ()
                              (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
-                             (session:save!)
-                             (commit-stop!)))
+                             (save-and-stop!)))
                          (set! reason 'signal))]
                       [else (loop)]))))
           (lambda ()

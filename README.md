@@ -115,14 +115,15 @@ $ ~/.e/e --name work
 `C-x C-c` detaches that screen. Attach with the same name to restore its
 layout, positions and kill ring; use a different name for an independent
 screen. Shared edits and terminal processes continue while no screen is
-attached. `M-x (main:shutdown!!)` reviews unsaved work and live processes,
-then stops the base and all its screens. Set `(main:shutdown-on-exit #t)`
-in `config.e` to offer shutdown when the last screen quits.
-`e --restart --name work` saves shared text and named views, restarts the base
-and reattaches. `kill -TERM PID` also saves a recovery snapshot and stops the
-base. Terminal processes, undo history and local drafts do not survive a
-restart; terminal text returns as read-only transcripts. Reviewed shutdown
-deletes the snapshot.
+attached. `M-x (main:shutdown!!)` saves shared text and named views, then
+stops the base and all its screens. It asks about local drafts, live processes
+and other screens. Set `(main:shutdown-on-exit #t)` in `config.e` to use
+this shutdown when the last screen quits.
+`e --restart --name work` also starts the replacement base and reattaches.
+All graceful stops, including `kill -TERM PID`, use the same save path;
+the next start restores the snapshot. Terminal processes, undo history and
+local drafts do not survive a stop; terminal text returns as read-only
+transcripts.
 New heads check library sources and protocol compatibility against the running
 base and ask for `e --restart` when they differ.
 `e --help` shows the base's status, version, buffer and process counts,

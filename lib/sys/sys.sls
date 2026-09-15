@@ -24,7 +24,7 @@
           release-process! signal-process!
           ensure-private-directory! acquire-file-lock release-file-lock!
           remove-stale-socket! call-with-private-output-file redirect-daemon-ports!
-          process-identity process-exited? remove-session! write-session! archive-session!
+          process-identity process-exited? write-session! archive-session!
           call-with-private-input-file durability-uncertain? call-with-verified-base
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
@@ -510,16 +510,6 @@
                     (raise ex))])
       (descriptor-check 'session directory
         ((foreign-procedure __collect_safe "fsync" (int) int) fd))))
-
-  (define (remove-session! directory)
-    (call-with-directory-fd directory
-      (lambda (fd)
-        (let* ([path (string-append directory "/session")] [info (ownership-info path)])
-          (when info
-            (private-info! path info #o100000)
-            (descriptor-check 'shutdown path
-              ((foreign-procedure "unlinkat" (int string int) int) fd "session" 0)))
-          (sync-directory! fd directory (and info "session was removed"))))))
 
   (define (write-session! directory write!)
     (call-with-directory-fd directory

@@ -128,7 +128,7 @@
             (string-append " --base-working-dir " (shell-quote directory))))))
 
   (define (guidance status port)
-    (format port "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a (save session)\n"
+    (format port "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a\n"
       (car (cdr (assq 'instance status)))))
 
   (define (status-summary status head-noun)

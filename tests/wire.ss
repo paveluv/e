@@ -90,7 +90,7 @@
      (copy-libraries "lib" sources)
      ;; Fault the OS sync in this owned installation only. Production has
      ;; no testing option or alternate lifecycle path; the ordinary syscall
-     ;; still runs except during the one post-unlink failure scenario.
+     ;; still runs except during the save/rename failure scenarios.
      (let* ([path (string-append sources "/sys/sys.sls")]
             [text (call-with-input-file path get-string-all)]
             [call "((foreign-procedure __collect_safe \"fsync\" (int) int) fd)"]
@@ -398,8 +398,7 @@
        (fresh-session!)
        (let ([held (string-append root "/pause-held")]
              [release (string-append root "/pause-release")]
-             [session (string-append base-directory "/session")]
-             [disk (string-append root "/reviewed-file")])
+             [session (string-append base-directory "/session")])
          (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
          (write-forms (string-append root "/base-config.e")
            `((base:connection-policy
@@ -430,18 +429,8 @@
                (for-each (lambda (connection who) (hello connection who))
                  (list a b restricted agent)
                  '((head "shutdown A") (head "shutdown B") (head "restricted") (agent "observer")))
-               (write-text disk "on disk\n")
-               (let* ([clean (rpc a 'create "matches disk" '("on disk") `((file . ,disk) (trailing . #t)))]
-                      [empty (rpc a 'create "empty" '(""))]
-                      [unreadable (rpc a 'create "unreadable disk" '("keep") `((file . ,root)))]
-                      [output (rpc a 'create "disposable" '("output") '((disposable . #t)))]
-                      [large (map (lambda (i) (rpc a 'create (format "large ~a" i)
-                                                (list (make-string (* 6 1024 1024) #\x)))) '(1 2 3))]
+               (let* ([clean (rpc a 'create "shared work" '("on disk"))]
                       [review (rpc a 'prepare-close)] [token (cadr review)])
-                 (test:check 'compact-review-retains-large-text-and-exact-cleanliness-at-the-base
-                   (list (< (bytevector-length (encoded review)) 4096)
-                         (map (lambda (id) (caddr (assv id (caddr review)))) (cons* clean empty unreadable large))
-                         (assv output (caddr review))) '(#t (#f #f #t #t #t #t) #f))
                  (test:check 'review-owns-admission-but-leaves-status-and-existing-work-live
                    (list (phase)
                          (map (lambda (who)
@@ -460,26 +449,7 @@
                  (test:check 'restricted-head-detaches-even-with-shutdown-preference
                    (eq? (car (rpc restricted 'leaving #t)) 'last) #f)
                  (sys:close-connection! restricted)
-                 (for-each (lambda (id) (rpc a 'delete id)) large)
-                 ;; Disk changes can turn unchanged store text into unsaved work.
-                 (let* ([review (rpc a 'prepare-close)]
-                        [next (begin (write-text disk "changed on disk\n")
-                                     (rpc a 'shutdown (cadr review)))])
-                   (test:check 'disk-change-needs-new-consent
-                     (list (car next) (caddr (assv clean (caddr next)))) '(review #t))
-                   (cancel a next))
-                 (for-each
-                   (lambda (change)
-                     (let* ([review (rpc a 'prepare-close)]
-                            [next (begin
-                                    (case change
-                                      [(edit) (rpc a 'edit clean 0 '(0 0 0 0) '("new "))]
-                                      [(facts) (rpc a 'properties clean '((read-only . #t)))]
-                                      [(new) (rpc a 'create "new hidden work" '("kept") '((audience)))])
-                                    (rpc a 'shutdown (cadr review)))])
-                       (test:check (list 'stale-shutdown change)
-                         (list (car next) (not (= (cadr review) (cadr next))) (phase)) '(review #t reviewing))
-                       (cancel a next))) '(edit facts new))
+                 (rpc a 'edit clean 0 '(0 0 0 0) '("new "))
                  (let ([abandoned (connect)])
                    (hello abandoned '(head "abandoned review"))
                    (rpc abandoned 'prepare-close)
@@ -537,32 +507,6 @@
                      (cancel a (rpc a 'prepare-close))
                      (test:check 'cancelled-last-head-remains-present
                        (list (phase) (cdr (assq 'heads (rpc agent 'status)))) '(running 1)))
-                   ;; Deletions and disposable output need no fresh consent.
-                   ;; An invalid session path then fails before unlink, while
-                   ;; the injected sync failure is after unlink: both resume.
-                   (for-each
-                     (lambda (failure)
-                       (if (eq? failure 'unlink) (mkdir session #o700)
-                           (begin (write-text session "saved session") (chmod session #o600)
-                                  (write-text sync-failure "fail")))
-                       (let* ([review (rpc a 'prepare-close)]
-                              [error (begin
-                                       (when (eq? failure 'unlink)
-                                         (rpc a 'delete empty)
-                                         (rpc a 'reset output '("new disposable output")))
-                                       (reject a 'shutdown (cadr review)))])
-                         (test:check (list 'durable-failure-resumes-before-ending-processes failure)
-                           (list (and error #t) (phase) (file-exists? session)
-                                 (cdr (assq 'alive (caddr (rpc a 'snapshot term))))
-                                 (if (eq? failure 'sync) (> (occurrences error "uncertain") 0) #t))
-                           (list #t 'running (eq? failure 'unlink) #t #t)))
-                       (if (eq? failure 'unlink) (delete-directory session) (delete-file sync-failure)))
-                     '(unlink sync))
-                   (rpc a 'vt-send term "recovered\n" '(3 32) #f #f)
-                   (test:await 'terminal-works-after-failed-stop
-                     (lambda () (exists (lambda (line) (> (occurrences line "<recovered>") 0))
-                                  (vector->list (car (rpc a 'snapshot term))))))
-                   (write-text session "saved session") (chmod session #o600)
                    (let ([ui (start-head "shutdown UI")])
                      (head-wait 'shutdown-ui-ready ui (lambda () (head-sees? ui "*scratch*")))
                      (head-read ui
@@ -593,24 +537,29 @@
                      (head-send! ui "y")
                      (head-wait 'reviewed-shutdown-announced ui (lambda () (head-sees? ui "e: the base shut down")))
                      (test:await 'accepted-base-exits (lambda () (sys:process-status (fixture:process base))))
-                     (test:check 'durable-shutdown-removes-session-and-restores-terminal
+                     (test:check 'graceful-shutdown-saves-session-and-restores-terminal
                        (list (file-exists? session) (receive agent)
                              (map (lambda (key) (cdr (assq key (vt:emulator-state (vector-ref ui 2)))))
-                               '(mouse-tracking sgr-mouse))) '(#f (closing shutdown) (#f #f)))))))))))
+                               '(mouse-tracking sgr-mouse))) '(#t (closing shutdown) (#f #f)))))))))))
 
      (define (final-shutdown-scenarios!)
        (for-each
          (lambda (mode)
+           (fresh-session!)
            (fixture:call-with-base root base-directory
              (lambda (base)
                (set! test-base base)
                (if (eq? mode 'clean)
                    (let ([ui (start-head "clean shutdown")])
                      (head-wait 'clean-head-ready ui (lambda () (head-sees? ui "*scratch*")))
+                     (head-read ui '(begin (insert-text! "shared unsaved work") #t))
                      (head-send! ui "\x1b;xmain:shutdown!!\r")
                      (head-wait 'clean-shutdown-needs-no-question ui (lambda () (head-sees? ui "e: the base shut down")))
-                     (test:check 'clean-base-stops-without-a-question
-                       (occurrences (vector-ref ui 3) "Stop the base?") 0))
+                     (test:check 'shared-unsaved-work-is-saved-without-a-question
+                       (list (occurrences (vector-ref ui 3) "Stop the base?")
+                             (map (lambda (state) (list-ref state 3))
+                               (cdr (list-ref (call-with-input-file (string-append base-directory "/session") read) 4))))
+                       '(0 (#("shared unsaved work")))))
                    (let ([owner (connect)] [observer (connect)]
                          [session (string-append base-directory "/session")])
                      (hello owner '(head "durable owner"))
@@ -628,7 +577,7 @@
                              (list (hello late '(head "during durable step"))
                                    (cdr (assq 'phase (rpc observer 'status)))
                                    (file-exists? session) (sys:process-status (fixture:process base)))
-                             '((error #f (busy paused)) paused #f #f))
+                             '((error #f (busy paused)) paused #t #f))
                            (sys:close-connection! late))
                          (sys:close-connection! owner))
                        (lambda () (when (file-exists? sync-failure) (delete-file sync-failure))))
@@ -722,18 +671,21 @@
                  (test:await 'maintenance-disconnect-releases-review
                    (lambda () (eq? (cdr (assq 'phase (rpc head 'status))) 'running)))
                  (set! control (connect)) (exchange control '(maintenance 1 (head "kept desk"))))
-               ;; One durable failure table checks both sides of rename and
-               ;; keeps the same live PTY through both failures.
+               ;; Both reviewed entry points use the same save. Check both
+               ;; sides of rename while keeping the same live PTY.
                (write-forms path '((session 1 7 1 (buffers) (checkpoints)))) (chmod path #o600)
                (for-each
-                 (lambda (failure)
-                   (let ([previous (call-with-input-file path get-string-all)])
+                 (lambda (scenario)
+                   (let* ([operation (car scenario)] [failure (cadr scenario)]
+                          [connection (if (eq? operation 'restart) control head)]
+                          [previous (call-with-input-file path get-string-all)])
                      (if (eq? failure 'temporary) (mkdir temporary #o700) (write-text sync-failure "fail"))
                      (dynamic-wind void
                        (lambda ()
-                         (let* ([review (rpc control 'prepare-restart)] [error (reject control 'restart (cadr review))]
+                         (let* ([review (rpc connection (if (eq? operation 'restart) 'prepare-restart 'prepare-close))]
+                                [error (reject connection operation (cadr review))]
                                 [status (rpc control 'status)])
-                           (test:check (list 'failed-save-preserves-service failure)
+                           (test:check (cons 'failed-save-preserves-service scenario)
                              (list (and error #t) (cdr (assq 'phase status))
                                    (equal? previous (call-with-input-file path get-string-all))
                                    (cdr (assq 'session-uncertain? status))
@@ -742,7 +694,7 @@
                              (list #t 'running (eq? failure 'temporary) (eq? failure 'sync) #t #t))))
                        (lambda ()
                          (if (eq? failure 'temporary) (delete-directory temporary) (delete-file sync-failure))))))
-                 '(temporary sync))
+                 '((restart temporary) (shutdown sync)))
                ;; A signal steals a pending review; later signals in the held
                ;; save coalesce even when that save ultimately fails.
                (let ([review (rpc control 'prepare-restart)])
@@ -823,16 +775,43 @@
                  (test:await 'crash-after-import (lambda () (sys:process-status (fixture:process base))))
                  (test:check 'crash-keeps-last-recovery-snapshot (call-with-input-file path read) saved)))
              (lambda () (sys:close-process! (fixture:process base)))))
-         (fixture:call-with-base root base-directory
-           (lambda (base)
-             (set! test-base base)
-             (let ([head (connect)])
-               (hello head '(head "kept desk"))
-               (test:check 'crash-recovery-restores-the-last-snapshot-again (rpc head 'snapshot note) expected)
-               (let ([review (rpc head 'prepare-close)])
-                 (test:check 'reviewed-shutdown-discards-the-recovery-snapshot
-                   (list (exchange head (list 'request 7 'shutdown (cadr review))) (file-exists? path))
-                   '((closing shutdown) #f))))))))
+         ;; Recover the pre-crash state, then alternate ordinary shutdown
+         ;; and OS signals through the same workspace. Every cycle adds
+         ;; new text and a view, and consumes another disposable buffer id.
+         (for-each
+           (lambda (mode cycle)
+             (fixture:call-with-base root base-directory
+               (lambda (base)
+                 (set! test-base base)
+                 (let ([head (connect)] [before (call-with-input-file initialized read)])
+                   (hello head '(head "kept desk"))
+                   (test:check (list 'repeated-stops-restore-latest-state mode cycle)
+                     (list (rpc head 'snapshot note) (rpc head 'checkpoint)
+                           (list-sort < (car before)) (cadr before)
+                           (rpc head 'history note)
+                           (map (lambda (id) (car (rpc head 'snapshot id))) (list term ended)))
+                     (list expected checkpoint (map car (cdr (list-ref saved 4))) (cadddr saved) '()
+                           (map (lambda (id) (list-ref (assv id (cdr (list-ref saved 4))) 3)) (list term ended))))
+                   (let ([review (and (eq? mode 'shutdown) (rpc head 'prepare-close))])
+                     ;; Shared edits during a shutdown review need no new
+                     ;; consent, just as with the maintenance restart above.
+                     (rpc head 'edit note (cadr expected) '(0 0 0 0) (list (format "cycle ~a " cycle)))
+                     (set! checkpoint `(future-view (,note ,cycle) (,gap missing) (,omitted unsupported)))
+                     (rpc head 'checkpoint checkpoint)
+                     (set! expected (rpc head 'snapshot note))
+                     (test:check (list 'repeated-stops-save-without-reprompt mode cycle)
+                       (if review
+                           (exchange head (list 'request 7 'shutdown (cadr review)))
+                           (begin (sys:signal-process! (fixture:process base) mode) (receive head)))
+                       (list 'closing (if review 'shutdown 'signal))))
+                   (test:await 'repeated-save-exits (lambda () (sys:process-status (fixture:process base))))
+                   (set! saved (call-with-input-file path read))
+                   (test:check (list 'repeated-stops-replace-session mode cycle)
+                     (list (list-ref (assv note (cdr (list-ref saved 4))) 3)
+                           (cadr (assoc "kept desk" (cdr (list-ref saved 5))))
+                           (get-mode path) (file-exists? temporary))
+                     (list (car expected) checkpoint #o600 #f))))))
+           '(shutdown 15 shutdown 2 shutdown 15) (iota 6))))
 
      (define (recovery-scenarios!)
        (fresh-session!)
@@ -965,7 +944,7 @@
                        (when review (cancel head review))
                        (list (car result)
                              (occurrences output
-                               (format "Base: alive (pid ~a; wire ~a; source ~a); ~a\nBase directory: ~s\nStop the base: M-x (main:shutdown!!) or kill -TERM ~a (save session)\nThe base holds ~a.\n"
+                               (format "Base: alive (pid ~a; wire ~a; source ~a); ~a\nBase directory: ~s\nStop the base: M-x (main:shutdown!!) or kill -TERM ~a\nThe base holds ~a.\n"
                                  (car (cdr (assq 'instance before))) wire:version (cdr (assq 'fingerprint before)) phase base-directory
                                  (car (cdr (assq 'instance before)))
                                  "1 buffer (1 modified), 1 attached head, 0 running terminals and 0 agents"))
@@ -2522,7 +2501,7 @@
                                          (if (and at screen (< at screen)
                                                   (= (occurrences output (format "pid ~a; wire ~a" (cadr record) wire:version)) 1)
                                                   (= (occurrences output
-                                                       (format "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a (save session)" (cadr record))) 1)
+                                                       (format "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a" (cadr record))) 1)
                                                   (zero? (occurrences output "Describe:"))) 1 0)))
                                   (list a b))))
                  (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t 1))

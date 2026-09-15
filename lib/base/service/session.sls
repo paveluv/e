@@ -1,7 +1,7 @@
 ;; session.sls -- one recovery snapshot of shared text and named views.
 ;; The lifecycle pauses writers; the store and VT own their representation.
 (library (session)
-  (export restore! save! discard! status take-notice!)
+  (export restore! save! status take-notice!)
   (import (chezscheme) (prefix (store) store:) (prefix (actor) actor:)
           (prefix (vt) vt:) (prefix (sys) sys:) (prefix (startup) startup:)
           (prefix (activity) activity:) (prefix (datum) datum:)
@@ -88,15 +88,6 @@
               (parameterize ([print-length #f] [print-level #f] [print-graph #f])
                 (write value port) (newline port))))
           (with-mutex lock (set! saved-at written-at) (set! uncertain? #f))))))
-
-  (define (discard!)
-    (require-pause!)
-    (guard (ex [else
-                (when (sys:durability-uncertain? ex)
-                  (with-mutex lock (set! saved-at #f) (set! uncertain? #t)))
-                (raise ex)])
-      (sys:remove-session! (startup:base-working-directory))
-      (with-mutex lock (set! saved-at #f) (set! uncertain? #f))))
 
   (define (status)
     (with-mutex lock

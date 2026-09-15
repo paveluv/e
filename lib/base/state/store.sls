@@ -19,7 +19,7 @@
 ;; (store:snapshot ...).
 
 (library (store)
-  (export create! visit! delete! discard! prepare-close close! reset! rename! publication publish!
+  (export create! visit! delete! discard! close! reset! rename! publication publish!
           buffer-list exists? visible? buffer-name find-named find-file
           snapshot snapshot-since snapshot-state state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
@@ -383,38 +383,6 @@
 
   (define (reviewed-state? b review)
     (equal? review (cons (buffer-revision b) (current-properties b))))
-
-  (define (prepare-close)
-    ;; Base lifetime review: -> owned (id text revision facts) snapshots
-    ;; and a validation thunk. Review runs outside the writer. Validation
-    ;; rechecks every current non-disposable buffer, including hidden/new
-    ;; work, without closing writes. The lifecycle owner pauses producers,
-    ;; validates, performs its durable operation, and only then calls close!.
-    ;; Deletion and disposable output need no new consent.
-    (let ([reviewed (make-eqv-hashtable)])
-      (let ([states
-             (locked
-               (lambda ()
-                 (fold-left
-                   (lambda (states id)
-                     (let ([b (buffer-of 'prepare-close id)])
-                       (if (property-value b 'disposable #f) states
-                           (let ([state (list id (buffer-text b) (buffer-revision b) (property-data b))])
-                             (hashtable-set! reviewed id state)
-                             (cons state states)))))
-                   '() (vector->list (hashtable-keys (store-buffers (current-store)))))))])
-        ;; The caller may mutate returned facts without rewriting its consent.
-        (values (map (lambda (state)
-                       (list (car state) (cadr state) (caddr state) (datum:copy (cadddr state)))) states)
-          (lambda ()
-            (locked
-              (lambda ()
-                (for-all
-                  (lambda (id)
-                    (let ([b (buffer-of 'prepare-close id)] [state (hashtable-ref reviewed id #f)])
-                      (or (property-value b 'disposable #f)
-                          (and state (reviewed-state? b (cons (caddr state) (cadddr state)))))))
-                  (vector->list (hashtable-keys (store-buffers (current-store))))))))))))
 
   (define (close!)
     (locked (lambda () (store-closing?-set! (current-store) #t))))

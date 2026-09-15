@@ -1383,64 +1383,33 @@
              (list (test:raises? (lambda () (store:import! next-id (list saved))))
                    (equal? before (call-with-values (lambda () (store:snapshot-state id)) list))) '(#t #t)))))
 
-     ;; A base lifetime review uses store truth, independent of audiences.
-     ;; The acceptance closure owns its preconditions, and all writers share
-     ;; the final lifetime guard. Keep this last: closing is irreversible.
+     ;; All writers share the final lifetime guard. Keep this last:
+     ;; closing is irreversible, but readable state remains available.
      (let* ([id (store:create! alice "quit-hidden" '("keep") '((audience) (note . "before")))]
-            [output (store:create! bot "quit-output" '("output") '((disposable . #t)))])
-       (let-values ([(states accept!) (store:prepare-close)])
-         (check 'close-review-includes-hidden-work-and-skips-disposable-output
-           (list (and (assv id states) #t) (assv output states) (store:visible? alice id)) '(#t #f #f)))
-       (check 'close-refuses-edits-facts-new-work-and-newly-protected-output
-         (map
-           (lambda (change)
-             (let-values ([(states accept!) (store:prepare-close)])
-               (let* ([reviewed (test:gate)]
-                      [writer (test:worker (lambda () (test:await 'quit-review reviewed) (change states) #t))])
-                 (reviewed #t) (writer)
-                 (accept!))))
+            [events (test:recorder)] [token (store:subscribe! #f events)])
+       (store:set-mark! alice id 'point '(0 . 1))
+       (store:close!)
+       (let ([before (call-with-values (lambda () (store:snapshot-state id)) list)]
+             [before-events (events)])
+         (check 'accepted-close-refuses-every-writer-without-changing-readable-state
            (list
-             (lambda (states) (store:edit! bot id 0 (span 0 4 0 4) '("!")))
-             (lambda (states)
-               ;; Mutating the returned facts cannot forge the captured review.
-               (string-set! (cdr (assq 'note (cadddr (assv id states)))) 0 #\B)
-               (store:set-property! bot id 'note "Before"))
-             (lambda (states) (store:create! bot "new-hidden-work" '("new") '((audience))))
-             (lambda (states) (store:set-property! bot output 'disposable #f))))
-         '(#f #f #f #f))
-       (store:set-property! bot output 'disposable #t)
-       (let* ([gone (store:create! alice "already-discarded" '("old"))]
-              [events (test:recorder)] [token (store:subscribe! #f events)])
-         (let-values ([(states accept!) (store:prepare-close)])
-           (store:delete! alice gone)
-           (store:rename! alice id "still-reviewed")
-           (store:set-mark! alice id 'point '(0 . 1))
-           ((test:worker (lambda () (store:reset! bot output '("new output")) #t)))
-           (check 'close-accepts-after-deletion-rename-marks-and-disposable-output (accept!) #t)
-           (check 'validation-is-reversible
-             (begin (store:set-property! bot id 'note "still writable") (accept!)) #f))
-         (store:close!)
-         (let ([before (call-with-values (lambda () (store:snapshot-state id)) list)]
-               [before-events (events)])
-           (check 'accepted-close-refuses-every-writer-without-changing-readable-state
-             (list
-               (for-all
-                 (lambda (write!) (test:raises? write! kernel:refusal?))
-                 (list
-                   (lambda () (store:create! bot "late work" '("lost")))
-                   (lambda () (store:edit! bot id 1 (span 0 0 0 0) '("lost")))
-                   (lambda () (store:reset! bot id '("lost")))
-                   (lambda () (store:publish! bot 'late "late output" '("lost") '()))
-                   (lambda () (store:rename! bot id "lost name"))
-                   (lambda () (store:delete! bot id))
-                   (lambda () (store:discard! bot id 1 (caddr before)))
-                   (lambda () (store:set-property! bot id 'note "lost fact"))
-                   (lambda () (store:drop-property! bot id 'note))
-                   (lambda () (store:history-step! bot id 'undo 'mine))
-                   (lambda () (store:set-mark! bot id 'point '(0 . 0)))))
-               (equal? before (call-with-values (lambda () (store:snapshot-state id)) list))
-               (equal? before-events (events)) (store:mark alice id 'point))
-             '(#t #t #t (0 . 1))))
-         (store:unsubscribe! token)))
+             (for-all
+               (lambda (write!) (test:raises? write! kernel:refusal?))
+               (list
+                 (lambda () (store:create! bot "late work" '("lost")))
+                 (lambda () (store:edit! bot id 0 (span 0 0 0 0) '("lost")))
+                 (lambda () (store:reset! bot id '("lost")))
+                 (lambda () (store:publish! bot 'late "late output" '("lost") '()))
+                 (lambda () (store:rename! bot id "lost name"))
+                 (lambda () (store:delete! bot id))
+                 (lambda () (store:discard! bot id 0 (caddr before)))
+                 (lambda () (store:set-property! bot id 'note "lost fact"))
+                 (lambda () (store:drop-property! bot id 'note))
+                 (lambda () (store:history-step! bot id 'undo 'mine))
+                 (lambda () (store:set-mark! bot id 'point '(0 . 0)))))
+             (equal? before (call-with-values (lambda () (store:snapshot-state id)) list))
+             (equal? before-events (events)) (store:mark alice id 'point))
+           '(#t #t #t (0 . 1))))
+       (store:unsubscribe! token))
 
      (test:finish! 'store)))

@@ -105,10 +105,11 @@ moves focus there.
 If protected work changes during confirmation, e reviews it again before exiting.
 Disposable generated output can keep updating without requiring new confirmation.
 Shared unsaved text and terminal processes stay in the running daemon.
-`M-x (main:shutdown!!)` also reviews that shared work and the base's live
-processes before stopping it. With `(main:shutdown-on-exit #t)`, quitting
-the last head enters this review; cancelling keeps the head open.
-`e --restart` instead saves shared text and named views before stopping. IDs,
+`M-x (main:shutdown!!)` saves shared text and named views, reviewing only
+local drafts, other heads and live work that will end. Shared unsaved text
+needs no confirmation. With `(main:shutdown-on-exit #t)`, quitting the last
+head uses this shutdown; cancelling keeps the head open.
+`e --restart` uses the same save path and also starts a replacement base. IDs,
 revisions and modification times survive, while undo history and local draft
 text do not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 
