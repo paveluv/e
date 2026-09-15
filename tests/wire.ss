@@ -922,6 +922,49 @@
                        (stop-reviewed head) (length (archive-paths)))
                  (list (archive-paths) #f '(closing shutdown) (+ 1 (length bad)))))))))
 
+     (define (legacy-refusal-scenarios!)
+       (let* ([path (string-append sources "/head/head.sls")]
+              [source (call-with-input-file path get-string-all)]
+              [listener (sys:listen-local socket)])
+         (dynamic-wind void
+           (lambda ()
+             ;; Old bases sent exception text, before structured stale status
+             ;; existed. Exercise the real launcher without importing its head.
+             (write-text path "this is deliberately not a library\n")
+             (test:check 'old-base-refusals-explain-recovery-before-head-import
+               (map
+                 (lambda (case)
+                   (let* ([reply (list 'error #f (car case))]
+                          [server
+                           (test:worker
+                             (lambda ()
+                               (let accept ()
+                                 (let ([connection (sys:accept-local listener)])
+                                   (let ([message
+                                          (dynamic-wind void
+                                            (lambda ()
+                                              (let ([message (wire:receive (sys:connection-input connection))])
+                                                (unless (eof-object? message)
+                                                  (wire:send! (sys:connection-output connection) reply))
+                                                message))
+                                            (lambda () (sys:close-connection! connection)))])
+                                     ;; The startup endpoint probe has no hello.
+                                     (if (eof-object? message) (accept) message))))))]
+                          [result (loader-exit (list "--name" "old desk" "--base-working-dir" base-directory))])
+                     (list (car result) (occurrences (cadr result) (cadr case))
+                           (occurrences (cadr result) "--restart") (occurrences (caddr result) "\x1b;")
+                           (guard (ex [else (error 'fixture "launcher did not send hello" result)]) (server))
+                           (file-exists? socket))))
+                 `(("Exception in wire: expected (hello 2 (head-or-agent name))" "save files and export any other wanted text")
+                   ("Exception in wire: expected (hello 3 (head-or-agent name))" "save files and export any other wanted text")
+                   ("Exception in wire: expected (hello 4 (head-or-agent name)) or (maintenance 1 (head name))"
+                    ,(string-append (quote-shell (string-append root "/e")) " --restart --name "
+                       (quote-shell "old desk") " --base-working-dir " (quote-shell base-directory)))
+                   ("fixture policy refused the connection" "base refused attachment")))
+               (map (lambda (restarts) (list 1 1 restarts 0 (list 'hello wire:version '(head "old desk") (fingerprint)) #t))
+                 '(0 0 1 0))))
+           (lambda () (sys:close-local-listener! listener) (write-text path source)))))
+
      (define (restart-scenarios!)
        (define restoring (string-append root "/replacement-restoring"))
        (define hold (string-append root "/replacement-hold"))
@@ -2333,6 +2376,8 @@
                    (test:raises? (lambda () (sys:connect-local socket)))
                    (call-with-input-file socket get-string-all)) '(#t #t "ordinary file"))
            (delete-file socket)
+
+           (legacy-refusal-scenarios!)
 
            ;; Bound whole hello exchanges, including partial frames and a
            ;; blocked write. This also exercises watchdog cleanup on failure.

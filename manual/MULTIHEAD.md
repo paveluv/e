@@ -181,11 +181,16 @@ Status includes the base's startup `fingerprint` alongside `wire-version`.
 Scripted clients send `(hello version actor fingerprint)` using the installation's
 `kernel:fingerprint`; the fingerprint grants no permissions.
 
-S3 bases (wire version 4) already support `e --restart`, even though their
-normal attachment refusal predates the fingerprint diagnostic. Earlier bases
-cannot save sessions: save files and export any other wanted text before
-manually stopping them. `--force` does not bypass an explicit
-unsupported-maintenance reply.
+Updating the source does not replace a running base. The launcher recognizes
+the older version-refusal messages as well: S3 bases (wire version 4) already
+support `e --restart`, so it prints that command without unavailable session
+counts. Bases using wire version 2 or 3 cannot save sessions or restart
+automatically. Use an existing head or a matching older checkout to save files
+and export any other wanted text. A separate older checkout can attach with
+`/path/to/old/e --base-working-dir /path/to/current/.base`. Then manually stop
+that old base and rerun the new `e`. This manual transition is needed only
+when upgrading a base from before session saving existed. `--force` does not
+bypass an explicit unsupported-maintenance reply.
 
 ## What is shared and what is local
 
