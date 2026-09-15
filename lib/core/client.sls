@@ -215,18 +215,14 @@
         ;; a retracted recipient, isolates failures and leaves config staging.
         (kernel:drain-deliveries! deliveries))))
 
-  (define (status-count status key noun)
-    (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
-
   (define (report-stale! status)
     (format (current-error-port)
-      "e: ~a\n   Restart it with ~a\n   (the base holds ~a, ~a modified; ~a attached).\n"
+      "e: ~a\n   Restart it with ~a\n   (the base holds ~a).\n"
       (let ([version (cdr (assq 'wire-version status))])
         (if (equal? version wire:version) "the running base was built from other sources than this head."
             (format "the running base uses wire version ~a; this head uses ~a." version wire:version)))
       (daemon:head-command (or (startup:name) (startup:default-name)) #t)
-      (status-count status 'buffers "buffer") (cdr (assq 'modified status))
-      (status-count status 'heads "other head"))
+      (daemon:status-summary status "attached head"))
     (flush-output-port (current-error-port)))
 
   (define (leave! shutdown-on-exit?)
@@ -235,10 +231,7 @@
       result))
 
   (define (farewell status)
-    (format #t "e: detached; the base holds ~a (~a modified), ~a, ~a and ~a.\n"
-      (status-count status 'buffers "buffer") (cdr (assq 'modified status))
-      (status-count status 'heads "other head") (status-count status 'terminals "running terminal")
-      (status-count status 'agents "agent")))
+    (format #t "e: detached; the base holds ~a.\n" (daemon:status-summary status "other head")))
 
   (define (call-with-runtime thunk)
     (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"

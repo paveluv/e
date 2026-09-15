@@ -52,16 +52,20 @@ them. A timeout does not kill or replace the existing base.
 
 When an invocation starts a new base, it prints `e: started base` before
 opening the screen, with the pid, wire version, source fingerprint and base
-directory. It also prints the shutdown command, `M-x (describe:this main:shutdown!!)`
-for its describe page, and the help command. Concurrent starts announce only
-the winning base; an ordinary reattachment prints no startup notice.
+directory. It also prints the stop options and help command. Concurrent starts
+announce only the winning base; an ordinary reattachment prints no startup notice.
 
-Run `./e --help` to see whether the base is listening, its version and source
-fingerprint, and its attached and detached head names. Each detached head has
-a shell-quoted resume command. Help also shows the shutdown and describe
-commands. It respects `--base-working-dir`, works without a terminal, and
-does not start a base, attach a head or load configuration. Its status read
-uses the maintenance connection with a two-second deadline; an unavailable
+Run `./e --help` to see the base's status, version and source fingerprint.
+`Base: alive (...)` means it responded; the lifecycle phase follows separately,
+for example `running` or `reviewing`. The directory is on the next line,
+followed by stop options and counts of buffers (including modified ones),
+attached heads, running terminals and agents. Attached and detached
+head names follow, with a shell-quoted resume command for every detached head.
+Generated commands omit `--base-working-dir` when it resolves to the default
+directory, including when an alias was supplied. Help respects
+`--base-working-dir`, works without a terminal, and does not start a base,
+attach a head or load configuration. Its status read uses the maintenance
+connection with a two-second deadline; an unavailable
 status is reported without changing the base. If no socket answers, help
 reports that no base is listening; a base may still be starting or recovering.
 
@@ -77,10 +81,13 @@ and prints a restart command for that installation, head name and base
 directory. It does not register another actor or stop the base. This checks
 source consistency; permissions still come from the OS user and base policy.
 
-SIGHUP leaves the base running. SIGTERM or SIGINT pauses and saves the shared
-session before stopping the base and its terminal processes. A failed save
-resumes service and reports the error to attached heads and the diagnostic
-log. Further signals during the save coalesce with that operation.
+Help offers two ways to stop the base: `M-x (main:shutdown!!)` for a reviewed
+shutdown, or `kill -TERM PID` with the displayed pid to save the session for
+recovery and stop. SIGTERM pauses and saves the shared session before stopping
+the base and its terminal processes. SIGINT uses the same path; SIGHUP leaves
+the base running. A failed save resumes service and reports the error to
+attached heads and the diagnostic log. Further signals during the save
+coalesce with that operation.
 
 `C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
 stay alive; local unsaved text still requires confirmation. After restoring

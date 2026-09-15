@@ -926,10 +926,12 @@
        (let* ([missing (string-append root "/help-unused")]
               [result (loader-exit (list "--help" "--restart" "--force" "--base-working-dir" missing))])
          (test:check 'help-without-a-base-does-not-start-or-create-one
-           (list (car result) (occurrences (caddr result) "no base is listening") (file-exists? missing)) '(0 1 #f)))
+           (list (car result) (occurrences (caddr result) (format "Base: no base is listening.\nBase directory: ~s\n" missing))
+                 (file-exists? missing)) '(0 1 #f)))
        (fresh-session!)
        (write-forms (string-append root "/base-config.e") '())
-       (let* ([path (string-append sources "/head/head.sls")]
+       (let* ([default-directory (string-append root "/.base")]
+              [path (string-append sources "/head/head.sls")]
               [source (call-with-input-file path get-string-all)]
               [base (fixture:start! root base-directory)]
               [head (connect)] [detached (connect)])
@@ -947,26 +949,40 @@
                (write-text path "this is deliberately not a library\n")
                (test:check 'help-reads-presence-without-claiming-a-head-or-changing-the-review
                  (map
-                   (lambda (phase)
-                     (let* ([review (and (eq? phase 'reviewing) (rpc head 'prepare-close))]
+                   (lambda (row)
+                     ;; The default may itself be a symlink. Both implicit
+                     ;; selection and an explicit alias need short commands.
+                     (when (eq? (cadr row) 'default)
+                       (unless (zero? ((foreign-procedure "symlink" (string string) int) base-directory default-directory))
+                         (error 'fixture "cannot link the default base directory")))
+                     (let* ([phase (car row)]
+                            [review (and (eq? phase 'reviewing) (rpc head 'prepare-close))]
                             [before (rpc head 'status)]
-                            [result (loader-exit (list "--help" "--restart" "--force" "--name" "help inspector"
-                                                   "--base-working-dir" base-directory))]
+                            [result (loader-exit (append '("--help" "--restart" "--force" "--name" "help inspector")
+                                                   (if (eq? (cadr row) 'default) '() (list "--base-working-dir" base-directory))))]
                             [output (caddr result)]
                             [after (rpc head 'status)])
                        (when review (cancel head review))
-                       (list (car result) (occurrences output (format "wire ~a; source ~a" wire:version (cdr (assq 'fingerprint before))))
-                             (occurrences output (format "); ~a" phase))
+                       (list (car result)
+                             (occurrences output
+                               (format "Base: alive (pid ~a; wire ~a; source ~a); ~a\nBase directory: ~s\nStop the base: M-x (main:shutdown!!) or kill -TERM ~a (save session)\nThe base holds ~a.\n"
+                                 (car (cdr (assq 'instance before))) wire:version (cdr (assq 'fingerprint before)) phase base-directory
+                                 (car (cdr (assq 'instance before)))
+                                 "1 buffer (1 modified), 1 attached head, 0 running terminals and 0 agents"))
+                             (occurrences output "A tiny, fully customizable, self-aware, Emacs-like editor.")
                              (occurrences output "attached \"help inspector\"")
                              (occurrences output "detached \"saved α's desk\"")
                              (occurrences output (string-append "Resume: " (quote-shell (string-append root "/e"))
-                                                   " --name " (quote-shell "saved α's desk") " --base-working-dir " (quote-shell base-directory)))
-                             (occurrences output "Stop the base: M-x (main:shutdown!!)")
+                                                   " --name " (quote-shell "saved α's desk")
+                                                   (if (eq? (cadr row) 'custom)
+                                                       (string-append " --base-working-dir " (quote-shell base-directory)) "") "\n"))
+                             (occurrences output "Attach:")
                              (occurrences output "Describe: M-x (describe:this main:shutdown!!)")
                              (occurrences output "\x1b;") (equal? before after) (car (rpc head 'snapshot id)))))
-                   '(running reviewing))
-                 (make-list 2 '(0 1 1 1 1 1 1 1 0 #t #("keep this text"))))))
+                   '((running custom) (reviewing default) (running alias)))
+                 (make-list 3 '(0 1 1 1 1 1 0 0 0 #t #("keep this text"))))))
            (lambda ()
+             (when (file-exists? default-directory #f) (delete-file default-directory))
              (write-text path source)
              (sys:close-connection! head)
              (sys:close-connection! detached)
@@ -2505,7 +2521,9 @@
                                               [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
                                          (if (and at screen (< at screen)
                                                   (= (occurrences output (format "pid ~a; wire ~a" (cadr record) wire:version)) 1)
-                                                  (= (occurrences output "Describe: M-x (describe:this main:shutdown!!)") 1)) 1 0)))
+                                                  (= (occurrences output
+                                                       (format "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a (save session)" (cadr record))) 1)
+                                                  (zero? (occurrences output "Describe:"))) 1 0)))
                                   (list a b))))
                  (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t 1))
                (head-read a '(begin (insert-text! "retained")

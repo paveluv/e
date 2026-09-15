@@ -1,7 +1,8 @@
 ;; startup.sls -- options admitted before importing the head. No editor state.
 
 (library (startup)
-  (export call-with-options mode name file base-working-directory default-name restart? force?)
+  (export call-with-options mode name file base-working-directory default-base-working-directory
+          default-name restart? force?)
   (import (rnrs)
           (only (chezscheme) make-thread-parameter parameterize getenv get-process-id
                 current-directory path-absolute? path-parent path-last)
@@ -30,9 +31,12 @@
             (if (or (not parent) (string=? path parent)) (path:canonical path)
                 (path:canonical (string-append (resolve parent) "/" (path-last path))))))))
 
+  (define (default-base-working-directory)
+    (resolve-directory (string-append (kernel:installation-directory) "/.base")))
+
   (define (base-working-directory)
     (cond [(cadddr (options)) => string-copy]
-          [else (resolve-directory (string-append (kernel:installation-directory) "/.base"))]))
+          [else (default-base-working-directory)]))
 
   (define (nonempty text) (and text (> (string-length text) 0) text))
 
@@ -88,8 +92,8 @@
     (let ([parsed (parse args)])
       (parameterize ([options (list (if (list-ref parsed 6) 'help (car parsed)) (cadr parsed)
                                     (and (caddr parsed) (path:canonical (path:expand (caddr parsed))))
-                                    (resolve-directory (or (cadddr parsed)
-                                                         (string-append (kernel:installation-directory) "/.base")))
+                                    (if (cadddr parsed) (resolve-directory (cadddr parsed))
+                                        (default-base-working-directory))
                                     (list-ref parsed 4) (list-ref parsed 5))])
         (thunk))))
 )

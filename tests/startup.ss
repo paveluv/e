@@ -30,7 +30,7 @@
 
 (eval
   '(begin
-     (import (prefix (startup) startup:) (prefix (actor) actor:)
+     (import (prefix (startup) startup:) (prefix (daemon) daemon:) (prefix (actor) actor:)
              (prefix (store) store:) (prefix (kernel) kernel:)
              (prefix (string) string:) (prefix (sys) sys:)
              (prefix (test) test:))
@@ -232,11 +232,18 @@
          `((base "/tmp/base λ" (#f #f) (head ,(string-append (current-directory) "/another")
                                              ("desk" ,(string-append (current-directory) "/notes")))) head))
        ;; Installations never share a default base; normalize directory aliases.
-       (test:check 'default-base-lives-in-the-installation
+       (test:check 'default-base-lives-in-the-installation-and-is-omitted-from-commands
          (parameterize ([kernel:installation-directory "/tmp/e-install λ/unused/.."])
-           (map (lambda (args) (startup:call-with-options args startup:base-working-directory))
-                '(("--base") ("--name=desk"))))
-         (make-list 2 "/tmp/e-install λ/.base"))
+           (map (lambda (args)
+                  (startup:call-with-options args
+                    (lambda ()
+                      (list (startup:base-working-directory)
+                            (contains? (daemon:head-command (startup:name) (startup:restart?)) "--base-working-dir")))))
+                '(("--base") ("--name=desk")
+                  ("--base-working-dir=/tmp/e-install λ/.base")
+                  ("--restart" "--name=desk" "--base-working-dir=/tmp/e-install λ/unused/../.base/")
+                  ("--base-working-dir=/tmp/another base"))))
+         (append (make-list 4 '("/tmp/e-install λ/.base" #f)) '(("/tmp/another base" #t))))
        (for-each
          (lambda (flag)
            (test:check (list 'help flag)

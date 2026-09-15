@@ -119,14 +119,16 @@ attached. `M-x (main:shutdown!!)` reviews unsaved work and live processes,
 then stops the base and all its screens. Set `(main:shutdown-on-exit #t)`
 in `config.e` to offer shutdown when the last screen quits.
 `e --restart --name work` saves shared text and named views, restarts the base
-and reattaches. SIGTERM/SIGINT also save a recovery snapshot. Terminal
-processes, undo history and local drafts do not survive a restart; terminal
-text returns as read-only transcripts. Reviewed shutdown deletes the snapshot.
+and reattaches. `kill -TERM PID` also saves a recovery snapshot and stops the
+base. Terminal processes, undo history and local drafts do not survive a
+restart; terminal text returns as read-only transcripts. Reviewed shutdown
+deletes the snapshot.
 New heads check library sources and protocol compatibility against the running
 base and ask for `e --restart` when they differ.
-`e --help` shows the base's version, attached and detached screens, and
-commands to resume them. Starting a new base prints its details and shutdown
-guidance before the screen opens; detaching prints only the session summary.
+`e --help` shows the base's status, version, buffer and process counts,
+attached and detached screens, and commands to resume them. Starting a new
+base prints its details and stop options before the screen opens; detaching
+prints only the session summary.
 Connections currently use a local Unix socket under
 the same OS user. See [the base and its heads](manual/MULTIHEAD.md#the-base-and-its-heads)
 for configuration, lifecycle and scripted clients.

@@ -2,7 +2,7 @@
 ;; No store or head state: enter this lifetime before importing either runtime.
 (library (daemon)
   (export call-with-base call-with-head socket rotate-logs! log-deadline control
-          call-with-stop take-stop-signal! help head-command report-start!)
+          call-with-stop take-stop-signal! help head-command status-summary report-start!)
   (import (chezscheme) (prefix (startup) startup:) (prefix (sys) sys:)
           (prefix (kernel) kernel:) (prefix (string) string:) (prefix (wire) wire:))
 
@@ -120,14 +120,23 @@
                          (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
 
   (define (head-command name restart?)
-    (format "~a~a~a --base-working-dir ~a"
-      (shell-quote (string-append (kernel:installation-directory) "/e"))
-      (if restart? " --restart" "") (if name (string-append " --name " (shell-quote name)) "")
-      (shell-quote (startup:base-working-directory))))
+    (let ([directory (startup:base-working-directory)])
+      (format "~a~a~a~a"
+        (shell-quote (string-append (kernel:installation-directory) "/e"))
+        (if restart? " --restart" "") (if name (string-append " --name " (shell-quote name)) "")
+        (if (string=? directory (startup:default-base-working-directory)) ""
+            (string-append " --base-working-dir " (shell-quote directory))))))
 
-  (define (guidance port)
-    (display "Stop the base: M-x (main:shutdown!!)\n" port)
-    (display "Describe: M-x (describe:this main:shutdown!!)\n" port))
+  (define (guidance status port)
+    (format port "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a (save session)\n"
+      (car (cdr (assq 'instance status)))))
+
+  (define (status-summary status head-noun)
+    (define (count key noun)
+      (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
+    (format "~a (~a modified), ~a, ~a and ~a"
+      (count 'buffers "buffer") (cdr (assq 'modified status))
+      (count 'heads head-noun) (count 'terminals "running terminal") (count 'agents "agent")))
 
   (define (base-description status)
     (format "pid ~a; wire ~a~a"
@@ -144,25 +153,24 @@
           (when (= (sys:process-pid child) (car (cdr (assq 'instance status))))
             (format (current-error-port) "e: started base (~a) in ~s\n"
               (base-description status) (startup:base-working-directory))
-            (guidance (current-error-port))
+            (guidance status (current-error-port))
             (format (current-error-port) "Status and resume commands: ~a --help\n" (head-command #f #f))
             (flush-output-port (current-error-port)))))))
 
   (define (help)
+    (define (show-status line)
+      (format #t "\n~a\nBase directory: ~s\n" line (startup:base-working-directory)))
     (display "Usage: e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]\n")
     (display "       e --base [--base-working-dir DIR]\n")
     (display "       e --help [--base-working-dir DIR]\n")
-    (display "A tiny Emacs-like terminal editor.\n")
+    (display "A tiny, fully customizable, self-aware, Emacs-like editor.\n")
     (display "Head names default to user@host:tty (pid without a terminal).\n")
-    (format #t "Attach: ~a\n" (head-command (startup:name) #f))
-    (guidance (current-output-port))
-    (format #t "\nBase directory: ~s\n" (startup:base-working-directory))
     ;; Help never creates a directory, launches a base, claims a name or
     ;; consumes the recovery notice. One bounded maintenance read suffices.
-    (guard (ex [else (format #t "Base status unavailable: ~a\n" (kernel:condition-text ex))])
+    (guard (ex [else (show-status (format "Base status unavailable: ~a" (kernel:condition-text ex)))])
       (let* ([deadline (after 2)] [connection (sys:try-connect-local (socket) deadline)])
         (if (not connection)
-            (display "Base: no base is listening.\n")
+            (show-status "Base: no base is listening.")
             (dynamic-wind void
               (lambda ()
                 (let ([hello (sys:call-with-connection-deadline connection deadline
@@ -173,7 +181,9 @@
                   (unless (and (list? hello) (= (length hello) 3) (equal? (list-head hello 2) '(maintenance 1)))
                     (error 'help "base refused status" hello))
                   (let ([status (caddr hello)])
-                    (format #t "Base: running (~a); ~a\n" (base-description status) (cdr (assq 'phase status)))
+                    (show-status (format "Base: alive (~a); ~a" (base-description status) (cdr (assq 'phase status))))
+                    (guidance status (current-output-port))
+                    (format #t "The base holds ~a.\n" (status-summary status "attached head"))
                     (cond
                       [(assq 'head-states status)
                        => (lambda (entry)
