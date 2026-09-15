@@ -16,23 +16,32 @@ restart; see [the reload boundary](manual/MODULES.md#hot-reload).
 
 Highlights:
 
-- Run `e` on an SSH host; it starts or attaches to the installation's daemon.
-  Shared buffers and terminals survive detachment;
-  named screens recover their windows and positions after a disconnect.
-  Several screens can work on the same documents with independent layouts.
-- `M-x` evaluates Scheme in the editor's context, with structural multiline
-  input, semantic completion, parameter hints, history, and captured output
-  (evaluation results, stdout, and stderr are captured separately).
+- Local installation. All code and state are kept in the installation
+  directory (where you cloned `e`), including modules, configuration files,
+  and the base's session state and logs. To uninstall `e`, simply remove
+  the installation directory.
+- Multi-head and persistent sessions. On its first invocation, `e` starts a
+  daemon base to which multiple heads can connect (local connections only
+  for now). Heads detach on exit and reattach on the next invocation.
+  Reattaching with the same head name restores its layout. The base owns
+  the buffers, terminals, and some app state, so multiple heads can access
+  them and edit simultaneously. Work can resume after an SSH disconnect,
+  much like with tmux.
+- Scheme evaluation. `M-x` evaluates Scheme in the editor's context, with
+  structural multiline input, semantic completion, parameter hints, history,
+  and captured output (evaluation results, stdout, and stderr are captured
+  separately).
 - Besides normal editing buffers, there are app buffers. They update their
   presentation from internal structures and can optionally
   interact with the user: logs, Git history, live reference pages and rendered
   Markdown, as well as the file and buffer pickers.
-- `files` and `buffers` apps have live, filterable tables with multi-column
-  sorting and keyboard or mouse navigation. Files supports recursive path matching,
-  clickable directory breadcrumbs and explicit file/directory creation.
+- Easy filesystem navigation. The `files` and `buffers` apps have live,
+  filterable tables with multi-column sorting and keyboard or mouse
+  navigation. Files supports recursive path matching, clickable directory
+  breadcrumbs and explicit file/directory creation.
 - Windows form a recursive tiling layout that is easy to reshape: split in
   either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
-- `C-c t` opens a new PTY-backed terminal buffer able to run
+- Terminals. `C-c t` opens a new PTY-backed terminal buffer able to run
   shells, full-screen programs, or another editor such as
   [legmacs](https://github.com/nooga/legmacs). `C-x` and `M-x` reach e by default;
   `C-]` or the clickable `●` / `◐` indicator toggles full / partial capture.
