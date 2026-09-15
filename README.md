@@ -124,6 +124,9 @@ processes, undo history and local drafts do not survive a restart; terminal
 text returns as read-only transcripts. Reviewed shutdown deletes the snapshot.
 New heads check library sources and protocol compatibility against the running
 base and ask for `e --restart` when they differ.
+`e --help` shows the base's version, attached and detached screens, and
+commands to resume them. Starting a new base prints its details and shutdown
+guidance before the screen opens; detaching prints only the session summary.
 Connections currently use a local Unix socket under
 the same OS user. See [the base and its heads](manual/MULTIHEAD.md#the-base-and-its-heads)
 for configuration, lifecycle and scripted clients.

@@ -442,15 +442,18 @@
         (flush-output-port (current-error-port)))))
 
   (define (status identities)
-    (let ([facts (filter values
-                   (map (lambda (id)
-                          (let ([state (store:state id #f '(modified mode alive))])
-                            (and state (cadddr state))))
-                     (store:buffer-list)))])
+    (let* ([heads (map cadr (filter (lambda (identity) (eq? (car identity) 'head)) identities))]
+           [names (append heads (filter (lambda (name) (not (member name heads))) (actor:head-names)))]
+           [facts (filter values
+                    (map (lambda (id)
+                           (let ([state (store:state id #f '(modified mode alive))])
+                             (and state (cadddr state))))
+                      (store:buffer-list)))])
       (define (fact key facts) (cond [(assq key facts) => cdr] [else #f]))
       (append (session:status) (list (cons 'buffers (length facts))
                                  (cons 'modified (length (filter (lambda (facts) (fact 'modified facts)) facts)))
-                                 (cons 'heads (length (filter (lambda (identity) (eq? (car identity) 'head)) identities)))
+                                 (cons 'heads (length heads))
+                                 (cons 'head-states (map (lambda (name) (list name (if (member name heads) 'attached 'detached))) names))
                                  (cons 'terminals (length (filter (lambda (facts) (and (equal? (fact 'mode facts) "terminal")
                                                                                     (fact 'alive facts))) facts)))
                                  (cons 'agents (length (agent-sessions)))

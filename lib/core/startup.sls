@@ -84,18 +84,12 @@
         [else (loop (cdr args) mode name (string-copy (car args)) directory restart? force? help? flags?)])))
 
   (define (call-with-options args thunk)
-    ;; Help and malformed arguments never import the editor or load config.
+    ;; Select help before the loader imports a runtime or loads config.
     (let ([parsed (parse args)])
-      (if (list-ref parsed 6)
-          (begin
-            (display "Usage: e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]\n")
-            (display "       e --base [--base-working-dir DIR]\n")
-            (display "A tiny Emacs-like terminal editor.\n")
-            (display "Head names default to user@host:tty (pid without a terminal).\n"))
-          (parameterize ([options (list (car parsed) (cadr parsed)
+      (parameterize ([options (list (if (list-ref parsed 6) 'help (car parsed)) (cadr parsed)
                                     (and (caddr parsed) (path:canonical (path:expand (caddr parsed))))
                                     (resolve-directory (or (cadddr parsed)
                                                          (string-append (kernel:installation-directory) "/.base")))
                                     (list-ref parsed 4) (list-ref parsed 5))])
-            (thunk)))))
+        (thunk))))
 )

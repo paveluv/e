@@ -240,14 +240,11 @@
        (for-each
          (lambda (flag)
            (test:check (list 'help flag)
-             (let ([initialized? #f])
-               (let ([output (call-with-string-output-port
-                               (lambda (port)
-                                 (parameterize ([current-output-port port])
-                                   (startup:call-with-options (list flag)
-                                     (lambda () (set! initialized? #t))))))])
-                 (list initialized? (contains? output "--name NAME"))))
-             '(#f #t)))
+             (list (startup:call-with-options (list flag "--restart" "--force" "--name=desk"
+                                                    "--base-working-dir=/tmp/help base")
+                     (lambda () (list (startup:mode) (startup:name) (startup:base-working-directory))))
+                   (startup:mode))
+             '((help "desk" "/tmp/help base") head)))
          '("-h" "--help"))
        (let ([name (string-copy "desk")] [file (string-copy "notes")])
          (test:check 'scoped-options-own-their-input-and-results
@@ -271,7 +268,7 @@
                (list (zero? status)
                      (contains? (string:join (append (out) (err)) "\n") (caddr entry)))
                (list (cadr entry) #t))))
-         '(("./e --help" #t "Usage: e")
+         `((,(format "./e --help --base-working-dir /tmp/e-help-missing-~a" (get-process-id)) #t "Usage: e")
            ("./e --name=''" #f "nonempty name")
            ("./e one two" #f "at most one file")))
        (for-each

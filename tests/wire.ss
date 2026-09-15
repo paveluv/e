@@ -922,48 +922,55 @@
                        (stop-reviewed head) (length (archive-paths)))
                  (list (archive-paths) #f '(closing shutdown) (+ 1 (length bad)))))))))
 
-     (define (legacy-refusal-scenarios!)
+     (define (help-scenarios!)
+       (let* ([missing (string-append root "/help-unused")]
+              [result (loader-exit (list "--help" "--restart" "--force" "--base-working-dir" missing))])
+         (test:check 'help-without-a-base-does-not-start-or-create-one
+           (list (car result) (occurrences (caddr result) "no base is listening") (file-exists? missing)) '(0 1 #f)))
+       (fresh-session!)
+       (write-forms (string-append root "/base-config.e") '())
        (let* ([path (string-append sources "/head/head.sls")]
               [source (call-with-input-file path get-string-all)]
-              [listener (sys:listen-local socket)])
+              [base (fixture:start! root base-directory)]
+              [head (connect)] [detached (connect)])
+         (set! test-base base)
          (dynamic-wind void
            (lambda ()
-             ;; Old bases sent exception text, before structured stale status
-             ;; existed. Exercise the real launcher without importing its head.
-             (write-text path "this is deliberately not a library\n")
-             (test:check 'old-base-refusals-explain-recovery-before-head-import
-               (map
-                 (lambda (case)
-                   (let* ([reply (list 'error #f (car case))]
-                          [server
-                           (test:worker
-                             (lambda ()
-                               (let accept ()
-                                 (let ([connection (sys:accept-local listener)])
-                                   (let ([message
-                                          (dynamic-wind void
-                                            (lambda ()
-                                              (let ([message (wire:receive (sys:connection-input connection))])
-                                                (unless (eof-object? message)
-                                                  (wire:send! (sys:connection-output connection) reply))
-                                                message))
-                                            (lambda () (sys:close-connection! connection)))])
-                                     ;; The startup endpoint probe has no hello.
-                                     (if (eof-object? message) (accept) message))))))]
-                          [result (loader-exit (list "--name" "old desk" "--base-working-dir" base-directory))])
-                     (list (car result) (occurrences (cadr result) (cadr case))
-                           (occurrences (cadr result) "--restart") (occurrences (caddr result) "\x1b;")
-                           (guard (ex [else (error 'fixture "launcher did not send hello" result)]) (server))
-                           (file-exists? socket))))
-                 `(("Exception in wire: expected (hello 2 (head-or-agent name))" "save files and export any other wanted text")
-                   ("Exception in wire: expected (hello 3 (head-or-agent name))" "save files and export any other wanted text")
-                   ("Exception in wire: expected (hello 4 (head-or-agent name)) or (maintenance 1 (head name))"
-                    ,(string-append (quote-shell (string-append root "/e")) " --restart --name "
-                       (quote-shell "old desk") " --base-working-dir " (quote-shell base-directory)))
-                   ("fixture policy refused the connection" "base refused attachment")))
-               (map (lambda (restarts) (list 1 1 restarts 0 (list 'hello wire:version '(head "old desk") (fingerprint)) #t))
-                 '(0 0 1 0))))
-           (lambda () (sys:close-local-listener! listener) (write-text path source)))))
+             (hello head '(head "help inspector"))
+             (hello detached '(head "saved α's desk"))
+             (rpc detached 'checkpoint '(opaque "keep my screen"))
+             (rpc detached 'leaving #f)
+             (sys:close-connection! detached)
+             (let ([id (rpc head 'create "help work" '("keep this text") '())])
+               ;; Help must reach this mismatched base without head imports,
+               ;; even with restart flags and an already attached --name.
+               (write-text path "this is deliberately not a library\n")
+               (test:check 'help-reads-presence-without-claiming-a-head-or-changing-the-review
+                 (map
+                   (lambda (phase)
+                     (let* ([review (and (eq? phase 'reviewing) (rpc head 'prepare-close))]
+                            [before (rpc head 'status)]
+                            [result (loader-exit (list "--help" "--restart" "--force" "--name" "help inspector"
+                                                   "--base-working-dir" base-directory))]
+                            [output (caddr result)]
+                            [after (rpc head 'status)])
+                       (when review (cancel head review))
+                       (list (car result) (occurrences output (format "wire ~a; source ~a" wire:version (cdr (assq 'fingerprint before))))
+                             (occurrences output (format "); ~a" phase))
+                             (occurrences output "attached \"help inspector\"")
+                             (occurrences output "detached \"saved α's desk\"")
+                             (occurrences output (string-append "Resume: " (quote-shell (string-append root "/e"))
+                                                   " --name " (quote-shell "saved α's desk") " --base-working-dir " (quote-shell base-directory)))
+                             (occurrences output "Stop the base: M-x (main:shutdown!!)")
+                             (occurrences output "Describe: M-x (describe:this main:shutdown!!)")
+                             (occurrences output "\x1b;") (equal? before after) (car (rpc head 'snapshot id)))))
+                   '(running reviewing))
+                 (make-list 2 '(0 1 1 1 1 1 1 1 0 #t #("keep this text"))))))
+           (lambda ()
+             (write-text path source)
+             (sys:close-connection! head)
+             (sys:close-connection! detached)
+             (fixture:stop! base)))))
 
      (define (restart-scenarios!)
        (define restoring (string-append root "/replacement-restoring"))
@@ -2374,10 +2381,10 @@
            (test:check 'ordinary-file-at-socket-path-is-preserved
              (list (test:raises? (lambda () (sys:listen-local socket)))
                    (test:raises? (lambda () (sys:connect-local socket)))
-                   (call-with-input-file socket get-string-all)) '(#t #t "ordinary file"))
+                   (let ([result (loader-exit (list "--help" "--base-working-dir" base-directory))])
+                     (list (car result) (occurrences (caddr result) "Base status unavailable")))
+                   (call-with-input-file socket get-string-all)) '(#t #t (0 1) "ordinary file"))
            (delete-file socket)
-
-           (legacy-refusal-scenarios!)
 
            ;; Bound whole hello exchanges, including partial frames and a
            ;; blocked write. This also exercises watchdog cleanup on failure.
@@ -2403,6 +2410,19 @@
                                sys:unresponsive?))
                            (lambda () (sys:close-connection! client) (sys:close-connection! server)))))
                      '(#vu8(0) #vu8(0 0 0 4 40) #f)) '(#t #t #t))
+                 (let* ([launcher (test:worker
+                                    (lambda () (loader-exit (list "--help" "--name" "status probe"
+                                                                  "--base-working-dir" base-directory))))]
+                        [connection (sys:accept-local listener)])
+                   (dynamic-wind void
+                     (lambda ()
+                       (test:check 'help-times-out-without-retrying-or-changing-the-endpoint
+                         (list (wire:receive (sys:connection-input connection))
+                               (let ([result (launcher)])
+                                 (list (car result) (occurrences (caddr result) "unresponsive")
+                                       (occurrences (caddr result) "\x1b;") (file-exists? socket))))
+                         '((maintenance 1 (head "status probe")) (0 1 0 #t))))
+                     (lambda () (sys:close-connection! connection))))
                  (let ([pending '()] [timed-out? #f])
                    (dynamic-wind void
                      (lambda ()
@@ -2478,8 +2498,16 @@
                        (head-read b '(store:property (store:find-named "bootstrap") 'directory))
                        (map get-mode (list base-directory socket pid-path (string-append base-directory "/lock")))
                        (file-exists? (string-append base-directory "/log/2000-01-01.log"))
-                       (file-exists? (string-append base-directory "/log/keep.txt")))
-                 (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t))
+                       (file-exists? (string-append base-directory "/log/keep.txt"))
+                       (apply + (map (lambda (head)
+                                       (let* ([output (vector-ref head 3)]
+                                              [at (string:search output "e: started base" 0 (string-length output))]
+                                              [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
+                                         (if (and at screen (< at screen)
+                                                  (= (occurrences output (format "pid ~a; wire ~a" (cadr record) wire:version)) 1)
+                                                  (= (occurrences output "Describe: M-x (describe:this main:shutdown!!)") 1)) 1 0)))
+                                  (list a b))))
+                 (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t 1))
                (head-read a '(begin (insert-text! "retained")
                                     (head:add-shutdown-hook! (lambda () (goto-point! '(0 . 3)))) #t))
                (for-each (lambda (head) (head-send! head "\x18;\x03;")) (list a b))
@@ -2489,11 +2517,17 @@
                (let* ([again (start-head "auto α's desk")] [inspector (connect)]
                       [leavers (list (connect) (connect))])
                  (head-wait 'automatic-resume again (lambda () (head-sees? again "retained")))
-                 (test:check 'quit-keeps-shared-edits-checkpoint-and-shell-quoted-resume
+                 (test:check 'quit-keeps-shared-edits-and-print-only-one-farewell-line
                    (list (head-read again '(list (buffer-line (current-buffer) 0) (point)))
                          (equal? record (call-with-input-file pid-path read))
-                         (> (occurrences (vector-ref a 3) "--name 'auto α'\\''s desk'") 0))
-                   '(("retained" (0 . 3)) #t #t))
+                         (occurrences (vector-ref again 3) "e: started base")
+                         (map (lambda (head)
+                                (let* ([output (vector-ref head 3)]
+                                       [at (string:search output "e: detached;" 0 (string-length output))]
+                                       [farewell (substring output at (string-length output))])
+                                  (list (occurrences farewell "\n") (occurrences farewell "Resume:")
+                                        (occurrences farewell "Stop the base:")))) (list a b)))
+                   '(("retained" (0 . 3)) #t 0 ((1 0 0) (1 0 0))))
                  (hello inspector '(head "inspector"))
                  (for-each (lambda (connection name) (hello connection (list 'head name))) leavers '("leave A" "leave B"))
                  (let* ([before (cdr (assq 'heads (rpc inspector 'status)))]
@@ -2529,7 +2563,8 @@
            (session-scenarios!)
            (recovery-scenarios!)
            (restart-scenarios!)
-           (force-scenarios!))
+           (force-scenarios!)
+           (help-scenarios!))
          (lambda ()
            (write-text edit-release "continue")
            (write-text automatic-control "stop")

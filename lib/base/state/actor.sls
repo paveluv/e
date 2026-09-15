@@ -17,7 +17,7 @@
   (export register! registered? detach! attached describe subscribe! unsubscribe!
           current call-as identity? audience? in-audience? send!
           ask! answer! cancel! cancel-owned! pending pending-tickets checkpoint checkpoint!
-          export import! valid-import?)
+          head-names export import! valid-import?)
   (import (rnrs)
           (only (chezscheme) void make-mutex with-mutex
                 current-time time-second parameterize)
@@ -140,6 +140,11 @@
   (define (checkpoint actor)
     (let ([entry (known-head actor)])
       (and entry (datum:copy (with-mutex protocol-lock (head-state-checkpoint entry))))))
+
+  (define (head-names)
+    ;; Status needs identities, not copies of opaque screen/kill contents.
+    (map (lambda (entry) (string-copy (cadr (head-state-identity entry))))
+      (kernel:registry-items known-heads)))
 
   (define (export)
     ;; The lifecycle barrier stabilizes the directory before this read.

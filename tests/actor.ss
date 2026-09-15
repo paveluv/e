@@ -96,11 +96,12 @@
      (string-set! (vector-ref capabilities 0) 0 #\Z)
      (string-set! (cadar description) 0 #\Q)
      (string-set! (vector-ref (list-ref description 4) 0) 0 #\R)
+     (for-each (lambda (name) (string-set! name 0 #\N)) (actor:head-names))
      (test:check 'directory-data-is-owned
        (let ([entry (actor:describe canonical)])
          (list (list-head entry 3) (list-ref entry 4) (actor:send! canonical 'hello)
-               (original-delivery)))
-       (list (list canonical 'head "directory") '#("read" (buffers source)) #t '(hello)))
+               (original-delivery) (list-sort string<? (actor:head-names))))
+       (list (list canonical 'head "directory") '#("read" (buffers source)) #t '(hello) '("directory" "test")))
      (define cycle (list 'cycle))
      (set-cdr! cycle cycle)
      (define invalid-registrations
@@ -443,8 +444,9 @@
        (actor:detach! owner)
        (test:check 'checkpoint-owns-input-and-reads-and-outlives-the-endpoint
          (list (actor:checkpoint owner) (actor:checkpoint '(head "another"))
-               (test:raises? (lambda () (actor:checkpoint! owner 'obsolete))))
-         '(#("kill text" (layout)) #f #t))
+               (test:raises? (lambda () (actor:checkpoint! owner 'obsolete)))
+               (and (member "checkpoint" (actor:head-names)) #t))
+         '(#("kill text" (layout)) #f #t #t))
        (actor:register! owner void)
        (test:check 'checkpoint-replacement-rejects-runtime-objects-before-mutation
          (list (test:raises? (lambda () (actor:checkpoint! owner void)))

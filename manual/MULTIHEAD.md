@@ -50,6 +50,21 @@ minutes, with a message after two seconds; a silent hello times out after ten
 seconds. Permission failures and foreign files are reported without removing
 them. A timeout does not kill or replace the existing base.
 
+When an invocation starts a new base, it prints `e: started base` before
+opening the screen, with the pid, wire version, source fingerprint and base
+directory. It also prints the shutdown command, `M-x (describe:this main:shutdown!!)`
+for its describe page, and the help command. Concurrent starts announce only
+the winning base; an ordinary reattachment prints no startup notice.
+
+Run `./e --help` to see whether the base is listening, its version and source
+fingerprint, and its attached and detached head names. Each detached head has
+a shell-quoted resume command. Help also shows the shutdown and describe
+commands. It respects `--base-working-dir`, works without a terminal, and
+does not start a base, attach a head or load configuration. Its status read
+uses the maintenance connection with a two-second deadline; an unavailable
+status is reported without changing the base. If no socket answers, help
+reports that no base is listening; a base may still be starting or recovering.
+
 Before importing the head or loading its configuration, a new head compares
 its wire version and library fingerprint with the running base. Every `.sls`
 under `lib/` counts, including modes and both runtime trees. Any library edit
@@ -69,8 +84,9 @@ log. Further signals during the save coalesce with that operation.
 
 `C-x C-c` detaches this head. Shared unsaved text, terminals and other heads
 stay alive; local unsaved text still requires confirmation. After restoring
-the shell, e reports the base's counts and prints a shell-quoted command to
-resume this screen. A new attachment
+the shell, e prints only a summary such as
+`e: detached; the base holds 3 buffers (0 modified), 0 other heads, 0 running terminals and 0 agents.`
+Resume commands are available through `e --help`. A new attachment
 with the same `--name` restores its split layout, selected window and buffers,
 points, viewports, selection, window preferences and kill text. Use distinct
 names for independent screens. An explicit file argument opens in the restored
@@ -181,16 +197,12 @@ Status includes the base's startup `fingerprint` alongside `wire-version`.
 Scripted clients send `(hello version actor fingerprint)` using the installation's
 `kernel:fingerprint`; the fingerprint grants no permissions.
 
-Updating the source does not replace a running base. The launcher recognizes
-the older version-refusal messages as well: S3 bases (wire version 4) already
-support `e --restart`, so it prints that command without unavailable session
-counts. Bases using wire version 2 or 3 cannot save sessions or restart
-automatically. Use an existing head or a matching older checkout to save files
-and export any other wanted text. A separate older checkout can attach with
-`/path/to/old/e --base-working-dir /path/to/current/.base`. Then manually stop
-that old base and rerun the new `e`. This manual transition is needed only
-when upgrading a base from before session saving existed. `--force` does not
-bypass an explicit unsupported-maintenance reply.
+Only the current normal wire protocol is supported. Updating the source does
+not replace a running base; use `e --restart` to load the current code.
+Maintenance remains independent so help and restart can inspect a base with
+different sources or a different normal protocol version. The launcher does
+not interpret historical hello/error strings or negotiate an older protocol.
+`--force` does not bypass an explicit unsupported-maintenance reply.
 
 ## What is shared and what is local
 
@@ -284,6 +296,12 @@ The display name is a string, and the timestamp is the UTC second when the
 registration was created. Optional capabilities are descriptive plain data,
 defaulting to `#f`; they do not grant permissions. `actor:registered? who`
 queries presence.
+
+In the base, `actor:head-names` returns copied names of known heads, including
+detached heads, without copying their checkpoint contents. Status combines
+these names with the participating connections in `head-states`, a list of
+`(name attached)` or `(name detached)` entries. Help reads this inventory;
+it never becomes a participating head itself.
 
 `actor:subscribe! proc` returns a token for `actor:unsubscribe!`. The callback
 receives one batch of `(detached actor)` and `(attached actor)` entries per

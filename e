@@ -91,7 +91,7 @@
                      (exit 1)])
            (startup:call-with-options (command-line-arguments)
              (lambda ()
-               (when (and (not (eq? (startup:mode) 'base))
+               (when (and (eq? (startup:mode) 'head)
                        (or (not (getenv "TERM")) (string=? (getenv "TERM") "dumb")))
                  (display "e: an interactive terminal is required\n" (current-error-port))
                  (exit 1))
@@ -99,19 +99,22 @@
                ;; Separate objects keep base and client library identities
                ;; from overwriting one another in a shared installation.
                (exit
-                 (if (eq? (startup:mode) 'base)
-                   (daemon:call-with-base
-                     (lambda ()
-                       (eval '(begin
-                                (import (prefix (base) base:))
-                                (base:call-with-runtime base:run)))))
-                   (daemon:call-with-head
-                     (lambda ()
-                       (library-directories ',(runtime-roots "client"))
-                       (eval '(begin
-                                (import (prefix (client) client:))
-                                (client:call-with-runtime
-                                  (lambda ()
-                                    (eval '(begin
-                                             (import (edit) (prefix (main) main:))
-                                             (main:run))))))))))))))))
+                 (case (startup:mode)
+                   [(help) (daemon:help) 0]
+                   [(base)
+                    (daemon:call-with-base
+                      (lambda ()
+                        (eval '(begin
+                                 (import (prefix (base) base:))
+                                 (base:call-with-runtime base:run)))))]
+                   [else
+                    (daemon:call-with-head
+                      (lambda ()
+                        (library-directories ',(runtime-roots "client"))
+                        (eval '(begin
+                                 (import (prefix (client) client:))
+                                 (client:call-with-runtime
+                                   (lambda ()
+                                     (eval '(begin
+                                              (import (edit) (prefix (main) main:))
+                                              (main:run)))))))))])))))))

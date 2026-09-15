@@ -6,6 +6,9 @@ Run `./e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file
 in the shell if it contains spaces. `--name=NAME` also works. `--` allows a
 file whose name begins with `-`. Help (`-h` or `--help`) and argument errors
 are handled before loading the editor or `config.e`.
+Help includes the selected base's status, version, attached and detached
+heads, resume commands and shutdown guidance. It never starts or restarts
+the base, including when combined with `--restart` or `--force`.
 Compatibility with a running base is also checked before head imports and
 `config.e`; a library-source or wire mismatch prints a restart command and
 exits. Configuration files themselves do not participate in the fingerprint.
@@ -14,7 +17,7 @@ Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,
 ` 3`, and so on if occupied; an explicitly requested name must be free.
 The identity is `(head "name")`, exposed as `head:ui-actor`. It is chosen
-before shared buffers or cursor marks are created. Every invocation starts or
+before shared buffers or cursor marks are created. Every head invocation starts or
 attaches to the installation's base. Use a stable explicit name to restore the
 same screen after an SSH login whose terminal name has changed.
 `--restart` reviews and saves the existing base before restarting and claiming

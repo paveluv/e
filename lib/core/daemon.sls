@@ -2,11 +2,12 @@
 ;; No store or head state: enter this lifetime before importing either runtime.
 (library (daemon)
   (export call-with-base call-with-head socket rotate-logs! log-deadline control
-          call-with-stop take-stop-signal!)
+          call-with-stop take-stop-signal! help head-command report-start!)
   (import (chezscheme) (prefix (startup) startup:) (prefix (sys) sys:)
           (prefix (kernel) kernel:) (prefix (string) string:) (prefix (wire) wire:))
 
   (define (socket) (string-append (startup:base-working-directory) "/socket"))
+  (define starting-process (make-thread-parameter #f))
   (define log-day #f)
   (define next-rotation #f)
   (define control (kernel:make-mailbox))
@@ -113,6 +114,80 @@
 
   (define (after seconds)
     (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 seconds)))
+
+  (define (shell-quote text)
+    (string-append "'" (apply string-append
+                         (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
+
+  (define (head-command name restart?)
+    (format "~a~a~a --base-working-dir ~a"
+      (shell-quote (string-append (kernel:installation-directory) "/e"))
+      (if restart? " --restart" "") (if name (string-append " --name " (shell-quote name)) "")
+      (shell-quote (startup:base-working-directory))))
+
+  (define (guidance port)
+    (display "Stop the base: M-x (main:shutdown!!)\n" port)
+    (display "Describe: M-x (describe:this main:shutdown!!)\n" port))
+
+  (define (base-description status)
+    (format "pid ~a; wire ~a~a"
+      (car (cdr (assq 'instance status))) (cdr (assq 'wire-version status))
+      (cond [(assq 'fingerprint status) => (lambda (entry) (format "; source ~a" (cdr entry)))]
+            [else ""])))
+
+  (define (report-start! get-status)
+    ;; Only the launcher whose live child won ownership announces startup.
+    ;; A normal reattachment does not make an extra status request.
+    (let ([child (starting-process)])
+      (when (and child (not (sys:process-status child)))
+        (let ([status (get-status)])
+          (when (= (sys:process-pid child) (car (cdr (assq 'instance status))))
+            (format (current-error-port) "e: started base (~a) in ~s\n"
+              (base-description status) (startup:base-working-directory))
+            (guidance (current-error-port))
+            (format (current-error-port) "Status and resume commands: ~a --help\n" (head-command #f #f))
+            (flush-output-port (current-error-port)))))))
+
+  (define (help)
+    (display "Usage: e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]\n")
+    (display "       e --base [--base-working-dir DIR]\n")
+    (display "       e --help [--base-working-dir DIR]\n")
+    (display "A tiny Emacs-like terminal editor.\n")
+    (display "Head names default to user@host:tty (pid without a terminal).\n")
+    (format #t "Attach: ~a\n" (head-command (startup:name) #f))
+    (guidance (current-output-port))
+    (format #t "\nBase directory: ~s\n" (startup:base-working-directory))
+    ;; Help never creates a directory, launches a base, claims a name or
+    ;; consumes the recovery notice. One bounded maintenance read suffices.
+    (guard (ex [else (format #t "Base status unavailable: ~a\n" (kernel:condition-text ex))])
+      (let* ([deadline (after 2)] [connection (sys:try-connect-local (socket) deadline)])
+        (if (not connection)
+            (display "Base: no base is listening.\n")
+            (dynamic-wind void
+              (lambda ()
+                (let ([hello (sys:call-with-connection-deadline connection deadline
+                               (lambda ()
+                                 (wire:send! (sys:connection-output connection)
+                                   (list 'maintenance 1 (list 'head (or (startup:name) (startup:default-name)))))
+                                 (wire:receive (sys:connection-input connection))))])
+                  (unless (and (list? hello) (= (length hello) 3) (equal? (list-head hello 2) '(maintenance 1)))
+                    (error 'help "base refused status" hello))
+                  (let ([status (caddr hello)])
+                    (format #t "Base: running (~a); ~a\n" (base-description status) (cdr (assq 'phase status)))
+                    (cond
+                      [(assq 'head-states status)
+                       => (lambda (entry)
+                            (display "Heads:\n")
+                            (if (null? (cdr entry)) (display "  none\n")
+                                (for-each
+                                  (lambda (head)
+                                    (format #t "  ~a ~s\n" (cadr head) (car head))
+                                    (when (eq? (cadr head) 'detached)
+                                      (format #t "    Resume: ~a\n" (head-command (car head) #f))))
+                                  (list-sort (lambda (a b) (string<? (car a) (car b))) (cdr entry)))))]
+                      [else (format #t "Heads: ~a attached; names unavailable from this base.\n" (cdr (assq 'heads status)))]))))
+              (lambda () (sys:close-connection! connection))))))
+    (flush-output-port (current-output-port)))
 
   (define (lock-free? directory)
     (let ([lock (sys:acquire-file-lock (string-append directory "/lock"))])
@@ -253,7 +328,7 @@
                       (set! noticed? #t))
                     (sleep (make-time 'time-duration 50000000 0))
                     (wait)))))
-          (thunk))
+          (parameterize ([starting-process child]) (thunk)))
         (lambda () (when child (sys:release-process! child))))))
 
   (define (call-with-head thunk)

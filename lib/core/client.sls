@@ -133,20 +133,14 @@
                  (set! reader (fork-thread receive!))
                  (let ([notice (sys:call-with-connection-deadline next
                                  (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
-                                 (lambda () (request 'startup-notice)))])
+                                 (lambda ()
+                                   (let ([notice (request 'startup-notice)])
+                                     (daemon:report-start! (lambda () (request 'status)))
+                                     notice)))])
                    (when notice
                      (display notice (current-error-port))
                      (flush-output-port (current-error-port))))
                  (identity)]
-                ;; Before S4, version refusals were these fixed exception
-                ;; strings. Recognize them only for upgrade guidance; never
-                ;; retry an old hello or invent unavailable session counts.
-                [(find (lambda (version)
-                         (equal? hello
-                           (list 'error #f
-                             (format "Exception in wire: expected (hello ~a (head-or-agent name))~a" version
-                               (if (= version 4) " or (maintenance 1 (head name))" ""))))) '(2 3 4))
-                 => (lambda (version) (raise (make-stale-base (list (cons 'wire-version version)))))]
                 [else (error 'client "base refused attachment" hello)])))))))
 
   (define (request operation . args)
@@ -221,34 +215,18 @@
         ;; a retracted recipient, isolates failures and leaves config staging.
         (kernel:drain-deliveries! deliveries))))
 
-  (define (shell-quote text)
-    (string-append "'" (apply string-append
-                         (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
-
-  (define (head-command name restart?)
-    (format "~a~a --name ~a --base-working-dir ~a"
-      (shell-quote (string-append (kernel:installation-directory) "/e"))
-      (if restart? " --restart" "") (shell-quote name)
-      (shell-quote (startup:base-working-directory))))
-
   (define (status-count status key noun)
     (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
 
   (define (report-stale! status)
-    (let ([version (cdr (assq 'wire-version status))])
-      (format (current-error-port) "e: ~a\n"
+    (format (current-error-port)
+      "e: ~a\n   Restart it with ~a\n   (the base holds ~a, ~a modified; ~a attached).\n"
+      (let ([version (cdr (assq 'wire-version status))])
         (if (equal? version wire:version) "the running base was built from other sources than this head."
             (format "the running base uses wire version ~a; this head uses ~a." version wire:version)))
-      (if (< version 4)
-          (format (current-error-port)
-            "   This base cannot save sessions or restart automatically.\n   Using an existing head or a matching older checkout, save files and export any other wanted text.\n   Then manually stop the old base in ~s and run this command again.\n"
-            (startup:base-working-directory))
-          (format (current-error-port) "   Restart it with ~a\n"
-            (head-command (or (startup:name) (startup:default-name)) #t))))
-    (when (assq 'buffers status)
-      (format (current-error-port) "   (the base holds ~a, ~a modified; ~a attached).\n"
-        (status-count status 'buffers "buffer") (cdr (assq 'modified status))
-        (status-count status 'heads "other head")))
+      (daemon:head-command (or (startup:name) (startup:default-name)) #t)
+      (status-count status 'buffers "buffer") (cdr (assq 'modified status))
+      (status-count status 'heads "other head"))
     (flush-output-port (current-error-port)))
 
   (define (leave! shutdown-on-exit?)
@@ -260,9 +238,7 @@
     (format #t "e: detached; the base holds ~a (~a modified), ~a, ~a and ~a.\n"
       (status-count status 'buffers "buffer") (cdr (assq 'modified status))
       (status-count status 'heads "other head") (status-count status 'terminals "running terminal")
-      (status-count status 'agents "agent"))
-    (format #t "Resume: ~a\n" (head-command (cadr who) #f))
-    (display "Stop the base: M-x (main:shutdown!!)\n"))
+      (status-count status 'agents "agent")))
 
   (define (call-with-runtime thunk)
     (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
