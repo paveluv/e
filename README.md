@@ -239,10 +239,6 @@ immediately.
 - [Modules and architecture](manual/MODULES.md): the library layout, hot
   reload, registrations, modes, highlighters, and extension conventions.
 
-Development notes live in `dev/`. Start with the
-[task tracker and tech-debt ledger](dev/V2_TASKS.md) for current status and
-links to the design, implementation records and deferred work.
-
 ## Limits
 
 Tabs and other control characters display as one space cell. Input is UTF-8,

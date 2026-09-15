@@ -3,8 +3,7 @@
 ;; multihead-bench.sps -- the acceptance measurement for attached editing.
 ;;
 ;; Runs the installation in place: a base in a private directory and real
-;; heads under PTYs. Historical standalone measurements remain in the design
-;; notes; the current runtime has only attached heads.
+;; heads under PTYs.
 ;; Keys are written to the PTY in one burst; a scenario settles when the
 ;; status line shows the expected position, so the number is the editor's
 ;; own cost per key.  Bytes are the head's rchar/wchar deltas from
@@ -12,8 +11,8 @@
 ;;
 ;;   scheme-script tools/multihead-bench.sps   (from the repository root)
 ;;
-;; Prints a Markdown table; see dev/MULTIHEAD_IMPROVEMENTS.md for the
-;; baseline this reproduces.
+;; Prints a Markdown table of typing, cursor motion, whole-buffer kill/undo,
+;; and process I/O, including a second head watching the same buffer.
 
 (import (chezscheme))
 (include "tests/roots.ss")

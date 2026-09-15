@@ -5,7 +5,7 @@
 Always include a `Co-Authored-By` trailer for the AI model contributing to a commit.
 Use the exact runtime model identifier from the active session, including its version or
 snapshot suffix when exposed; never substitute a generic name such as Codex or GPT, infer
-the model from the configured default, or invent a version. 
+the model from the configured default, or invent a version.
 
 ## Formatting
 
@@ -27,4 +27,10 @@ name; a command that was the bare stem gets a verb (`terminal:open!!`,
 `eval:run!`, `describe:show!`). Commands that interact with the user
 (can block on input from the user) have double-bang suffix "!!". Commands
 without a bang, or with a single bang "!" are supposed to finish without
-the user's invervention.
+the user's intervention.
+
+## Contents and commit messages
+
+This repository contains the editor's code, user documentation and tests.
+`manual/` contains only the user's manual. Commit messages describe product
+behavior, code decisions and relevant validation.

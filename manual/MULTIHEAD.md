@@ -342,7 +342,7 @@ Scheme clients can read, evaluate granted read-only expressions, edit, undo and
 redo according to their session's permissions, exchange attributed mail and ask
 other actors questions. The messages and primitives an agent uses over the
 socket are specified in the
-[wire contract](../dev/MULTIHEAD.md#implemented-local-protocol).
+[wire contract](WIRE.md).
 
 The daemon uses `base:connection-policy`, a procedure parameter, to choose a
 policy from each connecting actor identity. Heads default to all-buffer write
