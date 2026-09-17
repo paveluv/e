@@ -26,7 +26,7 @@
                   (prompt-reindent reindent) (prompt-in-window in-window)
                   (validate-input validate) (draft-input draft)
                   (make-content-view make-content))
-          confirm? completion-label completion-highlight content line allow! interaction transient)
+          confirm? make-completer make-candidate completion-label completion-highlight content line allow! interaction transient)
   (import (rnrs) (rnrs r5rs)
           (only (chezscheme)
                 make-parameter parameterize box unbox set-box! format void
@@ -174,6 +174,16 @@
   (define prompt-in-window (make-parameter #f))
   (define completion-label (make-parameter (lambda (value) value)))
   (define completion-highlight (make-parameter (lambda (label) #f)))
+  ;; A cursor-aware source returns (values start end expansions candidates).
+  ;; Expansions may be a thunk: resolve only for a new Tab normalization,
+  ;; not when refreshing the live list or cycling already prepared results.
+  ;; Candidates replace [start,end); #f start means no completable token.
+  ;; Unlike a prefix completer, it normalizes on the first Tab and keeps its
+  ;; candidate list live after the second. Existing list procedures stay simple.
+  (define-record-type completer (fields lookup))
+  ;; A display label and its character styles are independent of the string
+  ;; inserted on selection. The lookup result owns both, including during cycling.
+  (define-record-type candidate (fields value label styles))
   ;; A live completion view supplies its minimum height, renderer and key
   ;; handler. (render input window available-height page) returns styled lines
   ;; and a page count. Choices replace input or run an action returning new
@@ -218,9 +228,13 @@
       (for-each
         (lambda (name)
           (mode:register! name '() '()
-            (lambda (line)
+            ;; Presentation can change while the text stays equal (for example,
+            ;; a different completion query underlines different characters).
+            ;; Read the current row instead of the mode's text-only style cache.
+            (lambda (line) #f) #f
+            (lambda (buffer row line)
               (let ([info (hashtable-ref line-presentation line #f)])
-                (if info (car info) (make-vector (string-length line) 'plain))))))
+                (and info (car info))))))
         '("prompt" "completions"))
       (paint:add-highlighter!
         (lambda ()
@@ -239,7 +253,8 @@
             caddr)))))
 
   (define (format-columns candidates width labeler highlight?)
-    (let* ([labels (map labeler candidates)]
+    (let* ([labels (map (lambda (value) (if (candidate? value) (candidate-label value) (labeler value)))
+                     candidates)]
            [column (min width (+ 2 (fold-left max 0 (map glyph:cells labels))))]
            [columns (max 1 (div width (max 1 column)))])
       (let rows ([values candidates] [labels labels] [out '()])
@@ -251,11 +266,24 @@
                     (cons (make-row text (list->vector (apply append (reverse styles)))
                             #f (reverse choices)) out))
                   (let* ([label (car labels)] [shown (glyph:fit label column)]
+                         [value (car values)]
+                         [base (if (candidate? value) 'plain (if (highlight? label) 'editor 'plain))]
+                         [faces (make-vector (string-length shown) base)]
                          [start (string-length text)] [end (+ start (string-length shown))])
+                    (when (candidate? value)
+                      ;; fit preserves a prefix of whole glyph clusters. Stop
+                      ;; copying at its ellipsis/padding so neither is underlined.
+                      (let ([visible
+                             (if (<= (glyph:cells label) column) (string-length label)
+                                 (let trim ([i (- (string-length shown) 1)])
+                                   (if (char=? (string-ref shown i) #\space) (trim (- i 1)) i)))])
+                        (do ([i 0 (+ i 1)]) ((= i visible))
+                          (vector-set! faces i (vector-ref (candidate-styles value) i)))))
                     (fill (cdr values) (cdr labels) (+ count 1)
                       (string-append text shown)
-                      (cons (make-list (string-length shown) (if (highlight? label) 'editor 'plain)) styles)
-                      (cons (list start end (car values)) choices)))))))))
+                      (cons (vector->list faces) styles)
+                      (cons (list start end (if (candidate? value) (candidate-value value) value))
+                        choices)))))))))
 
   (define (input-rows content styles width)
     ;; Prewrap through the normal cell/cluster geometry, then render a
@@ -340,6 +368,12 @@
     (define hist-pos -1)
     (define stash "")
     (define last-edge #f)
+    (define completion-source #f)
+    (define completion-range #f)
+    (define prepared #f)
+    (define completion-options '())
+    (define completion-matches '())
+    (define option-index 0)
     (define candidates #f)
     (define candidate-rows '#())
     (define candidate-width 0)
@@ -380,7 +414,11 @@
     (define (status-text b)
       (let* ([room (max 1 (- (head:window-width target) 12))]
              [short (cond [(and (or body candidates) in-window? (< (head:window-size target) 2)) "Enlarge pane"]
-                          [(and (or body candidates) (> pages 1)) (format "~a/~a Tab next" (+ page 1) pages)]
+                          [(and (or body candidates) (> pages 1))
+                           (format "~a/~a ~a" (+ page 1) pages
+                             (if (and completion-source (pair? completion-options)
+                                      (pair? (cdr completion-options)))
+                                 "PgUp/PgDn page" "Tab next"))]
                           [candidates (format "~a matches" (length candidates))]
                           [else "Tab complete"])]
              [help (if (> room 60)
@@ -391,7 +429,7 @@
             (string-append name "  " help) help)))
     (define (mouse! event)
       (cond
-        [(and body (member event '("WHEEL-UP" "WHEEL-DOWN")))
+        [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN")))
          (set! page (mod (+ page (if (string=? event "WHEEL-UP") -1 1)) pages)) #t]
         [(and (string=? event "MOUSE-CLICK")
               (or (not in-window?) (eq? (head:current) owner)))
@@ -406,7 +444,10 @@
                                                 (string-length label))))))]
                      [choice
                       (let ([value (if (procedure? (caddr choice)) ((caddr choice)) (caddr choice))])
-                        (if value (set! clicked (cons value (string-length value))) (set! page 0)))]))))
+                        (if value
+                            (set! clicked (if completion-source (replace-completion input value)
+                                            (cons value (string-length value))))
+                            (set! page 0)))]))))
          (if in-window? #t 'keep-focus)]
         [else #f]))
     (define (take-view!)
@@ -427,14 +468,35 @@
             (head:set-window-buffer! target view)
             (set! borrowed (list target))))))
     (define (dismiss-completions!)
+      (set! completion-source #f) (set! completion-range #f) (set! prepared #f)
+      (set! completion-options '()) (set! completion-matches '()) (set! option-index 0)
       (set! candidates #f) (set! pages 1) (set! page 0)
       (unless in-window? (release-view!)))
-    (define (invalidate-input! new-s)
-      (unless (string=? new-s input) (dismiss-completions!)))
+    (define (replace-completion s value)
+      (cons (string-append (substring s 0 (car completion-range)) value
+                           (string:tail s (cdr completion-range)))
+            (+ (car completion-range) (string-length value))))
+    (define (prepared? completer s pos)
+      (and prepared (eq? completer (car prepared))
+           (string=? s (cadr prepared)) (= pos (caddr prepared))))
+    (define (set-candidates! values)
+      (unless (equal? values candidates)
+        (set! candidates values) (set! candidate-width 0) (set! page 0)))
+    (define (invalidate-input! new-s new-pos)
+      (unless (and (string=? new-s input) (= new-pos position))
+        (unless (prepared? completion-source new-s new-pos) (set! prepared #f))
+        (if completion-source
+            (let-values ([(start end expansion values) ((completer-lookup completion-source) new-s new-pos)])
+              (if (and start (= start (car completion-range)))
+                  (begin (set! completion-range (cons start end))
+                         (when (and candidates (not (prepared? completion-source new-s new-pos)))
+                           (set-candidates! values)))
+                  (dismiss-completions!)))
+            (unless (string=? new-s input) (dismiss-completions!)))))
     (define (show-completions! values)
       (if (equal? values candidates)
           (set! page (mod (+ page 1) (max 1 pages)))
-          (begin (set! candidates values) (set! candidate-width 0) (set! page 0)))
+          (set-candidates! values))
       (take-view!))
     (define (page-rows width available)
       (cond [body
@@ -443,7 +505,8 @@
             [(not candidates) '()]
             [else
              (unless (= width candidate-width)
-               (set! candidate-rows (format-columns candidates width labeler highlight?))
+               (set! candidate-rows
+                 (format-columns candidates width (if completion-source (lambda (s) s) labeler) highlight?))
                (set! candidate-width width))
              (let* ([all (vector-length candidate-rows)] [size (max 1 available)])
                (set! pages (max 1 (div (+ all size -1) size)))
@@ -531,20 +594,22 @@
                    (or (not (memq target (head:windows)))
                        (not (eq? (head:window-buffer target) view))))
           (dismiss-completions!))
-        (invalidate-input! s)
+        (invalidate-input! s pos)
         (set! input s) (set! position pos) (set! note next-note)
         (when draft (set-box! draft (cons s pos)))
         (if (window-lost?) #f
             (let ()
               (define len (string-length s))
-              (define (edited new-s new-pos)
+              (define (edited new-s new-pos . completed)
                 (set! hist-pos -1)
                 (clear-validation!)
-                (let ([reindent (prompt-reindent)])
-                  (if reindent
-                      (let ([result (guard (ex [else (cons new-s new-pos)]) (reindent new-s new-pos))])
-                        (loop (car result) (cdr result) ""))
-                      (loop new-s new-pos ""))))
+                (let* ([reindent (prompt-reindent)]
+                       [result (if reindent
+                                   (guard (ex [else (cons new-s new-pos)]) (reindent new-s new-pos))
+                                   (cons new-s new-pos))])
+                  (when (pair? completed)
+                    (set! prepared (list (car completed) (car result) (cdr result))))
+                  (loop (car result) (cdr result) "")))
               (define (history-show entry) (clear-validation!) (loop entry (string-length entry) ""))
               (define (history-up)
                 (let ([h (if history (unbox history) '())])
@@ -566,16 +631,47 @@
                   (loop s (min (max 0 (- k (string-length label))) len) note)))
               (define (complete-input completer)
                 (set! hist-pos -1)
-                (let ([values (completer s)])
-                  (cond [(null? values) (dismiss-completions!) (loop s pos " [No match]")]
-                        [(null? (cdr values))
-                         (dismiss-completions!)
-                         (if (string=? (car values) s) (loop s len " [Sole completion]")
-                             (edited (car values) (string-length (car values))))]
+                (if (completer? completer)
+                    (let-values ([(start end options values) ((completer-lookup completer) s pos)])
+                      (cond
+                        [(not start) (dismiss-completions!) (loop s pos " [No symbol]")]
                         [else
-                         (let ([prefix (string:common-prefix values)])
-                           (if (> (string-length prefix) len) (edited prefix (string-length prefix))
-                               (begin (show-completions! values) (loop s pos ""))))])))
+                         (set! completion-source completer) (set! completion-range (cons start end))
+                         (cond
+                           [(null? values)
+                            (when candidates (set-candidates! values))
+                            (loop s pos " [No match]")]
+                           [(prepared? completer s pos)
+                            (if (null? (cdr completion-options))
+                                (begin (show-completions! completion-matches) (loop s pos ""))
+                                (begin
+                                  (set! option-index (mod (+ option-index 1) (length completion-options)))
+                                  (set-candidates! completion-matches) (take-view!)
+                                  (let ([next (replace-completion s (list-ref completion-options option-index))])
+                                    (edited (car next) (cdr next) completer))))]
+                           [else
+                            (set! completion-options (if (procedure? options) (options) options)) (set! option-index 0)
+                            (set! completion-matches values)
+                            (when candidates (set-candidates! values))
+                            (let ([next (replace-completion s (car completion-options))])
+                              (if (string=? (car next) s)
+                                  (begin
+                                    (set! prepared (list completer s (cdr next)))
+                                    (loop s (cdr next) (if candidates ""
+                                                           (format " [~a matches; Tab to list]" (length values)))))
+                                  (edited (car next) (cdr next) completer)))])]))
+                    (begin
+                      (when completion-source (dismiss-completions!))
+                      (let ([values (completer s)])
+                        (cond [(null? values) (dismiss-completions!) (loop s pos " [No match]")]
+                          [(null? (cdr values))
+                           (dismiss-completions!)
+                           (if (string=? (car values) s) (loop s len " [Sole completion]")
+                             (edited (car values) (string-length (car values))))]
+                          [else
+                           (let ([prefix (string:common-prefix values)])
+                             (if (> (string-length prefix) len) (edited prefix (string-length prefix))
+                               (begin (show-completions! values) (loop s pos ""))))])))))
               (if in-window? (render!) (render-echo!))
               (paint:redraw!)
               (let* ([event (head:read-key-event #t)]
@@ -587,9 +683,11 @@
                   [clicked
                    (let ([change clicked])
                      (set! clicked #f)
+                     (when completion-source (dismiss-completions!))
                      (if (string=? (car change) s) (loop s (cdr change) "")
                          (edited (car change) (cdr change))))]
-                  [(and body (member event '("PAGEUP" "PAGEDOWN" "S-TAB")))
+                  [(or (and (or body candidates) (member event '("PAGEUP" "PAGEDOWN")))
+                       (and body (string=? event "S-TAB")))
                    (set! page (mod (+ page (if (member event '("PAGEUP" "S-TAB")) -1 1)) pages))
                    (loop s pos "")]
                   [(and body (content-view-handle body) ((content-view-handle body) event))

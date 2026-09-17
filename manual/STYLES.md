@@ -5,6 +5,11 @@ Modes assign those names to text; `style:set!` controls how a terminal displays
 each name. Put overrides in `config.e` so they are reapplied at startup and
 after module reloads.
 
+Modes and other styled views may use a list of face names for one character's
+style-vector entry. For example, `(editor mark)` applies the current `editor`
+face followed by the `mark` underline. Faces resolve in order when painted,
+so their theme variants and `style:set!` overrides remain effective.
+
 ## Style expressions
 
 The preferred form is a quoted list of attributes and color clauses:

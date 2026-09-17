@@ -40,6 +40,12 @@
        (style:set-changed-hook! #f)
        (style:color-scheme! #f))
 
+     (parameterize ([kernel:registering-module 'style-test])
+       (style:set! 'editor '((foreground red)))
+       (check 'layered-faces-keep-semantic-overrides
+         (style:code '(editor mark)) "\x1b;[31m\x1b;[4m")
+       (kernel:retract-module! 'style-test))
+
      (check 'surface-sgr-values-are-parameters-only
        (map style:code '("" "31" "4:3;38:2::1:2:3" "31mBAD" "\x1b;[31" "31\n"))
        (list "\x1b;[m" "\x1b;[31m" "\x1b;[4:3;38:2::1:2:3m"

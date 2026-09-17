@@ -104,8 +104,9 @@ the window temporarily, then returns to the outer prompt and its input.
 
 ## Completion
 
-Tab extends input to the longest common prefix. When an ambiguous prefix
-cannot be extended, Tab shows `<completions>` in the currently focused window
+Ordinary prompts use prefix completion. Tab extends input to the longest
+common prefix. When an ambiguous prefix cannot be extended, Tab shows
+`<completions>` in the currently focused window
 or, for a window prompt, candidates above its input. Repeated Tab cycles
 through pages when the list is taller than the available space. Clicking a
 candidate fills the input without opening it or moving focus away from the
@@ -113,6 +114,11 @@ prompt. Hover makes the candidate label bold with a dotted underline without
 changing the input; column padding remains clickable without being underlined.
 Finishing or dismissing the list restores the borrowed window's
 buffer, point and viewport; completion does not change the split layout.
+
+[M-x](EVAL.md) uses fuzzy symbol completion: the first Tab normalizes the token
+while preserving its matches, and the second opens the list. Further typing
+keeps that list up to date. Further Tab presses cycle distinct normalizations,
+or page when there is only one. PageUp/PageDown and the mouse wheel also page.
 
 Completion candidates use a shared semantic style:
 
@@ -166,7 +172,31 @@ Presentation can be customized with `paint:prompt-styler`, `paint:completion-sty
 and `prompt:reindent`.
 
 `prompt:completion-label` maps a full candidate to its displayed label;
-the default preserves the value. `prompt:validate` is `#f` or a procedure
+the default preserves the value. A normal completion procedure receives the
+input and returns a list of full replacement strings, using prefix completion.
+For normalization and live filtering, pass `(prompt:make-completer lookup)`
+as the completion or alternate-completion argument. `lookup` receives the input
+and cursor index and returns four values: the start and exclusive end of the
+token, its proposed expansions, and a list of candidate replacement strings.
+Expansions are a nonempty list or a zero-argument procedure returning that list.
+The procedure runs only when Tab starts a new normalization; live filtering
+and subsequent cycling do not call it. All expansions must preserve the same
+match set. Their order and the candidate order stay fixed while Tab cycles; editing starts a
+new cycle. Duplicate expansions should be removed by the source.
+Return `#f` as the start when there is no completable token. String candidates
+are displayed as supplied and styled with `prompt:completion-highlight`.
+For richer presentation, return `(prompt:make-candidate value label styles)`
+in place of a string: `value` is the replacement string, `label` is the displayed
+text, and `styles` is a vector with one face per label character. Labels clip
+at whole glyphs; generated ellipses and padding stay plain. Clicking any part
+of a candidate inserts only its value. Candidates replace only the token
+interval; `prompt:completion-label` applies to ordinary completion procedures.
+The caller owns matching and expansion; the prompt owns
+normalization and cycling, live refresh within the same token, pagination,
+and placing the cursor after a replacement. Lookup must have no command
+effects, because editing may call it repeatedly.
+
+`prompt:validate` is `#f` or a procedure
 called on normalized input when Enter is pressed. It returns `#f` to accept
 or a short explanation to keep editing. Returning `(prompt:transient "message")`
 instead shows only an inline `[message]` ghost, cleared after two seconds or

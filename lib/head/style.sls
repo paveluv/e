@@ -213,7 +213,10 @@
           (cons 'candidate-hover (style-escape '(bold (background (rgb 226 235 250)) dotted-underline (underline-color 248))))))
 
   (define (style-code style)
-    (or (style-override style)
+    ;; Layer semantic faces without copying their colors into another face:
+    ;; (editor mark), for example, keeps the current editor color and underlines.
+    (if (list? style) (apply string-append (map style-code style))
+      (or (style-override style)
         ;; Surfaces carry SGR parameters as values, without allocating a
         ;; face in this head's registry. Only parameter bytes can enter CSI.
         (and (string? style)
@@ -222,7 +225,7 @@
              (format "\x1b;[~am" style))
         (let ([hit (or (and (eq? current-color-scheme 'light) (assq style light-styles))
                        (assq style default-styles))])
-          (if hit (cdr hit) (cdar default-styles)))))
+          (if hit (cdr hit) (cdar default-styles))))))
   ;;; Styles vectors --------------------------------------------------------------
 
   (define (fill-range! v from to face)

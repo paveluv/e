@@ -28,7 +28,7 @@ Highlights:
   them and edit simultaneously. Work can resume after an SSH disconnect,
   much like with tmux.
 - **Scheme evaluation.** `M-x` evaluates Scheme in the editor's context, with
-  structural multiline input, semantic completion, parameter hints, history,
+  structural multiline input, fuzzy symbol completion, parameter hints, history,
   and captured output (evaluation results, stdout, and stderr are captured
   separately).
 - **Apps.** Besides normal editing buffers, there are app buffers. They

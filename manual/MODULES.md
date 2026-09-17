@@ -243,8 +243,8 @@ must synchronize subsequent mutations of the box's contents themselves.
 ## Public API conventions
 
 The published API contains commands, read-only state, editing primitives, and
-extension registries. `M-x (` followed by Shift+Tab lists the current top-level
-catalog; `C-h f` describes documented values.
+extension registries. At the initial `M-x (` prompt, press Shift-Tab twice to
+list the current editor-defined symbols; `C-h f` describes documented values.
 
 Naming distinguishes interaction:
 

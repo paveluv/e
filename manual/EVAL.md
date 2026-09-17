@@ -27,7 +27,9 @@ the history and log.
 
 While the prompt is active:
 
-- `TAB` completes symbols from the interaction environment.
+- `TAB` fuzzily completes the symbol at the cursor from the interaction environment,
+  including symbols in nested expressions. The first press normalizes the input;
+  the second shows matches and cycles any alternative normalizations.
 - `Shift-TAB` completes only symbols published by e and its modules.
 - e-specific completion candidates use the editor highlight.
 - Unknown or partial symbols are italic, standard Scheme symbols are plain,
@@ -47,6 +49,62 @@ While the prompt is active:
 - `M-.` describes the symbol at or immediately before the prompt cursor
   without closing the prompt.
 - `C-g` cancels the prompt. During evaluation it interrupts running code.
+
+Symbol completion matches contiguous segments beginning at the start of a
+symbol or immediately after `-` or `:`. Segments may appear in a different
+order: `splitright` and `rightsplit` both find `split-window-right!`. Each
+character occurrence can be used only once, so `xx` requires two `x` characters.
+Matching is case-sensitive; other punctuation, including `_`, does not create
+a boundary. Longer intact segments, fewer reorderings, and matches nearer the
+beginning rank first.
+
+Typed `-` and `:` stay inside literal segments, just like letters. Thus
+`split-w` matches `split-window!`, but `s-w` and `w-s` do not abbreviate it.
+You can omit separators when typing prefixes: `spwir` finds
+`split-window-right!` as `sp` + `wi` + `r`. Reordering still works with
+punctuation when the literal pieces exist: `window-split` can match
+`split-window-right!` as `window-` + `split`.
+
+Tab chooses a longest extension that the original query can match and that
+still matches every candidate. This preserves exactly the same match set,
+including its boundary constraints. For example, `splitwindow` and
+`windowsplit` normalize to `split-window` when both split commands remain.
+Adding `!` would lose `split-window-right!`, so it is not inserted yet. Typing
+`r` and pressing Tab then produces `split-window-right!`, including the `!`.
+The same rule applies to separators: `ker:` cannot abbreviate the literal
+prefix `kernel:`. Tab cannot add a colon after `ker` merely because all
+matches contain one.
+
+When complete names are longest extensions, Tab cycles those names in their
+original ranking. Otherwise, it offers at most one longest spelling in each
+candidate's character order, removing duplicates. If no such spelling exists,
+it keeps one valid extension rather than cycling arbitrary permutations.
+Typing or moving the cursor starts a new completion cycle.
+
+The result can be a complete symbol even when longer candidates remain.
+Enter evaluates the input as usual; to
+refine it instead, keep typing and press Tab again. Completion leaves the cursor
+at the end of the symbol, without appending a space or changing its arguments.
+Strings, comments and character literals are left alone. A fuzzy query need
+not itself be valid Scheme: `2foo` can find `foo-2`.
+
+Once the list is open, typing and deleting refresh it immediately. Tab normalizes
+the edited symbol; another Tab resumes cycling. When there is just one
+normalization, repeated Tab pages through the list. PageUp/PageDown and the
+mouse wheel also page, including when Tab is cycling alternatives. Clicking a
+candidate fills that symbol and closes the list. Leaving the symbol or cancelling M-x also returns
+the borrowed window. No match leaves your input intact.
+
+The completion list underlines the character occurrences used by the matcher.
+For now, a diagnostic suffix such as `[2 segments]` shows how many contiguous
+pieces it matched between the query and that symbol. Every matched character,
+including punctuation, belongs to a segment; an empty query has zero.
+These are the alignment's segments, not a minimum edit distance. The matcher
+tries longer leading segments first and backtracks when that choice cannot
+complete the match.
+The underlines and counts describe the query that produced the displayed
+ranking, retained while Tab normalizes and cycles. Editing refreshes them.
+The suffix is display-only: clicking anywhere in the label inserts just the symbol.
 
 Bracketed multiline paste keeps its line breaks and runs the same Scheme
 indenter over the resulting expression. This makes copied definitions and

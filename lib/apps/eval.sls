@@ -25,55 +25,73 @@
           (prefix (mode) mode:)
           (prefix (kernel) kernel:)
           (prefix (string) string:)
+          (prefix (fuzzy) fuzzy:)
+          (prefix (style) style:)
           (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
           (prefix (only (reference) lookup) reference:)
           (prefix (doc) doc:)
           (only (edit) regions-of region-text)
-          (prefix (only (scheme-format) indent-lines) scheme-format:)
+          (prefix (only (scheme-format) indent-lines delimiter?) scheme-format:)
           (prefix (only (sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
 
   ;;; Symbol completion -------------------------------------------------------
 
-  (define (symbol-start s)
-    (let loop ([i (- (string-length s) 1)])
-      (cond [(< i 0) 0]
-            [(memv (string-ref s i)
-                   '(#\space #\newline #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,))
-             (+ i 1)]
-            [else (loop (- i 1))])))
+  (define (symbol-range s pos)
+    ;; The query itself need not read as Scheme (2foo can find foo-2). Replace
+    ;; its raw token with an identifier, then let Scheme's lexer decide whether
+    ;; that slot is code rather than a string/comment. No expression is evaluated.
+    (define (delimiter? c)
+      (or (scheme-format:delimiter? c) (memv c '(#\` #\,))))
+    (guard (ex [else #f])
+      (let* ([start (let back ([i pos])
+                      (if (and (> i 0) (not (delimiter? (string-ref s (- i 1)))))
+                          (back (- i 1)) i))]
+             [end (let forward ([i pos])
+                    (if (and (< i (string-length s)) (not (delimiter? (string-ref s i))))
+                        (forward (+ i 1)) i))]
+             [in (open-input-string
+                   (string-append (substring s 0 start) "x" (string:tail s end)))])
+        (and (not (string:prefix? "#\\" (substring s start end)))
+          (let scan ()
+            (let-values ([(kind value from to) (read-token in)])
+              (cond [(or (eq? kind 'eof) (> from start)) #f]
+                [(> to start)
+                 (and (eq? kind 'atomic) (symbol? value) (= from start) (cons start end))]
+                [else (scan)])))))))
 
-  (define (complete-symbol-where s keep? empty-ok?)
-    ;; Complete the trailing symbol token of s against the bindings of
-    ;; the editor's top level that satisfy keep?.  An empty token
-    ;; completes to everything kept when empty-ok? -- the pop-up pages
-    ;; a list as large as the whole environment.
-    (let* ([start (symbol-start s)]
-           [head (substring s 0 start)]
-           [part (string:tail s start)])
-      (if (and (string=? part "") (not empty-ok?))
-          '()
-          (let ([names (sort string<?
-                             (filter (lambda (name)
-                                       (and (string:prefix? part name)
-                                            (keep? (string->symbol name))))
-                                     (map symbol->string
-                                          (environment-symbols
-                                            (interaction-environment)))))])
-            ;; A unique completion is final: append a space so the next
-            ;; argument can start at once.
-            (if (and (pair? names) (null? (cdr names)))
-                (list (string-append head (car names) " "))
-                (map (lambda (name) (string-append head name)) names))))))
+  (define (completion-candidate match)
+    (let* ([name (fuzzy:name match)] [fragments (fuzzy:fragments match)]
+           ;; Temporary diagnostics while tuning fuzzy discovery. Keep this
+           ;; suffix separate from the candidate value so it cannot be inserted.
+           [label (format "~a [~a segment~a]" name (length fragments)
+                    (if (= (length fragments) 1) "" "s"))]
+           [styles (make-vector (string-length label) 'chrome)]
+           [face (if (editor-symbol? (string->symbol name)) 'editor 'plain)]
+           [matched (list face 'mark)])
+      (style:fill-range! styles 0 (string-length name) face)
+      (for-each
+        (lambda (fragment)
+          (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) matched))
+        fragments)
+      (prompt:make-candidate name label styles)))
 
-  (define (complete-symbol s)
-    (complete-symbol-where s (lambda (sym) #t) #t))
+  (define (symbol-completer keep?)
+    (prompt:make-completer
+      (lambda (s pos)
+        (let ([range (symbol-range s pos)])
+          (if (not range) (values #f #f '() '())
+              (let* ([part (substring s (car range) (cdr range))]
+                     [ranked (fuzzy:rank part
+                               (map symbol->string
+                                 (filter keep? (environment-symbols (interaction-environment)))))]
+                     [names (map fuzzy:name ranked)])
+                (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
+                  (map completion-candidate ranked))))))))
 
-  (define (complete-editor-symbol s)
-    ;; Only the symbols the editor (and its modules) define -- few enough
-    ;; that an empty token usefully lists them all.
-    (complete-symbol-where s editor-symbol? #t))
+  (define complete-symbol (symbol-completer (lambda (sym) #t)))
+  (define complete-editor-symbol (symbol-completer editor-symbol?))
 
   ;;; Signatures ----------------------------------------------------------------
 
@@ -460,14 +478,10 @@
     ;; own top level.  The expression is logged (component eval, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let ([s (parameterize ([prompt:completion-label (lambda (s) (string:tail s (symbol-start s)))]
-                            [prompt:ghost signature-ghost]
+    (let ([s (parameterize ([prompt:ghost signature-ghost]
                             [prompt:multiline indent-scheme-insertion]
                             [prompt:edge-motion mx-edge-motion]
                             [prompt:reindent reindent-scheme-input]
-                            [prompt:completion-highlight
-                             (lambda (label)
-                               (editor-symbol? (string->symbol label)))]
                             [paint:echo-highlight mx-echo-styles])
                (prompt:read! "M-x " complete-symbol "("
                              (box (log:history 'eval car))

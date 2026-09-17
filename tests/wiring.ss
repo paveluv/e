@@ -35,9 +35,13 @@
      (putenv "SHELL" "/bin/sh")
      (putenv "TZ" "UTC") ; deterministic clock display in the buffer table
      (define mirror (vt:make-emulator 24 100))
+     ;; Even this in-process runtime restores sessions. Keep it away from
+     ;; the installation's saved state, just like the process fixtures.
      (define process
-       (sys:spawn-terminal-process "/bin/sh" "exec scheme-script tests/wiring.ss --head --name 'wired head λ'"
-                                   (current-directory) 24 100))
+       (sys:spawn-terminal-process "/bin/sh"
+         (format "exec scheme-script tests/wiring.ss --head --name 'wired head λ' --base-working-dir ~a"
+           (fixture:quote-shell (format "~a-base-~a" probe (random 1000000000))))
+         (current-directory) 24 100))
      (define drain! (fixture:terminal-reader process (lambda (text) (vt:emulator-feed! mirror text))))
      (define exited? #f)
      (define (pump! ms)
@@ -883,7 +887,9 @@
      ;; The filter is never completed: Tab moves the row like Down.
      (files-filter! "small/") (press! "\x1b;[C") (files-settle!)
      (let ([inside (files-location)])
-       (files-filter! "ne")
+       ;; Establish the empty filter's selection before typing. Sending C-u
+       ;; and ne together races the directory worker's initial inventory.
+       (files-filter! "") (press! "ne") (files-settle!)
        ;; The empty filter's default row, nested/, still matches and stays chosen.
        (let ([before (read-editor '(string:prefix? "nested/" (buffer-line (current-buffer) (car (point)))))])
          (press! "\t") (files-settle!)
@@ -2340,9 +2346,9 @@
      (read-editor '(begin (store:delete! '(agent rival) (store:find-named "rival-log")) #t))
 
      ;; completions borrow the prompt's target window -- no pop-ups:
-     ;; TAB on an ambiguous M-x prefix shows <completions> where the
-     ;; buffer was; the prompt's end hands the window back intact
-     (send! "\x1b;xblame\t")            ; first TAB extends to "blame:"
+     ;; The second TAB on an ambiguous M-x query shows <completions>
+     ;; where the buffer was; the prompt's end hands the window back intact.
+     (send! "\x1b;xblame\t")            ; first TAB normalizes without dropping matches
      (pump! 400)
      (send! "\t")                       ; second TAB lists the candidates
      (pump! 900)
@@ -2351,7 +2357,7 @@
        (or (screen-has? 21 needle) (screen-has? 22 needle)))
      (check 'completions-borrow-the-target-window
             (list (status-has? "<completions>")
-                  (screen-has? 0 "blame:at-point!"))
+                  (visible? "blame:at-point! [1 segment]"))
             '(#t #t))
      (send! "\x7;")                     ; C-g: the prompt ends
      (pump! 600)

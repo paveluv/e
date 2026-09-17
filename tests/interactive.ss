@@ -95,6 +95,9 @@
        (vector-ref (vector-ref (vt:emulator-styles mirror) (car cell))
                    (cdr cell)))
 
+     (define (underlined-at? cell offset)
+       (contains? (format ";~a;" (style-at (cons (car cell) (+ (cdr cell) offset)))) ";4;"))
+
      ;; -- start the editor and open a nested terminal ---------------------
      (wait-for! 'editor-starts
                 (lambda () (find-cell "*scratch*")) 30000)
@@ -320,29 +323,142 @@
      (send! "\x18;0")                   ; C-x 0: back to one window
      (settle! 500)
 
-     ;; -- completions borrow the window and give it back ------------------
-     ;; M-x, a partial name, TAB: the <completions> view takes the window
-     ;; and lists the candidates; C-g hands the window's buffer back.  A
-     ;; second prompt creates its own view.
-     (send! "\x1b;x")                   ; M-x
-     (settle! 500)
-     (send! "split-w\t\t")
+     ;; -- fuzzy completions normalize, then stay live in the borrowed view --
+     ;; A colon must extend a literal subword, not terminate its abbreviation.
+     (send! "\x1b;xker\t")
+     (wait-for! 'normalization-does-not-terminate-an-abbreviated-subword
+       (lambda () (and (find-cell "M-x (ker") (not (find-cell "M-x (ker:")))) 5000)
+     (send! "n\t")
+     (wait-for! 'typing-can-refine-the-unnormalized-subword
+       (lambda () (find-cell "M-x (kernel:")) 5000)
+     (send! "\x7;")
+     (send! "\x1b;[<35;80;24M\x1b;xwindowsplit\t")
+     (wait-for! 'first-tab-normalizes-without-choosing
+       (lambda () (and (find-cell "M-x (split-window")
+                       (not (find-cell "<completions>")))) 5000)
+     (send! "\t")
      (wait-for! 'completions-take-the-window
                 (lambda () (and (find-cell "<completions>")
-                                (find-cell "split-window!")))
+                                (find-cell "split-window! [2 segments]")
+                                (find-cell "split-window-right! [2 segments]")))
                 5000)
+     ;; Underlines explain the original windowsplit query, not the normalized
+     ;; text inserted by Tab. Added punctuation, diagnostics and padding stay plain.
+     (let ([cell (find-cell "split-window! [2 segments]")])
+       (check 'completion-underlines-the-ranked-alignment
+         (equal? (map (lambda (i) (underlined-at? cell i)) (iota 27))
+           (append '(#t #t #t #t #t #f #t #t #t #t #t #t) (make-list 15 #f)))))
+     (send! "r")
+     (wait-for! 'typing-narrows-the-visible-list-at-boundaries
+       (lambda () (and (find-cell "M-x (split-windowr")
+                       (find-cell "<completions>")
+                       (contains? (car (screen-lines)) "split-window-right!")
+                       (not (find-cell "paint:scroll-window!"))
+                       (not (contains? (car (screen-lines)) "split-window!")))) 5000)
+     (send! "\t")
+     (wait-for! 'tab-renormalizes-the-refined-symbol
+       (lambda () (find-cell "M-x (split-window-right!")) 5000)
+     (send! "z")
+     (wait-for! 'empty-results-keep-the-view-open
+       (lambda () (and (find-cell "<completions>") (find-cell "0 matches"))) 5000)
+     (send! "\x7f;")
+     (wait-for! 'backspace-restores-the-live-results
+       (lambda () (contains? (car (screen-lines)) "split-window-right!")) 5000)
+     ;; Even clicking the diagnostic suffix inserts only the candidate value.
+     (let* ([cell (find-cell "split-window-right!")] [x (+ (cdr cell) 22)] [y (+ (car cell) 1)])
+       (send! (format "\x1b;[<0;~a;~aM\x1b;[<0;~a;~am" x y x y)))
+     (wait-for! 'click-fills-the-symbol-and-releases-the-list
+       (lambda () (and (not (find-cell "<completions>"))
+                       (find-cell "M-x (split-window-right!")
+                       (not (find-cell " segment")))) 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back
                 (lambda () (and (not (find-cell "<completions>"))
                                 (find-cell "*terminal*")))
                 5000)
-     (send! "\x1b;x")
-     (settle! 500)
-     (send! "split-w\t\t")
-     (wait-for! 'completions-view-opens-again
-                (lambda () (find-cell "split-window!")) 5000)
+
+     ;; Completing a sole candidate includes punctuation and remains executable.
+     (send! "\x1b;xspwir\t\r")
+     (wait-for! 'normalized-full-match-can-run
+       (lambda () (and (find-cell "0▏") (find-cell "1▏"))) 5000)
+     (send! "\x18;0")
+     (wait-for! 'close-the-test-split
+       (lambda () (not (and (find-cell "0▏") (find-cell "1▏")))) 5000)
+
+     ;; Subword prefixes may reorder. Complete a nested operator
+     ;; from inside its token, retaining arguments; Enter can run this full
+     ;; candidate even though longer string-append names remain in the set.
+     (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))
+     (wait-for! 'completion-replaces-only-the-token-at-point
+       (lambda () (find-cell "M-x (list (string-append \"a\" \"b\"))")) 5000)
+     (send! "\r")
+     (wait-for! 'completed-expression-keeps-its-arguments
+       (lambda () (find-cell "=> (\"ab\")")) 5000)
+
+     ;; Distinct longest refinements share a completion set. Tab cycles their
+     ;; original order, and further typing can select a full name.
+     (send! "\x1b;xbegin (define (completion-cycle:ab-c) 'abc) (define (completion-cycle:ac-b) 'bca) (define (completion-cycle:2abc) 'numeric-filter) 'cycle-ready)\r")
+     (wait-for! 'cycle-commands-are-defined (lambda () (find-cell "=> cycle-ready")) 5000)
+     (send! "\x1b;xcompletioncyclea")
+     (for-each
+       (lambda (name)
+         (send! "\t")
+         (wait-for! (list 'tab-cycles-safe-extensions name)
+           (lambda () (find-cell (string-append "M-x (completion-cycle:" name))) 5000))
+       '("ab" "ac" "ab" "ac"))
+     (send! "b\t\r")
+     (wait-for! 'cycled-name-can-run (lambda () (find-cell "=> bca")) 5000)
+     (send! "\x1b;x2acompletioncycle\t\r")
+     (wait-for! 'query-can-start-with-a-digit (lambda () (find-cell "=> numeric-filter")) 5000)
+
+     ;; Lookup refreshes on edits and Tabs, but expensive normalization is
+     ;; needed only once per query. A tiny source checks that boundary directly.
+     (send!
+       (format "\x1b;xlet ([calls 0]) (list (prompt:read! ~s (prompt:make-completer ~s) ~s) calls))\r"
+         "Deferred "
+         '(lambda (s pos)
+            (values 0 (string-length s)
+              (lambda () (set! calls (+ calls 1)) (list s)) '("aa" "ab"))) ""))
+     (wait-for! 'deferred-completer-starts (lambda () (find-cell "Deferred ")) 5000)
+     (send! "\t\ta\t\t\r")
+     (wait-for! 'live-filter-and-cycling-do-not-repeat-normalization
+       (lambda () (find-cell "=> (\"a\" 2)")) 5000)
+
+     ;; A sole contiguous match retains its label and count as we delete a
+     ;; character. Its underlines still need to refresh without a text change.
+     (send! "\x1b;[<35;80;24M\x1b;xcompletion-cycle:2abc\t\t")
+     (wait-for! 'exact-completion-underlines-every-character
+       (lambda ()
+         (let ([cell (find-cell "completion-cycle:2abc [1 segment]")])
+           (and cell (underlined-at? cell 20)))) 5000)
+     (send! "\x7f;")
+     (wait-for! 'underlining-refreshes-with-unchanged-labels
+       (lambda ()
+         (let ([cell (find-cell "completion-cycle:2abc [1 segment]")])
+           (and cell (underlined-at? cell 19) (not (underlined-at? cell 20))))) 5000)
      (send! "\x7;")
-     (settle! 500)
+
+     (for-each
+       (lambda (literal)
+         (send! (string-append "\x1b;xlist " literal "\t"))
+         (wait-for! (list 'completion-leaves-literal-alone literal)
+           (lambda () (and (find-cell literal) (find-cell "[No symbol]"))) 5000)
+         (send! "\x7;"))
+       '("\"windowsplit" "; windowsplit" "#| windowsplit" "#\\space"))
+
+     ;; Empty-query paging and the alternate source use the same protocol.
+     (send! "\x1b;x\t\t")
+     (wait-for! 'empty-query-lists-the-environment
+       (lambda () (and (find-cell "<completions>") (find-cell "1/"))) 5000)
+     (let ([first (car (screen-lines))])
+       (send! "\t")
+       (wait-for! 'repeated-tab-pages-the-results
+         (lambda () (and (find-cell "2/") (not (string=? first (car (screen-lines)))))) 5000))
+     (send! "\x7;\x1b;xwindowsplit\x1b;[Z\x1b;[Z")
+     (wait-for! 'shift-tab-uses-editor-symbols
+       (lambda () (and (find-cell "M-x (split-window")
+                       (find-cell "<completions>") (find-cell "split-window-right!"))) 5000)
+     (send! "\x7;")
 
      ;; -- M3 exit: a private source and its rendered local companion ------
      (send! "\x8;fmarkdown:view!\r") ; C-h f, then the documented name
