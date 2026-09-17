@@ -163,7 +163,7 @@
      (let* ([process
              (sys:spawn-terminal-process
                "/bin/sh"
-               "trap 'printf resized=; stty size; exit 0' WINCH; echo ready; while :; do sleep 1; done"
+               "trap 'printf resized=; stty size; exit 0' WINCH; echo ready; while :; do sleep 0.05; done"
                (current-directory) 5 20)]
             [input (transcoded-port
                      (sys:terminal-process-input process)

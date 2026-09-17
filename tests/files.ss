@@ -1,0 +1,219 @@
+#!/usr/bin/env scheme-script
+
+;; The <files> app as a table over a real directory tree: recursive name
+;; filters and literal path filters, collapsed and expanded match groups,
+;; navigation that preserves each directory's choice, hidden and linked
+;; entries, sorting, opening, and identity through kill and reload. Headless:
+;; the scan worker publishes to the view, which is refreshed while waiting.
+;; Run from the repository root.
+
+(import (chezscheme))
+
+(include "tests/roots.ss")
+(test-roots! 'base)
+
+(eval
+  '(begin
+     (import (except (edit) init!) (prefix (head) head:) (prefix (kernel) kernel:) (prefix (keymap) keymap:)
+             (prefix (string) string:) (prefix (test) test:))
+
+     (define check test:check)
+     ;; Load through the kernel so the reload below replaces the real module.
+     ;; Fresh procedures resolve through the top level after that reload.
+     (kernel:load-module! "file-view")
+     (define (open! . directory) (apply (top-level-value 'file-view:open!) directory))
+     (define (show-hidden) ((top-level-value 'file-view:show-hidden)))
+
+     (define root (format "/tmp/e-files-~a-~a" (get-process-id) (random 1000000)))
+     (define (path name) (string-append root "/" name))
+     (define names '("apple.txt" "APPLE.txt" "zeta.txt" "a 日本語 long (name).txt" "odd\nname.txt" ".dot"
+                     "small/needle-one.txt" "small/nested/needle-only.txt"
+                     "large/needle-a.txt" "large/needle-b.txt" "large/needle-c.txt"))
+     (define directories '("empty" "large" "small" "small/nested" "small/.日本語\n" "small/.日本語\n/leaf"))
+     (mkdir root)
+     (for-each (lambda (name) (mkdir (path name))) directories)
+     (for-each (lambda (name)
+                 (call-with-output-file (path name)
+                   (lambda (p) (display (if (string=? name "zeta.txt") "z\n" "one\ntwo\n") p)))) names)
+
+     (define (view) (head:find-tool-buffer "*files*"))
+     (define (lines) (vector->list (head:buffer-lines (view))))
+     (define (visible? needle)
+       (exists (lambda (line) (and (string:search line needle 0 (string-length line)) #t)) (lines)))
+     (define (settle!)
+       ;; The scan worker publishes complete snapshots; refreshing the shown
+       ;; view collects them until its directory label stops searching.
+       (test:await 'scan-settles
+         (lambda ()
+           (head:refresh-visible-views!)
+           (or (not (memq (view) (map head:window-buffer (head:windows))))
+               (not (visible? "Searching…"))))))
+     (define (press! . events)
+       ;; Each key sees a settled scan, as a user's next key would.
+       (for-each (lambda (event) (head:dispatch-app-event! event) (settle!)) events))
+     (define (type! text) (for-each (lambda (c) (head:dispatch-app-event! (string c))) (string->list text)) (settle!))
+     (define (filter! text) (press! "C-u") (type! text))
+     (define (files-open! . directory)
+       ((top-level-value 'file-view:expansion-limit) 2)
+       (apply open! directory)
+       (settle!))
+     (define (labels)
+       (map (lambda (line)
+              (substring line 0 (or (string:search line "  " 0 (string-length line)) (string-length line))))
+         (list-tail (lines) 3)))
+     (define (location)
+       (list (head:buffer-fact (view) 'directory #f) (head:buffer-fact (view) 'file-filter #f)))
+     (define (chosen-is? prefix) (string:prefix? prefix (buffer-line (current-buffer) (car (point)))))
+     (define (group-count name)
+       (let ([line (find (lambda (s) (string:prefix? name s)) (lines))])
+         (and line (substring line (- (string-length line) 3) (string-length line)))))
+     (define (sequence proc items)
+       ;; map does not promise effect order; event sequences do.
+       (reverse (fold-left (lambda (acc item) (cons (proc item) acc)) '() items)))
+
+     (files-open! root)
+     (check 'files-list-has-only-subdirectories-and-files-with-a-full-directory-path
+       (list (list-head (labels) 4) (cadr (lines))
+             (and (member "odd\\xA;name.txt" (labels)) #t) (and (member ".dot" (labels)) #t)
+             (head:buffer-store-id (view)) (head:app-cursor-visible-in? (selected-window))
+             (head:buffer-selectable? (view))
+             (eq? (keymap:binding "C-x C-f") (top-level-value 'file-view:open!)))
+       (list '("empty/" "large/" "small/" "a 日本語 long (name).txt") (string-append "Directory: " root "/")
+             #t #f #f #f #f #t))
+     (press! "DOWN" "DOWN") (type! "ONly") ; begin on small/, whose descendant will match
+     (check 'files-single-recursive-match-is-the-default
+       (list (visible? "small/nested/needle-") (chosen-is? "small/nested/needle-only.txt")) '(#t #t))
+     (press! "RET")
+     (define visited
+       (begin (goto-point! '(1 . 1)) (insert-text! "!")
+              (list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer)))))
+     (files-open! root) (filter! "only") (press! "RET")
+     (check 'files-reopening-reuses-unsaved-buffer-and-window-point
+       (list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer))) visited)
+
+     ;; A filter names entries unless it contains a slash: a directory whose
+     ;; name matches does not claim its contents, while its path does.
+     (files-open! root) (filter! "small")
+     (define named (list (visible? "small/") (visible? "small/needle-one.txt") (group-count "small/")))
+     (filter! "small/")
+     (check 'files-name-filters-match-entries-and-slash-filters-match-paths
+       (list named (visible? "small/needle-one.txt") (group-count "small/"))
+       '((#t #f "  0") #f "  3"))
+     (files-open! root) (filter! "needle")
+     (check 'files-groups-remain-stable-through-filter-changes
+       (list (and (member "large/" (labels)) #t) (and (member "large/needle-a.txt" (labels)) #t)
+             (and (member "small/needle-one.txt" (labels)) #t) (group-count "large/")
+             ;; Inspect the handler's immediate rendering before another
+             ;; refresh can collect worker results: erase/refill and column
+             ;; shifts on each keystroke would show here.
+             (let ([header (list-ref (lines) 2)])
+               (define (sample event)
+                 (head:dispatch-app-event! event)
+                 (let ([lines (lines)])
+                   (define (has? name) (exists (lambda (s) (string:prefix? name s)) lines))
+                   (list (for-all has? '("large/" "small/" "small/needle-one.txt" "small/nested/needle-only.txt"))
+                         (has? "empty/") (equal? header (list-ref lines 2)))))
+               (let ([narrow (sample "-")]) (list narrow (sample "BACKSPACE")))))
+       '(#t #f #t "  3" ((#t #f #t) (#t #f #t))))
+     (settle!)
+     ;; Right enters the chosen directory with the filter; Left returns with
+     ;; it selected, and each directory recalls its own choice.
+     (press! "HOME" "RIGHT" "DOWN")     ; into large/, then beyond its default row
+     (check 'files-drilldown-and-return-preserve-filter-and-each-directorys-choice
+       (cons (location)
+         (sequence (lambda (step) (press! (car step)) (list (location) (chosen-is? (cadr step))))
+           '(("LEFT" "large/") ("RIGHT" "needle-b.txt") ("LEFT" "large/"))))
+       (list (list (path "large") "needle")
+         (list (list root "needle") #t) (list (list (path "large") "needle") #t) (list (list root "needle") #t)))
+     ;; The filter is never completed: Tab moves the row like Down. The
+     ;; empty filter's default row, nested/, still matches and stays chosen.
+     (filter! "small/") (press! "RIGHT")
+     (define inside (location))
+     (filter! "") (type! "ne")
+     (define before-tab (chosen-is? "nested/"))
+     (press! "TAB")
+     (check 'files-entering-a-typed-directory-path-keeps-the-filter-and-tab-moves-the-row
+       (list inside before-tab (location) (chosen-is? "needle-one.txt"))
+       (list (list (path "small") "small/") #t (list (path "small") "ne") #t))
+     (files-open! root) (filter! "small/.日本語") (press! "DOWN")
+     (define shown (location))
+     (define escaped (visible? "small/.日本語\\xA;/"))
+     (press! "RET")
+     (check 'files-filter-shows-a-safe-label-for-a-hidden-control-character-path-and-enters-it
+       (list shown escaped (location))
+       (list (list root "small/.日本語") #t (list (path "small/.日本語\n") "small/.日本語")))
+     (unless (zero? ((foreign-procedure "symlink" (string string) int) (path "small/nested") (path "linked")))
+       (error 'files "cannot create directory-link fixture"))
+     (files-open! root) (filter! "linked/needle")
+     (define route (labels))
+     (press! "RIGHT")
+     (define inside-link (location))
+     (filter! "needle-only.txt") (press! "RET")
+     (check 'files-typed-link-path-remains-navigable-without-recursively-following-links
+       (list route inside-link (head:buffer-file (current-buffer)))
+       (list '("linked@/") (list (path "linked") "linked/needle") (path "small/nested/needle-only.txt")))
+     (delete-file (path "linked"))
+     (files-open! (path "small/nested"))
+     (check 'files-left-right-retraces-three-levels-with-the-return-child-selected
+       (sequence (lambda (step) (press! (car step)) (list (car (location)) (chosen-is? (cadr step))))
+         `(("LEFT" "nested/") ("LEFT" "small/") ("LEFT" ,(string-append (string:tail root 5) "/"))
+           ("RIGHT" "small/") ("RIGHT" "nested/") ("RIGHT" "needle-only.txt")))
+       (map (lambda (directory) (list directory #t))
+         (list (path "small") root "/tmp" root (path "small") (path "small/nested"))))
+     (files-open! (path "small/.日本語\n/leaf"))
+     (press! "LEFT")                    ; into the hidden directory, leaf/ selected
+     (check 'files-return-navigation-reveals-a-hidden-child-and-recalls-its-selection
+       (sequence (lambda (step) (press! (car step)) (list (car (location)) (show-hidden) (chosen-is? (cadr step))))
+         '(("LEFT" ".日本語\\xA;/") ("RIGHT" "leaf/")))
+       (list (list (path "small") #t #t) (list (path "small/.日本語\n") #t #t)))
+     (press! "M-.")                     ; hide dot entries again
+     (files-open! root) (filter! "no-such-match") (press! "RET")
+     (check 'files-empty-filter-result-does-not-navigate
+       (list (visible? "No matching files") (car (location))) (list #t root))
+
+     ;; Sort keys cycle ascending, descending and off, renumbering the rest;
+     ;; sizes compare as bytes within the file group.
+     (filter! "apple") (press! "F2" "F1")
+     (define keys (head:buffer-fact (view) 'file-sorts #f))
+     (press! "F2")
+     (define descending (visible? "Size¹↓"))
+     (press! "F2")
+     (check 'files-sort-keys-cycle-and-renumber
+       (list keys descending (visible? "Name¹↑") (head:buffer-fact (view) 'file-sorts #f))
+       '(((1 . #f) (0 . #f)) #t #t ((0 . #f))))
+     (filter! "txt") (press! "F1" "F1" "F2") ; disable Name, enable Size ascending
+     (check 'files-size-sorting-uses-bytes-within-the-file-group
+       (find (lambda (name) (string:suffix? ".txt" name)) (labels)) "zeta.txt")
+     (filter! "") (press! "M-.")
+     (check 'files-hidden-toggle-reveals-dot-entries (and (member ".dot" (labels)) #t) #t)
+     (press! "M-.")
+     (check 'files-mark-command-cannot-enable-selection
+       (begin (guard (ex [else #f]) (set-mark-command!)) (head:buffer-marked (view))) #f)
+     (filter! "日本語") (press! "RET")
+     (check 'files-unicode-filter-opens-the-complete-path
+       (head:buffer-file (current-buffer)) (path "a 日本語 long (name).txt"))
+
+     ;; Identity: a killed view's scan is rejected by its recreation, and a
+     ;; real reload replaces the worker's owner while restoring the app state.
+     (files-open! root)
+     (head:dispatch-app-event! "n")
+     (kill-buffer! (current-buffer))
+     (files-open! (path "empty"))
+     (check 'files-kill-and-recreate-rejects-the-old-scan
+       (list (car (location)) (car (lines)) (head:app-buffer? (view))) (list (path "empty") "Filter: " #t))
+     (define same-view
+       (let ([before (current-buffer)])
+         (head:dispatch-app-event! "n") (head:dispatch-app-event! "M-.")
+         (kernel:reload-module! "file-view")
+         (eq? before (current-buffer))))
+     (settle!)
+     (check 'files-reload-replaces-worker-ownership-and-restores-app-state
+       (list same-view (visible? "No matching files") (car (location)) (car (lines))
+             (head:app-buffer? (view)) (show-hidden))
+       (list #t #t (path "empty") "Filter: n" #t #t))
+
+     (kill-buffer! (view))
+     (for-each (lambda (name) (delete-file (path name))) names)
+     (for-each (lambda (name) (delete-directory (path name))) (reverse directories))
+     (delete-directory root)
+     (test:finish! 'files)))

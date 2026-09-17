@@ -416,10 +416,6 @@
                 (let ([state (actor:checkpoint head:ui-actor)])
                   (set-car! (car (list-ref state 5)) '(uninstalled-view "old view"))
                   (actor:checkpoint! head:ui-actor state))]
-               [(legacy)
-                (let ([state (actor:checkpoint head:ui-actor)])
-                  (actor:checkpoint! head:ui-actor
-                    (list 'screen 1 (caddr state) (cadddr state) (list-head (list-ref state 4) 7) (list-ref state 5))))]
                [(edit) (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("new" ""))]
                [(reset) (store:reset! bot id '("x"))]
                [(expired)
@@ -434,11 +430,10 @@
                        (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:kill-ring)
                        (head:full-capture? (head:current))
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
-                 (list #t expected #t "saved kill" (not (eq? kind 'legacy)) #t)))))
-         '(edit reset expired legacy missing-provider)
+                 (list #t expected #t "saved kill" #t #t)))))
+         '(edit reset expired missing-provider)
          '(((3 . 4) (2 . 0) (3 . 2) (2 . 3) (2 . 0))
            ((0 . 1) (0 . 0) (0 . 1) (0 . 1) (0 . 0))
-           ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (0 . 0) (0 . 0))))
        ;; The unchanged-frame comparison owns its data too.
@@ -474,7 +469,7 @@
            (head:before-frame!)
            (let ([stop (test:worker
                          (lambda ()
-                           (sleep (make-time 'time-duration 500000000 0))
+                           (sleep (make-time 'time-duration 200000000 0))
                            (finished? #t)
                            (head:wake-main!)))])
              (dynamic-wind

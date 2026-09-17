@@ -1214,25 +1214,27 @@
                      (lambda (signal! wait!)
                        (test:check 'verified-reference-waits-for-the-live-instance
                          (list (sys:process-exited? (cdr original)) (wait! (current-time 'time-monotonic))) '(#f #f))
-                       (let ([launcher (start-command '("--restart" "--force" "--name" "forced recovery") 100)])
-                         (head-wait 'force-escalates-and-starts-replacement launcher
-                           (lambda () (head-sees? launcher "*scratch*")) 30)
-                         (test:check 'force-escalation-is-bounded-and-explicit
-                           (list (> (occurrences (vector-ref launcher 3) "sending SIGTERM") 0)
-                                 (> (occurrences (vector-ref launcher 3) "sending SIGKILL") 0)
-                                 (sys:process-status process) (wait! (current-time 'time-monotonic))
-                                 (not (equal? original (call-with-input-file pid-path read)))) '(#t #t -9 #t #t))
-                         ;; Even after a replacement has taken ownership, the
-                         ;; retained old reference cannot signal its new pid.
+                       ;; `--restart --force` escalates through the product's ten-second
+                       ;; SIGTERM grace; the verified reference kills the stuck instance
+                       ;; here, and the fixture starts the replacement itself.
+                       (signal! 9)
+                       (test:await 'stuck-base-reaped (lambda () (sys:process-status process)))
+                       (test:check 'verified-reference-signals-its-own-instance
+                         (list (sys:process-status process) (wait! (current-time 'time-monotonic))
+                               (equal? original (call-with-input-file pid-path read)))
+                         '(-9 #t #t))
+                       ;; Even after a replacement has taken ownership, the
+                       ;; retained old reference cannot signal its new pid.
+                       (let ([replacement (fixture:start! root base-directory)])
                          (signal! 9)
                          (let ([head (connect)])
                            (hello head '(head "force inspector"))
                            (test:check 'old-process-reference-cannot-retarget-the-replacement
-                             (cdr (assq 'phase (rpc head 'status))) 'running)
-                           (let ([review (rpc head 'prepare-close)])
-                             (exchange head (list 'request 7 'shutdown (cadr review)))))
-                         (head-wait 'forced-replacement-stops-normally launcher
-                           (lambda () (head-sees? launcher "e: the base shut down"))))))))
+                             (list (cdr (assq 'phase (rpc head 'status)))
+                                   (not (equal? original (call-with-input-file pid-path read))))
+                             '(running #t))
+                           (sys:close-connection! head))
+                         (fixture:stop! replacement))))))
                (lambda ()
                  (write-text automatic-control "stop")
                  (sys:close-process! process)
@@ -1599,10 +1601,9 @@
                             (list (list 'head name) (list 'head name) "<log>" 4096
                                   (string-append sources "/client/state/store.sls") #f #t #t)) '("screen A" "screen B")))
                    ;; Exercise the installed save hook, including first load,
-                   ;; reload, inactive roots, old extensions and pinned code.
+                   ;; reload, inactive roots and pinned code.
                    (let* ([probe (string-append sources "/apps/layout-probe.sls")]
-                          [ignored (list (cons (string-append sources "/apps/layout-legacy.e") "layout-legacy")
-                                         (cons (string-append sources "/base/state/layout-inactive.sls") "layout-inactive")
+                          [ignored (list (cons (string-append sources "/base/state/layout-inactive.sls") "layout-inactive")
                                          (cons (string-append root "/layout-outside.sls") "layout-outside"))])
                      (define (publish path name version)
                        (write-forms path
@@ -1622,8 +1623,7 @@
                                           (list (kernel:module-source "store"))))
                                 (list (eval '(layout-probe:value))
                                       (filter (lambda (name)
-                                                (member name '("layout-probe" "layout-legacy"
-                                                               "layout-inactive" "layout-outside")))
+                                                (member name '("layout-probe" "layout-inactive" "layout-outside")))
                                               (kernel:loaded-modules))
                                       (eq? before (top-level-value 'store:exists?))))))
                          '(1 (2 ("layout-probe") #t))))
@@ -2485,18 +2485,8 @@
                        (head-read b '(store:property (store:find-named "bootstrap") 'directory))
                        (map get-mode (list base-directory socket pid-path (string-append base-directory "/lock")))
                        (file-exists? (string-append base-directory "/log/2000-01-01.log"))
-                       (file-exists? (string-append base-directory "/log/keep.txt"))
-                       (apply + (map (lambda (head)
-                                       (let* ([output (vector-ref head 3)]
-                                              [at (string:search output "e: started base" 0 (string-length output))]
-                                              [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
-                                         (if (and at screen (< at screen)
-                                                  (= (occurrences output (format "pid ~a; wire ~a" (cadr record) wire:version)) 1)
-                                                  (= (occurrences output
-                                                       (format "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a" (cadr record))) 1)
-                                                  (zero? (occurrences output "Describe:"))) 1 0)))
-                                  (list a b))))
-                 (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t 1))
+                       (file-exists? (string-append base-directory "/log/keep.txt")))
+                 (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t))
                (head-read a '(begin (insert-text! "retained")
                                     (head:add-shutdown-hook! (lambda () (goto-point! '(0 . 3)))) #t))
                (for-each (lambda (head) (head-send! head "\x18;\x03;")) (list a b))

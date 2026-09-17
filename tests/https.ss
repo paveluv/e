@@ -285,7 +285,9 @@
                (error 'https-test "native descriptors changed" before after))))
          (let ([completed (run (make-engine thunk) 1000000)])
            (observe! completed)
-           (do ([fuel 1 (+ fuel 1)]) ((> fuel 1500))
+           ;; Sample interruption points across the whole request; every
+           ;; tick would multiply the fixture's connections without new phases.
+           (do ([fuel 1 (+ fuel 5)]) ((> fuel 1500))
              (observe! (run (make-engine thunk) fuel)))
            (let ([expired? (not (null? held))])
              (for-each (lambda (engine) (observe! (run engine 1000000))) held)
@@ -367,12 +369,15 @@
        (check 'local-fixture-releases-resources (list (test:child-pids) (test:fd-count)) before))
 
      ;; -- the TLS connector, against live hosts ------------------------
+     ;; Live hosts need a network and dominate this suite's time: opt in
+     ;; with E_TESTS_NETWORK=1 when the TLS reject paths matter.
 
      (define network
-       (guard (ex [else #f]) (https:get "https://example.com/")))
+       (and (getenv "E_TESTS_NETWORK")
+            (guard (ex [else #f]) (https:get "https://example.com/"))))
 
      (if (not network)
-         (display "TLS skipped: no network\n")
+         (display "TLS skipped: set E_TESTS_NETWORK=1 to check live hosts\n")
          (for-each
            (lambda (backend)
              (parameterize ([https:backend backend])

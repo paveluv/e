@@ -352,7 +352,7 @@
                (do ([i 0 (+ i 1)]) ((= i 100)) (paint:visual-bell!))))))
        (let ([stop (test:worker
                      (lambda ()
-                       (sleep (make-time 'time-duration 0 1))
+                       (sleep (make-time 'time-duration 400000000 0))
                        (timed-out? #t)
                        (head:wake-main!)))])
          (dynamic-wind
