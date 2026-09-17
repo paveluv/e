@@ -109,7 +109,7 @@
           (guard (ex [else (sys:close-connection! next) (raise ex)])
             (let ([hello
                    (sys:call-with-connection-deadline next
-                     (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
+                     (sys:after 10)
                      (lambda ()
                        (wire:send! (sys:connection-output next) (list 'hello wire:version actor fingerprint))
                        (wire:receive (sys:connection-input next))))])
@@ -132,7 +132,7 @@
                  (set! pump-thread (get-thread-id))
                  (set! reader (fork-thread receive!))
                  (let ([notice (sys:call-with-connection-deadline next
-                                 (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))
+                                 (sys:after 10)
                                  (lambda ()
                                    (let ([notice (request 'startup-notice)])
                                      (daemon:report-start! (lambda () (request 'status)))

@@ -150,8 +150,7 @@
   ;; without tearing. A deadline bounds the hold in case the application
   ;; dies mid-frame.
   (define (start-synchronized-update! state)
-    (terminal-state-sync-deadline-set! state
-      (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 1))))
+    (terminal-state-sync-deadline-set! state (sys:after 1)))
 
   (define (synchronized-update-pending? state)
     (and (memv 2026 (terminal-state-extra-modes state))

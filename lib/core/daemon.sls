@@ -112,8 +112,7 @@
                     (if (eof-object? line) (string:join (reverse lines) "\n")
                         (read-tail (cons line (if (>= (length lines) 20) (list-head lines 19) lines))))))))))))
 
-  (define (after seconds)
-    (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 seconds)))
+  (define (after seconds) (sys:after seconds))
 
   (define (shell-quote text)
     (string-append "'" (apply string-append
@@ -307,8 +306,8 @@
   (define (attach-or-start thunk)
     (let* ([directory (startup:base-working-directory)] [child #f]
            [started (current-time 'time-monotonic)]
-           [deadline (add-duration started (make-time 'time-duration 0 120))]
-           [notice-at (add-duration started (make-time 'time-duration 0 2))] [noticed? #f])
+           [deadline (add-duration started (sys:duration 120))]
+           [notice-at (add-duration started (sys:duration 2))] [noticed? #f])
       ;; A foreign/unsafe existing directory is a hard error, even when its
       ;; socket answers. Only absent/refused endpoints permit a spawn.
       (sys:ensure-private-directory! directory)

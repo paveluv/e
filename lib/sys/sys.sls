@@ -29,8 +29,24 @@
           spawn-terminal-process terminal-process?
           terminal-process-input terminal-process-output
           terminal-process-pid resize-terminal-process!
-          close-terminal-process! reap-terminal-process!)
+          close-terminal-process! reap-terminal-process!
+          time-scale duration after)
   (import (chezscheme) (prefix (activity) activity:))
+
+  ;; Waits the editor imposes on itself -- connection deadlines, quiescence
+  ;; before a stop, a synchronized-output hold -- are seconds multiplied by
+  ;; E_TIME_SCALE, so a test installation shortens them without touching the
+  ;; product's numbers. Unset or invalid text means 1.
+  (define time-scale
+    (let ([text (getenv "E_TIME_SCALE")])
+      (or (and text (let ([n (string->number text)])
+                      (and (real? n) (positive? n) (exact->inexact n))))
+          1.0)))
+  (define (duration seconds)
+    (let* ([total (* seconds time-scale)] [whole (exact (floor total))])
+      (make-time 'time-duration (exact (round (* (- total whole) 1000000000))) whole)))
+  (define (after seconds)
+    (add-duration (current-time 'time-monotonic) (duration seconds)))
 
   (define os
     ;; From the machine type's suffix: ...osx is macOS, ...fb is FreeBSD,
@@ -857,7 +873,7 @@
 
   (define connect-local
     (case-lambda
-      [(path) (connect-local path (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10)))]
+      [(path) (connect-local path (after 10))]
       [(path deadline)
        (or (try-connect-local path deadline) (error 'connect-local "no base is listening" path))]))
 
@@ -903,8 +919,10 @@
            (let ([n ((foreign-procedure "recv" (int u8* uptr int) iptr)
                      (connection-fd connection) (make-bytevector 1) 1
                      (logor 2 (os-case #x40 #x80 #x80)))]) ; MSG_PEEK | MSG_DONTWAIT
+             ;; No data yet (EAGAIN) or a signal during the peek (EINTR) is
+             ;; still a live peer; only EOF or a real error is not.
              (or (> n 0)
-                 (and (< n 0) (= (foreign-ref 'int (c-errno) 0) (os-case 11 35 35))))))))
+                 (and (< n 0) (memv (foreign-ref 'int (c-errno) 0) (list (os-case 11 35 35) 4)) #t))))))
 
   (define (close-local-listener! listener)
     (with-mutex (local-listener-lock listener)

@@ -14,8 +14,10 @@
 (test-roots! 'base)
 
 ;; The nested terminal must run a predictable shell. The base spawns the
-;; terminal children, so it must inherit this before it starts.
+;; terminal children, so it must inherit this before it starts; the head
+;; inherits the evaluation-mail switch the same way.
 (putenv "SHELL" "/bin/sh")
+(putenv "E_TEST_EVAL" "1")
 
 (define interactive-scenario
   '(begin
@@ -89,6 +91,10 @@
      ;; frame output too.
      (wait-for! 'editor-starts
                 (lambda () (find-cell "*scratch*")) 30000)
+     ;; Evaluation mail reads the head's state without typing into M-x.
+     (define evaluator
+       (fixture:evaluator (current-directory) (fixture:directory test-base) '(agent "evaluator")))
+     (define (evaluate expression) (fixture:evaluate evaluator '(head "interactive") expression))
      (define resize-question
        "This pending question expands to the new terminal width before another key.")
      (define asker (sys:connect-local (string-append (fixture:directory test-base) "/socket")))
@@ -210,24 +216,16 @@
      (wait-for! 'describe-opens-a-rendered-page (lambda () (find-cell "<describe>")) 5000)
      ;; The page opens beside the requesting window, whose short viewport may
      ;; scroll the header away: read the rendered companion itself.
-     (send!
-       (format "\x1b;xlist ~s (quote describe-source-check)\r"
-               '(let* ([page (reference:page head:ui-actor)] [id (car page)]
-                       [source (head:buffer-of-store-id id)] [view (markdown:companion source)])
-                  (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
-                    (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
-                    (head:buffer-read-only source) (not (head:buffer-store-id view))
-                    (eq? source (head:buffer-fact view 'markdown-input #f))
-                    (exists (lambda (line) (string:prefix? "procedure: (markdown:view!" line))
-                      (vector->list (head:buffer-lines view)))))))
-     (wait-for! 'describe-source-is-shared-and-private-to-the-requester
-                (lambda ()
-                  ;; M-x can wrap its result across terminal rows.
-                  (contains?
-                    (list->string
-                      (filter (lambda (c) (not (memv c '(#\space #\\))))
-                              (string->list (apply string-append (screen-lines)))))
-                    "(#tdescribe-source-check)")) 5000)
+     (check 'describe-source-is-shared-and-private-to-the-requester
+       (evaluate
+         '(let* ([page (reference:page head:ui-actor)] [id (car page)]
+                 [source (head:buffer-of-store-id id)] [view (markdown:companion source)])
+            (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
+              (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
+              (head:buffer-read-only source) (not (head:buffer-store-id view))
+              (eq? source (head:buffer-fact view 'markdown-input #f))
+              (exists (lambda (line) (string:prefix? "procedure: (markdown:view!" line))
+                (vector->list (head:buffer-lines view)))))))
 
      (send! "\x18;\x3;")                ; C-x C-c
      (test:await 'editor-exits drain!)

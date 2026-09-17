@@ -105,7 +105,7 @@
           app-cursor-visible?-set! app-status-position
           app-status-position-set! make-app app?)
   (import (rnrs) (rnrs r5rs)
-          (only (chezscheme) keyboard-interrupt-handler
+          (only (chezscheme) keyboard-interrupt-handler getenv eval interaction-environment open-input-string
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
                 make-time add-duration
@@ -2534,6 +2534,27 @@
 
   ;;; The seat as an actor -----------------------------------------------------------
 
+  ;; Under E_TEST_EVAL another actor may drive this head through mail: an
+  ;; (evaluate token text) payload evaluates text at the top level on the main
+  ;; thread -- the environment M-x sees -- and answers the sender with
+  ;; (evaluated token printed) or (evaluated token error text). Like a key,
+  ;; the evaluation is followed by a frame and a checkpoint, so what it showed
+  ;; is what a resumed screen restores. Tests use it instead of typing into
+  ;; the prompt; it is off unless the variable is set.
+  (define evaluation-mail? (and (getenv "E_TEST_EVAL") #t))
+  (define (deliver-evaluation-mail! message)
+    (when (and evaluation-mail? (list? message) (= (length message) 3) (eq? (car message) 'message))
+      (let ([from (cadr message)] [payload (caddr message)])
+        (when (and (list? payload) (= (length payload) 3) (eq? (car payload) 'evaluate)
+                   (string? (caddr payload)))
+          (run-on-main!
+            (lambda ()
+              (let ([reply (guard (ex [else (list 'evaluated (cadr payload) 'error (kernel:condition-text ex))])
+                             (let ([value (eval (read (open-input-string (caddr payload))) (interaction-environment))])
+                               (list 'evaluated (cadr payload) (format "~s" value))))])
+                (guard (ex [else (void)]) (frame!) (checkpoint!))
+                (actor:send! from reply))))))))
+
   ;; another actor's message to this head wakes its loop; the question
   ;; is presented before the next frame
   (define ui-actor
@@ -2554,7 +2575,8 @@
               (kernel:call-with-registration-update
                 (lambda ()
                   (let ([identity (actor:register! (list 'head name)
-                                    (lambda (message) (wake-main!)) 'all)])
+                                    (lambda (message) (deliver-evaluation-mail! message) (wake-main!))
+                                    'all)])
                     (let-values ([(token take!) (store:watch! wake-main!)])
                       (set! take-store-changes! take!))
                     ;; Surface events are wakeups. The head prepares current

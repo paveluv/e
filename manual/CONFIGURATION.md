@@ -135,6 +135,20 @@ See [Key binding configuration](KEY_BINDING.md), [Styles](STYLES.md),
 [Formatting](FORMATTING.md), and [Buffers](BUFFERS.md) for the relevant APIs
 and precedence rules.
 
+## Developer settings
+
+Two environment variables exist for the test suite and are read at startup by
+every process of an installation, so set them where the base is started.
+`E_TIME_SCALE` multiplies the waits the editor imposes on itself: connection
+and maintenance deadlines, quiescence before a stop, the synchronized-output
+hold of a terminal. A test installation runs with `E_TIME_SCALE=0.2`; unset
+or invalid text means the product's own numbers. `E_TEST_EVAL=1` makes a head
+accept evaluation mail: another actor's `(evaluate token text)` message
+evaluates the text at the head's top level, on its main thread, and the head
+answers `(evaluated token printed)` or `(evaluated token error text)`. Tests
+drive a live head this way instead of typing into `M-x`; leave it unset for
+ordinary sessions.
+
 ## Self-contained installations
 
 Each checkout keeps `config.e`, `base-config.e`, `lib/`, `data/` and compiled

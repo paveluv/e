@@ -338,7 +338,7 @@
     (let ([review (current-review peer token operation)])
       (dynamic-wind void
         (lambda ()
-          (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+          (activity:pause! (sys:after 2))
           (if (and (for-all (lambda (p) (memq p (review-heads review)))
                      (with-mutex peer-lock (participating-heads)))
                    (for-all (lambda (owner) (member owner (review-terminals review))) (vt:running))
@@ -691,13 +691,13 @@
                            (lifecycle-review-set! lifecycle-state #f))
                          (daemon:call-with-stop
                            (lambda ()
-                             (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+                             (activity:pause! (sys:after 2))
                              (save-and-stop!)))
                          (set! reason 'signal))]
                       [else (loop)]))))
           (lambda ()
             (let ([active (with-mutex peer-lock (set! stopping? #t) peers)]
-                  [deadline (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 1))])
+                  [deadline (sys:after 1)])
               (sys:close-local-listener! listener)
               (for-each (lambda (peer) ((peer-finish! peer) reason)) active)
               (with-mutex peer-lock
