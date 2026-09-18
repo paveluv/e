@@ -26,18 +26,33 @@
   (define (control? c)
     (let ([n (char->integer c)]) (or (< n 32) (<= 127 n 159))))
 
+  (define (plain? text)
+    ;; Printable ASCII: one cell per character, and nothing extends a cluster.
+    (let ([n (string-length text)])
+      (let loop ([i 0])
+        (or (fx= i n)
+            (and (let ([c (char->integer (string-ref text i))]) (and (fx>= c 32) (fx< c 127)))
+                 (loop (fx+ i 1)))))))
+
   (define (cells text)
-    (fold-left (lambda (n cluster) (+ n (cdr cluster))) 0 (clusters text)))
+    (if (plain? text) (string-length text)
+        (fold-left (lambda (n cluster) (+ n (cdr cluster))) 0 (clusters text))))
 
   (define (fit text width . side)
     ;; Fit a label to exactly width terminal cells, padding on the right.
     ;; Truncate whole clusters, with an ellipsis on the right by default
     ;; or on the left to retain a path's informative tail.
     (let* ([left? (and (pair? side) (eq? (car side) 'left))]
-           [parts (clusters text)]
-           [size (fold-left (lambda (n part) (+ n (cdr part))) 0 parts)])
+           [plain (plain? text)]
+           [parts (if plain '() (clusters text))]
+           [size (if plain (string-length text) (fold-left (lambda (n part) (+ n (cdr part))) 0 parts))])
       (cond [(<= width 0) ""]
             [(<= size width) (string-append text (make-string (- width size) #\space))]
+            [plain
+             ;; One cell per character: width - 1 of them stay beside the ellipsis.
+             (if left?
+                 (string-append "…" (substring text (- size (- width 1)) size))
+                 (string-append (substring text 0 (- width 1)) "…"))]
             [else
              (let keep ([parts (if left? (reverse parts) parts)] [chars 0] [used 0])
                (if (or (null? parts) (> (+ used (cdar parts)) (- width 1)))
@@ -53,8 +68,9 @@
     ;; blank cell, including tabs; an isolated zero-width cluster gets a
     ;; blank anchor. Controls cannot absorb an adjacent combining character.
     (let ([n (string-length text)])
-      (let scan ([start 0] [out '()])
-        (if (= start n) (reverse out)
+      (if (plain? text) (map (lambda (i) '(1 . 1)) (iota n))
+        (let scan ([start 0] [out '()])
+          (if (= start n) (reverse out)
             (let end ([i (+ start 1)]
                       [indicators (if (eq? (char-grapheme-break-property (string-ref text start))
                                            'Regional_Indicator) 1 0)])
@@ -68,4 +84,4 @@
                                               'Regional_Indicator) 1 0)))
                   (scan i (cons (cons (- i start)
                                       (if (control? (string-ref text start)) 1
-                                          (max 1 (width (substring text start i))))) out)))))))))
+                                          (max 1 (width (substring text start i))))) out))))))))))

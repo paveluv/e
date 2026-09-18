@@ -4,178 +4,273 @@
 (library (fuzzy)
   (export matches expansions rank
           (rename (match-name name) (match-score score) (match-fragments fragments)))
-  (import (rnrs))
+  (import (rnrs) (only (chezscheme) make-mutex with-mutex vector-copy iota void))
 
   (define-record-type match (fields name score fragments))
-  ;; Parts are (start . end): each subword includes its trailing ':' or '-'.
-  ;; Every part starts at a boundary, and every character stays in a segment.
-  (define-record-type source (fields name parts counts))
-  (define (separator? c) (memv c '(#\: #\-)))
+  ;; A source is a name prepared once for alignment: the indices where its
+  ;; parts start (the beginning and the position after every ':' or '-'),
+  ;; its characters as sorted code points, and a presence mask over the
+  ;; slots below. Every part starts at a boundary, and every character stays
+  ;; in a segment.
+  (define-record-type source (fields name starts codes mask))
+  (define (separator? c) (or (char=? c #\:) (char=? c #\-)))
 
-  (define (character-counts s)
-    (let ([counts (make-eqv-hashtable)])
-      (string-for-each
-        (lambda (c) (hashtable-set! counts c (+ 1 (hashtable-ref counts c 0)))) s)
-      counts))
+  (define (slot c)
+    ;; One mask bit per common symbol character; everything else shares one.
+    (let ([n (char->integer c)])
+      (cond [(fx<=? 97 n 122) (fx- n 97)]
+            [(fx<=? 48 n 57) (fx+ 26 (fx- n 48))]
+            [else
+             (case c
+               [(#\-) 36] [(#\:) 37] [(#\!) 38] [(#\?) 39] [(#\*) 40] [(#\<) 41] [(#\>) 42]
+               [(#\=) 43] [(#\/) 44] [(#\+) 45] [(#\.) 46] [(#\_) 47] [(#\$) 48] [(#\%) 49]
+               [(#\&) 50] [(#\^) 51] [(#\~) 52] [(#\@) 53] [(#\#) 54] [else 55])])))
 
-  (define (includes-counts? counts required)
-    (for-all
-      (lambda (c) (>= (hashtable-ref counts c 0) (hashtable-ref required c 0)))
-      (vector->list (hashtable-keys required))))
+  (define (build-source text)
+    (let* ([n (string-length text)] [codes (make-vector n 0)])
+      (let scan ([i 0] [mask 0] [starts (if (fx>? n 0) '(0) '())])
+        (if (fx=? i n)
+            (begin
+              (vector-sort! fx<? codes)
+              (make-source text (list->vector (reverse starts)) codes mask))
+            (let ([c (string-ref text i)])
+              (vector-set! codes i (char->integer c))
+              (scan (fx+ i 1)
+                    (fxior mask (fxarithmetic-shift-left 1 (slot c)))
+                    (if (and (separator? c) (fx<? (fx+ i 1) n)) (cons (fx+ i 1) starts) starts)))))))
 
+  (define (part-end source p)
+    (let ([starts (source-starts source)])
+      (if (fx<? (fx+ p 1) (vector-length starts))
+          (vector-ref starts (fx+ p 1))
+          (string-length (source-name source)))))
+
+  ;; Names recur across keystrokes: keep their sources, keyed by the symbol
+  ;; or string a caller passes, within a bound. One lock serializes callers.
+  (define lock (make-mutex))
+  (define by-symbol (make-eq-hashtable))
+  (define by-string (make-hashtable string-hash string=?))
+  (define (text-of name) (if (symbol? name) (symbol->string name) name))
   (define (source-of name)
-    (let ([n (string-length name)])
-      (let scan ([i 0] [start 0] [parts '()])
-        (cond
-          [(= i n)
-           (make-source name
-             (reverse (if (< start n) (cons (cons start n) parts) parts))
-             (character-counts name))]
-          [(separator? (string-ref name i))
-           (scan (+ i 1) (+ i 1)
-             (cons (cons start (+ i 1)) parts))]
-          [else (scan (+ i 1) start parts)]))))
+    (let ([table (if (symbol? name) by-symbol by-string)])
+      (or (hashtable-ref table name #f)
+          (let ([source (build-source (text-of name))])
+            (when (fx>? (hashtable-size table) 16384) (hashtable-clear! table))
+            (hashtable-set! table name source)
+            source))))
 
-  (define (alignment query source)
+  (define (codes-within? part whole)
+    ;; Is the sorted multiset part contained in the sorted multiset whole?
+    (let ([m (vector-length part)] [n (vector-length whole)])
+      (let walk ([i 0] [j 0])
+        (cond [(fx=? i m) #t]
+              [(fx=? j n) #f]
+              [(fx<? (vector-ref whole j) (vector-ref part i)) (walk i (fx+ j 1))]
+              [(fx=? (vector-ref whole j) (vector-ref part i)) (walk (fx+ i 1) (fx+ j 1))]
+              [else #f]))))
+
+  (define (align query source)
+    ;; The query arrives prepared like a source: its mask and sorted codes
+    ;; reject most names here, before anything is allocated for a search.
+    (and (fx<=? (string-length (source-name query)) (string-length (source-name source)))
+         (fxzero? (fxand (source-mask query) (fxnot (source-mask source))))
+         (codes-within? (source-codes query) (source-codes source))
+         (search query source)))
+
+  (define (search query source)
     ;; Match longest leading segments first, then earliest candidate position.
     ;; All characters, including ':' and '-', stay inside these literal runs.
     ;; Backtracking keeps eligibility independent of a greedy choice; the bit
-    ;; mask prevents reuse of any character occurrence.
-    (let* ([name (source-name source)] [n (string-length name)] [m (string-length query)]
-           [failed (make-eqv-hashtable)] [stride (bitwise-arithmetic-shift-left 1 n)])
-      (and (<= m n) (includes-counts? (source-counts source) (character-counts query))
-        (let solve ([at 0] [used 0])
-          (let ([key (+ used (* at stride))])
-            (cond
-              [(= at m) '()]
-              [(hashtable-ref failed key #f) #f]
-              [else
-               (let ([options
-                      (list-sort
-                        (lambda (a b) (if (= (cdr a) (cdr b)) (< (car a) (car b)) (> (cdr a) (cdr b))))
-                        (fold-right
-                          (lambda (part out)
-                            (let* ([start (car part)]
-                                   [size
-                                    (let prefix ([size 0])
-                                      (if (and (< (+ at size) m) (< (+ start size) n)
-                                               (not (bitwise-bit-set? used (+ start size)))
-                                               (char=? (string-ref query (+ at size)) (string-ref name (+ start size))))
-                                          (prefix (+ size 1)) size))])
-                              (if (zero? size) out (cons (cons start size) out))))
-                          '() (source-parts source)))])
-                 (or
-                   (let candidates ([options options])
-                     (and (pair? options)
-                       (let ([start (caar options)])
-                         (or
-                           (let lengths ([size (cdar options)])
-                             (and (> size 0)
-                               (let* ([mask (bitwise-arithmetic-shift-left
-                                              (- (bitwise-arithmetic-shift-left 1 size) 1) start)]
-                                      [tail (solve (+ at size) (bitwise-ior used mask))])
-                                 (if tail
-                                     (cons (list at start size) tail)
-                                     (lengths (- size 1))))))
-                           (candidates (cdr options))))))
-                   (begin (hashtable-set! failed key #t) #f)))]))))))
+    ;; mask prevents reuse of any character occurrence. The failure memo
+    ;; exists only once a choice has to be undone.
+    (let* ([text (source-name query)] [m (string-length text)]
+           [name (source-name source)] [n (string-length name)]
+           [starts (source-starts source)] [parts (vector-length starts)]
+           [failed #f] [stride (bitwise-arithmetic-shift-left 1 n)])
+      (let solve ([at 0] [used 0])
+        (cond
+          [(fx=? at m) '()]
+          [(and failed (hashtable-ref failed (+ used (* at stride)) #f)) #f]
+          [else
+           (let ([count 0] [option-start (make-vector parts 0)] [option-size (make-vector parts 0)])
+             ;; Every part whose run from its start matches, longest run
+             ;; first and earliest start among equals, as the parts come.
+             (do ([p 0 (fx+ p 1)]) ((fx=? p parts))
+                 (let* ([start (vector-ref starts p)]
+                        [size (let prefix ([size 0])
+                                (if (and (fx<? (fx+ at size) m) (fx<? (fx+ start size) n)
+                                         (not (bitwise-bit-set? used (fx+ start size)))
+                                         (char=? (string-ref text (fx+ at size))
+                                                 (string-ref name (fx+ start size))))
+                                    (prefix (fx+ size 1)) size))])
+                   (when (fx>? size 0)
+                     (let insert ([i count])
+                       (if (and (fx>? i 0) (fx<? (vector-ref option-size (fx- i 1)) size))
+                           (begin
+                             (vector-set! option-size i (vector-ref option-size (fx- i 1)))
+                             (vector-set! option-start i (vector-ref option-start (fx- i 1)))
+                             (insert (fx- i 1)))
+                           (begin (vector-set! option-size i size) (vector-set! option-start i start))))
+                     (set! count (fx+ count 1)))))
+             (or (let candidates ([i 0])
+                   (and (fx<? i count)
+                        (let ([start (vector-ref option-start i)])
+                          (or (let lengths ([size (vector-ref option-size i)])
+                                (and (fx>? size 0)
+                                     (let* ([mask (bitwise-arithmetic-shift-left
+                                                    (- (bitwise-arithmetic-shift-left 1 size) 1) start)]
+                                            [tail (solve (fx+ at size) (bitwise-ior used mask))])
+                                       (if tail
+                                           (cons (list at start size) tail)
+                                           (lengths (fx- size 1))))))
+                              (candidates (fx+ i 1))))))
+                 (begin
+                   (unless failed (set! failed (make-eqv-hashtable)))
+                   (hashtable-set! failed (+ used (* at stride)) #t)
+                   #f)))]))))
 
   (define (score fragments size name-size)
+    ;; Fewer segments, fewer reordered pairs, an earlier first character and
+    ;; a tighter span rank ahead; a shorter name breaks the remaining ties.
     (if (null? fragments) (list 0 0 0 0 name-size)
-      (let* ([inversions
-              (let pairs ([xs fragments])
-                (if (null? xs) 0
-                    (+ (length (filter (lambda (b) (> (cadar xs) (cadr b))) (cdr xs)))
-                       (pairs (cdr xs)))))]
-             [prefix (apply min (map cadr fragments))]
-             [end (apply max (map (lambda (f) (+ (cadr f) (caddr f))) fragments))])
-        (list (- (length fragments) 1) inversions prefix (- end prefix size) name-size))))
+        (let loop ([xs fragments] [count 0] [inversions 0] [prefix name-size] [end 0])
+          (if (null? xs)
+              (list (fx- count 1) inversions prefix (fx- (fx- end prefix) size) name-size)
+              (let* ([f (car xs)] [start (cadr f)])
+                (loop (cdr xs) (fx+ count 1)
+                      (fx+ inversions
+                           (let later ([ys (cdr xs)] [k 0])
+                             (if (null? ys) k
+                                 (later (cdr ys) (if (fx>? start (cadr (car ys))) (fx+ k 1) k)))))
+                      (fxmin prefix start) (fxmax end (fx+ start (caddr f)))))))))
 
   (define (score<? a b)
     (cond [(null? a) #f] [(< (car a) (car b)) #t] [(> (car a) (car b)) #f]
           [else (score<? (cdr a) (cdr b))]))
 
   (define (rank query names)
-    (if (string=? query "")
-        (map (lambda (name) (make-match name (list 0 0 0 0 (string-length name)) '()))
-          (list-sort string<? names))
-      (list-sort
-        (lambda (a b)
-          (if (equal? (match-score a) (match-score b))
-            (string<? (match-name a) (match-name b))
-            (score<? (match-score a) (match-score b))))
-        (fold-right
-          (lambda (name out)
-            (let ([fragments (alignment query (source-of name))])
-              (if fragments
-                (cons (make-match name (score fragments (string-length query) (string-length name)) fragments) out)
-                out))) '() names))))
+    ;; Names may be symbols or strings; every match names a string.
+    (with-mutex lock
+      (if (string=? query "")
+          (map (lambda (name) (make-match name (list 0 0 0 0 (string-length name)) '()))
+               (list-sort string<? (map text-of names)))
+          (let ([prepared (build-source query)] [size (string-length query)])
+            (list-sort
+              (lambda (a b)
+                (if (equal? (match-score a) (match-score b))
+                    (string<? (match-name a) (match-name b))
+                    (score<? (match-score a) (match-score b))))
+              ;; Gathered in reverse: the sort below settles every order that
+              ;; matters, and identical names are identical matches.
+              (fold-left
+                (lambda (out name)
+                  (let* ([source (source-of name)] [fragments (align prepared source)])
+                    (if fragments
+                        (cons (make-match (source-name source)
+                                          (score fragments size (string-length (source-name source)))
+                                          fragments)
+                              out)
+                        out)))
+                '() names))))))
 
   (define (matches query names) (map match-name (rank query names)))
 
-  (define (common-counts sources)
-    (let ([counts (hashtable-copy (source-counts (car sources)) #t)])
-      (for-each
-        (lambda (source)
-          (vector-for-each
-            (lambda (c)
-              (hashtable-set! counts c (min (hashtable-ref counts c 0) (hashtable-ref (source-counts source) c 0))))
-            (hashtable-keys counts))) (cdr sources))
-      counts))
+  (define (common-alphabet sources)
+    ;; The distinct characters of the first source, sorted, each with the
+    ;; count every source can spare: the letters any extension may use.
+    (let* ([first (source-codes (car sources))] [n (vector-length first)])
+      (let distinct ([i 0] [codes '()] [counts '()])
+        (if (fx=? i n)
+            (let ([codes (list->vector (reverse codes))] [counts (list->vector (reverse counts))])
+              (for-each (lambda (source) (lower-counts! codes counts (source-codes source))) (cdr sources))
+              (values codes counts))
+            (let ([c (vector-ref first i)])
+              (if (and (pair? codes) (fx=? (car codes) c))
+                  (distinct (fx+ i 1) codes (cons (fx+ (car counts) 1) (cdr counts)))
+                  (distinct (fx+ i 1) (cons c codes) (cons 1 counts))))))))
 
-  (define (walk-extensions query source ordered? counts limit minimum compatible? accept)
+  (define (lower-counts! codes counts whole)
+    ;; Cap each count by the occurrences of its code in the sorted vector whole.
+    (let ([m (vector-length codes)] [n (vector-length whole)])
+      (let walk ([i 0] [j 0] [seen 0])
+        (cond
+          [(fx=? i m) (void)]
+          [(or (fx=? j n) (fx>? (vector-ref whole j) (vector-ref codes i)))
+           (vector-set! counts i (fxmin (vector-ref counts i) seen))
+           (walk (fx+ i 1) j 0)]
+          [(fx=? (vector-ref whole j) (vector-ref codes i)) (walk i (fx+ j 1) (fx+ seen 1))]
+          [else (walk i (fx+ j 1) seen)]))))
+
+  (define (index-of codes c)
+    (let ([code (char->integer c)] [n (vector-length codes)])
+      (let find ([i 0])
+        (cond [(fx=? i n) #f]
+              [(fx=? (vector-ref codes i) code) i]
+              [(fx>? (vector-ref codes i) code) #f]
+              [else (find (fx+ i 1))]))))
+
+  (define (count-of codes counts c)
+    (let ([i (index-of codes c)]) (if i (vector-ref counts i) 0)))
+
+  (define (walk-extensions query source ordered? codes counts limit minimum compatible? accept)
     ;; Every match is a permutation of prefixes of the boundary-starting parts.
     ;; Ordered walks produce readable projections for the Tab cycle. An
     ;; unrestricted walk establishes the maximum length, even when no such
     ;; projection can express it. Prefix rejection prunes every continuation.
+    ;; Parts are indices into the source; the letters left are counted like
+    ;; codes.
     (define name (source-name source))
+    (define (start-of p) (vector-ref (source-starts source) p))
+    (define (end-of p) (part-end source p))
     (define (capacity parts left)
       ;; A missing character blocks the rest of its subword, even if those
       ;; later characters occur elsewhere. Counting that tail as available
       ;; makes the longest-extension proof needlessly enumerate permutations.
       (fold-left
-        (lambda (n part)
-          (+ n (let prefix ([at (car part)])
-                 (if (and (< at (cdr part)) (> (hashtable-ref left (string-ref name at) 0) 0))
-                     (prefix (+ at 1)) (- at (car part)))))) 0 parts))
+        (lambda (n p)
+          (fx+ n (let prefix ([at (start-of p)])
+                   (if (and (fx<? at (end-of p)) (fx>? (count-of codes left (string-ref name at)) 0))
+                       (prefix (fx+ at 1)) (fx- at (start-of p))))))
+        0 parts))
     (define (viable? text parts)
       ;; Extra boundaries make the unused parts a superset of every possible
       ;; continuation. Reject prefixes that cannot retain the original query
       ;; even there, instead of proving this again for every permutation.
-      (alignment query
-        (source-of
+      (align query
+        (build-source
           (fold-right
-            (lambda (part tail) (string-append tail "-" (substring name (car part) (cdr part))))
+            (lambda (p tail) (string-append tail "-" (substring name (start-of p) (end-of p))))
             text parts))))
     (call-with-current-continuation
       (lambda (done)
-        (let walk ([parts (source-parts source)] [text ""] [left counts])
+        (let walk ([parts (iota (vector-length (source-starts source)))] [text ""] [left counts])
           (let ([size (string-length text)])
-            (when (and (>= size (minimum)) (accept text)) (done text))
-            (when (and (< size limit)
-                       (>= (+ size (capacity parts left)) (minimum))
+            (when (and (fx>=? size (minimum)) (accept text)) (done text))
+            (when (and (fx<? size limit)
+                       (fx>=? (fx+ size (capacity parts left)) (minimum))
                        (viable? text parts))
               (let choices ([rest parts] [seen '()])
                 (when (pair? rest)
-                  (let* ([part (car rest)] [start (car part)] [spelling (substring name start (cdr part))]
-                         [remaining (hashtable-copy left #t)]
+                  (let* ([p (car rest)] [start (start-of p)] [stop (end-of p)]
+                         [spelling (substring name start stop)]
+                         [remaining (vector-copy left)]
                          [end
                           (let take ([end start])
-                            (if (and (< end (cdr part)) (< (+ size (- end start)) limit)
-                                     (> (hashtable-ref remaining (string-ref name end) 0) 0))
-                                (begin
-                                  (hashtable-set! remaining (string-ref name end)
-                                    (- (hashtable-ref remaining (string-ref name end) 0) 1))
-                                  (take (+ end 1))) end))])
+                            (if (and (fx<? end stop) (fx<? (fx+ size (fx- end start)) limit)
+                                     (fx>? (count-of codes remaining (string-ref name end)) 0))
+                                (let ([i (index-of codes (string-ref name end))])
+                                  (vector-set! remaining i (fx- (vector-ref remaining i) 1))
+                                  (take (fx+ end 1)))
+                                end))])
                     (unless (member spelling seen)
                       (let lengths ([end end])
-                        (when (> end start)
+                        (when (fx>? end start)
                           (let ([next (string-append text (substring name start end))])
                             (when (compatible? next)
-                              (walk (if ordered? (cdr rest) (remq part parts)) next remaining)))
-                          (let ([c (string-ref name (- end 1))])
-                            (hashtable-set! remaining c (+ (hashtable-ref remaining c 0) 1)))
-                          (lengths (- end 1)))))
+                              (walk (if ordered? (cdr rest) (remq p parts)) next remaining)))
+                          (let ([i (index-of codes (string-ref name (fx- end 1)))])
+                            (vector-set! remaining i (fx+ (vector-ref remaining i) 1)))
+                          (lengths (fx- end 1)))))
                     ;; Identical parts are interchangeable only in unrestricted
                     ;; permutations; ordered projections retain their positions.
                     (choices (cdr rest) (if ordered? seen (cons spelling seen)))))))))
@@ -185,33 +280,46 @@
     ;; A safe extension E satisfies query <= E <= every current match under
     ;; this same relation. Boundary-starting alignments compose, so transitivity
     ;; guarantees that E cannot introduce a name the query did not match.
-    (cond [(null? names) (list query)] [(null? (cdr names)) names]
-      [else
-       (let* ([sources (map source-of names)] [counts (common-counts sources)]
-              [limit (fold-left (lambda (n c) (+ n (hashtable-ref counts c 0))) 0
-                       (vector->list (hashtable-keys counts)))]
-              [known (make-hashtable string-hash string=?)]
-              [best query] [size (string-length query)])
-         (define (compatible? text)
-           (let ([hit (hashtable-ref known text #f)])
-             (if hit (car hit)
-               (let ([yes? (for-all (lambda (source) (and (alignment text source) #t)) sources)])
-                 (hashtable-set! known text (list yes?)) yes?))))
-         (define (refines? text) (alignment query (source-of text)))
-         (when (> limit size)
-           (walk-extensions
-             query
-             (car (list-sort (lambda (a b) (< (string-length (source-name a)) (string-length (source-name b)))) sources))
-             #f counts limit (lambda () (+ size 1)) compatible?
-             (lambda (text)
-               (and (refines? text)
-                 (begin (set! best text) (set! size (string-length text)) (= size limit))))))
-         (let ([whole (filter (lambda (name) (and (= (string-length name) size) (compatible? name))) names)])
-           (if (pair? whole) whole
-             (let ([seen (make-hashtable string-hash string=?)])
-               (let candidates ([sources sources] [out '()])
-                 (if (null? sources) (if (null? out) (list best) (reverse out))
-                   (let ([text (walk-extensions query (car sources) #t counts size (lambda () size) compatible? refines?)])
-                     (if (or (not text) (hashtable-ref seen text #f)) (candidates (cdr sources) out)
-                       (begin (hashtable-set! seen text #t) (candidates (cdr sources) (cons text out)))))))))))]))
+    (with-mutex lock
+      (cond [(null? names) (list query)] [(null? (cdr names)) (list (text-of (car names)))]
+        [else
+         (let*-values ([(sources) (map source-of names)]
+                       [(codes counts) (common-alphabet sources)])
+           (let* ([limit (let sum ([i 0] [n 0])
+                           (if (fx=? i (vector-length counts)) n (sum (fx+ i 1) (fx+ n (vector-ref counts i)))))]
+                  [prepared (build-source query)]
+                  [known (make-hashtable string-hash string=?)]
+                  [best query] [size (string-length query)])
+             (define (compatible? text)
+               (let ([hit (hashtable-ref known text #f)])
+                 (if hit (car hit)
+                     (let* ([candidate (build-source text)]
+                            [yes? (for-all (lambda (source) (and (align candidate source) #t)) sources)])
+                       (hashtable-set! known text (list yes?)) yes?))))
+             (define (refines? text) (align prepared (build-source text)))
+             (when (fx>? limit size)
+               (walk-extensions
+                 prepared
+                 (let shortest ([rest (cdr sources)] [found (car sources)])
+                   (cond [(null? rest) found]
+                         [(fx<? (string-length (source-name (car rest))) (string-length (source-name found)))
+                          (shortest (cdr rest) (car rest))]
+                         [else (shortest (cdr rest) found)]))
+                 #f codes counts limit (lambda () (fx+ size 1)) compatible?
+                 (lambda (text)
+                   (and (refines? text)
+                        (begin (set! best text) (set! size (string-length text)) (fx=? size limit))))))
+             (let ([whole (filter (lambda (source)
+                                    (and (fx=? (string-length (source-name source)) size)
+                                         (compatible? (source-name source))))
+                                  sources)])
+               (if (pair? whole) (map source-name whole)
+                   (let ([seen (make-hashtable string-hash string=?)])
+                     (let candidates ([sources sources] [out '()])
+                       (if (null? sources) (if (null? out) (list best) (reverse out))
+                           (let ([text (walk-extensions prepared (car sources) #t codes counts size
+                                                        (lambda () size) compatible? refines?)])
+                             (if (or (not text) (hashtable-ref seen text #f)) (candidates (cdr sources) out)
+                                 (begin (hashtable-set! seen text #t)
+                                        (candidates (cdr sources) (cons text out))))))))))))])))
 )

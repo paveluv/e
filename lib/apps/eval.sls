@@ -83,9 +83,9 @@
         (let ([range (symbol-range s pos)])
           (if (not range) (values #f #f '() '())
               (let* ([part (substring s (car range) (cdr range))]
-                     [ranked (fuzzy:rank part
-                               (map symbol->string
-                                 (filter keep? (environment-symbols (interaction-environment)))))]
+                     ;; Symbols go in as they are: the matcher keeps each one
+                     ;; prepared across keystrokes.
+                     [ranked (fuzzy:rank part (filter keep? (environment-symbols (interaction-environment))))]
                      [names (map fuzzy:name ranked)])
                 (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
                   (map completion-candidate ranked))))))))
