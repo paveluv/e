@@ -169,7 +169,7 @@ history box, alternate completion and input normalization procedures.
 Presentation can be customized with `paint:prompt-styler`, `paint:completion-styler`,
 `prompt:completion-label`, `prompt:completion-highlight`,
 `prompt:ghost`, `prompt:inspector`, `prompt:multiline`, `prompt:edge-motion`,
-and `prompt:reindent`.
+and `prompt:reindent`. The echo area is a bordered box of at most `paint:echo-box-width` columns (120 by default), centered on the screen; a narrower screen is the whole box. Messages and prompts wrap inside its borders, row by row, with their text at the left border.
 
 `prompt:completion-label` maps a full candidate to its displayed label;
 the default preserves the value. A normal completion procedure receives the

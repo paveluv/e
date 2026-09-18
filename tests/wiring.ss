@@ -72,7 +72,8 @@
          ;; path before callers inspect cells or send the next command.
          (await! 'evaluation-presented
            (lambda ()
-             (not (exists (lambda (line) (string:prefix? "M-x " line))
+             ;; The prompt row is centered, so the label sits mid-line.
+             (not (exists (lambda (line) (string:search line "M-x " 0 (string-length line)))
                     (vector->list (vt:emulator-screen mirror))))))
          result))
 

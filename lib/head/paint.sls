@@ -32,8 +32,8 @@
           window-layout page-size set-buffer-viewports!
           reset-buffer-viewports! view-invalidate! point-visible?
           rows-before scroll-margin view-overflows? scroll-window!
-          echo-indent-now compute-echo-spans echo-position
-          cursor-in-echo echo-highlight prompt-styler
+          echo-indent-now compute-echo-spans echo-position echo-index-at
+          echo-box-width echo-width cursor-in-echo echo-highlight prompt-styler
           completion-styler echo-cursor-now show-message!
           show-prompt-message! echo-append! echo-queue!
           present-echo! echo-log-prefix echo-log-spans
@@ -1144,21 +1144,43 @@
                            ; alternate-screen enter and exit
   (define cursor-style-shown "\x1b;[0 q")   ; DECSCUSR last emitted
 
-  (define (echo-indent-now) (echo:indent-now cols))
+  ;; The echo area is a box of at most echo-box-width columns, borders
+  ;; included, centered on the screen; a narrower screen is the whole box.
+  ;; Every row wraps inside the borders, with its text at the left one.
+  (define echo-box-width
+    (make-parameter 120
+      (lambda (n)
+        (unless (and (integer? n) (exact? n) (>= n 4))
+          (error 'echo-box-width "expected an exact integer of at least 4" n))
+        n)))
+  (define (echo-box-columns) (min cols (echo-box-width)))
+  (define (echo-box-offset) (quotient (- cols (echo-box-columns)) 2))
+  (define (echo-width) (max 1 (- (echo-box-columns) 2)))
+
+  (define (echo-indent-now) (echo:indent-now (echo-width)))
 
   (define (compute-echo-spans content len)
-    (echo:compute-spans content len cols))
+    (echo:compute-spans content len (echo-width)))
+
+  (define (echo-line-lead line)
+    ;; Inner column where visual line `line` of the live content starts.
+    (if (= line 0) 0 (echo-indent-now)))
 
   (define (echo-position k)
-    ;; Visual (line . column) of content index k, per echo-spans.
+    ;; Visual (line . inner column) of content index k, per echo-spans.
     (let loop ([spans (echo:spans)] [line 0])
       (let ([span (car spans)])
         (if (or (null? (cdr spans)) (< k (cdr span))
                 (and (= k (cdr span)) (< k (string-length (echo:text)))
                      (char=? (string-ref (echo:text) k) #\newline)))
-            (cons line (+ (if (= line 0) 0 (echo-indent-now))
-                          (- k (car span))))
+            (cons line (+ (echo-line-lead line) (- k (car span))))
             (loop (cdr spans) (+ line 1))))))
+
+  (define (echo-index-at line column)
+    ;; The content index under inner column `column` of visual line
+    ;; `line`, clamped to that line's span: the inverse of echo-position.
+    (let ([span (list-ref (echo:spans) line)])
+      (max (car span) (min (cdr span) (+ (car span) (- column (echo-line-lead line)))))))
 
   ;; Parameterized on (by eval, around an evaluation), the cursor parks
   ;; at the end of the echo area's content -- and is drawn as a blinking
@@ -1262,10 +1284,24 @@
             (redraw!)))
       (flush-output-port (sys:terminal-output-port))))
 
-  (define (echo-log-prefix e) (echo:log-prefix e cols))
+  (define (echo-log-prefix e) (echo:log-prefix e (echo-width)))
   (define (echo-log-spans prefix-len content)
-    (echo:log-spans prefix-len content cols))
-  (define (echo-log-rows e) (echo:log-rows e cols))
+    (echo:log-spans prefix-len content (echo-width)))
+  (define (echo-log-rows e) (echo:log-rows e (echo-width)))
+
+  (define (echo-frame! draw used wrapped?)
+    ;; Paint one echo row: the margin, the left border, the inner cells
+    ;; that draw emits (used of them), the fill up to a wrap mark or the
+    ;; right border, and the margin after it. The borders are heavy strokes,
+    ;; unlike the light dividers between windows.
+    (let* ([offset (echo-box-offset)] [width (echo-width)])
+      (ansi "\x1b;[0m" (make-string offset #\space) (style:code 'chrome) "┃" "\x1b;[0m")
+      (draw)
+      (ansi "\x1b;[0m"
+        (make-string (max 0 (- width used (if wrapped? 1 0))) #\space)
+        (if wrapped? "\\" "")
+        (style:code 'chrome) "┃" "\x1b;[0m"
+        (make-string (max 0 (- cols offset (echo-box-columns))) #\space))))
 
   (define (display-echo-log-row prefix text styler ghost k span wrapped?)
     ;; One visual row of a transient-log entry: the grey prefix on the
@@ -1274,7 +1310,7 @@
     (let* ([lead (if (= k 0)
                      prefix
                      (make-string (min (string-length prefix)
-                                       (quotient cols 2))
+                                       (quotient (echo-width) 2))
                                   #\space))]
            [start (car span)]
            [end (cdr span)]
@@ -1282,19 +1318,18 @@
            [text-end (min end (string-length text))]
            [ghost-start (max start (string-length text))]
            [content (string-append text ghost)])
-      (ansi "\x1b;[0m" (style:code 'chrome) lead)
-      (when (< start text-end)
-        (if styles
-            (emit-runs text styles start text-end)
-            (ansi "\x1b;[0m" (substring text start text-end))))
-      (when (< ghost-start end)
-        (ansi "\x1b;[0m" (style:code 'ghost)
-          (substring content ghost-start end)))
-      (ansi "\x1b;[0m"
-        (make-string (max 0 (- cols (string-length lead) (- end start)
-                               (if wrapped? 1 0)))
-                     #\space)
-        (if wrapped? "\\" ""))))
+      (echo-frame!
+        (lambda ()
+          (ansi (style:code 'chrome) lead)
+          (when (< start text-end)
+            (if styles
+                (emit-runs text styles start text-end)
+                (ansi "\x1b;[0m" (substring text start text-end))))
+          (when (< ghost-start end)
+            (ansi "\x1b;[0m" (style:code 'ghost)
+              (substring content ghost-start end))))
+        (+ (string-length lead) (- end start))
+        wrapped?)))
 
   (define (paint-echo-area!)
     ;; Paint the pending transient-log lines, then the visible
@@ -1319,7 +1354,7 @@
                 (loop (cdr es) row)
                 (let ([span (car spans)]
                       [wrapped? (pair? (cdr spans))])
-                  (paint! row 0 (list 'echo-log e k span wrapped?)
+                  (paint! row 0 (list 'echo-log e k span wrapped? (echo-box-width) cols)
                     (lambda ()
                       (display-echo-log-row prefix text (caddr e) ghost
                                             k span wrapped?)))
@@ -1327,16 +1362,15 @@
     (when (> (echo:live-height) 0)
       (let* ([content (string-append (echo:text) (echo:ghost))]
              [ghost-at (string-length (echo:text))]
-             [total (length (echo:spans))]
-             [indent (echo-indent-now)])
+             [total (length (echo:spans))])
         (let loop ([line (echo:scroll)] [row (- rows (echo:live-height))])
           (when (< row rows)
             (let* ([span (list-ref (echo:spans) line)]
                    [start (car span)]
                    [end (min (cdr span) (string-length content))]
                    [end (max end start)]
-                   [lead (if (= line 0) 0 indent)]
                    [wrapped? (< line (- total 1))]
+                   [lead (echo-line-lead line)]
                    [cut (min (max (- ghost-at start) 0) (- end start))]
                    ;; a prompt's label -- content up to (echo:indent) on
                    ;; the first visual line -- is painted grey, the
@@ -1347,7 +1381,7 @@
                            0)])
               (paint! row 0
                 (list 'echo line (substring content start end)
-                      cut lead lb wrapped? (and (echo-highlight) #t)
+                      cut lead lb wrapped? (echo-box-width) cols (and (echo-highlight) #t)
                       (and (echo:styles) #t))
                 (lambda ()
                   (let ([styles
@@ -1360,24 +1394,23 @@
                                   (guard (ex [else #f])
                                     ((cdr (echo:styles))
                                      (car (echo:styles))))))])
-                    (ansi (make-string lead #\space))
-                    (when (> lb 0)
-                      (ansi (style:code 'chrome)
-                            (substring content 0 lb) "\x1b;[0m"))
-                    (if styles
-                        ;; styled runs for the typed part
-                        (emit-runs content styles (+ start lb)
-                                   (+ start cut))
-                        (ansi (substring content (+ start lb)
-                                         (+ start cut))))
-                    (ansi "\x1b;[0m" (style:code 'ghost)
-                          (substring content (+ start cut) end)
-                          "\x1b;[0m"
-                          (make-string
-                            (max 0 (- cols lead (- end start)
-                                      (if wrapped? 1 0)))
-                            #\space)
-                          (if wrapped? "\\" ""))))))
+                    (echo-frame!
+                      (lambda ()
+                        (ansi (make-string lead #\space))
+                        (when (> lb 0)
+                          (ansi (style:code 'chrome)
+                                (substring content 0 lb) "\x1b;[0m"))
+                        (if styles
+                            ;; styled runs for the typed part
+                            (emit-runs content styles (+ start lb)
+                                       (+ start cut))
+                            (ansi (substring content (+ start lb)
+                                             (+ start cut))))
+                        (ansi "\x1b;[0m" (style:code 'ghost)
+                              (substring content (+ start cut) end)
+                              "\x1b;[0m"))
+                      (+ lead (- end start))
+                      wrapped?)))))
             (loop (+ line 1) (+ row 1)))))))
 
   (define (echo-cap)
@@ -1492,7 +1525,7 @@
       (if cursor
           (let ([p (echo-position cursor)])
             (goto (+ (- rows (echo:live-height)) (- (car p) (echo:scroll)) 1)
-              (min (+ (cdr p) 1) cols)))
+              (min (+ (echo-box-offset) 1 (cdr p) 1) cols)))
           (when visible?
             (let ([p (window-screen-position (head:current)
                                              (head:window-prow (head:current)) (head:window-pcol (head:current)))])

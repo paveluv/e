@@ -622,12 +622,10 @@
                       [(= hist-pos 0) (set! hist-pos -1) (history-show stash)]
                       [else (set! hist-pos (- hist-pos 1)) (history-show (list-ref (unbox history) hist-pos))]))
               (define (vertical-move delta)
+                ;; Straight up or down on the screen, whatever each row's
+                ;; indent is.
                 (let* ([p (paint:echo-position echo-cursor)]
-                       [target (list-ref echo-spans (+ (car p) delta))]
-                       [indent (paint:echo-indent-now)] [col (cdr p)]
-                       [k (if (= (+ (car p) delta) 0) (min col (cdr target))
-                              (+ (car target) (max 0 (- col indent))))]
-                       [k (min k (cdr target))])
+                       [k (paint:echo-index-at (+ (car p) delta) (cdr p))])
                   (loop s (min (max 0 (- k (string-length label))) len) note)))
               (define (complete-input completer)
                 (set! hist-pos -1)
