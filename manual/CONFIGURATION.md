@@ -149,6 +149,22 @@ answers `(evaluated token printed)` or `(evaluated token error text)`. Tests
 drive a live head this way instead of typing into `M-x`; leave it unset for
 ordinary sessions.
 
+Three procedure parameters let a base or head configuration stand in for
+conditions that are hard to arrange: `sys:durable-sync-hook` receives the
+thunk that syncs a saved session's directory to disk and returns its result;
+`base:closing-hook` receives a connection, the closing reason and the thunk
+that sends the notice, so a transport that loses it can be modelled;
+`client:inbox-limits` is the `(count . bytes)` of pending base events a head
+holds before it detaches as overloaded, `(256 . 33554432)` by default, which
+a `config.e` may lower. The defaults perform the sync, send the notice and
+keep the limits. Because a base restores its saved session before it reads
+`base-config.e`, a disk fault during that restore cannot come from
+configuration: `E_TEST_SYNC_CONTROL` names a control file that the default
+sync hook consults from process start. An absent file syncs; `fail` fails the
+sync; `hold` marks `<file>.held`, waits until the file is removed and then
+syncs; `hold-fail` waits the same way and fails, `hold-fail-log` after closing
+the error port. Leave it unset outside the test suite.
+
 ## Self-contained installations
 
 Each checkout keeps `config.e`, `base-config.e`, `lib/`, `data/` and compiled

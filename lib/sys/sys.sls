@@ -30,7 +30,7 @@
           terminal-process-input terminal-process-output
           terminal-process-pid resize-terminal-process!
           close-terminal-process! reap-terminal-process!
-          time-scale duration after)
+          time-scale duration after durable-sync-hook)
   (import (chezscheme) (prefix (activity) activity:))
 
   ;; Waits the editor imposes on itself -- connection deadlines, quiescence
@@ -344,11 +344,28 @@
       (guard (ex [else (void)]) (close-port (terminal-process-output process)))
       (when c-close (c-close (terminal-process-master process)))))
 
+  (define c-waitpid-blocking
+    ;; A thread inside a plain foreign call stays active, so a blocking wait
+    ;; there stops the collector, and with it every other thread, for as long
+    ;; as the child lives. Deactivate around the call; its status lands in C
+    ;; memory, which a collection cannot move.
+    (and libc-loaded?
+         (guard (ex [else #f])
+           (foreign-procedure __collect_safe "waitpid" (int uptr int) int))))
+
   (define (wait-terminal-process! process options)
     (and c-waitpid
          (not (terminal-process-reaped process))
-         (let ([result (c-waitpid (terminal-process-pid process)
-                                  (make-bytevector 4 0) options)])
+         (let ([result
+                (if (and (zero? options) c-waitpid-blocking)
+                    (let ([status (foreign-alloc 4)])
+                      (dynamic-wind void
+                        (lambda ()
+                          (let wait ()
+                            (let ([result (c-waitpid-blocking (terminal-process-pid process) status 0)])
+                              (if (and (< result 0) (= (foreign-ref 'int (c-errno) 0) 4)) (wait) result))))
+                        (lambda () (foreign-free status))))
+                    (c-waitpid (terminal-process-pid process) (make-bytevector 4 0) options))])
            (when (or (= result (terminal-process-pid process)) (< result 0))
              (terminal-process-reaped-set! process #t))
            result)))
@@ -517,6 +534,31 @@
           (thunk fd))
         (lambda () (c-close fd)))))
 
+  ;; The directory sync that makes a saved session durable calls this hook
+  ;; with the real sync thunk and returns its result. The default performs
+  ;; the sync, unless E_TEST_SYNC_CONTROL names a control file: then a test
+  ;; installation models the disk from process start, before any
+  ;; configuration runs. An absent file syncs; "fail" fails at once; "hold"
+  ;; marks <control>.held, waits until the file is removed, then syncs;
+  ;; "hold-fail" waits the same way and fails, "hold-fail-log" after
+  ;; closing the error port so the failure cannot be logged either.
+  (define (controlled-sync control)
+    (lambda (sync)
+      (if (not (file-exists? control)) (sync)
+          (let ([mode (call-with-input-file control get-string-all)])
+            (unless (string=? mode "fail")
+              (call-with-output-file (string-append control ".held") (lambda (p) (write #t p)) 'replace)
+              (let wait ([left 1000])
+                (when (file-exists? control)
+                  (when (zero? left) (error 'session "the sync hold timed out" control))
+                  (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))
+            (if (string=? mode "hold") (sync)
+                (begin (when (string=? mode "hold-fail-log") (close-port (current-error-port))) -1))))))
+  (define durable-sync-hook
+    (make-parameter
+      (let ([control (getenv "E_TEST_SYNC_CONTROL")])
+        (if control (controlled-sync control) (lambda (sync) (sync))))))
+
   (define (sync-directory! fd directory changed)
     (guard (ex [else
                 (if changed
@@ -525,7 +567,7 @@
                              (make-irritants-condition (list directory ex))))
                     (raise ex))])
       (descriptor-check 'session directory
-        ((foreign-procedure __collect_safe "fsync" (int) int) fd))))
+        ((durable-sync-hook) (lambda () ((foreign-procedure __collect_safe "fsync" (int) int) fd))))))
 
   (define (write-session! directory write!)
     (call-with-directory-fd directory

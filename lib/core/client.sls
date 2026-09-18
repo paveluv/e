@@ -3,7 +3,7 @@
 ;; mail and log presentation have the same finite budget as the base outbox.
 (library (client)
   (export call-with-runtime identity request subscribe! unsubscribe!
-          set-wake! pump! close! watch! ended? leave!)
+          set-wake! pump! close! watch! ended? leave! inbox-limits)
   (import (chezscheme)
           (prefix (kernel) kernel:) (prefix (startup) startup:) (prefix (daemon) daemon:)
           (prefix (wire) wire:) (prefix (sys) sys:) (prefix (datum) datum:))
@@ -91,7 +91,7 @@
                          [(presence) (set! presence? #t) wake]
                          [(event logged)
                           (let ([size (bytevector-length (wire:encode message))])
-                            (when (or (>= count 256) (> (+ bytes size) #x2000000))
+                            (when (or (>= count (car (inbox-limits))) (> (+ bytes size) (cdr (inbox-limits))))
                               (error 'client "pending input limit reached"))
                             (set! notices (cons message notices))
                             (set! count (+ count 1))
@@ -232,6 +232,16 @@
 
   (define (farewell status)
     (format #t "e: detached; the base holds ~a.\n" (daemon:status-summary status "other head")))
+
+  ;; Pending base events a head may hold before it detaches as overloaded:
+  ;; (count . bytes). Configuration may lower them for small screens or tests.
+  (define inbox-limits
+    (make-parameter (cons 256 #x2000000)
+      (lambda (limits)
+        (unless (and (pair? limits) (exact? (car limits)) (positive? (car limits))
+                     (exact? (cdr limits)) (positive? (cdr limits)))
+          (error 'inbox-limits "expected (count . bytes)" limits))
+        limits)))
 
   (define (call-with-runtime thunk)
     (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"

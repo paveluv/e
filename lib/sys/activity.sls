@@ -19,22 +19,41 @@
   ;; serializes head admission and departure. No service lock nests it.
   (define (phase) state)
 
+  (define (call-with-interrupts-enabled thunk)
+    ;; Chez keeps a thread that blocks on a mutex or condition with
+    ;; interrupts disabled counted as active, so a pending collection waits
+    ;; for it while every other thread stops at its next allocation. Callers
+    ;; arrive that way from the in thunk of a critical dynamic-wind, as
+    ;; command scopes do. Release their disable count around the admission
+    ;; alone: nothing is acquired before it, and an escape rewinds the count.
+    (let ([depth (- (disable-interrupts) 1)])
+      (enable-interrupts)
+      (if (zero? depth) (thunk)
+          (dynamic-wind
+            (lambda () (do ([i 0 (+ i 1)]) ((= i depth)) (enable-interrupts)))
+            thunk
+            (lambda () (do ([i 0 (+ i 1)]) ((= i depth)) (disable-interrupts)))))))
+
   (define (scope thunk retiring? admit!)
     (if (eqv? (entered) (get-thread-id)) (thunk)
         (dynamic-wind
           (lambda ()
-            (with-mutex lock
-              (admit!)
-              (let wait ()
-                (when (eq? state 'paused) (condition-wait changed lock) (wait)))
-              (when (and (eq? state 'stopping) (not retiring?))
-                (raise (condition (make-stopped) (make-message-condition "The base is stopping"))))
-              (set! active (+ active 1))))
+            (call-with-interrupts-enabled
+              (lambda ()
+                (with-mutex lock
+                  (admit!)
+                  (let wait ()
+                    (when (eq? state 'paused) (condition-wait changed lock) (wait)))
+                  (when (and (eq? state 'stopping) (not retiring?))
+                    (raise (condition (make-stopped) (make-message-condition "The base is stopping"))))
+                  (set! active (+ active 1))))))
           (lambda () (parameterize ([entered (get-thread-id)]) (thunk)))
           (lambda ()
-            (with-mutex lock
-              (set! active (- active 1))
-              (when (zero? active) (condition-broadcast changed)))))))
+            (call-with-interrupts-enabled
+              (lambda ()
+                (with-mutex lock
+                  (set! active (- active 1))
+                  (when (zero? active) (condition-broadcast changed)))))))))
 
   (define call-with
     (case-lambda

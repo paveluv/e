@@ -120,18 +120,26 @@
        (check 'command-table-releases-resources
          (equal? (list (test:child-pids) (test:fd-count)) before)))
 
-     (define (read-process process)
-       (let ([input (transcoded-port
-                      (sys:terminal-process-input process)
-                      (make-transcoder (utf-8-codec) 'none 'replace))])
+     (define (process-reader process)
+       (transcoded-port (sys:terminal-process-input process) (make-transcoder (utf-8-codec) 'none 'replace)))
+     (define (read-until input done?)
+       ;; Collect the child's output until the slave closes or done? accepts
+       ;; the text so far. A child that produces neither within ten seconds
+       ;; fails with what it did print instead of blocking the suite.
+       (let ([deadline (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 10))])
          (let loop ([characters '()])
-           (guard (ex [(i/o-read-error? ex)
-                       (list->string (reverse characters))]
-                      [else (raise ex)])
-             (let ([character (get-char input)])
-               (if (eof-object? character)
-                   (list->string (reverse characters))
-                   (loop (cons character characters))))))))
+           (let ([text (list->string (reverse characters))])
+             (cond
+               [(done? text) text]
+               [(time>=? (current-time 'time-monotonic) deadline)
+                (error 'terminal-process-test "the child produced no further output" text)]
+               [(guard (ex [(i/o-read-error? ex) 'closed]) (char-ready? input))
+                => (lambda (ready)
+                     (if (eq? ready 'closed) text
+                         (let ([character (guard (ex [(i/o-read-error? ex) (eof-object)]) (get-char input))])
+                           (if (eof-object? character) text (loop (cons character characters))))))]
+               [else (sleep (make-time 'time-duration 5000000 0)) (loop characters)])))))
+     (define (read-process process) (read-until (process-reader process) (lambda (text) #f)))
 
      (let* ([process
              (sys:spawn-terminal-process
@@ -165,20 +173,11 @@
                "/bin/sh"
                "trap 'printf resized=; stty size; exit 0' WINCH; echo ready; while :; do sleep 0.05; done"
                (current-directory) 5 20)]
-            [input (transcoded-port
-                     (sys:terminal-process-input process)
-                     (make-transcoder (utf-8-codec) 'none 'replace))])
-       (check 'resize-child-ready (string=? (get-line input) "ready\r"))
+            [input (process-reader process)])
+       (check 'resize-child-ready
+              (contains? (read-until input (lambda (text) (contains? text "ready\r\n"))) "ready\r"))
        (sys:resize-terminal-process! process 9 37)
-       (let loop ([characters '()])
-         (guard (ex [(i/o-read-error? ex)
-                     (let ([output (list->string (reverse characters))])
-                       (check 'resized-window-size
-                              (contains? output "resized=9 37")))]
-                    [else (raise ex)])
-           (let ([character (get-char input)])
-             (unless (eof-object? character)
-               (loop (cons character characters))))))
+       (check 'resized-window-size (contains? (read-until input (lambda (text) #f)) "resized=9 37"))
        (sys:reap-terminal-process! process))
 
      (let* ([process
@@ -263,8 +262,11 @@
                           (system "stty size")]
                          [(finish)
                           (note 'finish-ready)
+                          ;; The parent's replace deletes and recreates the
+                          ;; marker, so a poll can find it missing for a moment.
                           (let wait ()
-                            (unless (equal? (call-with-input-file ,marker read) 'finish-release)
+                            (unless (equal? (guard (ex [else #f]) (call-with-input-file ,marker read))
+                                            'finish-release)
                               (sleep (make-time 'time-duration 5000000 0)) (wait)))
                           (display "\x1b;[?2026h\x1b;[2J\x1b;[H\x1b;[35m界q\x301;FINAL\x1b;[6n")
                           (flush-output-port)

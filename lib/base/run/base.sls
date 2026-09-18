@@ -1,6 +1,6 @@
 ;; base.sls -- process lifetime and the local daemon. Base runtime only.
 (library (base)
-  (export call-with-runtime run connection-policy connection-owner)
+  (export call-with-runtime run connection-policy connection-owner closing-hook)
   (import (chezscheme)
           (prefix (kernel) kernel:) (prefix (daemon) daemon:)
           (prefix (activity) activity:) (prefix (startup) startup:)
@@ -19,6 +19,11 @@
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
+  ;; The closing notice of a connection goes through this hook with the
+  ;; connection, the reason and the thunk that sends it; a test's base
+  ;; configuration may lose the notice to model a broken transport.
+  (define closing-hook (make-parameter (lambda (connection reason send!) (send!))))
+
   (define connection-policy
     (make-parameter
       (lambda (actor)
@@ -576,7 +581,8 @@
                              => (lambda (reason)
                                   ;; The control notice takes the next frame
                                   ;; slot; presentation backlog is discarded.
-                                  (wire:send! (sys:connection-output connection) (list 'closing reason))
+                                  ((closing-hook) connection reason
+                                   (lambda () (wire:send! (sys:connection-output connection) (list 'closing reason))))
                                   (close!))]
                             [item
                              (let ([frame

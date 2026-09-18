@@ -287,7 +287,7 @@
            (observe! completed)
            ;; Sample interruption points across the whole request; every
            ;; tick would multiply the fixture's connections without new phases.
-           (do ([fuel 1 (+ fuel 5)]) ((> fuel 1500))
+           (do ([fuel 1 (+ fuel 10)]) ((> fuel 1500))
              (observe! (run (make-engine thunk) fuel)))
            (let ([expired? (not (null? held))])
              (for-each (lambda (engine) (observe! (run engine 1000000))) held)

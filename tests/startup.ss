@@ -278,11 +278,12 @@
          `((,(format "./e --help --base-working-dir /tmp/e-help-missing-~a" (get-process-id)) #t "Usage: e")
            ("./e --name=''" #f "nonempty name")
            ("./e one two" #f "at most one file")))
-       (for-each
-         (lambda (kind)
-           (test:check (list 'fresh-process kind)
-             (system (format "scheme-script tests/startup.ss ~a" kind)) 0))
-         '(named default suffix conflict roots-base roots-client))
+       ;; Each claim is its own image; the six are independent.
+       (let ([kinds '(named default suffix conflict roots-base roots-client)])
+         (test:check 'fresh-processes
+           (test:parallel (length kinds)
+             (lambda (i) (system (format "scheme-script tests/startup.ss ~a" (list-ref kinds i)))))
+           (make-list (length kinds) 0)))
        (test:finish! 'startup))
 
      (if (null? (command-line-arguments))

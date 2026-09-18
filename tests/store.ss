@@ -78,6 +78,26 @@
      (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
      (activity:resume!)
 
+     ;; A critical dynamic-wind runs its in thunk with interrupts disabled,
+     ;; and Chez counts a thread that waits like that as still active, so a
+     ;; collection would wait for it. Admission releases that count for its
+     ;; wait: the collector must finish while such a caller is held. (With
+     ;; the count kept, this check freezes the suite until the runner's kill.)
+     (let* ([waiting (test:gate)] [admitted (test:gate)])
+       (activity:pause! (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2)))
+       (let ([caller (test:worker
+                       (lambda ()
+                         (dynamic-wind #t
+                           (lambda ()
+                             (activity:call-with (lambda () (admitted #t)) (lambda () (waiting #t))))
+                           void void)))])
+         (test:await 'held-caller waiting)
+         (test:await 'collection-during-held-admission
+           (lambda () (guard (ex [else #f]) (collect) #t)))
+         (check 'held-admission-permits-collection (admitted) #f)
+         (activity:resume!) (caller)
+         (check 'released-caller-admitted (admitted) #t)))
+
      ;; One review/race table covers full-state and selected-fact decisions.
      ;; Refusal preserves text, facts, history and marks, with no notifications.
      (for-each
