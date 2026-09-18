@@ -281,7 +281,7 @@
            (paint:set-screen-live! #f)
            (kernel:retract-module! 'paint-prepare-test)
            (echo:settle!))))
-     ;; The echo area is a bordered box of at most 120 columns, centered: a
+     ;; The echo area is a bordered box of at most 100 columns, centered: a
      ;; narrower screen is the whole box. Rows wrap inside the borders with
      ;; their text at the left one, and cursor geometry counts inner columns.
      (define (echo-box-frame width text)
@@ -299,21 +299,32 @@
            (list (paint:echo-width) (paint:echo-position 5) (paint:echo-index-at 0 5)
                  (and (>= (string-length frame) 80)
                       (string=? (substring frame 0 80)
-                                (string-append "┃Boxed" (make-string 73 #\space) "┃")))))
+                                (string-append "┋Boxed" (make-string 73 #\space) "┋")))))
          (let ([frame (echo-box-frame 140 "Boxed")])
            (list (paint:echo-width)
                  (and (>= (string-length frame) 140)
                       (string=? (substring frame 0 140)
-                                (string-append (make-string 10 #\space) "┃Boxed" (make-string 113 #\space) "┃"
-                                               (make-string 10 #\space))))))
+                                (string-append (make-string 20 #\space) "┋Boxed" (make-string 93 #\space) "┋"
+                                               (make-string 20 #\space))))))
          (let ([frame (echo-box-frame 60 (make-string 70 #\a))])
            ;; two rows: the first wraps at inner column 57 with its mark
            (list (paint:echo-width) (length (echo:spans)) (paint:echo-position 57)
                  (and (>= (string-length frame) 120)
-                      (string=? (substring frame 0 60) (string-append "┃" (make-string 57 #\a) "\\┃"))
+                      (string=? (substring frame 0 60) (string-append "┋" (make-string 57 #\a) "\\┋"))
                       (string=? (substring frame 60 120)
-                                (string-append "┃" (make-string 13 #\a) (make-string 45 #\space) "┃"))))))
-       '((78 (0 . 5) 5 #t) (118 #t) (58 2 (1 . 0) #t)))
+                                (string-append "┋" (make-string 13 #\a) (make-string 45 #\space) "┋"))))))
+       '((78 (0 . 5) 5 #t) (98 #t) (58 2 (1 . 0) #t)))
+     (check 'echo-border-wears-the-inactive-bar-shade
+       (begin
+         (paint:set-screen-cols! 80)
+         (paint:invalidate-screen-cache!)
+         (echo:set-text! "Shaded")
+         (paint:update-echo-geometry!)
+         (dynamic-wind
+           (lambda () (paint:set-screen-live! #t))
+           (lambda () (contains? (painted paint:present-echo!) "\x1b;[38;5;245m┋"))
+           (lambda () (paint:set-screen-live! #f))))
+       #t)
      (paint:set-screen-cols! 80)
      (echo:settle!)
      (define top-before (head:window-top (head:current)))

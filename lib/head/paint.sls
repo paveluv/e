@@ -1148,7 +1148,7 @@
   ;; included, centered on the screen; a narrower screen is the whole box.
   ;; Every row wraps inside the borders, with its text at the left one.
   (define echo-box-width
-    (make-parameter 120
+    (make-parameter 100
       (lambda (n)
         (unless (and (integer? n) (exact? n) (>= n 4))
           (error 'echo-box-width "expected an exact integer of at least 4" n))
@@ -1292,15 +1292,17 @@
   (define (echo-frame! draw used wrapped?)
     ;; Paint one echo row: the margin, the left border, the inner cells
     ;; that draw emits (used of them), the fill up to a wrap mark or the
-    ;; right border, and the margin after it. The borders are heavy strokes,
-    ;; unlike the light dividers between windows.
-    (let* ([offset (echo-box-offset)] [width (echo-width)])
-      (ansi "\x1b;[0m" (make-string offset #\space) (style:code 'chrome) "┃" "\x1b;[0m")
+    ;; right border, and the margin after it. The borders are heavy dashed
+    ;; strokes in the mid grey of an inactive status bar (see the bar's
+    ;; painter for why that shade is explicit), unlike the light dividers
+    ;; between windows.
+    (let* ([offset (echo-box-offset)] [width (echo-width)] [border "\x1b;[38;5;245m┋\x1b;[0m"])
+      (ansi "\x1b;[0m" (make-string offset #\space) border)
       (draw)
       (ansi "\x1b;[0m"
         (make-string (max 0 (- width used (if wrapped? 1 0))) #\space)
         (if wrapped? "\\" "")
-        (style:code 'chrome) "┃" "\x1b;[0m"
+        border
         (make-string (max 0 (- cols offset (echo-box-columns))) #\space))))
 
   (define (display-echo-log-row prefix text styler ghost k span wrapped?)

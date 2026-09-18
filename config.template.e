@@ -28,7 +28,7 @@
 ;; (scroll-margin 8)              ; rows kept between the cursor and the edges
 ;; (scrollbar #f)                 ; #t: show position bars in ordinary buffers
 ;; (scrollbar-position 'right)    ; position bars on the left or right edge
-;; (paint:echo-box-width 120)     ; the echo area's bordered box: at most this
+;; (paint:echo-box-width 100)     ; the echo area's bordered box: at most this
 ;;                                ; wide, centered; a narrower screen is the box
 ;; (line-numbers #f)              ; #t: show line numbers in every untoggled buffer
 ;; (wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)

@@ -2220,12 +2220,15 @@
                      (vector-set! a 3 "")
                      (vt:emulator-resize! (vector-ref a 2) 18 120)
                      (sys:resize-terminal-process! (vector-ref a 0) 18 120)
-                     ;; At 120 columns the echo box is the whole width: the
-                     ;; question refits into one row behind the left border.
+                     ;; The echo area stays a 100-column box, recentered: the
+                     ;; question remains wrapped, now behind a border at column 10.
                      (head-wait 'attached-idle-resize-refits-question a
                        (lambda ()
-                         (and (head-sees? a "18x120/#t") (head-sees? a question)
-                              (head-sees? a "┃")
+                         (and (head-sees? a "18x120/#t")
+                              (exists (lambda (line)
+                                        (and (string:prefix? (string-append (make-string 10 #\space) "┋") line)
+                                             (string:search line "This pending que" 0 (string-length line))))
+                                (vector->list (vt:emulator-screen (vector-ref a 2))))
                               (let ([frames (vector-ref a 3)])
                                 (and (> (occurrences frames "\x1b;[?2026h") 0)
                                      (= (occurrences frames "\x1b;[?2026h")

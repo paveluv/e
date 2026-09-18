@@ -114,15 +114,17 @@
            (set! transcript '())
            (vt:emulator-resize! mirror rows cols)
            (sys:resize-terminal-process! process rows cols)
-           ;; The echo area is a box of at most 120 columns, recentered on the
-           ;; new width, where the question fits in one row behind its border.
+           ;; The echo area is a box of at most 100 columns, recentered on the
+           ;; new width: the question fits its first row behind the border,
+           ;; the answer hint wraps to a second, and the status line sits above.
            (wait-for! (list 'idle-resize-refreshes-the-screen prompt?)
              (lambda ()
                (let ([buffer (find-cell "*scratch*")] [close (find-cell "│×│")]
-                     [edge (find-cell (if prompt? "┃M-x (resize-input" "┃(head"))])
+                     [edge (find-cell (if prompt? "┋M-x (resize-input" "┋(head"))]
+                     [echo-rows (if prompt? 1 2)])
                  (and (contains? (transcript-text) "\x1b;[?2026h")
-                      buffer close (= (car buffer) (- rows 2)) (= (cdr close) (- cols 3))
-                      edge (= (cdr edge) (quotient (- cols (min cols 120)) 2))
+                      buffer close (= (car buffer) (- rows 1 echo-rows)) (= (cdr close) (- cols 3))
+                      edge (= (cdr edge) (quotient (- cols (min cols 100)) 2))
                       (or prompt? (find-cell resize-question))))) 3000)))
        '((#f 18 160) (#t 24 80)))
      (send! "\x7;")                     ; C-g leaves the prompt
