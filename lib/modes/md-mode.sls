@@ -12,7 +12,7 @@
 
 (library (md-mode)
   (export init!)
-  (import (chezscheme) (except (edit) init!)
+  (import (only (edoc) edefine edoc) (chezscheme) (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:))
 
@@ -161,6 +161,7 @@
          (let ([scheme (mode:find "scheme")])
            (and scheme ((mode:styles scheme) line)))))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Register the markdown mode for .md and .markdown files.")
     (mode:register! "markdown" '(".md" ".markdown") '() md-styles
                     #f md-row-styles)))

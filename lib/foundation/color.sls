@@ -3,7 +3,7 @@
 
 (library (color)
   (export parse)
-  (import (rnrs) (prefix (string) string:))
+  (import (only (edoc) edefine edoc) (rnrs) (prefix (string) string:))
 
   (define (hex-component text)
     (and (<= 1 (string-length text) 4)
@@ -13,7 +13,10 @@
          (round (/ (* 255 (string->number text 16))
                    (- (expt 16 (string-length text)) 1)))))
 
-  (define (parse text)
+  (edefine (parse text)
+    (edoc "A terminal color reply, rgb:rrrr/gggg/bbbb or #rrggbb, as (red green blue) in 0 to 255, or #f."
+          (text string "the reply")
+          (returns (or list #f)))
     (let* ([size (string-length text)]
            [parts
             (cond

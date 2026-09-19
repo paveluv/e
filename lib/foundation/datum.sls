@@ -1,17 +1,26 @@
 ;; datum.sls -- owned snapshots of finite, plain protocol data.
 (library (datum)
   (export copy invalid?)
-  (import (rnrs))
+  (import (rnrs) (only (edoc) edefine edefine-condition-type edoc))
 
-  (define-condition-type &invalid &error make-invalid invalid?)
+  (edefine-condition-type &invalid &error make-invalid invalid?
+    (edoc "Data was not plain protocol data."))
   (define (invalid! message value)
     (raise (condition (make-invalid) (make-who-condition 'datum:copy)
              (make-message-condition message) (make-irritants-condition (list value)))))
 
-  (define copy
+  (edefine copy
     (case-lambda
-      [(value) (copy value (lambda (leaf) (invalid! "expected plain protocol data" leaf)))]
+      [(value)
+       (edoc "A deep copy of plain protocol data, sharing nothing mutable; cycles and runtime objects raise an invalid condition."
+             (value datum "the data")
+             (returns datum))
+       (copy value (lambda (leaf) (invalid! "expected plain protocol data" leaf)))]
       [(value copy-leaf)
+       (edoc "A deep copy of data whose opaque leaves a copier preserves."
+             (value any "the data")
+             (copy-leaf procedure "(copy-leaf leaf) giving its copy")
+             (returns any))
        ;; Sharing is allowed, cycles and runtime objects are not. Readers own
        ;; every mutable part; no retained data changes without a seam operation.
        ;; An explicit leaf copier can preserve a domain's opaque values, e.g.

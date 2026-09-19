@@ -4,9 +4,14 @@
 (library (fuzzy)
   (export matches expansions rank
           (rename (match-name name) (match-score score) (match-fragments fragments)))
-  (import (rnrs) (only (chezscheme) make-mutex with-mutex vector-copy iota void))
+  (import (only (edoc) edefine edefine-record-type edoc) (rnrs) (only (chezscheme) make-mutex with-mutex vector-copy iota void))
 
-  (define-record-type match (fields name score fragments))
+  (edefine-record-type match
+    (edoc "A name a query matched, with its rank and where the query's characters landed."
+          (name string "the matched name")
+          (score list "the rank components, smaller first")
+          (fragments list "(query-index name-index length) runs of matched characters"))
+    (fields name score fragments))
   ;; A source is a name prepared once for alignment: the indices where its
   ;; parts start (the beginning and the position after every ':' or '-'),
   ;; its characters as sorted code points, and a presence mask over the
@@ -148,7 +153,11 @@
     (cond [(null? a) #f] [(< (car a) (car b)) #t] [(> (car a) (car b)) #f]
           [else (score<? (cdr a) (cdr b))]))
 
-  (define (rank query names)
+  (edefine (rank query names)
+    (edoc "The names a query matches as subsequences, best first: fewer segments, fewer reorderings, an earlier first character, a tighter span and a shorter name rank ahead."
+          (query string "the typed characters")
+          (names (list-of (or symbol string)) "the candidates")
+          (returns (list-of (record match))))
     ;; Names may be symbols or strings; every match names a string.
     (with-mutex lock
       (if (string=? query "")
@@ -173,7 +182,12 @@
                         out)))
                 '() names))))))
 
-  (define (matches query names) (map match-name (rank query names)))
+  (edefine (matches query names)
+    (edoc "The names a query matches, best first."
+          (query string "the typed characters")
+          (names (list-of (or symbol string)) "the candidates")
+          (returns (list-of string)))
+    (map match-name (rank query names)))
 
   (define (common-alphabet sources)
     ;; The distinct characters of the first source, sorted, each with the
@@ -276,7 +290,11 @@
                     (choices (cdr rest) (if ordered? seen (cons spelling seen)))))))))
         #f)))
 
-  (define (expansions query names)
+  (edefine (expansions query names)
+    (edoc "The safe extensions of a query: the longer strings every current match still matches, the query itself included."
+          (query string "the typed characters")
+          (names (list-of (or symbol string)) "the current matches")
+          (returns (list-of string)))
     ;; A safe extension E satisfies query <= E <= every current match under
     ;; this same relation. Boundary-starting alignments compose, so transitivity
     ;; guarantees that E cannot introduce a name the query did not match.

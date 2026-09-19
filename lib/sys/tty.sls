@@ -21,21 +21,24 @@
 (library (tty)
   (export read-event character-event key-event-character
           mouse-reporting! query-color-scheme! paste-lines)
-  (import (rnrs)
+  (import (only (edoc) edefine edoc) (rnrs)
           (only (chezscheme) format char-ready?)
           (prefix (only (sys) terminal-output-port) sys:)
           (prefix (string) string:) (prefix (color) color:))
 
   ;;; Input-side negotiation ------------------------------------------------------
 
-  (define (query-color-scheme!)
+  (edefine (query-color-scheme!)
+    (edoc "Ask the terminal for its background color and color scheme without waiting; the input pump reads the reply.")
     ;; Ask without waiting: OSC 11 also works on hosts without DSR 996.
     ;; The ordinary input pump consumes either reply.
     (let ([port (sys:terminal-output-port)])
       (display "\x1b;]11;?\x1b;\\\x1b;[?996n" port)
       (flush-output-port port)))
 
-  (define (mouse-reporting! on?)
+  (edefine (mouse-reporting! on?)
+    (edoc "Turn SGR mouse tracking with pointer motion on or off."
+          (on? boolean "whether to track the mouse"))
     ;; SGR mouse tracking with any-event reports (1003;1006): on asks
     ;; the terminal to send the (mouse ...) events read-event decodes,
     ;; pointer motion included so an app row can follow the pointer;
@@ -46,7 +49,10 @@
 
   ;;; Key naming ---------------------------------------------------------------
 
-  (define (character-event c)
+  (edefine (character-event c)
+    (edoc "The key event name of a typed character: C-a, TAB, RET, or the character itself."
+          (c char "the character")
+          (returns string))
     (let ([n (char->integer c)])
       (cond [(= n 0) "C-@"]
             [(= n 9) "TAB"]
@@ -61,7 +67,10 @@
             [(= n 127) "BACKSPACE"]
             [else (string c)])))
 
-  (define (key-event-character event)
+  (edefine (key-event-character event)
+    (edoc "The plain character a key event types, or #f."
+          (event any "the event")
+          (returns (or char #f)))
     ;; the plain character a key event types, or #f
     (and (string? event) (= (string-length event) 1)
          (let ([c (string-ref event 0)])
@@ -232,7 +241,10 @@
                             [else #f]))]
                    [else #f]))))])))
 
-  (define (read-event port)
+  (edefine (read-event port)
+    (edoc "Decode the next terminal event from a port: a key name, a (mouse ...) report, a paste, or eof."
+          (port port "the terminal input")
+          (returns any))
     ;; Decode the terminal once, into data.  Blocks until a whole
     ;; event is available; a lone ESC is the ESC key only when no more
     ;; input is pending.
@@ -278,7 +290,10 @@
                                          plain))))]))]))))
   ;;; Pasted text -------------------------------------------------------------------
 
-  (define (paste-lines s)
+  (edefine (paste-lines s)
+    (edoc "Pasted text split at newlines, whichever convention the terminal delivered."
+          (s string "the pasted text")
+          (returns (list-of string)))
     ;; Pasted text split at newlines, whichever convention the terminal
     ;; delivered: \n, \r\n, or bare \r.
     (let ([n (string-length s)])

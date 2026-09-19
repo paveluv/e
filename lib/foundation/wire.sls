@@ -1,20 +1,26 @@
 ;; wire.sls -- length-prefixed plain data. No store, actor or display state.
 (library (wire)
   (export version encode send! receive)
-  (import (rnrs)
+  (import (only (edoc) edefine edoc) (rnrs)
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (datum) datum:))
 
   ;; S4 requires the source fingerprint in every normal hello. Maintenance
   ;; retains its version 1 contract so mismatched builds can still restart.
-  (define version 5)
+  (edefine version
+    (edoc "The wire protocol version a hello must carry."
+          (value integer))
+    5)
   (define frame-limit #x1000000) ; 16 MiB, checked before reading a payload
 
   (define (frame-size! size)
     (unless (<= 1 size frame-limit)
       (error 'wire "frame must contain 1 through 16777216 bytes" size)))
 
-  (define (encode value)
+  (edefine (encode value)
+    (edoc "A value as one wire frame: a 4-byte big-endian length and the written datum in UTF-8."
+          (value datum "the value")
+          (returns bytevector))
     (let* ([owned (datum:copy value)]
            [payload (string->utf8
                       (call-with-string-output-port
@@ -28,13 +34,19 @@
         (bytevector-copy! payload 0 frame 4 size)
         frame)))
 
-  (define (send! port value)
+  (edefine (send! port value)
+    (edoc "Write a value to a port as one frame and flush."
+          (port port "the output port")
+          (value datum "the value"))
     ;; The connection owns serialization of complete frames. An outbox can
     ;; retain encode's owned bytes and bound them without serializing twice.
     (put-bytevector port (encode value))
     (flush-output-port port))
 
-  (define (receive port)
+  (edefine (receive port)
+    (edoc "Read one frame from a port and read its datum; eof when the port ends."
+          (port port "the input port")
+          (returns any))
     (let ([header (get-bytevector-n port 4)])
       (if (eof-object? header) header
           (begin

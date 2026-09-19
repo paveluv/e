@@ -6,18 +6,25 @@
 ;; admitted. Forked workers inherit parameters, but not their parent's id.
 (library (activity)
   (export lock phase call-with call-with-retirement wrap pause! resume! stop! stopped?)
-  (import (chezscheme))
+  (import (only (edoc) edefine edefine-condition-type edoc) (chezscheme))
 
-  (define lock (make-mutex))
+  (edefine lock
+    (edoc "The mutex serializing lifecycle coordination, head admission and departure."
+          (value any))
+    (make-mutex))
   (define changed (make-condition))
   (define state 'running)
   (define active 0)
   (define entered (make-thread-parameter #f))
-  (define-condition-type &stopped &error make-stopped stopped?)
+  (edefine-condition-type &stopped &error make-stopped stopped?
+    (edoc "An operation was refused because the activity is stopping."))
 
   ;; Lifecycle coordination reads this while holding lock, which also
   ;; serializes head admission and departure. No service lock nests it.
-  (define (phase) state)
+  (edefine (phase)
+    (edoc "The lifecycle phase: running, paused or stopping."
+          (returns symbol))
+    state)
 
   (define (call-with-interrupts-enabled thunk)
     ;; Chez keeps a thread that blocks on a mutex or condition with
@@ -55,21 +62,40 @@
                   (set! active (- active 1))
                   (when (zero? active) (condition-broadcast changed)))))))))
 
-  (define call-with
+  (edefine call-with
     (case-lambda
-      [(thunk) (scope thunk #f void)]
-      [(thunk admit!) (scope thunk #f admit!)]))
-  (define (call-with-retirement thunk) (scope thunk #t void))
-  (define (wrap procedure)
+      [(thunk)
+       (edoc "Run a thunk as an admitted operation, waiting while the activity is paused and refusing once it stops."
+             (thunk thunk "the operation")
+             (returns any))
+       (scope thunk #f void)]
+      [(thunk admit!)
+       (edoc "Run a thunk as an admitted operation, calling admit! under the lock once it is admitted."
+             (thunk thunk "the operation")
+             (admit! thunk "run on admission")
+             (returns any))
+       (scope thunk #f admit!)]))
+  (edefine (call-with-retirement thunk)
+    (edoc "Run a thunk as an operation that may still be admitted while paused, for retiring work."
+          (thunk thunk "the operation")
+          (returns any))
+    (scope thunk #t void))
+  (edefine (wrap procedure)
+    (edoc "A procedure whose every call is an admitted operation."
+          (procedure procedure "the procedure")
+          (returns procedure))
     (lambda args (call-with (lambda () (apply procedure args)))))
 
-  (define (resume!)
+  (edefine (resume!)
+    (edoc "Let operations be admitted again after a pause.")
     (with-mutex lock
       (when (eq? state 'paused)
         (set! state 'running)
         (condition-broadcast changed))))
 
-  (define (pause! deadline)
+  (edefine (pause! deadline)
+    (edoc "Stop admitting operations and wait for the active ones to finish, by a monotonic deadline; not from inside an operation."
+          (deadline any "a monotonic time"))
     (when (eqv? (entered) (get-thread-id)) (error 'pause! "cannot pause inside an admitted operation"))
     (let ([ready? #f])
       (dynamic-wind void
@@ -86,7 +112,8 @@
                        (wait))]))))
         (lambda () (unless ready? (resume!))))))
 
-  (define (stop!)
+  (edefine (stop!)
+    (edoc "Enter the stopping phase from a drained pause.")
     (with-mutex lock
       (unless (and (eq? state 'paused) (zero? active)) (error 'stop! "expected a drained pause"))
       (set! state 'stopping)

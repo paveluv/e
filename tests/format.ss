@@ -59,7 +59,8 @@
          (copy-text "tools/scheme-format.sps" tool)
          (for-each
            (lambda (path) (copy-text (string-append "lib/" path) (string-append install "/lib/" path)))
-           '("foundation/scheme-format.sls" "core/kernel.sls" "sys/path.sls" "foundation/string.sls"))
+           '("foundation/scheme-format.sls" "core/kernel.sls" "sys/path.sls" "foundation/string.sls"
+             "foundation/edoc.sls"))
          (current-directory root)
          (for-each
            (lambda (entry)

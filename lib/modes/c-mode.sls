@@ -10,7 +10,7 @@
 
 (library (c-mode)
   (export init!)
-  (import (chezscheme) (except (edit) init!)
+  (import (only (edoc) edefine edoc) (chezscheme) (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:))
@@ -149,6 +149,7 @@
   (define (c-row-styles b row line)
     (c-row b row))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Register the c mode for .c and .h files and tcc scripts.")
     (mode:register! "c" '(".c" ".h") '("tcc")
                     c-styles #f c-row-styles)))

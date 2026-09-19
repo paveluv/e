@@ -3,7 +3,7 @@
 ;; a dependency: consulting the cache to install its lock would itself race.
 (library (cache)
   (export install!)
-  (import (chezscheme))
+  (import (only (edoc) edefine edoc) (chezscheme))
 
   (define libc
     (let try ([names '("libc.so.6" "libSystem.dylib" "libc.so.7" "libc.so")])
@@ -13,7 +13,9 @@
   (define flock (foreign-procedure __collect_safe "flock" (int int) int))
   (define fcntl (foreign-procedure "fcntl" (int int int) int))
 
-  (define (install! directory)
+  (edefine (install! directory)
+    (edoc "Use a directory, created private, as the compiled object cache, locked against other installations."
+          (directory directory "the cache directory"))
     (unless (file-directory? directory)
       (guard (ex [(i/o-file-already-exists-error? ex) (void)] [else (raise ex)])
         (mkdir directory #o700)))

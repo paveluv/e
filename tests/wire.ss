@@ -1075,14 +1075,15 @@
                  (equal? original-fingerprint (cdr (assq 'fingerprint before)))
                  (not (equal? original-fingerprint (fingerprint))))
                (list (make-list 3 (list (list 'error #f (list 'stale-base before)) #t)) #t #t))
-             (let* ([needle (format "(define version ~a)" wire:version)]
-                    [at (string:search wire-source needle 0 (string-length wire-source))])
+             (let* ([needle (format "\n    ~a)" wire:version)]
+                    [declaration (string:search wire-source "(edefine version" 0 (string-length wire-source))]
+                    [at (and declaration (string:search wire-source needle declaration (string-length wire-source)))])
                (unless at (error 'fixture "wire version declaration not found"))
                (test:check 'stale-launcher-refuses-before-head-import-and-screen
                  (map (lambda (version)
                         (when version
                           (write-text wire-path
-                            (string-append (substring wire-source 0 at) (format "(define version ~a)" version)
+                            (string-append (substring wire-source 0 at) (format "\n    ~a)" version)
                               (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
                         (let* ([result (loader-exit (list "--name" "restart desk" "--base-working-dir" base-directory))]
                                [errors (cadr result)])
@@ -1136,11 +1137,12 @@
          (lambda (head control base original original-fingerprint
                    source-path source wire-path wire-source pid-path path temporary file hold restoring)
            (write-text source-path (string-append source "\n; changed source for maintenance restart\n"))
-           (let* ([needle (format "(define version ~a)" wire:version)]
-                  [at (string:search wire-source needle 0 (string-length wire-source))])
+           (let* ([needle (format "\n    ~a)" wire:version)]
+                  [declaration (string:search wire-source "(edefine version" 0 (string-length wire-source))]
+                  [at (and declaration (string:search wire-source needle declaration (string-length wire-source)))])
              (unless at (error 'fixture "wire version declaration not found"))
              (write-text wire-path
-               (string-append (substring wire-source 0 at) (format "(define version ~a)" (+ wire:version 1))
+               (string-append (substring wire-source 0 at) (format "\n    ~a)" (+ wire:version 1))
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
            (let* ([expected (head-read head '(list (buffer-line (current-buffer) 0) (point)))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
