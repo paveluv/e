@@ -84,10 +84,20 @@ Typing or moving the cursor starts a new completion cycle.
 
 The result can be a complete symbol even when longer candidates remain.
 Enter evaluates the input as usual; to
-refine it instead, keep typing and press Tab again. Completion leaves the cursor
-at the end of the symbol, without appending a space or changing its arguments.
-Strings, comments and character literals are left alone. A fuzzy query need
-not itself be valid Scheme: `2foo` can find `foo-2`.
+refine it instead, keep typing and press Tab again.
+
+A Tab with exactly one match inserts that symbol, closes the list, and
+settles the form around it while every enclosing operator has a fixed arity:
+a procedure of no arguments closes its form with the matching `)`, `]` or
+`}`, one expecting more arguments leaves the cursor one space on, at the next
+argument, and a completed last argument closes the form. A closed form is then
+settled as an argument of its parent, so `(head:window-index (head:curr` Tab
+yields `(head:window-index (head:current))`. Optional and rest parameters,
+syntax, unbound names, quoted or quasiquoted forms, and text after the
+cursor all leave the cursor at the end of the symbol without appending a
+space or changing the arguments. Strings, comments and character literals
+are left alone. A fuzzy query need not itself be valid Scheme: `2foo` can
+find `foo-2`.
 
 Once the list is open, typing and deleting refresh it immediately. Tab normalizes
 the edited symbol; another Tab resumes cycling. When there is just one

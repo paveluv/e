@@ -180,7 +180,14 @@
   ;; Candidates replace [start,end); #f start means no completable token.
   ;; Unlike a prefix completer, it normalizes on the first Tab and keeps its
   ;; candidate list live after the second. Existing list procedures stay simple.
-  (define-record-type completer (fields lookup))
+  ;; An optional settle procedure, (settle text position), receives the input
+  ;; after a sole match has been inserted and returns the (text . position)
+  ;; to continue with: M-x closes forms and steps to the next argument.
+  (define-record-type (completer %make-completer completer?) (fields lookup settle))
+  (define make-completer
+    (case-lambda
+      [(lookup) (%make-completer lookup #f)]
+      [(lookup settle) (%make-completer lookup settle)]))
   ;; A display label and its character styles are independent of the string
   ;; inserted on selection. The lookup result owns both, including during cycling.
   (define-record-type candidate (fields value label styles))
@@ -662,6 +669,19 @@
                            [(null? values)
                             (when candidates (set-candidates! values))
                             (loop s pos " [No match]")]
+                           [(and (null? (cdr values)) (completer-settle completer))
+                            ;; One match: insert it, close the list, and let the
+                            ;; completer settle what follows the symbol.
+                            (let* ([options (if (procedure? options) (options) options)]
+                                   [value (car values)]
+                                   [text (if (pair? options) (car options)
+                                             (if (candidate? value) (candidate-value value) value))]
+                                   [next (replace-completion s text)]
+                                   [settled ((completer-settle completer) (car next) (cdr next))])
+                              (dismiss-completions!)
+                              (if (and (string=? (car settled) s) (= (cdr settled) pos))
+                                  (loop s pos "")
+                                  (edited (car settled) (cdr settled))))]
                            [(prepared? completer s pos)
                             (if (null? (cdr completion-options))
                                 (begin (show-completions! completion-matches) (loop s pos ""))

@@ -18,7 +18,8 @@
 ;; region/buffer target, in that same top level.
 
 (library (eval)
-  (export init! (rename (eval! run!)) (rename (eval!! run!!)) (rename (eval-copy-result copy-result)))
+  (export init! settle-completion
+          (rename (eval! run!)) (rename (eval!! run!!)) (rename (eval-copy-result copy-result)))
   (import (chezscheme) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (head) head:)
@@ -88,7 +89,10 @@
                      [ranked (fuzzy:rank part (filter keep? (environment-symbols (interaction-environment))))]
                      [names (map fuzzy:name ranked)])
                 (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
-                  (map completion-candidate ranked))))))))
+                  (map completion-candidate ranked))))))
+      ;; a closure: the completers are built while the module loads, before
+      ;; the settling procedures below are defined
+      (lambda (text pos) (settle-completion text pos))))
 
   (define complete-symbol (symbol-completer (lambda (sym) #t)))
   (define complete-editor-symbol (symbol-completer editor-symbol?))
@@ -237,6 +241,104 @@
                            (string-append
                              (if (string:suffix? " " s) "" " ")
                              (string:join left " "))))))))))
+
+  ;;; Settling a sole completion --------------------------------------------------
+
+  (define (fixed-arity sym)
+    ;; The number of arguments sym's procedure takes when that is one number:
+    ;; #f for optional or rest parameters, for syntax, and for anything unbound.
+    (let ([tokens (guard (ex [else #f]) (symbol-params sym))])
+      (and tokens
+           (for-all (lambda (token)
+                      (not (or (string=? token "...")
+                               (string:prefix? ". " token)
+                               (string:prefix? "[" token))))
+                    tokens)
+           (length tokens))))
+
+  ;; An unclosed form: its opening bracket, its operator (the token string,
+  ;; #f for a datum that is not a symbol, pending before any), the completed
+  ;; data after the operator, and whether a quote or quasiquote covers it.
+  (define-record-type frame (fields opener operator arguments quoted?))
+  (define closers '((#\( . #\)) (#\[ . #\]) (#\{ . #\})))
+
+  (define (call-frames text)
+    ;; The unclosed forms in text, innermost first. A trailing partial atom
+    ;; counts as a datum; a quoted atom is a datum without a symbol.
+    (define n (string-length text))
+    (define (atom-end i)
+      (if (or (>= i n)
+              (memv (string-ref text i)
+                    '(#\space #\tab #\newline #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,)))
+          i
+          (atom-end (+ i 1))))
+    (define (string-end j)
+      (cond [(>= j n) n]
+            [(char=? (string-ref text j) #\\) (string-end (+ j 2))]
+            [(char=? (string-ref text j) #\") (+ j 1)]
+            [else (string-end (+ j 1))]))
+    (let loop ([i 0] [stack '()] [quote-next? #f])
+      (if (>= i n)
+          stack
+          (let ([c (string-ref text i)])
+            (cond
+              [(memv c '(#\space #\tab #\newline)) (loop (+ i 1) stack quote-next?)]
+              [(memv c '(#\' #\`)) (loop (+ i 1) stack #t)]
+              [(char=? c #\,)
+               (loop (+ i (if (and (< (+ i 1) n) (char=? (string-ref text (+ i 1)) #\@)) 2 1)) stack quote-next?)]
+              [(assv c closers)
+               (loop (+ i 1)
+                     (cons (make-frame c 'pending 0
+                             (or quote-next? (and (pair? stack) (frame-quoted? (car stack)))))
+                           stack)
+                     #f)]
+              [(memv c '(#\) #\] #\}))
+               (loop (+ i 1) (if (pair? stack) (count-datum (cdr stack) #f) stack) #f)]
+              [(char=? c #\") (loop (string-end (+ i 1)) (count-datum stack #f) #f)]
+              [else
+               (let ([j (atom-end (+ i 1))])
+                 (loop j (count-datum stack (and (not quote-next?) (substring text i j))) #f))])))))
+
+  (define (count-datum frames token)
+    ;; A completed datum fills the innermost form's operator slot, else is one
+    ;; more argument of it.
+    (if (null? frames)
+        frames
+        (let ([f (car frames)])
+          (cons (if (eq? (frame-operator f) 'pending)
+                    (make-frame (frame-opener f) token 0 (frame-quoted? f))
+                    (make-frame (frame-opener f) (frame-operator f) (+ (frame-arguments f) 1) (frame-quoted? f)))
+                (cdr frames)))))
+
+  (define (settle-completion text pos)
+    ;; The input to continue with after a sole completion ends at pos: while
+    ;; the enclosing operator has a fixed arity, a complete form closes with
+    ;; its matching bracket and settles again as an argument of its parent,
+    ;; and an incomplete one steps to its next argument. An unknown arity, a
+    ;; quoted form, or text after pos leaves the cursor at the symbol.
+    (define (blank? from)
+      (let loop ([i from])
+        (or (>= i (string-length text))
+            (and (memv (string-ref text i) '(#\space #\tab #\newline)) (loop (+ i 1))))))
+    (define (settle frames out at)
+      (if (or (null? frames) (frame-quoted? (car frames)))
+          (cons out at)
+          (let* ([frame (car frames)]
+                 [operator (frame-operator frame)]
+                 [arity (and (string? operator) (fixed-arity (string->symbol operator)))])
+            (cond
+              [(not arity) (cons out at)]
+              [(< (frame-arguments frame) arity) (cons (string-append out " ") (+ at 1))]
+              [(= (frame-arguments frame) arity)
+               (settle (count-datum (cdr frames) #f)
+                 (string-append out (string (cdr (assv (frame-opener frame) closers))))
+                 (+ at 1))]
+              [else (cons out at)]))))
+    (if (not (blank? pos))
+        (cons text pos)
+        (let* ([head (substring text 0 pos)] [tail (substring text pos (string-length text))]
+               [settled (settle (call-frames head) head pos)])
+          (cons (string-append (car settled) tail) (cdr settled)))))
 
   ;;; Evaluation ----------------------------------------------------------------
 

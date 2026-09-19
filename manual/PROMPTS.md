@@ -195,7 +195,7 @@ interval; `prompt:completion-label` applies to ordinary completion procedures.
 The caller owns matching and expansion; the prompt owns
 normalization and cycling, live refresh within the same token, pagination,
 and placing the cursor after a replacement. Lookup must have no command
-effects, because editing may call it repeatedly.
+effects, because editing may call it repeatedly. An optional second argument, `(settle text position)`, receives the input after a Tab with exactly one match has inserted that match and closed the list, and returns the `(text . position)` to continue with; M-x uses it to close forms and step to the next argument.
 
 `prompt:validate` is `#f` or a procedure
 called on normalized input when Enter is pressed. It returns `#f` to accept
