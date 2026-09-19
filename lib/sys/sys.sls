@@ -8,7 +8,8 @@
 ;; terminal (or without libc) they become no-ops and sys:terminal-size
 ;; returns #f.
 
-(library (sys)
+(import (only (edoc) elibrary))
+(elibrary (sys)
   (export terminal-raw! terminal-restore! terminal-isig!
           terminal-size watch-terminal-resize! call-with-streamed-output
           duplicate-standard-output-port duplicate-output-port
@@ -31,29 +32,29 @@
           terminal-process-pid resize-terminal-process!
           close-terminal-process! reap-terminal-process!
           time-scale duration after durable-sync-hook)
-  (import (only (edoc) edefine edefine-record-type edefine-condition-type edoc) (chezscheme) (prefix (activity) activity:))
+  (import (chezscheme) (prefix (activity) activity:))
 
   ;; Waits the editor imposes on itself -- connection deadlines, quiescence
   ;; before a stop, a synchronized-output hold -- are seconds multiplied by
   ;; E_TIME_SCALE, so a test installation shortens them without touching the
   ;; product's numbers. Unset or invalid text means 1.
-  (edefine time-scale
-    (edoc "The factor E_TIME_SCALE applies to the editor's self-imposed waits; 1 by default."
-          (value number))
+  (edoc "The factor E_TIME_SCALE applies to the editor's self-imposed waits; 1 by default."
+        (value number))
+  (define time-scale
     (let ([text (getenv "E_TIME_SCALE")])
       (or (and text (let ([n (string->number text)])
                       (and (real? n) (positive? n) (exact->inexact n))))
           1.0)))
-  (edefine (duration seconds)
-    (edoc "A time duration of some seconds, scaled by E_TIME_SCALE."
-          (seconds number "the seconds")
-          (returns any))
+  (edoc "A time duration of some seconds, scaled by E_TIME_SCALE."
+        (seconds number "the seconds")
+        (returns any))
+  (define (duration seconds)
     (let* ([total (* seconds time-scale)] [whole (exact (floor total))])
       (make-time 'time-duration (exact (round (* (- total whole) 1000000000))) whole)))
-  (edefine (after seconds)
-    (edoc "A monotonic time some scaled seconds from now."
-          (seconds number "the seconds")
-          (returns any))
+  (edoc "A monotonic time some scaled seconds from now."
+        (seconds number "the seconds")
+        (returns any))
+  (define (after seconds)
     (add-duration (current-time 'time-monotonic) (duration seconds)))
 
   (define os
@@ -141,10 +142,10 @@
   (define libc-character-locale
     (and c-setlocale (c-setlocale 0 "")))
 
-  (edefine (terminal-character-width character)
-    (edoc "How many terminal cells a character takes: 0 for combining marks, else 1 or 2."
-          (character char "the character")
-          (returns integer))
+  (edoc "How many terminal cells a character takes: 0 for combining marks, else 1 or 2."
+        (character char "the character")
+        (returns integer))
+  (define (terminal-character-width character)
     (let ([width (and c-wcwidth (c-wcwidth (char->integer character)))])
       (cond [(and width (>= width 0)) width]
             [(memq (char-general-category character) '(Mn Me Cf)) 0]
@@ -236,15 +237,15 @@
              (guard (ex [else #f])
                (foreign-procedure "ioctl" (int unsigned-long u8*) int)))))
 
-  (edefine-record-type terminal-process
-    (edoc "A program running in a PTY."
-          (input port "the port reading the program's output")
-          (output port "the port writing the program's input")
-          (pid integer "the process id")
-          (master integer "the PTY master descriptor")
-          (closed boolean "whether its descriptors are closed")
-          (reaped boolean "whether the process was waited for")
-          (lock any "the mutex around it"))
+  (edoc "A program running in a PTY."
+        (input port "the port reading the program's output")
+        (output port "the port writing the program's input")
+        (pid integer "the process id")
+        (master integer "the PTY master descriptor")
+        (closed boolean "whether its descriptors are closed")
+        (reaped boolean "whether the process was waited for")
+        (lock any "the mutex around it"))
+  (define-record-type terminal-process
     (fields input output pid master (mutable closed) (mutable reaped) lock))
 
   (define tiocsctty-request (os-case #x540e #x20007461 #x20007461))
@@ -270,11 +271,11 @@
            (do ([fd 3 (+ fd 1)]) ((= fd (min 65536 (c-getdtablesize))))
              (c-close fd))]))
 
-  (edefine (resize-terminal-process! process rows cols)
-    (edoc "Tell a terminal process's PTY its new size."
-          (process (record terminal-process) "the terminal process")
-          (rows integer "the rows")
-          (cols integer "the columns"))
+  (edoc "Tell a terminal process's PTY its new size."
+        (process (record terminal-process) "the terminal process")
+        (rows integer "the rows")
+        (cols integer "the columns"))
+  (define (resize-terminal-process! process rows cols)
     (unless (terminal-process? process)
       (error 'resize-terminal-process! "expected a terminal process" process))
     (with-mutex (terminal-process-lock process)
@@ -302,14 +303,14 @@
     (for-each c-free (cdr arguments))
     (foreign-free (car arguments)))
 
-  (edefine (spawn-terminal-process shell command directory rows cols)
-    (edoc "Start a command, or the shell, in a fresh PTY of a size, in a directory."
-          (shell string "the shell")
-          (command (or string #f) "the command line, or #f for the shell")
-          (directory directory "the working directory")
-          (rows integer "the rows")
-          (cols integer "the columns")
-          (returns (record terminal-process)))
+  (edoc "Start a command, or the shell, in a fresh PTY of a size, in a directory."
+        (shell string "the shell")
+        (command (or string #f) "the command line, or #f for the shell")
+        (directory directory "the working directory")
+        (rows integer "the rows")
+        (cols integer "the columns")
+        (returns (record terminal-process)))
+  (define (spawn-terminal-process shell command directory rows cols)
     (activity:call-with
       (lambda ()
         (unless (and c-openpty c-fork c-setsid c-execv c-strdup c-free
@@ -400,9 +401,9 @@
              (terminal-process-reaped-set! process #t))
            result)))
 
-  (edefine (close-terminal-process! process)
-    (edoc "Close a terminal process's descriptors and end its process group, giving it a short chance to clean up."
-          (process (record terminal-process) "the terminal process"))
+  (edoc "Close a terminal process's descriptors and end its process group, giving it a short chance to clean up."
+        (process (record terminal-process) "the terminal process"))
+  (define (close-terminal-process! process)
     (with-mutex (terminal-process-lock process)
       (close-terminal-descriptors! process)
       (unless (terminal-process-reaped process)
@@ -419,9 +420,9 @@
                    (when c-kill (c-kill (- (terminal-process-pid process)) 9))
                    (wait-terminal-process! process 0)]))))))
 
-  (edefine (reap-terminal-process! process)
-    (edoc "Wait for a terminal process whose master reported EOF, without blocking the editor."
-          (process (record terminal-process) "the terminal process"))
+  (edoc "Wait for a terminal process whose master reported EOF, without blocking the editor."
+        (process (record terminal-process) "the terminal process"))
+  (define (reap-terminal-process! process)
     ;; Called after the master reports EOF: the child has closed the slave and
     ;; can be waited without delaying the editor.
     (with-mutex (terminal-process-lock process)
@@ -518,9 +519,9 @@
       (error 'base "expected a private path owned by this user" path))
     info)
 
-  (edefine (ensure-private-directory! path)
-    (edoc "Create a directory with mode 700 owned by this user, or check that it is one."
-          (path directory "the directory"))
+  (edoc "Create a directory with mode 700 owned by this user, or check that it is one."
+        (path directory "the directory"))
+  (define (ensure-private-directory! path)
     (unless (ownership-info path)
       (guard (ex [(i/o-file-already-exists-error? ex) (void)] [else (raise ex)])
         (mkdir path #o700)))
@@ -542,31 +543,31 @@
         (descriptor-check 'base path (c-fchmod fd #o600))
         fd)))
 
-  (edefine (acquire-file-lock path)
-    (edoc "Take an exclusive, non-blocking lock on a file; its descriptor, or #f when another process holds it."
-          (path file "the lock file")
-          (returns (or integer #f)))
+  (edoc "Take an exclusive, non-blocking lock on a file; its descriptor, or #f when another process holds it."
+        (path file "the lock file")
+        (returns (or integer #f)))
+  (define (acquire-file-lock path)
     (let ([fd (private-file-fd path #f)])
       (if (zero? (c-flock fd 6)) fd ; LOCK_EX | LOCK_NB
           (let ([code (foreign-ref 'int (c-errno) 0)])
             (c-close fd)
             (if (= code (os-case 11 35 35)) #f (os-error 'base path code))))))
 
-  (edefine (release-file-lock! fd)
-    (edoc "Release a file lock by closing its descriptor."
-          (fd integer "the descriptor"))
+  (edoc "Release a file lock by closing its descriptor."
+        (fd integer "the descriptor"))
+  (define (release-file-lock! fd)
     (c-close fd)) ; Never unlink the lock inode.
 
-  (edefine (remove-stale-socket! path)
-    (edoc "Delete a stale socket path after checking it is a socket of this user."
-          (path file "the socket path"))
+  (edoc "Delete a stale socket path after checking it is a socket of this user."
+        (path file "the socket path"))
+  (define (remove-stale-socket! path)
     (cond [(ownership-info path)
            => (lambda (info)
                 (private-info! path info #o140000)
                 (delete-file path))]))
 
-  (edefine-condition-type &durability-uncertain &error make-durability-uncertain durability-uncertain?
-    (edoc "A durable write could not be confirmed as synced."))
+  (edoc "A durable write could not be confirmed as synced.")
+  (define-condition-type &durability-uncertain &error make-durability-uncertain durability-uncertain?)
 
   (define (call-with-directory-fd directory thunk)
     (let ([fd (descriptor-check 'session directory
@@ -599,9 +600,9 @@
                   (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))
             (if (string=? mode "hold") (sync)
                 (begin (when (string=? mode "hold-fail-log") (close-port (current-error-port))) -1))))))
-  (edefine durable-sync-hook
-    (edoc "How durable writes sync: a procedure given the sync thunk, so tests can control it."
-          (value procedure))
+  (edoc "How durable writes sync: a procedure given the sync thunk, so tests can control it."
+        (value procedure))
+  (define durable-sync-hook
     (make-parameter
       (let ([control (getenv "E_TEST_SYNC_CONTROL")])
         (if control (controlled-sync control) (lambda (sync) (sync))))))
@@ -616,10 +617,10 @@
       (descriptor-check 'session directory
         ((durable-sync-hook) (lambda () ((foreign-procedure __collect_safe "fsync" (int) int) fd))))))
 
-  (edefine (write-session! directory write!)
-    (edoc "Write the session file of a base directory atomically: a writer fills a temporary file, which then replaces the old one."
-          (directory directory "the base directory")
-          (write! procedure "(write! port)"))
+  (edoc "Write the session file of a base directory atomically: a writer fills a temporary file, which then replaces the old one."
+        (directory directory "the base directory")
+        (write! procedure "(write! port)"))
+  (define (write-session! directory write!)
     (call-with-directory-fd directory
       (lambda (fd)
         (let ([path (string-append directory "/session")]
@@ -644,9 +645,9 @@
               (when (and opened? (not renamed?))
                 (guard (ex [else (void)]) (delete-file temporary)))))))))
 
-  (edefine (archive-session! directory)
-    (edoc "Move a base directory's session file to an archive name without replacing an earlier archive."
-          (directory directory "the base directory"))
+  (edoc "Move a base directory's session file to an archive name without replacing an earlier archive."
+        (directory directory "the base directory"))
+  (define (archive-session! directory)
     ;; A genuine no-replace rename preserves earlier recovery evidence.
     ;; If the OS cannot provide it, startup refuses instead of overwriting.
     (let ([rename (guard (ex [else (error 'session "atomic recovery-file preservation is unavailable" directory)])
@@ -664,11 +665,11 @@
                   (let ([code (foreign-ref 'int (c-errno) 0)])
                     (if (= code 17) (choose (+ suffix 1)) (os-error 'session name code))))))))))
 
-  (edefine (call-with-private-input-file path read!)
-    (edoc "Open a private file for reading and call a procedure with its port; #f for an absent file, an error for anything else wrong."
-          (path file "the file")
-          (read! procedure "(read! port)")
-          (returns any))
+  (edoc "Open a private file for reading and call a procedure with its port; #f for an absent file, an error for anything else wrong."
+        (path file "the file")
+        (read! procedure "(read! port)")
+        (returns any))
+  (define (call-with-private-input-file path read!)
     ;; Return #f only for absence. Type, ownership, permission and read
     ;; errors remain startup errors, never evidence of malformed data.
     (let ([fd (c-open path (logor (os-case #o400000 #x100 #x100) (os-case #o4000 #x4 #x4)) 0)])
@@ -684,20 +685,20 @@
                 (read! port))
               (lambda () (if port (close-port port) (c-close fd))))))))
 
-  (edefine (call-with-private-output-file path procedure)
-    (edoc "Truncate a private file and call a procedure with its output port."
-          (path file "the file")
-          (procedure procedure "(procedure port)")
-          (returns any))
+  (edoc "Truncate a private file and call a procedure with its output port."
+        (path file "the file")
+        (procedure procedure "(procedure port)")
+        (returns any))
+  (define (call-with-private-output-file path procedure)
     (let ([port (open-fd-output-port (private-file-fd path #f) 'block (native-transcoder))])
       (dynamic-wind void
         (lambda () (truncate-file port 0) (procedure port) (flush-output-port port))
         (lambda () (close-port port)))))
 
-  (edefine (redirect-daemon-ports! path first?)
-    (edoc "Point the process's stdout and stderr at a private log file."
-          (path file "the log file")
-          (first? boolean "whether this is the first redirection"))
+  (edoc "Point the process's stdout and stderr at a private log file."
+        (path file "the log file")
+        (first? boolean "whether this is the first redirection"))
+  (define (redirect-daemon-ports! path first?)
     (let ([fd (private-file-fd path #t)])
       (dynamic-wind void
         (lambda ()
@@ -729,18 +730,18 @@
   (define (process-generation pid)
     (let ([record (process-record pid)]) (and record (car record))))
 
-  (edefine (process-identity)
-    (edoc "This process's identity: its pid and its start generation where the OS records one."
-          (returns list))
+  (edoc "This process's identity: its pid and its start generation where the OS records one."
+        (returns list))
+  (define (process-identity)
     ;; Linux records boot identity and /proc's start ticks, not a reusable
     ;; pid alone. Other systems explicitly lack a verified force target until
     ;; their stable process-reference implementation is added with restart.
     (list (get-process-id) (process-generation (get-process-id))))
 
-  (edefine (process-exited? identity)
-    (edoc "Whether a process identity no longer names a live process."
-          (identity list "the identity")
-          (returns boolean))
+  (edoc "Whether a process identity no longer names a live process."
+        (identity list "the identity")
+        (returns boolean))
+  (define (process-exited? identity)
     ;; Read-only waiting for an announced stop. A reused pid is already a
     ;; different instance; platforms without generation data may time out
     ;; conservatively. Forced signals instead require the pidfd proof below.
@@ -787,11 +788,11 @@
                                    (equal? (map string->number device '(16 16 10)) identity))))
                        (scan)))))))))
 
-  (edefine (call-with-verified-base directory thunk)
-    (edoc "Run a thunk with proof that a base directory's lock holder is the live process it claims, keeping a pidfd through the signals."
-          (directory directory "the base directory")
-          (thunk procedure "the work, given the verified process")
-          (returns any))
+  (edoc "Run a thunk with proof that a base directory's lock holder is the live process it claims, keeping a pidfd through the signals."
+        (directory directory "the base directory")
+        (thunk procedure "the work, given the verified process")
+        (returns any))
+  (define (call-with-verified-base directory thunk)
     ;; Keep a pidfd, not a numeric pid, from proof through both signals.
     ;; /proc/locks ties the record to this actual flock inode and holder;
     ;; process generation and a live pidfd exclude a recycled process id.
@@ -848,20 +849,20 @@
                       (lambda () (c-close fd) (foreign-free pollfd))))))))
         (lambda () (c-close lock)))))
 
-  (edefine-condition-type &unresponsive &error make-unresponsive unresponsive?
-    (edoc "A peer did not answer within its deadline."))
+  (edoc "A peer did not answer within its deadline.")
+  (define-condition-type &unresponsive &error make-unresponsive unresponsive?)
   (define (unresponsive! message)
     (raise (condition (make-unresponsive) (make-who-condition 'e) (make-message-condition message))))
 
   (define-record-type local-listener
     (fields fd path lock (mutable closed)))
-  (edefine-record-type connection
-    (edoc "A local socket connection."
-          (fd integer "the socket descriptor")
-          (input port "the port reading from the peer")
-          (output port "the port writing to the peer")
-          (lock any "the mutex around it")
-          (closed boolean "whether it is closed"))
+  (edoc "A local socket connection."
+        (fd integer "the socket descriptor")
+        (input port "the port reading from the peer")
+        (output port "the port writing to the peer")
+        (lock any "the mutex around it")
+        (closed boolean "whether it is closed"))
+  (define-record-type connection
     (fields fd input output lock (mutable closed)))
 
   (define (socket-check who result)
@@ -916,10 +917,10 @@
         (set! output (open-fd-output-port out-fd 'none #f))
         (make-connection fd input output (make-mutex) #f))))
 
-  (edefine (listen-local path)
-    (edoc "Listen on a local socket path."
-          (path file "the socket path")
-          (returns (record local-listener)))
+  (edoc "Listen on a local socket path."
+        (path file "the socket path")
+        (returns (record local-listener)))
+  (define (listen-local path)
     (unless c-socket (error 'listen-local "local sockets are unavailable"))
     (call-with-local-address path
       (lambda (address size)
@@ -934,10 +935,10 @@
             (socket-check 'listen-local (c-listen fd 32))
             (make-local-listener fd (string-copy path) (make-mutex) #f))))))
 
-  (edefine (accept-local listener)
-    (edoc "Accept the next connection on a local listener, or #f once it is closed."
-          (listener (record local-listener) "the listener")
-          (returns (or (record connection) #f)))
+  (edoc "Accept the next connection on a local listener, or #f once it is closed."
+        (listener (record local-listener) "the listener")
+        (returns (or (record connection) #f)))
+  (define (accept-local listener)
     (let again ()
       (if (local-listener-closed listener) #f
           (let ([fd (c-accept (local-listener-fd listener) 0 0)])
@@ -946,11 +947,11 @@
                   [(= (foreign-ref 'int (c-errno) 0) 4) (again)] ; EINTR
                   [else (socket-check 'accept-local fd)])))))
 
-  (edefine (try-connect-local path deadline)
-    (edoc "Connect to a local socket by a deadline; #f when nothing listens, the only failure that permits starting a base."
-          (path file "the socket path")
-          (deadline any "a monotonic time")
-          (returns (or (record connection) #f)))
+  (edoc "Connect to a local socket by a deadline; #f when nothing listens, the only failure that permits starting a base."
+        (path file "the socket path")
+        (deadline any "a monotonic time")
+        (returns (or (record connection) #f)))
+  (define (try-connect-local path deadline)
     ;; #f means absent/refused, the only failures that permit automatic start.
     ;; AF_UNIX EAGAIN (a full backlog on Linux) needs a fresh connect attempt;
     ;; SO_ERROR=0 after EAGAIN would falsely report an established connection.
@@ -1002,26 +1003,23 @@
                (and (eq? result 'retry)
                     (begin (sleep (make-time 'time-duration 50000000 0)) (again)))]))))))
 
-  (edefine connect-local
+  (edoc "Connect to a local socket by a deadline, ten scaled seconds from now by default; an error when no base listens."
+        (path file "the socket path")
+        (deadline any "a monotonic time")
+        (returns (record connection)))
+  (define connect-local
     (case-lambda
       [(path)
-       (edoc "Connect to a local socket, waiting up to ten scaled seconds; an error when no base listens."
-             (path file "the socket path")
-             (returns (record connection)))
        (connect-local path (after 10))]
       [(path deadline)
-       (edoc "Connect to a local socket by a deadline; an error when no base listens."
-             (path file "the socket path")
-             (deadline any "a monotonic time")
-             (returns (record connection)))
        (or (try-connect-local path deadline) (error 'connect-local "no base is listening" path))]))
 
-  (edefine (call-with-connection-deadline connection deadline thunk)
-    (edoc "Run an exchange on a connection under one deadline, shutting the connection down when it expires."
-          (connection (record connection) "the connection")
-          (deadline any "a monotonic time")
-          (thunk thunk "the exchange")
-          (returns any))
+  (edoc "Run an exchange on a connection under one deadline, shutting the connection down when it expires."
+        (connection (record connection) "the connection")
+        (deadline any "a monotonic time")
+        (thunk thunk "the exchange")
+        (returns any))
+  (define (call-with-connection-deadline connection deadline thunk)
     ;; A single watchdog bounds the complete exchange, including partial
     ;; frames and blocked writes. Shutdown wakes the blocked port operation.
     (let* ([lock (make-mutex)] [ready (make-condition)] [finished? #f] [expired? #f]
@@ -1045,9 +1043,9 @@
             (thread-join watchdog)
             (when expired? (unresponsive! "the base is unresponsive (exchange timed out)")))))))
 
-  (edefine (close-connection! connection)
-    (edoc "Shut a connection down, waking blocked reads and writes, and close its ports."
-          (connection (record connection) "the connection"))
+  (edoc "Shut a connection down, waking blocked reads and writes, and close its ports."
+        (connection (record connection) "the connection"))
+  (define (close-connection! connection)
     (with-mutex (connection-lock connection)
       (unless (connection-closed connection)
         (connection-closed-set! connection #t)
@@ -1056,10 +1054,10 @@
         (for-each (lambda (port) (guard (ex [else (void)]) (close-port port)))
                   (list (connection-input connection) (connection-output connection))))))
 
-  (edefine (connection-alive? connection)
-    (edoc "Whether a connection's peer is still there, peeking without consuming bytes."
-          (connection (record connection) "the connection")
-          (returns boolean))
+  (edoc "Whether a connection's peer is still there, peeking without consuming bytes."
+        (connection (record connection) "the connection")
+        (returns boolean))
+  (define (connection-alive? connection)
     ;; A lifecycle caller's reader is waiting for its RPC, so it cannot
     ;; discover EOF during the pause itself. Peek without consuming bytes
     ;; or changing descriptor flags; a dead requester has not accepted yet.
@@ -1073,9 +1071,9 @@
              (or (> n 0)
                  (and (< n 0) (memv (foreign-ref 'int (c-errno) 0) (list (os-case 11 35 35) 4)) #t))))))
 
-  (edefine (close-local-listener! listener)
-    (edoc "Close a local listener and delete its socket path."
-          (listener (record local-listener) "the listener"))
+  (edoc "Close a local listener and delete its socket path."
+        (listener (record local-listener) "the listener"))
+  (define (close-local-listener! listener)
     (with-mutex (local-listener-lock listener)
       (unless (local-listener-closed listener)
         (local-listener-closed-set! listener #t)
@@ -1083,9 +1081,9 @@
         (c-close (local-listener-fd listener))
         (delete-file (local-listener-path listener)))))
 
-  (edefine (watch-daemon-signals! stop!)
-    (edoc "Route the process's termination signals to one receiver thread that calls a stop procedure; install before creating workers."
-          (stop! thunk "what to run on a signal"))
+  (edoc "Route the process's termination signals to one receiver thread that calls a stop procedure; install before creating workers."
+        (stop! thunk "what to run on a signal"))
+  (define (watch-daemon-signals! stop!)
     ;; Install before creating any worker: each inherits this blocked mask.
     ;; Chez 10.0 queues a registered signal on whichever thread receives it;
     ;; a worker may then block in I/O before servicing that queue. One POSIX
@@ -1119,27 +1117,27 @@
   ;; escape. Only a poll blocks, with foreign memory and the collector released.
   ;; Exec one argument list; cancellation owns that PID, not the
   ;; editor's process group or arbitrary children of other callers.
-  (edefine-record-type command-process
-    (edoc "A command started with piped input and output."
-          (to port "the port writing the command's input")
-          (from port "the port reading its output")
-          (errors port "the port reading its stderr")
-          (pid integer "the process id")
-          (buffer any "the pending output bytes")
-          (capture any "the stderr capture")
-          (code (or integer #f) "the exit status, once ended")
-          (input any "the port a consumer reads the output from")
-          (prefix any "output read ahead")
-          (closed boolean "whether the process was closed")
-          (complaint (or string #f) "the stderr text, once read"))
+  (edoc "A command started with piped input and output."
+        (to port "the port writing the command's input")
+        (from port "the port reading its output")
+        (errors port "the port reading its stderr")
+        (pid integer "the process id")
+        (buffer any "the pending output bytes")
+        (capture any "the stderr capture")
+        (code (or integer #f) "the exit status, once ended")
+        (input any "the port a consumer reads the output from")
+        (prefix any "output read ahead")
+        (closed boolean "whether the process was closed")
+        (complaint (or string #f) "the stderr text, once read"))
+  (define-record-type command-process
     (fields to from errors pid buffer capture
             (mutable code) (mutable input process-input set-process-input!)
             (mutable prefix) (mutable closed) (mutable complaint)))
 
-  (edefine (open-process arguments)
-    (edoc "Start a command with piped input and output, as an owned process."
-          (arguments (list-of string) "the command line")
-          (returns (record command-process)))
+  (edoc "Start a command with piped input and output, as an owned process."
+        (arguments (list-of string) "the command line")
+        (returns (record command-process)))
+  (define (open-process arguments)
     (activity:call-with
       (lambda ()
         (unless (and c-waitpid c-kill c-poll c-errno c-pipe c-fork c-execvp
@@ -1241,10 +1239,10 @@
     (capture-process! process (command-process-errors process)
                       (car (command-process-capture process))))
 
-  (edefine (write-process! process bytes)
-    (edoc "Send a process its input body and then EOF, reading early output meanwhile."
-          (process (record command-process) "the process")
-          (bytes bytevector "the input"))
+  (edoc "Send a process its input body and then EOF, reading early output meanwhile."
+        (process (record command-process) "the process")
+        (bytes bytevector "the input"))
+  (define (write-process! process bytes)
     ;; Submit one optional input body and then EOF. Keep early stdout while
     ;; sending a large body, so even a program writing before reading can run.
     (when (command-process-closed process) (error 'write-process! "command is closed"))
@@ -1262,10 +1260,10 @@
         (command-process-prefix-set! process (open-bytevector-input-port (take)))
         (close-port to))))
 
-  (edefine (poll-process! process)
-    (edoc "A process's exit status when it has ended, else #f, reaping it exactly once."
-          (process (record command-process) "the process")
-          (returns (or integer #f)))
+  (edoc "A process's exit status when it has ended, else #f, reaping it exactly once."
+        (process (record command-process) "the process")
+        (returns (or integer #f)))
+  (define (poll-process! process)
     ;; A returned status and its adoption are indivisible: never signal a PID
     ;; after reaping it, including on engine expiry. Other owners' PIDs stay out.
     (or (command-process-code process)
@@ -1313,10 +1311,10 @@
                [(zero? got) (wait-process-io! process #f) (read-process! process bytes start count)]
                [else got]))]))
 
-  (edefine (process-result process)
-    (edoc "A finished process's status, as system reports it: an exit code, or a negated signal."
-          (process (record command-process) "the process")
-          (returns integer))
+  (edoc "A finished process's status, as system reports it: an exit code, or a negated signal."
+        (process (record command-process) "the process")
+        (returns integer))
+  (define (process-result process)
     ;; Ask after output EOF or explicit close. Status matches Chez's system:
     ;; an exit code, or the negated terminating signal.
     (unless (integer? (command-process-code process))
@@ -1327,9 +1325,9 @@
                             (make-transcoder (utf-8-codec) 'none 'replace))))
     (values (command-process-code process) (string-copy (command-process-complaint process))))
 
-  (edefine (close-process! process)
-    (edoc "Close a process, ending it when it still runs, and reap it."
-          (process (record command-process) "the process"))
+  (edoc "Close a process, ending it when it still runs, and reap it."
+        (process (record command-process) "the process"))
+  (define (close-process! process)
     (with-interrupts-disabled
       (unless (command-process-closed process)
         (command-process-closed-set! process #t)
@@ -1352,9 +1350,9 @@
                     (command-process-errors process) (command-process-prefix process)
                     (process-input process))))))))
 
-  (edefine (release-process! process)
-    (edoc "Give up a process without signalling it, reaping it by pid when it ends."
-          (process (record command-process) "the process"))
+  (edoc "Give up a process without signalling it, reaping it by pid when it ends."
+        (process (record command-process) "the process"))
+  (define (release-process! process)
     ;; Give up cancellation ownership without signalling the child. Bootstrap
     ;; uses this after its head exits, or after a startup timeout. Reap by the
     ;; owned child pid, even when the child outlives the calling runtime.
@@ -1378,37 +1376,37 @@
                   (command-process-errors process) (command-process-prefix process)
                   (process-input process)))))))
 
-  (edefine (signal-process! process signal)
-    (edoc "Send a running process a signal; whether it was sent."
-          (process (record command-process) "the process")
-          (signal integer "the signal number")
-          (returns boolean))
+  (edoc "Send a running process a signal; whether it was sent."
+        (process (record command-process) "the process")
+        (signal integer "the signal number")
+        (returns boolean))
+  (define (signal-process! process signal)
     (with-interrupts-disabled
       (and (not (command-process-closed process)) (not (poll-process! process))
            (zero? (descriptor-check 'process (command-process-pid process)
                     (c-kill (command-process-pid process) signal))))))
 
-  (edefine (host-name)
-    (edoc "The host's name, or #f."
-          (returns (or string #f)))
+  (edoc "The host's name, or #f."
+        (returns (or string #f)))
+  (define (host-name)
     (and c-gethostname
          (let ([out (make-bytevector 1024 0)])
            (and (zero? (c-gethostname out (bytevector-length out)))
                 (nul-terminated-string out)))))
 
-  (edefine (terminal-name)
-    (edoc "The controlling terminal's device name, or #f."
-          (returns (or string #f)))
+  (edoc "The controlling terminal's device name, or #f."
+        (returns (or string #f)))
+  (define (terminal-name)
     ;; ttyname_r owns its output buffer, unlike ttyname's shared C storage.
     (and c-ttyname-r
          (let ([out (make-bytevector 1024 0)])
            (and (zero? (c-ttyname-r 0 out (bytevector-length out)))
                 (nul-terminated-string out)))))
 
-  (edefine (canonical-file-path path)
-    (edoc "The absolute, symlink-resolved spelling of an existing path, or #f."
-          (path string "the path")
-          (returns (or string #f)))
+  (edoc "The absolute, symlink-resolved spelling of an existing path, or #f."
+        (path string "the path")
+        (returns (or string #f)))
+  (define (canonical-file-path path)
     ;; The absolute, symlink-resolved spelling of an existing path, or #f.
     ;; PATH_MAX is commonly 4096; realpath fails instead of overflowing the
     ;; caller-provided buffer.
@@ -1417,22 +1415,19 @@
            (and (not (= (c-realpath path out) 0))
                 (nul-terminated-string out)))))
 
-  (edefine file-info
+  (edoc "A file's metadata without opening it, following a symbolic link when asked: #(kind permissions byte-size modified-ns created-ns), or #f when inaccessible."
+        (path string "the path")
+        (follow? boolean "whether to follow a link")
+        (returns (or vector #f)))
+  (define file-info
     ;; #(kind permissions byte-size modified-ns created-ns), or #f when
     ;; inaccessible. Never open the file to obtain metadata: a device/FIFO
     ;; must not turn directory browsing into a read. Unknown fields are #f.
     ;; Linux's fixed statx ABI includes birth time; ctime is not creation.
     (case-lambda
       [(path)
-       (edoc "A file's metadata without opening it: #(kind permissions byte-size modified-ns created-ns), or #f when inaccessible."
-             (path string "the path")
-             (returns (or vector #f)))
        (file-info path #f)]
       [(path follow?)
-       (edoc "A file's metadata, following a symbolic link when asked."
-             (path string "the path")
-             (follow? boolean "whether to follow a link")
-             (returns (or vector #f)))
        (define (portable)
          (guard (ex [else #f])
            (and (file-exists? path follow?)
@@ -1476,9 +1471,9 @@
   ;; The destination for terminal-control output. Normally this is stdout;
   ;; clients that temporarily redirect process stdout can preserve a separate
   ;; terminal descriptor here so the interface remains drawable.
-  (edefine terminal-output-port
-    (edoc "The port terminal-control output goes to, normally stdout."
-          (value port))
+  (edoc "The port terminal-control output goes to, normally stdout."
+        (value port))
+  (define terminal-output-port
     (make-parameter (current-output-port)))
 
   (define (make-pipe)
@@ -1488,18 +1483,18 @@
                 (cons (bytevector-s32-native-ref fds 0)
                       (bytevector-s32-native-ref fds 4))))))
 
-  (edefine (duplicate-standard-output-port)
-    (edoc "A fresh port on a duplicate of stdout, stable while fd 1 is redirected."
-          (returns port))
+  (edoc "A fresh port on a duplicate of stdout, stable while fd 1 is redirected."
+        (returns port))
+  (define (duplicate-standard-output-port)
     ;; A stable route to the terminal while fd 1 is temporarily redirected
     ;; into an evaluated program's stdout pipe.
     (unless c-dup
       (error 'duplicate-standard-output-port "dup is unavailable"))
     (open-fd-output-port (c-dup 1) 'block (native-transcoder)))
 
-  (edefine (duplicate-standard-input-port)
-    (edoc "A fresh port on a duplicate of stdin, with its own lock."
-          (returns port))
+  (edoc "A fresh port on a duplicate of stdin, with its own lock."
+        (returns port))
+  (define (duplicate-standard-input-port)
     ;; A private route to the terminal's input: its own port object,
     ;; its own lock -- a thread blocked reading it never starves
     ;; writers on the console ports.
@@ -1513,10 +1508,10 @@
     ;; fd 1 is the same terminal and is the safe fallback.
     (guard (ex [else 1]) (port-file-descriptor port)))
 
-  (edefine (duplicate-output-port port)
-    (edoc "A fresh port on a duplicate of an output port's descriptor."
-          (port port "the output port")
-          (returns port))
+  (edoc "A fresh port on a duplicate of an output port's descriptor."
+        (port port "the output port")
+        (returns port))
+  (define (duplicate-output-port port)
     ;; Keep an independently closeable route to an existing descriptor.  PTY
     ;; readers use this to outlive M-x's temporary evaluation display port.
     (unless c-dup
@@ -1547,12 +1542,12 @@
       (lambda ()
         (guard (ex [else (failed! ex)]) (close-port (capture-stream-input stream))))))
 
-  (edefine (call-with-streamed-output stdout! stderr! thunk)
-    (edoc "Run a thunk with stdout and stderr, Scheme's and the process's, piped to line emitters."
-          (stdout! procedure "(stdout! line)")
-          (stderr! procedure "(stderr! line)")
-          (thunk thunk "the work")
-          (returns any))
+  (edoc "Run a thunk with stdout and stderr, Scheme's and the process's, piped to line emitters."
+        (stdout! procedure "(stdout! line)")
+        (stderr! procedure "(stderr! line)")
+        (thunk thunk "the work")
+        (returns any))
+  (define (call-with-streamed-output stdout! stderr! thunk)
     ;; Run thunk with Scheme's current ports and the process-level stdout and
     ;; stderr descriptors connected to pipes. Reader threads emit each line
     ;; as it arrives, including output inherited by child processes.
@@ -1676,8 +1671,8 @@
 
   (define saved-termios #f)
 
-  (edefine (terminal-raw!)
-    (edoc "Switch the terminal to raw mode, remembering how to put it back.")
+  (edoc "Switch the terminal to raw mode, remembering how to put it back.")
+  (define (terminal-raw!)
     ;; Switch the terminal to raw mode, remembering how to put it back.
     (when (and tcgetattr tcsetattr cfmakeraw)
       (guard (ex [else (void)])
@@ -1688,15 +1683,15 @@
               (cfmakeraw raw)
               (tcsetattr 0 tcsanow raw)))))))
 
-  (edefine (terminal-restore!)
-    (edoc "Restore the terminal settings saved by terminal-raw!.")
+  (edoc "Restore the terminal settings saved by terminal-raw!.")
+  (define (terminal-restore!)
     (when (and tcsetattr saved-termios)
       (guard (ex [else (void)])
         (tcsetattr 0 tcsanow saved-termios))))
 
-  (edefine (terminal-isig! on)
-    (edoc "Let the terminal turn C-g into SIGINT, or stop doing so."
-          (on boolean "whether C-g interrupts"))
+  (edoc "Let the terminal turn C-g into SIGINT, or stop doing so."
+        (on boolean "whether C-g interrupts"))
+  (define (terminal-isig! on)
     ;; Let the terminal turn C-g into SIGINT (the interrupt character is
     ;; set to C-g; quit and suspend stay disabled), or stop doing so.
     (when (and tcgetattr tcsetattr)
@@ -1713,9 +1708,9 @@
               (bytevector-u8-set! t (+ cc-offset vsusp) vdisable))
             (tcsetattr 0 tcsanow t))))))
 
-  (edefine (terminal-size)
-    (edoc "The terminal's (rows . cols), or #f."
-          (returns (or pair #f)))
+  (edoc "The terminal's (rows . cols), or #f."
+        (returns (or pair #f)))
+  (define (terminal-size)
     ;; (rows . cols) for the display's tty via TIOCGWINSZ, or #f.
     ;; Process stdout may be a capture pipe while M-x is running.
     (and winsize-ioctl
@@ -1728,10 +1723,10 @@
                         [c (bytevector-u16-native-ref size 2)])
                     (and (> r 0) (> c 0) (cons r c))))))))
 
-  (edefine (watch-terminal-resize! thunk)
-    (edoc "Call a thunk on window size changes; #f when registration is unavailable."
-          (thunk thunk "what to run")
-          (returns boolean))
+  (edoc "Call a thunk on window size changes; #f when registration is unavailable."
+        (thunk thunk "what to run")
+        (returns boolean))
+  (define (watch-terminal-resize! thunk)
     ;; Call thunk on window-size changes.  SIGWINCH is signal 28 on both
     ;; Linux and macOS; #f when registration is unavailable.
     (guard (ex [else #f])

@@ -1,12 +1,13 @@
 ;; glyph.sls -- shared terminal-cell widths and cluster boundaries.
-(library (glyph)
+(import (only (edoc) elibrary))
+(elibrary (glyph)
   (export width extends? clusters cells fit)
-  (import (only (edoc) edefine edoc) (chezscheme) (prefix (sys) sys:))
+  (import (chezscheme) (prefix (sys) sys:))
 
-  (edefine (width text)
-    (edoc "The terminal cells one grapheme cluster takes: the widest character, 2 for emoji and flags."
-          (text string "the cluster")
-          (returns integer))
+  (edoc "The terminal cells one grapheme cluster takes: the widest character, 2 for emoji and flags."
+        (text string "the cluster")
+        (returns integer))
+  (define (width text)
     (let loop ([i 0] [cells 0] [indicators 0] [emoji? #f])
       (if (= i (string-length text))
           (if (or emoji? (>= indicators 2)) (max 2 cells) cells)
@@ -15,12 +16,12 @@
                   (+ indicators (if (eq? (char-grapheme-break-property c) 'Regional_Indicator) 1 0))
                   (or emoji? (memv c '(#\xfe0f #\x20e3))))))))
 
-  (edefine (extends? previous character indicators)
-    (edoc "Whether a character continues the cluster of the previous one."
-          (previous (or char #f) "the previous character")
-          (character char "the character")
-          (indicators integer "regional indicators seen so far")
-          (returns boolean))
+  (edoc "Whether a character continues the cluster of the previous one."
+        (previous (or char #f) "the previous character")
+        (character char "the character")
+        (indicators integer "regional indicators seen so far")
+        (returns boolean))
+  (define (extends? previous character indicators)
     (let ([property (char-grapheme-break-property character)]
           [before (and previous (char-grapheme-break-property previous))])
       (or (memq property '(Extend ZWJ SpacingMark))
@@ -42,19 +43,19 @@
             (and (let ([c (char->integer (string-ref text i))]) (and (fx>= c 32) (fx< c 127)))
                  (loop (fx+ i 1)))))))
 
-  (edefine (cells text)
-    (edoc "The terminal cells a text takes."
-          (text string "the text")
-          (returns integer))
+  (edoc "The terminal cells a text takes."
+        (text string "the text")
+        (returns integer))
+  (define (cells text)
     (if (plain? text) (string-length text)
         (fold-left (lambda (n cluster) (+ n (cdr cluster))) 0 (clusters text))))
 
-  (edefine (fit text width . side)
-    (edoc "A text fitted to exactly a width in cells, padded on the right or cut at whole clusters with an ellipsis, on the left when asked."
-          (text string "the text")
-          (width integer "the cells")
-          (side (list-of (one-of left)) "left to cut the start, at most one")
-          (returns string))
+  (edoc "A text fitted to exactly a width in cells, padded on the right or cut at whole clusters with an ellipsis, on the left when asked."
+        (text string "the text")
+        (width integer "the cells")
+        (side (list-of (one-of left)) "left to cut the start, at most one")
+        (returns string))
+  (define (fit text width . side)
     ;; Fit a label to exactly width terminal cells, padding on the right.
     ;; Truncate whole clusters, with an ellipsis on the right by default
     ;; or on the left to retain a path's informative tail.
@@ -79,10 +80,10 @@
                      (make-string (- width used 1) #\space))
                    (keep (cdr parts) (+ chars (caar parts)) (+ used (cdar parts)))))])))
 
-  (edefine (clusters text)
-    (edoc "A text's grapheme clusters as (character-count . cell-count) pairs."
-          (text string "the text")
-          (returns list))
+  (edoc "A text's grapheme clusters as (character-count . cell-count) pairs."
+        (text string "the text")
+        (returns list))
+  (define (clusters text)
     ;; Positive (character-count . cell-count) pairs. A control occupies one
     ;; blank cell, including tabs; an isolated zero-width cluster gets a
     ;; blank anchor. Controls cannot absorb an adjacent combining character.

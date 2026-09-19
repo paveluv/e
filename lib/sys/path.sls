@@ -4,14 +4,15 @@
 ;; symbolic links. Tilde expansion and canonicalization are separate:
 ;; compose them as (path:canonical (path:expand name)).
 
-(library (path)
+(import (only (edoc) elibrary))
+(elibrary (path)
   (export expand canonical)
-  (import (only (edoc) edefine edoc) (except (chezscheme) expand) (prefix (string) string:))
+  (import (except (chezscheme) expand) (prefix (string) string:))
 
-  (edefine (expand path)
-    (edoc "A path with a leading ~ expanded to the home directory."
-          (path string "the path")
-          (returns string))
+  (edoc "A path with a leading ~ expanded to the home directory."
+        (path string "the path")
+        (returns string))
+  (define (expand path)
     ;; Expand a leading ~ to the home directory.
     (let ([home (getenv "HOME")])
       (cond [(not home) path]
@@ -19,10 +20,10 @@
             [(string:prefix? "~/" path) (string-append home (string:tail path 1))]
             [else path])))
 
-  (edefine (canonical path*)
-    (edoc "A path made absolute with its dot, dot-dot and empty segments resolved textually; links are not chased."
-          (path* string "the path")
-          (returns string))
+  (edoc "A path made absolute with its dot, dot-dot and empty segments resolved textually; links are not chased."
+        (path* string "the path")
+        (returns string))
+  (define (canonical path*)
     ;; path made absolute, with ".", "..", and empty segments resolved
     ;; textually (symbolic links are not chased) -- enough to recognize
     ;; the editor's own files whichever way they are named.

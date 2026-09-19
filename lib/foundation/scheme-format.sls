@@ -22,29 +22,30 @@
 ;; row -- trailing blank lines dropped, so a file ends with exactly
 ;; one newline.
 
-(library (scheme-format)
+(import (only (edoc) elibrary))
+(elibrary (scheme-format)
   (export (rename (scheme-indent-lines indent-lines)) (rename (scheme-format-lines lines)) (rename (scheme-delimiter? delimiter?))
           (rename (scheme-format-brackets brackets)) (rename (scheme-tab-width tab-width))
           (rename (scheme-format-intrusive intrusive)) (rename (scheme-format-width width)))
-  (import (only (edoc) edefine edoc) (chezscheme) (prefix (string) string:))
+  (import (chezscheme) (prefix (string) string:))
 
   ;; Configuration: bracket convention, tab expansion, and the opt-in
   ;; width-aware layout pass.
-  (edefine scheme-format-brackets
-    (edoc "Whether formatting normalizes brackets by convention: round for forms, square for binding and clause lists."
-          (value boolean))
+  (edoc "Whether formatting normalizes brackets by convention: round for forms, square for binding and clause lists."
+        (value boolean))
+  (define scheme-format-brackets
     (make-parameter #t))
-  (edefine scheme-tab-width
-    (edoc "The columns a tab counts for when formatting."
-          (value integer))
+  (edoc "The columns a tab counts for when formatting."
+        (value integer))
+  (define scheme-tab-width
     (make-parameter 2))
-  (edefine scheme-format-intrusive
-    (edoc "Whether whole-buffer formatting may change line counts to lay code out within the width."
-          (value boolean))
+  (edoc "Whether whole-buffer formatting may change line counts to lay code out within the width."
+        (value boolean))
+  (define scheme-format-intrusive
     (make-parameter #f))
-  (edefine scheme-format-width
-    (edoc "The line width the intrusive layout aims for."
-          (value integer))
+  (edoc "The line width the intrusive layout aims for."
+        (value integer))
+  (define scheme-format-width
     (make-parameter 100
       (lambda (width)
         (unless (and (integer? width) (exact? width) (>= width 20))
@@ -58,10 +59,10 @@
               [(string=? (substring s i (+ i m)) needle) i]
               [else (loop (+ i 1))]))))
 
-  (edefine (scheme-delimiter? c)
-    (edoc "Whether a character ends a Scheme token: whitespace, a bracket, a quote or a semicolon."
-          (c char "the character")
-          (returns boolean))
+  (edoc "Whether a character ends a Scheme token: whitespace, a bracket, a quote or a semicolon."
+        (c char "the character")
+        (returns boolean))
+  (define (scheme-delimiter? c)
     (or (char-whitespace? c) (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\'))))
 
   ;; One scanner drives both: it walks lines left to right, skipping
@@ -399,12 +400,12 @@
 
   (define (blank? s) (= (indent-of s) (string-length s)))
 
-  (edefine (scheme-indent-lines v from to)
-    (edoc "The indentation stops of rows [from, to] of Scheme lines: #f, a column, or an ascending list, each line scanned as it will lie once settled."
-          (v vector "the lines")
-          (from integer "the first row")
-          (to integer "the last row")
-          (returns list))
+  (edoc "The indentation stops of rows [from, to] of Scheme lines: #f, a column, or an ascending list, each line scanned as it will lie once settled."
+        (v vector "the lines")
+        (from integer "the first row")
+        (to integer "the last row")
+        (returns list))
+  (define (scheme-indent-lines v from to)
     ;; The indenter: stops for rows [from, to] -- #f, a column, or an
     ;; ascending list -- each line scanned as it will lie once settled
     ;; on the stop nearest its current indentation.
@@ -630,12 +631,12 @@
           [b (read-all (lines-text after))])
       (and a b (equal? (cdr a) (cdr b)))))
 
-  (edefine (scheme-format-lines v from to)
-    (edoc "Rows [from, to] of Scheme lines reformatted: indented and their brackets normalized, and laid out to the width when intrusive formatting is on for a whole buffer."
-          (v vector "the lines")
-          (from integer "the first row")
-          (to integer "the last row")
-          (returns list))
+  (edoc "Rows [from, to] of Scheme lines reformatted: indented and their brackets normalized, and laid out to the width when intrusive formatting is on for a whole buffer."
+        (v vector "the lines")
+        (from integer "the first row")
+        (to integer "the last row")
+        (returns list))
+  (define (scheme-format-lines v from to)
     ;; Intrusive, line-count-changing layout is opt-in and limited to a whole
     ;; buffer; region formatting retains the old structural guarantees.
     (let ([basic (scheme-basic-format-lines v from to)])

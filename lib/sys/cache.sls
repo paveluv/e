@@ -1,9 +1,10 @@
 ;; cache.sls -- serialize access to one installation's compiled libraries.
 ;; Loaded from source before the loader's first cached import. Only Chez is
 ;; a dependency: consulting the cache to install its lock would itself race.
-(library (cache)
+(import (only (edoc) elibrary))
+(elibrary (cache)
   (export install!)
-  (import (only (edoc) edefine edoc) (chezscheme))
+  (import (chezscheme))
 
   (define libc
     (let try ([names '("libc.so.6" "libSystem.dylib" "libc.so.7" "libc.so")])
@@ -13,9 +14,9 @@
   (define flock (foreign-procedure __collect_safe "flock" (int int) int))
   (define fcntl (foreign-procedure "fcntl" (int int int) int))
 
-  (edefine (install! directory)
-    (edoc "Use a directory, created private, as the compiled object cache, locked against other installations."
-          (directory directory "the cache directory"))
+  (edoc "Use a directory, created private, as the compiled object cache, locked against other installations."
+        (directory directory "the cache directory"))
+  (define (install! directory)
     (unless (file-directory? directory)
       (guard (ex [(i/o-file-already-exists-error? ex) (void)] [else (raise ex)])
         (mkdir directory #o700)))

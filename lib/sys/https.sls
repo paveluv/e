@@ -32,14 +32,15 @@
 ;; same reason they exchange bytes through foreign buffers, never
 ;; through Scheme bytevectors that the collector could move mid-call.
 
-(library (https)
+(import (only (edoc) elibrary))
+(elibrary (https)
   (export (rename (https-get get)) (rename (https-download download)) (rename (https-request request))
           (rename (https-response-status response-status)) (rename (https-response-headers response-headers)) (rename (https-response-port response-port))
           (rename (https-response-text response-text)) (rename (https-close! close!))
           (rename (https-connector connector)) (rename (https-timeout timeout)) (rename (https-backend backend))
           make-channel channel-read! channel-write! channel-close!
           tcp-connect tls-connect)
-  (import (only (edoc) edefine edefine-record-type edoc) (chezscheme) (prefix (string) string:) (prefix (sys) sys:))
+  (import (chezscheme) (prefix (string) string:) (prefix (sys) sys:))
 
   ;;; Foreign library loading ---------------------------------------------
 
@@ -204,9 +205,9 @@
     (let ([next (foreign-ref 'void* info 40)])
       (and (not (zero? next)) next)))
 
-  (edefine https-timeout
-    (edoc "Seconds a stalled peer may hold a read or write before the request fails."
-          (value integer))
+  (edoc "Seconds a stalled peer may hold a read or write before the request fails."
+        (value integer))
+  (define https-timeout
     ;; Seconds a stalled peer may hold a read or write before the
     ;; request fails.
     (make-parameter 60
@@ -271,11 +272,11 @@
   ;; A channel is the transport abstraction: read! fills a bytevector
   ;; range and returns the count (0 at orderly close), write! sends a
   ;; whole bytevector, close! releases the transport.
-  (edefine-record-type channel
-    (edoc "A byte channel to a peer: how to read, write and close it."
-          (read! procedure "(read! bytevector start count) giving the bytes read")
-          (write! procedure "(write! bytevector start count)")
-          (close! thunk "closes the channel"))
+  (edoc "A byte channel to a peer: how to read, write and close it."
+        (read! procedure "(read! bytevector start count) giving the bytes read")
+        (write! procedure "(write! bytevector start count)")
+        (close! thunk "closes the channel"))
+  (define-record-type channel
     (fields read! write! close!))
 
   (define transfer-buffer-size 32768)
@@ -284,18 +285,18 @@
   ;; in the active request atomically, including through connector wrappers.
   (define adopt-channel! (make-parameter values))
 
-  (edefine (tcp-connect host port)
-    (edoc "A plain TCP channel to a host and port."
-          (host string "the host")
-          (port integer "the port")
-          (returns (record channel)))
+  (edoc "A plain TCP channel to a host and port."
+        (host string "the host")
+        (port integer "the port")
+        (returns (record channel)))
+  (define (tcp-connect host port)
     (native-connect host port #f))
 
-  (edefine (tls-connect host port)
-    (edoc "A TLS channel to a host and port, verified."
-          (host string "the host")
-          (port integer "the port")
-          (returns (record channel)))
+  (edoc "A TLS channel to a host and port, verified."
+        (host string "the host")
+        (port integer "the port")
+        (returns (record channel)))
+  (define (tls-connect host port)
     (native-connect host port #t))
 
   ;;; TLS (libssl) -----------------------------------------------------------
@@ -410,9 +411,9 @@
   (define (tls-available?)
     (guard (ex [else #f]) (tls-loaded) #t))
 
-  (edefine https-connector
-    (edoc "The secure-transport provider: (connect host port) giving a channel."
-          (value procedure))
+  (edoc "The secure-transport provider: (connect host port) giving a channel."
+        (value procedure))
+  (define https-connector
     ;; The secure-transport provider: replace it to switch the TLS
     ;; implementation (a pure-Scheme TLS, an openssl pipe, a test
     ;; double) without touching the HTTP client.
@@ -513,16 +514,16 @@
                 (string-append (if (string=? (uri-path ref) "") "/" (uri-path ref))
                                (query-suffix (uri-query ref))) authority))))
 
-  (edefine-record-type https-response
-    (edoc "An HTTP response with its body still open."
-          (status integer "the status code")
-          (headers list "(name . value) header pairs")
-          (port port "the body port"))
+  (edoc "An HTTP response with its body still open."
+        (status integer "the status code")
+        (headers list "(name . value) header pairs")
+        (port port "the body port"))
+  (define-record-type https-response
     (fields status headers port))
 
-  (edefine (https-close! response)
-    (edoc "Close a response's body port."
-          (response (record https-response) "the response"))
+  (edoc "Close a response's body port."
+        (response (record https-response) "the response"))
+  (define (https-close! response)
     (close-port (https-response-port response)))
 
   (define (call-with-scope start! use finish!)
@@ -753,9 +754,9 @@
                         [else (scan (+ i 1))]))])
       (if semi (substring line 0 semi) line)))
 
-  (edefine https-backend
-    (edoc "Which machinery performs requests: native, the FFI TLS connector, or curl, a subprocess."
-          (value (one-of native curl)))
+  (edoc "Which machinery performs requests: native, the FFI TLS connector, or curl, a subprocess."
+        (value (one-of native curl)))
+  (define https-backend
     ;; Which machinery performs requests: 'native is the FFI TLS
     ;; connector; 'curl delegates whole requests to a curl subprocess.
     ;; Native additionally falls back to curl by itself when no TLS
@@ -797,12 +798,12 @@
       (lambda (bv) (error 'https "the curl channel is read-only"))
       (lambda () (sys:close-process! process))))
 
-  (edefine (https-request method url . options)
-    (edoc "Perform an HTTPS request with a method and URL, and optional headers and body; the response with its body port open."
-          (method string "GET, POST and so on")
-          (url string "the URL")
-          (options (list-of any) "headers, then a body")
-          (returns (record https-response)))
+  (edoc "Perform an HTTPS request with a method and URL, and optional headers and body; the response with its body port open."
+        (method string "GET, POST and so on")
+        (url string "the URL")
+        (options (list-of any) "headers, then a body")
+        (returns (record https-response)))
+  (define (https-request method url . options)
     (apply call-with-request method url #f options))
 
   (define (call-with-request method url consume . options)
@@ -867,10 +868,10 @@
             (utf8->string (join-bytevectors (reverse parts)))
             (loop (cons chunk parts))))))
 
-  (edefine (https-response-text response)
-    (edoc "A response's whole body as text, closing it."
-          (response (record https-response) "the response")
-          (returns string))
+  (edoc "A response's whole body as text, closing it."
+        (response (record https-response) "the response")
+        (returns string))
+  (define (https-response-text response)
     (call-with-body response body-text))
 
   (define (call-with-get url consume)
@@ -891,16 +892,16 @@
                                   [else (error 'https (format "~a fetching ~a" status url))])))))])
         (if location (fetch (resolve-url url location) (+ hops 1)) result))))
 
-  (edefine (https-get url)
-    (edoc "The body of a URL as text."
-          (url string "the URL")
-          (returns string))
+  (edoc "The body of a URL as text."
+        (url string "the URL")
+        (returns string))
+  (define (https-get url)
     (call-with-get url body-text))
 
-  (edefine (https-download url path)
-    (edoc "Save the body of a URL to a file."
-          (url string "the URL")
-          (path file "where to save it"))
+  (edoc "Save the body of a URL to a file."
+        (url string "the URL")
+        (path file "where to save it"))
+  (define (https-download url path)
     (call-with-get url
       (lambda (in)
         (let ([out #f])

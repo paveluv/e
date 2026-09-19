@@ -18,27 +18,29 @@
 ;; escape sequences are swallowed whole so their payloads can never
 ;; leak into a buffer as typed text.
 
-(library (tty)
+(import (only (edoc) elibrary))
+(elibrary (tty)
   (export read-event character-event key-event-character
           mouse-reporting! query-color-scheme! paste-lines)
-  (import (only (edoc) edefine edoc) (rnrs)
+  (import (rnrs)
           (only (chezscheme) format char-ready?)
           (prefix (only (sys) terminal-output-port) sys:)
-          (prefix (string) string:) (prefix (color) color:))
+          (prefix (string) string:)
+          (prefix (color) color:))
 
   ;;; Input-side negotiation ------------------------------------------------------
 
-  (edefine (query-color-scheme!)
-    (edoc "Ask the terminal for its background color and color scheme without waiting; the input pump reads the reply.")
+  (edoc "Ask the terminal for its background color and color scheme without waiting; the input pump reads the reply.")
+  (define (query-color-scheme!)
     ;; Ask without waiting: OSC 11 also works on hosts without DSR 996.
     ;; The ordinary input pump consumes either reply.
     (let ([port (sys:terminal-output-port)])
       (display "\x1b;]11;?\x1b;\\\x1b;[?996n" port)
       (flush-output-port port)))
 
-  (edefine (mouse-reporting! on?)
-    (edoc "Turn SGR mouse tracking with pointer motion on or off."
-          (on? boolean "whether to track the mouse"))
+  (edoc "Turn SGR mouse tracking with pointer motion on or off."
+        (on? boolean "whether to track the mouse"))
+  (define (mouse-reporting! on?)
     ;; SGR mouse tracking with any-event reports (1003;1006): on asks
     ;; the terminal to send the (mouse ...) events read-event decodes,
     ;; pointer motion included so an app row can follow the pointer;
@@ -49,10 +51,10 @@
 
   ;;; Key naming ---------------------------------------------------------------
 
-  (edefine (character-event c)
-    (edoc "The key event name of a typed character: C-a, TAB, RET, or the character itself."
-          (c char "the character")
-          (returns string))
+  (edoc "The key event name of a typed character: C-a, TAB, RET, or the character itself."
+        (c char "the character")
+        (returns string))
+  (define (character-event c)
     (let ([n (char->integer c)])
       (cond [(= n 0) "C-@"]
             [(= n 9) "TAB"]
@@ -67,10 +69,10 @@
             [(= n 127) "BACKSPACE"]
             [else (string c)])))
 
-  (edefine (key-event-character event)
-    (edoc "The plain character a key event types, or #f."
-          (event any "the event")
-          (returns (or char #f)))
+  (edoc "The plain character a key event types, or #f."
+        (event any "the event")
+        (returns (or char #f)))
+  (define (key-event-character event)
     ;; the plain character a key event types, or #f
     (and (string? event) (= (string-length event) 1)
          (let ([c (string-ref event 0)])
@@ -241,10 +243,10 @@
                             [else #f]))]
                    [else #f]))))])))
 
-  (edefine (read-event port)
-    (edoc "Decode the next terminal event from a port: a key name, a (mouse ...) report, a paste, or eof."
-          (port port "the terminal input")
-          (returns any))
+  (edoc "Decode the next terminal event from a port: a key name, a (mouse ...) report, a paste, or eof."
+        (port port "the terminal input")
+        (returns any))
+  (define (read-event port)
     ;; Decode the terminal once, into data.  Blocks until a whole
     ;; event is available; a lone ESC is the ESC key only when no more
     ;; input is pending.
@@ -290,10 +292,10 @@
                                          plain))))]))]))))
   ;;; Pasted text -------------------------------------------------------------------
 
-  (edefine (paste-lines s)
-    (edoc "Pasted text split at newlines, whichever convention the terminal delivered."
-          (s string "the pasted text")
-          (returns (list-of string)))
+  (edoc "Pasted text split at newlines, whichever convention the terminal delivered."
+        (s string "the pasted text")
+        (returns (list-of string)))
+  (define (paste-lines s)
     ;; Pasted text split at newlines, whichever convention the terminal
     ;; delivered: \n, \r\n, or bare \r.
     (let ([n (string-length s)])

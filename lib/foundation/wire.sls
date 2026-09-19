@@ -1,26 +1,26 @@
 ;; wire.sls -- length-prefixed plain data. No store, actor or display state.
-(library (wire)
+(import (only (edoc) elibrary))
+(elibrary (wire)
   (export version encode send! receive)
-  (import (only (edoc) edefine edoc) (rnrs)
+  (import (rnrs)
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (datum) datum:))
 
   ;; S4 requires the source fingerprint in every normal hello. Maintenance
   ;; retains its version 1 contract so mismatched builds can still restart.
-  (edefine version
-    (edoc "The wire protocol version a hello must carry."
-          (value integer))
-    5)
+  (edoc "The wire protocol version a hello must carry."
+        (value integer))
+  (define version 5)
   (define frame-limit #x1000000) ; 16 MiB, checked before reading a payload
 
   (define (frame-size! size)
     (unless (<= 1 size frame-limit)
       (error 'wire "frame must contain 1 through 16777216 bytes" size)))
 
-  (edefine (encode value)
-    (edoc "A value as one wire frame: a 4-byte big-endian length and the written datum in UTF-8."
-          (value datum "the value")
-          (returns bytevector))
+  (edoc "A value as one wire frame: a 4-byte big-endian length and the written datum in UTF-8."
+        (value datum "the value")
+        (returns bytevector))
+  (define (encode value)
     (let* ([owned (datum:copy value)]
            [payload (string->utf8
                       (call-with-string-output-port
@@ -34,19 +34,19 @@
         (bytevector-copy! payload 0 frame 4 size)
         frame)))
 
-  (edefine (send! port value)
-    (edoc "Write a value to a port as one frame and flush."
-          (port port "the output port")
-          (value datum "the value"))
+  (edoc "Write a value to a port as one frame and flush."
+        (port port "the output port")
+        (value datum "the value"))
+  (define (send! port value)
     ;; The connection owns serialization of complete frames. An outbox can
     ;; retain encode's owned bytes and bound them without serializing twice.
     (put-bytevector port (encode value))
     (flush-output-port port))
 
-  (edefine (receive port)
-    (edoc "Read one frame from a port and read its datum; eof when the port ends."
-          (port port "the input port")
-          (returns any))
+  (edoc "Read one frame from a port and read its datum; eof when the port ends."
+        (port port "the input port")
+        (returns any))
+  (define (receive port)
     (let ([header (get-bytevector-n port 4)])
       (if (eof-object? header) header
           (begin

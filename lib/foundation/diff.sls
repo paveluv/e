@@ -4,9 +4,10 @@
 ;; the diff3 merge built on it.  The file library imports it for the
 ;; stale-file guard; anything else may use it too.
 
-(library (diff)
+(import (only (edoc) elibrary))
+(elibrary (diff)
   (export (rename (diff-matches matches)) merge3 merge-report-lines)
-  (import (only (edoc) edefine edoc) (chezscheme))
+  (import (chezscheme))
 
   ;;; Patience diff --------------------------------------------------------------
 
@@ -79,11 +80,11 @@
               (vector-set! tails place i)
               (loop (+ i 1) (if (= place size) (+ size 1) size)))))))
 
-  (edefine (diff-matches a b)
-    (edoc "The matching line pairs ((ai . bi) ...) between two line vectors, increasing on both sides: a patience diff."
-          (a vector "one text")
-          (b vector "the other")
-          (returns list))
+  (edoc "The matching line pairs ((ai . bi) ...) between two line vectors, increasing on both sides: a patience diff."
+        (a vector "one text")
+        (b vector "the other")
+        (returns list))
+  (define (diff-matches a b)
     ;; Matching line pairs ((ai . bi) ...) between vectors a and b,
     ;; increasing on both sides: common prefix and suffix, then
     ;; recursion between unique-line anchors (patience diff).
@@ -125,11 +126,11 @@
 
   ;;; Three-way merge -------------------------------------------------------------
 
-  (edefine (merge3 base mine theirs)
-    (edoc "The three-way merge of line vectors: (values merged-lines conflicts report), regions one side touched taking that side, the rest marked as conflicts."
-          (base vector "the common ancestor")
-          (mine vector "one side")
-          (theirs vector "the other side"))
+  (edoc "The three-way merge of line vectors: (values merged-lines conflicts report), regions one side touched taking that side, the rest marked as conflicts."
+        (base vector "the common ancestor")
+        (mine vector "one side")
+        (theirs vector "the other side"))
+  (define (merge3 base mine theirs)
     ;; Merge line vectors: three values -- the merged lines (a list),
     ;; the conflict count, and a report of the changed chunks, each
     ;; (kind base-pos mine-pos theirs-pos base-lines mine-lines
@@ -196,13 +197,13 @@
 
   ;;; The merge report -----------------------------------------------------------
 
-  (edefine (merge-report-lines path base report conflicts)
-    (edoc "A merge report rendered like a unified diff: hunk headers for all three sides with two lines of base context."
-          (path string "the file, for the header")
-          (base vector "the common ancestor")
-          (report list "merge3's report")
-          (conflicts integer "how many conflicts")
-          (returns (list-of string)))
+  (edoc "A merge report rendered like a unified diff: hunk headers for all three sides with two lines of base context."
+        (path string "the file, for the header")
+        (base vector "the common ancestor")
+        (report list "merge3's report")
+        (conflicts integer "how many conflicts")
+        (returns (list-of string)))
+  (define (merge-report-lines path base report conflicts)
     ;; merge3's report rendered in a unified-diff-like shape: @@
     ;; headers with 1-based positions and lengths for all three sides,
     ;; two lines of base context around each hunk.  -> a list of lines.
