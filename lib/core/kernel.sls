@@ -607,11 +607,12 @@
     ;; (compiling it when stale) and run its init!, if any, owning its
     ;; registrations.
     (let ([lib (list (string->symbol name))])
-      ;; every module but the command layer arrives prefixed in the
-      ;; editor's top level, exactly as code imports it -- M-x says
-      ;; (store:edit! ...) and (terminal:open!!) too; (edit) alone is
-      ;; bare, being what M-x is for
-      (eval (if (string=? name "edit")
+      ;; every module but two arrives prefixed in the editor's top level,
+      ;; exactly as code imports it -- M-x says (store:edit! ...) and
+      ;; (terminal:open!!) too. (literal) is bare because its names are how
+      ;; values print, (buffer "name") and (window n); (edit) is bare for
+      ;; now, being what M-x is for
+      (eval (if (member name '("edit" "literal"))
                 `(import ,lib)
                 `(import (prefix ,lib
                                  ,(string->symbol

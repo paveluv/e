@@ -153,7 +153,7 @@ resolves to a type record with prose, a predicate and, optionally, a
 completer, a reader and a writer; an unknown name is an error then, and
 `tools/edoc-coverage.sps` reports one statically. The language's types come
 predefined in `(edoc)`; the editor's notions are defined by the libraries
-that own them, `buffer` and `window` in `(edit)`, `file` in `(file)`, `mode`
+that own them, `buffer`, `window` and `region` in `(literal)`, `file` in `(file)`, `mode`
 in `(mode)`, `key` in `(keymap)`, `style` in `(style)`, with a form in the
 body:
 

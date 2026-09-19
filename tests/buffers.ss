@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (prefix (head) head:) (prefix (mode) mode:) (prefix (kernel) kernel:)
+     (import (except (edit) init!) (literal) (prefix (head) head:) (prefix (mode) mode:) (prefix (kernel) kernel:)
              (prefix (string) string:) (prefix (test) test:))
 
      (define check test:check)

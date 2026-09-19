@@ -248,7 +248,7 @@
         (reverse
           (kernel:load-modules!
             '("blame" "c-mode" "describe" "dispatch" "echo" "edit" "eval" "file-view" "git-view"
-              "glyph" "head" "keymap" "log-view" "markdown" "md-mode" "mode"
+              "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "mode"
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
               "scheme-mode" "search" "style" "terminal" "tty"))))
       (load-config!)

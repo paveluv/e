@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (prefix (eval) eval:) (prefix (head) head:) (prefix (text) text:)
+     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (head) head:) (prefix (text) text:)
              (prefix (string) string:) (prefix (test) test:))
 
      (define check test:check)

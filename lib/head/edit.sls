@@ -28,7 +28,6 @@
 (import (only (edoc) elibrary))
 (elibrary (edit)
   (export init!
-          region region? region-buffer region-start region-end
           regions-of region-text
           replace-all! count-matches replace!!
           next-conflict! keep-mine! keep-disk!
@@ -45,8 +44,6 @@
     buffer-line  buffer-line-count
 
     editor-symbol?
-    (rename (lookup-buffer buffer))   ; buffers print as (buffer "name")
-    (rename (lookup-window window))   ; windows print as (window n)
     ;; buffers, windows, files
     visit-file! save-file! save!! save-as!! find-file!! default-directory
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
@@ -98,6 +95,7 @@
     app-event-position app-event-buffer-position app-event-button
   )
   (import (chezscheme)
+          (literal)
           (prefix (sys) sys:)
           (prefix (store) store:)
           (prefix (text) text:)
@@ -1353,85 +1351,15 @@
     (when (pair? entries) (paint:present-echo!)))
 
 
-  ;; A buffer's printed form is the expression that looks it up again, so
-  ;; results shown in *eval* can be pasted straight into the next
-  ;; expression: (buffer-line-count (buffer "e")).  The lookup is by
-  ;; name at evaluation time -- a killed buffer's form reports itself.
-  (edoc "The buffer with a given name, as buffers print: (buffer name); an error when there is none."
-        (name buffer-name "the buffer's name")
-        (returns buffer))
-  (define (lookup-buffer name)
-    (or (head:buffer-named name) (error 'buffer "no buffer named" name)))
-
-  (define buffer-printing
-    (record-writer (record-type-descriptor head:buffer)
-      (lambda (r p wr)
-        (display "(buffer " p)
-        (wr (head:buffer-name r) p)
-        (display ")" p))))
-
-  ;; A window's printed form is likewise the expression that finds it
-  ;; again: (window 1) is the window numbered 1 at the left of its
-  ;; status line.  Numbers are reused, so the form names whatever
-  ;; window holds the number when it is evaluated.
-  (edoc "The window numbered n at the left of its status line, as windows print: (window n); an error when there is none."
-        (n integer "the window's number")
-        (returns window))
-  (define (lookup-window n)
-    (or (head:window-numbered n) (error 'window "no window numbered" n)))
-
   ;;; Types ---------------------------------------------------------------------
 
-  ;; The editor's notions, as edoc types: what M-x offers at an argument of
-  ;; that type, how a value is spelled as an expression, and what a value
-  ;; must be. A buffer or a window is live, on this seat, now.
-
-  (define (live-buffer? v) (and (head:buffer? v) (memq v buffers) #t))
-
-  (define (buffer-details b)
-    ;; what a completion row shows beside a buffer
-    (string:join
-      (filter values
-        (list (let ([file (head:buffer-file b)]) (and file (file:abbreviate file)))
-              (mode:name-of b)
-              (and (head:buffer-modified b) "modified")))
-      "  "))
-
-  (edoc-type buffer "a live buffer, spelled (buffer \"name\")"
-    (predicate live-buffer?)
-    (complete (lambda (partial) (map (lambda (b) (cons b (buffer-details b))) buffers)))
-    (read lookup-buffer)
-    (write (lambda (b) (format "(buffer ~s)" (head:buffer-name b)))))
-
-  (edoc-type buffer-name "the name of a live buffer"
-    (predicate (lambda (v) (and (string? v) (head:buffer-named v) #t)))
-    (complete (lambda (partial) (map (lambda (b) (cons (head:buffer-name b) (buffer-details b))) buffers)))
-    (write (lambda (v) (format "~s" v))))
-
-  (edoc-type window "a window on screen, spelled (window n)"
-    (predicate (lambda (v) (and (head:window? v) (memq v windows) #t)))
-    (complete (lambda (partial)
-                (map (lambda (w) (cons w (head:buffer-name (head:window-buffer w))))
-                     (remq (head:popup) windows))))
-    (read lookup-window)
-    (write (lambda (w) (format "(window ~a)" (head:window-index w)))))
-
-  (edoc-type region "a slice of one buffer between two (row . col) points"
-    (predicate region?))
-
-  (edoc-type position "a (row . col) position in a buffer"
-    (predicate text:position?))
+  ;; The command type: what a key or a binding names. The literal types,
+  ;; buffer, window, region and position, live in (literal) with their
+  ;; spellings.
 
   (edoc-type command "a command: a procedure callable with no arguments, by its name"
     (predicate (lambda (v) (and (procedure? v) (logbit? 0 (procedure-arity-mask v)))))
     (write action-name))
-
-  (define window-printing
-    (record-writer (record-type-descriptor head:window)
-      (lambda (r p wr)
-        (display "(window " p)
-        (wr (head:window-index r) p)
-        (display ")" p))))
 
   (define (complete-buffer-name s)
     (sort string<? (filter (lambda (n) (string:prefix? s n))
@@ -2777,43 +2705,10 @@
 
   ;;; Regions and the generic helpers ------------------------------------------
 
-  (edoc "A slice of one buffer between two (row . col) points."
-        (buffer buffer "the buffer the slice is in")
-        (start position "where it starts")
-        (end position "where it ends"))
-  (define-record-type (region-record make-region region?)
-    (fields (immutable buffer region-buffer)
-            (immutable start region-start)
-            (immutable end region-end)))
-
-  (define (point<? a b)
-    (or (< (car a) (car b))
-        (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
-
-  (edoc "The slice of buffer b between two (row . col) points, given in either order."
-        (b buffer "the buffer the slice is in")
-        (start position "one end")
-        (end position "the other end")
-        (returns region))
-  (define (region b start end)
-    ;; The slice of buffer b between two (row . col) points, either order.
-    (if (point<? end start)
-        (make-region b end start)
-        (make-region b start end)))
-
-  (define region-printing
-    (record-writer (record-type-descriptor region-record)
-      (lambda (r p wr)
-        (display "(region " p)
-        (wr (region-buffer r) p)
-        (display " '" p) (wr (region-start r) p)
-        (display " '" p) (wr (region-end r) p)
-        (display ")" p))))
-
   (define (whole-buffer b)
     (let ([last (- (buffer-line-count b) 1)])
-      (make-region b '(0 . 0)
-                   (cons last (string-length (buffer-line b last))))))
+      (region b '(0 . 0)
+              (cons last (string-length (buffer-line b last))))))
 
   (edoc "The regions a where argument denotes: #f for the selected region or the whole current buffer, a buffer or its name for all of it, a region itself, a predicate for the buffers it accepts, or a list of any of these."
         (where (or buffer string region procedure list #f) "what to operate on")
@@ -2827,7 +2722,7 @@
                        (whole-buffer (current-buffer)))))]
           [(region? where) (list where)]
           [(head:buffer? where) (list (whole-buffer where))]
-          [(string? where) (list (whole-buffer (lookup-buffer where)))]
+          [(string? where) (list (whole-buffer (buffer where)))]
           [(procedure? where) (regions-of (filter where (buffer-list)))]
           [(list? where) (apply append (map regions-of where))]
           [else (error 'regions-of
