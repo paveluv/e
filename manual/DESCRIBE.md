@@ -99,7 +99,42 @@ The `(edit)` module uses this mechanism for commands such as `replace!!` and
 
 ### Documented definitions
 
-A procedure can carry its documentation in its own definition instead:
+A library can document its exports where it defines them. A documented
+library is written with `elibrary`; its file starts with the import that
+brings the form in:
+
+```scheme
+(import (only (edoc) elibrary))
+(elibrary (datum)
+  (export copy invalid?)
+  (import (rnrs))
+
+  (edoc "Data was not plain protocol data.")
+  (define-condition-type &invalid &error make-invalid invalid?)
+
+  (edoc "A deep copy of plain protocol data, sharing nothing mutable."
+        (value datum "the data")
+        (copy-leaf procedure "(copy-leaf leaf) giving a leaf's copy; omitted, an opaque leaf is invalid")
+        (returns datum))
+  (define copy (case-lambda [(value) ...] [(value copy-leaf) ...]))
+  ...)
+```
+
+An `edoc` form annotates the definition that follows it, which stays an
+ordinary `define`, `define-syntax`, `define-record-type` or
+`define-condition-type`; `(edoc name summary clause ...)` documents a
+name some other form defines. The annotations are checked while the
+library expands, with the rules below, and every export the body defines
+must have one, or expansion fails naming the export. Re-exported imports
+and aliases such as `(define x other:y)` take their documentation from
+their origin. A record's edoc names every field; a case-lambda's names the
+formals of all its clauses, and the reader gets one signature per clause.
+When the library is initialized the edocs are attached to the objects they
+document, or recorded under the name for a keyword, a record type or a
+value without identity.
+
+The libraries not yet migrated carry their documentation in the
+definition forms themselves:
 
 ```scheme
 (edefine (visit-file! path)

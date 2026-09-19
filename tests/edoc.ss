@@ -17,6 +17,12 @@
 
      (define check test:check)
 
+     ;; Malformed forms are rejected while expanding, with the reason.
+     (define (rejection form)
+       (guard (ex [(syntax-violation? ex) (condition-message ex)] [else (list 'other (condition-message ex))])
+         (eval form (interaction-environment))
+         'accepted))
+
      (edefine (add x y)
        (edoc "Add two numbers. Slowly, for the test." (x integer "the first addend") (y integer) (returns integer))
        (+ x y))
@@ -92,6 +98,59 @@
        (map (lambda (sig) (cons (signature-formals sig) (map argument-type (signature-arguments sig)))) (edoc-of visit))
        '(((path) file) ((path encoding) file (one-of utf-8 latin-1))))
      (check 'undocumented-procedures-have-no-signature (list (edoc-of car) (edoc-of (lambda (x) x)) (edoc-of 3)) '(#f #f #f))
+
+     ;; A documented library: annotations precede the definitions they
+     ;; document, which stay ordinary define forms.
+     (eval '(elibrary (probe)
+              (export twice width limit make-point point? point-x point-y-set! swap! stale? stale-revision plain
+                      (rename (twice again)) shared)
+              (import (rnrs) (only (chezscheme) make-parameter))
+              (edoc "Apply a procedure twice." (f procedure "the procedure") (x any))
+              (define (twice f x) (f (f x)))
+              (edoc "The width." (value integer))
+              (define width (make-parameter 80))
+              (edoc "The limit." (value integer))
+              (define limit 40)
+              (edoc "A place." (x integer "the column") (y integer))
+              (define-record-type point (fields (immutable x) (mutable y)))
+              (edoc "Exchange two variables." (a symbol) (b symbol))
+              (define-syntax swap! (syntax-rules () [(_ a b) (let ([t a]) (set! a b) (set! b t))]))
+              (edoc "A stale basis." (revision integer "the revision that was current"))
+              (define-condition-type &stale &error make-stale stale? (revision stale-revision))
+              (edoc "Multiply, by a step or by one."
+                    (n integer "the number") (step integer "the step, 1 when omitted") (returns integer))
+              (define plain (case-lambda [(n) (plain n 1)] [(n step) (* n step)]))
+              (define shared twice)
+              (define helper 1))
+           (interaction-environment))
+     (eval '(import (probe)) (interaction-environment))
+     (define (kinds-of . names) (map (lambda (n) (signature-kind (car (or (edoc-of (top-level-value n)) (edoc-named n))))) names))
+     (check 'an-elibrary-documents-its-definitions-by-annotation
+       (list (kinds-of 'twice 'width 'make-point 'point? 'point-x 'point-y-set! 'stale? 'stale-revision 'plain)
+             (map (lambda (n) (signature-kind (car (edoc-named n)))) '(limit point swap! &stale))
+             (signature-formals (car (edoc-of (top-level-value 'twice)))) (signature-library (car (edoc-of (top-level-value 'twice))))
+             (map signature-formals (edoc-of (top-level-value 'plain)))
+             (map (lambda (s) (map argument-name (signature-arguments s))) (edoc-of (top-level-value 'plain)))
+             (signature-summary (car (edoc-of (top-level-value 'shared))))
+             (cadr (edoc-entry 'plain (edoc-of (top-level-value 'plain)))))
+       '((procedure parameter constructor predicate accessor mutator predicate accessor procedure)
+         (value record syntax condition)
+         (f x) "(probe)" ((n) (n step)) ((n) (n step)) "Apply a procedure twice."
+         (("procedure" . "(plain n)") ("procedure" . "(plain n step)"))))
+     (check 'an-elibrary-refuses-undocumented-and-misplaced-edocs
+       (map rejection
+         '((elibrary (bad1) (export f) (import (rnrs)) (define (f) 1))
+           (elibrary (bad2) (export) (import (rnrs)) (edoc "x") (display 1))
+           (elibrary (bad3) (export f) (import (rnrs)) (edoc "x" (y integer)) (define (f x) x))
+           (elibrary (bad4) (export g) (import (rnrs)) (define (f) 1) (edoc "x") (define g f))
+           (elibrary (bad5) (export f) (import (rnrs)) (edoc "x") (edoc "y") (define (f) 1))
+           (elibrary (bad6) (export f) (import (rnrs)) (edoc f "x") (edoc "y") (define (f) 1))
+           (elibrary (bad7) (export f) (import (rnrs)) (edoc "x" (rest integer)) (define (f . rest) rest))
+           (elibrary (bad8) (export f) (import (rnrs)) (edoc "x"))))
+       '("export has no edoc" "an edoc annotates the definition that follows it" "an edoc clause names a formal"
+         "an alias takes its documentation from its origin" "two edocs annotate one definition"
+         "two edocs document one definition" "a rest parameter is a list-of"
+         "an edoc annotates the definition that follows it"))
      (check 'the-edoc-library-documents-itself
        (list (map (lambda (name) (signature-kind (car (edoc-named name)))) '(edoc edefine edefine-syntax edefine-record-type edefine-condition-type))
              (signature-kind (car (edoc-of edoc-of))) (signature-library (car (edoc-of edoc-of)))
@@ -116,11 +175,6 @@
        (let ([entry (edoc-entry 'add (edoc-of add))]) (list (caddr entry) (list-ref entry 7)))
        '("integer" "Add two numbers. Slowly, for the test.\n\n- `x` (integer): the first addend\n- `y` (integer)"))
 
-     ;; Malformed forms are rejected while expanding, with the reason.
-     (define (rejection form)
-       (guard (ex [(syntax-violation? ex) (condition-message ex)] [else (list 'other (condition-message ex))])
-         (eval form (interaction-environment))
-         'accepted))
      (check 'malformed-edefines-are-rejected
        (map rejection
          '((edefine (f x y) (edoc "text" (x integer)) x)
@@ -147,7 +201,7 @@
          "one returns clause at most" "edoc notes must be strings"
          "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
          "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
-         "edoc belongs at the head of an edefine, edefine-syntax, edefine-record-type or edefine-condition-type"
+         "edoc annotates a definition inside an elibrary, or heads an edefine form"
          "a value clause stands alone" "one edoc clause per name" "unknown edoc type"
          "an edoc clause names a field" "every field needs an edoc clause" "one edoc clause per field"
          "a constructor clause belongs to a record with a protocol or parent" "every field needs an edoc clause"))

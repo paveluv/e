@@ -4,8 +4,8 @@
 ;;
 ;;   tools/edoc-coverage.sps [--list] [library ...]
 ;;
-;; Every export is classified by its definition: edefine (documented, by
-;; any of the edefine forms), procedure (define with a lambda list, or a
+;; Every export is classified by its definition: edefine (documented, by an
+;; edoc annotation in an elibrary or any of the edefine forms), procedure (define with a lambda list, or a
 ;; lambda/case-lambda value), parameter, syntax, record (constructor,
 ;; predicate or field procedure of a define-record-type), value (any other
 ;; define), standard (a name of (rnrs) or (chezscheme) passed on), or
@@ -67,8 +67,27 @@
                            (string->symbol (string-append (symbol->string type) "-" (symbol->string name) "-set!"))))))
              fields)))))
 
+(define (edoc-annotation? form)
+  ;; (edoc "summary" ...) annotates the next form; (edoc name "summary" ...) names its definition
+  (and (pair? form) (eq? (car form) 'edoc) (pair? (cdr form))))
+
 (define (definitions library)
-  ;; (name . kind) for every top-level definition of the library body
+  ;; (name . kind) for every top-level definition of the library body; a
+  ;; definition an edoc annotates, or names, is documented
+  (let loop ([forms (cdddr library)] [pending? #f] [out '()])
+    (cond
+      [(null? forms) (apply append (reverse out))]
+      [(edoc-annotation? (car forms))
+       (if (string? (cadr (car forms)))
+           (loop (cdr forms) #t out)
+           (loop (cdr forms) pending? (cons (list (cons (cadr (car forms)) 'edefine)) out)))]
+      [else
+       (let ([defs (form-definitions (car forms))])
+         (loop (cdr forms) #f
+               (cons (if pending? (map (lambda (d) (cons (car d) 'edefine)) defs) defs) out)))])))
+
+(define (form-definitions form)
+  ;; (name . kind) for one top-level form of a library body
   (apply append
     (map (lambda (form)
            (if (not (pair? form)) '()
@@ -104,7 +123,7 @@
                     (append (list (cadr form) (cadddr form) (car (cddddr form)))
                             (map cadr (cdr (cddddr form)))))]
                  [else '()])))
-         (cdddr library))))
+         (list form))))
 
 ;;; The libraries, indexed by name ------------------------------------------------
 
@@ -112,7 +131,7 @@
   ;; (name library) for every library form under lib
   (apply append
     (map (lambda (path)
-           (let ([library (find (lambda (f) (and (pair? f) (eq? (car f) 'library))) (read-forms path))])
+           (let ([library (find (lambda (f) (and (pair? f) (memq (car f) '(library elibrary)))) (read-forms path))])
              (if library (list (list (cadr library) library path)) '())))
          (list-sort string<? (sls-files "lib")))))
 

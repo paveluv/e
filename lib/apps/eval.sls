@@ -85,7 +85,8 @@
                        (if tokens (string-append "(" (string:join tokens " ") ")") ""))]
                     [else
                      (case (edoc:signature-kind sig)
-                       [(procedure) (format "~s" (edoc:signature-formals sig))]
+                       [(procedure)
+                        (string:join (map (lambda (s) (format "~s" (edoc:signature-formals s))) signatures) " ")]
                        [(parameter) "[value]"]
                        [(value)
                         (let ([type (find (lambda (a) (eq? (edoc:argument-name a) 'value)) (edoc:signature-arguments sig))])

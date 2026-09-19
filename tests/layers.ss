@@ -35,7 +35,20 @@
                               path "source is outside the runtime roots")
                     (call-with-input-file path
                       (lambda (port)
-                        (let ([declaration (read port)])
+                        ;; A documented library imports its form first, then
+                        ;; declares itself with elibrary; that import counts
+                        ;; among the library's own for the layering rules.
+                        (let* ([first (read port)]
+                               [declaration
+                                (if (and (pair? first) (eq? (car first) 'import))
+                                    (let ([second (read port)])
+                                      (if (and (list? second) (>= (length second) 4) (eq? (car second) 'elibrary)
+                                               (pair? (cadddr second)) (eq? (car (cadddr second)) 'import))
+                                          (append (list 'library (cadr second) (caddr second)
+                                                        (append (cadddr second) (cdr first)))
+                                                  (cddddr second))
+                                          second))
+                                    first)])
                           (require! (and (list? declaration) (>= (length declaration) 4)
                                          (eq? (car declaration) 'library)
                                          (equal? (cadr declaration) (list stem))
