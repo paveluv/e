@@ -151,8 +151,9 @@
      (check 'answer-routes-to-the-asker (call-with-input-file answer-file read) "yes")
      (delete-file answer-file)
 
-     ;; -- window numbers: a split takes the smallest free number, a deleted
-     ;; number is reused, and a window prints as the literal that finds it ----
+     ;; -- window numbers: window 0 is the hidden pop-up, a split takes the
+     ;; smallest free number, a deleted number is reused, and a window prints
+     ;; as the literal that finds it ----------------------------------------
      (check 'window-numbers-are-reused-and-print-as-literals
        (read-editor
          '(let ([indices (lambda () (list-sort < (map head:window-index (head:windows))))])
@@ -163,23 +164,34 @@
               (let ([deleted (indices)])
                 (split-window-below!)
                 (let ([reused (indices)] [literal (format "~s" (window 2))])
-                  (select-window! (window 0)) (delete-other-windows!)
+                  (select-window! (window 1)) (delete-other-windows!)
                   (list split deleted reused literal))))))
-       '((0 1 2) (0 2) (0 1 2) "(window 2)"))
+       '((0 1 2 3) (0 2 3) (0 1 2 3) "(window 2)"))
      (check 'status-lines-lead-with-the-number
-       (exists (lambda (row) (string:prefix? "0\x258F;" (screen-line row))) (iota 24)) #t)
+       (exists (lambda (row) (string:prefix? "1\x258F;" (screen-line row))) (iota 24)) #t)
+     ;; The pop-up is window 0: hidden, never focused, split or deleted, and
+     ;; the rest of the layout is the root split's first subtree.
+     (check 'the-pop-up-is-window-0-and-stays-out-of-the-way
+       (read-editor
+         '(list (head:window-index (head:popup)) (head:popup-rows)
+                (select-window! (window 0)) (eq? (other-window!) (head:current))
+                (begin (delete-window!) (head:window-index (head:current)))
+                (head:window? (head:layout-split-first (head:root)))
+                (eq? (head:layout-split-second (head:root)) (head:popup))))
+       '(0 0 #f #t 1 #t #t))
      ;; The above and left splits are the stacked and side-by-side splits
      ;; with the new window first: the selected one becomes the second leaf.
      (check 'above-and-left-splits-put-the-new-window-first
        (read-editor
-         '(let ([position (lambda ()
-                            (let ([leaves (head:layout-leaves (head:root))])
+         '(let ([rest (lambda () (head:layout-split-first (head:root)))]
+                [position (lambda ()
+                            (let ([leaves (head:layout-leaves (head:layout-split-first (head:root)))])
                               (- (length leaves) (length (memq (head:current) leaves)))))])
             (split-window-above!)
-            (let ([above (list (position) (head:layout-split-orientation (head:root)))])
+            (let ([above (list (position) (head:layout-split-orientation (rest)))])
               (delete-other-windows!)
               (split-window-left!)
-              (let ([left (list (position) (head:layout-split-orientation (head:root)))])
+              (let ([left (list (position) (head:layout-split-orientation (rest)))])
                 (delete-other-windows!)
                 (list above left)))))
        '((1 below) (1 right)))

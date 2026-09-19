@@ -1319,13 +1319,15 @@
                     (unless (discard-reviewed! b revision facts) (review))))))))))
 
   (define (next-window w)
-    (let ([tail (cdr (memq w windows))])
-      (if (pair? tail) (car tail) (car windows))))
+    ;; the ring of ordinary windows: the pop-up is never in it
+    (let* ([ring (remq (head:popup) windows)]
+           [tail (cdr (or (memq w ring) (cons #f ring)))])
+      (if (pair? tail) (car tail) (car ring))))
 
   (define (focus-window! w)
     ;; All user-visible focus changes pass here: the apps being left
     ;; and entered hear BLUR and FOCUS.
-    (when (and (memq w windows) (not (eq? w current-window)))
+    (when (and (memq w windows) (not (head:popup? w)) (not (eq? w current-window)))
       (head:dispatch-app-event! "BLUR")
       (set! current-window w)
       (head:dispatch-app-event! "FOCUS"))
@@ -1335,7 +1337,7 @@
     (focus-window! (next-window current-window)))
 
   (define (focus-window-direction! direction)
-    (let* ([layout (paint:window-layout)]
+    (let* ([layout (remp (lambda (entry) (head:popup? (car entry))) (paint:window-layout))]
            [cursor (paint:window-screen-position current-window
                                                  point-row point-col)]
            [cx (- (cdr cursor) 1)]
@@ -1373,7 +1375,7 @@
 
   (define (select-window! w)
     ;; Make w current when it is still on screen; -> whether it was.
-    (and (memq w windows) (begin (focus-window! w) #t)))
+    (and (memq w windows) (not (head:popup? w)) (begin (focus-window! w) #t)))
 
   (define (split-current-window! orientation b . first?)
     ;; Divide the selected leaf along orientation, the new window second
@@ -1386,7 +1388,7 @@
                        (head:window-width current-window))]
            [minimum (if vertical? (+ (head:min-window-lines) 1) 20)]
            [usable (- extent (if vertical? 0 1))])
-      (and (>= usable (* 2 minimum))
+      (and (not (head:popup? current-window)) (>= usable (* 2 minimum))
            (let* ([second (quotient usable 2)]
                   [first (- usable second)]
                   [w (head:make-window b top-row (head:window-topseg current-window)
@@ -1438,7 +1440,8 @@
     (let loop ([child current-window])
       (let ([parent (head:layout-parent layout-root child)])
         (cond
-          [(not parent) (set! message "No vertical split")]
+          [(or (not parent) (head:popup? (head:layout-split-second parent)))
+           (set! message "No vertical split")]
           [(eq? (head:layout-split-orientation parent) 'below)
            (let ([signed (if (eq? child (head:layout-split-first parent))
                              delta (- delta))])
@@ -1449,15 +1452,18 @@
           [else (loop parent)]))))
 
   (define (delete-window!)
-    (if (null? (cdr (head:layout-leaves layout-root)))
-        (set! message "Only one window")
-        (let* ([next (next-window current-window)]
-               [parent (head:layout-parent layout-root current-window)]
-               [sibling (if (eq? current-window (head:layout-split-first parent))
-                            (head:layout-split-second parent)
-                            (head:layout-split-first parent))])
-          (head:replace-layout-window! parent sibling)
-          (focus-window! next))))
+    (cond
+      [(head:popup? current-window) (set! message "The pop-up window stays")]
+      [(null? (cdr (remq (head:popup) (head:layout-leaves layout-root))))
+       (set! message "Only one window")]
+      [else
+       (let* ([next (next-window current-window)]
+              [parent (head:layout-parent layout-root current-window)]
+              [sibling (if (eq? current-window (head:layout-split-first parent))
+                           (head:layout-split-second parent)
+                           (head:layout-split-first parent))])
+         (head:replace-layout-window! parent sibling)
+         (focus-window! next))]))
 
   (define (delete-other-windows!)
     (head:set-layout-root! current-window))
@@ -1469,7 +1475,7 @@
     (head:add-buffer! b)
     (cond
       [(find (lambda (w) (eq? (head:window-buffer w) b)) windows)]
-      [(pair? (cdr (head:layout-leaves layout-root)))
+      [(pair? (cdr (remq (head:popup) (head:layout-leaves layout-root))))
        (let ([w (next-window current-window)])
          (head:set-window-buffer! w b)
          w)]

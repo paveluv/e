@@ -55,6 +55,7 @@
           layout-split-second-weight layout-split-second-weight-set!
           layout-leaves layout-replace layout-parent
           set-layout-root! replace-layout-window! fit-layout!
+          popup popup? popup-rows show-popup! hide-popup!
           layout-min-width layout-min-height weighted-first
           layout-node!
           min-window-lines
@@ -232,6 +233,29 @@
   (define the-current #f)       ; the selected window
   (define the-dividers '())     ; layout output: divider rectangles
 
+  ;; The pop-up: window 0, the root split's second leaf, above the echo
+  ;; area. It has no rows and no status line until a completion list or
+  ;; another echo-area pop-up shows it, and it is never split, deleted or
+  ;; focused; the rest of the layout is the root's first subtree.
+  (define the-popup #f)
+  (define popup-buffer #f)      ; its placeholder while hidden, outside the buffer list
+  (define the-popup-rows 0)
+  (define (popup) the-popup)
+  (define (popup? w) (eq? w the-popup))
+  (define (popup-rows) the-popup-rows)
+  (define (show-popup! rows)
+    ;; Give the pop-up rows text rows (the layout keeps the windows above
+    ;; their minimum) and repaint.
+    (unless (and (integer? rows) (exact? rows) (> rows 0))
+      (error 'show-popup! "expected a positive row count" rows))
+    (set! the-popup-rows rows)
+    (request-repaint!))
+  (define (hide-popup!)
+    (set! the-popup-rows 0)
+    (unless (eq? (window-buffer the-popup) popup-buffer)
+      (set-window-buffer! the-popup popup-buffer))
+    (request-repaint!))
+
   (define (buffers) the-buffers)
   (define (set-buffers! bs) (set! the-buffers bs))
   (define (windows) the-windows)
@@ -307,22 +331,25 @@
                  (layout-parent (layout-split-second node) child)))))
 
   (define (set-layout-root! root)
-    ;; the tree is the seat's windows: replacing it replaces them
-    (set! the-root root)
-    (set! the-windows (layout-leaves root)))
+    ;; the tree is the seat's windows: replacing it replaces them; the
+    ;; pop-up stays the root split's second leaf whatever tree arrives
+    (set! the-root (if (memq the-popup (layout-leaves root)) root
+                       (make-layout-split 'below root the-popup 1 1)))
+    (set! the-windows (layout-leaves the-root)))
 
   (define (replace-layout-window! old replacement)
     (set-layout-root! (layout-replace the-root old replacement)))
 
   (define (fit-layout! width height)
     ;; A screen too small for the splits collapses the tree back to
-    ;; one window -- the current one.
-    (when (and (pair? (cdr (layout-leaves the-root)))
-               (or (< width (layout-min-width the-root))
-                   (< height (layout-min-height the-root))))
-      (set-layout-root! (if (memq the-current (layout-leaves the-root))
-                            the-current
-                            (car (layout-leaves the-root))))))
+    ;; one window -- the current one -- beside the pop-up.
+    (let ([rest (layout-split-first the-root)])
+      (when (and (layout-split? rest)
+                 (or (< width (layout-min-width rest))
+                     (< height (layout-min-height the-root))))
+        (set-layout-root! (if (memq the-current (layout-leaves rest))
+                              the-current
+                              (car (layout-leaves rest)))))))
 
   (define (layout-min-width node)
     (if (layout-split? node)
@@ -331,7 +358,7 @@
                (layout-min-width (layout-split-second node)))
             (max (layout-min-width (layout-split-first node))
                  (layout-min-width (layout-split-second node))))
-        20))
+        (if (popup? node) 0 20)))
 
   (define (layout-min-height node)
     (if (layout-split? node)
@@ -340,7 +367,10 @@
                (layout-min-height (layout-split-second node)))
             (max (layout-min-height (layout-split-first node))
                  (layout-min-height (layout-split-second node))))
-        (+ (min-window-lines) 1)))
+        (cond [(not (popup? node)) (+ (min-window-lines) 1)]
+              ;; the pop-up's rows and status line, or nothing while hidden
+              [(> the-popup-rows 0) (+ the-popup-rows 1)]
+              [else 0])))
 
   (define (weighted-first total minimum-first minimum-second a b)
     (min (- total minimum-second)
@@ -352,38 +382,50 @@
     ;; side-by-side nodes reserve one visible divider column.  Divider
     ;; rectangles accumulate in (dividers) for the painter and the
     ;; mouse's drag hit-testing.
-    (if (not (layout-split? node))
-        (begin
-          (window-xoff-set! node x)
-          (window-width-set! node (max 1 width))
-          (window-size-set! node (max 1 (- height 1)))
-          (list (list node y (max 1 (- height 1)))))
-        (let* ([first (layout-split-first node)]
-               [second (layout-split-second node)]
-               [below? (eq? (layout-split-orientation node) 'below)]
-               [total (- (if below? height width) (if below? 0 1))]
-               [m1 (if below? (layout-min-height first)
-                       (layout-min-width first))]
-               [m2 (if below? (layout-min-height second)
-                       (layout-min-width second))]
-               [one (weighted-first total m1 m2
-                                    (layout-split-first-weight node)
-                                    (layout-split-second-weight node))]
-               [two (- total one)])
-          (if below?
-              (begin
-                (set! the-dividers
-                  (cons (list 'below node x (+ y one -1) width)
-                        the-dividers))
-                (append (layout-node! first x y width one)
-                        (layout-node! second x (+ y one) width two)))
-              (begin
-                (set! the-dividers
-                  (cons (list 'right node (+ x one) y height)
-                        the-dividers))
-                (append (layout-node! first x y one height)
-                        (layout-node! second (+ x one 1) y two
-                                      height)))))))
+    (cond
+      [(and (popup? node) (= the-popup-rows 0))
+       ;; hidden: no rows, no status line, no entry to hit or paint
+       (window-xoff-set! node x)
+       (window-width-set! node (max 1 width))
+       (window-size-set! node 0)
+       '()]
+      [(not (layout-split? node))
+       (window-xoff-set! node x)
+       (window-width-set! node (max 1 width))
+       (window-size-set! node (max 1 (- height 1)))
+       (list (list node y (max 1 (- height 1))))]
+      [else
+       (let* ([first (layout-split-first node)]
+              [second (layout-split-second node)]
+              [below? (eq? (layout-split-orientation node) 'below)]
+              [total (- (if below? height width) (if below? 0 1))]
+              [m1 (if below? (layout-min-height first)
+                      (layout-min-width first))]
+              [m2 (if below? (layout-min-height second)
+                      (layout-min-width second))]
+              ;; the pop-up takes exactly its rows, whatever the weights,
+              ;; and only what the windows above can spare
+              [one (if (popup? second)
+                       (- total (min (max 0 (- total m1)) m2))
+                       (weighted-first total m1 m2
+                                       (layout-split-first-weight node)
+                                       (layout-split-second-weight node)))]
+              [two (- total one)])
+         (if below?
+             (begin
+               (unless (popup? second)
+                 (set! the-dividers
+                   (cons (list 'below node x (+ y one -1) width)
+                         the-dividers)))
+               (append (layout-node! first x y width one)
+                       (layout-node! second x (+ y one) width two)))
+             (begin
+               (set! the-dividers
+                 (cons (list 'right node (+ x one) y height)
+                       the-dividers))
+               (append (layout-node! first x y one height)
+                       (layout-node! second (+ x one 1) y two
+                                     height)))))]))
 
   ;;; The seat's loop -------------------------------------------------------------
 
@@ -672,7 +714,7 @@
     (window-at x0 r0
       (lambda (entry)
         (let ([w (car entry)])
-          (and (= r0 (+ (cadr entry) (caddr entry)))
+          (and (not (popup? w)) (= r0 (+ (cadr entry) (caddr entry)))
                (or (let ([column (- x0 (window-xoff w))])
                      (cond [(find (lambda (span)
                                     (and (<= 0 (car span) column) (< column (cadr span))
@@ -1751,8 +1793,9 @@
     ;; No store reads here: every coordinate describes exactly the adopted
     ;; text/view the head just painted. Unchanged wake frames send nothing.
     (let* ([slots (map cons the-buffers (iota (length the-buffers)))]
+           ;; the pop-up is not saved: every head has its own, hidden
            [layout
-            (let capture ([node the-root])
+            (let capture ([node (layout-split-first the-root)])
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
                     (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
@@ -1825,6 +1868,20 @@
                [buffers (list->vector (map restore-buffer entries))]
                [indices '()]
                [natural? (lambda (n) (and (integer? n) (exact? n) (>= n 0)))]
+               ;; Window 0 is the pop-up now. A screen saved before it
+               ;; numbered an ordinary window 0: that window takes the
+               ;; smallest number the saved screen leaves free.
+               [saved-indices
+                (let scan ([node layout] [acc '()])
+                  (cond [(and (pair? node) (eq? (car node) 'window) (pair? (cdr node)))
+                         (cons (cadr node) acc)]
+                        [(and (pair? node) (eq? (car node) 'split) (= (length node) 6))
+                         (scan (list-ref node 5) (scan (list-ref node 4) acc))]
+                        [else acc]))]
+               [renumbered (and (memv 0 saved-indices)
+                                (let free ([n 1]) (if (memv n saved-indices) (free (+ n 1)) n)))]
+               [remap (lambda (index) (if (and renumbered (eqv? index 0)) renumbered index))]
+               [selected (remap selected)]
                [root
                 (let restore ([node layout])
                   (case (car node)
@@ -1836,7 +1893,7 @@
                                       (boolean? following?) (boolean? full?))
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
-                         (%make-window index (or (vector-ref (vector-ref buffers slot) 0) fallback)
+                         (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
                            0 topseg left 0 0 1 0 80 wrap following? #f full? '()))
                        (if (= version 1) (append node '(#f)) node))]
                     [(split)
@@ -1860,7 +1917,7 @@
                                 (let* ([place (car entry)] [top? (pair? place)]
                                        [index (if top? (cdr place) place)]
                                        [w (and (natural? index)
-                                               (find (lambda (w) (= (window-index w) index)) windows))])
+                                               (find (lambda (w) (= (window-index w) (remap index))) windows))])
                                   (cons (if w (if top? (cons 'top w) w) place) (cdr entry))))
                            (vector-ref entry 4))])
                     (check-placements! b positions)
@@ -2600,8 +2657,11 @@
                    (and id (adopt-store-buffer! id)))
                  (new-buffer "*scratch*"))])
       (set! the-buffers (cons b (remq b the-buffers)))
+      ;; the pop-up is born first, so it is window 0; *scratch* is window 1
+      (set! popup-buffer (new-local-buffer "pop-up"))
+      (set! the-popup (make-window popup-buffer 0 0 0 0 0 0 0 0 'default))
+      (set! the-windows (list the-popup))
       (let ([w (make-window b 0 0 0 0 0 0 0 0 'default)])
-        (set! the-windows (list w))
-        (set! the-root w)
-        (set! the-current w))))
+        (set! the-current w)
+        (set-layout-root! w))))
 )

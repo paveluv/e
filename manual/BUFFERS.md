@@ -32,7 +32,7 @@ App windows also keep independent points and viewports; see
 [App buffers](APPS.md).
 
 Every window has a status line. It begins with the window's number and a thin
-vertical line, `0▏`, then the state marker:
+vertical line, `1▏`, then the state marker:
 
 | Marker | Meaning |
 |---|---|
@@ -47,11 +47,14 @@ mode, remaining merge-conflict count, and applicable command hints. Temporary
 interactions such as find-file use that space for operation hints and page
 counts instead of generated-buffer coordinates.
 
-Windows are numbered from 0. A new window takes the smallest number no window
-holds, so a closed window's number goes to the next window created and the
-numbers on screen stay small. `(window 1)` names the window numbered 1 in M-x
-and in module code, the way `(buffer "name")` names a buffer, and windows print
-in that form.
+Window 0 is the pop-up window. It has no rows and no status line until a
+completion list or another echo-area pop-up needs it, when it appears above
+the echo area for that interaction; it is never split, deleted or focused.
+Ordinary windows are numbered from 1. A new window takes the smallest number no
+window holds, so a closed window's number goes to the next window created and
+the numbers on screen stay small. `(window 1)` names the window numbered 1 in
+M-x and in module code, the way `(buffer "name")` names a buffer, and windows
+print in that form.
 
 ## Switching, creating, and killing
 
@@ -488,9 +491,10 @@ it moves the whole horizontal boundary. The shorter perpendicular dividers
 resize only their own subtrees. The same `┴` caps a vertical divider where it
 meets a status line directly above the echo area; there it is only a visual
 termination, and dragging still resizes the vertical split.
-`<completions>` borrows the current window for the prompt's duration and
-hands it back afterwards, point and viewport intact; there are no pop-up
-windows, so the split tree is the only source of windows.
+`<completions>` appears in the pop-up window, window 0, above the echo area
+for the prompt's duration and hides again afterwards; the other windows keep
+their buffers, points and viewports. The split tree is the only source of
+windows, the pop-up included: it is the root split's second leaf.
 `M-Up`, `M-Down`,
 `M-Left`, and `M-Right` cast an imaginary ray from the cursor in that direction
 and focus the first window it crosses. Thus the cursor's row chooses between

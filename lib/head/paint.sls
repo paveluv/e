@@ -815,7 +815,9 @@
               (append (app-status-values w current?) (status-hint-values b current?))]
              [hint-text (apply string-append (map car hint-values))]
              [status (string-append head mode-text hint-text)]
-             [status-width (max 0 (- (head:window-width w) head:window-buttons-width 1))]
+             ;; the pop-up is never split or closed: no buttons on its bar
+             [buttons? (not (head:popup? w))]
+             [status-width (max 0 (- (head:window-width w) (if buttons? head:window-buttons-width 0) 1))]
              [pointed (let ([at (head:mouse-position)])
                         (head:window-status-actions-set! w
                           (status-actions (string-append head mode-text) hint-values
@@ -880,14 +882,15 @@
                               [(italic) (ansi "\x1b;[23m")]
                               [(red) (ansi fg)])
                             (loop (cdr values) end))))
-                      (ansi (substring text he content-end) " │")
-                      (for-each
-                        (lambda (button)
-                          (when (eq? (car button) hovered) (ansi (style:code 'hover)))
-                          (ansi (cdr button))
-                          (when (eq? (car button) hovered) (ansi "\x1b;[0m" bar))
-                          (ansi "│"))
-                        head:window-buttons)
+                      (ansi (substring text he content-end) (if buttons? " │" " "))
+                      (when buttons?
+                        (for-each
+                          (lambda (button)
+                            (when (eq? (car button) hovered) (ansi (style:code 'hover)))
+                            (ansi (cdr button))
+                            (when (eq? (car button) hovered) (ansi "\x1b;[0m" bar))
+                            (ansi "│"))
+                          head:window-buttons))
                       (ansi "\x1b;[0m"))))))))
 
 

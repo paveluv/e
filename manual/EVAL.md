@@ -93,8 +93,8 @@ Once the list is open, typing and deleting refresh it immediately. Tab normalize
 the edited symbol; another Tab resumes cycling. When there is just one
 normalization, repeated Tab pages through the list. PageUp/PageDown and the
 mouse wheel also page, including when Tab is cycling alternatives. Clicking a
-candidate fills that symbol and closes the list. Leaving the symbol or cancelling M-x also returns
-the borrowed window. No match leaves your input intact.
+candidate fills that symbol and closes the list. Leaving the symbol or cancelling M-x also hides
+the pop-up. No match leaves your input intact.
 
 The completion list underlines the character occurrences used by the matcher.
 For now, a diagnostic suffix such as `[2 segments]` shows how many contiguous

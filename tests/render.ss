@@ -254,8 +254,9 @@
        (paint:set-screen-cols! 80)
        (publish '((2 #(blue blue blue) #(#f #f #f) ())))
        (painted)
+       ;; one ordinary window remains beside the hidden pop-up
        (test:check 'collapsed-layout-demands-its-final-visible-rows
-         (list (length (head:windows)) (and (data 2) #t)) '(1 #t))
+         (list (length (remq (head:popup) (head:windows))) (and (data 2) #t)) '(1 #t))
        (head:forget-buffer! other))
 
      (test:check 'unavailable-store-denies-rendition-and-retries-next-frame

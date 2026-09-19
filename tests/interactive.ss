@@ -5,7 +5,7 @@
 ;; terminal the way a user would. This layer keeps what only a live process
 ;; proves: attaching to a base, resizing under a pending question, capture
 ;; routing into a real shell, scrollback of real output, host theme
-;; forwarding, process exit, M-x completion in the borrowed window, a live
+;; forwarding, process exit, M-x completion in the pop-up window, a live
 ;; describe page, and a clean detach. Run from the repository root.
 
 (import (chezscheme))
@@ -184,9 +184,9 @@
        (lambda () (and (find-cell "■") (not (find-cell "■ ●")) (not (find-cell "■ ◐"))
                        (not (find-cell "C-] toggle capture")))) 10000)
 
-     ;; -- M-x completion borrows the window: the first Tab normalizes without
-     ;; choosing, the second lists candidates where the buffer was, and the
-     ;; prompt's end hands the window back ------------------------------------
+     ;; -- M-x completion opens the pop-up window: the first Tab normalizes
+     ;; without choosing, the second lists candidates above the echo area, and
+     ;; the prompt's end hides the pop-up again -------------------------------
      (send! "\x1b;xwindowsplit\t")
      (wait-for! 'first-tab-normalizes-without-choosing
        (lambda () (and (find-cell "M-x (split-window")
@@ -204,10 +204,10 @@
      ;; Completing a sole candidate includes punctuation and remains executable.
      (send! "\x1b;xspwir\t\r")
      (wait-for! 'normalized-full-match-can-run
-       (lambda () (and (find-cell "0▏") (find-cell "1▏"))) 5000)
+       (lambda () (and (find-cell "1▏") (find-cell "2▏"))) 5000)
      (send! "\x18;0")
      (wait-for! 'close-the-test-split
-       (lambda () (not (and (find-cell "0▏") (find-cell "1▏")))) 5000)
+       (lambda () (not (and (find-cell "1▏") (find-cell "2▏")))) 5000)
      ;; Subword prefixes may reorder. Complete a nested operator from inside
      ;; its token, retaining arguments; Enter runs the completed expression.
      (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))

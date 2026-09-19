@@ -99,21 +99,22 @@ keeps showing messages while a window prompt is active.
 
 Any prompt can use the window: `(prompt:in-window #t)` in `config.e` makes
 every `prompt:read!` take the current window. Find-file always uses the window.
-A nested prompt uses the echo area. Its own completion view may borrow
-the window temporarily, then returns to the outer prompt and its input.
+A nested prompt uses the echo area. Its own completion list takes the pop-up
+window temporarily, then returns to the outer prompt and its input.
 
 ## Completion
 
 Ordinary prompts use prefix completion. Tab extends input to the longest
 common prefix. When an ambiguous prefix cannot be extended, Tab shows
-`<completions>` in the currently focused window
-or, for a window prompt, candidates above its input. Repeated Tab cycles
+`<completions>` in the pop-up window (window 0), which appears above the echo
+area, or, for a window prompt, candidates above its input. Repeated Tab cycles
 through pages when the list is taller than the available space. Clicking a
 candidate fills the input without opening it or moving focus away from the
 prompt. Hover makes the candidate label bold with a dotted underline without
 changing the input; column padding remains clickable without being underlined.
-Finishing or dismissing the list restores the borrowed window's
-buffer, point and viewport; completion does not change the split layout.
+Finishing or dismissing the list hides the pop-up again; the other windows
+keep their buffers, points and viewports, and completion does not change the
+split layout.
 
 [M-x](EVAL.md) uses fuzzy symbol completion: the first Tab normalizes the token
 while preserving its matches, and the second opens the list. Further typing

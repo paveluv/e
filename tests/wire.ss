@@ -2408,7 +2408,7 @@
                      (head-wait 'real-head-reattaches again (lambda () (head-sees? again "through base")))
                      (test:check 'clean-reattach-restores-the-terminal-and-reuses-scratch
                        (list (head-read again '(list (head:buffer-store-id (current-buffer))
-                                                     (length (head:windows)) (head:kill-ring)))
+                                                     (length (remq (head:popup) (head:windows))) (head:kill-ring)))
                              (filter (lambda (name) (string:prefix? "*scratch*" name))
                                (map (lambda (id) (rpc head 'name id)) (rpc head 'buffers))))
                        (list (list terminal-id 1 "screen A kill") '("*scratch*")))
@@ -2428,19 +2428,23 @@
                                                  (if (string=? (buffer-line (current-buffer) row) "After table")
                                                      row (find (+ row 1)))) 2))
                             (other-window!) (wrap! #f) (split-window-below!)
-                            (head:layout-split-first-weight-set! (head:root) 2)
-                            (head:layout-split-second-weight-set! (head:root) 3)
-                            (head:layout-split-first-weight-set! (head:layout-split-first (head:root)) 2)
-                            (head:layout-split-second-weight-set! (head:layout-split-first (head:root)) 1)
+                            ;; the user's tree is the root split's first subtree;
+                            ;; the root itself holds the pop-up
+                            (let ([rest (head:layout-split-first (head:root))])
+                              (head:layout-split-first-weight-set! rest 2)
+                              (head:layout-split-second-weight-set! rest 3)
+                              (head:layout-split-first-weight-set! (head:layout-split-first rest) 2)
+                              (head:layout-split-second-weight-set! (head:layout-split-first rest) 1))
                             (goto-point! '(25 . 3)) (head:window-top-set! (head:current) 20)
                             (head:buffer-mark-row-set! (current-buffer) 26)
                             (head:buffer-mark-col-set! (current-buffer) 4)
                             (head:buffer-marked-set! (current-buffer) #t)
-                            (let ([other (head:window-numbered 2)])
+                            ;; the lower-left window, numbered 3 behind the pop-up's 0
+                            (let ([other (head:window-numbered 3)])
                               (head:window-prow-set! other 50) (head:window-pcol-set! other 4)
                               (head:window-top-set! other 45)) #t))
                        (let ([before (screen-state again)])
-                         ;; Completion borrows the selected window. A wake
+                         ;; Completion opens the pop-up window. A wake
                          ;; in that modal loop must not checkpoint its chrome.
                          ;; The first Tab only counts matches; the second lists them.
                          (head-send! again "\x1b;xhead:window-\t\t")
@@ -2482,10 +2486,28 @@
                              (head-wait 'missing-input-fallback fallback (lambda () (head-sees? fallback "shared text B")))
                              (test:check 'missing-or-hidden-inputs-fall-back-without-disturbing-another-screen
                                (list (head-read fallback '(map (lambda (w) (head:buffer-store-id (head:window-buffer w)))
-                                                               (head:windows)))
-                                     (head-read b '(list (length (head:windows))
+                                                               (remq (head:popup) (head:windows))))
+                                     (head-read b '(list (length (remq (head:popup) (head:windows)))
                                                          (head:buffer-store-id (current-buffer)) (head:kill-ring))))
-                               (list (make-list 3 id) (list 1 terminal-id "screen B kill")))))))))
+                               (list (make-list 3 id) (list 1 terminal-id "screen B kill")))
+                             ;; A screen saved before the pop-up numbered its
+                             ;; ordinary window 0. It resumes renumbered beside
+                             ;; the pop-up, which keeps 0.
+                             (let* ([lines (rpc head 'create "legacy lines" '("legacy text") '())]
+                                    [legacy (connect)])
+                               (hello legacy '(head "legacy desk")) (receive legacy)
+                               (rpc legacy 'checkpoint
+                                 `(screen 2 "legacy kill" 0 (window 0 0 0 0 #t #t #f)
+                                    (((shared ,lines ,(cadr (rpc head 'snapshot lines))) default #f ()))))
+                               (sys:close-connection! legacy)
+                               (let ([legacy (start-head "legacy desk")])
+                                 (head-wait 'legacy-screen-resumes legacy (lambda () (head-sees? legacy "legacy text")))
+                                 (test:check 'legacy-window-0-resumes-renumbered-beside-the-pop-up
+                                   (head-read legacy
+                                     '(list (head:window-index (head:current)) (head:window-index (head:popup))
+                                            (map head:window-index (remq (head:popup) (head:windows)))
+                                            (head:buffer-store-id (current-buffer)) (head:kill-ring)))
+                                   (list 1 0 '(1) lines "legacy kill"))))))))))
                )))
            (stop!)
            (for-each (lambda (head)

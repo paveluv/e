@@ -389,6 +389,15 @@
 
     (define (view-windows)
       (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))
+    (define (popup-height values)
+      ;; Rows for the candidate columns at the pop-up's width, at most half
+      ;; the screen; the layout keeps the windows above their minimum.
+      (let ([width (max 1 (if (> (head:window-width (head:popup)) 1)
+                              (head:window-content-width (head:popup))
+                              (paint:screen-cols)))])
+        (max 1 (min (quotient (paint:screen-rows) 2)
+                    (vector-length
+                      (format-columns values width (if completion-source (lambda (s) s) labeler) highlight?))))))
     (define (release-view!)
       (when view
         (let ([gone? (not (memq view (head:buffers)))]
@@ -399,10 +408,17 @@
             (lambda ()
               (for-each
                 (lambda (w)
-                  (when (or (eq? (head:window-buffer w) view)
-                            (and gone? (memq w borrowed)))
+                  (when (and (not (head:popup? w))
+                             (or (eq? (head:window-buffer w) view)
+                                 (and gone? (memq w borrowed))))
                     (head:set-window-buffer! w fallback)))
                 (head:windows))
+              ;; The pop-up hides again, unless an outer prompt's list is
+              ;; waiting to come back into it.
+              (when (head:popup? target)
+                (if (memq previous (head:buffers))
+                    (head:set-window-buffer! target previous)
+                    (head:hide-popup!)))
               (head:forget-buffer! view))))
         (set! view #f) (set! target #f) (set! borrowed '())))
     (define (window-lost?)
@@ -451,8 +467,10 @@
          (if in-window? #t 'keep-focus)]
         [else #f]))
     (define (take-view!)
+      ;; A window prompt shows its list in its own window; every other
+      ;; completion list opens the pop-up window above the echo area.
       (unless view
-        (set! target (if in-window? owner (head:current)))
+        (set! target (if in-window? owner (head:popup)))
         (set! previous (head:window-buffer target))
         (head:call-with-display-update
           (lambda ()
@@ -466,7 +484,8 @@
             (head:set-app-manages-viewport! view #t)
             (when body (head:set-app-selectable! view #f))
             (head:set-window-buffer! target view)
-            (set! borrowed (list target))))))
+            (set! borrowed (list target))
+            (unless in-window? (head:show-popup! (popup-height (or candidates '()))))))))
     (define (dismiss-completions!)
       (set! completion-source #f) (set! completion-range #f) (set! prepared #f)
       (set! completion-options '()) (set! completion-matches '()) (set! option-index 0)
@@ -481,7 +500,9 @@
            (string=? s (cadr prepared)) (= pos (caddr prepared))))
     (define (set-candidates! values)
       (unless (equal? values candidates)
-        (set! candidates values) (set! candidate-width 0) (set! page 0)))
+        (set! candidates values) (set! candidate-width 0) (set! page 0)
+        (when (and view (head:popup? target) (pair? values))
+          (head:show-popup! (popup-height values)))))
     (define (invalidate-input! new-s new-pos)
       (unless (and (string=? new-s input) (= new-pos position))
         (unless (prepared? completion-source new-s new-pos) (set! prepared #f))
