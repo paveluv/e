@@ -13,6 +13,7 @@
 (eval
   '(begin
      (import (except (edit) init!) (edoc) (prefix (test) test:))
+     (import (only (chezscheme) make-parameter))
 
      (define check test:check)
 
@@ -40,7 +41,22 @@
      (edefine-record-type point
        (edoc "A place on the screen." (x integer "the column") (y integer))
        (fields (immutable x) (mutable y)))
+     (edefine-record-type (tagged make-tagged tagged?)
+       (edoc "A tagged value." (tag symbol "the tag") (value any) (count integer "how often it was seen")
+             (constructor tag value))
+       (fields tag value (mutable count))
+       (protocol (lambda (new) (lambda (tag value) (new tag value 0)))))
+     (edefine-condition-type &stale &error make-stale stale?
+       (edoc "A stale basis was used." (revision integer "the revision that was current"))
+       (revision stale-revision))
      (define (kind-of sigs) (and sigs (signature-kind (car sigs))))
+     (check 'protocol-constructors-and-conditions-read-back
+       (list (map argument-name (signature-arguments (car (edoc-of make-tagged)))) (kind-of (edoc-of make-tagged))
+             (tagged-count (make-tagged 'a 1)) (kind-of (edoc-of make-stale)) (kind-of (edoc-of stale?))
+             (signature-summary (car (edoc-of stale-revision))) (stale-revision (make-stale 4))
+             (cdr (car (cadr (edoc-entry 'make-stale (edoc-of make-stale))))))
+       '((tag value) constructor 0 constructor predicate "The revision of a stale: the revision that was current" 4
+         "(make-stale revision)"))
      (check 'values-and-keywords-run
        (let ([a 1] [b 2]) (swap! a b) (list (width) limit (twice (lambda (n) (* n 2)) 3) a b (point-x (make-point 4 5))))
        '(80 40 12 2 1 4))
@@ -118,15 +134,18 @@
            (edefine-syntax s (edoc "text" (a nonsense)) (syntax-rules () [(_ a) a]))
            (edefine-record-type r (edoc "text" (x integer) (z integer)) (fields x))
            (edefine-record-type r (edoc "text") (fields x))
-           (edefine-record-type r (edoc "text" (x integer) (x integer)) (fields x))))
+           (edefine-record-type r (edoc "text" (x integer) (x integer)) (fields x))
+           (edefine-record-type r (edoc "text" (x integer) (constructor x)) (fields x))
+           (edefine-condition-type &c &error make-c c? (edoc "text") (x c-x))))
        '("every formal needs an edoc clause" "an edoc clause names a formal" "unknown edoc type"
          "the edoc summary must be a string" "one edoc clause per formal" "a rest parameter is a list-of"
          "one returns clause at most" "edoc notes must be strings"
          "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
          "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
-         "edoc belongs at the head of an edefine, edefine-syntax or edefine-record-type"
+         "edoc belongs at the head of an edefine, edefine-syntax, edefine-record-type or edefine-condition-type"
          "a value clause stands alone" "one edoc clause per name" "unknown edoc type"
-         "an edoc clause names a field" "every field needs an edoc clause" "one edoc clause per field"))
+         "an edoc clause names a field" "every field needs an edoc clause" "one edoc clause per field"
+         "a constructor clause belongs to a record with a protocol or parent" "every field needs an edoc clause"))
 
      ;; The command layer's converted definitions read back, and every
      ;; documented editor procedure's clauses match its formals.

@@ -17,14 +17,15 @@
 ;; value; a value without identity, such as a number, is recorded under its
 ;; name. (edefine-record-type spec (edoc summary (field type note ...) ...)
 ;; clause ...) documents a record's constructor, predicate and field
-;; procedures from one edoc. (edefine-syntax name (edoc ...) transformer)
+;; procedures from one edoc, and edefine-condition-type does the same for
+;; a condition type. (edefine-syntax name (edoc ...) transformer)
 ;; records a keyword's edoc under its name. edoc-of reads an object's
 ;; signatures back, edoc-named those recorded under a name, and edoc-entry
 ;; shapes signatures as a documentation entry in the describe corpus's
 ;; eight-field format.
 
 (library (edoc)
-  (export edefine edefine-record-type edefine-syntax edoc
+  (export edefine edefine-record-type edefine-condition-type edefine-syntax edoc
           edoc-of edoc-named signature? signature-kind signature-formals signature-summary
           signature-arguments signature-returns signature-library
           argument? argument-name argument-type argument-notes
@@ -77,7 +78,7 @@
 
   (define-syntax edoc
     (lambda (x)
-      (syntax-violation 'edoc "edoc belongs at the head of an edefine, edefine-syntax or edefine-record-type" x)))
+      (syntax-violation 'edoc "edoc belongs at the head of an edefine, edefine-syntax, edefine-record-type or edefine-condition-type" x)))
 
   (meta define (source-library x)
     ;; the library the form x appears in, from its source file, or #f when
@@ -252,9 +253,11 @@
     ;; (edefine-record-type spec (edoc summary (field type note ...) ...)
     ;; clause ...): a define-record-type whose constructor, predicate and
     ;; field procedures carry edocs derived from the record's. Every field
-    ;; has exactly one clause, and nothing else is named. A record with a
-    ;; protocol or a parent documents no constructor, since its arguments
-    ;; are not the fields.
+    ;; has exactly one clause, and nothing else is named -- except an
+    ;; optional (constructor field ...) clause, which names the arguments
+    ;; the constructor takes, in order, when a protocol or a parent makes
+    ;; them differ from the fields; without it such a record documents no
+    ;; constructor.
     (lambda (x)
       (define who 'edefine-record-type)
       (define (field-name field)
@@ -291,6 +294,8 @@
                       (not (exists (clause-named? 'protocol) #'(body ...)))
                       (not (exists (clause-named? 'parent) #'(body ...)))
                       (not (exists (clause-named? 'parent-rtd) #'(body ...))))]
+                [constructor-clause (find (clause-named? 'constructor) #'(clause ...))]
+                [field-clauses (filter (lambda (c) (not ((clause-named? 'constructor) c))) #'(clause ...))]
                 [type-name (syntax->datum type)]
                 [noun (let* ([s (symbol->string type-name)] [n (string-length s)])
                         ;; a type named to avoid clashing with its constructor
@@ -298,15 +303,23 @@
                         (if (and (> n 7) (string=? (substring s (- n 7) n) "-record")) (substring s 0 (- n 7)) s))]
                 [library (source-library x)])
            (check-summary! who x #'(summary clause ...))
-           (for-each (lambda (clause) (check-clause-shape! who x clause)) #'(clause ...))
+           (for-each (lambda (clause) (check-clause-shape! who x clause)) field-clauses)
            ;; every field has exactly one clause, and nothing else is named
            (let ([field-names (map (lambda (f) (syntax->datum (field-name f))) fields)]
-                 [clause-names (map clause-head #'(clause ...))])
+                 [clause-names (map clause-head field-clauses)])
              (for-each
                (lambda (clause)
                  (unless (memq (clause-head clause) field-names)
                    (syntax-violation who "an edoc clause names a field" x clause)))
-               #'(clause ...))
+               field-clauses)
+             (when constructor-clause
+               (when plain-constructor?
+                 (syntax-violation who "a constructor clause belongs to a record with a protocol or parent" x constructor-clause))
+               (for-each
+                 (lambda (f)
+                   (unless (and (identifier? f) (memq (syntax->datum f) field-names))
+                     (syntax-violation who "a constructor clause names fields" x f)))
+                 (syntax->list (syntax-case constructor-clause () [(_ . fs) #'fs]))))
              (for-each
                (lambda (f)
                  (unless (memq (syntax->datum (field-name f)) clause-names)
@@ -317,7 +330,7 @@
                  (when (memq (car names) (cdr names))
                    (syntax-violation who "one edoc clause per field" x (car names)))
                  (loop (cdr names)))))
-           (let* ([clauses (syntax->datum #'(clause ...))]
+           (let* ([clauses (syntax->datum field-clauses)]
                   [tail (if library (list (list "library" library)) '())]
                   [instance (list type-name (list 'record type-name))]
                   [attachment
@@ -325,9 +338,14 @@
                      (list object (append (list 'edoc summary) clauses (list (list "kind" kind)) tail)))]
                   [attachments
                    (append
-                     (if plain-constructor?
-                         (list (attachment constructor (syntax->datum #'summary) clauses 'constructor))
-                         '())
+                     (cond
+                       [plain-constructor?
+                        (list (attachment constructor (syntax->datum #'summary) clauses 'constructor))]
+                       [(and constructor constructor-clause)
+                        (list (attachment constructor (syntax->datum #'summary)
+                                (map (lambda (f) (assq f clauses)) (cdr (syntax->datum constructor-clause)))
+                                'constructor))]
+                       [else '()])
                      (if predicate
                          (list (attachment predicate (format "Whether a value is a ~a." noun)
                                  (list (list 'value 'any) (list 'returns 'boolean)) 'predicate))
@@ -356,6 +374,63 @@
                    (define tmp (begin (attach! 'object object 'datum) ... (void)))))))]
         [_ (syntax-violation who
              "expected (edefine-record-type spec (edoc summary (field type note ...) ...) clause ...)" x)])))
+
+  (define-syntax edefine-condition-type
+    ;; (edefine-condition-type &name &parent constructor predicate (edoc
+    ;; summary (field type note ...) ...) (field accessor) ...): a
+    ;; define-condition-type whose constructor, predicate and accessors
+    ;; carry edocs derived from the condition's; every field has exactly
+    ;; one clause.
+    (lambda (x)
+      (define who 'edefine-condition-type)
+      (syntax-case x (edoc)
+        [(_ name parent constructor predicate (edoc summary clause ...) (field accessor) ...)
+         (let* ([noun (let ([s (symbol->string (syntax->datum #'name))])
+                        (if (and (> (string-length s) 1) (char=? (string-ref s 0) #\&)) (substring s 1 (string-length s)) s))]
+                [library (source-library x)]
+                [field-names (map syntax->datum (syntax->list #'(field ...)))]
+                [clause-names (map clause-head #'(clause ...))])
+           (check-summary! who x #'(summary clause ...))
+           (for-each (lambda (clause) (check-clause-shape! who x clause)) #'(clause ...))
+           (for-each
+             (lambda (clause)
+               (unless (memq (clause-head clause) field-names)
+                 (syntax-violation who "an edoc clause names a field" x clause)))
+             #'(clause ...))
+           (for-each
+             (lambda (f)
+               (unless (memq f clause-names)
+                 (syntax-violation who "every field needs an edoc clause" x f)))
+             field-names)
+           (let loop ([names clause-names])
+             (unless (null? names)
+               (when (memq (car names) (cdr names))
+                 (syntax-violation who "one edoc clause per field" x (car names)))
+               (loop (cdr names))))
+           (let* ([clauses (syntax->datum #'(clause ...))]
+                  [tail (if library (list (list "library" library)) '())]
+                  [attachment
+                   (lambda (object summary clauses kind)
+                     (list object (append (list 'edoc summary) clauses (list (list "kind" kind)) tail)))]
+                  [attachments
+                   (append
+                     (list (attachment #'constructor (syntax->datum #'summary) clauses 'constructor)
+                           (attachment #'predicate (format "Whether a condition is ~a ~a." (if (memv (string-ref noun 0) '(#\a #\e #\i #\o #\u)) "an" "a") noun)
+                             (list (list 'value 'any) (list 'returns 'boolean)) 'predicate))
+                     (map (lambda (accessor field)
+                            (let ([clause (assq (syntax->datum field) clauses)])
+                              (attachment accessor (format "The ~a of ~a ~a~a" (car clause) (if (memv (string-ref noun 0) '(#\a #\e #\i #\o #\u)) "an" "a") noun
+                                                     (if (pair? (cddr clause)) (string-append ": " (caddr clause)) "."))
+                                (list (list 'condition 'condition) (list 'returns (cadr clause))) 'accessor)))
+                          (syntax->list #'(accessor ...)) (syntax->list #'(field ...))))])
+             (with-syntax ([((object datum) ...)
+                            (map (lambda (a) (list (car a) (datum->syntax #'edefine-condition-type (cadr a)))) attachments)]
+                           [(tmp) (generate-temporaries '(edoc))])
+               #'(begin
+                   (define-condition-type name parent constructor predicate (field accessor) ...)
+                   (define tmp (begin (attach! 'object object 'datum) ... (void)))))))]
+        [_ (syntax-violation who
+             "expected (edefine-condition-type &name &parent constructor predicate (edoc summary (field type note ...) ...) (field accessor) ...)" x)])))
 
   ;;; Reading it back -------------------------------------------------------------
 

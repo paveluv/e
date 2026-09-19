@@ -76,6 +76,10 @@
                  [(edefine) (list (cons (if (pair? (cadr form)) (car (cadr form)) (cadr form)) 'edefine))]
                  [(edefine-syntax) (list (cons (cadr form) 'edefine))]
                  [(edefine-record-type) (map (lambda (n) (cons n 'edefine)) (record-names (cons 'define-record-type (cons (cadr form) (cdddr form)))))]
+                 [(edefine-condition-type)
+                  (map (lambda (n) (cons n 'edefine))
+                    (append (list (cadr form) (cadddr form) (car (cddddr form)))
+                            (map cadr (filter (lambda (c) (not (eq? (car c) 'edoc))) (cdr (cddddr form))))))]
                  [(define)
                   (let ([target (cadr form)])
                     (cond [(pair? target) (list (cons (car target) 'procedure))]
