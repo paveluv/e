@@ -122,14 +122,22 @@ buffer's file, mode and state as its hint; then the documented procedures
 and parameters that produce a buffer, `(current-buffer)` and
 `(fresh-buffer name)` say, which insert their opening and settle to their
 first argument; then the top-level variables holding one, so a buffer you
-bound with `define` at M-x is offered by name. Typing narrows the list by
-substring, then by subsequence, within the candidates' spellings. A
-`one-of` type offers its literals, a boolean `#t` and `#f`, and inside a
-string literal the type's string values complete the literal: `(visit-file!
-"man` lists paths under `manual/`, `(buffer "` lists buffer names. The
-language's own types, `string` or `integer`, offer no producers, and an
-argument whose type offers nothing the token matches falls back to symbol
-completion. `S-Tab` always completes symbols.
+bound with `define` at M-x is offered by name. The token matches a
+candidate's own spelling the way it matches a symbol, by parts starting at
+any punctuation, so `scr` finds `(buffer "*scratch*")` and `cur` finds
+`(current-buffer)`, while the formals shown in a producer's label take no
+part. Tab extends the token to the longest text every current candidate
+still matches: `bu` becomes `(buffer` when everything offered is a form,
+and stays bare while a variable such as `myb` is among the matches. The
+operator position of a nested form takes the enclosing argument's type,
+so `(show-buffer! (cu` completes to `(current-buffer)` rather than to every
+symbol; a form under a quote, or under an undocumented operator, completes
+symbols as before. A `one-of` type offers its literals, a boolean `#t` and
+`#f`, and inside a string literal the type's string values complete the
+literal: `(visit-file! "man` lists paths under `manual/`, `(buffer "`
+lists buffer names. The language's own types, `string` or `integer`, offer
+no producers, and an argument whose type offers nothing the token matches
+falls back to symbol completion. `S-Tab` always completes symbols.
 
 Bracketed multiline paste keeps its line breaks and runs the same Scheme
 indenter over the resulting expression. This makes copied definitions and

@@ -60,8 +60,9 @@
      (check 'common-prefix-one (string:common-prefix '("solo")) "solo")
      (check 'common-prefix-none (string:common-prefix '("a" "b")) "")
 
-     ;; Segments start at the symbol's beginning or after ':' / '-'. Explicit
-     ;; separators stay inside literal segments, which may still reorder.
+     ;; Segments start at the symbol's beginning or after any character that
+     ;; is not a letter or a digit. Explicit separators stay inside literal
+     ;; segments, which may still reorder.
      (for-each
        (lambda (case)
          (check (list 'fuzzy (car case)) (fuzzy:matches (car case) (cadr case)) (caddr case)))
@@ -69,7 +70,8 @@
          ("abc" ("abc:tail" "ab:c" "abcde" "c:ab" "abc" "x:abc")
           ("abc" "abcde" "abc:tail" "x:abc" "ab:c" "c:ab"))
          ("abc" ("ab:a:bc" "abxbc" "xabc" "abdc") ("ab:a:bc"))
-         ("fb" ("foobar" "foo_bar" "foo-bar" "foo:bar") ("foo-bar" "foo:bar"))
+         ("fb" ("foobar" "foo_bar" "foo-bar" "foo:bar") ("foo-bar" "foo:bar" "foo_bar"))
+         ("scr" ("(buffer \"*scratch*\")" "describe" "scratch") ("scratch" "(buffer \"*scratch*\")"))
          ("xx" ("x" "x-x" "xx" "xxx" "XX") ("xx" "xxx" "x-x"))
          ("aa" ("aba" "ab-a") ("ab-a"))
          ("λλ" ("λ" "λ-λ" "λλ") ("λλ" "λ-λ"))

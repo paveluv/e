@@ -19,7 +19,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (eval)
-  (export init! settle-completion completion-candidates
+  (export init! settle-completion completion-candidates completion-extensions
           (rename (eval! run!)) (rename (eval!! run!!)) (rename (eval-copy-result copy-result)))
   (import (chezscheme)
           (except (edit) init!)
@@ -71,7 +71,9 @@
   ;; argument's edoc type accepts: the type's own values, spelled as
   ;; expressions; the documented procedures and parameters that produce one;
   ;; and the top-level variables holding one. Inside a string literal, the
-  ;; type's string values complete the literal.
+  ;; type's string values complete the literal. The token matches a
+  ;; candidate's spelling the way it matches a symbol, and Tab extends it
+  ;; the same way: to the longest text every current match still matches.
 
   (define (open-string-start s pos)
     ;; the index of the quote opening a string still open at pos, or #f
@@ -113,8 +115,15 @@
   (define (argument-context s pos)
     ;; (type start end token string?) for the cursor at a documented
     ;; argument position: the argument's type, the range and text of the
-    ;; token being completed, and whether it sits inside a string literal;
-    ;; #f at an operator position, under a quote, or without a type.
+    ;; token being completed, and whether it sits inside a string literal.
+    ;; At the operator position of a nested form, (show-buffer! (bu, the
+    ;; token is the form's opening and the type is the enclosing argument's:
+    ;; whatever the form produces has to serve it. #f under a quote, or
+    ;; without a type.
+    (define (typed frame start end in-string?)
+      (let ([type (argument-type (string->symbol (frame-operator frame)) (frame-arguments frame))])
+        (and type (list type start end (substring s start end) in-string?))))
+    (define (plain? frame) (and (not (frame-quoted? frame)) (string? (frame-operator frame))))
     (let* ([quote-at (open-string-start s pos)]
            [range (and (not quote-at) (symbol-range s pos))]
            [start (cond [quote-at (+ quote-at 1)] [range (car range)] [else pos])]
@@ -122,10 +131,13 @@
            [frames (call-frames (substring s 0 (if quote-at quote-at start)))])
       (and (pair? frames)
            (let ([frame (car frames)])
-             (and (not (frame-quoted? frame))
-                  (string? (frame-operator frame))
-                  (let ([type (argument-type (string->symbol (frame-operator frame)) (frame-arguments frame))])
-                    (and type (list type start end (substring s start end) (and quote-at #t)))))))))
+             (cond
+               [(plain? frame) (typed frame start end (and quote-at #t))]
+               [(and (eq? (frame-operator frame) 'pending) (not (frame-quoted? frame)) (not quote-at)
+                     (pair? (cdr frames)) (plain? (cadr frames))
+                     (> start 0) (char=? (string-ref s (- start 1)) (frame-opener frame)))
+                (typed (cadr frames) (- start 1) end #f)]
+               [else #f])))))
 
   (define (type-fits? wanted produced)
     ;; whether a produced type serves a wanted one: the same, a member of a
@@ -144,9 +156,18 @@
           [(and (pair? type) (eq? (car type) 'or)) (exists module-type? (cdr type))]
           [else #f]))
 
-  ;; A typed candidate: what Tab inserts, the label the row shows, the grey
-  ;; hint beside it, and the label's face.
-  (define-record-type option (fields insert label hint face))
+  ;; A typed candidate: the text the token matches against, what Tab inserts
+  ;; for it alone, the label the row shows, the grey hint beside it, and the
+  ;; label's face. The text is the candidate's opening: its spelling without
+  ;; the closers the settle step supplies, so an extension never closes the
+  ;; form the token is still inside.
+  (define-record-type option (fields text insert label hint face))
+
+  (define (opening spelling)
+    (let loop ([end (string-length spelling)])
+      (if (and (> end 1) (memv (string-ref spelling (- end 1)) '(#\) #\] #\")))
+          (loop (- end 1))
+          (substring spelling 0 end))))
 
   (define (value-options type token in-string?)
     (fold-right
@@ -156,9 +177,10 @@
             [in-string?
              (if (string? value)
                  ;; the literal stays open for a directory, to descend into
-                 (cons (make-option (if (string:suffix? "/" value) value (string-append value "\"")) value hint 'plain) out)
+                 (cons (make-option value (if (string:suffix? "/" value) value (string-append value "\"")) value hint 'plain) out)
                  out)]
-            [else (let ([text (edoc:type-spelling type value)]) (cons (make-option text text hint 'plain) out))])))
+            [else (let ([text (edoc:type-spelling type value)])
+                    (cons (make-option (opening text) text text hint 'plain) out))])))
       '() (edoc:type-completions type token)))
 
   (define (documented-symbols)
@@ -206,29 +228,10 @@
                 (let* ([sig (car producing)]
                        [formals (if (eq? (edoc:signature-kind sig) 'procedure) (edoc:signature-formals sig) '())]
                        [label (edoc:edoc-template sym formals)]
-                       [insert (if (null? formals) label (string-append "(" name))])
-                  (cons (make-option insert label (edoc:signature-summary sig) 'editor) out)))))
+                       [text (string-append "(" name)]
+                       [insert (if (null? formals) label text)])
+                  (cons (make-option text insert label (edoc:signature-summary sig) 'editor) out)))))
           '() (documented-symbols)))))
-
-  (define (loose-match label token)
-    ;; The token inside a label, case-insensitively: as a substring, else as
-    ;; a subsequence; the matched runs as (0 start length) fragments, or #f.
-    ;; Labels are expressions with punctuation the symbol matcher, which
-    ;; wants word starts, would refuse.
-    (let ([n (string-length label)] [m (string-length token)])
-      (cond
-        [(string:search label token 0 n #t) => (lambda (at) (list (list 0 at m)))]
-        [else
-         (let loop ([i 0] [j 0] [fragments '()])
-           (cond
-             [(= j m) (reverse fragments)]
-             [(= i n) #f]
-             [(char-ci=? (string-ref label i) (string-ref token j))
-              (loop (+ i 1) (+ j 1)
-                    (if (and (pair? fragments) (= (+ (cadr (car fragments)) (caddr (car fragments))) i))
-                        (cons (list 0 (cadr (car fragments)) (+ (caddr (car fragments)) 1)) (cdr fragments))
-                        (cons (list 0 i 1) fragments)))]
-             [else (loop (+ i 1) j fragments)]))])))
 
   (define (variable-options type)
     ;; the top-level names whose current values the type accepts, alphabetically
@@ -238,15 +241,29 @@
             (lambda (sym out)
               (let ([value (and (editor-symbol? sym) (top-level-value sym))])
                 (if (and value (guard (ex [else #f]) (edoc:type-accepts? type value)))
-                  (cons (make-option (symbol->string sym) (symbol->string sym)
-                          (if (procedure? value) (completion-hint sym) (edoc:type-spelling type value)) 'editor)
-                        out)
+                  (let ([name (symbol->string sym)])
+                    (cons (make-option name name name
+                            (if (procedure? value) (completion-hint sym) (edoc:type-spelling type value)) 'editor)
+                          out))
                   out)))
             '() (environment-symbols (interaction-environment))))))
 
+  (define (quality<? a b)
+    ;; The matcher's rank components that judge an alignment: segments,
+    ;; reorderings, first character and span, without the name length that
+    ;; breaks its own ties. Among equals the sources keep their order, so
+    ;; the values lead the producers when a token fits every candidate.
+    (let loop ([a a] [b b] [n 4])
+      (cond [(= n 0) #f]
+            [(< (car a) (car b)) #t]
+            [(> (car a) (car b)) #f]
+            [else (loop (cdr a) (cdr b) (- n 1))])))
+
   (define (typed-options context)
     ;; ((option . fragments) ...) for an argument context, best first, or #f
-    ;; when the type offers nothing the token matches
+    ;; when the type offers nothing the token matches: the token aligns with
+    ;; a candidate's text as it would with a symbol, so (bu matches both
+    ;; (buffer "a.txt") and (current-buffer), and name matches no formal
     (let* ([type (car context)] [token (cadddr context)] [in-string? (car (cddddr context))]
            [all (append (value-options type token in-string?)
                         (if in-string? '() (producer-options type))
@@ -255,12 +272,32 @@
         [(null? all) #f]
         [(string=? token "") (map (lambda (o) (cons o '())) all)]
         [else
-         ;; substring matches lead, earliest first; subsequence matches follow
-         (let* ([matched (filter values (map (lambda (o) (let ([f (loose-match (option-label o) token)]) (and f (cons o f)))) all))]
-                [tight? (lambda (entry) (and (null? (cdr (cdr entry))) (= (caddr (car (cdr entry))) (string-length token))))]
-                [ranked (append (list-sort (lambda (a b) (< (cadr (car (cdr a))) (cadr (car (cdr b))))) (filter tight? matched))
-                                (filter (lambda (e) (not (tight? e))) matched))])
-           (and (pair? ranked) ranked))])))
+         (let ([by-text (make-hashtable string-hash string=?)])
+           (for-each (lambda (o) (hashtable-set! by-text (option-text o) #t)) all)
+           (for-each (lambda (m) (hashtable-set! by-text (fuzzy:name m) m))
+                     (fuzzy:rank token (vector->list (hashtable-keys by-text))))
+           (let ([matched (fold-right
+                            (lambda (o out)
+                              (let ([m (hashtable-ref by-text (option-text o) #t)])
+                                (if (eq? m #t) out (cons (cons o m) out))))
+                            '() all)])
+             (and (pair? matched)
+                  (map (lambda (entry) (cons (car entry) (fuzzy:fragments (cdr entry))))
+                       (list-sort (lambda (a b) (quality<? (fuzzy:score (cdr a)) (fuzzy:score (cdr b)))) matched)))))])))
+
+  (define (typed-inserts token options)
+    ;; what Tab puts in place of the token: a sole candidate whole, else the
+    ;; safe extensions of the token over the candidates' texts, the longest
+    ;; that every current match still matches, as for symbols
+    (if (null? (cdr options))
+        (list (option-insert (car (car options))))
+        (let ([seen (make-hashtable string-hash string=?)])
+          (fuzzy:expansions token
+            (fold-right (lambda (entry out)
+                          (let ([text (option-text (car entry))])
+                            (if (hashtable-ref seen text #f) out
+                                (begin (hashtable-set! seen text #t) (cons text out)))))
+                        '() options)))))
 
   (define (typed-candidate entry)
     ;; a prompt candidate from (option . fragments): the label with its
@@ -284,6 +321,14 @@
   (define (completion-candidates text pos)
     (let* ([context (argument-context text pos)] [options (and context (typed-options context))])
       (and options (map (lambda (entry) (option-label (car entry))) options))))
+
+  (edoc "The texts Tab puts in place of the token at a typed argument position: a sole candidate whole, else the longest extensions of the token that every current candidate still matches, the token itself when nothing longer does; #f where symbols complete instead."
+        (text string "the prompt input")
+        (pos integer "the cursor position")
+        (returns (or (list-of string) #f)))
+  (define (completion-extensions text pos)
+    (let* ([context (argument-context text pos)] [options (and context (typed-options context))])
+      (and options (typed-inserts (cadddr context) options))))
 
   (define hint-cache (make-weak-eq-hashtable))
 
@@ -352,12 +397,13 @@
                   (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
                     (map completion-candidate ranked))))))
         ;; an argument with a documented type offers its own candidates; a
-        ;; sole one is what Tab inserts, else the token stays and Tab lists
+        ;; sole one is what Tab inserts, else Tab extends the token as far as
+        ;; every candidate allows and lists them
         (let* ([context (and typed? (argument-context s pos))]
                [options (and context (typed-options context))])
           (if (not options) (symbols)
               (values (cadr context) (caddr context)
-                (if (null? (cdr options)) (list (option-insert (car (car options)))) (list (cadddr context)))
+                (lambda () (typed-inserts (cadddr context) options))
                 (map typed-candidate options)))))
       ;; a closure: the completers are built while the module loads, before
       ;; the settling procedures below are defined

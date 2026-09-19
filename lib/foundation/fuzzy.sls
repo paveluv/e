@@ -14,12 +14,16 @@
   (define-record-type match
     (fields name score fragments))
   ;; A source is a name prepared once for alignment: the indices where its
-  ;; parts start (the beginning and the position after every ':' or '-'),
+  ;; parts start (the beginning and the position after every separator),
   ;; its characters as sorted code points, and a presence mask over the
   ;; slots below. Every part starts at a boundary, and every character stays
   ;; in a segment.
   (define-record-type source (fields name starts codes mask))
-  (define (separator? c) (or (char=? c #\:) (char=? c #\-)))
+  (define (separator? c)
+    ;; The character before a word start: anything but a letter or a digit,
+    ;; so that a query aligns with the parts of set-buffer-name!, of
+    ;; (current-buffer) and of (buffer "*scratch*") alike.
+    (not (or (char-alphabetic? c) (char-numeric? c))))
 
   (define (slot c)
     ;; One mask bit per common symbol character; everything else shares one.
