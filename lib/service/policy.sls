@@ -20,7 +20,8 @@
 ;; full-power eval owns the image; the confirmation gate stays the
 ;; in-process trust boundary.
 
-(library (policy)
+(import (only (edoc) elibrary))
+(elibrary (policy)
   (export (rename (make-policy make)) policy?
           (rename (policy-grants grants)) (rename (policy-fuel fuel)) (rename (policy-buffers buffers))
           (rename (policy-cap cap)) (rename (reader-policy reader))
@@ -28,14 +29,15 @@
           revoke! revoke-actor! revoked?
           session-eval! session-edit! session-undo! session-redo! session-history-step!
           session-send! session-ask! session-answer! session-cancel!)
-  (import (only (edoc) edefine edefine-record-type edoc) (except (rnrs) current-output-port)
+  (import (except (rnrs) current-output-port)
           (only (chezscheme)
                 current-output-port
                 box unbox set-box! format environment eval
                 make-engine parameterize print-graph remq make-mutex with-mutex void
                 open-string-input-port open-output-string
                 get-output-string)
-          (prefix (store) store:) (prefix (activity) activity:)
+          (prefix (store) store:)
+          (prefix (activity) activity:)
           (prefix (text) text:)
           (prefix (actor) actor:)
           (prefix (datum) datum:)
@@ -50,55 +52,55 @@
   ;; fuel:    engine ticks per evaluation
   ;; buffers: 'any, or the list of buffer names the session may edit
   ;; cap:     result and output size, characters
-  (edefine-record-type (policy policy-of-values policy?)
-    (edoc "What a session may do: the names it may call, its evaluation fuel, the buffers it may edit and its output cap."
-          (grants (or (one-of all) (list-of symbol)) "the granted names")
-          (fuel integer "the evaluation budget")
-          (buffers (or (one-of any) (list-of string)) "the editable buffers")
-          (cap integer "the output cap"))
+  (edoc "What a session may do: the names it may call, its evaluation fuel, the buffers it may edit and its output cap."
+        (grants (or (one-of all) (list-of symbol)) "the granted names")
+        (fuel integer "the evaluation budget")
+        (buffers (or (one-of any) (list-of string)) "the editable buffers")
+        (cap integer "the output cap"))
+  (define-record-type (policy policy-of-values policy?)
     (fields (immutable grants policy-grants-raw) fuel
             (immutable buffers policy-buffers-raw) cap))
 
-  (edefine (make-policy grants fuel buffers cap)
-    (edoc "A policy: the grants, all or a list of names an actor may call, its evaluation fuel, the buffers it may edit, any or names, and its output cap."
-          (grants (or (one-of all) (list-of symbol)) "the granted names")
-          (fuel integer "the evaluation budget")
-          (buffers (or (one-of any) (list-of string)) "the editable buffers")
-          (cap integer "the output cap")
-          (returns (record policy)))
+  (edoc "A policy: the grants, all or a list of names an actor may call, its evaluation fuel, the buffers it may edit, any or names, and its output cap."
+        (grants (or (one-of all) (list-of symbol)) "the granted names")
+        (fuel integer "the evaluation budget")
+        (buffers (or (one-of any) (list-of string)) "the editable buffers")
+        (cap integer "the output cap")
+        (returns (record policy)))
+  (define (make-policy grants fuel buffers cap)
     (unless (and (or (eq? grants 'all) (and (list? grants) (for-all symbol? grants)))
                  (fixnum? fuel) (> fuel 0) (fixnum? cap) (>= cap 0)
                  (or (eq? buffers 'any) (and (list? buffers) (for-all string? buffers))))
       (error 'make "expected grants, positive fuel, buffer names and nonnegative cap"))
     (policy-of-values (datum:copy grants) fuel (datum:copy buffers) cap))
 
-  (edefine (policy-grants p)
-    (edoc "A copy of a policy's grants."
-          (p (record policy) "the policy")
-          (returns (or (one-of all) (list-of symbol))))
+  (edoc "A copy of a policy's grants."
+        (p (record policy) "the policy")
+        (returns (or (one-of all) (list-of symbol))))
+  (define (policy-grants p)
     (datum:copy (policy-grants-raw p)))
-  (edefine (policy-buffers p)
-    (edoc "A copy of the buffers a policy lets an actor edit."
-          (p (record policy) "the policy")
-          (returns (or (one-of any) (list-of string))))
+  (edoc "A copy of the buffers a policy lets an actor edit."
+        (p (record policy) "the policy")
+        (returns (or (one-of any) (list-of string))))
+  (define (policy-buffers p)
     (datum:copy (policy-buffers-raw p)))
 
-  (edefine (reader-policy)
-    (edoc "The read-only tier: every grant, generous fuel, no edits anywhere."
-          (returns (record policy)))
+  (edoc "The read-only tier: every grant, generous fuel, no edits anywhere."
+        (returns (record policy)))
+  (define (reader-policy)
     ;; the whole read-only tier, no edits anywhere
     (make-policy 'all 100000000 '() 8000))
 
   ;;; Sessions ----------------------------------------------------------------
 
-  (edefine-record-type (session mint session?)
-    (edoc "An actor's admission under a policy."
-          (actor any "the actor identity")
-          (policy (record policy) "the policy")
-          (owner any "the actor asked when more is needed, or #f")
-          (env any "the granted evaluation environment")
-          (revoked any "a box, #t once revoked")
-          (close thunk "the one-shot connection cleanup"))
+  (edoc "An actor's admission under a policy."
+        (actor any "the actor identity")
+        (policy (record policy) "the policy")
+        (owner any "the actor asked when more is needed, or #f")
+        (env any "the granted evaluation environment")
+        (revoked any "a box, #t once revoked")
+        (close thunk "the one-shot connection cleanup"))
+  (define-record-type (session mint session?)
     (fields (immutable actor session-actor-raw)
             policy
             (immutable owner session-owner-raw) ; the actor asked when more is needed
@@ -108,15 +110,15 @@
 
   (define session-lock (make-mutex))
   (define live-sessions '())
-  (edefine (session-actor s)
-    (edoc "A copy of a session's actor identity."
-          (s (record session) "the session")
-          (returns any))
+  (edoc "A copy of a session's actor identity."
+        (s (record session) "the session")
+        (returns any))
+  (define (session-actor s)
     (datum:copy (session-actor-raw s)))
-  (edefine (session-owner s)
-    (edoc "A copy of the identity a session asks when it needs more than its grant, or #f."
-          (s (record session) "the session")
-          (returns any))
+  (edoc "A copy of the identity a session asks when it needs more than its grant, or #f."
+        (s (record session) "the session")
+        (returns any))
+  (define (session-owner s)
     (datum:copy (session-owner-raw s)))
 
   (define (audit! entry)
@@ -140,35 +142,34 @@
                      '(sandbox)
                      `(only (sandbox) ,@grants))))
 
-  (edefine mint!
-    (edoc "Mint a session for an actor under a policy; the optional owner is consulted beyond the grant, and the close procedure of a connection runs once on revocation."
-          (actor any "the actor identity")
-          (p (record policy) "the policy")
-          (owner any "the consulted identity, optional")
-          (close! thunk "the connection's close, optional")
-          (returns (record session)))
-    (activity:wrap
-      ;; Mint a session for the actor under a policy. The optional owner is
-      ;; consulted for anything beyond the grant (default: actor:current,
-      ;; or #f outside actor work). A connection supplies its close procedure;
-      ;; revocation invokes it once without exposing that resource to callers.
-      (case-lambda
-        [(actor p) (mint! actor p (actor:current))]
-        [(actor p owner) (mint! actor p owner void)]
-        [(actor p owner close!)
-         (unless (policy? p) (error 'mint! "expected a policy" p))
-         (unless (and (actor:identity? actor) (or (not owner) (actor:identity? owner)))
-           (error 'mint! "expected actor and optional owner identities" actor owner))
-         (unless (procedure? close!) (error 'mint! "expected a close procedure"))
-         (let ([s (mint (datum:copy actor) p (datum:copy owner)
-                        (grant-environment (policy-grants-raw p)) (box #f) close!)])
-           (with-mutex session-lock (set! live-sessions (cons s live-sessions)))
-           (audit! (list 'mint (session-actor s) (session-owner s)))
-           s)])))
+  (edoc "Mint a session for an actor under a policy; the optional owner is consulted beyond the grant, and the close procedure of a connection runs once on revocation."
+        (actor any "the actor identity")
+        (p (record policy) "the policy")
+        (owner any "the consulted identity, optional")
+        (close! thunk "the connection's close, optional")
+        (returns (record session)))
+  (define mint! (activity:wrap
+                  ;; Mint a session for the actor under a policy. The optional owner is
+                  ;; consulted for anything beyond the grant (default: actor:current,
+                  ;; or #f outside actor work). A connection supplies its close procedure;
+                  ;; revocation invokes it once without exposing that resource to callers.
+                  (case-lambda
+                    [(actor p) (mint! actor p (actor:current))]
+                    [(actor p owner) (mint! actor p owner void)]
+                    [(actor p owner close!)
+                     (unless (policy? p) (error 'mint! "expected a policy" p))
+                     (unless (and (actor:identity? actor) (or (not owner) (actor:identity? owner)))
+                       (error 'mint! "expected actor and optional owner identities" actor owner))
+                     (unless (procedure? close!) (error 'mint! "expected a close procedure"))
+                     (let ([s (mint (datum:copy actor) p (datum:copy owner)
+                                (grant-environment (policy-grants-raw p)) (box #f) close!)])
+                       (with-mutex session-lock (set! live-sessions (cons s live-sessions)))
+                       (audit! (list 'mint (session-actor s) (session-owner s)))
+                       s)])))
 
-  (edefine (revoke! s)
-    (edoc "Revoke a session: remove it from the inventory and close its connection once; an admitted operation may finish."
-          (s (record session) "the session"))
+  (edoc "Revoke a session: remove it from the inventory and close its connection once; an admitted operation may finish."
+        (s (record session) "the session"))
+  (define (revoke! s)
     (activity:call-with-retirement
       (lambda ()
         ;; Admission/inventory commit together; logging and all user callbacks
@@ -187,16 +188,16 @@
             (audit! (list 'revoke (session-actor s)))))
         #t)))
 
-  (edefine (revoked? s)
-    (edoc "Whether a session was revoked."
-          (s (record session) "the session")
-          (returns boolean))
+  (edoc "Whether a session was revoked."
+        (s (record session) "the session")
+        (returns boolean))
+  (define (revoked? s)
     (unbox (session-revoked s)))
 
-  (edefine (revoke-actor! actor)
-    (edoc "Revoke every live session of an actor; how many were selected."
-          (actor any "the actor identity")
-          (returns integer))
+  (edoc "Revoke every live session of an actor; how many were selected."
+        (actor any "the actor identity")
+        (returns integer))
+  (define (revoke-actor! actor)
     ;; Trusted control selects one inventory version. Reentrant cleanup or a
     ;; concurrent reconnect cannot redirect this selection to a new session.
     ;; Return the number selected; a racing disconnect may also revoke them.
@@ -207,9 +208,9 @@
       (for-each revoke! selected)
       (length selected)))
 
-  (edefine (sessions)
-    (edoc "The live sessions as (actor owner) pairs, copied."
-          (returns list))
+  (edoc "The live sessions as (actor owner) pairs, copied."
+        (returns list))
+  (define (sessions)
     ;; Capture one inventory version, then copy its immutable metadata.
     (map (lambda (s)
            (list (session-actor s) (session-owner s)))
@@ -217,9 +218,9 @@
 
   ;; Opaque incarnations for lifecycle consent. A reused actor name is a
   ;; different session, even when directory counts happen to match.
-  (edefine (live)
-    (edoc "The live session records themselves, opaque incarnations for lifecycle consent."
-          (returns (list-of (record session))))
+  (edoc "The live session records themselves, opaque incarnations for lifecycle consent."
+        (returns (list-of (record session))))
+  (define (live)
     (with-mutex session-lock live-sessions))
 
   ;;; Fueled evaluation ---------------------------------------------------------
@@ -234,11 +235,11 @@
                     [else (values (cons 'begin (reverse acc)) #f)])
               (loop (cons datum acc)))))))
 
-  (edefine (session-eval! s text)
-    (edoc "Evaluate text or a datum in a session's granted environment under its fuel: (status . text), status ok, unbound, fuel, error or refused."
-          (s (record session) "the session")
-          (text (or string datum) "the expression")
-          (returns pair))
+  (edoc "Evaluate text or a datum in a session's granted environment under its fuel: (status . text), status ok, unbound, fuel, error or refused."
+        (s (record session) "the session")
+        (text (or string datum) "the expression")
+        (returns pair))
+  (define (session-eval! s text)
     (call-as-session s
       (lambda ()
         ;; Evaluate an expression (a string, or a datum) in the session's
@@ -304,15 +305,15 @@
                         (if (eq? status 'applied) (car detail) detail)))
           (values status (if (eq? status 'applied) (datum:copy detail text:delta->datum) detail)))))
 
-  (edefine (session-edit! s id basis span lines . options)
-    (edoc "Edit a shared buffer as a session: a span replaced by lines against a basis, with an optional edit context and a delta flag; the receipt (revision text changes edit-facts)."
-          (s (record session) "the session")
-          (id integer "the buffer")
-          (basis integer "the revision edited")
-          (span list "the span replaced")
-          (lines list "the replacement")
-          (options (list-of any) "an edit context, then whether to omit the text")
-          (returns list))
+  (edoc "Edit a shared buffer as a session: a span replaced by lines against a basis, with an optional edit context and a delta flag; the receipt (revision text changes edit-facts)."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (basis integer "the revision edited")
+        (span list "the span replaced")
+        (lines list "the replacement")
+        (options (list-of any) "an edit context, then whether to omit the text")
+        (returns list))
+  (define (session-edit! s id basis span lines . options)
     (call-as-session s
       (lambda ()
         ;; One owned plain receipt (revision text changes edit-facts), ending at this
@@ -335,41 +336,41 @@
                       (cons* (car detail) #f (cddr detail))
                       detail)))))))))
 
-  (edefine (session-history-step! s id direction scope)
-    (edoc "Undo or redo in a shared buffer as a session: (values status detail)."
-          (s (record session) "the session")
-          (id integer "the buffer")
-          (direction (one-of undo redo) "which way")
-          (scope any "whose actions"))
+  (edoc "Undo or redo in a shared buffer as a session: (values status detail)."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (direction (one-of undo redo) "which way")
+        (scope any "whose actions"))
+  (define (session-history-step! s id direction scope)
     (call-as-session s
       (lambda ()
         (session-mutate! s direction id
           (lambda (actor access) (store:history-step! actor id direction scope access))))))
 
-  (edefine (session-undo! s id . scope)
-    (edoc "Undo in a shared buffer as a session, its own actions by default: (values status detail)."
-          (s (record session) "the session")
-          (id integer "the buffer")
-          (scope (list-of any) "mine, all or (actor who), at most one"))
+  (edoc "Undo in a shared buffer as a session, its own actions by default: (values status detail)."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (scope (list-of any) "mine, all or (actor who), at most one"))
+  (define (session-undo! s id . scope)
     ;; Default mine, or all/(actor who), under the same buffer permission.
     (unless (<= (length scope) 1) (error 'session-undo! "expected one undo scope"))
     (let-values ([(status detail)
                   (session-history-step! s id 'undo (if (pair? scope) (car scope) 'mine))])
       (values status (if (eq? status 'applied) (car detail) detail))))
 
-  (edefine (session-redo! s id)
-    (edoc "Redo the session's latest undo in a shared buffer: (values status detail)."
-          (s (record session) "the session")
-          (id integer "the buffer"))
+  (edoc "Redo the session's latest undo in a shared buffer: (values status detail)."
+        (s (record session) "the session")
+        (id integer "the buffer"))
+  (define (session-redo! s id)
     ;; Redo belongs to the requester who undid, even for another author's edit.
     (let-values ([(status detail) (session-history-step! s id 'redo 'mine)])
       (values status (if (eq? status 'applied) (car detail) detail))))
 
-  (edefine (session-send! s to message)
-    (edoc "Send a message to another actor as the session, in an envelope naming the session as its sender."
-          (s (record session) "the session")
-          (to any "the recipient identity")
-          (message any "the payload"))
+  (edoc "Send a message to another actor as the session, in an envelope naming the session as its sender."
+        (s (record session) "the session")
+        (to any "the recipient identity")
+        (message any "the payload"))
+  (define (session-send! s to message)
     (call-as-session s
       (lambda ()
         ;; Application control uses trusted raw delivery. Peer mail has an
@@ -378,22 +379,17 @@
         (and (not (revoked? s))
              (actor:send! to (list 'message (session-actor s) message))))))
 
-  (edefine session-ask!
+  (edoc "Ask an actor a question through the interaction protocol, the session's owner when none is named; the reply procedure receives the answer."
+        (s (record session) "the session")
+        (to any "the actor asked")
+        (question string "the question")
+        (choices (list-of string) "the offered answers, or none")
+        (reply! procedure "(reply! answer)"))
+  (define session-ask!
     (case-lambda
       [(s question choices reply!)
-       (edoc "Ask the session's owner a question through the interaction protocol, the reply procedure receiving the answer."
-             (s (record session) "the session")
-             (question string "the question")
-             (choices (list-of string) "the offered answers, or none")
-             (reply! procedure "(reply! answer)"))
        (session-ask! s (session-owner s) question choices reply!)]
       [(s to question choices reply!)
-       (edoc "Ask another actor a question through the interaction protocol, the reply procedure receiving the answer."
-             (s (record session) "the session")
-             (to any "the actor asked")
-             (question string "the question")
-             (choices (list-of string) "the offered answers, or none")
-             (reply! procedure "(reply! answer)"))
        (call-as-session s
          (lambda ()
            (unless (procedure? reply!) (error 'session-ask! "expected a reply procedure"))
@@ -408,17 +404,17 @@
                (audit! (list 'ask (session-actor s) to (clipped question 200)))
                ticket))))]))
 
-  (edefine (session-answer! s ticket answer)
-    (edoc "Answer a question posed to the session, by its ticket."
-          (s (record session) "the session")
-          (ticket any "the question's ticket")
-          (answer any "the reply"))
+  (edoc "Answer a question posed to the session, by its ticket."
+        (s (record session) "the session")
+        (ticket any "the question's ticket")
+        (answer any "the reply"))
+  (define (session-answer! s ticket answer)
     (call-as-session s
       (lambda ()
         (and (not (revoked? s)) (actor:answer! ticket answer (session-actor s))))))
 
-  (edefine (session-cancel! s ticket)
-    (edoc "Withdraw a question the session asked, by its ticket."
-          (s (record session) "the session")
-          (ticket any "the question's ticket"))
+  (edoc "Withdraw a question the session asked, by its ticket."
+        (s (record session) "the session")
+        (ticket any "the question's ticket"))
+  (define (session-cancel! s ticket)
     (and (not (revoked? s)) (actor:cancel! ticket s))))

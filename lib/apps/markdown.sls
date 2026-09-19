@@ -15,12 +15,14 @@
 ;; in either mode. Apps can request a companion without changing focus;
 ;; markdown:view-install! also renders literal input into local views.
 
-(library (markdown)
+(import (only (edoc) elibrary))
+(elibrary (markdown)
   (export init! (rename (markdown-view! view!)) (rename (markdown-edit! edit!))
           (rename (source-companion companion) (source-view companion!))
           (rename (markdown-render render)) (rename (markdown-view-install! view-install!)) (rename (markdown-browser browser))
           (rename (markdown-view-max-width view-max-width)))
-  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (echo) echo:)
           (prefix (mode) mode:)
@@ -30,7 +32,8 @@
           (prefix (text) text:)
           (prefix (file) file:)
           (prefix (style) style:)
-          (prefix (keymap) keymap:) (prefix (only (sys) terminal-character-width) sys:))
+          (prefix (keymap) keymap:)
+          (prefix (only (sys) terminal-character-width) sys:))
 
   ;;; Faces -------------------------------------------------------------
 
@@ -43,10 +46,9 @@
     (style:set! 'md-link '(underline (foreground 33)))
     (style:set! 'md-code '(reset)))
 
-  (edefine markdown-view-max-width
-    (edoc "The reading width cap: a view in a wider window wraps at this many columns."
-          (value integer))
-    ;; Reading width cap: a view in a wider window wraps at this many
+  (edoc "The reading width cap: a view in a wider window wraps at this many columns."
+        (value integer))
+  (define markdown-view-max-width ;; Reading width cap: a view in a wider window wraps at this many
     ;; columns instead of the full width.
     (make-parameter 80
       (lambda (columns)
@@ -55,10 +57,9 @@
                  "must be an integer of at least 20" columns))
         columns)))
 
-  (edefine markdown-browser
-    (edoc "The command handed a web link's URL when a link is followed."
-          (value string))
-    ;; The command handed a web link's quoted URL.
+  (edoc "The command handed a web link's URL when a link is followed."
+        (value string))
+  (define markdown-browser ;; The command handed a web link's quoted URL.
     (make-parameter "xdg-open"
       (lambda (command)
         (unless (and (string? command) (> (string-length command) 0))
@@ -254,10 +255,10 @@
              (loop (+ i 1) (+ i 1) (cons (substring body start i) acc))]
             [else (loop (+ i 1) start acc)])))
 
-  (edefine (markdown-render source-lines . width*)
-    (edoc "Render Markdown source lines for display, as four parallel lists with one entry per rendered line: its text, style vector, (start end url) links and source row."
-          (source-lines (list-of string) "the Markdown source")
-          (width* (list-of integer) "the target width, at most one; 79 by default"))
+  (edoc "Render Markdown source lines for display, as four parallel lists with one entry per rendered line: its text, style vector, (start end url) links and source row."
+        (source-lines (list-of string) "the Markdown source")
+        (width* (list-of integer) "the target width, at most one; 79 by default"))
+  (define (markdown-render source-lines . width*)
     (define target-width (if (pair? width*) (car width*) 79))
     ;; (values lines styles links rows): parallel lists, one entry per
     ;; rendered line -- the text, its style vector, its (start end url)
@@ -881,11 +882,11 @@
           (refresh-render! b)))
       (head:buffers)))
 
-  (edefine (markdown-view-install! b lines)
-    (edoc "Install Markdown lines as the input of a local view buffer: read-only, in markdown-view mode and rendered now."
-          (b buffer "a local buffer")
-          (lines (list-of string) "the Markdown lines")
-          (returns buffer))
+  (edoc "Install Markdown lines as the input of a local view buffer: read-only, in markdown-view mode and rendered now."
+        (b buffer "a local buffer")
+        (lines (list-of string) "the Markdown lines")
+        (returns buffer))
+  (define (markdown-view-install! b lines)
     ;; Literal input belongs to an existing local view.
     ;; Rendering can never replace a shared buffer's source text.
     (unless (and (head:buffer? b) (not (head:buffer-store-id b)))
@@ -904,18 +905,18 @@
     (mode:choose! b "markdown-view")
     b)
 
-  (edefine (source-companion source)
-    (edoc "The local view buffer rendering a Markdown source buffer, or #f."
-          (source buffer "the source buffer")
-          (returns (or buffer #f)))
+  (edoc "The local view buffer rendering a Markdown source buffer, or #f."
+        (source buffer "the source buffer")
+        (returns (or buffer #f)))
+  (define (source-companion source)
     (and (head:buffer? source)
          (find (lambda (b) (eq? (render-input b) source)) (head:buffers))))
 
-  (edefine (source-view source . name)
-    (edoc "The local companion view of a Markdown buffer, created under an optional name when there is none."
-          (source buffer "a buffer in markdown mode")
-          (name (list-of string) "a preferred buffer name, at most one")
-          (returns buffer))
+  (edoc "The local companion view of a Markdown buffer, created under an optional name when there is none."
+        (source buffer "a buffer in markdown mode")
+        (name (list-of string) "a preferred buffer name, at most one")
+        (returns buffer))
+  (define (source-view source . name)
     ;; A source record is the identity, never its mutable label.  The
     ;; relationship belongs only to the local companion, not the store.
     ;; Apps can supply a preferred local label without selecting a window.
@@ -956,9 +957,9 @@
                     anchors positions)))
               (values #f positions)))) reference))
 
-  (edefine (markdown-view! . b*)
-    (edoc "Show the rendered view of a Markdown buffer, the current one by default, in this window at the corresponding row."
-          (b* (list-of buffer) "the source buffer, at most one"))
+  (edoc "Show the rendered view of a Markdown buffer, the current one by default, in this window at the corresponding row."
+        (b* (list-of buffer) "the source buffer, at most one"))
+  (define (markdown-view! . b*)
     ;; Show a local companion in this window; other windows can keep
     ;; editing the original source at the same time.
     (let ([source (if (pair? b*) (car b*) (current-buffer))])
@@ -971,9 +972,9 @@
             (goto-point! (cons (view-row-showing (rendering-of b) row) 0)))))
       (void)))
 
-  (edefine (markdown-edit! . b*)
-    (edoc "Return from a Markdown view to its live source buffer."
-          (b* (list-of buffer) "the view buffer, at most one"))
+  (edoc "Return from a Markdown view to its live source buffer."
+        (b* (list-of buffer) "the view buffer, at most one"))
+  (define (markdown-edit! . b*)
     ;; Return to the live source, without restoring any old snapshot or
     ;; changing its mode, read-only state, file facts, or undo history.
     (let ([b (if (pair? b*) (car b*) (current-buffer))])
@@ -1083,8 +1084,8 @@
            (set! hint-shown #f)])))
     '())
 
-  (edefine (init!)
-    (edoc "Install Markdown viewing: its faces, mode, links, highlighter, hooks and session resume, and its describe entries and bindings.")
+  (edoc "Install Markdown viewing: its faces, mode, links, highlighter, hooks and session resume, and its describe entries and bindings.")
+  (define (init!)
     (register-md-faces!)
     (mode:register! "markdown-view" '() '() (lambda (line) #f)
                     #f view-row-styles)

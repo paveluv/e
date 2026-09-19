@@ -27,7 +27,8 @@
 ;;      reads below retain their interrupt mask; corpus loading remains
 ;;      interruptible and uses its own wind-protected mutex.
 
-(library (sandbox)
+(import (only (edoc) elibrary))
+(elibrary (sandbox)
   (export
     ;; syntax
     quote quasiquote unquote unquote-splicing lambda define if cond
@@ -71,7 +72,8 @@
     ;; the editor, read-only, by name
     buffer-names buffer-lines-count buffer-text-line buffer-revision
     read-buffer list-buffers log-tail describe-text)
-  (import (only (edoc) edefine edoc) (rnrs) (rnrs mutable-strings)
+  (import (rnrs)
+          (rnrs mutable-strings)
           (only (chezscheme)
                 format iota list-copy string-upcase string-downcase
                 string-titlecase last-pair cons* vector-sort nan?
@@ -102,33 +104,33 @@
         (error who "no buffer with that name ((buffer-names) lists them)"
                name)))
 
-  (edefine (buffer-names)
-    (edoc "Every buffer's name, as the store knows them."
-          (returns (list-of string)))
+  (edoc "Every buffer's name, as the store knows them."
+        (returns (list-of string)))
+  (define (buffer-names)
     ;; every buffer's name, as the store knows them
     (uninterruptible
       (lambda ()
         (map store:buffer-name (store:buffer-list)))))
 
-  (edefine (buffer-lines-count name)
-    (edoc "How many lines the named buffer has."
-          (name string "the buffer name")
-          (returns integer))
+  (edoc "How many lines the named buffer has."
+        (name string "the buffer name")
+        (returns integer))
+  (define (buffer-lines-count name)
     (let ([id (named 'buffer-lines-count name)])
       (uninterruptible (lambda () (store:line-count id)))))
 
-  (edefine (buffer-text-line name n)
-    (edoc "One line of the named buffer, zero-based."
-          (name string "the buffer name")
-          (n integer "the row")
-          (returns string))
+  (edoc "One line of the named buffer, zero-based."
+        (name string "the buffer name")
+        (n integer "the row")
+        (returns string))
+  (define (buffer-text-line name n)
     (let ([id (named 'buffer-text-line name)])
       (uninterruptible (lambda () (store:line id n)))))
 
-  (edefine (buffer-revision name)
-    (edoc "The named buffer's revision."
-          (name string "the buffer name")
-          (returns integer))
+  (edoc "The named buffer's revision."
+        (name string "the buffer name")
+        (returns integer))
+  (define (buffer-revision name)
     (let ([id (named 'buffer-revision name)])
       (uninterruptible (lambda () (store:revision id)))))
 
@@ -138,11 +140,11 @@
   ;; what dedicated tools would otherwise be.  Everything returns a
   ;; string; nothing here mutates.
 
-  (edefine (read-buffer name . range)
-    (edoc "Numbered lines of the named buffer, from a start line and for a count, at most 400 lines, as one text."
-          (name string "the buffer name")
-          (range (list-of integer) "a start line, then a count")
-          (returns string))
+  (edoc "Numbered lines of the named buffer, from a start line and for a count, at most 400 lines, as one text."
+        (name string "the buffer name")
+        (range (list-of integer) "a start line, then a count")
+        (returns string))
+  (define (read-buffer name . range)
     ;; Numbered lines of the named buffer: (read-buffer name), or with
     ;; a start line, or with a start and a count.  At most 400 lines.
     (guard (ex [else (format "error: no buffer named ~s ((buffer-names) lists them)"
@@ -170,9 +172,9 @@
                                                500))))
                 (get-output-string out))))))))
 
-  (edefine (list-buffers)
-    (edoc "Every buffer's name, line count and revision, as one text."
-          (returns string))
+  (edoc "Every buffer's name, line count and revision, as one text."
+        (returns string))
+  (define (list-buffers)
     ;; Every buffer: name, line count, revision.
     (uninterruptible
       (lambda ()
@@ -185,16 +187,14 @@
                               (store:revision id)))
                     (store:buffer-list))))))
 
-  (edefine log-tail
+  (edoc "The newest log entries as one text: 20 by default, at most 200."
+        (count integer "how many")
+        (returns string))
+  (define log-tail
     (case-lambda
       [()
-       (edoc "The newest 20 log entries, as one text."
-             (returns string))
        (log-tail 20)]
       [(count)
-       (edoc "The newest log entries, at most 200, as one text."
-             (count integer "how many")
-             (returns string))
        ;; The newest entries of *log* -- errors and messages land there.
        ;; Default 20, at most 200.
        (unless (and (integer? count) (exact? count) (>= count 0))
@@ -208,10 +208,10 @@
                            (clipped (log:format-entry entry) 500) "\n"))
                        (reverse entries)))))]))
 
-  (edefine (describe-text name)
-    (edoc "The documentation for a name, flattened from the corpus and every command and parameter, as one text."
-          (name (or symbol string) "the name")
-          (returns string))
+  (edoc "The documentation for a name, flattened from the corpus and every command and parameter, as one text."
+        (name (or symbol string) "the name")
+        (returns string))
+  (define (describe-text name)
     ;; The documentation corpus, flattened: R6RS, Chez Scheme, and
     ;; every e command and parameter.  The authoritative reference.
     (let ([entries (guard (ex [else '()])

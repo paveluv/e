@@ -20,9 +20,10 @@
 ;; by intersecting edits or resets. All bookkeeping runs before paint on the main
 ;; thread; a stalled head retains no independent raw-event backlog.
 
-(library (blame)
+(import (only (edoc) elibrary))
+(elibrary (blame)
   (export init! (rename (blame-at-point! at-point!)) (rename (blame-tint-seconds tint-seconds)))
-  (import (rnrs) (only (edoc) edefine edoc)
+  (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
                 make-time current-time add-duration time<? make-weak-eq-hashtable)
@@ -34,10 +35,9 @@
           (prefix (text) text:)
           (prefix (doc) doc:))
 
-  (edefine blame-tint-seconds
-    (edoc "How long another actor's edit stays tinted, in seconds; 0 turns tinting off."
-          (value integer))
-    ;; how long another actor's edit stays tinted (0 turns tinting off)
+  (edoc "How long another actor's edit stays tinted, in seconds; 0 turns tinting off."
+        (value integer))
+  (define blame-tint-seconds ;; how long another actor's edit stays tinted (0 turns tinting off)
     (make-parameter 8))
 
   (define per-buffer-cap 8)
@@ -159,8 +159,8 @@
 
   ;;; Asking ------------------------------------------------------------------
 
-  (edefine (blame-at-point!)
-    (edoc "Say who recently wrote the text at point, from the store log of the current shared buffer.")
+  (edoc "Say who recently wrote the text at point, from the store log of the current shared buffer.")
+  (define (blame-at-point!)
     ;; who recently wrote the text at point, from the store's log
     (let* ([b (current-buffer)]
            [id (head:buffer-store-id b)]
@@ -181,8 +181,8 @@
 
   ;;; Wiring ------------------------------------------------------------------
 
-  (edefine (init!)
-    (edoc "Install blame: the tint refresh hook and highlighter, the per-actor styles and its describe entry.")
+  (edoc "Install blame: the tint refresh hook and highlighter, the per-actor styles and its describe entry.")
+  (define (init!)
     (head:add-pre-redraw-hook! refresh!)
     (paint:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e

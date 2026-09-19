@@ -1,25 +1,33 @@
 ;; terminal.sls -- head commands and presentation for base-owned VT apps.
 
-(library (terminal)
+(import (only (edoc) elibrary))
+(elibrary (terminal)
   (export init! (rename (terminal!! open!!) (terminal-send! send!)
                         (terminal-yank! yank!) (terminal-close! close!)
                         (terminal-toggle-capture! toggle-capture!)
                         (terminal-color-scheme! color-scheme!)
                         (vt:scrollback scrollback) (vt:shell shell)
                         (terminal-forward-clipboard-to-kill-ring forward-clipboard-to-kill-ring)))
-  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
-          (prefix (vt) vt:) (prefix (head) head:) (prefix (paint) paint:)
-          (prefix (mode) mode:) (prefix (keymap) keymap:) (prefix (kernel) kernel:)
-          (prefix (file) file:) (prefix (store) store:) (prefix (log) log:) (prefix (doc) doc:))
+  (import (chezscheme)
+          (except (edit) init!)
+          (prefix (vt) vt:)
+          (prefix (head) head:)
+          (prefix (paint) paint:)
+          (prefix (mode) mode:)
+          (prefix (keymap) keymap:)
+          (prefix (kernel) kernel:)
+          (prefix (file) file:)
+          (prefix (store) store:)
+          (prefix (log) log:)
+          (prefix (doc) doc:))
 
-  (edefine terminal-forward-clipboard-to-kill-ring
-    (edoc "Whether text a terminal program puts on the clipboard through OSC 52 also becomes the kill ring's."
-          (value boolean))
-    (make-parameter #t
-      (lambda (enabled?)
-        (unless (boolean? enabled?)
-          (error 'forward-clipboard-to-kill-ring "expected a boolean" enabled?))
-        enabled?)))
+  (edoc "Whether text a terminal program puts on the clipboard through OSC 52 also becomes the kill ring's."
+        (value boolean))
+  (define terminal-forward-clipboard-to-kill-ring (make-parameter #t
+                                                    (lambda (enabled?)
+                                                      (unless (boolean? enabled?)
+                                                        (error 'forward-clipboard-to-kill-ring "expected a boolean" enabled?))
+                                                      enabled?)))
 
   (define (terminal-facts buffer)
     (let* ([facts (head:app-facts buffer)] [owner (and facts (cdr (assq 'app facts)))])
@@ -36,31 +44,31 @@
         (list (max 1 (head:window-size w)) (head:window-content-width w)) paste?
         (head:host-color-scheme))))
 
-  (edefine (terminal-send! text)
-    (edoc "Send text to the terminal in the current buffer as typed input."
-          (text string "what to type"))
+  (edoc "Send text to the terminal in the current buffer as typed input."
+        (text string "what to type"))
+  (define (terminal-send! text)
     (send-input! text #f) (void))
-  (edefine (terminal-yank!)
-    (edoc "Send the kill ring's text to the terminal in the current buffer as pasted input.")
+  (edoc "Send the kill ring's text to the terminal in the current buffer as pasted input.")
+  (define (terminal-yank!)
     (send-input! (current-kill-ring) #t) (void))
-  (edefine (terminal-toggle-capture!)
-    (edoc "Toggle whether the current terminal window captures every key, C-x and M-x included.")
+  (edoc "Toggle whether the current terminal window captures every key, C-x and M-x included.")
+  (define (terminal-toggle-capture!)
     (unless (and (terminal-id (current-buffer)) (head:app-buffer? (current-buffer)))
       (error 'toggle-capture! "current buffer is not a live terminal"))
     (let ([w (selected-window)]) (head:set-full-capture! w (not (head:full-capture? w)))))
-  (edefine (terminal-close! . buffer*)
-    (edoc "Close the terminal of a buffer, the current one by default, ending its process."
-          (buffer* (list-of buffer) "the terminal buffer, at most one"))
+  (edoc "Close the terminal of a buffer, the current one by default, ending its process."
+        (buffer* (list-of buffer) "the terminal buffer, at most one"))
+  (define (terminal-close! . buffer*)
     (cond [(terminal-id (if (pair? buffer*) (car buffer*) (current-buffer))) => vt:close!])
     (void))
-  (edefine (terminal-color-scheme! scheme)
-    (edoc "Tell the terminals the host's color scheme, so their default colors follow it."
-          (scheme symbol "light or dark"))
+  (edoc "Tell the terminals the host's color scheme, so their default colors follow it."
+        (scheme symbol "light or dark"))
+  (define (terminal-color-scheme! scheme)
     (vt:color-scheme! scheme head:ui-actor))
 
-  (edefine (terminal!! . command*)
-    (edoc "Open a terminal in a new buffer, running a command or the shell, in the current file's directory."
-          (command* (list-of string) "the command line to run, at most one; the shell by default"))
+  (edoc "Open a terminal in a new buffer, running a command or the shell, in the current file's directory."
+        (command* (list-of string) "the command line to run, at most one; the shell by default"))
+  (define (terminal!! . command*)
     (let* ([prior (current-buffer)] [path (head:buffer-file prior)] [id #f] [buffer #f])
       (guard (ex [else
                   (when id
@@ -106,8 +114,8 @@
                     (log:add! 'terminal (format "~a: ~a" (head:buffer-name buffer) message)))) diagnostics)))))
       (head:buffers)))
 
-  (edefine (init!)
-    (edoc "Install the terminal app: its mode, color scheme hooks, notices, the C-c t binding, the capture toggle and its describe entries.")
+  (edoc "Install the terminal app: its mode, color scheme hooks, notices, the C-c t binding, the capture toggle and its describe entries.")
+  (define (init!)
     (mode:register! "terminal" '() '() (lambda (line) #f))
     (terminal-color-scheme! (head:host-color-scheme))
     (head:add-color-scheme-hook! terminal-color-scheme!)

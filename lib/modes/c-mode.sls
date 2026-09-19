@@ -8,9 +8,11 @@
 ;; block comments span lines correctly.  Braces and brackets styled
 ;; delimiter take part in bracket matching.
 
-(library (c-mode)
+(import (only (edoc) elibrary))
+(elibrary (c-mode)
   (export init!)
-  (import (only (edoc) edefine edoc) (chezscheme) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:))
@@ -149,7 +151,7 @@
   (define (c-row-styles b row line)
     (c-row b row))
 
-  (edefine (init!)
-    (edoc "Register the c mode for .c and .h files and tcc scripts.")
+  (edoc "Register the c mode for .c and .h files and tcc scripts.")
+  (define (init!)
     (mode:register! "c" '(".c" ".h") '("tcc")
                     c-styles #f c-row-styles)))

@@ -17,7 +17,8 @@
 ;; (file:write! path lines trailing?), (file:merge path base mine
 ;; disk).
 
-(library (file)
+(import (only (edoc) elibrary))
+(elibrary (file)
   (export read read-state stamp create! write! call-with-port
           lines ends-in-newline? text state-clean?
           merge conflict-count
@@ -26,9 +27,7 @@
           visit-path complete make-directories! data-directory
           add-pre-save-hook! add-post-save-hook!
           run-pre-save-hooks! run-post-save-hooks!)
-  ;; These are Chez names too; importers always see this library's exports
-  ;; under the file: prefix.
-  (import (only (edoc) edefine edoc) (except (chezscheme) read expand merge call-with-port)
+  (import (except (chezscheme) read expand merge call-with-port)
           (prefix (only (sys) canonical-file-path) sys:)
           (prefix (only (diff) merge3 merge-report-lines) diff:)
           (prefix (path) path:)
@@ -39,11 +38,11 @@
 
   ;; Discard consent is the same for local and shared buffers. Compare the
   ;; captured text outside its writer lock; an unreadable disk is not clean.
-  (edefine (state-clean? lines facts)
-    (edoc "Whether a buffer's lines and facts may be discarded without losing work: disposable, unmodified, or equal to its file on disk; an unreadable disk is not clean."
-          (lines vector "the text")
-          (facts list "the buffer facts")
-          (returns boolean))
+  (edoc "Whether a buffer's lines and facts may be discarded without losing work: disposable, unmodified, or equal to its file on disk; an unreadable disk is not clean."
+        (lines vector "the text")
+        (facts list "the buffer facts")
+        (returns boolean))
+  (define (state-clean? lines facts)
     (define (fact key fallback) (cond [(assq key facts) => cdr] [else fallback]))
     (guard (ex [else #f])
       (or (fact 'disposable #f)
@@ -56,54 +55,51 @@
 
   ;;; Paths ---------------------------------------------------------------------
 
-  (edefine (directory-part path)
-    (edoc "Everything of a path up to and including its last slash, or #f without one."
-          (path string "the path")
-          (returns (or string #f)))
+  (edoc "Everything of a path up to and including its last slash, or #f without one."
+        (path string "the path")
+        (returns (or string #f)))
+  (define (directory-part path)
     ;; Everything up to and including the last slash, or #f without one.
     (let loop ([i (- (string-length path) 1)])
       (cond [(< i 0) #f]
             [(char=? (string-ref path i) #\/) (substring path 0 (+ i 1))]
             [else (loop (- i 1))])))
 
-  (edefine (base-name path)
-    (edoc "The last component of a path."
-          (path string "the path")
-          (returns string))
+  (edoc "The last component of a path."
+        (path string "the path")
+        (returns string))
+  (define (base-name path)
     (let ([dir (directory-part path)])
       (if dir (string:tail path (string-length dir)) path)))
 
-  (edefine (abbreviate path)
-    (edoc "A path for display, the home directory as ~: the inverse of expand."
-          (path string "the path")
-          (returns string))
+  (edoc "A path for display, the home directory as ~: the inverse of expand."
+        (path string "the path")
+        (returns string))
+  (define (abbreviate path)
     ;; The inverse of path:expand, for display: home becomes ~.
     (let ([home (getenv "HOME")])
       (if (and home (string:prefix? (string-append home "/") path))
           (string-append "~" (string:tail path (string-length home)))
           path)))
 
-  (edefine absolute
+  (edoc "A path resolved against a directory; an absolute or home path stays as it is."
+        (path string "the path")
+        (directory directory "the base directory")
+        (returns string))
+  (define absolute
     ;; Resolve a relative path against an explicit directory or the process
     ;; working directory. Keep home notation for editable path prompts.
     (case-lambda
       [(path)
-       (edoc "A path resolved against the process working directory; home notation is kept."
-             (path string "the path")
-             (returns string))
        (absolute path (current-directory))]
       [(path directory)
-       (edoc "A path resolved against a directory; an absolute or home path stays as it is."
-             (path string "the path")
-             (directory directory "the base directory")
-             (returns string))
        (if (or (string:prefix? "/" path) (string=? "~" path) (string:prefix? "~/" path)) path
            (string-append directory (if (string:suffix? "/" directory) "" "/") path))]))
 
-  (edefine (visit-path path)
-    (edoc "One stable identity for a visited file: symbolic links chased for an existing path, for a new file its parent's; textual normalization as the fallback."
-          (path string "the path as typed")
-          (returns file))
+  (edoc "One stable identity for a visited file: symbolic links chased for an existing path, for a new file its parent's; textual normalization as the fallback."
+        (path string "the path as typed")
+        (returns file))
+  (define (visit-path path)
     ;; One stable identity for visited files. Existing paths chase symbolic
     ;; links; for a new file, chase its existing parent and retain the final
     ;; component. Textual normalization is the portable fallback.
@@ -122,7 +118,11 @@
                   [(string=? real-parent "/") (string-append "/" (base-name full))]
                   [else (string-append real-parent "/" (base-name full))])))))
 
-  (edefine complete
+  (edoc "The completions of a partial path relative to a directory: the entries extending its last component, as full paths, directories with a trailing slash."
+        (s string "the partial path")
+        (directory directory "the base directory")
+        (returns (list-of string)))
+  (define complete
     ;; Completion candidates for the partial path s: the entries of its
     ;; directory whose names extend its final component, as full paths, with
     ;; a trailing slash on directories so completion can descend into them.
@@ -132,16 +132,9 @@
     ;; the input's spelling in candidates (including . and .. components).
     (case-lambda
       [(s directory)
-       (edoc "The completions of a partial path relative to a directory: the entries extending its last component, as full paths, directories with a trailing slash."
-             (s string "the partial path")
-             (directory directory "the base directory")
-             (returns (list-of string)))
        (let* ([full (absolute s directory)] [prefix (- (string-length full) (string-length s))])
          (map (lambda (value) (string:tail value prefix)) (complete full)))]
       [(s)
-       (edoc "The completions of a partial path relative to the working directory."
-             (s string "the partial path")
-             (returns (list-of string)))
        (if (string=? s "~") '("~/")
          (guard (ex [else '()])
            (let* ([dir (or (directory-part s) "")]
@@ -159,9 +152,9 @@
                                     (not (string:prefix? "." name)))))
                          listing))))))]))
 
-  (edefine (data-directory)
-    (edoc "Where commands and apps keep built or fetched data, out of git: the installation's data directory, created on first use."
-          (returns directory))
+  (edoc "Where commands and apps keep built or fetched data, out of git: the installation's data directory, created on first use."
+        (returns directory))
+  (define (data-directory)
     ;; Where commands and apps keep built or fetched data, out of git:
     ;; the installation's data directory, created on first use. Each
     ;; concern takes a subdirectory -- the describe corpus lives in
@@ -170,9 +163,9 @@
       (unless (file-directory? dir) (mkdir dir))
       dir))
 
-  (edefine (make-directories! path)
-    (edoc "Create a directory and its missing parents; an existing directory is fine, a file in the way is an error."
-          (path string "the directory"))
+  (edoc "Create a directory and its missing parents; an existing directory is fine, a file in the way is an error."
+        (path string "the directory"))
+  (define (make-directories! path)
     ;; Existing directories (including links to them) are fine. A file or
     ;; dangling link is an error, never something to replace. A concurrent
     ;; mkdir is fine too, provided the resulting path is a directory.
@@ -187,9 +180,9 @@
 
   ;;; Reading and writing ---------------------------------------------------------
 
-  (edefine (create! path)
-    (edoc "Create an empty file, or a directory for a trailing slash, exclusively; an existing target raises the already-exists condition."
-          (path string "the path"))
+  (edoc "Create an empty file, or a directory for a trailing slash, exclusively; an existing target raises the already-exists condition."
+        (path string "the path"))
+  (define (create! path)
     ;; A trailing slash requests a directory; both kinds create exclusively.
     ;; Chez's mkdir needs its existing-directory error normalized to the
     ;; same condition that the default output-file options already raise.
@@ -210,12 +203,12 @@
                        (if directory? (absolute "" path) path))))
     (void))
 
-  (edefine (call-with-port path output? use)
-    (edoc "Open a file for reading or replacing and call use with the port, closing it across exceptions too; output restores the file's permissions."
-          (path file "the file")
-          (output? boolean "whether to write it")
-          (use procedure "(use port)")
-          (returns any "what use returns"))
+  (edoc "Open a file for reading or replacing and call use with the port, closing it across exceptions too; output restores the file's permissions."
+        (path file "the file")
+        (output? boolean "whether to write it")
+        (use procedure "(use port)")
+        (returns any "what use returns"))
+  (define (call-with-port path output? use)
     ;; Chez's file combinators close only on normal return. Own the port
     ;; across exceptions and engine expiry too; protect acquisition/release,
     ;; while leaving the read/write body interruptible. Output replaces the
@@ -233,10 +226,10 @@
           (dynamic-wind void (lambda () (close-port port))
             (lambda () (when mode (guard (ex [else (void)]) (chmod path mode)))))))))
 
-  (edefine (read path)
-    (edoc "A file's whole text, empty for an empty file; raises when unreadable or not a regular file."
-          (path file "the file")
-          (returns string))
+  (edoc "A file's whole text, empty for an empty file; raises when unreadable or not a regular file."
+        (path file "the file")
+        (returns string))
+  (define (read path)
     ;; the file's whole text ("" when empty); raises when unreadable
     (unless (file-regular? path)
       (error 'read "not a regular file" path))
@@ -245,20 +238,20 @@
         (let ([s (get-string-all p)])
           (if (eof-object? s) "" s)))))
 
-  (edefine (stamp path)
-    (edoc "A file's modification time as (seconds . nanoseconds), or #f."
-          (path file "the file")
-          (returns (or pair #f)))
+  (edoc "A file's modification time as (seconds . nanoseconds), or #f."
+        (path file "the file")
+        (returns (or pair #f)))
+  (define (stamp path)
     ;; The file's mtime as (seconds . nanoseconds), or #f.
     (guard (ex [else #f])
       (and (file-exists? path)
            (let ([t (file-modification-time path)])
              (cons (time-second t) (time-nanosecond t))))))
 
-  (edefine (read-state path)
-    (edoc "A file's (text . stamp), the stamp #f unless it was the same on both sides of the read."
-          (path file "the file")
-          (returns pair))
+  (edoc "A file's (text . stamp), the stamp #f unless it was the same on both sides of the read."
+        (path file "the file")
+        (returns pair))
+  (define (read-state path)
     ;; (text . stamp), with #f for an uncertain stamp. Only cache an mtime
     ;; observed on both sides of the read; a later stamp must not certify
     ;; earlier bytes. This is a cache hint, not an atomic filesystem snapshot:
@@ -266,11 +259,11 @@
     (let* ([before (stamp path)] [content (read path)])
       (cons content (and before (equal? before (stamp path)) before))))
 
-  (edefine (write! path v trailing?)
-    (edoc "Write a line vector as a file's text, a newline after every line but the last unless trailing?."
-          (path file "the file")
-          (v vector "the lines")
-          (trailing? boolean "whether the last line ends in a newline"))
+  (edoc "Write a line vector as a file's text, a newline after every line but the last unless trailing?."
+        (path file "the file")
+        (v vector "the lines")
+        (trailing? boolean "whether the last line ends in a newline"))
+  (define (write! path v trailing?)
     ;; The line vector v as path's text, a newline after every line but
     ;; the last unless trailing?. The port scope owns permission restoration;
     ;; a failed or interrupted write can still leave partial contents.
@@ -289,18 +282,18 @@
   ;; one bit a line vector does not carry -- whether the text ended in
   ;; a newline -- travels alongside as the trailing flag.
 
-  (edefine (lines s)
-    (edoc "A text split at newlines into a line vector, a trailing newline yielding no empty last line."
-          (s string "the text")
-          (returns vector))
+  (edoc "A text split at newlines into a line vector, a trailing newline yielding no empty last line."
+        (s string "the text")
+        (returns vector))
+  (define (lines s)
     ;; s split at newlines, a trailing newline yielding no empty last
     ;; line: the shape comparisons and merges run on.
     (let-values ([(lines trailing?) (text:from-string s)]) lines))
 
-  (edefine (ends-in-newline? s)
-    (edoc "Whether a text ends in a newline."
-          (s string "the text")
-          (returns boolean))
+  (edoc "Whether a text ends in a newline."
+        (s string "the text")
+        (returns boolean))
+  (define (ends-in-newline? s)
     (and (> (string-length s) 0)
          (char=? (string-ref s (- (string-length s) 1)) #\newline)))
 
@@ -315,12 +308,12 @@
           [(eq? theirs base) mine]
           [else mine]))
 
-  (edefine (merge path base mine disk)
-    (edoc "The three-way merge of a file's text as loaded, as the buffer has it and as the disk has it: (values merged-lines trailing? conflicts report-lines), conflicts left as markers."
-          (path file "the file, for the report")
-          (base string "the text as loaded")
-          (mine string "the buffer's text")
-          (disk string "the disk's text"))
+  (edoc "The three-way merge of a file's text as loaded, as the buffer has it and as the disk has it: (values merged-lines trailing? conflicts report-lines), conflicts left as markers."
+        (path file "the file, for the report")
+        (base string "the text as loaded")
+        (mine string "the buffer's text")
+        (disk string "the disk's text"))
+  (define (merge path base mine disk)
     ;; The three-way merge of a file's text as loaded (base), as the
     ;; buffer has it (mine), and as the disk has it now: -> (values
     ;; merged-lines trailing? conflicts report-lines).  Conflicts stay
@@ -336,10 +329,10 @@
                 conflicts
                 (diff:merge-report-lines path base-lines report conflicts)))))
 
-  (edefine (conflict-count v)
-    (edoc "How many merge conflict markers a line vector still holds."
-          (v vector "the lines")
-          (returns integer))
+  (edoc "How many merge conflict markers a line vector still holds."
+        (v vector "the lines")
+        (returns integer))
+  (define (conflict-count v)
     ;; how many merge conflict markers a line vector still holds
     (let loop ([i 0] [n 0])
       (if (= i (vector-length v))
@@ -358,13 +351,13 @@
   (define pre-save-hooks (kernel:make-registry))
   (define post-save-hooks (kernel:make-registry))
 
-  (edefine (add-pre-save-hook! proc)
-    (edoc "Register a hook run with the path before a file is saved."
-          (proc procedure "(hook path)"))
+  (edoc "Register a hook run with the path before a file is saved."
+        (proc procedure "(hook path)"))
+  (define (add-pre-save-hook! proc)
     (kernel:registry-add! pre-save-hooks proc))
-  (edefine (add-post-save-hook! proc)
-    (edoc "Register a hook run with the path after a file was saved."
-          (proc procedure "(hook path)"))
+  (edoc "Register a hook run with the path after a file was saved."
+        (proc procedure "(hook path)"))
+  (define (add-post-save-hook! proc)
     (kernel:registry-add! post-save-hooks proc))
 
   (define (run-hooks! hooks path)
@@ -375,12 +368,12 @@
                   (p path)))
               (kernel:registry-items hooks)))
 
-  (edefine (run-pre-save-hooks! path)
-    (edoc "Run the pre-save hooks for a path."
-          (path file "the file"))
+  (edoc "Run the pre-save hooks for a path."
+        (path file "the file"))
+  (define (run-pre-save-hooks! path)
     (run-hooks! pre-save-hooks path))
-  (edefine (run-post-save-hooks! path)
-    (edoc "Run the post-save hooks for a path."
-          (path file "the file"))
+  (edoc "Run the post-save hooks for a path."
+        (path file "the file"))
+  (define (run-post-save-hooks! path)
     (run-hooks! post-save-hooks path))
 ) ;; library (file)

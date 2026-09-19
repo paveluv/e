@@ -1,43 +1,46 @@
 ;; directory.sls -- filesystem inventory and bounded recursive match groups.
 ;; No head state or threads: the caller owns cancellation and publication.
-(library (directory)
+(import (only (edoc) elibrary))
+(elibrary (directory)
   (export scan refilter reconcile entry-path entry-kind entry-link? entry-mode entry-size
           entry-modified entry-created entry-count entry-complete? entry-matches
           relative-path matches? directory? (rename (parent-path parent)))
-  (import (only (edoc) edefine edefine-record-type edoc) (chezscheme) (prefix (sys) sys:) (prefix (file) file:)
+  (import (chezscheme)
+          (prefix (sys) sys:)
+          (prefix (file) file:)
           (prefix (string) string:))
 
-  (edefine-record-type entry
-    (edoc "A file system entry as the files view lists it."
-          (path string "the absolute path")
-          (kind symbol "file, directory or another kind")
-          (link? boolean "whether it is a symbolic link")
-          (mode (or integer #f) "the permission bits")
-          (size (or integer #f) "the size in bytes")
-          (modified (or number #f) "the modification time")
-          (created (or number #f) "the creation time")
-          (count (or integer #f) "how many descendants match, when known")
-          (complete? boolean "whether the count is exact")
-          (matches (or list #f) "the matching descendants retained"))
+  (edoc "A file system entry as the files view lists it."
+        (path string "the absolute path")
+        (kind symbol "file, directory or another kind")
+        (link? boolean "whether it is a symbolic link")
+        (mode (or integer #f) "the permission bits")
+        (size (or integer #f) "the size in bytes")
+        (modified (or number #f) "the modification time")
+        (created (or number #f) "the creation time")
+        (count (or integer #f) "how many descendants match, when known")
+        (complete? boolean "whether the count is exact")
+        (matches (or list #f) "the matching descendants retained"))
+  (define-record-type entry
     (fields path kind link? mode size modified created count complete? matches))
 
-  (edefine (parent-path path)
-    (edoc "The canonical parent of a directory path."
-          (path directory "the directory")
-          (returns directory))
+  (edoc "The canonical parent of a directory path."
+        (path directory "the directory")
+        (returns directory))
+  (define (parent-path path)
     (file:canonical (string-append path "/..")))
 
-  (edefine (directory? entry)
-    (edoc "Whether an entry is a directory."
-          (entry (record entry) "the entry")
-          (returns boolean))
+  (edoc "Whether an entry is a directory."
+        (entry (record entry) "the entry")
+        (returns boolean))
+  (define (directory? entry)
     (eq? (entry-kind entry) 'directory))
 
-  (edefine (relative-path entry root)
-    (edoc "An entry's path relative to a root directory."
-          (entry (record entry) "the entry")
-          (root directory "the root")
-          (returns string))
+  (edoc "An entry's path relative to a root directory."
+        (entry (record entry) "the entry")
+        (root directory "the root")
+        (returns string))
+  (define (relative-path entry root)
     (string:tail (entry-path entry) (if (string=? root "/") 1 (+ 1 (string-length root)))))
 
   (define (path-query? query)
@@ -53,12 +56,12 @@
                       (if (directory? entry) "/" ""))])
           (and (string:search name query 0 (string-length name) #t) #t)))))
 
-  (edefine (matches? entry root query)
-    (edoc "Whether an entry matches a query under a root: by name, or by path when the query has a slash."
-          (entry (record entry) "the entry")
-          (root directory "the root")
-          (query string "the filter")
-          (returns boolean))
+  (edoc "Whether an entry matches a query under a root: by name, or by path when the query has a slash."
+        (entry (record entry) "the entry")
+        (root directory "the root")
+        (query string "the filter")
+        (returns boolean))
+  (define (matches? entry root query)
     ((matcher root query) entry))
 
   (define (inspect-entry path)
@@ -80,16 +83,16 @@
           (not (or (string:prefix? "." path)
                    (string:search path "/." 0 (string-length path)))))))
 
-  (edefine (refilter entries root previous query was-hidden? hidden? limit)
-    (edoc "Filter known entries by a new query without rescanning: exact when the previous group kept every match, else a bounded subset until a fresh scan."
-          (entries list "the entries")
-          (root directory "the root")
-          (previous string "the previous query")
-          (query string "the new query")
-          (was-hidden? boolean "whether hidden entries were included")
-          (hidden? boolean "whether they are now")
-          (limit integer "the expansion limit")
-          (returns list))
+  (edoc "Filter known entries by a new query without rescanning: exact when the previous group kept every match, else a bounded subset until a fresh scan."
+        (entries list "the entries")
+        (root directory "the root")
+        (previous string "the previous query")
+        (query string "the new query")
+        (was-hidden? boolean "whether hidden entries were included")
+        (hidden? boolean "whether they are now")
+        (limit integer "the expansion limit")
+        (returns list))
+  (define (refilter entries root previous query was-hidden? hidden? limit)
     ;; A narrower query is exact when the previous group retained every
     ;; match. Otherwise keep the known subset, with a lower bound or an
     ;; unknown count, until a fresh scan replaces it. Empty queries count
@@ -122,13 +125,13 @@
                      (if (and count (> count limit)) '() matches)))))
         (filter (lambda (entry) (visible? entry root hidden?)) entries))))
 
-  (edefine (reconcile entries previous limit done?)
-    (edoc "Merge a partial publication with the previous entries so known matches survive, preferring fresh metadata; a complete one replaces them."
-          (entries list "the new entries")
-          (previous list "the previous entries")
-          (limit integer "the expansion limit")
-          (done? boolean "whether the publication is complete")
-          (returns list))
+  (edoc "Merge a partial publication with the previous entries so known matches survive, preferring fresh metadata; a complete one replaces them."
+        (entries list "the new entries")
+        (previous list "the previous entries")
+        (limit integer "the expansion limit")
+        (done? boolean "whether the publication is complete")
+        (returns list))
+  (define (reconcile entries previous limit done?)
     ;; A shallow/partial publication must not erase matches the new query
     ;; already knows. Prefer fresh metadata and union bounded match sets;
     ;; completed groups (and the final snapshot, including errors/removals)
@@ -151,14 +154,14 @@
                             (with-count entry total #f
                               (if (<= total limit) matches '())))]))) entries))))
 
-  (edefine (scan path query hidden? limit cancelled? publish!)
-    (edoc "Scan a directory for entries matching a query, publishing (entries unreadable-directories done?) at most ten times a second until the counts are exact; each directory keeps at most limit matches."
-          (path directory "the directory")
-          (query string "the filter")
-          (hidden? boolean "whether to include dot names")
-          (limit integer "the expansion limit")
-          (cancelled? thunk "whether to stop")
-          (publish! procedure "(publish! entries unreadable done?)"))
+  (edoc "Scan a directory for entries matching a query, publishing (entries unreadable-directories done?) at most ten times a second until the counts are exact; each directory keeps at most limit matches."
+        (path directory "the directory")
+        (query string "the filter")
+        (hidden? boolean "whether to include dot names")
+        (limit integer "the expansion limit")
+        (cancelled? thunk "whether to stop")
+        (publish! procedure "(publish! entries unreadable done?)"))
+  (define (scan path query hidden? limit cancelled? publish!)
     ;; Publish (entries unreadable-directories done?), initially the shallow
     ;; inventory, then at most ten times/second, and finally exact counts.
     ;; Each directory retains at most limit descendant matches. Crossing the

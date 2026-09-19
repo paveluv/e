@@ -1,26 +1,35 @@
 ;; file-view.sls -- the local, filterable <files> app.
-(library (file-view)
+(import (only (edoc) elibrary))
+(elibrary (file-view)
   (export init! open! refresh! expansion-limit show-hidden)
-  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
-          (prefix (head) head:) (prefix (file) file:) (prefix (directory) directory:)
-          (prefix (table) table:) (prefix (glyph) glyph:) (prefix (string) string:)
-          (prefix (mode) mode:) (prefix (style) style:) (prefix (paint) paint:)
-          (prefix (keymap) keymap:) (prefix (tty) tty:) (prefix (kernel) kernel:)
-          (prefix (doc) doc:) (prefix (prompt) prompt:))
+  (import (chezscheme)
+          (except (edit) init!)
+          (prefix (head) head:)
+          (prefix (file) file:)
+          (prefix (directory) directory:)
+          (prefix (table) table:)
+          (prefix (glyph) glyph:)
+          (prefix (string) string:)
+          (prefix (mode) mode:)
+          (prefix (style) style:)
+          (prefix (paint) paint:)
+          (prefix (keymap) keymap:)
+          (prefix (tty) tty:)
+          (prefix (kernel) kernel:)
+          (prefix (doc) doc:)
+          (prefix (prompt) prompt:))
 
-  (edefine expansion-limit
-    (edoc "How many matching entries the files view expands a directory into while filtering."
-          (value integer))
-    (make-parameter 20
-      (lambda (n)
-        (unless (and (integer? n) (exact? n) (>= n 0))
-          (error 'expansion-limit "expected a nonnegative integer" n)) n)))
-  (edefine show-hidden
-    (edoc "Whether the files view lists hidden entries, the dot files."
-          (value boolean))
-    (make-parameter #f
-      (lambda (value)
-        (unless (boolean? value) (error 'show-hidden "expected a boolean" value)) value)))
+  (edoc "How many matching entries the files view expands a directory into while filtering."
+        (value integer))
+  (define expansion-limit (make-parameter 20
+                            (lambda (n)
+                              (unless (and (integer? n) (exact? n) (>= n 0))
+                                (error 'expansion-limit "expected a nonnegative integer" n)) n)))
+  (edoc "Whether the files view lists hidden entries, the dot files."
+        (value boolean))
+  (define show-hidden (make-parameter #f
+                        (lambda (value)
+                          (unless (boolean? value) (error 'show-hidden "expected a boolean" value)) value)))
   (define view #f)
   (define location #f)
   (define query "")
@@ -440,8 +449,8 @@
         (lambda ()
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
           (when (and view (memq view (buffer-list)) (head:app-buffer? view)) (start-scan!))))))
-  (edefine (refresh!)
-    (edoc "Rescan the directory the files view shows.")
+  (edoc "Rescan the directory the files view shows.")
+  (define (refresh!)
     (when view (start-scan!)) (void))
 
   (define (handle! event)
@@ -526,9 +535,9 @@
       (head:buffer-line-numbers-setting-set! view #f)
       (mode:choose! view "files"))
     view)
-  (edefine (open! . path)
-    (edoc "Show the files view for a directory, the current file's by default, with the current file selected."
-          (path (list-of directory) "the directory to browse, at most one"))
+  (edoc "Show the files view for a directory, the current file's by default, with the current file selected."
+        (path (list-of directory) "the directory to browse, at most one"))
+  (define (open! . path)
     (unless (or (null? path) (and (null? (cdr path)) (string? (car path))))
       (error 'open! "expected an optional directory path" path))
     (let* ([was (current-buffer)] [dir (if (pair? path) (car path) (default-directory))]
@@ -540,8 +549,8 @@
       (if (and (eq? was view) (null? path)) (refresh!)
           (navigate! dir #f selected))) (void))
 
-  (edefine (init!)
-    (edoc "Install the files app: its mode, the C-x C-f binding, its status hints and buffer-kill hook.")
+  (edoc "Install the files app: its mode, the C-x C-f binding, its status hints and buffer-kill hook.")
+  (define (init!)
     (mode:register! "files" '() '() (lambda (line) #f) #f styles)
     (keymap:bind-default! "C-x C-f" open!)
     (paint:add-status-hint! hints)

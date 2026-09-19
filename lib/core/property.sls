@@ -1,19 +1,19 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
-(library (property)
+(import (only (edoc) elibrary))
+(elibrary (property)
   (export select validate-expected matches? edit-keys
           (rename (validate-properties validate)
                   (writable-properties writable) (validate-edit-context edit-context)))
-  (import (only (edoc) edefine edoc) (rnrs) (prefix (identity) identity:))
+  (import (rnrs) (prefix (identity) identity:))
 
   ;; Maintained by the text owner and carried with incremental edit replies.
-  (edefine edit-keys
-    (edoc "The facts the text owner maintains and carries with edit replies: modified and modified-at."
-          (value (list-of symbol)))
-    '(modified modified-at))
+  (edoc "The facts the text owner maintains and carries with edit replies: modified and modified-at."
+        (value (list-of symbol)))
+  (define edit-keys '(modified modified-at))
 
-  (edefine (validate-properties updates)
-    (edoc "Check a batch of (key . value) facts before either owner installs any of it; an error names the fault."
-          (updates list "the facts"))
+  (edoc "Check a batch of (key . value) facts before either owner installs any of it; an error names the fault."
+        (updates list "the facts"))
+  (define (validate-properties updates)
     ;; A pure boundary shared with head-local facts.  Validate the whole
     ;; batch before either owner can install any part of it.
     (unless
@@ -45,10 +45,10 @@
       (error 'validate-properties "expected unique symbol keys and valid fact values" updates))
     updates)
 
-  (edefine (writable-properties updates)
-    (edoc "Validate facts a writer may set: not the text owner's modification facts, nor the publication identity."
-          (updates list "the facts")
-          (returns list))
+  (edoc "Validate facts a writer may set: not the text owner's modification facts, nor the publication identity."
+        (updates list "the facts")
+        (returns list))
+  (define (writable-properties updates)
     (validate-properties updates)
     (when (exists (lambda (entry) (memq (car entry) edit-keys)) updates)
       (error 'store "modification facts are maintained by the text owner"))
@@ -56,18 +56,18 @@
       (error 'store "publication identity belongs to publish!"))
     updates)
 
-  (edefine (select facts keys)
-    (edoc "The expectations for keys among facts: the (key . value) present, or the bare key for an absent one."
-          (facts list "the facts")
-          (keys (list-of symbol) "the keys")
-          (returns list))
+  (edoc "The expectations for keys among facts: the (key . value) present, or the bare key for an absent one."
+        (facts list "the facts")
+        (keys (list-of symbol) "the keys")
+        (returns list))
+  (define (select facts keys)
     ;; A pair expects that exact value; a bare key expects absence. In
     ;; particular, absence and an explicit #f can have different defaults.
     (map (lambda (key) (or (assq key facts) key)) keys))
 
-  (edefine (validate-expected expected)
-    (edoc "Check a fact review: #f, or a list of distinct bare keys and (key . value) pairs."
-          (expected any "the review"))
+  (edoc "Check a fact review: #f, or a list of distinct bare keys and (key . value) pairs."
+        (expected any "the review"))
+  (define (validate-expected expected)
     (unless (or (not expected)
                 (and (list? expected)
                      (let valid ([rest expected] [seen '()])
@@ -79,20 +79,20 @@
     (when expected (validate-properties (filter pair? expected)))
     expected)
 
-  (edefine (matches? expected facts)
-    (edoc "Whether facts satisfy a review: each pair present exactly, each bare key absent."
-          (expected any "the review, or #f")
-          (facts list "the facts")
-          (returns boolean))
+  (edoc "Whether facts satisfy a review: each pair present exactly, each bare key absent."
+        (expected any "the review, or #f")
+        (facts list "the facts")
+        (returns boolean))
+  (define (matches? expected facts)
     (or (not expected)
         (for-all (lambda (entry)
                    (if (pair? entry) (equal? entry (assq (car entry) facts))
                        (not (assq entry facts))))
                  expected)))
 
-  (edefine (validate-edit-context context)
-    (edoc "Check an edit context: a group label and optional undo, commit and expected facts, no key in two sets."
-          (context any "the context, or #f"))
+  (edoc "Check an edit context: a group label and optional undo, commit and expected facts, no key in two sets."
+        (context any "the context, or #f"))
+  (define (validate-edit-context context)
     ;; Undo facts travel with the inverse.  Commit facts describe external
     ;; state (e.g. a disk baseline) and survive undo, but commit atomically
     ;; with the text. A key cannot appear in both sets. Expected facts

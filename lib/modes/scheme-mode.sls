@@ -11,21 +11,23 @@
 ;; style:code, and brackets styled 'delimiter take part in bracket
 ;; matching (so brackets inside strings and comments don't count).
 
-(library (scheme-mode)
+(import (only (edoc) elibrary))
+(elibrary (scheme-mode)
   (export init! (rename (scheme-format-on-save format-on-save)))
-  (import (only (edoc) edefine edoc) (chezscheme) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (file) file:)
           (prefix (style) style:)
-          (prefix (mode) mode:) (prefix (scheme-format) scheme-format:)
+          (prefix (mode) mode:)
+          (prefix (scheme-format) scheme-format:)
           (prefix (doc) doc:))
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
   ;; On by default; (scheme-mode:format-on-save #f) in config.e turns it off.
-  (edefine scheme-format-on-save
-    (edoc "Whether Scheme buffers are formatted just before they are saved."
-          (value boolean))
-    (make-parameter #t))
+  (edoc "Whether Scheme buffers are formatted just before they are saved."
+        (value boolean))
+  (define scheme-format-on-save (make-parameter #t))
 
   (define scheme-keywords
     (let ([table (make-hashtable string-hash string=?)])
@@ -195,8 +197,8 @@
                (equal? (mode:name-of (current-buffer)) "scheme"))
       (format-buffer!)))
 
-  (edefine (init!)
-    (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries.")
+  (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries.")
+  (define (init!)
     (mode:register! "scheme"
                     '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
                     '("scheme" "petite" "chez" "guile" "racket")

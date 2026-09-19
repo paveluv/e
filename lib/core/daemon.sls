@@ -1,22 +1,26 @@
 ;; daemon.sls -- installation-local process ownership and head bootstrap.
 ;; No store or head state: enter this lifetime before importing either runtime.
-(library (daemon)
+(import (only (edoc) elibrary))
+(elibrary (daemon)
   (export call-with-base call-with-head socket rotate-logs! log-deadline control
           call-with-stop take-stop-signal! help head-command status-summary report-start!)
-  (import (only (edoc) edefine edoc) (chezscheme) (prefix (startup) startup:) (prefix (sys) sys:)
-          (prefix (kernel) kernel:) (prefix (string) string:) (prefix (wire) wire:))
+  (import (chezscheme)
+          (prefix (startup) startup:)
+          (prefix (sys) sys:)
+          (prefix (kernel) kernel:)
+          (prefix (string) string:)
+          (prefix (wire) wire:))
 
-  (edefine (socket)
-    (edoc "The base's socket path in its working directory."
-          (returns file))
+  (edoc "The base's socket path in its working directory."
+        (returns file))
+  (define (socket)
     (string-append (startup:base-working-directory) "/socket"))
   (define starting-process (make-thread-parameter #f))
   (define log-day #f)
   (define next-rotation #f)
-  (edefine control
-    (edoc "The base's control mailbox: stop signals and administrative messages."
-          (value any))
-    (kernel:make-mailbox))
+  (edoc "The base's control mailbox: stop signals and administrative messages."
+        (value any))
+  (define control (kernel:make-mailbox))
   (define signal-lock (make-mutex))
   (define signal-generation 0)
   (define signal-pending? #f)
@@ -28,18 +32,18 @@
         (set! signal-pending? #t)
         (kernel:mailbox-post! control (cons 'signal signal-generation)))))
 
-  (edefine (take-stop-signal! message)
-    (edoc "Whether a control message is the pending stop signal of the current generation, consuming it."
-          (message any "the control message")
-          (returns boolean))
+  (edoc "Whether a control message is the pending stop signal of the current generation, consuming it."
+        (message any "the control message")
+        (returns boolean))
+  (define (take-stop-signal! message)
     (with-mutex signal-lock
       (and (equal? message (cons 'signal signal-generation)) signal-pending?
            (begin (set! signal-pending? #f) #t))))
 
-  (edefine (call-with-stop thunk)
-    (edoc "Run the stop of the base, accepting the queued signals so a burst never starts a second writer."
-          (thunk thunk "the stop")
-          (returns any))
+  (edoc "Run the stop of the base, accepting the queued signals so a burst never starts a second writer."
+        (thunk thunk "the stop")
+        (returns any))
+  (define (call-with-stop thunk)
     ;; Acceptance absorbs queued signals too. On failure a later, newly
     ;; received signal may retry, but a burst never starts a second writer.
     (dynamic-wind
@@ -49,16 +53,16 @@
           (set! signal-generation (+ signal-generation 1))))
       thunk
       (lambda () (with-mutex signal-lock (set! stop-accepted? #f)))))
-  (edefine (log-deadline)
-    (edoc "When the base log next rotates, a UTC time."
-          (returns any))
+  (edoc "When the base log next rotates, a UTC time."
+        (returns any))
+  (define (log-deadline)
     next-rotation)
 
   (define (day-name date)
     (format "~4,'0d-~2,'0d-~2,'0d" (date-year date) (date-month date) (date-day date)))
 
-  (edefine (rotate-logs!)
-    (edoc "Rotate the base's log to today's file and schedule the next rotation at local midnight.")
+  (edoc "Rotate the base's log to today's file and schedule the next rotation at local midnight.")
+  (define (rotate-logs!)
     (let* ([now (current-time 'time-utc)] [today (time-utc->date now)]
            [day (day-name today)]
            [directory (string-append (startup:base-working-directory) "/log")]
@@ -87,10 +91,10 @@
             (directory-list directory))))
       (set! next-rotation (add-duration (current-time 'time-monotonic) (time-difference midnight now)))))
 
-  (edefine (call-with-base thunk)
-    (edoc "Run a base owning its working directory: take the lock, publish the pid, and run the thunk; 3 when another base owns it."
-          (thunk thunk "the base")
-          (returns integer "the exit status"))
+  (edoc "Run a base owning its working directory: take the lock, publish the pid, and run the thunk; 3 when another base owns it."
+        (thunk thunk "the base")
+        (returns integer "the exit status"))
+  (define (call-with-base thunk)
     (let* ([directory (startup:base-working-directory)]
            [pid-path (string-append directory "/pid")])
       (sys:ensure-private-directory! directory)
@@ -137,11 +141,11 @@
     (string-append "'" (apply string-append
                          (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
 
-  (edefine (head-command name restart?)
-    (edoc "The shell command line that starts a head with a name, restarting or attaching, in this base directory."
-          (name (or string #f) "the head name")
-          (restart? boolean "whether to restart the base")
-          (returns string))
+  (edoc "The shell command line that starts a head with a name, restarting or attaching, in this base directory."
+        (name (or string #f) "the head name")
+        (restart? boolean "whether to restart the base")
+        (returns string))
+  (define (head-command name restart?)
     (let ([directory (startup:base-working-directory)])
       (format "~a~a~a~a"
         (shell-quote (string-append (kernel:installation-directory) "/e"))
@@ -153,11 +157,11 @@
     (format port "Stop the base: M-x (main:shutdown!!) or kill -TERM ~a\n"
       (car (cdr (assq 'instance status)))))
 
-  (edefine (status-summary status head-noun)
-    (edoc "A base status as one line: buffers, modified, heads, terminals and agents."
-          (status list "the status alist")
-          (head-noun string "what to call a head")
-          (returns string))
+  (edoc "A base status as one line: buffers, modified, heads, terminals and agents."
+        (status list "the status alist")
+        (head-noun string "what to call a head")
+        (returns string))
+  (define (status-summary status head-noun)
     (define (count key noun)
       (let ([n (cdr (assq key status))]) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
     (format "~a (~a modified), ~a, ~a and ~a"
@@ -170,9 +174,9 @@
       (cond [(assq 'fingerprint status) => (lambda (entry) (format "; source ~a" (cdr entry)))]
             [else ""])))
 
-  (edefine (report-start! get-status)
-    (edoc "Announce a started base on stderr, from the launcher whose child won ownership."
-          (get-status thunk "fetches the base status"))
+  (edoc "Announce a started base on stderr, from the launcher whose child won ownership."
+        (get-status thunk "fetches the base status"))
+  (define (report-start! get-status)
     ;; Only the launcher whose live child won ownership announces startup.
     ;; A normal reattachment does not make an extra status request.
     (let ([child (starting-process)])
@@ -185,8 +189,8 @@
             (format (current-error-port) "Status and resume commands: ~a --help\n" (head-command #f #f))
             (flush-output-port (current-error-port)))))))
 
-  (edefine (help)
-    (edoc "Print the command line usage and the base status.")
+  (edoc "Print the command line usage and the base status.")
+  (define (help)
     (define (show-status line)
       (format #t "\n~a\nBase directory: ~s\n" line (startup:base-working-directory)))
     (display "Usage: e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]\n")
@@ -370,10 +374,10 @@
           (parameterize ([starting-process child]) (thunk)))
         (lambda () (when child (sys:release-process! child))))))
 
-  (edefine (call-with-head thunk)
-    (edoc "Run a head against the base in its working directory, starting or restarting the base as the options ask."
-          (thunk thunk "the head")
-          (returns integer "the exit status"))
+  (edoc "Run a head against the base in its working directory, starting or restarting the base as the options ask."
+        (thunk thunk "the head")
+        (returns integer "the exit status"))
+  (define (call-with-head thunk)
     (sys:ensure-private-directory! (startup:base-working-directory))
     (if (and (startup:restart?) (not (restart! (startup:base-working-directory)))) 0
         (attach-or-start thunk)))

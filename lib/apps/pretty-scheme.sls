@@ -14,9 +14,11 @@
 ;; is one character and one terminal cell, so editing, search, and the
 ;; file on disk are untouched.
 
-(library (pretty-scheme)
+(import (only (edoc) elibrary))
+(elibrary (pretty-scheme)
   (export init! (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!)) (rename (pretty-scheme-rainbow! rainbow!)))
-  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
           (prefix (keymap) keymap:)
@@ -299,26 +301,26 @@
                       name))
     (void))
 
-  (edefine (pretty-scheme-clusters!)
-    (edoc "Toggle the current Scheme buffer between its normal mode and a view whose parens are glyph pairs chosen by construct.")
+  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose parens are glyph pairs chosen by construct.")
+  (define (pretty-scheme-clusters!)
     ;; Toggle the current buffer between scheme and pretty-scheme-clusters:
     ;; construct-cluster parens.
     (toggle-mode! "pretty-scheme-clusters"))
 
-  (edefine (pretty-scheme-depth!)
-    (edoc "Toggle the current Scheme buffer between its normal mode and a view whose paren glyph pairs rotate with nesting depth.")
+  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose paren glyph pairs rotate with nesting depth.")
+  (define (pretty-scheme-depth!)
     ;; Toggle pretty-scheme-depth: parens by nesting level, the pair rotation
     ;; cycling as the tree deepens.
     (toggle-mode! "pretty-scheme-depth"))
 
-  (edefine (pretty-scheme-rainbow!)
-    (edoc "Toggle the current Scheme buffer between its normal mode and a view that colors parens by nesting depth.")
+  (edoc "Toggle the current Scheme buffer between its normal mode and a view that colors parens by nesting depth.")
+  (define (pretty-scheme-rainbow!)
     ;; Toggle pretty-scheme-rainbow: plain characters, colored by nesting
     ;; level through the rainbow.
     (toggle-mode! "pretty-scheme-rainbow"))
 
-  (edefine (init!)
-    (edoc "Register the three pretty-scheme modes, their describe entries and the closing-bracket binding.")
+  (edoc "Register the three pretty-scheme modes, their describe entries and the closing-bracket binding.")
+  (define (init!)
     (doc:register!
       '(((pretty-scheme:clusters!)
          (("procedure" . "(pretty-scheme:clusters!)")) "void"

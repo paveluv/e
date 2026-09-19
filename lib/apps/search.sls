@@ -10,9 +10,11 @@
 ;; dispatch with the search carrying on, so windows and buffers can be
 ;; switched mid-search.
 
-(library (search)
+(import (only (edoc) elibrary))
+(elibrary (search)
   (export init! (rename (search!! incremental!!)) (rename (search-fold-case fold-case)))
-  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (dispatch) dispatch:)
           (prefix (style) style:)
           (prefix (prompt) prompt:)
@@ -28,10 +30,9 @@
   ;; needle is all lowercase; one typed capital makes it exact.
   ;; (search:fold-case #f) in config.e makes C-s always exact.
   ;; M-c inside a search toggles the current search either way.
-  (edefine search-fold-case
-    (edoc "Whether incremental search folds case the smart way: matching ignores case only while the needle is all lowercase."
-          (value boolean))
-    (make-parameter #t))
+  (edoc "Whether incremental search folds case the smart way: matching ignores case only while the needle is all lowercase."
+        (value boolean))
+  (define search-fold-case (make-parameter #t))
 
   ;; The most recently entered nonempty needle.  It survives accepting
   ;; or cancelling a search, so C-s at an empty I-search can repeat it.
@@ -246,8 +247,8 @@
            (dispatch! event)
            (unless (head:quitting?) (loop needle match failed?))]))))
 
-  (edefine (search!!)
-    (edoc "Start an incremental search in the current buffer: typing extends it, C-s repeats, M-c toggles case folding, Return accepts and C-g cancels.")
+  (edoc "Start an incremental search in the current buffer: typing extends it, C-s repeats, M-c toggles case folding, Return accepts and C-g cancels.")
+  (define (search!!)
     ;; The search owns C-g while it runs; the match highlighting goes
     ;; away however it exits.
     (prompt:interaction
@@ -259,8 +260,8 @@
             (set! needle-now "")
             (set! current-match #f))))))
 
-  (edefine (init!)
-    (edoc "Install incremental search: its describe entry, the match highlighter and the C-s binding with the search keymap.")
+  (edoc "Install incremental search: its describe entry, the match highlighter and the C-s binding with the search keymap.")
+  (define (init!)
     (doc:register!
       '(((search:incremental!!) (("procedure" . "(search:incremental!!)")) "void"
          ("(search)") search "Search commands" #f

@@ -8,9 +8,11 @@
 ;; like <log eval>, one timestamped, actor/component-prefixed row per line,
 ;; appended incrementally past a high-water mark.
 
-(library (log-view)
+(import (only (edoc) elibrary))
+(elibrary (log-view)
   (export init! (rename (log-view buffer)) (rename (show-log! show!)))
-  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:)
@@ -98,10 +100,10 @@
     (refresh!)
     b)
 
-  (edefine (log-view . component)
-    (edoc "The log view buffer, or a view filtered to one component, created on demand."
-          (component (list-of symbol) "the component to show alone, at most one")
-          (returns buffer))
+  (edoc "The log view buffer, or a view filtered to one component, created on demand."
+        (component (list-of symbol) "the component to show alone, at most one")
+        (returns buffer))
+  (define (log-view . component)
     ;; The *log* view -- or a dynamic filtered one, *log eval* for
     ;; (log-view:buffer 'eval) -- created (or recreated after a kill) on
     ;; demand.
@@ -112,14 +114,14 @@
           b
           (make-log-view name component))))
 
-  (edefine (show-log!)
-    (edoc "Pop up the log view.")
+  (edoc "Pop up the log view.")
+  (define (show-log!)
     ;; Pop up the *log* view.
     (pop-up-or-reuse! (log-view))
     (void))
 
-  (edefine (init!)
-    (edoc "Install the log view: its describe entry, its mode and the saved filters of views that survived a reload.")
+  (edoc "Install the log view: its describe entry, its mode and the saved filters of views that survived a reload.")
+  (define (init!)
     (doc:register!
       '(((log-view:show!) (("procedure" . "(log-view:show!)")) "void"
          ("(log-view:buffer)") log-view "Log commands" #f

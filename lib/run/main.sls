@@ -9,10 +9,12 @@
 ;; Like the kernel, main is never reloaded: it is what everything else
 ;; runs under.  (main:run) is the whole program.
 
-(library (main)
+(import (only (edoc) elibrary))
+(elibrary (main)
   (export run set-startup-page! load-config!
           modules-reload-on-save config-reload-on-save shutdown!! shutdown-on-exit)
-  (import (only (edoc) edefine edoc) (chezscheme) (prefix (sys) sys:)
+  (import (chezscheme)
+          (prefix (sys) sys:)
           (prefix (client) client:)
           (prefix (file) file:)
           (prefix (kernel) kernel:)
@@ -28,15 +30,14 @@
           (prefix (log) log:)
           (prefix (string) string:))
 
-  (edefine shutdown-on-exit
-    (edoc "Whether the base stops when the last head leaves."
-          (value boolean))
-    (make-parameter #f
-      (lambda (value)
-        (unless (boolean? value) (error 'shutdown-on-exit "expected a boolean")) value)))
+  (edoc "Whether the base stops when the last head leaves."
+        (value boolean))
+  (define shutdown-on-exit (make-parameter #f
+                             (lambda (value)
+                               (unless (boolean? value) (error 'shutdown-on-exit "expected a boolean")) value)))
 
-  (edefine (shutdown!!)
-    (edoc "Stop the base and every head after reviewing modified buffers: yes, no, or view them.")
+  (edoc "Stop the base and every head after reviewing modified buffers: yes, no, or view them.")
+  (define (shutdown!!)
     (let ([token #f])
       (dynamic-wind void
         (lambda ()
@@ -114,9 +115,9 @@
 
   ;;; Configuration and reloads -----------------------------------------------------
 
-  (edefine (load-config!)
-    (edoc "Load config.e into the editor top level, repainting and re-resolving buffer modes; whether it loaded cleanly."
-          (returns boolean))
+  (edoc "Load config.e into the editor top level, repainting and re-resolving buffer modes; whether it loaded cleanly."
+        (returns boolean))
+  (define (load-config!)
     ;; The kernel loads config.e (kernel:load-config!); the head repaints
     ;; around it -- a recolor must repaint rows cached under the old
     ;; codes -- re-resolves buffer modes, and reports an error.  ->
@@ -147,14 +148,12 @@
   ;; takes effect on save.  Both on by default; (main:modules-reload-on-save
   ;; #f) or (main:config-reload-on-save #f) -- in config.e for an
   ;; installation, at M-x for a session -- turns either off.
-  (edefine modules-reload-on-save
-    (edoc "Whether saving a module's source reloads it on the spot."
-          (value boolean))
-    (make-parameter #t))
-  (edefine config-reload-on-save
-    (edoc "Whether saving config.e applies it on the spot."
-          (value boolean))
-    (make-parameter #t))
+  (edoc "Whether saving a module's source reloads it on the spot."
+        (value boolean))
+  (define modules-reload-on-save (make-parameter #t))
+  (edoc "Whether saving config.e applies it on the spot."
+        (value boolean))
+  (define config-reload-on-save (make-parameter #t))
 
   (define (module-name-of-path path)
     ;; The module name a saved path denotes in the selected source roots;
@@ -219,18 +218,18 @@
 
   (define startup-page #f)
 
-  (edefine (set-startup-page! proc)
-    (edoc "Install the welcome page shown when e starts without a file; #f restores the scratch buffer."
-          (proc (or procedure #f) "the page"))
+  (edoc "Install the welcome page shown when e starts without a file; #f restores the scratch buffer."
+        (proc (or procedure #f) "the page"))
+  (define (set-startup-page! proc)
     ;; A module (or config.e) may present a welcome page when e starts
     ;; without a file argument; #f restores the plain scratch buffer.
     (unless (or (not proc) (procedure? proc))
       (error 'set-startup-page! "expected a procedure or #f" proc))
     (set! startup-page proc))
 
-  (edefine (run)
-    (edoc "Run the head: the main loop against the base, as this head's actor."
-          (returns integer "the exit status"))
+  (edoc "Run the head: the main loop against the base, as this head's actor."
+        (returns integer "the exit status"))
+  (define (run)
     (kernel:pin-modules! '("main"))
     (parameterize ([exit-handler (exit-handler)] [abort-handler (abort-handler)] [reset-handler (reset-handler)])
       (actor:call-as head:ui-actor run-head)))

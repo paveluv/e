@@ -8,9 +8,11 @@
 ;; comments don't count, per the buffer's syntax styles; in a buffer
 ;; without a mode every bracket counts.
 
-(library (paren)
+(import (only (edoc) elibrary))
+(elibrary (paren)
   (export init! (rename (matching-paren-style matching-style)))
-  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
           (prefix (style) style:)
@@ -30,17 +32,16 @@
       (bold (bold (foreground default)))
       (colored (bold (foreground 135)))))
 
-  (edefine matching-paren-style
-    (edoc "How the matched bracket pair is marked: bold, underline, box or colored."
-          (value (one-of bold underline box colored)))
-    (make-parameter 'bold
-      (lambda (name)
-        (let ([hit (assq name matching-paren-style-table)])
-          (unless hit
-            (error 'matching-paren-style
-                   "must be underline, box, bold, or colored" name))
-          (style:set! 'matching-paren (cadr hit))
-          name))))
+  (edoc "How the matched bracket pair is marked: bold, underline, box or colored."
+        (value (one-of bold underline box colored)))
+  (define matching-paren-style (make-parameter 'bold
+                                 (lambda (name)
+                                   (let ([hit (assq name matching-paren-style-table)])
+                                     (unless hit
+                                       (error 'matching-paren-style
+                                         "must be underline, box, bold, or colored" name))
+                                     (style:set! 'matching-paren (cadr hit))
+                                     name))))
 
   (define (scan-paren b styles-of start-row start-col dir)
     ;; Find the bracket balancing the one at (start-row, start-col),
@@ -93,8 +94,8 @@
                   (list (car match) (cdr match) (+ (cdr match) 1) 'matching-paren))
             '()))))
 
-  (edefine (init!)
-    (edoc "Install the matching-bracket highlighter and its describe entry.")
+  (edoc "Install the matching-bracket highlighter and its describe entry.")
+  (define (init!)
     (paint:add-highlighter! paren-highlights)
     (doc:register!
       '(((paren:matching-style)

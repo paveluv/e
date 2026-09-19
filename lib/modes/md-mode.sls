@@ -10,9 +10,11 @@
 ;; pattern); code in Scheme documents is Scheme, so fence interiors
 ;; delegate to the scheme mode, like indented blocks.
 
-(library (md-mode)
+(import (only (edoc) elibrary))
+(elibrary (md-mode)
   (export init!)
-  (import (only (edoc) edefine edoc) (chezscheme) (except (edit) init!)
+  (import (chezscheme)
+          (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:))
 
@@ -161,7 +163,7 @@
          (let ([scheme (mode:find "scheme")])
            (and scheme ((mode:styles scheme) line)))))
 
-  (edefine (init!)
-    (edoc "Register the markdown mode for .md and .markdown files.")
+  (edoc "Register the markdown mode for .md and .markdown files.")
+  (define (init!)
     (mode:register! "markdown" '(".md" ".markdown") '() md-styles
                     #f md-row-styles)))

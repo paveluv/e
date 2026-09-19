@@ -3,16 +3,23 @@
 ;; Corpus queries belong to reference:. This facade adds completion, local
 ;; key annotations, Markdown display, and the interactive fetch command.
 
-(library (describe)
+(import (only (edoc) elibrary))
+(elibrary (describe)
   (export init! (rename (describe this) (describe! show!) (describe!! show!!)
                         (describe-at-point! at-point!)
                         (reference:fetch! fetch-data!)))
-  (import (chezscheme) (only (edoc) edefine edefine-syntax edoc) (except (edit) init!)
-          (prefix (doc) doc:) (prefix (reference) reference:)
-          (prefix (prompt) prompt:) (prefix (mode) mode:)
-          (prefix (string) string:) (prefix (paint) paint:)
-          (prefix (head) head:) (prefix (style) style:)
-          (prefix (keymap) keymap:) (prefix (only (markdown) companion companion!) markdown:))
+  (import (chezscheme)
+          (except (edit) init!)
+          (prefix (doc) doc:)
+          (prefix (reference) reference:)
+          (prefix (prompt) prompt:)
+          (prefix (mode) mode:)
+          (prefix (string) string:)
+          (prefix (paint) paint:)
+          (prefix (head) head:)
+          (prefix (style) style:)
+          (prefix (keymap) keymap:)
+          (prefix (only (markdown) companion companion!) markdown:))
 
   ;;; Display -------------------------------------------------------------------
 
@@ -26,9 +33,9 @@
                     (keymap:command-keys (caddr page)) (cons (car page) (cadr page)))])
           (when id (head:sync-foreign-edits! id))))))
 
-  (edefine (describe! name)
-    (edoc "Show every documentation entry for a name in the read-only Markdown describe buffer, or say there is none."
-          (name (or symbol string) "the documented name"))
+  (edoc "Show every documentation entry for a name in the read-only Markdown describe buffer, or say there is none."
+        (name (or symbol string) "the documented name"))
+  (define (describe! name)
     (let* ([name (if (string? name) (string->symbol name) name)]
            [id (reference:page! head:ui-actor name (keymap:command-keys name))])
       (if (not id)
@@ -45,9 +52,9 @@
                         (set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))
     (void))
 
-  (edefine-syntax describe
-    (edoc "Show the describe page of a name written literally: (describe visit-file!)."
-          (name symbol "the name, unquoted"))
+  (edoc "Show the describe page of a name written literally: (describe visit-file!)."
+        (name symbol "the name, unquoted"))
+  (define-syntax describe
     (syntax-rules ()
       [(_ name) (describe! 'name)]))
 
@@ -69,8 +76,8 @@
                   names (doc:names entry)))
               '() (reference:entries)))))
 
-  (edefine (describe!!)
-    (edoc "Prompt for a documented name with completion and show its live describe page.")
+  (edoc "Prompt for a documented name with completion and show its live describe page.")
+  (define (describe!!)
     ;; Prompt for a documented name and display its live describe page.
     (define label "Describe function: ")
     (define (editor-name? text)
@@ -121,8 +128,8 @@
       (and m (or (string=? m "scheme")
                  (string:prefix? "pretty-scheme" m)))))
 
-  (edefine (describe-at-point!)
-    (edoc "Show the describe page of the symbol under the cursor in a Scheme buffer.")
+  (edoc "Show the describe page of the symbol under the cursor in a Scheme buffer.")
+  (define (describe-at-point!)
     ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
     (cond [(not (scheme-buffer?))
            (set-message! "Not a Scheme buffer")]
@@ -158,8 +165,8 @@
       (when (> end start)
         (describe! (string->symbol (substring text start end))))))
 
-  (edefine (init!)
-    (edoc "Install the describe commands: the page refresh hook, the describe entries of the extension API and the C-h f binding.")
+  (edoc "Install the describe commands: the page refresh hook, the describe entries of the extension API and the C-h f binding.")
+  (define (init!)
     ;; Rebind a head callback; selection itself belongs to the store page.
     (head:add-pre-redraw-hook! refresh-describe!)
     (doc:register!
