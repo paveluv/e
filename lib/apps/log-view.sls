@@ -10,7 +10,7 @@
 
 (library (log-view)
   (export init! (rename (log-view buffer)) (rename (show-log! show!)))
-  (import (chezscheme) (except (edit) init!)
+  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:)
@@ -98,7 +98,10 @@
     (refresh!)
     b)
 
-  (define (log-view . component)
+  (edefine (log-view . component)
+    (edoc "The log view buffer, or a view filtered to one component, created on demand."
+          (component (list-of symbol) "the component to show alone, at most one")
+          (returns buffer))
     ;; The *log* view -- or a dynamic filtered one, *log eval* for
     ;; (log-view:buffer 'eval) -- created (or recreated after a kill) on
     ;; demand.
@@ -109,12 +112,14 @@
           b
           (make-log-view name component))))
 
-  (define (show-log!)
+  (edefine (show-log!)
+    (edoc "Pop up the log view.")
     ;; Pop up the *log* view.
     (pop-up-or-reuse! (log-view))
     (void))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Install the log view: its describe entry, its mode and the saved filters of views that survived a reload.")
     (doc:register!
       '(((log-view:show!) (("procedure" . "(log-view:show!)")) "void"
          ("(log-view:buffer)") log-view "Log commands" #f

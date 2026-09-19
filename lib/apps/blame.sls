@@ -22,7 +22,7 @@
 
 (library (blame)
   (export init! (rename (blame-at-point! at-point!)) (rename (blame-tint-seconds tint-seconds)))
-  (import (rnrs)
+  (import (rnrs) (only (edoc) edefine edoc)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
                 make-time current-time add-duration time<? make-weak-eq-hashtable)
@@ -34,7 +34,9 @@
           (prefix (text) text:)
           (prefix (doc) doc:))
 
-  (define blame-tint-seconds
+  (edefine blame-tint-seconds
+    (edoc "How long another actor's edit stays tinted, in seconds; 0 turns tinting off."
+          (value integer))
     ;; how long another actor's edit stays tinted (0 turns tinting off)
     (make-parameter 8))
 
@@ -157,7 +159,8 @@
 
   ;;; Asking ------------------------------------------------------------------
 
-  (define (blame-at-point!)
+  (edefine (blame-at-point!)
+    (edoc "Say who recently wrote the text at point, from the store log of the current shared buffer.")
     ;; who recently wrote the text at point, from the store's log
     (let* ([b (current-buffer)]
            [id (head:buffer-store-id b)]
@@ -178,7 +181,8 @@
 
   ;;; Wiring ------------------------------------------------------------------
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Install blame: the tint refresh hook and highlighter, the per-actor styles and its describe entry.")
     (head:add-pre-redraw-hook! refresh!)
     (paint:add-highlighter! blame-highlights)
     ;; muted per-actor backgrounds, overridable from config.e

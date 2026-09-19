@@ -10,7 +10,7 @@
 
 (library (paren)
   (export init! (rename (matching-paren-style matching-style)))
-  (import (chezscheme) (except (edit) init!)
+  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
           (prefix (style) style:)
@@ -30,7 +30,9 @@
       (bold (bold (foreground default)))
       (colored (bold (foreground 135)))))
 
-  (define matching-paren-style
+  (edefine matching-paren-style
+    (edoc "How the matched bracket pair is marked: bold, underline, box or colored."
+          (value (one-of bold underline box colored)))
     (make-parameter 'bold
       (lambda (name)
         (let ([hit (assq name matching-paren-style-table)])
@@ -91,7 +93,8 @@
                   (list (car match) (cdr match) (+ (cdr match) 1) 'matching-paren))
             '()))))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Install the matching-bracket highlighter and its describe entry.")
     (paint:add-highlighter! paren-highlights)
     (doc:register!
       '(((paren:matching-style)

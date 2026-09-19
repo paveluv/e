@@ -20,7 +20,7 @@
 (library (eval)
   (export init! settle-completion
           (rename (eval! run!)) (rename (eval!! run!!)) (rename (eval-copy-result copy-result)))
-  (import (chezscheme) (except (edit) init!)
+  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (head) head:)
           (prefix (mode) mode:)
@@ -348,7 +348,11 @@
                     (make-frame (frame-opener f) (frame-operator f) (+ (frame-arguments f) 1) (frame-quoted? f)))
                 (cdr frames)))))
 
-  (define (settle-completion text pos)
+  (edefine (settle-completion text pos)
+    (edoc "The input to continue with after a sole completion ends at pos: a form whose operator has a known arity closes when complete and settles again in its parent, or steps to its next argument; an unknown arity, a quoted form or text after pos leaves the cursor at the symbol."
+          (text string "the prompt input")
+          (pos integer "where the completed symbol ends")
+          (returns pair "the new input and cursor position, (text . pos)"))
     ;; The input to continue with after a sole completion ends at pos: while
     ;; the enclosing operator has a fixed arity, a complete form closes with
     ;; its matching bracket and settles again as an argument of its parent,
@@ -380,7 +384,10 @@
 
   ;;; Evaluation ----------------------------------------------------------------
 
-  (define eval-copy-result (make-parameter #t))
+  (edefine eval-copy-result
+    (edoc "Whether a non-void evaluation result is also placed in the kill ring."
+          (value boolean))
+    (make-parameter #t))
 
   (define (close-expression text)
     ;; text completed with the parentheses it is missing (up to a few), so
@@ -601,18 +608,19 @@
           (append output-records (list result-record))
           (if copied? " [stored in kill ring]" "")))))
 
-  (define (eval! . rest)
-    ;; Evaluate the text in where (the whole current buffer by default) in
-    ;; the M-x interaction environment and show its result in the echo area.
-    (let* ([where (if (pair? rest) (car rest) (current-buffer))]
-           [query (if (pair? rest) (format "(eval! ~s)" where) "(eval!)")]
+  (edefine (eval! . where*)
+    (edoc "Evaluate the Scheme text in where, the whole current buffer by default, in the M-x interaction environment and show the last result in the echo area."
+          (where* (list-of (or buffer string region procedure list)) "what to evaluate, at most one: a buffer, its name, a region, a predicate on buffers or a list of these"))
+    (let* ([where (if (pair? where*) (car where*) (current-buffer))]
+           [query (if (pair? where*) (format "(eval! ~s)" where) "(eval!)")]
            [text (string:join (map region-text (regions-of where)) "\n")])
       (let-values ([(outcome output-records)
                     (evaluation-outcome query text)])
         (report-evaluation! query outcome output-records))
       (void)))
 
-  (define (eval!!)
+  (edefine (eval!!)
+    (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area.")
     ;; Read an expression -- the prompt pretypes "(", deletable, so a
     ;; bare symbol evaluates too -- and evaluate it in the editor's
     ;; own top level.  The expression is logged (component eval, which
@@ -641,7 +649,8 @@
           ;; while the view and echo show the formatted pair.
           (report-evaluation! s outcome output-records)))))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e and M-x bindings.")
     (doc:register!
       '(((eval:run!) (("procedure" . "(eval:run! [where])")) "void"
          ("(eval)") eval "Evaluation commands" #f

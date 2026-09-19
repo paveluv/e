@@ -2,7 +2,7 @@
 
 (library (git-view)
   (export init! (rename (git-log!! log!!)) (rename (git-log-refresh! refresh!)))
-  (import (chezscheme) (except (edit) init!)
+  (import (chezscheme) (only (edoc) edefine edoc) (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:)
@@ -125,7 +125,8 @@
       (goto-point! (cons (if (null? log-rows) 0 1) 0)))
     (set-message! "Git log refreshed"))
 
-  (define (git-log-refresh!)
+  (edefine (git-log-refresh!)
+    (edoc "Reload the git log app's commits and redraw, showing the refresh as a pressed button.")
     (let ([visible? (eq? (current-buffer) log-buffer)]
           [started (real-time)])
       (dynamic-wind
@@ -228,7 +229,9 @@
       (head:set-app-presentation! diff-buffer 1 #t)
       (mode:choose! diff-buffer "git:diff")))
 
-  (define (git-log!! . path)
+  (edefine (git-log!! . path)
+    (edoc "Open the interactive git log app for the repository containing a path, the current file by default; Up and Down navigate, Enter shows a file's patch."
+          (path (list-of file) "a path inside the repository, at most one"))
     (let ([source (if (pair? path) (car path)
                       (or (head:buffer-file (current-buffer)) "."))])
       (ensure-git-buffers!)
@@ -241,7 +244,8 @@
           (goto-point! '(1 . 0))))
       (void)))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Register the git log and diff modes, reconnect surviving app buffers, and install the describe entries and bindings.")
     (mode:register! "git:log" '() '() log-styles)
     (mode:register! "git:diff" '() '() diff-styles)
     ;; A reload after Git was opened reconnects its surviving app buffers;
