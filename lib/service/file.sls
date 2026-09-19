@@ -72,6 +72,20 @@
     (let ([dir (directory-part path)])
       (if dir (string:tail path (string-length dir)) path)))
 
+  ;; Paths as edoc types: completion lists the entries extending the partial
+  ;; path, relative to the working directory, as the file prompt does.
+  (edoc-type file "a file, by its path"
+    (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
+    (complete (lambda (partial) (map (lambda (path) (cons path #f)) (complete partial))))
+    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+
+  (edoc-type directory "a directory, by its path"
+    (predicate (lambda (v) (and (string? v) (guard (ex [else #f]) (file-directory? (path:canonical (path:expand v)))))))
+    (complete (lambda (partial)
+                (map (lambda (path) (cons path #f))
+                     (filter (lambda (path) (string:suffix? "/" path)) (complete partial)))))
+    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+
   (edoc "A path for display, the home directory as ~: the inverse of expand."
         (path string "the path")
         (returns string))

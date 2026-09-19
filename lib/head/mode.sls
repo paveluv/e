@@ -79,6 +79,16 @@
 
   (define modes (kernel:make-registry))
 
+  ;; A mode as an edoc type: its registered name; completion lists the modes
+  ;; with the endings they claim.
+  (edoc-type mode "a mode, by name"
+    (predicate (lambda (v) (and (string? v) (find-mode v) #t)))
+    (complete (lambda (partial)
+                (map (lambda (m) (cons (mode-name m) (string:join (mode-extensions m) " ")))
+                     (kernel:registry-items modes))))
+    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+
+
   (define mode-extension-additions (kernel:make-registry))
 
   (edoc "Register a mode: its name, the file-name endings it claims, the interpreters of a #! line, a line styles function, then optionally a render transform and a buffer-aware row-styles procedure."
@@ -96,7 +106,7 @@
                  (and (pair? extra) (pair? (cdr extra)) (cadr extra)))))
 
   (edoc "Give an existing mode another file-name ending, as a registry entry that config reload retracts."
-        (name string "the mode")
+        (name mode "the mode")
         (extension string "the ending, with its dot"))
   (define (add-mode-extension! name extension)
     ;; Add a suffix to an existing mode without replacing its implementation.
@@ -144,14 +154,14 @@
       (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0)) #t))
 
   (edoc "The registered mode called name, or #f."
-        (name string "the mode's name")
+        (name mode "the mode's name")
         (returns (or (record mode) #f)))
   (define (find-mode name)
     (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name))))
 
   (edoc "Give a buffer the registered mode called name, or none with #f, regardless of its file name."
         (b buffer "the buffer")
-        (name (or string #f) "the mode's name"))
+        (name (or mode #f) "the mode's name"))
   (define (set-buffer-mode! b name)
     ;; Give b the registered mode called name (#f for none), regardless of
     ;; its file name -- how transcript buffers get their highlighting.

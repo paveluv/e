@@ -14,7 +14,7 @@
 (eval
   '(begin
      (import (except (edit) init!) (prefix (eval) eval:) (prefix (head) head:) (prefix (text) text:)
-             (prefix (test) test:))
+             (prefix (string) string:) (prefix (test) test:))
 
      (define check test:check)
      (define (settled text) (eval:settle-completion text (string-length text)))
@@ -52,5 +52,34 @@
        (eval:settle-completion "(head:current 1)" 13) '("(head:current 1)" . 13))
      (check 'blank-tail-is-kept
        (eval:settle-completion "(head:current  " 13) '("(head:current)  " . 14))
+
+     ;; At an argument position the type documented for it decides what Tab
+     ;; offers: the type's values as expressions, the procedures producing
+     ;; one, and the variables holding one; symbols complete elsewhere.
+     (define (labels text) (eval:completion-candidates text (string-length text)))
+     (define (has? needle candidates) (and candidates (exists (lambda (l) (string=? l needle)) candidates) #t))
+     (define (has-prefix? needle candidates) (and candidates (exists (lambda (l) (string:prefix? needle l)) candidates) #t))
+     (eval '(define myb (buffer "*scratch*")) (interaction-environment))
+     (check 'a-buffer-argument-offers-buffers-producers-and-variables
+       (let ([offered (labels "(show-buffer! ")])
+         (list (has? "(buffer \"*scratch*\")" offered) (has? "(current-buffer)" offered)
+               (has? "(fresh-buffer name)" offered) (has? "myb" offered)
+               ;; a typed token narrows, and the buffer's spelling leads
+               (car (labels "(show-buffer! scr")) (has? "myb" (labels "(show-buffer! my"))
+               ;; the alias of a symbol completing elsewhere: an operator position
+               (labels "(show-buff") (labels "(show-buffer! (cur")))
+       '(#t #t #t #t "(buffer \"*scratch*\")" #t #f #f))
+     (check 'literals-and-strings-complete-in-place
+       (list (has? "'clean" (labels "(set-buffer-wrap! b ")) (has? "#f" (labels "(set-buffer-wrap! b "))
+             ;; the language's types offer their own values but no producers
+             (length (labels "(set-buffer-wrap! b ")) (labels "(wrap! ")
+             (has-prefix? "manual/" (labels "(visit-file! \"man"))
+             (has? "*scratch*" (labels "(buffer \""))
+             ;; an undocumented operator falls back to symbols
+             (labels "(car "))
+       '(#t #t 4 ("#t" "#f") #t #t #f))
+     (check 'a-completed-value-settles-its-form
+       (list (settled "(show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))
+       '(("(show-buffer! (buffer \"*scratch*\"))" . 35) ("(visit-file! \"manual/EVAL.md\")" . 30)))
 
      (test:finish! 'mx)))

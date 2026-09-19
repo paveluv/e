@@ -148,6 +148,30 @@ the editor's notions `file`, `directory`, `buffer`, `window`, `region`,
 the compounds `(one-of literal ...)`, `(or type ...)`, `(list-of type)` and
 `(record name)` for an instance of a record type.
 
+Types are data. When the library initializes, each name a clause uses
+resolves to a type record with prose, a predicate and, optionally, a
+completer, a reader and a writer; an unknown name is an error then, and
+`tools/edoc-coverage.sps` reports one statically. The language's types come
+predefined in `(edoc)`; the editor's notions are defined by the libraries
+that own them, `buffer` and `window` in `(edit)`, `file` in `(file)`, `mode`
+in `(mode)`, `key` in `(keymap)`, `style` in `(style)`, with a form in the
+body:
+
+```scheme
+(edoc-type buffer "a live buffer, spelled (buffer \"name\")"
+  (predicate live-buffer?)
+  (complete (lambda (partial) (map (lambda (b) (cons b (buffer-details b))) buffers)))
+  (read lookup-buffer)
+  (write (lambda (b) (format "(buffer ~s)" (head:buffer-name b)))))
+```
+
+The completer gives `(value . hint)` pairs for a partial text, the writer
+spells a value as the expression denoting it, and a record documented in an
+elibrary registers its predicate for `(record name)` by itself. M-x uses the
+completers and writers to complete arguments by type; see
+[Evaluation](EVAL.md). `type-accepts?`, `type-completions`, `type-spelling`
+and `type-prose` work over the compound forms too.
+
 When the library is initialized the edocs are attached to the objects they
 document; a keyword, a record or condition type, and a value without
 identity, such as a number, are recorded under their names. `edoc-of` reads

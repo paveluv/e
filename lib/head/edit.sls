@@ -1358,7 +1358,7 @@
   ;; expression: (buffer-line-count (buffer "e")).  The lookup is by
   ;; name at evaluation time -- a killed buffer's form reports itself.
   (edoc "The buffer with a given name, as buffers print: (buffer name); an error when there is none."
-        (name string "the buffer's name")
+        (name buffer-name "the buffer's name")
         (returns buffer))
   (define (lookup-buffer name)
     (or (head:buffer-named name) (error 'buffer "no buffer named" name)))
@@ -1379,6 +1379,52 @@
         (returns window))
   (define (lookup-window n)
     (or (head:window-numbered n) (error 'window "no window numbered" n)))
+
+  ;;; Types ---------------------------------------------------------------------
+
+  ;; The editor's notions, as edoc types: what M-x offers at an argument of
+  ;; that type, how a value is spelled as an expression, and what a value
+  ;; must be. A buffer or a window is live, on this seat, now.
+
+  (define (live-buffer? v) (and (head:buffer? v) (memq v buffers) #t))
+
+  (define (buffer-details b)
+    ;; what a completion row shows beside a buffer
+    (string:join
+      (filter values
+        (list (let ([file (head:buffer-file b)]) (and file (file:abbreviate file)))
+              (mode:name-of b)
+              (and (head:buffer-modified b) "modified")))
+      "  "))
+
+  (edoc-type buffer "a live buffer, spelled (buffer \"name\")"
+    (predicate live-buffer?)
+    (complete (lambda (partial) (map (lambda (b) (cons b (buffer-details b))) buffers)))
+    (read lookup-buffer)
+    (write (lambda (b) (format "(buffer ~s)" (head:buffer-name b)))))
+
+  (edoc-type buffer-name "the name of a live buffer"
+    (predicate (lambda (v) (and (string? v) (head:buffer-named v) #t)))
+    (complete (lambda (partial) (map (lambda (b) (cons (head:buffer-name b) (buffer-details b))) buffers)))
+    (write (lambda (v) (format "~s" v))))
+
+  (edoc-type window "a window on screen, spelled (window n)"
+    (predicate (lambda (v) (and (head:window? v) (memq v windows) #t)))
+    (complete (lambda (partial)
+                (map (lambda (w) (cons w (head:buffer-name (head:window-buffer w))))
+                     (remq (head:popup) windows))))
+    (read lookup-window)
+    (write (lambda (w) (format "(window ~a)" (head:window-index w)))))
+
+  (edoc-type region "a slice of one buffer between two (row . col) points"
+    (predicate region?))
+
+  (edoc-type position "a (row . col) position in a buffer"
+    (predicate text:position?))
+
+  (edoc-type command "a command: a procedure callable with no arguments, by its name"
+    (predicate (lambda (v) (and (procedure? v) (logbit? 0 (procedure-arity-mask v)))))
+    (write action-name))
 
   (define window-printing
     (record-writer (record-type-descriptor head:window)
@@ -1707,14 +1753,14 @@
   (define formatters (kernel:make-registry))  ; entries (mode proc)
 
   (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on by default."
-        (name string "the mode")
+        (name mode "the mode")
         (proc procedure "the indenter")
         (tab (list-of boolean) "whether TAB indents, at most one"))
   (define (register-indenter! name proc . tab)
     (kernel:registry-add! indenters (list name proc (or (null? tab) (car tab)))))
 
   (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
-        (name string "the mode")
+        (name mode "the mode")
         (proc procedure "the formatter"))
   (define (register-formatter! name proc)
     (kernel:registry-add! formatters (list name proc)))
@@ -1858,7 +1904,7 @@
         (indent-line!))))
 
   (edoc "Set whether TAB indents in a mode, overriding the flag its indenter registered with."
-        (name string "the mode")
+        (name mode "the mode")
         (flag boolean "whether TAB indents"))
   (define (indent-on-tab! name flag)
     ;; Configuration: whether TAB auto-indents in the named mode,

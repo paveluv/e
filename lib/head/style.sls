@@ -139,6 +139,16 @@
 
   (define style-overrides (kernel:make-registry))
 
+  ;; A face as an edoc type: completion lists the built-in faces and the
+  ;; overridden ones.
+  (edoc-type style "a face, by name"
+    (predicate symbol?)
+    (complete (lambda (partial)
+                (map (lambda (name) (cons name #f))
+                     (append (map car default-styles) (map car (kernel:registry-items style-overrides))))))
+    (write (lambda (v) (string-append "'" (symbol->string v)))))
+
+
   ;; The painter's repaint trigger: painted rows are cached by content
   ;; and marks, not by face definitions, so a redefined face must
   ;; repaint everything.  Installed by the command layer's init!; a
@@ -167,7 +177,7 @@
         (styles-changed!))))
 
   (edoc "Override a face: a color number, a raw SGR parameter string, or declarative style clauses."
-        (style symbol "the face")
+        (style style "the face")
         (spec (or integer string list) "its look"))
   (define (set-style! style spec)
     (kernel:registry-add!
@@ -249,7 +259,7 @@
         (v vector "the styles")
         (from integer "the first column")
         (to integer "the column after the last")
-        (face symbol "the face"))
+        (face style "the face"))
   (define (fill-range! v from to face)
     ;; face into the per-column styles vector v over [from, to)
     (let loop ([i from])

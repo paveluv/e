@@ -203,6 +203,17 @@
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back
                 (lambda () (not (find-cell "<completions>"))) 5000)
+     ;; An argument whose type is documented completes to its values: the
+     ;; buffers, spelled as the expressions that denote them.
+     (send! "\x1b;xshow-buffer! \t\t")
+     (wait-for! 'a-typed-argument-lists-its-values
+                (lambda () (and (find-cell "<completions>")
+                                (find-cell "(buffer \"*scratch*\")")
+                                (find-cell "(buffer \"*terminal*\")  terminal")))
+                5000)
+     (send! "\x7;")                     ; C-g
+     (wait-for! 'typed-completions-give-the-window-back
+                (lambda () (not (find-cell "<completions>"))) 5000)
      ;; Completing a sole candidate includes punctuation and remains executable.
      (send! "\x1b;xspwir\t\r")
      (wait-for! 'normalized-full-match-can-run

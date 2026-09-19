@@ -158,13 +158,13 @@
 
   (define base-types
     (begin
+      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(edoc)")
       (for-each
         (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(edoc)"))
         (list (list 'string "a string" string?)
               (list 'char "a character" char?)
               (list 'integer "an exact integer" (lambda (v) (and (integer? v) (exact? v))))
               (list 'number "a number" number?)
-              (list 'boolean "a boolean" boolean?)
               (list 'list "a proper list" list?)
               (list 'pair "a pair" pair?)
               (list 'vector "a vector" vector?)

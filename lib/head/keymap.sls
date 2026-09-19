@@ -75,7 +75,7 @@
       [else (error 'bind-key! "unrecognized key" s)]))
 
   (edoc "A human key spelling, C-x C-f say, as its canonical event tokens."
-        (spec string "the spelling")
+        (spec key "the spelling")
         (returns (list-of string)))
   (define (key-spec spec)
     ;; a human spelling -- "C-x C-f" -- into canonical event tokens
@@ -97,6 +97,15 @@
         (returns string))
   (define (sequence-text sequence)
     (string:join sequence " "))
+
+  ;; A key spelling as an edoc type: completion offers the spellings bound
+  ;; in the global map now.
+  (edoc-type key "a key spelling, C-x C-f say"
+    (predicate (lambda (v) (and (string? v) (guard (ex [else #f]) (key-spec v) #t))))
+    (complete (lambda (partial)
+                (map (lambda (owned) (cons (binding-spec (cdr owned)) #f)) (effective-bindings 'global))))
+    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+
 
   ;;; The binding table ---------------------------------------------------------
 
@@ -209,7 +218,7 @@
 
   (edoc "The action bound to a key spelling in a context, or #f."
         (context symbol "the keymap context")
-        (spec string "the spelling")
+        (spec key "the spelling")
         (returns (or procedure symbol #f)))
   (define key-binding
     (case-lambda
@@ -261,7 +270,7 @@
 
   (edoc "Bind a key spelling as a user binding, which wins over defaults: in a context, or in the global map when none is given."
         (context symbol "the keymap context")
-        (spec string "the spelling")
+        (spec key "the spelling")
         (action (or procedure symbol) "the command, or a keymap action"))
   (define bind-key!
     (case-lambda
@@ -272,7 +281,7 @@
 
   (edoc "Bind a key spelling as a module's default, which user bindings override: in a context, or in the global map when none is given."
         (context symbol "the keymap context")
-        (spec string "the spelling")
+        (spec key "the spelling")
         (action (or procedure symbol) "the command, or a keymap action"))
   (define bind-default-key!
     (case-lambda
@@ -283,7 +292,7 @@
 
   (edoc "Unbind a key spelling as a user override, in a context or in the global map when none is given."
         (context symbol "the keymap context")
-        (spec string "the spelling"))
+        (spec key "the spelling"))
   (define unbind-key!
     (case-lambda
       [(spec)

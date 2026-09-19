@@ -19,7 +19,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (eval)
-  (export init! settle-completion
+  (export init! settle-completion completion-candidates
           (rename (eval! run!)) (rename (eval!! run!!)) (rename (eval-copy-result copy-result)))
   (import (chezscheme)
           (except (edit) init!)
@@ -64,6 +64,226 @@
                 [(> to start)
                  (and (eq? kind 'atomic) (symbol? value) (= from start) (cons start end))]
                 [else (scan)])))))))
+
+  ;;; Completing an argument by its type -----------------------------------------
+
+  ;; At an argument position of a documented operator, Tab offers what the
+  ;; argument's edoc type accepts: the type's own values, spelled as
+  ;; expressions; the documented procedures and parameters that produce one;
+  ;; and the top-level variables holding one. Inside a string literal, the
+  ;; type's string values complete the literal.
+
+  (define (open-string-start s pos)
+    ;; the index of the quote opening a string still open at pos, or #f
+    (let loop ([i 0] [open #f])
+      (cond [(>= i pos) open]
+            [(and open (char=? (string-ref s i) #\\)) (loop (+ i 2) open)]
+            [(char=? (string-ref s i) #\") (loop (+ i 1) (if open #f i))]
+            [else (loop (+ i 1) open)])))
+
+  (define (formal-at formals index)
+    ;; (name . rest?) of the formal taking a zero-based argument index, or #f
+    (let loop ([f formals] [i index])
+      (cond [(pair? f) (if (= i 0) (cons (car f) #f) (loop (cdr f) (- i 1)))]
+            [(symbol? f) (cons f #t)]
+            [else #f])))
+
+  (define (argument-type sym index)
+    ;; the type documented for argument index of the procedure bound to sym,
+    ;; the union of its lambda lists' answers, or #f
+    (let* ([value (and (top-level-bound? sym) (top-level-value sym))]
+           [signatures (and (procedure? value) (edoc:edoc-of value))])
+      (and signatures
+           (let ([types
+                  (fold-left
+                    (lambda (types sig)
+                      (let* ([formal (and (eq? (edoc:signature-kind sig) 'procedure)
+                                          (formal-at (edoc:signature-formals sig) index))]
+                             [argument (and formal (find (lambda (a) (eq? (edoc:argument-name a) (car formal)))
+                                                         (edoc:signature-arguments sig)))])
+                        (if (not argument) types
+                            (let* ([type (edoc:argument-type argument)]
+                                   [type (if (and (cdr formal) (pair? type) (eq? (car type) 'list-of)) (cadr type) type)])
+                              (if (member type types) types (cons type types))))))
+                    '() signatures)])
+             (cond [(null? types) #f]
+                   [(null? (cdr types)) (car types)]
+                   [else (cons 'or (reverse types))])))))
+
+  (define (argument-context s pos)
+    ;; (type start end token string?) for the cursor at a documented
+    ;; argument position: the argument's type, the range and text of the
+    ;; token being completed, and whether it sits inside a string literal;
+    ;; #f at an operator position, under a quote, or without a type.
+    (let* ([quote-at (open-string-start s pos)]
+           [range (and (not quote-at) (symbol-range s pos))]
+           [start (cond [quote-at (+ quote-at 1)] [range (car range)] [else pos])]
+           [end (cond [quote-at pos] [range (cdr range)] [else pos])]
+           [frames (call-frames (substring s 0 (if quote-at quote-at start)))])
+      (and (pair? frames)
+           (let ([frame (car frames)])
+             (and (not (frame-quoted? frame))
+                  (string? (frame-operator frame))
+                  (let ([type (argument-type (string->symbol (frame-operator frame)) (frame-arguments frame))])
+                    (and type (list type start end (substring s start end) (and quote-at #t)))))))))
+
+  (define (type-fits? wanted produced)
+    ;; whether a produced type serves a wanted one: the same, a member of a
+    ;; wanted union, or a union with a serving member
+    (or (equal? wanted produced)
+        (and (pair? wanted) (eq? (car wanted) 'or) (exists (lambda (m) (type-fits? m produced)) (cdr wanted)))
+        (and (pair? produced) (eq? (car produced) 'or) (exists (lambda (m) (type-fits? wanted m)) (cdr produced)))))
+
+  (define (module-type? type)
+    ;; a type with values worth scanning the top level for: one a library
+    ;; defined, or a record; the language's types would list everything
+    (cond [(symbol? type)
+           (let ([record (edoc:type-named type)])
+             (and record (not (equal? (edoc:type-owner record) "(edoc)")) (edoc:type-owner record) #t))]
+          [(and (pair? type) (eq? (car type) 'record)) #t]
+          [(and (pair? type) (eq? (car type) 'or)) (exists module-type? (cdr type))]
+          [else #f]))
+
+  ;; A typed candidate: what Tab inserts, the label the row shows, the grey
+  ;; hint beside it, and the label's face.
+  (define-record-type option (fields insert label hint face))
+
+  (define (value-options type token in-string?)
+    (fold-right
+      (lambda (pair out)
+        (let ([value (car pair)] [hint (or (cdr pair) "")])
+          (cond
+            [in-string?
+             (if (string? value)
+                 ;; the literal stays open for a directory, to descend into
+                 (cons (make-option (if (string:suffix? "/" value) value (string-append value "\"")) value hint 'plain) out)
+                 out)]
+            [else (let ([text (edoc:type-spelling type value)]) (cons (make-option text text hint 'plain) out))])))
+      '() (edoc:type-completions type token)))
+
+  (define (documented-symbols)
+    ;; the editor's top-level names bound to documented values, with their signatures
+    (fold-right
+      (lambda (sym out)
+        (let ([signatures (and (editor-symbol? sym) (edoc:edoc-of (top-level-value sym)))])
+          (if signatures (cons (cons sym signatures) out) out)))
+      '() (environment-symbols (interaction-environment))))
+
+  (define (option<? a b)
+    ;; the command layer's bare names before a module's prefixed ones, fewer
+    ;; arguments first, then alphabetically
+    (define (key o)
+      (let ([label (option-label o)])
+        (list (if (string:search label ":" 0 (string-length label)) 1 0)
+              (let count ([i 0] [n 0])
+                (if (= i (string-length label)) n (count (+ i 1) (if (char=? (string-ref label i) #\space) (+ n 1) n))))
+              label)))
+    (let ([ka (key a)] [kb (key b)])
+      (or (< (car ka) (car kb))
+          (and (= (car ka) (car kb))
+               (or (< (cadr ka) (cadr kb))
+                   (and (= (cadr ka) (cadr kb)) (string<? (caddr ka) (caddr kb))))))))
+
+  (define (producer-options type)
+    ;; the documented procedures and parameters whose result serves the type;
+    ;; for the language's types, integer or boolean say, that would be half
+    ;; the editor, so only a library's own types and records get them
+    (if (not (module-type? type)) '()
+      (list-sort option<?
+        (fold-right
+          (lambda (entry out)
+            (let* ([sym (car entry)] [name (symbol->string sym)]
+                   [producing
+                    (filter (lambda (sig)
+                              (case (edoc:signature-kind sig)
+                                [(procedure) (let ([returns (edoc:signature-returns sig)])
+                                               (and returns (type-fits? type (edoc:argument-type returns))))]
+                                [(parameter) (let ([value (find (lambda (a) (eq? (edoc:argument-name a) 'value)) (edoc:signature-arguments sig))])
+                                               (and value (type-fits? type (edoc:argument-type value))))]
+                                [else #f]))
+                      (cdr entry))])
+              (if (null? producing) out
+                (let* ([sig (car producing)]
+                       [formals (if (eq? (edoc:signature-kind sig) 'procedure) (edoc:signature-formals sig) '())]
+                       [label (edoc:edoc-template sym formals)]
+                       [insert (if (null? formals) label (string-append "(" name))])
+                  (cons (make-option insert label (edoc:signature-summary sig) 'editor) out)))))
+          '() (documented-symbols)))))
+
+  (define (loose-match label token)
+    ;; The token inside a label, case-insensitively: as a substring, else as
+    ;; a subsequence; the matched runs as (0 start length) fragments, or #f.
+    ;; Labels are expressions with punctuation the symbol matcher, which
+    ;; wants word starts, would refuse.
+    (let ([n (string-length label)] [m (string-length token)])
+      (cond
+        [(string:search label token 0 n #t) => (lambda (at) (list (list 0 at m)))]
+        [else
+         (let loop ([i 0] [j 0] [fragments '()])
+           (cond
+             [(= j m) (reverse fragments)]
+             [(= i n) #f]
+             [(char-ci=? (string-ref label i) (string-ref token j))
+              (loop (+ i 1) (+ j 1)
+                    (if (and (pair? fragments) (= (+ (cadr (car fragments)) (caddr (car fragments))) i))
+                        (cons (list 0 (cadr (car fragments)) (+ (caddr (car fragments)) 1)) (cdr fragments))
+                        (cons (list 0 i 1) fragments)))]
+             [else (loop (+ i 1) j fragments)]))])))
+
+  (define (variable-options type)
+    ;; the top-level names whose current values the type accepts, alphabetically
+    (if (not (module-type? type)) '()
+        (list-sort option<?
+          (fold-right
+            (lambda (sym out)
+              (let ([value (and (editor-symbol? sym) (top-level-value sym))])
+                (if (and value (guard (ex [else #f]) (edoc:type-accepts? type value)))
+                  (cons (make-option (symbol->string sym) (symbol->string sym)
+                          (if (procedure? value) (completion-hint sym) (edoc:type-spelling type value)) 'editor)
+                        out)
+                  out)))
+            '() (environment-symbols (interaction-environment))))))
+
+  (define (typed-options context)
+    ;; ((option . fragments) ...) for an argument context, best first, or #f
+    ;; when the type offers nothing the token matches
+    (let* ([type (car context)] [token (cadddr context)] [in-string? (car (cddddr context))]
+           [all (append (value-options type token in-string?)
+                        (if in-string? '() (producer-options type))
+                        (if in-string? '() (variable-options type)))])
+      (cond
+        [(null? all) #f]
+        [(string=? token "") (map (lambda (o) (cons o '())) all)]
+        [else
+         ;; substring matches lead, earliest first; subsequence matches follow
+         (let* ([matched (filter values (map (lambda (o) (let ([f (loose-match (option-label o) token)]) (and f (cons o f)))) all))]
+                [tight? (lambda (entry) (and (null? (cdr (cdr entry))) (= (caddr (car (cdr entry))) (string-length token))))]
+                [ranked (append (list-sort (lambda (a b) (< (cadr (car (cdr a))) (cadr (car (cdr b))))) (filter tight? matched))
+                                (filter (lambda (e) (not (tight? e))) matched))])
+           (and (pair? ranked) ranked))])))
+
+  (define (typed-candidate entry)
+    ;; a prompt candidate from (option . fragments): the label with its
+    ;; matched characters underlined, the hint in grey, the insertion apart
+    (let* ([option (car entry)] [fragments (cdr entry)]
+           [label (option-label option)] [hint (option-hint option)]
+           [text (if (string=? hint "") label (string-append label "  " hint))]
+           [styles (make-vector (string-length text) 'chrome)]
+           [face (option-face option)])
+      (style:fill-range! styles 0 (string-length label) face)
+      (for-each
+        (lambda (fragment)
+          (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
+        fragments)
+      (prompt:make-candidate (option-insert option) text styles)))
+
+  (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
+        (text string "the prompt input")
+        (pos integer "the cursor position")
+        (returns (or (list-of string) #f)))
+  (define (completion-candidates text pos)
+    (let* ([context (argument-context text pos)] [options (and context (typed-options context))])
+      (and options (map (lambda (entry) (option-label (car entry))) options))))
 
   (define hint-cache (make-weak-eq-hashtable))
 
@@ -118,24 +338,33 @@
         fragments)
       (prompt:make-candidate name label styles)))
 
-  (define (symbol-completer keep?)
+  (define (symbol-completer keep? typed?)
     (prompt:make-completer
       (lambda (s pos)
-        (let ([range (symbol-range s pos)])
-          (if (not range) (values #f #f '() '())
-              (let* ([part (substring s (car range) (cdr range))]
-                     ;; Symbols go in as they are: the matcher keeps each one
-                     ;; prepared across keystrokes.
-                     [ranked (fuzzy:rank part (filter keep? (environment-symbols (interaction-environment))))]
-                     [names (map fuzzy:name ranked)])
-                (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
-                  (map completion-candidate ranked))))))
+        (define (symbols)
+          (let ([range (symbol-range s pos)])
+            (if (not range) (values #f #f '() '())
+                (let* ([part (substring s (car range) (cdr range))]
+                       ;; Symbols go in as they are: the matcher keeps each one
+                       ;; prepared across keystrokes.
+                       [ranked (fuzzy:rank part (filter keep? (environment-symbols (interaction-environment))))]
+                       [names (map fuzzy:name ranked)])
+                  (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
+                    (map completion-candidate ranked))))))
+        ;; an argument with a documented type offers its own candidates; a
+        ;; sole one is what Tab inserts, else the token stays and Tab lists
+        (let* ([context (and typed? (argument-context s pos))]
+               [options (and context (typed-options context))])
+          (if (not options) (symbols)
+              (values (cadr context) (caddr context)
+                (if (null? (cdr options)) (list (option-insert (car (car options)))) (list (cadddr context)))
+                (map typed-candidate options)))))
       ;; a closure: the completers are built while the module loads, before
       ;; the settling procedures below are defined
       (lambda (text pos) (settle-completion text pos))))
 
-  (define complete-symbol (symbol-completer (lambda (sym) #t)))
-  (define complete-editor-symbol (symbol-completer editor-symbol?))
+  (define complete-symbol (symbol-completer (lambda (sym) #t) #t))
+  (define complete-editor-symbol (symbol-completer editor-symbol? #f))
 
   ;;; Signatures ----------------------------------------------------------------
 
