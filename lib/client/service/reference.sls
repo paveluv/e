@@ -5,8 +5,19 @@
 (library (reference)
   (export fetch! page page! lookup entries browser-url)
   (import (chezscheme) (prefix (client) client:) (prefix (doc) doc:)
-          (prefix (kernel) kernel:) (prefix (datum) datum:))
-  (define (documents) (map doc:to-datum (doc:entries)))
+          (prefix (edoc) edoc:) (prefix (kernel) kernel:) (prefix (datum) datum:))
+  (define (documents)
+    ;; Registered module documentation, then entries read from the top-level
+    ;; procedures defined with edefine, for the names the registry leaves out.
+    (let* ([registered (doc:entries)]
+           [covered (apply append (map doc:names registered))])
+      (append (map doc:to-datum registered)
+              (fold-left
+                (lambda (out sym)
+                  (let ([value (and (not (memq sym covered)) (top-level-bound? sym) (top-level-value sym))])
+                    (let ([entry (and (procedure? value) (edoc:edoc-entry sym value))])
+                      (if entry (cons entry out) out))))
+                '() (environment-symbols (interaction-environment))))))
   (define current 'unknown)
   (define (forget-page!) (set! current 'unknown))
   (define invalidation

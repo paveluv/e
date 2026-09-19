@@ -96,3 +96,36 @@ through module registration or reload; changing a retained input has no effect.
 The `(edit)` module uses this mechanism for commands such as `replace!!` and
 `replace-all!`. Registered forms also drive the grey parameter suggestion in
 `M-x`, so newly documented procedures receive prompt hints automatically.
+
+### Documented definitions
+
+A procedure can carry its documentation in its own definition instead:
+
+```scheme
+(edefine (visit-file! path)
+  (edoc "Visit a file in the current window, creating or reusing its buffer."
+        (path file "the file to visit")
+        (returns buffer))
+  ...)
+```
+
+`edefine`, from the `(edoc)` library, binds the procedure and keeps the
+`edoc` form at the head of its body as a quoted datum: a constant the body
+discards, so it costs nothing to run, while the procedure's recorded source
+keeps it. `edefine` also accepts a `case-lambda` whose clauses each open with
+an `edoc`. The form is checked while the module expands: the summary is a
+string, every formal has exactly one clause `(name type note ...)` and no
+other name appears, a rest parameter's type is a `list-of`, `returns` appears
+at most once, and every type is one of `file`, `directory`, `buffer`,
+`window`, `command`, `symbol`, `key`, `mode`, `style`, `string`, `integer`,
+`boolean`, `procedure`, `any`, or `(one-of literal ...)`, `(or type ...)`,
+`(list-of type)`. An `edoc` anywhere else is a syntax error.
+
+`edoc-of` reads a procedure's signatures back from its source, and
+`edoc-entry` shapes them as an entry in the format above, under the source
+`edoc` and the chapter "Documented definitions". A head sends those entries
+with every describe query for the top-level procedures the registry does not
+already cover, so a documented definition gets a describe page and the `M-x`
+parameter suggestion without a `doc:register!` batch. The types are meant
+for tooling: they describe what an argument is, and later choose how it is
+completed; they are never checked at run time.

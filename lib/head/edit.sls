@@ -98,7 +98,7 @@
   )
   ;; The system-specific layer -- libc, termios, signals -- comes
   ;; from (sys).
-  (import (chezscheme) (prefix (sys) sys:)
+  (import (chezscheme) (only (edoc) edefine edoc) (prefix (sys) sys:)
           (prefix (store) store:) (prefix (text) text:) (prefix (datum) datum:)
           (prefix (property) property:)
           (prefix (kernel) kernel:) (prefix (actor) actor:)
@@ -852,7 +852,9 @@
                        (parameterize ([message-source 'visit-file!])
                          (set-message! (format "Cannot reread ~a" path)))]))))))))))
 
-  (define (visit-file! path)
+  (edefine (visit-file! path)
+    (edoc "Visit a file in the current window, creating or reusing its buffer; nothing is written to disk."
+          (path file "the file to visit"))
     ;; Direct visits and the interactive picker share acquisition and the
     ;; buffer-only merge/reread/cancel flow. Visiting never writes to disk.
     (guard (ex [else
@@ -1125,7 +1127,9 @@
 
   ;;; Buffer and window commands ---------------------------------------------
 
-  (define (show-buffer! b)
+  (edefine (show-buffer! b)
+    (edoc "Show a buffer in the current window and put it first in the recency list."
+          (b buffer "the buffer to show"))
     (head:add-buffer! b)
     ;; The picker is inventory, not a document visit, including when its
     ;; own row is opened. Keep it behind documents in the recency list.
@@ -1198,7 +1202,8 @@
   ;; window geometry helpers live in (head); the commands over them are
   ;; here.
 
-  (define (line-numbers!)
+  (edefine (line-numbers!)
+    (edoc "Toggle line numbers in the current buffer.")
     (let ([b (current-buffer)])
       (head:buffer-line-numbers-setting-set! b (not (head:buffer-line-numbers b)))
       (paint:invalidate-screen-cache!)
@@ -1286,7 +1291,9 @@
       (when (and name (not (string=? name "")))
         (show-buffer! (head:new-buffer name)))))
 
-  (define (kill-buffer! b)
+  (edefine (kill-buffer! b)
+    (edoc "Kill a buffer: delete its shared text if it has any, and forget it here."
+          (b buffer "the buffer to kill"))
     (when (head:buffer-store-id b)
       (store:delete! head:ui-actor (head:buffer-store-id b)))
     (retire-buffer! b))
@@ -1333,7 +1340,8 @@
       (head:dispatch-app-event! "FOCUS"))
     current-window)
 
-  (define (other-window!)
+  (edefine (other-window!)
+    (edoc "Select the next window in layout order.")
     (focus-window! (next-window current-window)))
 
   (define (focus-window-direction! direction)
@@ -1373,8 +1381,10 @@
     ;; it back to select-window!.
     current-window)
 
-  (define (select-window! w)
-    ;; Make w current when it is still on screen; -> whether it was.
+  (edefine (select-window! w)
+    (edoc "Select a window when it is still on screen; the pop-up is never selected."
+          (w window "the window to select")
+          (returns boolean "whether the window was selected"))
     (and (memq w windows) (not (head:popup? w)) (begin (focus-window! w) #t)))
 
   (define (split-current-window! orientation b . first?)
@@ -1402,30 +1412,33 @@
              (head:replace-layout-window! current-window node)
              w))))
 
-  (define (split-window-below!)
-    ;; Split only the selected leaf, as in Emacs; the new window is below.
+  (edefine (split-window-below!)
+    (edoc "Split the selected window into a stacked pair; the new window is below and shows the same buffer.")
+    ;; Split only the selected leaf, as in Emacs.
     (unless (split-current-window! 'below (head:window-buffer current-window))
       (set! message "Not enough room to split")))
 
-  (define (split-window-right!)
+  (edefine (split-window-right!)
+    (edoc "Split the selected window into a side-by-side pair; the new window is to the right.")
     (unless (split-current-window! 'right (head:window-buffer current-window))
       (set! message "Not enough room to split"))
     (void))
 
-  (define (split-window-above!)
-    ;; The same stacked split with the new window above the selected one.
+  (edefine (split-window-above!)
+    (edoc "Split the selected window into a stacked pair; the new window is above.")
     (unless (split-current-window! 'below (head:window-buffer current-window) #t)
       (set! message "Not enough room to split"))
     (void))
 
-  (define (split-window-left!)
-    ;; The same side-by-side split with the new window to the left.
+  (edefine (split-window-left!)
+    (edoc "Split the selected window into a side-by-side pair; the new window is to the left.")
     (unless (split-current-window! 'right (head:window-buffer current-window) #t)
       (set! message "Not enough room to split"))
     (void))
 
-  (define (wrap! . on)
-    ;; Toggle (or set) soft-wrapping of long lines in the current window.
+  (edefine (wrap! . on)
+    (edoc "Toggle soft wrapping of long lines in the current window, or set it."
+          (on (list-of boolean) "an explicit setting instead of a toggle"))
     (head:window-wrap-set! current-window
                            (if (pair? on) (car on)
                              (not (paint:window-wrapped? current-window))))
@@ -1435,8 +1448,9 @@
                           (if (paint:window-wrapped? current-window) "on" "off")))
     (void))
 
-  (define (resize-window! delta)
-    ;; Resize at the nearest enclosing stacked split.
+  (edefine (resize-window! delta)
+    (edoc "Move the boundary of the nearest enclosing stacked split."
+          (delta integer "rows to give the selected side; negative takes them"))
     (let loop ([child current-window])
       (let ([parent (head:layout-parent layout-root child)])
         (cond
@@ -1451,7 +1465,8 @@
                parent (max 1 (- (head:layout-split-second-weight parent) signed))))]
           [else (loop parent)]))))
 
-  (define (delete-window!)
+  (edefine (delete-window!)
+    (edoc "Close the selected window; its sibling subtree takes the space. The last window and the pop-up stay.")
     (cond
       [(head:popup? current-window) (set! message "The pop-up window stays")]
       [(null? (cdr (remq (head:popup) (head:layout-leaves layout-root))))
@@ -1465,7 +1480,8 @@
          (head:replace-layout-window! parent sibling)
          (focus-window! next))]))
 
-  (define (delete-other-windows!)
+  (edefine (delete-other-windows!)
+    (edoc "Keep only the selected window.")
     (head:set-layout-root! current-window))
 
   (define (display-buffer! b)

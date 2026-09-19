@@ -232,6 +232,16 @@
               (eq? source (head:buffer-fact view 'markdown-input #f))
               (exists (lambda (line) (string:prefix? "procedure: (markdown:view!" line))
                 (vector->list (head:buffer-lines view)))))))
+     ;; A definition documented in its own body reaches the page through the
+     ;; head's contribution to the query, with no registry batch involved. Read
+     ;; the screen: an evaluation right after a full-page repaint would wait on
+     ;; the wire while the head waits on the PTY.
+     (send! "\x8;fsplit-window-left!\r")
+     (wait-for! 'edoc-documents-a-definition-without-a-registry-entry
+       (lambda () (and (find-cell "libraries: (edit)")
+                       (find-cell "source: edoc, Documented definitions")
+                       (find-cell "side-by-side pair")))
+       5000)
 
      (send! "\x18;\x3;")                ; C-x C-c
      (test:await 'editor-exits drain!)
