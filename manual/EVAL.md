@@ -106,17 +106,12 @@ mouse wheel also page, including when Tab is cycling alternatives. Clicking a
 candidate fills that symbol and closes the list. Leaving the symbol or cancelling M-x also hides
 the pop-up. No match leaves your input intact.
 
-The completion list underlines the character occurrences used by the matcher.
-For now, a diagnostic suffix such as `[2 segments]` shows how many contiguous
-pieces it matched between the query and that symbol. Every matched character,
-including punctuation, belongs to a segment; an empty query has zero.
-These are the alignment's segments, not a minimum edit distance. The matcher
-tries longer leading segments first and backtracks when that choice cannot
-complete the match.
-The underlines and counts follow the symbol as it reads now: a Tab that
-normalizes or cycles it refreshes them, as editing does. After `delwin` becomes
-`delete-window`, the list underlines that one segment.
-The suffix is display-only: clicking anywhere in the label inserts just the symbol.
+The completion list shows one candidate per row: the name, with the
+character occurrences the matcher used underlined, then in grey its arguments
+and its `edoc` summary when it has one; a procedure without an `edoc` shows
+the parameters of its source, or its arity. A long hint wraps onto further
+rows, indented under itself. The hint is display-only: clicking anywhere in a
+candidate's rows inserts just the symbol.
 
 Bracketed multiline paste keeps its line breaks and runs the same Scheme
 indenter over the resulting expression. This makes copied definitions and

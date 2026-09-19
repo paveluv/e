@@ -107,7 +107,9 @@ window temporarily, then returns to the outer prompt and its input.
 Ordinary prompts use prefix completion. Tab extends input to the longest
 common prefix. When an ambiguous prefix cannot be extended, Tab shows
 `<completions>` in the pop-up window (window 0), which appears above the echo
-area, or, for a window prompt, candidates above its input. Repeated Tab cycles
+area, or, for a window prompt, candidates above its input. Plain candidates
+fill columns; labelled ones, as M-x's, take a row each, a long label wrapping
+under its hint. Repeated Tab cycles
 through pages when the list is taller than the available space. Clicking a
 candidate fills the input without opening it or moving focus away from the
 prompt. Hover makes the candidate label bold with a dotted underline without

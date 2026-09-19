@@ -194,9 +194,11 @@
      (send! "\t")
      (wait-for! 'completions-take-the-window
                 (lambda () (and (find-cell "<completions>")
-                                ;; normalized to split-window-, one segment each
-                                (find-cell "split-window-below! [1 segment]")
-                                (find-cell "split-window-above! [1 segment]")))
+                                ;; each candidate carries its edoc hint, one per
+                                ;; row, a long hint wrapping under itself
+                                (find-cell "split-window-below!  ()  Split the selected")
+                                (find-cell "split-window-above!  ()  Split the selected")
+                                (find-cell "shows the same buffer.")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back

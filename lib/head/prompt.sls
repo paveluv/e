@@ -259,7 +259,52 @@
                                 (trim (- end 1)) (list (car choice) end (caddr choice))))))))
             caddr)))))
 
+  (define (format-rows candidates width)
+    ;; One candidate per row. A label made of the value, two spaces and a
+    ;; hint wraps at word boundaries with its continuation rows indented to
+    ;; the hint; any other label wraps from the margin. Every row of a
+    ;; candidate chooses it.
+    (define (slice styles from to)
+      (let ([out (make-vector (- to from) 'plain)])
+        (do ([i from (+ i 1)]) ((= i to) out)
+          (when (< i (vector-length styles)) (vector-set! out (- i from) (vector-ref styles i))))))
+    (list->vector
+      (apply append
+        (map (lambda (value)
+               (let* ([rich? (candidate? value)]
+                      [chosen (if rich? (candidate-value value) value)]
+                      [label (if rich? (candidate-label value) value)]
+                      [styles (if rich? (candidate-styles value) (make-vector (string-length label) 'plain))]
+                      [head (+ (string-length chosen) 2)]
+                      [indent (if (and (< (* 2 head) width) (> (string-length label) head)
+                                       (string=? (substring label 0 head) (string-append chosen "  ")))
+                                  head 0)]
+                      [tail (substring label indent (string-length label))]
+                      [breaks (paint:compute-breaks tail (max 1 (- width indent)))]
+                      [count (vector-length breaks)])
+                 (map (lambda (i)
+                        (let* ([from (vector-ref breaks i)]
+                               [to (if (= (+ i 1) count) (string-length tail) (vector-ref breaks (+ i 1)))]
+                               [segment (substring tail from to)]
+                               [text (if (= i 0)
+                                         (string-append (substring label 0 indent) segment)
+                                         (string-append (make-string indent #\space) segment))]
+                               [faces (if (= i 0)
+                                          (slice styles 0 (+ indent to))
+                                          (list->vector
+                                            (append (make-list indent 'plain)
+                                                    (vector->list (slice styles (+ indent from) (+ indent to))))))])
+                          (make-row text faces #f (list (list 0 (string-length text) chosen)))))
+                      (iota count))))
+             candidates))))
+
   (define (format-columns candidates width labeler highlight?)
+    ;; Labelled candidates take a row each; plain strings fill columns.
+    (if (exists candidate? candidates)
+        (format-rows candidates width)
+        (format-grid candidates width labeler highlight?)))
+
+  (define (format-grid candidates width labeler highlight?)
     (let* ([labels (map (lambda (value) (if (candidate? value) (candidate-label value) (labeler value)))
                      candidates)]
            [column (min width (+ 2 (fold-left max 0 (map glyph:cells labels))))]

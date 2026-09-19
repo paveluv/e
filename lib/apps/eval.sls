@@ -27,6 +27,7 @@
           (prefix (kernel) kernel:)
           (prefix (string) string:)
           (prefix (fuzzy) fuzzy:)
+          (prefix (edoc) edoc:)
           (prefix (style) style:)
           (prefix (paint) paint:)
           (prefix (log) log:)
@@ -62,12 +63,33 @@
                  (and (eq? kind 'atomic) (symbol? value) (= from start) (cons start end))]
                 [else (scan)])))))))
 
+  (define hint-cache (make-weak-eq-hashtable))
+
+  (define (completion-hint sym)
+    ;; The grey text beside a candidate: the arguments, then its edoc summary;
+    ;; "" when nothing local is known. The list wraps it as needed. Cached per
+    ;; procedure: stripping a source datum is costly and the answer never
+    ;; changes for the same procedure.
+    (let ([value (and (top-level-bound? sym) (top-level-value sym))])
+      (if (not (procedure? value)) ""
+          (or (eq-hashtable-ref hint-cache value #f)
+              (let* ([signatures (edoc:edoc-of value)]
+                     [arguments
+                      (if signatures
+                          (format "~s" (edoc:signature-formals (car signatures)))
+                          (let ([tokens (guard (ex [else #f]) (local-params value))])
+                            (if tokens (string-append "(" (string:join tokens " ") ")") "")))]
+                     [summary (if signatures (edoc:signature-summary (car signatures)) "")]
+                     [hint (if (string=? summary "") arguments (string-append arguments "  " summary))])
+                (eq-hashtable-set! hint-cache value hint)
+                hint)))))
+
   (define (completion-candidate match)
+    ;; The label: the name with its matched characters underlined, then in
+    ;; grey what is known about it, kept apart from the inserted value.
     (let* ([name (fuzzy:name match)] [fragments (fuzzy:fragments match)]
-           ;; Temporary diagnostics while tuning fuzzy discovery. Keep this
-           ;; suffix separate from the candidate value so it cannot be inserted.
-           [label (format "~a [~a segment~a]" name (length fragments)
-                    (if (= (length fragments) 1) "" "s"))]
+           [hint (completion-hint (string->symbol name))]
+           [label (if (string=? hint "") name (string-append name "  " hint))]
            [styles (make-vector (string-length label) 'chrome)]
            [face (if (editor-symbol? (string->symbol name)) 'editor 'plain)]
            [matched (list face 'mark)])
@@ -158,6 +180,18 @@
           (reference:lookup sym))
         (and best (signature-tokens best)))))
 
+  (define (local-params v)
+    ;; The parameters of procedure v as display tokens, from its source, else
+    ;; its arity in brackets.
+    (let ([src (((inspect/object v) 'code) 'source)])
+      (cond
+        [(and src (pair? (src 'value)) (eq? (car (src 'value)) 'lambda))
+         (let loop ([p (cadr (src 'value))])
+           (cond [(null? p) '()]
+                 [(symbol? p) (list (format ". ~a" p))]
+                 [else (cons (format "~a" (car p)) (loop (cdr p)))]))]
+        [else (arity-params (procedure-arity-mask v))])))
+
   (define (symbol-params sym)
     ;; The parameters of the procedure sym names, as a list of display
     ;; tokens: from its live describe entry when available, else its source,
@@ -165,18 +199,7 @@
     (and (top-level-bound? sym)
          (let ([v (top-level-value sym)])
            (and (procedure? v)
-                (let ([src (((inspect/object v) 'code) 'source)])
-                  (cond
-                    [(described-params sym)]
-                    [(and src
-                          (pair? (src 'value))
-                          (eq? (car (src 'value)) 'lambda))
-                     (let loop ([p (cadr (src 'value))])
-                       (cond [(null? p) '()]
-                             [(symbol? p) (list (format ". ~a" p))]
-                             [else (cons (format "~a" (car p))
-                                         (loop (cdr p)))]))]
-                    [else (arity-params (procedure-arity-mask v))]))))))
+                (or (described-params sym) (local-params v))))))
 
   (define (drop-params tokens n)
     ;; The parameter tokens left after n arguments: one is consumed per
