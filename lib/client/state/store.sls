@@ -3,16 +3,20 @@
 ;; A change notice marks an entry stale; the next read asks the base for the
 ;; chain since the cached revision and applies it, so ordinary edits cost a
 ;; delta on the wire, never the buffer's text.
-(library (store)
+(import (only (edoc) elibrary))
+(elibrary (store)
   (export create! visit! delete! discard! reset! rename! buffer-list exists? visible? buffer-name find-named find-file
           snapshot snapshot-state snapshot-since revision line-count line extract
           property properties set-property! set-properties!
           edit! edit-with-snapshot! history-step! undo-authors history blame marks set-marks!
           validate-properties validate-edit-context watch! unsubscribe!)
-  (import (only (edoc) edefine edoc) (chezscheme)
-          (prefix (client) client:) (prefix (kernel) kernel:)
-          (prefix (identity) identity:) (prefix (property) property:)
-          (prefix (datum) datum:) (prefix (text) text:))
+  (import (chezscheme)
+          (prefix (client) client:)
+          (prefix (kernel) kernel:)
+          (prefix (identity) identity:)
+          (prefix (property) property:)
+          (prefix (datum) datum:)
+          (prefix (text) text:))
 
   (define validate-properties property:validate)
   (define validate-edit-context property:edit-context)
@@ -60,9 +64,9 @@
     (kernel:call-with-runtime-registrations
       (lambda () (client:subscribe! 'changed mark-stale!))))
 
-  (edefine (watch! wake)
-    (edoc "Subscribe to invalidations from the base: (values token take), waking the head on changes."
-          (wake thunk "run when something changes"))
+  (edoc "Subscribe to invalidations from the base: (values token take), waking the head on changes."
+        (wake thunk "run when something changes"))
+  (define (watch! wake)
     (client:set-wake! wake)
     (unless watching? (client:request 'watch-head) (set! watching? #t))
     (client:watch! 'changed wake))
@@ -123,58 +127,54 @@
     (hashtable-delete! cache id)
     (hashtable-delete! stale id)
     (hashtable-delete! chains id))
-  (edefine (buffer-list)
-    (edoc "Every buffer's id."
-          (returns (list-of integer)))
+  (edoc "Every buffer's id."
+        (returns (list-of integer)))
+  (define (buffer-list)
     (client:request 'buffers))
-  (edefine (exists? id)
-    (edoc "Whether a buffer id is live."
-          (id integer "the buffer id")
-          (returns boolean))
+  (edoc "Whether a buffer id is live."
+        (id integer "the buffer id")
+        (returns boolean))
+  (define (exists? id)
     (and (cached id) #t))
-  (edefine (buffer-name id)
-    (edoc "A copy of a buffer's name."
-          (id integer "the buffer id")
-          (returns string))
+  (edoc "A copy of a buffer's name."
+        (id integer "the buffer id")
+        (returns string))
+  (define (buffer-name id)
     (string-copy (car (required id))))
-  (edefine (find-named name)
-    (edoc "The id of the buffer with a name, or #f."
-          (name string "the name")
-          (returns (or integer #f)))
+  (edoc "The id of the buffer with a name, or #f."
+        (name string "the name")
+        (returns (or integer #f)))
+  (define (find-named name)
     (find (lambda (id) (equal? (buffer-name id) name)) (buffer-list)))
-  (edefine (find-file path)
-    (edoc "The id of the buffer visiting a file, or #f."
-          (path file "the file")
-          (returns (or integer #f)))
+  (edoc "The id of the buffer visiting a file, or #f."
+        (path file "the file")
+        (returns (or integer #f)))
+  (define (find-file path)
     (let ([id (client:request 'find-file path)])
       (when id (forget! id))
       id))
-  (edefine (properties id)
-    (edoc "Every fact of a buffer, copied."
-          (id integer "the buffer id")
-          (returns list))
+  (edoc "Every fact of a buffer, copied."
+        (id integer "the buffer id")
+        (returns list))
+  (define (properties id)
     (datum:copy (cadddr (required id))))
-  (edefine property
+  (edoc "A buffer's fact, or a fallback when absent, #f by default."
+        (id integer "the buffer id")
+        (key symbol "the fact")
+        (fallback any "the value when absent")
+        (returns any))
+  (define property
     (case-lambda
       [(id key)
-       (edoc "A buffer's fact, or #f when absent."
-             (id integer "the buffer id")
-             (key symbol "the fact")
-             (returns any))
        (property id key #f)]
       [(id key fallback)
-       (edoc "A buffer's fact, or a fallback when absent."
-             (id integer "the buffer id")
-             (key symbol "the fact")
-             (fallback any "the value when absent")
-             (returns any))
        (cond [(assq key (cadddr (required id))) => (lambda (fact) (datum:copy (cdr fact)))]
          [else fallback])]))
-  (edefine (visible? actor id)
-    (edoc "Whether an actor is in a buffer's audience."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (returns boolean))
+  (edoc "Whether an actor is in a buffer's audience."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (returns boolean))
+  (define (visible? actor id)
     (and (exists? id) (identity:in-audience? actor (property id 'audience 'all))))
 
   (define (capture id basis)
@@ -189,52 +189,50 @@
       (if chain
           (append old (list chain))
           (or (read-state id basis) (error 'snapshot-state "no buffer" id)))))
-  (edefine snapshot-state
+  (edoc "A buffer's text, revision and facts from one read, and the changes since a basis when one is given: (values text revision facts [changes])."
+        (id integer "the buffer id")
+        (basis (or integer #f) "the earlier revision"))
+  (define snapshot-state
     (case-lambda
       [(id)
-       (edoc "A buffer's text, revision and facts: (values text revision facts)."
-             (id integer "the buffer id"))
        (snapshot-state id #f)]
       [(id basis)
-       (edoc "A buffer's text, revision, facts and the changes since a basis: (values text revision facts changes)."
-             (id integer "the buffer id")
-             (basis (or integer #f) "the earlier revision"))
        (let ([state (capture id basis)])
          (if basis
              (values (cadr state) (caddr state) (datum:copy (cadddr state)) (list-ref state 4))
              (values (cadr state) (caddr state) (datum:copy (cadddr state)))))]))
-  (edefine (snapshot id)
-    (edoc "A buffer's text and revision: (values text revision)."
-          (id integer "the buffer id"))
+  (edoc "A buffer's text and revision: (values text revision)."
+        (id integer "the buffer id"))
+  (define (snapshot id)
     (let ([state (capture id #f)]) (values (cadr state) (caddr state))))
-  (edefine (snapshot-since id basis)
-    (edoc "A buffer's text, revision and the changes since a basis: (values text revision changes)."
-          (id integer "the buffer id")
-          (basis (or integer #f) "the earlier revision"))
+  (edoc "A buffer's text, revision and the changes since a basis: (values text revision changes)."
+        (id integer "the buffer id")
+        (basis (or integer #f) "the earlier revision"))
+  (define (snapshot-since id basis)
     ;; The per-frame catch-up: no facts copy, which would include a file
     ;; baseline the size of the buffer.
     (let ([state (capture id basis)]) (values (cadr state) (caddr state) (list-ref state 4))))
-  (edefine (revision id)
-    (edoc "A buffer's revision."
-          (id integer "the buffer id")
-          (returns integer))
+  (edoc "A buffer's revision."
+        (id integer "the buffer id")
+        (returns integer))
+  (define (revision id)
     (caddr (required id)))
-  (edefine (line-count id)
-    (edoc "How many lines a buffer has."
-          (id integer "the buffer id")
-          (returns integer))
+  (edoc "How many lines a buffer has."
+        (id integer "the buffer id")
+        (returns integer))
+  (define (line-count id)
     (vector-length (cadr (required id))))
-  (edefine (line id row)
-    (edoc "One line of a buffer."
-          (id integer "the buffer id")
-          (row integer "the row")
-          (returns string))
+  (edoc "One line of a buffer."
+        (id integer "the buffer id")
+        (row integer "the row")
+        (returns string))
+  (define (line id row)
     (vector-ref (cadr (required id)) row))
-  (edefine (extract id span)
-    (edoc "A span's content in a buffer, as lines."
-          (id integer "the buffer id")
-          (span (record span) "the span")
-          (returns list))
+  (edoc "A span's content in a buffer, as lines."
+        (id integer "the buffer id")
+        (span (record span) "the span")
+        (returns list))
+  (define (extract id span)
     (text:extract (cadr (required id)) span))
 
   (define (check-actor actor)
@@ -244,77 +242,77 @@
     (let ([result (apply client:request operation id args)])
       (stale! id 'facts)
       result))
-  (edefine (create! actor name lines . facts)
-    (edoc "Create a buffer in the base with a name, lines and optional facts; its id."
-          (actor any "the actor identity")
-          (name string "the name")
-          (lines (or list vector) "the lines")
-          (facts (list-of list) "a fact batch, at most one")
-          (returns integer))
+  (edoc "Create a buffer in the base with a name, lines and optional facts; its id."
+        (actor any "the actor identity")
+        (name string "the name")
+        (lines (or list vector) "the lines")
+        (facts (list-of list) "a fact batch, at most one")
+        (returns integer))
+  (define (create! actor name lines . facts)
     (check-actor actor)
     (apply client:request 'create name lines facts))
-  (edefine (visit! actor name lines facts)
-    (edoc "Visit a file as a buffer in the base: (values id created?)."
-          (actor any "the actor identity")
-          (name string "the name")
-          (lines (or list vector) "the lines read")
-          (facts list "the file facts"))
+  (edoc "Visit a file as a buffer in the base: (values id created?)."
+        (actor any "the actor identity")
+        (name string "the name")
+        (lines (or list vector) "the lines read")
+        (facts list "the file facts"))
+  (define (visit! actor name lines facts)
     (check-actor actor)
     (let ([result (client:request 'visit name lines facts)])
       (forget! (car result))
       (apply values result)))
-  (edefine (delete! actor id)
-    (edoc "Delete a buffer."
-          (actor any "the actor identity")
-          (id integer "the buffer id"))
+  (edoc "Delete a buffer."
+        (actor any "the actor identity")
+        (id integer "the buffer id"))
+  (define (delete! actor id)
     (mutate actor id 'delete '()) (void))
-  (edefine (discard! actor id revision facts)
-    (edoc "Delete a buffer only while its reviewed revision and facts still hold; whether it was deleted."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (revision integer "the reviewed revision")
-          (facts list "the reviewed facts")
-          (returns boolean))
+  (edoc "Delete a buffer only while its reviewed revision and facts still hold; whether it was deleted."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (revision integer "the reviewed revision")
+        (facts list "the reviewed facts")
+        (returns boolean))
+  (define (discard! actor id revision facts)
     (mutate actor id 'discard (list revision facts)))
-  (edefine (reset! actor id lines . options)
-    (edoc "Replace a buffer's baseline wholesale, with optional facts and a reviewed state; the new revision, or #f."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (lines (or list vector) "the lines")
-          (options (list-of any) "facts, then a reviewed state")
-          (returns (or integer #f)))
+  (edoc "Replace a buffer's baseline wholesale, with optional facts and a reviewed state; the new revision, or #f."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (lines (or list vector) "the lines")
+        (options (list-of any) "facts, then a reviewed state")
+        (returns (or integer #f)))
+  (define (reset! actor id lines . options)
     (mutate actor id 'reset (cons lines options)))
-  (edefine (rename! actor id name)
-    (edoc "Rename a buffer; the accepted name."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (name string "the wanted name")
-          (returns string))
+  (edoc "Rename a buffer; the accepted name."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (name string "the wanted name")
+        (returns string))
+  (define (rename! actor id name)
     (mutate actor id 'rename (list name)))
-  (edefine (set-properties! actor id updates . options)
-    (edoc "Set facts of a buffer, optionally under a review and with a new name; whether accepted."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (updates list "(key . value) facts")
-          (options (list-of any) "a fact review, then a new name")
-          (returns boolean))
+  (edoc "Set facts of a buffer, optionally under a review and with a new name; whether accepted."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (updates list "(key . value) facts")
+        (options (list-of any) "a fact review, then a new name")
+        (returns boolean))
+  (define (set-properties! actor id updates . options)
     (mutate actor id 'properties (cons updates options)))
-  (edefine (set-property! actor id key value)
-    (edoc "Set one fact of a buffer."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (key symbol "the fact")
-          (value datum "its value"))
+  (edoc "Set one fact of a buffer."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (key symbol "the fact")
+        (value datum "its value"))
+  (define (set-property! actor id key value)
     (set-properties! actor id (list (cons key value))))
 
-  (edefine (edit-with-snapshot! actor id basis span replacement . options)
-    (edoc "Apply an edit against a basis, acknowledged with (revision text changes edit-facts) that advances the head's cache."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (basis integer "the revision edited")
-          (span (record span) "the span replaced")
-          (replacement list "the replacement lines")
-          (options (list-of any) "an edit context, then write access"))
+  (edoc "Apply an edit against a basis, acknowledged with (revision text changes edit-facts) that advances the head's cache."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (basis integer "the revision edited")
+        (span (record span) "the span replaced")
+        (replacement list "the replacement lines")
+        (options (list-of any) "an edit context, then write access"))
+  (define (edit-with-snapshot! actor id basis span replacement . options)
     ;; Ask for a delta receipt when the cache holds text at or past the
     ;; basis, then advance the cached text through the receipt's chain.
     ;; The cache stays stale for facts the commit may have changed.
@@ -346,50 +344,50 @@
                 (if delta? (remember-chain! id have changes) (hashtable-set! chains id (reverse changes))))
               (list revision text changes (datum:copy (cadddr detail))))
             detail))))
-  (edefine (edit! actor id basis span replacement . options)
-    (edoc "Apply an edit against a basis: (values applied revision), or (values stale reason)."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (basis integer "the revision edited")
-          (span (record span) "the span replaced")
-          (replacement list "the replacement lines")
-          (options (list-of any) "an edit context, then write access"))
+  (edoc "Apply an edit against a basis: (values applied revision), or (values stale reason)."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (basis integer "the revision edited")
+        (span (record span) "the span replaced")
+        (replacement list "the replacement lines")
+        (options (list-of any) "an edit context, then write access"))
+  (define (edit! actor id basis span replacement . options)
     (let-values ([(status detail) (apply edit-with-snapshot! actor id basis span replacement options)])
       (values status (if (eq? status 'applied) (car detail) detail))))
-  (edefine (history-step! actor id direction scope . access)
-    (edoc "Undo or redo in a buffer under a scope: (values status detail)."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (direction (one-of undo redo) "which way")
-          (scope any "mine, all or (actor who)")
-          (access (list-of any) "write access, at most one"))
+  (edoc "Undo or redo in a buffer under a scope: (values status detail)."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (direction (one-of undo redo) "which way")
+        (scope any "mine, all or (actor who)")
+        (access (list-of any) "write access, at most one"))
+  (define (history-step! actor id direction scope . access)
     (unless (<= (length access) 1) (error 'history-step! "expected one write access"))
     (apply values (mutate actor id 'history-step (list direction scope))))
-  (edefine (undo-authors id)
-    (edoc "The actors with retained live actions in a buffer, newest first."
-          (id integer "the buffer id")
-          (returns list))
+  (edoc "The actors with retained live actions in a buffer, newest first."
+        (id integer "the buffer id")
+        (returns list))
+  (define (undo-authors id)
     (client:request 'undo-authors id))
-  (edefine (history id . count)
-    (edoc "A buffer's newest applied edits as plain data, newest first."
-          (id integer "the buffer id")
-          (count (list-of integer) "how many, at most one")
-          (returns list))
+  (edoc "A buffer's newest applied edits as plain data, newest first."
+        (id integer "the buffer id")
+        (count (list-of integer) "how many, at most one")
+        (returns list))
+  (define (history id . count)
     (apply client:request 'history id count))
-  (edefine (blame id . count)
-    (edoc "A buffer's newest edits with their spans in the current text: (span actor revision) each."
-          (id integer "the buffer id")
-          (count (list-of integer) "how many, at most one")
-          (returns list))
+  (edoc "A buffer's newest edits with their spans in the current text: (span actor revision) each."
+        (id integer "the buffer id")
+        (count (list-of integer) "how many, at most one")
+        (returns list))
+  (define (blame id . count)
     (map (lambda (entry) (cons (text:datum->span (car entry)) (cdr entry)))
       (apply client:request 'blame id count)))
-  (edefine (set-marks! actor id basis updates drops)
-    (edoc "Set and drop this head's marks in a buffer against a basis: (values applied revision) or (values stale revision)."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (basis (or integer #f) "the revision the positions describe")
-          (updates list "(name . position) marks")
-          (drops list "names to remove"))
+  (edoc "Set and drop this head's marks in a buffer against a basis: (values applied revision) or (values stale revision)."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (basis (or integer #f) "the revision the positions describe")
+        (updates list "(name . position) marks")
+        (drops list "names to remove"))
+  (define (set-marks! actor id basis updates drops)
     (check-actor actor)
     (apply values
       (client:request 'marks id basis
@@ -397,11 +395,11 @@
                (cons (car entry) (if (text:span? (cdr entry))
                                    (list 'span (text:span->datum (cdr entry))) (cdr entry)))) updates)
         drops)))
-  (edefine (marks actor id)
-    (edoc "This head's marks in a buffer, (name . position) each."
-          (actor any "the actor identity")
-          (id integer "the buffer id")
-          (returns list))
+  (edoc "This head's marks in a buffer, (name . position) each."
+        (actor any "the actor identity")
+        (id integer "the buffer id")
+        (returns list))
+  (define (marks actor id)
     (check-actor actor)
     (map (lambda (entry)
            (cons (car entry)

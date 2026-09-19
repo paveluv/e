@@ -5,13 +5,19 @@
 ;; https: and reports through log:. The describe facade reexports these
 ;; operations and adds prompts, key annotations, and a Markdown viewer.
 
-(library (reference)
+(import (only (edoc) elibrary))
+(elibrary (reference)
   (export fetch! page page! (rename (doc-lookup lookup) (doc-entries entries)
                               (doc-browser-url browser-url)))
-  (import (only (edoc) edefine edoc) (chezscheme) (prefix (doc) doc:) (prefix (file) file:)
-          (prefix (https) https:) (prefix (log) log:)
-          (prefix (actor) actor:) (prefix (store) store:)
-          (prefix (string) string:) (prefix (text) text:))
+  (import (chezscheme)
+          (prefix (doc) doc:)
+          (prefix (file) file:)
+          (prefix (https) https:)
+          (prefix (log) log:)
+          (prefix (actor) actor:)
+          (prefix (store) store:)
+          (prefix (string) string:)
+          (prefix (text) text:))
 
   (define (data-dir)
     (string-append (file:data-directory) "/describe"))
@@ -30,10 +36,10 @@
     (unless (and (actor:identity? head) (eq? (car head) 'head))
       (error 'reference "expected a requesting head" head)))
 
-  (edefine (page head)
-    (edoc "A head's describe page receipt, (id revision selected-name), or #f when absent or hidden."
-          (head any "the head's identity")
-          (returns (or list #f)))
+  (edoc "A head's describe page receipt, (id revision selected-name), or #f when absent or hidden."
+        (head any "the head's identity")
+        (returns (or list #f)))
+  (define (page head)
     ;; -> (id revision selected-name), or #f if absent/hidden. This receipt
     ;; can be the basis of a refresh, so it cannot replace a newer query or
     ;; recreate a page deleted while its source was being computed.
@@ -46,12 +52,12 @@
                  (and (actor:in-audience? head (if audience (cdr audience) 'all))
                       (list id revision (cdr (assq 'reference-query facts))))))))))
 
-  (edefine (page! head name keys . basis)
-    (edoc "Publish or refresh a head's describe page for a name, annotated with its keys; a basis (id . revision) refreshes an existing page."
-          (head any "the head's identity")
-          (name (or symbol string) "the documented name")
-          (keys (list-of string) "the key spellings bound to it")
-          (basis (list-of pair) "(id . revision) to refresh, at most one"))
+  (edoc "Publish or refresh a head's describe page for a name, annotated with its keys; a basis (id . revision) refreshes an existing page."
+        (head any "the head's identity")
+        (name (or symbol string) "the documented name")
+        (keys (list-of string) "the key spellings bound to it")
+        (basis (list-of pair) "(id . revision) to refresh, at most one"))
+  (define (page! head name keys . basis)
     ;; Keys are plain annotations supplied by the requesting head. Omit
     ;; basis for an explicit selection; pass (id . revision) to refresh it.
     (check-head head)
@@ -471,10 +477,10 @@
     '("binding" "compat" "control" "debug" "expeditor" "foreign" "io"
       "libraries" "numeric" "objects" "smgmt" "syntax" "system" "threads"))
 
-  (edefine (doc-browser-url entry)
-    (edoc "An entry's documentation in the browser: its anchor made absolute against its book's site, or #f."
-          (entry (record doc-entry) "the entry")
-          (returns (or string #f)))
+  (edoc "An entry's documentation in the browser: its anchor made absolute against its book's site, or #f."
+        (entry (record doc-entry) "the entry")
+        (returns (or string #f)))
+  (define (doc-browser-url entry)
     ;; The entry's documentation in the browser: its page anchor made
     ;; absolute against its book's site.  Locally registered entries may
     ;; have no URL.
@@ -509,8 +515,8 @@
         (for-each (lambda (e) (write e port) (newline port)) entries)
         (display ")\n" port))))
 
-  (edefine (fetch!)
-    (edoc "Download the reference corpus, TSPL and CSUG, and rebuild the index; one fetch at a time.")
+  (edoc "Download the reference corpus, TSPL and CSUG, and rebuild the index; one fetch at a time.")
+  (define (fetch!)
     ;; One fetch owns the downloaded chapter files at a time. Readers keep
     ;; the last complete index; no log or transport call runs under its lock.
     (dynamic-wind #t
@@ -572,19 +578,19 @@
             (set! corpus next)
             next))))
 
-  (edefine (doc-lookup name)
-    (edoc "Every entry for a name: the corpus first, then the registered module entries."
-          (name (or symbol string) "the name")
-          (returns (list-of (record doc-entry))))
+  (edoc "Every entry for a name: the corpus first, then the registered module entries."
+        (name (or symbol string) "the name")
+        (returns (list-of (record doc-entry))))
+  (define (doc-lookup name)
     ;; Corpus order (TSPL before CSUG), followed by current module entries.
     (let* ([snapshot (load-data!)]
            [name (if (string? name) (string->symbol name) name)])
       (append (eq-hashtable-ref (cdr snapshot) name '())
               (filter (lambda (entry) (memq name (doc:names entry))) (doc:entries)))))
 
-  (edefine (doc-entries . maybe-pred)
-    (edoc "Every entry of the corpus and the registered modules, optionally filtered."
-          (maybe-pred (list-of procedure) "a predicate on entries, at most one")
-          (returns (list-of (record doc-entry))))
+  (edoc "Every entry of the corpus and the registered modules, optionally filtered."
+        (maybe-pred (list-of procedure) "a predicate on entries, at most one")
+        (returns (list-of (record doc-entry))))
+  (define (doc-entries . maybe-pred)
     (let ([entries (append (car (load-data!)) (doc:entries))])
       (if (pair? maybe-pred) (filter (car maybe-pred) entries) entries))))

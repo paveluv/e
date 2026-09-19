@@ -1,10 +1,16 @@
 ;; session.sls -- one recovery snapshot of shared text and named views.
 ;; The lifecycle pauses writers; the store and VT own their representation.
-(library (session)
+(import (only (edoc) elibrary))
+(elibrary (session)
   (export restore! save! status take-notice!)
-  (import (only (edoc) edefine edoc) (chezscheme) (prefix (store) store:) (prefix (actor) actor:)
-          (prefix (vt) vt:) (prefix (sys) sys:) (prefix (startup) startup:)
-          (prefix (activity) activity:) (prefix (datum) datum:)
+  (import (chezscheme)
+          (prefix (store) store:)
+          (prefix (actor) actor:)
+          (prefix (vt) vt:)
+          (prefix (sys) sys:)
+          (prefix (startup) startup:)
+          (prefix (activity) activity:)
+          (prefix (datum) datum:)
           (prefix (string) string:))
 
   (define format-version 1)
@@ -46,8 +52,8 @@
              (> (string-length name) 21)
              (for-all char-numeric? (string->list (string:tail name 21))))))
 
-  (edefine (restore!)
-    (edoc "Restore the saved session from the base directory: the store's buffers and the heads' checkpoints.")
+  (edoc "Restore the saved session from the base directory: the store's buffers and the heads' checkpoints.")
+  (define (restore!)
     (let* ([directory (startup:base-working-directory)]
            [bytes (sys:call-with-private-input-file (string-append directory "/session")
                     (lambda (port)
@@ -73,8 +79,8 @@
   (define (require-pause!)
     (unless (eq? (activity:phase) 'paused) (error 'session "saving requires a paused base")))
 
-  (edefine (save!)
-    (edoc "Save the session to the base directory atomically, during a lifecycle pause.")
+  (edoc "Save the session to the base directory atomically, during a lifecycle pause.")
+  (define (save!)
     (require-pause!)
     (let-values ([(next-id buffers) (store:export vt:transcript)])
       (let* ([written-at (now)]
@@ -91,9 +97,9 @@
                 (write value port) (newline port))))
           (with-mutex lock (set! saved-at written-at) (set! uncertain? #f))))))
 
-  (edefine (status)
-    (edoc "When the session was saved and restored, whether it is uncertain, and its recovery archives."
-          (returns list))
+  (edoc "When the session was saved and restored, whether it is uncertain, and its recovery archives."
+        (returns list))
+  (define (status)
     (with-mutex lock
       (datum:copy (list (cons 'saved-at saved-at) (cons 'restored-at restored-at) (cons 'session-uncertain? uncertain?)
                     (cons 'recovery-archives archives)))))
@@ -107,9 +113,9 @@
            [count (div seconds (car unit))])
       (format "~a ~a~a ago" count (cdr unit) (if (= count 1) "" "s"))))
 
-  (edefine (take-notice!)
-    (edoc "The pending session notice for the next head, once, or #f."
-          (returns (or string #f)))
+  (edoc "The pending session notice for the next head, once, or #f."
+        (returns (or string #f)))
+  (define (take-notice!)
     (with-mutex lock
       (and notice-pending?
            (begin

@@ -1,35 +1,36 @@
 ;; journal.sls -- the base's log writer, history, and ordered delivery.
-(library (journal)
+(import (only (edoc) elibrary))
+(elibrary (journal)
   (export add! snapshot retention subscribe! unsubscribe! progress)
-  (import (only (edoc) edefine edoc) (rnrs)
+  (import (rnrs)
           (only (chezscheme) current-time time-second time-nanosecond
                 make-mutex with-mutex void make-thread-parameter parameterize)
-          (prefix (kernel) kernel:) (prefix (actor) actor:) (prefix (datum) datum:))
+          (prefix (kernel) kernel:)
+          (prefix (actor) actor:)
+          (prefix (datum) datum:))
 
   ;; This owner is pinned for the base's lifetime. Absolute append indexes
   ;; survive eviction; the ring bounds retained records, not payload bytes.
   (define lock (make-mutex))
   (define subscriptions (kernel:make-registry))
   (define deliveries (kernel:make-delivery-queue))
-  (edefine progress
-    (edoc "Whether a logged message supersedes its component's newest echo line rather than stacking."
-          (value boolean))
-    (make-thread-parameter #f))
+  (edoc "Whether a logged message supersedes its component's newest echo line rather than stacking."
+        (value boolean))
+  (define progress (make-thread-parameter #f))
   (define records (make-vector 1000000 #f))
   (define count 0)
   ;; Growing the ring must not move this floor back over evicted entries.
   (define first 0)
   (define serial 0)
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
-  (edefine retention
+  (edoc "How many records the log keeps, or set it, dropping the oldest."
+        (size integer "the record count")
+        (returns integer))
+  (define retention
     (case-lambda
       [()
-       (edoc "How many records the log keeps."
-             (returns integer))
        (with-mutex lock (vector-length records))]
       [(size)
-       (edoc "Set how many records the log keeps, dropping the oldest."
-             (size integer "the record count"))
        (unless (and (fixnum? size) (> size 0))
          (error 'retention "expected a positive exact record count" size))
        (with-mutex lock
@@ -40,32 +41,22 @@
              (set! records next)
              (set! first from)))
          (vector-length records))]))
-  (edefine snapshot
+  (edoc "Log records from an index on: (values records end first), at most limit of them, of one component and one actor when given."
+        (start integer "the first index")
+        (limit (or integer #f) "how many at most")
+        (component (or symbol #f) "the component, or #f for all")
+        (actor any "the actor, or #f for all"))
+  (define snapshot
     (case-lambda
       [()
-       (edoc "Every log record: (values records end first).")
        (snapshot 0 #f #f)]
       [(start)
-       (edoc "The log records from an index on: (values records end first)."
-             (start integer "the first index"))
        (snapshot start #f #f)]
       [(start limit)
-       (edoc "At most limit log records from an index on: (values records end first)."
-             (start integer "the first index")
-             (limit (or integer #f) "how many at most"))
        (snapshot start limit #f)]
       [(start limit component)
-       (edoc "A component's log records from an index on, at most limit: (values records end first)."
-             (start integer "the first index")
-             (limit (or integer #f) "how many at most")
-             (component (or symbol #f) "the component, or #f for all"))
        (snapshot start limit component #f)]
       [(start limit component actor)
-       (edoc "An actor's records of a component from an index on, at most limit: (values records end first)."
-             (start integer "the first index")
-             (limit (or integer #f) "how many at most")
-             (component (or symbol #f) "the component, or #f for all")
-             (actor any "the actor, or #f for all"))
        ;; Newest matching records, end bookmark, and global retention floor
        ;; from one commit. Expired starts clamp to the floor. Filter and limit
        ;; before copying; immutable entries can be copied outside the writer.
@@ -87,10 +78,10 @@
                                      (loop (- i 1) left out)))))))])
          (values (map datum:copy selected) end first))]))
 
-  (edefine (subscribe! procedure)
-    (edoc "Watch the log: (procedure entry presentation), presentation #f, append or progress; the token unsubscribes."
-          (procedure procedure "the subscriber")
-          (returns integer))
+  (edoc "Watch the log: (procedure entry presentation), presentation #f, append or progress; the token unsubscribes."
+        (procedure procedure "the subscriber")
+        (returns integer))
+  (define (subscribe! procedure)
     ;; -> revocable token. procedure receives (entry presentation), where
     ;; presentation is #f, append or progress. Registration has module lifetime.
     (unless (procedure? procedure) (error 'subscribe! "expected a procedure" procedure))
@@ -98,18 +89,18 @@
       (kernel:registry-add! subscriptions (cons token procedure))
       token))
 
-  (edefine (unsubscribe! token)
-    (edoc "Stop watching the log, by token."
-          (token integer "the token"))
+  (edoc "Stop watching the log, by token."
+        (token integer "the token"))
+  (define (unsubscribe! token)
     (kernel:registry-remove! subscriptions (lambda (entry) (eqv? (car entry) token)))
     (void))
 
-  (edefine (add! component datum . show)
-    (edoc "Add a record under a component, attributed to the current actor; show says how heads present it. The record."
-          (component symbol "the component")
-          (datum datum "the record's data")
-          (show (list-of any) "#f, #t or progress, at most one")
-          (returns list))
+  (edoc "Add a record under a component, attributed to the current actor; show says how heads present it. The record."
+        (component symbol "the component")
+        (datum datum "the record's data")
+        (show (list-of any) "#f, #t or progress, at most one")
+        (returns list))
+  (define (add! component datum . show)
     ;; Attribution follows the work; registration is not required to log it.
     (unless (symbol? component) (error 'add! "expected a component symbol" component))
     (let* ([actor (or (actor:current) '(base e))]
