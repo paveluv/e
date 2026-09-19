@@ -126,12 +126,21 @@
 
 (define standard-libraries '((rnrs) (chezscheme) (scheme)))
 
+(define standard-names
+  ;; every name Chez's environment binds, which the standard libraries claim
+  (let ([t (make-eq-hashtable)])
+    (for-each (lambda (s) (eq-hashtable-set! t s #t)) (environment-symbols (environment '(chezscheme))))
+    t))
+
+(define (standard-library? spec)
+  (or (member spec standard-libraries) (and (pair? spec) (eq? (car spec) 'rnrs))))
+
 (define (resolve-import spec local)
   ;; (library-name . external-name) when spec brings local in, or #f; a
-  ;; standard library's name stands for every name
+  ;; standard library claims the names Chez binds
   (cond
     [(not (pair? spec)) #f]
-    [(or (member spec standard-libraries) (and (pair? spec) (eq? (car spec) 'rnrs))) (cons '(rnrs) local)]
+    [(standard-library? spec) (and (eq-hashtable-ref standard-names local #f) (cons '(rnrs) local))]
     [(eq? (car spec) 'prefix)
      (let ([inner (strip-prefix (caddr spec) local)])
        (and inner (resolve-import (cadr spec) inner)))]

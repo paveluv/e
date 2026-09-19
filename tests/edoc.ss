@@ -81,9 +81,9 @@
        (list (edoc-template 'visit '(path . more)) (first-sentence "Add two numbers. Slowly.") (first-sentence "No end")
              (type-text '(one-of utf-8 latin-1)) (type-text '(or string #f)) (type-text '(list-of buffer)) (type-text '(record frame))
              (edoc-type? 'file) (edoc-type? '(list-of (or window buffer))) (edoc-type? '(record frame))
-             (edoc-type? 'nonsense) (edoc-type? '(list-of)))
+             (edoc-type? '(or position #f)) (edoc-type? 'nonsense) (edoc-type? '(list-of)))
        '("(visit path . more)" "Add two numbers." "No end" "one of utf-8 or latin-1" "string or #f" "list of buffer"
-         "frame record" #t #t #t #f #f))
+         "frame record" #t #t #t #t #f #f))
 
      (check 'describe-entry-is-shaped-from-the-signatures
        (let ([entry (edoc-entry 'visit (edoc-of visit))])

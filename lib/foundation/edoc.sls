@@ -3,7 +3,8 @@
 ;; (edefine (name . formals) (edoc summary clause ...) body ...) binds name
 ;; to a procedure whose body opens with the edoc form as a quoted datum: a
 ;; constant the body discards, so it costs nothing to run, while the
-;; procedure's recorded source keeps it for introspection. edefine also
+;; procedure's recorded source keeps it for introspection; the body proper
+;; gets its own scope, so it may open with definitions. edefine also
 ;; takes a case-lambda whose clauses each open with an edoc. The form is
 ;; checked while the module expands: the summary is a string, every formal
 ;; has exactly one typed clause and nothing else is named, a rest parameter
@@ -36,17 +37,19 @@
   ;;; The vocabulary, for the expander and for run time ---------------------------
 
   (define-syntax vocabulary
-    ;; The editor's notions first, then the language's. A record instance is
-    ;; (record name).
+    ;; The editor's notions first -- a position is a (row . col) pair, a
+    ;; region a slice of a buffer between two -- then the language's. A
+    ;; record instance is (record name); #f stands for itself, for unions
+    ;; such as (or string #f).
     (syntax-rules ()
-      [(_) '(file directory buffer window command symbol key mode style
+      [(_) '(file directory buffer window region position command symbol key mode style
               string char integer number boolean list pair vector bytevector hashtable
               port procedure thunk condition datum any)]))
 
   (define-syntax type-checker
     ;; (checker types t): is t a type over the vocabulary types? A symbol of
-    ;; the vocabulary, (one-of literal ...), (or type type ...), (list-of type)
-    ;; or (record name).
+    ;; the vocabulary, #f, (one-of literal ...), (or type type ...), (list-of
+    ;; type) or (record name).
     (syntax-rules ()
       [(_)
        (lambda (types t)
@@ -54,6 +57,7 @@
          (let ok? ([t t])
            (cond
              [(symbol? t) (and (memq t types) #t)]
+             [(eq? t #f) #t]
              [(and (pair? t) (list? t) (pair? (cdr t)))
               (case (car t)
                 [(one-of) (for-all literal? (cdr t))]
@@ -201,13 +205,15 @@
          (begin
            (check! #'formals #'doc)
            (with-syntax ([kept (spec #'doc)])
-             #'(define name (lambda formals '(edoc . kept) body0 body ...))))]
+             ;; the body in its own scope, so its internal definitions may
+             ;; follow the datum
+             #'(define name (lambda formals '(edoc . kept) (let () body0 body ...)))))]
         [(_ name (case-lambda [formals (edoc . doc) body0 body ...] ...))
          (identifier? #'name)
          (begin
            (for-each check! #'(formals ...) #'(doc ...))
            (with-syntax ([(kept ...) (map spec #'(doc ...))])
-             #'(define name (case-lambda [formals '(edoc . kept) body0 body ...] ...))))]
+             #'(define name (case-lambda [formals '(edoc . kept) (let () body0 body ...)] ...))))]
         [(_ name (edoc . doc) expression)
          (identifier? #'name)
          ;; a value: the datum is attached to the object when it is defined
@@ -286,6 +292,10 @@
                       (not (exists (clause-named? 'parent) #'(body ...)))
                       (not (exists (clause-named? 'parent-rtd) #'(body ...))))]
                 [type-name (syntax->datum type)]
+                [noun (let* ([s (symbol->string type-name)] [n (string-length s)])
+                        ;; a type named to avoid clashing with its constructor
+                        ;; procedure, region-record say, is a region in prose
+                        (if (and (> n 7) (string=? (substring s (- n 7) n) "-record")) (substring s 0 (- n 7)) s))]
                 [library (source-library x)])
            (check-summary! who x #'(summary clause ...))
            (for-each (lambda (clause) (check-clause-shape! who x clause)) #'(clause ...))
@@ -319,7 +329,7 @@
                          (list (attachment constructor (syntax->datum #'summary) clauses 'constructor))
                          '())
                      (if predicate
-                         (list (attachment predicate (format "Whether a value is a ~a." type-name)
+                         (list (attachment predicate (format "Whether a value is a ~a." noun)
                                  (list (list 'value 'any) (list 'returns 'boolean)) 'predicate))
                          '())
                      (apply append
@@ -329,12 +339,12 @@
                                      [procedures (field-procedures type field)])
                                 (append
                                   (list (attachment (car procedures)
-                                          (format "The ~a of a ~a~a" name type-name
+                                          (format "The ~a of a ~a~a" name noun
                                             (if (pair? notes) (string-append ": " (car notes)) "."))
                                           (list instance (list 'returns field-type)) 'accessor))
                                   (if (cdr procedures)
                                       (list (attachment (cdr procedures)
-                                              (format "Set the ~a of a ~a." name type-name)
+                                              (format "Set the ~a of a ~a." name noun)
                                               (list instance (list 'value field-type)) 'mutator))
                                       '()))))
                             fields)))])
@@ -472,6 +482,7 @@
       [(and (pair? t) (eq? (car t) 'or)) (join (map type-text (cdr t)) " or ")]
       [(and (pair? t) (eq? (car t) 'list-of)) (string-append "list of " (type-text (cadr t)))]
       [(and (pair? t) (eq? (car t) 'record)) (format "~a record" (cadr t))]
+      [(eq? t #f) "#f"]
       [else (format "~s" t)]))
 
   (define (join parts separator)
