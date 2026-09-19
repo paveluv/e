@@ -3,7 +3,7 @@
 ;; and both coordinate directions. Public metadata reads own their data.
 (library (render)
   (export prepare header row column character width present breaks)
-  (import (rnrs)
+  (import (rnrs) (only (edoc) edefine edoc)
           (prefix (surface) surface:)
           (prefix (datum) datum:)
           (prefix (glyph) glyph:))
@@ -88,7 +88,15 @@
             (hashtable-set! wanted i #t))) ranges)
       (list-sort < (vector->list (hashtable-keys wanted)))))
 
-  (define (prepare previous id text revision ranges . follow-height)
+  (edefine (prepare previous id text revision ranges . follow-height)
+    (edoc "Project a buffer's text and the demanded surface rows into a frame of terminal cells, reusing the previous frame's rows where the text is unchanged."
+          (previous (or (record frame) #f) "the last frame")
+          (id (or integer #f) "the store buffer id")
+          (text vector "the lines")
+          (revision integer "the text revision")
+          (ranges list "the demanded (from . to) row ranges")
+          (follow-height (list-of integer) "the rows to follow a surface with, at most one")
+          (returns (record frame)))
     ;; A bounded retry handles publication between a header and its ranges.
     ;; Retain only demanded rows on a refill; scrolling cannot grow a history
     ;; cache. An unchanged complete request reuses the private projection.
@@ -134,7 +142,11 @@
                                (fetch (cdr tail))]
                               [else (plain wanted)]))))))))))))
 
-  (define (header frame) (and frame (datum:copy (frame-header frame))))
+  (edefine (header frame)
+    (edoc "A copy of a frame's surface header, or #f for plain text."
+          (frame (or (record frame) #f) "the frame")
+          (returns (or list #f)))
+    (and frame (datum:copy (frame-header frame))))
   (define (line-at frame row)
     (and frame
          (<= 0 row) (< row (vector-length (frame-text frame)))
@@ -143,18 +155,33 @@
                          ;; Derive it without retaining a scrollback cache.
                          (project (vector-ref (frame-text frame) row) #f))])
            (and (line? line) line))))
-  (define (row frame index)
+  (edefine (row frame index)
+    (edoc "A copy of a frame row's (cell-strings styles cell-link-ranges), or #f for plain text."
+          (frame (record frame) "the frame")
+          (index integer "the row")
+          (returns (or list #f)))
     ;; -> owned (cell-strings styles cell-link-ranges), or #f for plain text.
     (let ([line (line-at frame index)])
       (and line (line-styles line)
            (datum:copy (list (line-shown line) (line-styles line) (line-links line))))))
-  (define (width frame row fallback)
+  (edefine (width frame row fallback)
+    (edoc "A frame row's width in cells, or the fallback for plain text."
+          (frame (record frame) "the frame")
+          (row integer "the row")
+          (fallback integer "the width without a projection")
+          (returns integer))
     (let ([line (line-at frame row)]) (if line (vector-length (line-shown line)) fallback)))
   (define (coordinate table at)
     ;; Preserve addressed columns past the text for unclamped pointer input.
     (let ([last (- (vector-length table) 1)])
       (+ (vector-ref table (min at last)) (max 0 (- at last)))))
-  (define (column frame row at . end?)
+  (edefine (column frame row at . end?)
+    (edoc "The cell of a character position in a frame row; interior positions snap to the glyph's start, an interval end expands over a partly selected glyph."
+          (frame (record frame) "the frame")
+          (row integer "the row")
+          (at integer "the character position")
+          (end? (list-of boolean) "whether at ends an interval, at most one")
+          (returns integer))
     ;; Character -> cell. Interior positions snap to the glyph start;
     ;; an interval's end expands to include a partially selected glyph.
     (let ([line (line-at frame row)])
@@ -165,11 +192,22 @@
                 (let end ([i (+ at 1)])
                   (if (= (vector-ref columns i) cell) (end (+ i 1)) (vector-ref columns i)))
                 cell)))))
-  (define (character frame row at)
+  (edefine (character frame row at)
+    (edoc "The character position at a cell of a frame row."
+          (frame (record frame) "the frame")
+          (row integer "the row")
+          (at integer "the cell")
+          (returns integer))
     (let ([line (line-at frame row)])
       (if line (coordinate (line-characters line) at) at)))
 
-  (define (present frame row text replacement styles)
+  (edefine (present frame row text replacement styles)
+    (edoc "A row's shown text with a mode's geometry-preserving replacement and styles projected onto cells; an invalid replacement falls back to the source."
+          (frame (record frame) "the frame")
+          (row integer "the row")
+          (text string "the source line")
+          (replacement (or string vector #f) "the mode's display transform")
+          (styles (or vector #f) "the character styles"))
     ;; Modes supply character styles and geometry-preserving substitutions.
     ;; Surfaces already supply cell styles. Invalid substitutions fall back
     ;; to source, so painting never changes navigation's coordinate system.
@@ -201,7 +239,11 @@
                           (vector-set! out i (vector-ref styles at))))))
                   styles))))
 
-  (define (breaks text width)
+  (edefine (breaks text width)
+    (edoc "The character starts of a text's soft-wrapped segments at a width, measured in cells and breaking only between whole clusters."
+          (text string "the line")
+          (width integer "the columns available")
+          (returns vector))
     ;; Return character starts, measuring cells and breaking only between
     ;; whole clusters. A glyph wider than the viewport still advances once.
     (let* ([line (project text #f)] [n (string-length text)]

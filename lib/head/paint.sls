@@ -41,7 +41,7 @@
           echo-cap update-echo-geometry!
           update-terminal-title! window-screen-position window-position column-at-cell
           place-cursor! terminal-size!)
-  (import (rnrs) (rnrs mutable-strings) (rnrs r5rs)
+  (import (rnrs) (only (edoc) edefine edoc) (rnrs mutable-strings) (rnrs r5rs)
           (only (chezscheme)
                 box void format make-parameter make-weak-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! remq getenv
@@ -60,13 +60,22 @@
 
   ;;; Output primitives ---------------------------------------------------------
 
-  (define (ansi . xs)
+  (edefine (ansi . xs)
+    (edoc "Write values to the terminal output port, displayed and unflushed."
+          (xs (list-of any) "what to write"))
     (for-each (lambda (x) (display x (sys:terminal-output-port))) xs))
 
-  (define (goto r c)
+  (edefine (goto r c)
+    (edoc "Move the terminal cursor to a 1-based row and column."
+          (r integer "the row")
+          (c integer "the column"))
     (ansi "\x1b;[" (number->string r) ";" (number->string c) "H"))
 
-  (define (fit s width)
+  (edefine (fit s width)
+    (edoc "A string padded with spaces or cut to exactly width characters."
+          (s string "the text")
+          (width integer "the wanted length")
+          (returns string))
     (let ([n (string-length s)])
       (if (> n width)
           (substring s 0 width)
@@ -74,8 +83,19 @@
 
   ;;; The row painter ------------------------------------------------------------
 
-  (define (display-editor-line s shown span marks links left styles edge
-                               width bound)
+  (edefine (display-editor-line s shown span marks links left styles edge
+                                width bound)
+    (edoc "Paint one screen row of a line: its columns from left on, styled per column, the region span and marks as backgrounds, hyperlinks as OSC 8, an edge mark for wrapping or truncation, blank past bound."
+          (s (or string vector) "the line, or a surface row of cells")
+          (shown (or string vector) "the display transform of the line, usually the line itself")
+          (span (or pair #f) "the selected columns, (start . end)")
+          (marks list "(start end [face]) highlight ranges")
+          (links list "(start end url [id]) hyperlink ranges")
+          (left integer "the first column shown")
+          (styles (or vector #f) "the per-column styles")
+          (edge (or (one-of wrap trunc) #f) "the continuation mark for the last column")
+          (width integer "the row width in cells")
+          (bound integer "the first column past this row's content"))
     ;; edge: #f, or the continuation mark for the last column -- 'wrap
     ;; (the line goes on below) or 'trunc (past the right edge).
     ;; bound: the first column past this row's content (a word-wrapped
@@ -204,7 +224,12 @@
             (if (eq? edge 'wrap) "\\" "$")))
     (ansi "\x1b;[0m"))
 
-  (define (emit-runs content styles start end)
+  (edefine (emit-runs content styles start end)
+    (edoc "Write content[start, end) as styled runs, each under its style's code; positions past the styles vector paint plain."
+          (content string "the text")
+          (styles vector "the per-column styles")
+          (start integer "the first column")
+          (end integer "the column after the last"))
     ;; content[start,end) in styled runs, each under its style's code;
     ;; positions past the styles vector paint plain.
     (let emit ([i start])
@@ -234,7 +259,10 @@
   (define (url-trailing-character? character)
     (memv character '(#\. #\, #\; #\: #\! #\? #\) #\] #\})))
 
-  (define (detect-hyperlinks text)
+  (edefine (detect-hyperlinks text)
+    (edoc "The http and https URLs in a text, as (start end url) ranges."
+          (text string "the text to scan")
+          (returns list))
     ;; Return explicit ranges rather than styling URLs directly, so callers
     ;; can inspect the destination and modes can add non-URL labels later.
     (let ([length (string-length text)])
@@ -267,7 +295,11 @@
                                         (substring text start end))
                                   links))))))))))
 
-  (define (valid-hyperlink? link line-length)
+  (edefine (valid-hyperlink? link line-length)
+    (edoc "Whether a value is a well-formed (start end url [id]) link inside a line of a given length."
+          (link any "the value to check")
+          (line-length integer "the line's length")
+          (returns boolean))
     (and (list? link) (<= 3 (length link) 4)
          (integer? (car link)) (integer? (cadr link))
          (<= 0 (car link)) (< (car link) (cadr link))
@@ -298,14 +330,23 @@
   (define repaint-hooked
     (head:set-repaint-hook! (lambda () (invalidate-screen-cache!))))
 
-  (define (begin-frame! view rows)
+  (edefine (begin-frame! view rows)
+    (edoc "Start a frame for a view description: a changed view, the terminal size or layout say, empties the row cache."
+          (view any "what the frame shows, compared with the last")
+          (rows integer "the screen height"))
     (unless (equal? view cached-view)
       (set! screen-cache (make-vector rows #f))
       (set! cached-view view)))
 
-  (define (invalidate-screen-cache!) (set! cached-view #f))
+  (edefine (invalidate-screen-cache!)
+    (edoc "Forget every cached row, so the next frame repaints all of it.")
+    (set! cached-view #f))
 
-  (define (region-span row line-length)
+  (edefine (region-span row line-length)
+    (edoc "The columns of a row inside the selected window's active region, as (start . end), or #f."
+          (row integer "the row")
+          (line-length integer "the line's length")
+          (returns (or pair #f)))
     ;; The columns of `row` inside the selected window's active
     ;; region, as (start . end), or #f.
     (let* ([w (head:current)] [b (head:window-buffer w)])
@@ -323,25 +364,40 @@
 
   ;; Whether windows soft-wrap by default -- for config.e; a window
   ;; toggled by hand (wrap!, C-x t) keeps its own setting.
-  (define wrap-lines (make-parameter #t))
+  (edefine wrap-lines
+    (edoc "Whether windows soft-wrap long lines by default; a window toggled by hand keeps its own setting."
+          (value boolean))
+    (make-parameter #t))
 
-  (define (buffer-wrap-setting b)
+  (edefine (buffer-wrap-setting b)
+    (edoc "A buffer's wrap fact: default, #t, #f, clean or (clean . columns), shared by every window and head showing it."
+          (b buffer "the buffer")
+          (returns (or (one-of default #t #f clean) pair)))
     ;; the buffer's wrap fact -- default, #t, #f, clean, or (clean . n)
     ;; -- a store property, shared by every window and head showing it
     (head:buffer-fact b 'wrap 'default))
 
-  (define (window-wrapped? w)
+  (edefine (window-wrapped? w)
+    (edoc "Whether a window soft-wraps its lines now: its buffer's setting, else its own, else wrap-lines; never for a surfaced app grid."
+          (w window "the window")
+          (returns boolean))
     ;; A surfaced row is an app's cell grid. Reflow belongs to its publisher;
     ;; withdrawal restores the head's ordinary buffer/window wrap setting.
     (let* ([b (head:window-buffer w)] [choice (buffer-wrap-setting b)]
            [x (if (eq? choice 'default) (head:window-wrap w) choice)])
       (and (not (render:header (head:window-rendition w))) (if (eq? x 'default) (wrap-lines) x))))
 
-  (define (clean-wrap? w)
+  (edefine (clean-wrap? w)
+    (edoc "Whether a window's buffer wraps cleanly: no continuation marks, the full width."
+          (w window "the window")
+          (returns boolean))
     (let ([x (buffer-wrap-setting (head:window-buffer w))])
       (or (eq? x 'clean) (and (pair? x) (eq? (car x) 'clean)))))
 
-  (define (wrap-width w)
+  (edefine (wrap-width w)
+    (edoc "The columns a wrapped row of a window may use: the content width less the continuation mark, or a clean wrap's full width or cap."
+          (w window "the window")
+          (returns integer))
     ;; a wrapped row keeps its last column for the \ continuation mark;
     ;; a clean wrap draws none and uses the full width -- or its own
     ;; cap: (clean . n) wraps at n columns inside a wider window
@@ -370,10 +426,14 @@
   (define status-hints (kernel:make-registry))
   (define buffer-status-hints (kernel:make-registry))
 
-  (define (add-status-hint! proc)
+  (edefine (add-status-hint! proc)
+    (edoc "Register a status-line hint for the focused window: (proc) gives the text, or #f."
+          (proc procedure "the hint"))
     (kernel:registry-add! status-hints proc))
 
-  (define (add-buffer-status-hint! proc)
+  (edefine (add-buffer-status-hint! proc)
+    (edoc "Register a status hint evaluated for every painted window as (proc buffer active?): a list of (text . face), or #f."
+          (proc procedure "the hint"))
     ;; Unlike a conventional status hint, this is evaluated for every painted
     ;; window as (proc buffer active?) and can therefore describe passive
     ;; windows too.
@@ -435,10 +495,14 @@
 
   (define highlighters (kernel:make-registry))
 
-  (define (add-highlighter! proc)
+  (edefine (add-highlighter! proc)
+    (edoc "Register a highlighter: (proc) gives the ranges to mark this frame, each (row start end [face]), or scoped by a leading buffer or window."
+          (proc procedure "the highlighter"))
     (kernel:registry-add! highlighters proc))
 
-  (define (highlight-ranges)
+  (edefine (highlight-ranges)
+    (edoc "Every highlighter's ranges for this frame, the hovered hyperlink included; a raising highlighter contributes none."
+          (returns list))
     (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
       (hover-ranges
         (lambda (w row column)
@@ -446,7 +510,11 @@
             (line-hyperlinks (head:window-buffer w) row (head:window-lines w) (head:window-rendition w)))))
       (kernel:registry-items highlighters)))
 
-  (define (hover-ranges hit . face)
+  (edefine (hover-ranges hit . face)
+    (edoc "The highlight range under the mouse pointer: a hit query (hit window row column) gives (start end ...) or #f, painted with a face or hover."
+          (hit procedure "the hit query")
+          (face (list-of procedure) "a face chooser for the hit, at most one")
+          (returns list))
     ;; Reuse click geometry and the existing highlighter protocol. A hit
     ;; query takes (window row character-column) and returns (start end ...)
     ;; or #f. An optional face procedure maps that hit to a style.
@@ -477,7 +545,9 @@
   ;; terminal through OSC 8. Newer providers take precedence on overlap.
   (define hyperlinkers (kernel:make-registry))
 
-  (define (add-hyperlinker! proc)
+  (edefine (add-hyperlinker! proc)
+    (edoc "Register a source of hyperlinks beside URL detection: (proc buffer row line) gives (start end url [id]) ranges."
+          (proc procedure "the hyperlinker"))
     (kernel:registry-add! hyperlinkers proc))
 
   (define (text-hyperlinks buffer row line)
@@ -490,7 +560,11 @@
           links))
       (detect-hyperlinks line) (kernel:registry-items hyperlinkers)))
 
-  (define (buffer-line-hyperlinks buffer row)
+  (edefine (buffer-line-hyperlinks buffer row)
+    (edoc "The hyperlinks of a buffer row as source character ranges, on or off screen."
+          (buffer buffer "the buffer")
+          (row integer "the row")
+          (returns list))
     ;; The public query returns source character ranges, including outside
     ;; the visible viewport. Painting uses its already prepared frame below.
     (line-hyperlinks buffer row (head:buffer-lines buffer)
@@ -511,7 +585,14 @@
            (cons (render:column frame row (car range))
                  (cons (render:column frame row (cadr range) #t) (cddr range)))) ranges))
 
-  (define (ranges-on-row ranges w b row current?)
+  (edefine (ranges-on-row ranges w b row current?)
+    (edoc "The ranges among a frame's highlight ranges that fall on a row of a window: scoped ones for that buffer or window, unscoped ones when the window is current."
+          (ranges list "the frame's ranges")
+          (w window "the window")
+          (b buffer "its buffer")
+          (row integer "the row")
+          (current? boolean "whether the window is current")
+          (returns list))
     (fold-left (lambda (acc r)
                  (let* ([buffer-scoped? (and (pair? r) (head:buffer? (car r)))]
                         [window-scoped? (and (pair? r) (head:window? (car r)))]
@@ -528,7 +609,11 @@
 
   (define wrap-cache (make-weak-eq-hashtable))
 
-  (define (line-breaks w line)
+  (edefine (line-breaks w line)
+    (edoc "The break table of a line in a window, a vector of its segment start columns, memoized per line string and width."
+          (w window "the window")
+          (line string "the line")
+          (returns vector))
     ;; The break table for line in w: a vector of segment starts.
     (let* ([width (wrap-width w)]
            [hit (eq-hashtable-ref wrap-cache line '())]
@@ -540,29 +625,54 @@
                                (cons (cons width breaks) hit))
             breaks))))
 
-  (define (segment-of breaks col)
+  (edefine (segment-of breaks col)
+    (edoc "The index of the segment of a break table holding a column."
+          (breaks vector "the break table")
+          (col integer "the column")
+          (returns integer))
     ;; The segment holding column col.
     (let loop ([k (- (vector-length breaks) 1)])
       (if (or (= k 0) (>= col (vector-ref breaks k)))
           k
           (loop (- k 1)))))
 
-  (define (segment-start breaks k) (vector-ref breaks k))
+  (edefine (segment-start breaks k)
+    (edoc "The first column of segment k of a break table."
+          (breaks vector "the break table")
+          (k integer "the segment")
+          (returns integer))
+    (vector-ref breaks k))
 
-  (define (segment-close breaks k len)
+  (edefine (segment-close breaks k len)
+    (edoc "The last column the cursor may occupy within segment k of a line of length len."
+          (breaks vector "the break table")
+          (k integer "the segment")
+          (len integer "the line's length")
+          (returns integer))
     ;; The last column the cursor may occupy within segment k.
     (if (< (+ k 1) (vector-length breaks))
         (- (vector-ref breaks (+ k 1)) 1)
         len))
 
-  (define (line-segments w line)
+  (edefine (line-segments w line)
+    (edoc "How many screen rows a line takes in a window: 1, or its soft-wrapped segment count."
+          (w window "the window")
+          (line string "the line")
+          (returns integer))
     ;; How many screen rows the line takes in w: 1, or its soft-wrapped
     ;; segment count.
     (if (window-wrapped? w)
         (vector-length (line-breaks w line))
         1))
 
-  (define (column-at-cell w row breaks segment cell)
+  (edefine (column-at-cell w row breaks segment cell)
+    (edoc "The character column of a row at a visual cell within a segment, clamped into it and snapped to a glyph's start."
+          (w window "the window")
+          (row integer "the row")
+          (breaks (or vector #f) "the break table, or #f unwrapped")
+          (segment integer "the segment")
+          (cell integer "the visual cell")
+          (returns integer))
     ;; Shared landing rule for vertical goals, paging, clicks and hover.
     ;; Clamp to the segment, then snap to a cluster's leading character.
     (let* ([frame (head:window-rendition w)]
@@ -572,7 +682,14 @@
            [at (min end (render:character frame row (+ (render:column frame row start) cell)))])
       (render:character frame row (render:column frame row at))))
 
-  (define (window-position w start height x y)
+  (edefine (window-position w start height x y)
+    (edoc "The displayed (row . col) at a 1-based screen (x, y) inside a window's text band, given the band's start row and height."
+          (w window "the window")
+          (start integer "the band's first screen row")
+          (height integer "the band's height")
+          (x integer "the screen column")
+          (y integer "the screen row")
+          (returns position))
     ;; The displayed (row . col) at 1-based screen (x, y) inside w's text
     ;; band. Wrapped lines occupy successive screen rows.
     (let* ([v (head:window-lines w)]
@@ -603,7 +720,8 @@
            (cons row (render:character (head:window-rendition w) row
                                        (+ (head:window-left w) col))))])))
 
-  (define (erase-screen!)
+  (edefine (erase-screen!)
+    (edoc "Blank the terminal, its selection highlight included, and schedule the full repaint.")
     ;; Blank the terminal and schedule the full repaint -- an actual
     ;; erase, which also clears the terminal's own selection highlight
     ;; where an identical overwrite would not.
@@ -642,7 +760,12 @@
                                 "\x2502;\x1b;[0m")))))))))
       (head:dividers)))
 
-  (define (paint! row xoff key draw)
+  (edefine (paint! row xoff key draw)
+    (edoc "Repaint the segment of a 0-based screen row starting at column xoff by calling draw, unless it already shows key."
+          (row integer "the screen row")
+          (xoff integer "the first column")
+          (key any "what the segment shows")
+          (draw thunk "the painter"))
     ;; Repaint the segment of the 0-based screen row starting at
     ;; column xoff unless it already shows key; a row shared by
     ;; side-by-side windows caches one key per segment.
@@ -904,18 +1027,38 @@
 
   (define rows 24)
   (define cols 80)
-  (define (screen-rows) rows)
-  (define (set-screen-rows! n) (set! rows n))
-  (define (screen-cols) cols)
-  (define (set-screen-cols! n) (set! cols n))
-  (define (mark-size-dirty!) (set! size-dirty? #t))
-  (define (set-screen-live! on?)
+  (edefine (screen-rows)
+    (edoc "The screen height in rows."
+          (returns integer))
+    rows)
+  (edefine (set-screen-rows! n)
+    (edoc "Set the screen height in rows."
+          (n integer "the rows"))
+    (set! rows n))
+  (edefine (screen-cols)
+    (edoc "The screen width in columns."
+          (returns integer))
+    cols)
+  (edefine (set-screen-cols! n)
+    (edoc "Set the screen width in columns."
+          (n integer "the columns"))
+    (set! cols n))
+  (edefine (mark-size-dirty!)
+    (edoc "Note that the terminal size may have changed, so the next frame measures it again.")
+    (set! size-dirty? #t))
+  (edefine (set-screen-live! on?)
+    (edoc "Say whether the screen is the editor's to paint; leaving it forgets the row cache and the bell."
+          (on? boolean "whether painting may proceed"))
     (set! the-screen-live? on?)
     (unless on?
       (set! visual-bell-deadline #f)
       (invalidate-screen-cache!)))
-  (define (screen-live?) the-screen-live?)
-  (define (reset-cursor-style!)
+  (edefine (screen-live?)
+    (edoc "Whether the screen is the editor's to paint."
+          (returns boolean))
+    the-screen-live?)
+  (edefine (reset-cursor-style!)
+    (edoc "Restore the terminal's default cursor shape, on the way out.")
     ;; on the way out: the terminal's default cursor, unless it already shows
     (unless (string=? cursor-style-shown "\x1b;[0 q")
       (ansi "\x1b;[0 q")))
@@ -940,7 +1083,8 @@
            [n (and s (string->number s))])
       (if (and n (exact? n) (integer? n) (> n 0)) n fallback)))
 
-  (define (terminal-size!)
+  (edefine (terminal-size!)
+    (edoc "Measure the terminal when its size is dirty: at least 3 rows and 20 columns.")
     (when size-dirty?
       (set! size-dirty? #f)
       ;; One text row, its status line and the echo area fit in three rows.
@@ -950,13 +1094,17 @@
         (when size
           (set! rows (max 3 (car size)))
           (set! cols (max 20 (cdr size)))))))
-  (define (window-layout)
+  (edefine (window-layout)
+    (edoc "Tile the split tree into the screen above the echo area: ((window start text-height) ...), start 0-based, remembered for mouse hit-testing."
+          (returns list))
     ;; Tile the persistent split tree into the screen minus the echo
     ;; area; -> ((window start text-height) ...), start 0-based.  The
     ;; head remembers the tiling for mouse hit-testing.
     (head:tile! cols (max 2 (- rows (echo:height)))))
 
-  (define (page-size)
+  (edefine (page-size)
+    (edoc "The scrollable body height of the selected window, without its sticky app rows."
+          (returns integer))
     ;; The scrollable body height. Sticky app rows are fixed chrome and do not
     ;; form part of a page.
     (let ([height (caddr (assq (head:current) (window-layout)))])
@@ -969,7 +1117,13 @@
   ;; greedily (the last space that fits; a word longer than the width
   ;; breaks mid-word) and memoized per line string and width, like the
   ;; style cache: edits replace line strings, so identity keys it.
-  (define (set-buffer-viewports! b position top excluded-windows)
+  (edefine (set-buffer-viewports! b position top excluded-windows)
+    (edoc "Put point and the top row of a buffer, and of every window showing it but the excluded ones, at a position and top clamped into the text."
+          (b buffer "the buffer")
+          (position position "where point goes")
+          (top integer "the top row")
+          (excluded-windows (list-of window) "windows left alone")
+          (returns buffer))
     (let* ([v (head:buffer-lines b)]
            [row (max 0 (min (car position) (- (vector-length v) 1)))]
            [col (max 0 (min (cdr position)
@@ -990,10 +1144,17 @@
         (head:windows))
       b))
 
-  (define (reset-buffer-viewports! b position)
+  (edefine (reset-buffer-viewports! b position)
+    (edoc "Put point at a position and the top at the first row in a buffer and every window showing it."
+          (b buffer "the buffer")
+          (position position "where point goes")
+          (returns buffer))
     (set-buffer-viewports! b position 0 '()))
 
-  (define (view-invalidate! b)
+  (edefine (view-invalidate! b)
+    (edoc "Mark an app or view buffer's display stale, so the next frame asks its renderer for every visible row."
+          (b buffer "the app or view buffer")
+          (returns buffer))
     ;; Dynamic row renderers can change their presentation while the view's
     ;; structural placeholder lines remain equal. Mark the display stale
     ;; explicitly so the next frame asks the renderer for every visible row.
@@ -1002,13 +1163,20 @@
     (invalidate-screen-cache!)
     b)
 
-  (define (point-visible?)
+  (edefine (point-visible?)
+    (edoc "Whether the selected window's point is on screen."
+          (returns boolean))
     (let* ([entry (assq (head:current) (window-layout))]
            [p (window-screen-position (head:current) (head:window-prow (head:current)) (head:window-pcol (head:current)))])
       (and entry (< (cadr entry) (car p))
            (<= (car p) (+ (cadr entry) (caddr entry))))))
 
-  (define (rows-before w prow pcol)
+  (edefine (rows-before w prow pcol)
+    (edoc "How many screen rows lie between a window's top and a position, counting wrapped segments."
+          (w window "the window")
+          (prow integer "the row")
+          (pcol integer "the column")
+          (returns integer))
     ;; Screen rows between w's top -- its first visible segment -- and
     ;; point, wrap-aware.
     (let* ([v (head:window-lines w)]
@@ -1025,7 +1193,9 @@
   ;; window's top and bottom edges: scrolling starts that early, and
   ;; the cursor enters the zone only where the view cannot scroll any
   ;; further (the ends of the buffer).  Configurable in config.e.
-  (define scroll-margin
+  (edefine scroll-margin
+    (edoc "The rows kept between the cursor and a window's top and bottom edges while scrolling."
+          (value integer))
     (make-parameter 8 (lambda (v) (max 0 v))))
 
   (define (decide-scrollbar! w height)
@@ -1047,7 +1217,12 @@
                                          (vector-length (compute-breaks (vector-ref v i) width))
                                          1)))])))))))
 
-  (define (view-overflows? w v height)
+  (edefine (view-overflows? w v height)
+    (edoc "Whether lines hold more content than a window of a height shows from its top segment."
+          (w window "the window")
+          (v vector "the lines")
+          (height integer "the text height")
+          (returns boolean))
     ;; Is there more content than the window holds, counting from its
     ;; top segment?
     (let loop ([i (max (head:buffer-sticky-lines (head:window-buffer w))
@@ -1058,7 +1233,10 @@
             [else (loop (+ i 1)
                         (+ n (line-segments w (vector-ref v i))))])))
 
-  (define (scroll-window! w height)
+  (edefine (scroll-window! w height)
+    (edoc "Clamp a window's point into its buffer and scroll so point stays visible, at least scroll-margin rows from the edges where the buffer allows."
+          (w window "the window")
+          (height integer "its text height"))
     ;; Clamp w's point to its buffer (edits in another window may have moved
     ;; the ground under it) and scroll so point stays visible -- at
     ;; least scroll-margin rows from the edges, where the buffer's
@@ -1150,13 +1328,17 @@
   ;; The echo area is a box of at most echo-box-width columns, borders
   ;; included, centered on the screen; a narrower screen is the whole box.
   ;; Every row wraps inside the borders, with its text at the left one.
-  (define echo-box-width
+  (edefine echo-box-width
+    (edoc "The echo box's width in columns, borders included; a narrower screen is the whole box."
+          (value integer))
     (make-parameter 100
       (lambda (n)
         (unless (and (integer? n) (exact? n) (>= n 4))
           (error 'echo-box-width "expected an exact integer of at least 4" n))
         n)))
-  (define echo-box-border
+  (edefine echo-box-border
+    (edoc "The glyph on both sides of the echo box: any single terminal cell."
+          (value (or string char)))
     ;; The glyph on both sides of the box: any single terminal cell.
     (make-parameter "┊"
       (lambda (glyph)
@@ -1166,18 +1348,31 @@
           glyph))))
   (define (echo-box-columns) (min cols (echo-box-width)))
   (define (echo-box-offset) (quotient (- cols (echo-box-columns)) 2))
-  (define (echo-width) (max 1 (- (echo-box-columns) 2)))
+  (edefine (echo-width)
+    (edoc "The columns inside the echo box's borders."
+          (returns integer))
+    (max 1 (- (echo-box-columns) 2)))
 
-  (define (echo-indent-now) (echo:indent-now (echo-width)))
+  (edefine (echo-indent-now)
+    (edoc "The echo area's continuation indent, capped at half its width."
+          (returns integer))
+    (echo:indent-now (echo-width)))
 
-  (define (compute-echo-spans content len)
+  (edefine (compute-echo-spans content len)
+    (edoc "The content index ranges of the echo area's visual lines, for content of length len."
+          (content string "the content")
+          (len integer "its length")
+          (returns list))
     (echo:compute-spans content len (echo-width)))
 
   (define (echo-line-lead line)
     ;; Inner column where visual line `line` of the live content starts.
     (if (= line 0) 0 (echo-indent-now)))
 
-  (define (echo-position k)
+  (edefine (echo-position k)
+    (edoc "The visual (line . inner column) of an echo content index."
+          (k integer "the content index")
+          (returns pair))
     ;; Visual (line . inner column) of content index k, per echo-spans.
     (let loop ([spans (echo:spans)] [line 0])
       (let ([span (car spans)])
@@ -1187,7 +1382,11 @@
             (cons line (+ (echo-line-lead line) (- k (car span))))
             (loop (cdr spans) (+ line 1))))))
 
-  (define (echo-index-at line column)
+  (edefine (echo-index-at line column)
+    (edoc "The echo content index under an inner column of a visual line, clamped to the line: the inverse of echo-position."
+          (line integer "the visual line")
+          (column integer "the inner column")
+          (returns integer))
     ;; The content index under inner column `column` of visual line
     ;; `line`, clamped to that line's span: the inverse of echo-position.
     (let ([span (list-ref (echo:spans) line)])
@@ -1196,15 +1395,25 @@
   ;; Parameterized on (by eval, around an evaluation), the cursor parks
   ;; at the end of the echo area's content -- and is drawn as a blinking
   ;; underline, so a running evaluation is visible at a glance.
-  (define cursor-in-echo (make-parameter #f))
+  (edefine cursor-in-echo
+    (edoc "Whether the cursor parks at the end of the echo content as a blinking underline: on around an evaluation."
+          (value boolean))
+    (make-parameter #f))
 
   ;; Prompts may parameterize this to style the echo content -- M-x
   ;; gives the expression Scheme highlighting.  A procedure from the
   ;; content string to a styles vector (as modes produce), or #f to
   ;; style nothing; a raising styler paints plain.
-  (define echo-highlight (make-parameter #f))
+  (edefine echo-highlight
+    (edoc "A styler of the echo content for a prompt, content string to styles vector, or #f to style nothing."
+          (value (or procedure #f)))
+    (make-parameter #f))
 
-  (define (prompt-styler label input-styler)
+  (edefine (prompt-styler label input-styler)
+    (edoc "Lift a styler of the editable input into one of the whole echo content: the label and notes grey, the input delegated."
+          (label string "the prompt label")
+          (input-styler procedure "input string to styles vector")
+          (returns procedure))
     ;; Lift a styler for the editable input into one for the complete echo
     ;; content. The prompt label and any note stay grey; only the input is
     ;; delegated. Shared by file, symbol, and expression prompts.
@@ -1224,7 +1433,11 @@
                           (loop (+ i 1))))
                       styles)))))))
 
-  (define (completion-styler match? highlight?)
+  (edefine (completion-styler match? highlight?)
+    (edoc "A styler of a completion input by its state: italic when incomplete or unknown, plain for an exact match, the editor face when distinguished."
+          (match? procedure "whether an input is an exact match")
+          (highlight? procedure "whether an input is distinguished")
+          (returns procedure))
     ;; Style one completion input by its semantic state: an incomplete or
     ;; unknown value is italic, an exact match is plain, and a distinguished
     ;; match (an editor symbol, for example) uses the editor face.
@@ -1234,14 +1447,19 @@
                          [(match? input) 'plain]
                          [else 'italic]))))
 
-  (define (echo-cursor-now)
+  (edefine (echo-cursor-now)
+    (edoc "Where the cursor sits in the echo content: the prompt's cursor, the end of a running evaluation's text, or #f."
+          (returns (or integer #f)))
     (or (echo:cursor)
         (and (cursor-in-echo)
              (+ (string-length (echo:text)) (string-length (echo:ghost))))))
 
                               ; applied while the text still matches
 
-  (define (show-message! s styles-pair)
+  (edefine (show-message! s styles-pair)
+    (edoc "Put a message in the echo area and paint it right away, once the screen is the editor's."
+          (s string "the message")
+          (styles-pair (or pair #f) "(content . styler), applied while the text still matches"))
     ;; Put s in the echo area and paint right away (once the screen is
     ;; the editor's).
     (echo:set-indent! #f)
@@ -1251,7 +1469,11 @@
     (echo:set-styles! styles-pair)
     (present-echo!))
 
-  (define (show-prompt-message! label input styler)
+  (edefine (show-prompt-message! label input styler)
+    (edoc "Keep a completed prompt's layout and styling in the echo area while its command runs."
+          (label string "the prompt label")
+          (input string "the accepted input")
+          (styler (or procedure #f) "the content styler"))
     ;; Preserve a completed prompt's exact layout and styling while its
     ;; command runs.  In particular, hard-newline continuations retain the
     ;; prompt indentation instead of becoming an unrelated plain message.
@@ -1263,7 +1485,12 @@
       (echo:set-styles! (and styler (cons content styler)))
       (present-echo!)))
 
-  (define (echo-append! component text styler replace?)
+  (edefine (echo-append! component text styler replace?)
+    (edoc "Append a line to the echo area's transient log and present it, component-prefixed and stacked until the next key; replace? supersedes the component's newest line when it is the newest overall."
+          (component symbol "the log component")
+          (text string "the line")
+          (styler (or procedure #f) "the component's styler")
+          (replace? boolean "whether to redraw in place"))
     ;; Append one line to the echo area's transient log: every logged
     ;; message stacks up there, component-prefixed, until the next key
     ;; settles the area.  With replace? true the component's newest
@@ -1275,14 +1502,21 @@
     (echo-queue! component text styler replace?)
     (present-echo!))
 
-  (define (echo-queue! component text styler replace? . rest)
+  (edefine (echo-queue! component text styler replace? . rest)
+    (edoc "Queue a transient-log line without painting it, for batch publishers that present once at the end."
+          (component symbol "the log component")
+          (text string "the line")
+          (styler (or procedure #f) "the component's styler")
+          (replace? boolean "whether to redraw in place")
+          (rest (list-of string) "a ghost text after the line, at most one"))
     ;; Update transient echo state without painting it; batch publishers use
     ;; this before one final present-echo!.
     (echo:queue! component text styler replace?
                  (if (pair? rest) (car rest) "")
                  (and (echo-cursor-now) #t)))
 
-  (define (present-echo!)
+  (edefine (present-echo!)
+    (edoc "Present the echo area now, mid-command included: a full redraw when its height changed, else just the area.")
     ;; Present the echo area now, mid-command included (once the
     ;; screen is the editor's).  Grown or shrunk it takes a full
     ;; redraw -- the windows above shift, their status bars with them
@@ -1295,10 +1529,22 @@
             (redraw!)))
       (flush-output-port (sys:terminal-output-port))))
 
-  (define (echo-log-prefix e) (echo:log-prefix e (echo-width)))
-  (define (echo-log-spans prefix-len content)
+  (edefine (echo-log-prefix e)
+    (edoc "The grey component prefix of a transient-log entry, fitted to the echo width."
+          (e datum "the log entry")
+          (returns string))
+    (echo:log-prefix e (echo-width)))
+  (edefine (echo-log-spans prefix-len content)
+    (edoc "The content index ranges of a transient-log entry's visual rows."
+          (prefix-len integer "the prefix length")
+          (content string "the entry text")
+          (returns list))
     (echo:log-spans prefix-len content (echo-width)))
-  (define (echo-log-rows e) (echo:log-rows e (echo-width)))
+  (edefine (echo-log-rows e)
+    (edoc "How many visual rows a transient-log entry takes."
+          (e datum "the log entry")
+          (returns integer))
+    (echo:log-rows e (echo-width)))
 
   (define (echo-frame! draw used wrapped?)
     ;; Paint one echo row: the margin, the left border, the inner cells
@@ -1317,7 +1563,15 @@
         border
         (make-string (max 0 (- cols offset (echo-box-columns))) #\space))))
 
-  (define (display-echo-log-row prefix text styler ghost k span wrapped?)
+  (edefine (display-echo-log-row prefix text styler ghost k span wrapped?)
+    (edoc "Paint one visual row of a transient-log entry: the prefix or its indent, the slice under the styler, a mark when wrapped."
+          (prefix string "the component prefix")
+          (text string "the entry text")
+          (styler (or procedure #f) "the component's styler")
+          (ghost string "the grey tail")
+          (k integer "the row within the entry")
+          (span pair "the content indices of the row")
+          (wrapped? boolean "whether the row wraps on"))
     ;; One visual row of a transient-log entry: the grey prefix on the
     ;; first, its indent on continuations, the slice under the
     ;; component's styler, a mark closing every wrapped row.
@@ -1427,13 +1681,16 @@
                       wrapped?)))))
             (loop (+ line 1) (+ row 1)))))))
 
-  (define (echo-cap)
+  (edefine (echo-cap)
+    (edoc "How tall the echo area may grow: the screen less every window's minimum."
+          (returns integer))
     ;; How tall the whole echo area may grow: everything but each
     ;; window's minimum -- head:min-window-lines of text (at least 1)
     ;; plus its status line.
     (max 1 (- rows (head:layout-min-height (head:root)))))
 
-  (define (update-echo-geometry!)
+  (edefine (update-echo-geometry!)
+    (edoc "Lay out the echo area: the pending transient lines above the live line, wrapped, capped and scrolled to keep the prompt cursor visible.")
     ;; The echo area stacks the pending transient-log lines above the
     ;; live line.  The live line's height follows its wrapped content
     ;; (the grey suggestion included): prompt input wraps with
@@ -1495,14 +1752,20 @@
                (if (or (< n 32) (= n 127)) #\space c)))
            (string->list s))))
 
-  (define (update-terminal-title!)
+  (edefine (update-terminal-title!)
+    (edoc "Set the terminal's title to the current buffer's name when it changed.")
     ;; OSC 2 is understood by GNOME Terminal, xterm, and nested e terminals.
     (let ([title (string-append "e: " (head:buffer-name (head:window-buffer (head:current))))])
       (unless (equal? title terminal-title-shown)
         (set! terminal-title-shown title)
         (ansi "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
 
-  (define (window-screen-position w prow pcol)
+  (edefine (window-screen-position w prow pcol)
+    (edoc "The 1-based screen (row . col) of a displayed position in a window, wrap-aware."
+          (w window "the window")
+          (prow integer "the row")
+          (pcol integer "the column")
+          (returns pair))
     ;; 1-based screen (row . col) of a displayed position in w, wrap-aware.
     (let* ([entry (assq w (window-layout))]
            [sticky (head:buffer-sticky-lines (head:window-buffer w))]
@@ -1527,7 +1790,8 @@
                 (+ x (- (render:column frame prow pcol)
                         (head:window-left w)) 1)))))
 
-  (define (place-cursor!)
+  (edefine (place-cursor!)
+    (edoc "Park the cursor in the echo area for a prompt or a running evaluation, else at point in the current window.")
     ;; Park the cursor in the echo area (a prompt, or a running
     ;; evaluation -- the latter drawn as a blinking underline), else
     ;; put it at point in the current window.  Also called on its own
@@ -1573,7 +1837,10 @@
 
   ;; The head's pump owns painting. The redraw lock keeps its cache and
   ;; output together with other terminal writes (the clipboard's OSC 52).
-  (define redraw-lock (make-mutex))
+  (edefine redraw-lock
+    (edoc "The mutex around painting and the other terminal writes, such as the clipboard's OSC 52."
+          (value any))
+    (make-mutex))
 
   (define (paint-frame!)
     ;; Refresh here so direct prompt frames share the same bell lifetime.
@@ -1655,7 +1922,8 @@
           (ansi "\x1b;[?2026l")
           (flush-output-port (sys:terminal-output-port))))))
 
-  (define (redraw!)
+  (edefine (redraw!)
+    (edoc "Paint a frame: measure the terminal, tile, adopt foreign edits, then repaint what changed.")
     ;; Every entry, including direct prompt redraws, prepares against current
     ;; geometry. Hooks can present messages and reenter, so finish them before
     ;; opening this frame's synchronized update.
@@ -1666,7 +1934,8 @@
       (update-terminal-title!)
       (redraw-frame!)))
 
-  (define (visual-bell!)
+  (edefine (visual-bell!)
+    (edoc "Flash the screen briefly through the main pump, instead of ringing.")
     ;; Main-thread presentation state: a retrigger replaces the deadline.
     ;; Request the first frame too; an invalid prompt key otherwise goes
     ;; straight back to waiting. Expiry uses that same pump, without a worker.

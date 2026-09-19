@@ -10,7 +10,7 @@
 
 (library (dispatch)
   (export (rename (handle-key! key!)))
-  (import (chezscheme)
+  (import (chezscheme) (only (edoc) edefine edoc)
           (prefix (head) head:)
           (prefix (paint) paint:)
           (prefix (echo) echo:)
@@ -96,7 +96,9 @@
                       (member event (cddr capture)))))
            #t)))
 
-  (define (handle-key! input)
+  (edefine (handle-key! input)
+    (edoc "Dispatch one key from the pump: the current buffer's app has first refusal of keys its mode context leaves unbound, the rest go through the keymaps; eof quits."
+          (input (or char string any) "a character, an event string, or eof"))
     ;; One key from the pump: a character or an event string, eof
     ;; when the terminal is gone.  The current buffer's app has first
     ;; refusal of every key its mode context leaves unbound; what it

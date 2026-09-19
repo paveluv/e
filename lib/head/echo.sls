@@ -21,7 +21,7 @@
           spans set-spans! live-height set-live-height!
           indent-now queue! settle!
           compute-spans log-prefix log-spans log-rows)
-  (import (rnrs) (rnrs r5rs)
+  (import (rnrs) (only (edoc) edefine edoc) (rnrs r5rs)
           (only (chezscheme) format))
 
   ;;; The model -----------------------------------------------------------------
@@ -42,41 +42,121 @@
   (define the-spans '((0 . 0)))
   (define the-live-height 1) ; rows of the live line inside the-height
 
-  (define (text) the-text)
-  (define (text-owner) the-text-owner)
-  (define set-text!
+  (edefine (text)
+    (edoc "The echo area's live text."
+          (returns string))
+    the-text)
+  (edefine (text-owner)
+    (edoc "Who owns the live text: an indicator's component, or #f."
+          (returns any))
+    the-text-owner)
+  (edefine set-text!
     ;; Ordinary messages always replace an indicator's ownership, even if
     ;; their text is identical. Queueing and settling use the same boundary.
     (case-lambda
-      [(s) (set-text! s #f)]
-      [(s owner) (set! the-text s) (set! the-text-owner owner)]))
-  (define (ghost) the-ghost)
-  (define (set-ghost! s) (set! the-ghost s))
-  (define (styles) the-styles)
-  (define (set-styles! s) (set! the-styles s))
-  (define (pending) the-pending)
-  (define (set-pending! entries) (set! the-pending entries))
-  (define (cursor) the-cursor)
-  (define (set-cursor! at) (set! the-cursor at))
-  (define (indent) the-indent)
-  (define (set-indent! i) (set! the-indent i))
-  (define (input-end) the-input-end)
-  (define (set-input-end! at) (set! the-input-end at))
-  (define (height) the-height)
-  (define (set-height! h) (set! the-height h))
-  (define (scroll) the-scroll)
-  (define (set-scroll! s) (set! the-scroll s))
-  (define (spans) the-spans)
-  (define (set-spans! s) (set! the-spans s))
-  (define (live-height) the-live-height)
-  (define (set-live-height! h) (set! the-live-height h))
+      [(s)
+       (edoc "Set the live text, owned by nobody." (s string "the text"))
+       (set-text! s #f)]
+      [(s owner)
+       (edoc "Set the live text and who owns it, an indicator's component." (s string "the text") (owner any "the owner, or #f"))
+       (set! the-text s) (set! the-text-owner owner)]))
+  (edefine (ghost)
+    (edoc "The grey suggestion after the live text."
+          (returns string))
+    the-ghost)
+  (edefine (set-ghost! s)
+    (edoc "Set the grey suggestion after the live text."
+          (s string "the suggestion"))
+    (set! the-ghost s))
+  (edefine (styles)
+    (edoc "The live text's styles, (content . styler) applied while the text still matches, or #f."
+          (returns (or pair #f)))
+    the-styles)
+  (edefine (set-styles! s)
+    (edoc "Set the live text's styles."
+          (s (or pair #f) "(content . styler), or #f"))
+    (set! the-styles s))
+  (edefine (pending)
+    (edoc "The queued transient-log entries, oldest first."
+          (returns list))
+    the-pending)
+  (edefine (set-pending! entries)
+    (edoc "Replace the queued transient-log entries."
+          (entries list "the entries"))
+    (set! the-pending entries))
+  (edefine (cursor)
+    (edoc "The prompt cursor's content index, or #f without a prompt."
+          (returns (or integer #f)))
+    the-cursor)
+  (edefine (set-cursor! at)
+    (edoc "Set the prompt cursor's content index, or #f without a prompt."
+          (at (or integer #f) "the index"))
+    (set! the-cursor at))
+  (edefine (indent)
+    (edoc "The continuation indent of wrapped content, or #f for none."
+          (returns (or integer #f)))
+    the-indent)
+  (edefine (set-indent! i)
+    (edoc "Set the continuation indent of wrapped content."
+          (i (or integer #f) "the indent, or #f"))
+    (set! the-indent i))
+  (edefine (input-end)
+    (edoc "Where the prompt's input ends in the content, or #f."
+          (returns (or integer #f)))
+    the-input-end)
+  (edefine (set-input-end! at)
+    (edoc "Set where the prompt's input ends in the content."
+          (at (or integer #f) "the index, or #f"))
+    (set! the-input-end at))
+  (edefine (height)
+    (edoc "The echo area's height in rows."
+          (returns integer))
+    the-height)
+  (edefine (set-height! h)
+    (edoc "Set the echo area's height in rows."
+          (h integer "the rows"))
+    (set! the-height h))
+  (edefine (scroll)
+    (edoc "How many visual lines of the live content are scrolled off above."
+          (returns integer))
+    the-scroll)
+  (edefine (set-scroll! s)
+    (edoc "Set how many visual lines of the live content are scrolled off above."
+          (s integer "the lines"))
+    (set! the-scroll s))
+  (edefine (spans)
+    (edoc "The content index ranges of the live content's visual lines."
+          (returns list))
+    the-spans)
+  (edefine (set-spans! s)
+    (edoc "Set the content index ranges of the live content's visual lines."
+          (s list "the spans"))
+    (set! the-spans s))
+  (edefine (live-height)
+    (edoc "The rows the live line takes."
+          (returns integer))
+    the-live-height)
+  (edefine (set-live-height! h)
+    (edoc "Set the rows the live line takes."
+          (h integer "the rows"))
+    (set! the-live-height h))
 
-  (define (indent-now width)
+  (edefine (indent-now width)
+    (edoc "The continuation indent for a width, capped at half of it."
+          (width integer "the echo width")
+          (returns integer))
     ;; The continuation indent, capped at half the width so a prompt
     ;; whose label alone overflows the screen still wraps usefully.
     (min (or the-indent 0) (quotient width 2)))
 
-  (define (queue! component text styler replace? ghost keep-live?)
+  (edefine (queue! component text styler replace? ghost keep-live?)
+    (edoc "Append a line to the transient log without painting: replace? supersedes the component's newest line when it is the newest overall; unless keep-live?, the message and prompt bookkeeping give way."
+          (component symbol "the log component")
+          (text string "the line")
+          (styler (or procedure #f) "the component's styler")
+          (replace? boolean "whether to redraw in place")
+          (ghost string "the grey tail")
+          (keep-live? boolean "whether the live line stays"))
     ;; Append one line to the transient log without painting it;
     ;; batch publishers call this before one final present.  With
     ;; replace? true the component's newest line is superseded when it
@@ -97,14 +177,20 @@
       (set! the-indent #f)
       (set! the-input-end #f)))
 
-  (define (settle!)
+  (edefine (settle!)
+    (edoc "Clear the live text and the transient lines, as the next keystroke does.")
     ;; the next keystroke: transient lines and the message give way
     (set-text! "")
     (set! the-pending '()))
 
   ;;; Geometry -------------------------------------------------------------------
 
-  (define (compute-spans content len width)
+  (edefine (compute-spans content len width)
+    (edoc "The content index ranges of the visual lines of content of length len at a width: newlines force lines, continuations start at the indent, wrapped lines give their last column to the mark."
+          (content string "the content")
+          (len integer "its length")
+          (width integer "the echo width")
+          (returns list))
     ;; Content index ranges of the echo area's visual lines: the first
     ;; line spans the full width, explicit newlines force a new visual line,
     ;; continuations start at the indent, and every soft-wrapped line gives
@@ -126,11 +212,20 @@
                    (loop (+ start take) #f
                          (cons (cons start (+ start take)) acc)))])))))
 
-  (define (log-prefix e width)
+  (edefine (log-prefix e width)
+    (edoc "The component prefix of a transient-log entry, cut to the width."
+          (e datum "the log entry")
+          (width integer "the echo width")
+          (returns string))
     (let ([p (format "~a: " (car e))])
       (if (> (string-length p) width) (substring p 0 width) p)))
 
-  (define (log-spans prefix-len content width)
+  (edefine (log-spans prefix-len content width)
+    (edoc "The content index ranges of a transient-log entry's rows: the first after the prefix, continuations indented to it."
+          (prefix-len integer "the prefix length")
+          (content string "the entry text")
+          (width integer "the echo width")
+          (returns list))
     ;; Content index ranges of a transient-log entry's visual rows: a
     ;; long line wraps rather than being cut -- there is no way to
     ;; scroll past the echo area's edge.  The first row follows the
@@ -155,7 +250,11 @@
                      (loop (+ start take) #f
                            (cons (cons start (+ start take)) acc)))]))))))
 
-  (define (log-rows e width)
+  (edefine (log-rows e width)
+    (edoc "How many rows a transient-log entry takes at a width."
+          (e datum "the log entry")
+          (width integer "the echo width")
+          (returns integer))
     (length (log-spans (string-length (log-prefix e width))
                        (string-append (cadr e) (cadddr e))
                        width))))
