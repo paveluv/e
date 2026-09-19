@@ -489,8 +489,10 @@
             (let-values ([(start end expansion values) ((completer-lookup completion-source) new-s new-pos)])
               (if (and start (= start (car completion-range)))
                   (begin (set! completion-range (cons start end))
-                         (when (and candidates (not (prepared? completion-source new-s new-pos)))
-                           (set-candidates! values)))
+                         ;; A normalized or cycled spelling keeps its options,
+                         ;; but the matches underline the symbol as it now reads.
+                         (set! completion-matches values)
+                         (when candidates (set-candidates! values)))
                   (dismiss-completions!)))
             (unless (string=? new-s input) (dismiss-completions!)))))
     (define (show-completions! values)

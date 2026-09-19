@@ -120,7 +120,7 @@
            (wait-for! (list 'idle-resize-refreshes-the-screen prompt?)
              (lambda ()
                (let ([buffer (find-cell "*scratch*")] [close (find-cell "│×│")]
-                     [edge (find-cell (if prompt? "┋M-x (resize-input" "┋(head"))]
+                     [edge (find-cell (if prompt? "┊M-x (resize-input" "┊(head"))]
                      [echo-rows (if prompt? 1 2)])
                  (and (contains? (transcript-text) "\x1b;[?2026h")
                       buffer close (= (car buffer) (- rows 1 echo-rows)) (= (cdr close) (- cols 3))
@@ -194,8 +194,9 @@
      (send! "\t")
      (wait-for! 'completions-take-the-window
                 (lambda () (and (find-cell "<completions>")
-                                (find-cell "split-window! [2 segments]")
-                                (find-cell "split-window-right! [2 segments]")))
+                                ;; normalized to split-window-, one segment each
+                                (find-cell "split-window-below! [1 segment]")
+                                (find-cell "split-window-above! [1 segment]")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back

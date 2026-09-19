@@ -465,10 +465,13 @@ control characters occupy one blank cell. Buffer positions and the status
 column still count characters.
 
 Each split has independent point, scrolling, wrapping, and status. Splits form
-a tree, so either half may be split again in either direction: `C-x 2` divides
-only the current window into a stacked pair, and `C-x 3` divides only it into a
-side-by-side pair. Deleting a window with `C-x 0` promotes its complete sibling
-subtree; the `×` button at the right edge of every status line performs the
+a tree, so either half may be split again in either direction: `C-x 2`
+(`split-window-below!`) divides only the current window into a stacked pair,
+and `C-x 3` (`split-window-right!`) divides only it into a side-by-side pair;
+`split-window-above!` and `split-window-left!` make the same splits with the
+new window first, and have no default keys. Deleting a window with `C-x 0`
+promotes its complete sibling subtree; the `×` button at the right edge of
+every status line performs the
 same operation with the mouse. Beside it, `↕` performs the stacked `C-x 2`
 split and `↔` performs the side-by-side `C-x 3` split. `C-x 1` retains only
 the current window. `C-x o` moves focus. Status lines and column dividers can

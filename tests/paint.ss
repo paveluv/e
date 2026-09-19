@@ -299,21 +299,38 @@
            (list (paint:echo-width) (paint:echo-position 5) (paint:echo-index-at 0 5)
                  (and (>= (string-length frame) 80)
                       (string=? (substring frame 0 80)
-                                (string-append "┋Boxed" (make-string 73 #\space) "┋")))))
+                                (string-append "┊Boxed" (make-string 73 #\space) "┊")))))
          (let ([frame (echo-box-frame 140 "Boxed")])
            (list (paint:echo-width)
                  (and (>= (string-length frame) 140)
                       (string=? (substring frame 0 140)
-                                (string-append (make-string 20 #\space) "┋Boxed" (make-string 93 #\space) "┋"
+                                (string-append (make-string 20 #\space) "┊Boxed" (make-string 93 #\space) "┊"
                                                (make-string 20 #\space))))))
          (let ([frame (echo-box-frame 60 (make-string 70 #\a))])
            ;; two rows: the first wraps at inner column 57 with its mark
            (list (paint:echo-width) (length (echo:spans)) (paint:echo-position 57)
                  (and (>= (string-length frame) 120)
-                      (string=? (substring frame 0 60) (string-append "┋" (make-string 57 #\a) "\\┋"))
+                      (string=? (substring frame 0 60) (string-append "┊" (make-string 57 #\a) "\\┊"))
                       (string=? (substring frame 60 120)
-                                (string-append "┋" (make-string 13 #\a) (make-string 45 #\space) "┋"))))))
+                                (string-append "┊" (make-string 13 #\a) (make-string 45 #\space) "┊"))))))
        '((78 (0 . 5) 5 #t) (98 #t) (58 2 (1 . 0) #t)))
+     (check 'echo-border-follows-its-setting
+       (begin
+         (paint:set-screen-cols! 80)
+         (paint:invalidate-screen-cache!)
+         (echo:set-text! "Framed")
+         (paint:update-echo-geometry!)
+         (dynamic-wind
+           (lambda () (paint:set-screen-live! #t))
+           (lambda ()
+             ;; no cache reset between the two frames: the key carries the glyph
+             (list (contains? (painted paint:present-echo!) "\x1b;[38;5;245m┊")
+                   (parameterize ([paint:echo-box-border "║"])
+                     (contains? (painted paint:present-echo!) "\x1b;[38;5;245m║"))
+                   (test:raises? (lambda () (paint:echo-box-border "ab")))
+                   (parameterize ([paint:echo-box-border #\|]) (paint:echo-box-border))))
+           (lambda () (paint:set-screen-live! #f))))
+       '(#t #t #t "|"))
      (check 'echo-border-wears-the-inactive-bar-shade
        (begin
          (paint:set-screen-cols! 80)
@@ -322,7 +339,7 @@
          (paint:update-echo-geometry!)
          (dynamic-wind
            (lambda () (paint:set-screen-live! #t))
-           (lambda () (contains? (painted paint:present-echo!) "\x1b;[38;5;245m┋"))
+           (lambda () (contains? (painted paint:present-echo!) "\x1b;[38;5;245m┊"))
            (lambda () (paint:set-screen-live! #f))))
        #t)
      (paint:set-screen-cols! 80)

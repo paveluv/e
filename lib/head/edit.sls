@@ -53,7 +53,7 @@
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
     call-with-buffer
     switch-buffer!! new-buffer!! kill-buffer!!
-    split-window! split-window-right!
+    split-window-below! split-window-right! split-window-above! split-window-left!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
     resize-window! wrap!
@@ -1375,9 +1375,12 @@
     ;; Make w current when it is still on screen; -> whether it was.
     (and (memq w windows) (begin (focus-window! w) #t)))
 
-  (define (split-current-window! orientation b)
+  (define (split-current-window! orientation b . first?)
+    ;; Divide the selected leaf along orientation, the new window second
+    ;; (below or right) unless first? asks for it above or to the left.
     (paint:window-layout)
     (let* ([vertical? (eq? orientation 'below)]
+           [new-first? (and (pair? first?) (car first?))]
            [extent (if vertical?
                        (+ (head:window-size current-window) 1)
                        (head:window-width current-window))]
@@ -1390,19 +1393,32 @@
                                        left-col point-row point-col
                                        (max 1 (- second 1)) 0 0
                                        (head:window-wrap current-window))]
-                  [node (head:make-layout-split orientation current-window w
-                                                first second)])
+                  [node (if new-first?
+                            (head:make-layout-split orientation w current-window first second)
+                            (head:make-layout-split orientation current-window w first second))])
              (head:set-full-capture! w (head:full-capture? current-window))
              (head:replace-layout-window! current-window node)
              w))))
 
-  (define (split-window!)
-    ;; Split only the selected leaf, as in Emacs.
+  (define (split-window-below!)
+    ;; Split only the selected leaf, as in Emacs; the new window is below.
     (unless (split-current-window! 'below (head:window-buffer current-window))
       (set! message "Not enough room to split")))
 
   (define (split-window-right!)
     (unless (split-current-window! 'right (head:window-buffer current-window))
+      (set! message "Not enough room to split"))
+    (void))
+
+  (define (split-window-above!)
+    ;; The same stacked split with the new window above the selected one.
+    (unless (split-current-window! 'below (head:window-buffer current-window) #t)
+      (set! message "Not enough room to split"))
+    (void))
+
+  (define (split-window-left!)
+    ;; The same side-by-side split with the new window to the left.
+    (unless (split-current-window! 'right (head:window-buffer current-window) #t)
       (set! message "Not enough room to split"))
     (void))
 
@@ -2148,7 +2164,7 @@
              (focus-window! w)
              (if (procedure? action) (action)
                (case action
-                 [(below) (split-window!)]
+                 [(below) (split-window-below!)]
                  [(right) (split-window-right!)]
                  [(close) (delete-window!)])))
            "MOUSE-HANDLED")]
@@ -3188,7 +3204,8 @@
       (for-each prompt:allow!
                 (list focus-window-up! focus-window-down!
                       focus-window-left! focus-window-right!
-                      other-window! split-window! split-window-right!
+                      other-window! split-window-below! split-window-right!
+                      split-window-above! split-window-left!
                       delete-window! delete-other-windows!))
       (prompt:allow! kill-buffer!! prompt-kill-buffer!))
     ;; The pump lives in (head); its mouse report handler is the
@@ -3222,7 +3239,7 @@
           ("C-x b" ,switch-buffer!!)
           ("C-x k" ,kill-buffer!!) ("C-x o" ,other-window!)
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
-          ("C-x 2" ,split-window!) ("C-x 3" ,split-window-right!)
+          ("C-x 2" ,split-window-below!) ("C-x 3" ,split-window-right!)
           ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
           ("C-h k" ,describe-key!!)
           ("C-c a" ,answer!!)))

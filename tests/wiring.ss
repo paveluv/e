@@ -156,18 +156,33 @@
      (check 'window-numbers-are-reused-and-print-as-literals
        (read-editor
          '(let ([indices (lambda () (list-sort < (map head:window-index (head:windows))))])
-            (split-window!) (split-window!)
+            (split-window-below!) (split-window-below!)
             (let ([split (indices)])
               (select-window! (window 1)) (delete-window!)
               (paint:window-layout)
               (let ([deleted (indices)])
-                (split-window!)
+                (split-window-below!)
                 (let ([reused (indices)] [literal (format "~s" (window 2))])
                   (select-window! (window 0)) (delete-other-windows!)
                   (list split deleted reused literal))))))
        '((0 1 2) (0 2) (0 1 2) "(window 2)"))
      (check 'status-lines-lead-with-the-number
        (exists (lambda (row) (string:prefix? "0\x258F;" (screen-line row))) (iota 24)) #t)
+     ;; The above and left splits are the stacked and side-by-side splits
+     ;; with the new window first: the selected one becomes the second leaf.
+     (check 'above-and-left-splits-put-the-new-window-first
+       (read-editor
+         '(let ([position (lambda ()
+                            (let ([leaves (head:layout-leaves (head:root))])
+                              (- (length leaves) (length (memq (head:current) leaves)))))])
+            (split-window-above!)
+            (let ([above (list (position) (head:layout-split-orientation (head:root)))])
+              (delete-other-windows!)
+              (split-window-left!)
+              (let ([left (list (position) (head:layout-split-orientation (head:root)))])
+                (delete-other-windows!)
+                (list above left)))))
+       '((1 below) (1 right)))
 
      ;; -- quit reviews protected local work while input keeps arriving. A
      ;; frame callback interleaves a change after the question is visible; a

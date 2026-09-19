@@ -33,7 +33,7 @@
           reset-buffer-viewports! view-invalidate! point-visible?
           rows-before scroll-margin view-overflows? scroll-window!
           echo-indent-now compute-echo-spans echo-position echo-index-at
-          echo-box-width echo-width cursor-in-echo echo-highlight prompt-styler
+          echo-box-width echo-box-border echo-width cursor-in-echo echo-highlight prompt-styler
           completion-styler echo-cursor-now show-message!
           show-prompt-message! echo-append! echo-queue!
           present-echo! echo-log-prefix echo-log-spans
@@ -1153,6 +1153,14 @@
         (unless (and (integer? n) (exact? n) (>= n 4))
           (error 'echo-box-width "expected an exact integer of at least 4" n))
         n)))
+  (define echo-box-border
+    ;; The glyph on both sides of the box: any single terminal cell.
+    (make-parameter "┊"
+      (lambda (glyph)
+        (let ([glyph (if (char? glyph) (string glyph) glyph)])
+          (unless (and (string? glyph) (= (glyph:cells glyph) 1))
+            (error 'echo-box-border "expected a one-cell string or character" glyph))
+          glyph))))
   (define (echo-box-columns) (min cols (echo-box-width)))
   (define (echo-box-offset) (quotient (- cols (echo-box-columns)) 2))
   (define (echo-width) (max 1 (- (echo-box-columns) 2)))
@@ -1292,11 +1300,12 @@
   (define (echo-frame! draw used wrapped?)
     ;; Paint one echo row: the margin, the left border, the inner cells
     ;; that draw emits (used of them), the fill up to a wrap mark or the
-    ;; right border, and the margin after it. The borders are heavy dashed
-    ;; strokes in the mid grey of an inactive status bar (see the bar's
-    ;; painter for why that shade is explicit), unlike the light dividers
-    ;; between windows.
-    (let* ([offset (echo-box-offset)] [width (echo-width)] [border "\x1b;[38;5;245m┋\x1b;[0m"])
+    ;; right border, and the margin after it. The borders are echo-box-border
+    ;; in the mid grey of an inactive status bar (see the bar's painter for
+    ;; why that shade is explicit); light dashes by default, unlike the
+    ;; light dividers between windows.
+    (let* ([offset (echo-box-offset)] [width (echo-width)]
+           [border (string-append "\x1b;[38;5;245m" (echo-box-border) "\x1b;[0m")])
       (ansi "\x1b;[0m" (make-string offset #\space) border)
       (draw)
       (ansi "\x1b;[0m"
@@ -1356,7 +1365,7 @@
                 (loop (cdr es) row)
                 (let ([span (car spans)]
                       [wrapped? (pair? (cdr spans))])
-                  (paint! row 0 (list 'echo-log e k span wrapped? (echo-box-width) cols)
+                  (paint! row 0 (list 'echo-log e k span wrapped? (echo-box-width) (echo-box-border) cols)
                     (lambda ()
                       (display-echo-log-row prefix text (caddr e) ghost
                                             k span wrapped?)))
@@ -1383,7 +1392,7 @@
                            0)])
               (paint! row 0
                 (list 'echo line (substring content start end)
-                      cut lead lb wrapped? (echo-box-width) cols (and (echo-highlight) #t)
+                      cut lead lb wrapped? (echo-box-width) (echo-box-border) cols (and (echo-highlight) #t)
                       (and (echo:styles) #t))
                 (lambda ()
                   (let ([styles

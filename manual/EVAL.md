@@ -59,7 +59,7 @@ a boundary. Longer intact segments, fewer reorderings, and matches nearer the
 beginning rank first.
 
 Typed `-` and `:` stay inside literal segments, just like letters. Thus
-`split-w` matches `split-window!`, but `s-w` and `w-s` do not abbreviate it.
+`split-w` matches `split-window-below!`, but `s-w` and `w-s` do not abbreviate it.
 You can omit separators when typing prefixes: `spwir` finds
 `split-window-right!` as `sp` + `wi` + `r`. Reordering still works with
 punctuation when the literal pieces exist: `window-split` can match
@@ -68,9 +68,10 @@ punctuation when the literal pieces exist: `window-split` can match
 Tab chooses a longest extension that the original query can match and that
 still matches every candidate. This preserves exactly the same match set,
 including its boundary constraints. For example, `splitwindow` and
-`windowsplit` normalize to `split-window` when both split commands remain.
-Adding `!` would lose `split-window-right!`, so it is not inserted yet. Typing
-`r` and pressing Tab then produces `split-window-right!`, including the `!`.
+`windowsplit` normalize to `split-window-` while all four split commands
+remain. Adding `r` would lose the other three, so it is not inserted yet.
+Typing `r` and pressing Tab then produces `split-window-right!`, including
+the `!`.
 The same rule applies to separators: `ker:` cannot abbreviate the literal
 prefix `kernel:`. Tab cannot add a colon after `ker` merely because all
 matches contain one.
@@ -102,8 +103,9 @@ including punctuation, belongs to a segment; an empty query has zero.
 These are the alignment's segments, not a minimum edit distance. The matcher
 tries longer leading segments first and backtracks when that choice cannot
 complete the match.
-The underlines and counts describe the query that produced the displayed
-ranking, retained while Tab normalizes and cycles. Editing refreshes them.
+The underlines and counts follow the symbol as it reads now: a Tab that
+normalizes or cycles it refreshes them, as editing does. After `delwin` becomes
+`delete-window`, the list underlines that one segment.
 The suffix is display-only: clicking anywhere in the label inserts just the symbol.
 
 Bracketed multiline paste keeps its line breaks and runs the same Scheme
