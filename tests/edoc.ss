@@ -28,8 +28,8 @@
      (eval '(elibrary (probe)
               (export add join twice width limit make-place place? place-x place-y place-y-set!
                       make-tagged tagged? tagged-count swap! make-stale stale? stale-revision plain
-                      (rename (twice again)) shared hidden)
-              (import (rnrs) (only (chezscheme) make-parameter))
+                      (rename (twice again)) shared hidden paint)
+              (import (rnrs) (only (chezscheme) make-parameter format))
               (edoc "Add two numbers. Slowly, for the test." (x integer "the first addend") (y integer) (returns integer))
               (define (add x y) (+ x y))
               (edoc "Join strings." (sep string) (parts (list-of string)))
@@ -55,6 +55,13 @@
                     (n integer "the number") (step integer "the step, 1 when omitted") (returns integer))
               (define plain (case-lambda [(n) (plain n 1)] [(n step) (* n step)]))
               (define shared twice)
+              ;; a type of the library's own, with a completer and a writer
+              (edoc-type hue "a hue, by name"
+                (predicate (lambda (v) (and (memq v '(red green blue)) #t)))
+                (complete (lambda (partial) (map (lambda (h) (cons h "a hue")) '(red green blue))))
+                (write (lambda (v) (format "'~a" v))))
+              (edoc "Paint a place with a hue." (p (record place) "the place") (h hue "the hue") (returns list))
+              (define (paint p h) (list p h))
               ;; a definition another macro produces is documented by name
               (define-syntax defthing (syntax-rules () [(_ n v) (define n v)]))
               (edoc hidden "A value a macro defined." (value integer))
@@ -106,6 +113,44 @@
      (check 'an-alias-shares-its-origin
        (signature-summary (car (signatures 'shared))) "Apply a procedure twice.")
 
+     ;; Types are data the library registered when it initialized.
+     (check 'types-resolve-to-records-with-behavior
+       (list (type-owner (type-named 'hue)) (type-owner (type-named 'string)) (type-owner (type-named 'buffer))
+             (type-prose 'hue) (type-prose 'integer) (type-prose '(or hue #f))
+             (type-accepts? 'hue 'red) (type-accepts? 'hue 'pink) (type-accepts? 'integer 2) (type-accepts? 'integer 2.5)
+             (type-accepts? 'thunk (lambda () 1)) (type-accepts? 'thunk (lambda (x) x))
+             (type-accepts? '(or string #f) #f) (type-accepts? '(or string #f) 'x)
+             (type-accepts? '(list-of integer) '(1 2)) (type-accepts? '(list-of integer) '(1 a))
+             (type-accepts? '(record place) ((value-of 'make-place) 1 2)) (type-accepts? '(record place) 3)
+             (type-accepts? '(one-of utf-8 latin-1) 'utf-8) (type-accepts? 'datum '(1 "a" #(b)))
+             (type-accepts? 'datum (lambda (x) x)) (type-accepts? 'nonsense 1)
+             (type-completions 'hue "") (type-completions '(one-of utf-8 latin-1) "") (type-completions '(or hue #f) "x")
+             (type-spelling 'hue 'red) (type-spelling 'string "a") (type-spelling '(one-of a b) 'a) (type-spelling '(or string hue) 'blue)
+             (edoc-type? 'hue) (edoc-type? 'nonsense) (edoc-type? '(list-of hue)))
+       '("(probe)" "(edoc)" #f "a hue, by name" "an exact integer" "hue or #f"
+         #t #f #t #f #t #f #t #f #t #f #t #f #t #t #f #t
+         ((red . "a hue") (green . "a hue") (blue . "a hue")) ((utf-8 . #f) (latin-1 . #f))
+         ((red . "a hue") (green . "a hue") (blue . "a hue") (#f . #f))
+         "'red" "\"a\"" "'a" "'blue" #t #f #t))
+     ;; Defining a library only visits it; a reference invokes it, and that is
+     ;; when its names resolve. The steps are sequenced explicitly, and the
+     ;; broken libraries are referenced in a copy of the environment, so the
+     ;; scan of every top-level value below does not trip over them.
+     (define (invoked library name)
+       (guard (ex [else (condition-message ex)])
+         (eval (list 'begin (list 'import library) name) (copy-environment (interaction-environment) #t))
+         'imported))
+     (define defined-badtype
+       (rejection '(elibrary (badtype) (export f) (import (rnrs)) (edoc "x" (a nonsense-type)) (define (f a) a))))
+     (define invoked-badtype (invoked '(badtype) 'f))
+     (define defined-badtype2
+       (rejection '(elibrary (badtype2) (export g) (import (rnrs))
+                     (edoc-type hue "another hue" (predicate symbol?)) (edoc "x") (define (g) 1))))
+     (define invoked-badtype2 (invoked '(badtype2) 'g))
+     (check 'unknown-types-fail-when-the-library-initializes
+       (list defined-badtype invoked-badtype defined-badtype2 invoked-badtype2)
+       '(accepted "unknown edoc type nonsense-type in the edoc of f" accepted "type hue is defined by (probe)"))
+
      (check 'entries-follow-the-kind
        (map (lambda (name) (let ([entry (edoc-entry name (signatures name))]) (list (cadr entry) (caddr entry))))
             '(width limit swap! make-place place-y-set! plain place))
@@ -142,13 +187,12 @@
            (elibrary (bad7) (export f) (import (rnrs)) (edoc "x" (rest integer)) (define (f . rest) rest))
            (elibrary (bad8) (export f) (import (rnrs)) (edoc "x"))
            (elibrary (bad9) (export f) (import (rnrs)) (edoc "x") (define (f x y) x))
-           (elibrary (bad10) (export f) (import (rnrs)) (edoc "x" (x nonsense)) (define (f x) x))
            (elibrary (bad11) (export f) (import (rnrs)) (edoc 7 (x integer)) (define (f x) x))
            (elibrary (bad12) (export f) (import (rnrs)) (edoc "x" (x integer) (x integer)) (define (f x) x))
            (elibrary (bad13) (export f) (import (rnrs)) (edoc "x" (x integer) (returns integer) (returns string)) (define (f x) x))
            (elibrary (bad14) (export f) (import (rnrs)) (edoc "x" (x integer 7)) (define (f x) x))
            (elibrary (bad15) (export v) (import (rnrs)) (edoc "x" (value integer) (x integer)) (define v 3))
-           (elibrary (bad16) (export s) (import (rnrs)) (edoc "x" (a nonsense)) (define-syntax s (syntax-rules () [(_ a) a])))
+           (elibrary (bad16) (export t) (import (rnrs)) (edoc "x") (edoc-type t "a t" (predicate symbol?)))
            (elibrary (bad17) (export r) (import (rnrs)) (edoc "x" (x integer) (z integer)) (define-record-type r (fields x)))
            (elibrary (bad18) (export r) (import (rnrs)) (edoc "x") (define-record-type r (fields x)))
            (elibrary (bad19) (export r) (import (rnrs)) (edoc "x" (x integer) (x integer)) (define-record-type r (fields x)))
@@ -160,10 +204,10 @@
          "an alias takes its documentation from its origin" "two edocs annotate one definition"
          "two edocs document one definition" "a rest parameter is a list-of"
          "an edoc annotates the definition that follows it"
-         "every formal needs an edoc clause" "unknown edoc type"
+         "every formal needs an edoc clause"
          "expected (edoc summary clause ...) or (edoc name summary clause ...)"
          "one edoc clause per formal" "one returns clause at most" "edoc notes must be strings"
-         "a value clause stands alone" "unknown edoc type"
+         "a value clause stands alone" "an edoc annotates the definition that follows it"
          "an edoc clause names a field" "every field needs an edoc clause" "one edoc clause per field"
          "a constructor clause belongs to a record with a protocol or parent" "every field needs an edoc clause"
          "export has no edoc" "edoc annotates a definition inside an elibrary"))

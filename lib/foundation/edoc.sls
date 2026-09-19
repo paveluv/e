@@ -16,20 +16,31 @@
 ;; name for a keyword, a record type or a value without identity. A library
 ;; file starts with (import (only (edoc) elibrary)) and the elibrary form.
 ;;
+;; Types are data. A name in a clause resolves, when the library
+;; initializes, to a type record with prose, a predicate and optionally a
+;; completer, a reader and a writer; the language's types come predefined
+;; here, and a library defines the types for the notions it owns with an
+;; (edoc-type name prose (predicate p) ...) form in its body, registered
+;; when it initializes. type-accepts?, type-completions and type-spelling
+;; work over the compound forms too. A record documented in an elibrary
+;; registers its predicate for (record name).
+;;
 ;; edoc-of reads an object's signatures back, edoc-named those recorded
 ;; under a name, and edoc-entry shapes signatures as a documentation entry
 ;; in the describe corpus's eight-field format. This library documents
 ;; itself with the same helpers, through forms of its own.
 
 (library (edoc)
-  (export elibrary edoc
+  (export elibrary edoc edoc-type
           edoc-of edoc-named signature? signature-kind signature-formals signature-summary
           signature-arguments signature-returns signature-library
           argument? argument-name argument-type argument-notes
-          edoc-types edoc-type? type-text edoc-entry edoc-template first-sentence)
+          edoc-types edoc-type? type-text edoc-entry edoc-template first-sentence
+          type-named type-owner type-read type-prose type-accepts? type-completions type-spelling)
   (import (rnrs)
           (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
-                eq-hashtable-ref eq-hashtable-set! format syntax->list))
+                eq-hashtable-ref eq-hashtable-set! eq-hashtable-contains? format syntax->list
+                procedure-arity-mask logbit?))
 
   ;;; The vocabulary, for the expander and for run time ---------------------------
 
@@ -44,16 +55,17 @@
               port procedure thunk condition datum any)]))
 
   (define-syntax type-checker
-    ;; (checker types t): is t a type over the vocabulary types? A symbol of
-    ;; the vocabulary, #f, (one-of literal ...), (or type type ...), (list-of
-    ;; type) or (record name).
+    ;; (checker known? t): is t a type? A symbol known? accepts, #f, (one-of
+    ;; literal ...), (or type type ...), (list-of type) or (record name).
+    ;; While a library expands every symbol may name a type another library
+    ;; defines, so the expander accepts them all and initialization checks.
     (syntax-rules ()
       [(_)
-       (lambda (types t)
+       (lambda (known? t)
          (define (literal? x) (or (symbol? x) (string? x) (number? x) (boolean? x) (char? x)))
          (let ok? ([t t])
            (cond
-             [(symbol? t) (and (memq t types) #t)]
+             [(symbol? t) (and (known? t) #t)]
              [(eq? t #f) #t]
              [(and (pair? t) (list? t) (pair? (cdr t)))
               (case (car t)
@@ -64,7 +76,7 @@
                 [else #f])]
              [else #f])))]))
 
-  (meta define known-types (vocabulary))
+  (meta define known-types (lambda (t) #t))
   (meta define meta-type-ok? (type-checker))
   (define type-ok? (type-checker))
 
@@ -83,12 +95,95 @@
              (null? object) (eof-object? object) (eq? object (void)))))
 
   (define (attach! name object spec)
+    (check-spec-types! spec name)
     (if (identity? object)
         (eq-hashtable-set! attached object spec)
         (eq-hashtable-set! named name spec))
     object)
 
-  (define (attach-name! name spec) (eq-hashtable-set! named name spec) name)
+  (define (attach-name! name spec) (check-spec-types! spec name) (eq-hashtable-set! named name spec) name)
+
+  ;;; Types ------------------------------------------------------------------------
+
+  ;; A type: what a clause's symbol resolves to when its library initializes.
+  ;; The language's types are predefined below; a library defines its own
+  ;; with edoc-type. The editor's notions start as placeholders, prose alone
+  ;; without an owner, so libraries that use them may initialize before the
+  ;; one that defines them; the owner's definition replaces the placeholder.
+  (define-record-type (type make-type type?)
+    (fields (immutable name type-name-of) (immutable prose type-prose-of) (immutable predicate type-predicate-of)
+            (immutable complete type-complete-of) (immutable read type-read-of) (immutable write type-write-of)
+            (immutable owner type-owner-of)))
+  (define types (make-eq-hashtable))
+  (define record-predicates (make-eq-hashtable))
+
+  (define (register-type! name prose predicate complete read write owner)
+    (let ([existing (eq-hashtable-ref types name #f)])
+      (when (and existing (type-owner-of existing) (not (equal? (type-owner-of existing) owner)))
+        (error 'edoc-type (format "type ~a is defined by ~a" name (type-owner-of existing)) owner))
+      (eq-hashtable-set! types name (make-type name prose predicate complete read write owner))))
+
+  (define (register-record-type! name predicate)
+    (eq-hashtable-set! record-predicates name predicate))
+
+  (define (check-spec-types! spec name)
+    ;; every type a recorded datum names is known by now
+    (define (known? t)
+      (cond [(symbol? t) (eq-hashtable-contains? types t)]
+            [(eq? t #f) #t]
+            [(and (pair? t) (list? t))
+             (case (car t)
+               [(one-of record) #t]
+               [(or list-of) (for-all known? (cdr t))]
+               [else #t])]
+            [else #t]))
+    (when (pair? spec)
+      (for-each
+        (lambda (clause)
+          (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause)) (not (known? (cadr clause))))
+            (error 'edoc (format "unknown edoc type ~s in the edoc of ~a" (cadr clause) name))))
+        (cddr spec))))
+
+  (define (plain-datum? value)
+    ;; plain data, pairs, vectors and strings down to atoms, within a budget
+    ;; that keeps a cyclic value from spinning: past it the value passes
+    (let walk ([v value] [fuel 10000])
+      (cond
+        [(<= fuel 0) #t]
+        [(pair? v) (and (walk (car v) (- fuel 1)) (walk (cdr v) (- fuel 1)))]
+        [(vector? v) (let loop ([i 0]) (or (= i (vector-length v)) (and (walk (vector-ref v i) (- fuel 1)) (loop (+ i 1)))))]
+        [else (or (null? v) (symbol? v) (string? v) (number? v) (boolean? v) (char? v) (bytevector? v))])))
+
+  (define (always v) #t)
+
+  (define base-types
+    (begin
+      (for-each
+        (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(edoc)"))
+        (list (list 'string "a string" string?)
+              (list 'char "a character" char?)
+              (list 'integer "an exact integer" (lambda (v) (and (integer? v) (exact? v))))
+              (list 'number "a number" number?)
+              (list 'boolean "a boolean" boolean?)
+              (list 'list "a proper list" list?)
+              (list 'pair "a pair" pair?)
+              (list 'vector "a vector" vector?)
+              (list 'bytevector "a bytevector" bytevector?)
+              (list 'hashtable "a hashtable" hashtable?)
+              (list 'port "a port" port?)
+              (list 'procedure "a procedure" procedure?)
+              (list 'thunk "a procedure taking no arguments"
+                    (lambda (v) (and (procedure? v) (logbit? 0 (procedure-arity-mask v)))))
+              (list 'condition "a condition" condition?)
+              (list 'symbol "a symbol" symbol?)
+              (list 'datum "plain data: pairs, vectors, strings and atoms" plain-datum?)
+              (list 'any "anything" always)))
+      (for-each
+        (lambda (entry) (register-type! (car entry) (cadr entry) always #f #f #f #f))
+        '((file "a file, by its path") (directory "a directory, by its path") (buffer "a buffer")
+          (window "a window") (region "a region of a buffer") (position "a (row . col) position")
+          (command "a command") (key "a key spelling") (mode "a mode") (style "a face")))
+      'registered))
 
   ;;; Checking, shared by the forms -------------------------------------------------
 
@@ -96,8 +191,20 @@
     (lambda (x)
       (syntax-violation 'edoc "edoc annotates a definition inside an elibrary" x)))
 
+  (define-syntax edoc-type
+    (lambda (x)
+      (syntax-violation 'edoc-type "edoc-type defines a type inside an elibrary" x)))
+
   ;; The forms that cannot document themselves record their edocs by hand;
   ;; the coverage tool reads these attach-name! definitions as documentation.
+  (define edoc-type-documentation
+    (attach-name! 'edoc-type
+      '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (read r) (write w)), the last three optional; registered when the library initializes."
+         (name symbol "the type's name")
+         (prose string "what values of the type are")
+         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (read r) text to value, (write w) value to expression text")
+         ("kind" syntax) ("library" "(edoc)"))))
+
   (define edoc-documentation
     (attach-name! 'edoc
       '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents."
@@ -422,6 +529,29 @@
     (lambda (x)
       (define who 'elibrary)
       (define (edoc-form? form) (head-is? form 'edoc))
+      (define (type-form? form) (head-is? form 'edoc-type))
+      (define (type-registration form library-name)
+        ;; (edoc-type name prose field ...) as the expression registering it
+        (syntax-case form ()
+          [(_ name prose field ...)
+           (and (identifier? #'name) (string? (syntax->datum #'prose)))
+           (let ([fields (syntax->list #'(field ...))])
+             (define (field-of key)
+               (let ([hit (find (lambda (f) (head-is? f key)) fields)])
+                 (and hit (syntax-case hit () [(_ e) #'e] [_ (syntax-violation who "expected (field expression)" form hit)]))))
+             (for-each
+               (lambda (f)
+                 (unless (exists (lambda (key) (head-is? f key)) '(predicate complete read write))
+                   (syntax-violation who "expected a predicate, complete, read or write field" form f)))
+               fields)
+             (unless (field-of 'predicate) (syntax-violation who "a type needs a predicate" form))
+             (with-syntax ([predicate (field-of 'predicate)]
+                           [complete (or (field-of 'complete) #'#f)]
+                           [read (or (field-of 'read) #'#f)]
+                           [write (or (field-of 'write) #'#f)]
+                           [library library-name])
+               #'(register-type! 'name prose predicate complete read write library)))]
+          [_ (syntax-violation who "expected (edoc-type name prose (predicate p) field ...)" form)]))
       (define (export-identifiers exports)
         ;; the internal identifiers the export clause names
         (syntax-case exports ()
@@ -480,7 +610,7 @@
          (let ([library-name (format "~s" (syntax->datum #'name))]
                [exported (export-identifiers #'exports)])
            ;; pair every annotation with the definition that follows it
-           (let walk ([forms (syntax->list #'(body ...))] [pending #f] [kept '()] [entries '()] [named '()])
+           (let walk ([forms (syntax->list #'(body ...))] [pending #f] [kept '()] [entries '()] [named '()] [registrations '()])
              (cond
                [(null? forms)
                 (when pending (syntax-violation who "an edoc annotates the definition that follows it" pending))
@@ -528,26 +658,43 @@
                                        [else '()])))
                                  documented))])
                     (with-syntax ([(form ...) (reverse kept)]
+                                  [(registration ...) (reverse registrations)]
+                                  [(record-registration ...)
+                                   ;; a documented record's predicate stands for (record name)
+                                   (apply append
+                                     (map (lambda (entry)
+                                            (let ([info (car entry)])
+                                              (if (and (eq? (car info) 'record) (cadr entry))
+                                                  (let* ([parts (record-parts who x (caddr info) (cadddr info))]
+                                                         [type (car parts)] [predicate (caddr parts)])
+                                                    (if predicate
+                                                        (list (with-syntax ([t type] [p predicate]) #'(register-record-type! 't p)))
+                                                        '()))
+                                                  '())))
+                                          documented))]
                                   [(attachment ...) (attachment-forms attachments by-name)]
                                   [(tmp) (generate-temporaries '(edocs))])
                       #'(library name exports imports
                           form ...
-                          (define tmp (begin attachment ... (void)))))))]
+                          (define tmp (begin registration ... record-registration ... attachment ... (void)))))))]
                [(edoc-form? (car forms))
                 (syntax-case (car forms) ()
                   [(_ summary clause ...) (string? (syntax->datum #'summary))
                    (begin
                      (when pending (syntax-violation who "two edocs annotate one definition" (car forms)))
-                     (walk (cdr forms) (car forms) kept entries named))]
+                     (walk (cdr forms) (car forms) kept entries named registrations))]
                   [(_ id summary clause ...) (and (identifier? #'id) (string? (syntax->datum #'summary)))
-                   (walk (cdr forms) pending kept entries (cons (cons #'id (car forms)) named))]
+                   (walk (cdr forms) pending kept entries (cons (cons #'id (car forms)) named) registrations)]
                   [_ (syntax-violation who "expected (edoc summary clause ...) or (edoc name summary clause ...)" (car forms))])]
+               [(type-form? (car forms))
+                (when pending (syntax-violation who "an edoc annotates the definition that follows it" pending))
+                (walk (cdr forms) #f kept entries named (cons (type-registration (car forms) library-name) registrations))]
                [else
                 (let ([info (definition-info (car forms))])
                   (cond
-                    [info (walk (cdr forms) #f (cons (car forms) kept) (cons (list info pending) entries) named)]
+                    [info (walk (cdr forms) #f (cons (car forms) kept) (cons (list info pending) entries) named registrations)]
                     [pending (syntax-violation who "an edoc annotates the definition that follows it" pending)]
-                    [else (walk (cdr forms) #f (cons (car forms) kept) entries named)]))])))]
+                    [else (walk (cdr forms) #f (cons (car forms) kept) entries named registrations)]))])))]
         [_ (syntax-violation who "expected (elibrary (name) (export ...) (import ...) body ...)" x)])))
 
   (define elibrary-documentation
@@ -598,13 +745,13 @@
   ;;; Reading it back -------------------------------------------------------------
 
   (edefine edoc-types
-    (edoc "The type vocabulary: the editor's notions, then the language's; compounds are (one-of literal ...), (or type ...), (list-of type) and (record name)."
+    (edoc "The base type vocabulary: the editor's notions, then the language's; libraries add their own with edoc-type, and compounds are (one-of literal ...), (or type ...), (list-of type) and (record name)."
           (value (list-of symbol)))
     (vocabulary))
 
   (edefine (edoc-type? t)
-    (edoc "Whether a value is an edoc type over the vocabulary." (t datum "the value") (returns boolean))
-    (type-ok? edoc-types t))
+    (edoc "Whether a value is an edoc type: a registered name, #f, or a compound over them." (t datum "the value") (returns boolean))
+    (type-ok? (lambda (name) (eq-hashtable-contains? types name)) t))
 
   ;; A signature: the kind of definition -- procedure, parameter, value,
   ;; syntax, record, condition, constructor, predicate, accessor or mutator
@@ -688,6 +835,72 @@
           (returns (or (list-of (record signature)) #f)))
     (let ([spec (eq-hashtable-ref named name #f)])
       (and spec (attached-signatures spec #f))))
+
+  (edefine (type-named name)
+    (edoc "The type record registered under a name, or #f." (name symbol "the type's name") (returns (or (record type) #f)))
+    (eq-hashtable-ref types name #f))
+
+  (edefine (type-owner type)
+    (edoc "The library that defined a type, (edit) say, or #f for a placeholder." (type (record type) "the type record") (returns (or string #f)))
+    (type-owner-of type))
+
+  (edefine (type-read type)
+    (edoc "A type's reader, text to value, or #f." (type (record type) "the type record") (returns (or procedure #f)))
+    (type-read-of type))
+
+  (edefine (type-accepts? t value)
+    (edoc "Whether a value satisfies a type: its predicate for a name, membership for a one-of, any member for an or, every element for a list-of, the record's predicate for (record name); an unknown name accepts anything."
+          (t datum "the type") (value any "the value") (returns boolean))
+    (cond
+      [(symbol? t)
+       (let ([type (type-named t)])
+         (if type (and (guard (ex [else #f]) ((type-predicate-of type) value)) #t) #t))]
+      [(eq? t #f) (eq? value #f)]
+      [(and (pair? t) (list? t))
+       (case (car t)
+         [(one-of) (and (member value (cdr t)) #t)]
+         [(or) (exists (lambda (m) (type-accepts? m value)) (cdr t))]
+         [(list-of) (and (list? value) (for-all (lambda (x) (type-accepts? (cadr t) x)) value))]
+         [(record) (let ([p (eq-hashtable-ref record-predicates (cadr t) #f)]) (if p (and (p value) #t) #t))]
+         [else #t])]
+      [else #t]))
+
+  (edefine (type-completions t partial)
+    (edoc "The values a type offers for a partial text, as (value . hint) pairs: a completer's for a name, the literals of a one-of, every member's for an or, #f for #f."
+          (t datum "the type") (partial string "the text typed so far") (returns list))
+    (cond
+      [(symbol? t)
+       (let ([type (type-named t)])
+         (if (and type (type-complete-of type))
+             (guard (ex [else '()]) ((type-complete-of type) partial))
+             '()))]
+      [(eq? t #f) (list (cons #f #f))]
+      [(and (pair? t) (list? t))
+       (case (car t)
+         [(one-of) (map (lambda (literal) (cons literal #f)) (cdr t))]
+         [(or) (apply append (map (lambda (m) (type-completions m partial)) (cdr t)))]
+         [else '()])]
+      [else '()]))
+
+  (edefine (type-spelling t value)
+    (edoc "A value of a type as the expression denoting it: the type's writer, else written, a symbol quoted."
+          (t datum "the type") (value any "the value") (returns string))
+    (define (default v) (if (symbol? v) (format "'~s" v) (format "~s" v)))
+    (cond
+      [(symbol? t)
+       (let ([type (type-named t)])
+         (if (and type (type-write-of type))
+             (guard (ex [else (default value)]) ((type-write-of type) value))
+             (default value)))]
+      [(and (pair? t) (eq? (car t) 'or))
+       (let ([m (find (lambda (m) (type-accepts? m value)) (cdr t))])
+         (if m (type-spelling m value) (default value)))]
+      [else (default value)]))
+
+  (edefine (type-prose t)
+    (edoc "A type as prose: a name's own description, else type-text." (t datum "the type") (returns string))
+    (let ([type (and (symbol? t) (type-named t))])
+      (if type (type-prose-of type) (type-text t))))
 
   ;;; Presenting ------------------------------------------------------------------
 

@@ -13,7 +13,9 @@
 ;; alias of one, is classified where it is defined, through the import
 ;; specs.
 ;; --list prints the undocumented names of each library; library
-;; arguments restrict the report to those stems.
+;; arguments restrict the report to those stems. The types every edoc
+;; clause names are checked against the base vocabulary and the edoc-type
+;; forms of the whole tree; unknown ones are reported last.
 (import (chezscheme))
 
 (define (read-forms path)
@@ -70,6 +72,40 @@
 (define (edoc-annotation? form)
   ;; (edoc "summary" ...) annotates the next form; (edoc name "summary" ...) names its definition
   (and (pair? form) (eq? (car form) 'edoc) (pair? (cdr form))))
+
+;;; Types ----------------------------------------------------------------------------
+
+(define base-types
+  '(string char integer number boolean list pair vector bytevector hashtable port procedure thunk condition
+     symbol datum any file directory buffer window region position command key mode style))
+
+(define defined-types (make-eq-hashtable))
+(define used-types '())   ; ((type library name) ...)
+
+(define (note-types! library form)
+  ;; the types an edoc annotation's clauses name, and the types an edoc-type form defines
+  (cond
+    [(and (pair? form) (eq? (car form) 'edoc-type) (pair? (cdr form)) (symbol? (cadr form)))
+     (eq-hashtable-set! defined-types (cadr form) library)]
+    [(edoc-annotation? form)
+     (let* ([named? (symbol? (cadr form))]
+            [clauses (if named? (cdddr form) (cddr form))]
+            [name (if named? (cadr form) 'annotation)])
+       (for-each
+         (lambda (clause)
+           (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause)) (not (eq? (car clause) 'constructor)))
+             (set! used-types (cons (list (cadr clause) library name) used-types))))
+         clauses))]))
+
+(define (unknown-type? t)
+  (cond [(symbol? t) (not (or (memq t base-types) (eq-hashtable-contains? defined-types t)))]
+        [(eq? t #f) #f]
+        [(and (pair? t) (list? t))
+         (case (car t)
+           [(one-of record) #f]
+           [(or list-of) (exists unknown-type? (cdr t))]
+           [else #t])]
+        [else #t]))
 
 (define (definitions library)
   ;; (name . kind) for every top-level definition of the library body; a
@@ -224,6 +260,7 @@
         (let* ([rows (map (lambda (export) (cons (car export) (classify name (car export) 0))) (exports-of library))]
                [documented (filter (lambda (r) (eq? (cdr r) 'documented)) rows)])
           (for-each (lambda (r) (count! (cdr r))) rows)
+          (for-each (lambda (form) (note-types! name form)) (cdddr library))
           (printf "~24a ~3a of ~3a documented" (format "~s" name) (length documented) (length rows))
           (let ([present (filter (lambda (k) (exists (lambda (r) (eq? (cdr r) k)) rows)) kinds)])
             (printf "  ~a\n"
@@ -239,3 +276,6 @@
 (printf "\ntotal:")
 (for-each (lambda (k) (printf " ~a ~a" (hashtable-ref totals k 0) k)) (cons 'documented kinds))
 (newline)
+(let ([unknown (filter (lambda (use) (unknown-type? (car use))) used-types)])
+  (printf "types: ~a defined by libraries, ~a unknown\n" (hashtable-size defined-types) (length unknown))
+  (for-each (lambda (use) (printf "    ~s in ~s, ~a\n" (car use) (cadr use) (caddr use))) (reverse unknown)))
