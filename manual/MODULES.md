@@ -346,7 +346,7 @@ See [App buffers](APPS.md) for registration and event propagation, and
 
 Modules can publish structured documentation with `doc:register!` and
 component-specific log presentation with `log:register-formatter!`. Both
-registries participate in transactional reload. A definition can instead
-carry its documentation in itself with `edefine`, `edefine-record-type` or
-`edefine-syntax` and a typed `edoc` form, checked against its formals when
-the module expands. See [Describe](DESCRIBE.md) and [Logging](LOG.md).
+registries participate in transactional reload. A library written with
+`elibrary` documents its exports where it defines them, each definition
+annotated with a typed `edoc` form checked against it when the module
+expands. See [Describe](DESCRIBE.md) and [Logging](LOG.md).

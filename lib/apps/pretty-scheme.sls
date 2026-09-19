@@ -51,7 +51,7 @@
       (append
         (cluster #\｢ #\｣ ; #\⦃ #\⦄                  ; definitions
           "define" "define-values" "define-syntax" "define-record-type"
-          "define-condition-type" "edefine" "edefine-syntax" "edefine-record-type")
+          "define-condition-type")
         (cluster #\⸦ #\⸧                  ; lambdas
           "lambda" "case-lambda")
         (cluster #\⟨ #\⟩                  ; binders

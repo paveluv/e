@@ -35,7 +35,7 @@
                 '("and" "begin" "case" "case-lambda" "cond" "define"
                   "define-condition-type" "define-record-type"
                   "define-syntax" "define-values" "delay" "do"
-                  "edefine" "edefine-record-type" "edefine-syntax" "edoc" "elibrary"
+                  "edoc" "elibrary"
                   "else" "export" "guard" "identifier-syntax" "if" "import"
                   "include" "lambda" "let" "let*"
                   "let-values" "letrec" "letrec*" "library" "or"

@@ -4,8 +4,8 @@
 ;;
 ;;   tools/edoc-coverage.sps [--list] [library ...]
 ;;
-;; Every export is classified by its definition: edefine (documented, by an
-;; edoc annotation in an elibrary or any of the edefine forms), procedure (define with a lambda list, or a
+;; Every export is classified by its definition: documented (an edoc
+;; annotation in an elibrary), procedure (define with a lambda list, or a
 ;; lambda/case-lambda value), parameter, syntax, record (constructor,
 ;; predicate or field procedure of a define-record-type), value (any other
 ;; define), standard (a name of (rnrs) or (chezscheme) passed on), or
@@ -80,11 +80,11 @@
       [(edoc-annotation? (car forms))
        (if (string? (cadr (car forms)))
            (loop (cdr forms) #t out)
-           (loop (cdr forms) pending? (cons (list (cons (cadr (car forms)) 'edefine)) out)))]
+           (loop (cdr forms) pending? (cons (list (cons (cadr (car forms)) 'documented)) out)))]
       [else
        (let ([defs (form-definitions (car forms))])
          (loop (cdr forms) #f
-               (cons (if pending? (map (lambda (d) (cons (car d) 'edefine)) defs) defs) out)))])))
+               (cons (if pending? (map (lambda (d) (cons (car d) 'documented)) defs) defs) out)))])))
 
 (define (form-definitions form)
   ;; (name . kind) for one top-level form of a library body
@@ -92,20 +92,18 @@
     (map (lambda (form)
            (if (not (pair? form)) '()
                (case (car form)
-                 [(edefine) (list (cons (if (pair? (cadr form)) (car (cadr form)) (cadr form)) 'edefine))]
-                 [(edefine-syntax) (list (cons (cadr form) 'edefine))]
-                 [(edefine-record-type) (map (lambda (n) (cons n 'edefine)) (record-names (cons 'define-record-type (cons (cadr form) (cdddr form)))))]
-                 [(edefine-condition-type)
-                  (map (lambda (n) (cons n 'edefine))
-                    (append (list (cadr form) (cadddr form) (car (cddddr form)))
-                            (map cadr (filter (lambda (c) (not (eq? (car c) 'edoc))) (cdr (cddddr form))))))]
+                 ;; the edoc library documents its own definitions with two
+                 ;; forms of its own, checked and recorded like annotations
+                 [(edefine) (list (cons (if (pair? (cadr form)) (car (cadr form)) (cadr form)) 'documented))]
+                 [(edefine-record-type)
+                  (map (lambda (n) (cons n 'documented)) (record-names (cons 'define-record-type (cons (cadr form) (cdddr form)))))]
                  [(define)
                   (let ([target (cadr form)])
                     (cond [(pair? target) (list (cons (car target) 'procedure))]
                           [(and (pair? (cddr form)) (pair? (caddr form)) (eq? (car (caddr form)) 'attach-name!)
                                 (pair? (cdr (caddr form))) (pair? (cadr (caddr form))) (eq? (car (cadr (caddr form))) 'quote))
                            ;; (define x (attach-name! 'name '(edoc ...))): the edoc library's own keywords
-                           (list (cons (cadr (cadr (caddr form))) 'edefine))]
+                           (list (cons (cadr (cadr (caddr form))) 'documented))]
                           [(and (pair? (cddr form)) (symbol? (caddr form)))
                            (list (cons target (list 'alias (caddr form))))]
                           [(and (pair? (cddr form)) (pair? (caddr form)))
@@ -197,8 +195,8 @@
   (let* ([library (library-named name)]
          [internal (let ([e (and library (assq external (exports-of library)))]) (if e (cdr e) external))]
          [defs (definitions-of name)]
-         ;; a keyword documented by hand has two entries; the edefine wins
-         [def (or (find (lambda (d) (and (eq? (car d) internal) (eq? (cdr d) 'edefine))) defs) (assq internal defs))])
+         ;; a keyword documented by hand has two entries; the documented one wins
+         [def (or (find (lambda (d) (and (eq? (car d) internal) (eq? (cdr d) 'documented))) defs) (assq internal defs))])
     (cond
       [(equal? name '(rnrs)) 'standard]
       [(or (not library) (> depth 8)) 'elsewhere]
@@ -224,7 +222,7 @@
            [stem (let ([file (path-last path)]) (substring file 0 (- (string-length file) 4)))])
       (when (or (null? selected) (member stem selected))
         (let* ([rows (map (lambda (export) (cons (car export) (classify name (car export) 0))) (exports-of library))]
-               [documented (filter (lambda (r) (eq? (cdr r) 'edefine)) rows)])
+               [documented (filter (lambda (r) (eq? (cdr r) 'documented)) rows)])
           (for-each (lambda (r) (count! (cdr r))) rows)
           (printf "~24a ~3a of ~3a documented" (format "~s" name) (length documented) (length rows))
           (let ([present (filter (lambda (k) (exists (lambda (r) (eq? (cdr r) k)) rows)) kinds)])
@@ -239,5 +237,5 @@
   libraries)
 
 (printf "\ntotal:")
-(for-each (lambda (k) (printf " ~a ~a" (hashtable-ref totals k 0) k)) (cons 'edefine kinds))
+(for-each (lambda (k) (printf " ~a ~a" (hashtable-ref totals k 0) k)) (cons 'documented kinds))
 (newline)

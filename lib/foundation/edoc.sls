@@ -1,41 +1,35 @@
-;; edoc.sls -- documented definitions: the library (edoc).
+;; edoc.sls -- documented libraries: the library (edoc).
 ;;
 ;; (elibrary (name) (export ...) (import ...) body ...) is a library whose
 ;; exports are documented. In its body an (edoc summary clause ...) form
 ;; annotates the definition that follows it -- a define, define-syntax,
-;; define-record-type or define-condition-type, all left exactly as they
-;; are -- and (edoc name summary clause ...) documents a name defined by
-;; some other form. The annotations are checked while the library expands:
-;; the summary is a string, every formal, or every field, has exactly one
-;; typed clause and nothing else is named, a rest parameter is a list-of,
-;; every type is in the vocabulary, and returns appears at most once. Every
-;; export the body defines must be annotated, or expansion fails naming
-;; the export; re-exported imports and aliases, (define x other), take
-;; their documentation from their origin. The library records the edocs
-;; when it is initialized: attached to the objects they document, or under
-;; the name for a keyword, a record type or a value without identity. A
-;; library file starts with (import (only (edoc) elibrary)) and the
-;; elibrary form.
+;; define-record-type or define-condition-type, left exactly as written --
+;; and (edoc name summary clause ...) documents a name some other form
+;; defines. The annotations are checked while the library expands: the
+;; summary is a string, every formal, or every field, has exactly one typed
+;; clause and nothing else is named, a rest parameter is a list-of, every
+;; type is in the vocabulary, and returns appears at most once. Every export
+;; the body defines must be annotated, or expansion fails naming the
+;; export; re-exported imports and aliases, (define x other), take their
+;; documentation from their origin. When the library is initialized the
+;; edocs are attached to the objects they document, or recorded under the
+;; name for a keyword, a record type or a value without identity. A library
+;; file starts with (import (only (edoc) elibrary)) and the elibrary form.
 ;;
-;; The older forms remain while libraries migrate: (edefine (name .
-;; formals) (edoc ...) body ...) keeps the edoc as a quoted datum at the
-;; head of a lambda body, read back through the inspector; (edefine name
-;; (edoc ...) expression) attaches it to a value; edefine-record-type,
-;; edefine-condition-type and edefine-syntax document their definitions
-;; from one edoc. edoc-of reads an object's signatures back, edoc-named
-;; those recorded under a name, and edoc-entry shapes signatures as a
-;; documentation entry in the describe corpus's eight-field format.
+;; edoc-of reads an object's signatures back, edoc-named those recorded
+;; under a name, and edoc-entry shapes signatures as a documentation entry
+;; in the describe corpus's eight-field format. This library documents
+;; itself with the same helpers, through forms of its own.
 
 (library (edoc)
-  (export elibrary edefine edefine-record-type edefine-condition-type edefine-syntax edoc
+  (export elibrary edoc
           edoc-of edoc-named signature? signature-kind signature-formals signature-summary
           signature-arguments signature-returns signature-library
           argument? argument-name argument-type argument-notes
           edoc-types edoc-type? type-text edoc-entry edoc-template first-sentence)
   (import (rnrs)
-          (only (chezscheme) library meta void inspect/object make-weak-eq-hashtable make-eq-hashtable
-                eq-hashtable-ref eq-hashtable-set! format path-last make-parameter make-thread-parameter syntax->list
-                syntax->annotation annotation-source source-object-sfd source-file-descriptor-path))
+          (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
+                eq-hashtable-ref eq-hashtable-set! format syntax->list))
 
   ;;; The vocabulary, for the expander and for run time ---------------------------
 
@@ -100,37 +94,22 @@
 
   (define-syntax edoc
     (lambda (x)
-      (syntax-violation 'edoc "edoc annotates a definition inside an elibrary, or heads an edefine form" x)))
+      (syntax-violation 'edoc "edoc annotates a definition inside an elibrary" x)))
 
   ;; The forms that cannot document themselves record their edocs by hand;
   ;; the coverage tool reads these attach-name! definitions as documentation.
   (define edoc-documentation
     (attach-name! 'edoc
-      '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents; it also heads an edefine form."
+      '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents."
          (summary string "the description, its first sentence the short one")
          (clause list "(name type note ...) for a formal or field, or (returns type note ...)")
          ("kind" syntax) ("library" "(edoc)"))))
-
-  (meta define (source-library x)
-    ;; the library the form x appears in, from its source file, or #f when
-    ;; it was not read from a file
-    (let ([annotation (syntax->annotation x)])
-      (and annotation
-           (let* ([path (source-file-descriptor-path (source-object-sfd (annotation-source annotation)))]
-                  [file (path-last path)]
-                  [n (string-length file)])
-             (and (> n 4) (string=? (substring file (- n 4) n) ".sls")
-                  (string-append "(" (substring file 0 (- n 4)) ")"))))))
 
   (meta define (kept-datum doc extra library)
     ;; the datum recorded for introspection: (edoc summary clause ...), then
     ;; clauses no user form can write, since their heads are strings --
     ;; extra, and the defining library
     (append (list 'edoc) (syntax->datum doc) extra (if library (list (list "library" library)) '())))
-
-  (meta define (kept-spec x doc extra)
-    ;; kept-datum without its head, as syntax, for the edefine forms
-    (datum->syntax #'edefine (cdr (kept-datum doc extra (source-library x)))))
 
   (meta define (check-summary! who x doc)
     (syntax-case doc ()
@@ -580,105 +559,41 @@
          (body any "the definitions, annotated")
          ("kind" syntax) ("library" "(edoc)"))))
 
-  ;;; The older forms ----------------------------------------------------------------
+  ;;; This library's own definitions --------------------------------------------------
 
-  (define-syntax edefine-syntax
-    ;; (edefine-syntax name (edoc summary clause ...) transformer): the edoc
-    ;; is recorded under the name, since a keyword has no object. Clauses
-    ;; describe the form's parts.
+  ;; (edoc) cannot be an elibrary, since it defines the form; these two
+  ;; forms document its procedures and records the same way, with the same
+  ;; checks, attaching at initialization.
+
+  (define-syntax edefine
     (lambda (x)
       (syntax-case x (edoc)
-        [(_ name (edoc . doc) transformer)
-         (identifier? #'name)
-         (begin
-           (check-free-clauses! 'edefine-syntax x #'doc)
-           (with-syntax ([kept (kept-spec x #'doc '(("kind" syntax)))]
-                         [(tmp) (generate-temporaries '(edoc))])
-             #'(begin
-                 (define-syntax name transformer)
-                 (define tmp (attach-name! 'name '(edoc . kept))))))]
-        [_ (syntax-violation 'edefine-syntax
-             "expected (edefine-syntax name (edoc summary clause ...) transformer)" x)])))
-
-  (define edefine-syntax-documentation
-    (attach-name! 'edefine-syntax
-      '(edoc "Define a keyword whose edoc is recorded under its name, the clauses describing the form's parts."
-         (name symbol "the keyword")
-         (transformer any "the transformer, as define-syntax takes it")
-         ("kind" syntax) ("library" "(edoc)"))))
-
-  (edefine-syntax edefine
-    (edoc "Define a documented procedure, (edefine (name . formals) (edoc ...) body ...) or a case-lambda whose clauses open with an edoc, or a documented value, (edefine name (edoc ...) expression)."
-          (name symbol "the name defined")
-          (formals list "the lambda list, each formal with an edoc clause")
-          (body any "the body, which may open with definitions"))
-    (lambda (x)
-      (define (spec doc) (kept-spec x doc '()))
-      (syntax-case x (edoc case-lambda)
-        [(_ (name . formals) (edoc . doc) body0 body ...)
-         (identifier? #'name)
+        [(_ (name . formals) (edoc . doc) body ...)
          (begin
            (check-formals! 'edefine x (list #'formals) #'doc)
-           (with-syntax ([kept (spec #'doc)])
-             ;; the body in its own scope, so its internal definitions may
-             ;; follow the datum
-             #'(define name (lambda formals '(edoc . kept) (let () body0 body ...)))))]
-        [(_ name (case-lambda [formals (edoc . doc) body0 body ...] ...))
-         (identifier? #'name)
-         (begin
-           (for-each (lambda (formals doc) (check-formals! 'edefine x (list formals) doc)) #'(formals ...) #'(doc ...))
-           (with-syntax ([(kept ...) (map spec #'(doc ...))])
-             #'(define name (case-lambda [formals '(edoc . kept) (let () body0 body ...)] ...))))]
+           (with-syntax ([datum (datum->syntax #'edoc
+                                  (kept-datum #'doc (list (list "kind" 'procedure) (list "formals" (syntax->datum #'formals))) "(edoc)"))]
+                         [(tmp) (generate-temporaries '(edoc))])
+             #'(begin
+                 (define (name . formals) body ...)
+                 (define tmp (attach! 'name name 'datum)))))]
         [(_ name (edoc . doc) expression)
-         (identifier? #'name)
-         ;; a value: the datum is attached to the object when it is defined
          (begin
            (check-value-doc! 'edefine x #'doc)
-           (with-syntax ([kept (kept-spec x #'doc
-                                 (list (list "kind"
-                                         (if (or (head-is? #'expression 'make-parameter) (head-is? #'expression 'make-thread-parameter))
-                                             'parameter 'value))))])
-             #'(define name (attach! 'name expression '(edoc . kept)))))]
-        [_ (syntax-violation 'edefine
-             "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
-             x)])))
+           (with-syntax ([datum (datum->syntax #'edoc (kept-datum #'doc (list (list "kind" 'value)) "(edoc)"))])
+             #'(define name (attach! 'name expression 'datum))))])))
 
-  (edefine-syntax edefine-record-type
-    (edoc "A define-record-type whose constructor, predicate and field procedures carry edocs derived from one edoc naming every field; a (constructor field ...) clause documents a protocol's constructor."
-          (spec any "the record name, or (name constructor predicate)")
-          (clause list "the define-record-type clauses: fields, protocol and the rest"))
+  (define-syntax edefine-record-type
     (lambda (x)
       (syntax-case x (edoc)
         [(_ spec (edoc . doc) body ...)
-         (let* ([attachments (record-attachments 'edefine-record-type x #'spec #'doc (syntax->list #'(body ...)) (source-library x))]
-                [type (car (record-parts 'edefine-record-type x #'spec (syntax->list #'(body ...))))])
+         (let ([attachments (record-attachments 'edefine-record-type x #'spec #'doc (syntax->list #'(body ...)) "(edoc)")]
+               [type (car (record-parts 'edefine-record-type x #'spec (syntax->list #'(body ...))))])
            (with-syntax ([(attachment ...) (attachment-forms attachments (list type))]
                          [(tmp) (generate-temporaries '(edoc))])
              #'(begin
                  (define-record-type spec body ...)
-                 (define tmp (begin attachment ... (void))))))]
-        [_ (syntax-violation 'edefine-record-type
-             "expected (edefine-record-type spec (edoc summary (field type note ...) ...) clause ...)" x)])))
-
-  (edefine-syntax edefine-condition-type
-    (edoc "A define-condition-type whose constructor, predicate and accessors carry edocs derived from one edoc naming every field."
-          (name symbol "the condition type, &name")
-          (parent symbol "its parent condition type")
-          (constructor symbol "the constructor's name")
-          (predicate symbol "the predicate's name")
-          (field list "(field accessor) per field"))
-    (lambda (x)
-      (syntax-case x (edoc)
-        [(_ name parent constructor predicate (edoc . doc) (field accessor) ...)
-         (let ([attachments (condition-attachments 'edefine-condition-type x #'name #'constructor #'predicate #'doc
-                              (syntax->list #'((field accessor) ...)) (source-library x))])
-           (with-syntax ([(attachment ...) (attachment-forms attachments (list #'name))]
-                         [(tmp) (generate-temporaries '(edoc))])
-             #'(begin
-                 (define-condition-type name parent constructor predicate (field accessor) ...)
-                 (define tmp (begin attachment ... (void))))))]
-        [_ (syntax-violation 'edefine-condition-type
-             "expected (edefine-condition-type &name &parent constructor predicate (edoc summary (field type note ...) ...) (field accessor) ...)" x)])))
+                 (define tmp (begin attachment ... (void))))))])))
 
   ;;; Reading it back -------------------------------------------------------------
 
@@ -748,8 +663,8 @@
              [else #f]))))
 
   (define (attached-signatures spec procedure?)
-    ;; the signatures of an attached datum; a procedure documented as a
-    ;; value is a procedure whose formals are its argument names
+    ;; the signatures of a recorded datum; a procedure documented as a value
+    ;; is a procedure whose formals are its argument names
     (let ([sigs (spec-signatures 'value '() spec #f)])
       (and sigs
            (map (lambda (sig)
@@ -760,56 +675,12 @@
                       sig))
                 sigs))))
 
-  (define (clause-signature formals body library)
-    ;; The signature of one clause whose body opens with a quoted edoc datum.
-    (and (pair? body)
-         (let ([first (car body)])
-           (and (pair? first) (eq? (car first) 'quote) (pair? (cdr first))
-                (let ([sigs (spec-signatures 'procedure formals (cadr first) library)])
-                  (and sigs (car sigs)))))))
-
-  (define (read-signatures proc)
-    (let* ([code (guard (ex [else #f]) ((inspect/object proc) 'code))]
-           [source (and code (code 'source))]
-           [datum (and source (source 'value))]
-           [library
-             (and code
-                  (call-with-values (lambda () (code 'source-path))
-                    (lambda args
-                      (and (pair? args) (string? (car args))
-                           (let* ([file (path-last (car args))] [n (string-length file)])
-                             (and (> n 4) (string=? (substring file (- n 4) n) ".sls")
-                                  (string-append "(" (substring file 0 (- n 4)) ")")))))))])
-      (and (pair? datum)
-           (case (car datum)
-             [(lambda)
-              (and (pair? (cdr datum))
-                   (let ([sig (clause-signature (cadr datum) (cddr datum) library)])
-                     (and sig (list sig))))]
-             [(case-lambda)
-              (let ([sigs (map (lambda (clause)
-                                 (and (pair? clause) (clause-signature (car clause) (cdr clause) library)))
-                               (cdr datum))])
-                (and (pair? sigs) (for-all values sigs) sigs))]
-             [else #f]))))
-
-  (define cache (make-weak-eq-hashtable))
-
   (edefine (edoc-of object)
-    (edoc "The signatures an object was defined with, from its attached edoc or a procedure's source, or #f."
+    (edoc "The signatures an object was documented with, or #f."
           (object any "the procedure, parameter or value")
           (returns (or (list-of (record signature)) #f)))
-    (cond
-      [(eq-hashtable-ref attached object #f)
-       => (lambda (spec) (attached-signatures spec (procedure? object)))]
-      [(procedure? object)
-       (let ([hit (eq-hashtable-ref cache object #f)])
-         (cond [(eq? hit 'none) #f]
-               [hit hit]
-               [else (let ([found (read-signatures object)])
-                       (eq-hashtable-set! cache object (or found 'none))
-                       found)]))]
-      [else #f]))
+    (let ([spec (eq-hashtable-ref attached object #f)])
+      (and spec (attached-signatures spec (procedure? object)))))
 
   (edefine (edoc-named name)
     (edoc "The signatures recorded under a name: a keyword's, a record or condition type's, or a value's without identity; or #f."

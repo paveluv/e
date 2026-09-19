@@ -99,7 +99,7 @@ The `(edit)` module uses this mechanism for commands such as `replace!!` and
 
 ### Documented definitions
 
-A library can document its exports where it defines them. A documented
+A library documents its exports where it defines them. A documented
 library is written with `elibrary`; its file starts with the import that
 brings the form in:
 
@@ -122,67 +122,45 @@ brings the form in:
 
 An `edoc` form annotates the definition that follows it, which stays an
 ordinary `define`, `define-syntax`, `define-record-type` or
-`define-condition-type`; `(edoc name summary clause ...)` documents a
-name some other form defines. The annotations are checked while the
-library expands, with the rules below, and every export the body defines
-must have one, or expansion fails naming the export. Re-exported imports
-and aliases such as `(define x other:y)` take their documentation from
-their origin. A record's edoc names every field; a case-lambda's names the
-formals of all its clauses, and the reader gets one signature per clause.
+`define-condition-type`; `(edoc name summary clause ...)` documents a name
+some other form defines. Every export the body defines must have an edoc,
+or expansion fails naming the export. Re-exported imports and aliases such
+as `(define x other:y)` take their documentation from their origin.
+
+The annotations are checked while the library expands. The summary is a
+string. For a procedure, every formal has exactly one clause `(name type
+note ...)` and no other name appears; a rest parameter's type is a
+`list-of`; a case-lambda's edoc names the formals of all its clauses, and
+the reader gets one signature per clause. A parameter or another value
+takes one `(value type note ...)` clause for what it holds, and a
+procedure built by an expression takes argument clauses like a lambda's.
+A record's edoc names every field, and derives edocs for the constructor,
+the predicate and the field procedures; a record with a protocol or a
+parent documents its constructor only through a `(constructor field ...)`
+clause naming the arguments among the fields. A condition type's edoc
+names its fields the same way. A keyword's clauses name the parts of its
+form. `returns` appears at most once, and every type is in the vocabulary:
+the editor's notions `file`, `directory`, `buffer`, `window`, `region`,
+`position`, `command`, `symbol`, `key`, `mode`, `style`; the language's
+`string`, `char`, `integer`, `number`, `boolean`, `list`, `pair`,
+`vector`, `bytevector`, `hashtable`, `port`, `procedure`, `thunk`,
+`condition`, `datum`, `any`; `#f` for unions such as `(or string #f)`; and
+the compounds `(one-of literal ...)`, `(or type ...)`, `(list-of type)` and
+`(record name)` for an instance of a record type.
+
 When the library is initialized the edocs are attached to the objects they
-document, or recorded under the name for a keyword, a record type or a
-value without identity.
-
-The libraries not yet migrated carry their documentation in the
-definition forms themselves:
-
-```scheme
-(edefine (visit-file! path)
-  (edoc "Visit a file in the current window, creating or reusing its buffer."
-        (path file "the file to visit")
-        (returns buffer))
-  ...)
-```
-
-`edefine`, from the `(edoc)` library, binds the procedure and keeps the
-`edoc` form at the head of its body as a quoted datum: a constant the body
-discards, so it costs nothing to run, while the procedure's recorded source
-keeps it. `edefine` also accepts a `case-lambda` whose clauses each open with
-an `edoc`. The form is checked while the module expands: the summary is a
-string, every formal has exactly one clause `(name type note ...)` and no
-other name appears, a rest parameter's type is a `list-of`, `returns` appears
-at most once, and every type is in the vocabulary: the editor's notions
-`file`, `directory`, `buffer`, `window`, `command`, `symbol`, `key`, `mode`,
-`style`; the language's `string`, `char`, `integer`, `number`, `boolean`,
-`list`, `pair`, `vector`, `bytevector`, `hashtable`, `port`, `procedure`,
-`thunk`, `condition`, `datum`, `any`; and the compounds `(one-of literal
-...)`, `(or type ...)`, `(list-of type)` and `(record name)` for an instance
-of a record type. An `edoc` anywhere else is a syntax error.
-
-Definitions without a lambda body carry an `edoc` too. `(edefine name (edoc
-summary clause ...) expression)` attaches the datum to the value when it is
-defined: a parameter or another value takes one `(value type note ...)`
-clause for what it holds, and a procedure built by an expression takes
-argument clauses like a lambda's. A value without identity, such as a
-number, is recorded under its name. `(edefine-record-type spec (edoc summary
-(field type note ...) ...) clause ...)` is a `define-record-type` whose
-constructor, predicate and field procedures all carry edocs derived from the
-record's one form; every field has exactly one clause, and a record with a
-protocol or a parent documents no constructor. `(edefine-syntax name (edoc
-summary clause ...) transformer)` records a keyword's edoc under its name,
-the clauses naming the form's parts.
-
-`edoc-of` reads an object's signatures back, from its attached edoc or from
-a procedure's source, `edoc-named` those recorded under a name, and
+document; a keyword, a record or condition type, and a value without
+identity, such as a number, are recorded under their names. `edoc-of` reads
+an object's signatures back, `edoc-named` those recorded under a name, and
 `edoc-entry` shapes signatures as an entry in the format above, under the
-source `edoc` and the chapter "Documented definitions"; a value's type stands
-where a return would. A head sends those entries with every describe query
-for the top-level definitions the registry does not already cover, so a
-documented definition gets a describe page and the `M-x` parameter
-suggestion without a `doc:register!` batch. The types are meant for
-tooling: they describe what an argument is, and later choose how it is
-completed; they are never checked at run time. Every export of every
-library carries an edoc, the standard procedures the sandbox passes on
-excepted; `tools/edoc-coverage.sps` reports, library by library, which
-exports do and what kind of definition the others are, and `--list` names
-them.
+source `edoc` and the chapter "Documented definitions"; a value's type
+stands where a return would. A head sends those entries with every
+describe query for the top-level definitions the registry does not already
+cover, so a documented definition gets a describe page and the `M-x`
+parameter suggestion without a `doc:register!` batch. The types are meant
+for tooling: they describe what an argument is, and later choose how it is
+completed; they are never checked at run time. Every library is an
+`elibrary` except `(edoc)` itself, which documents its own exports with
+the same checks; `tools/edoc-coverage.sps` reports, library by library,
+which exports carry an edoc and what kind of definition the others are,
+and `--list` names them.
