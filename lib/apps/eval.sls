@@ -66,23 +66,38 @@
   (define hint-cache (make-weak-eq-hashtable))
 
   (define (completion-hint sym)
-    ;; The grey text beside a candidate: the arguments, then its edoc summary;
-    ;; "" when nothing local is known. The list wraps it as needed. Cached per
-    ;; procedure: stripping a source datum is costly and the answer never
-    ;; changes for the same procedure.
-    (let ([value (and (top-level-bound? sym) (top-level-value sym))])
-      (if (not (procedure? value)) ""
-          (or (eq-hashtable-ref hint-cache value #f)
-              (let* ([signatures (edoc:edoc-of value)]
-                     [arguments
-                      (if signatures
-                          (format "~s" (edoc:signature-formals (car signatures)))
-                          (let ([tokens (guard (ex [else #f]) (local-params value))])
-                            (if tokens (string-append "(" (string:join tokens " ") ")") "")))]
-                     [summary (if signatures (edoc:signature-summary (car signatures)) "")]
-                     [hint (if (string=? summary "") arguments (string-append arguments "  " summary))])
-                (eq-hashtable-set! hint-cache value hint)
-                hint)))))
+    ;; The grey text beside a candidate: what it takes, then its edoc summary;
+    ;; "" when nothing local is known. A procedure shows its arguments, a
+    ;; parameter [value], a value its type, a keyword its parts. The list
+    ;; wraps it as needed. Cached per procedure -- stripping a source datum
+    ;; is costly and the answer never changes for the same procedure -- and
+    ;; per name for the rest.
+    (let* ([bound? (top-level-bound? sym)]
+           [value (and bound? (top-level-value sym))]
+           [key (if (procedure? value) value sym)])
+      (or (eq-hashtable-ref hint-cache key #f)
+          (let* ([signatures (or (and bound? (edoc:edoc-of value)) (edoc:edoc-named sym))]
+                 [sig (and signatures (car signatures))]
+                 [arguments
+                  (cond
+                    [(not sig)
+                     (let ([tokens (and (procedure? value) (guard (ex [else #f]) (local-params value)))])
+                       (if tokens (string-append "(" (string:join tokens " ") ")") ""))]
+                    [else
+                     (case (edoc:signature-kind sig)
+                       [(procedure) (format "~s" (edoc:signature-formals sig))]
+                       [(parameter) "[value]"]
+                       [(value)
+                        (let ([type (find (lambda (a) (eq? (edoc:argument-name a) 'value)) (edoc:signature-arguments sig))])
+                          (if type (string-append "<" (edoc:type-text (edoc:argument-type type)) ">") ""))]
+                       [(syntax) (format "~s" (map edoc:argument-name (edoc:signature-arguments sig)))]
+                       [else (format "~s" (map edoc:argument-name (edoc:signature-arguments sig)))])])]
+                 [summary (if sig (edoc:signature-summary sig) "")]
+                 [hint (cond [(string=? summary "") arguments]
+                             [(string=? arguments "") summary]
+                             [else (string-append arguments "  " summary)])])
+            (eq-hashtable-set! hint-cache key hint)
+            hint))))
 
   (define (completion-candidate match)
     ;; The label: the name with its matched characters underlined, then in

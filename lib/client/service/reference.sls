@@ -8,15 +8,19 @@
           (prefix (edoc) edoc:) (prefix (kernel) kernel:) (prefix (datum) datum:))
   (define (documents)
     ;; Registered module documentation, then entries read from the top-level
-    ;; procedures defined with edefine, for the names the registry leaves out.
+    ;; definitions that carry an edoc -- attached to their value, or recorded
+    ;; under their name -- for the names the registry leaves out.
     (let* ([registered (doc:entries)]
            [covered (apply append (map doc:names registered))])
       (append (map doc:to-datum registered)
               (fold-left
                 (lambda (out sym)
-                  (let ([value (and (not (memq sym covered)) (top-level-bound? sym) (top-level-value sym))])
-                    (let ([entry (and (procedure? value) (edoc:edoc-entry sym value))])
-                      (if entry (cons entry out) out))))
+                  (let* ([signatures
+                          (and (not (memq sym covered))
+                               (or (and (top-level-bound? sym) (edoc:edoc-of (top-level-value sym)))
+                                   (edoc:edoc-named sym)))]
+                         [entry (and signatures (edoc:edoc-entry sym signatures))])
+                    (if entry (cons entry out) out)))
                 '() (environment-symbols (interaction-environment))))))
   (define current 'unknown)
   (define (forget-page!) (set! current 'unknown))

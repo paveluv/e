@@ -64,6 +64,7 @@
     (let ([t (make-hashtable string-hash string=?)])
       (for-each (lambda (k) (hashtable-set! t k #t))
                 '("lambda" "case-lambda" "when" "unless"
+                  "edefine" "edefine-syntax" "edefine-record-type"
                   "case" "do" "parameterize" "guard" "dynamic-wind"
                   "library" "module" "set!" "delay"
                   "syntax-case" "syntax-rules" "identifier-syntax"))

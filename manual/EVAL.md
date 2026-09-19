@@ -107,11 +107,13 @@ candidate fills that symbol and closes the list. Leaving the symbol or cancellin
 the pop-up. No match leaves your input intact.
 
 The completion list shows one candidate per row: the name, with the
-character occurrences the matcher used underlined, then in grey its arguments
-and its `edoc` summary when it has one; a procedure without an `edoc` shows
-the parameters of its source, or its arity. A long hint wraps onto further
-rows, indented under itself. The hint is display-only: clicking anywhere in a
-candidate's rows inserts just the symbol.
+character occurrences the matcher used underlined, then in grey what it takes
+and its `edoc` summary when it has one: a procedure its arguments, a
+parameter `[value]`, a value its type in angle brackets, a keyword the parts
+of its form. A procedure without an `edoc` shows the parameters of its
+source, or its arity. A long hint wraps onto further rows, indented under
+itself. The hint is display-only: clicking anywhere in a candidate's rows
+inserts just the symbol.
 
 Bracketed multiline paste keeps its line breaks and runs the same Scheme
 indenter over the resulting expression. This makes copied definitions and

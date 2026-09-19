@@ -116,16 +116,36 @@ keeps it. `edefine` also accepts a `case-lambda` whose clauses each open with
 an `edoc`. The form is checked while the module expands: the summary is a
 string, every formal has exactly one clause `(name type note ...)` and no
 other name appears, a rest parameter's type is a `list-of`, `returns` appears
-at most once, and every type is one of `file`, `directory`, `buffer`,
-`window`, `command`, `symbol`, `key`, `mode`, `style`, `string`, `integer`,
-`boolean`, `procedure`, `any`, or `(one-of literal ...)`, `(or type ...)`,
-`(list-of type)`. An `edoc` anywhere else is a syntax error.
+at most once, and every type is in the vocabulary: the editor's notions
+`file`, `directory`, `buffer`, `window`, `command`, `symbol`, `key`, `mode`,
+`style`; the language's `string`, `char`, `integer`, `number`, `boolean`,
+`list`, `pair`, `vector`, `bytevector`, `hashtable`, `port`, `procedure`,
+`thunk`, `condition`, `datum`, `any`; and the compounds `(one-of literal
+...)`, `(or type ...)`, `(list-of type)` and `(record name)` for an instance
+of a record type. An `edoc` anywhere else is a syntax error.
 
-`edoc-of` reads a procedure's signatures back from its source, and
-`edoc-entry` shapes them as an entry in the format above, under the source
-`edoc` and the chapter "Documented definitions". A head sends those entries
-with every describe query for the top-level procedures the registry does not
-already cover, so a documented definition gets a describe page and the `M-x`
-parameter suggestion without a `doc:register!` batch. The types are meant
-for tooling: they describe what an argument is, and later choose how it is
-completed; they are never checked at run time.
+Definitions without a lambda body carry an `edoc` too. `(edefine name (edoc
+summary clause ...) expression)` attaches the datum to the value when it is
+defined: a parameter or another value takes one `(value type note ...)`
+clause for what it holds, and a procedure built by an expression takes
+argument clauses like a lambda's. A value without identity, such as a
+number, is recorded under its name. `(edefine-record-type spec (edoc summary
+(field type note ...) ...) clause ...)` is a `define-record-type` whose
+constructor, predicate and field procedures all carry edocs derived from the
+record's one form; every field has exactly one clause, and a record with a
+protocol or a parent documents no constructor. `(edefine-syntax name (edoc
+summary clause ...) transformer)` records a keyword's edoc under its name,
+the clauses naming the form's parts.
+
+`edoc-of` reads an object's signatures back, from its attached edoc or from
+a procedure's source, `edoc-named` those recorded under a name, and
+`edoc-entry` shapes signatures as an entry in the format above, under the
+source `edoc` and the chapter "Documented definitions"; a value's type stands
+where a return would. A head sends those entries with every describe query
+for the top-level definitions the registry does not already cover, so a
+documented definition gets a describe page and the `M-x` parameter
+suggestion without a `doc:register!` batch. The types are meant for
+tooling: they describe what an argument is, and later choose how it is
+completed; they are never checked at run time. `tools/edoc-coverage.sps`
+reports, library by library, which exports carry an edoc and what kind of
+definition the others are; `--list` names them.

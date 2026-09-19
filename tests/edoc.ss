@@ -29,6 +29,39 @@
 
      (check 'edefined-procedures-run (list (add 1 2) (join "-" "a" "b") (visit "p")) '(3 "a-b" ("p" utf-8)))
 
+     ;; Values, parameters, keywords and records carry edocs too: attached to
+     ;; the object, or recorded under the name when the object has no identity.
+     (edefine width (edoc "The width of the box." (value integer "in columns")) (make-parameter 80))
+     (edefine limit (edoc "How many rows at most." (value integer)) 40)
+     (edefine twice (edoc "Apply a procedure twice." (f procedure "the procedure") (x any)) (let () (lambda (f x) (f (f x)))))
+     (edefine-syntax swap!
+       (edoc "Exchange the values of two variables." (a symbol "a variable") (b symbol))
+       (syntax-rules () [(_ a b) (let ([t a]) (set! a b) (set! b t))]))
+     (edefine-record-type point
+       (edoc "A place on the screen." (x integer "the column") (y integer))
+       (fields (immutable x) (mutable y)))
+     (define (kind-of sigs) (and sigs (signature-kind (car sigs))))
+     (check 'values-and-keywords-run
+       (let ([a 1] [b 2]) (swap! a b) (list (width) limit (twice (lambda (n) (* n 2)) 3) a b (point-x (make-point 4 5))))
+       '(80 40 12 2 1 4))
+     (check 'attached-edocs-read-back-by-kind
+       (list (kind-of (edoc-of width)) (edoc-of limit) (kind-of (edoc-named 'limit)) (kind-of (edoc-of twice))
+             (signature-formals (car (edoc-of twice))) (kind-of (edoc-named 'swap!)) (edoc-of 40)
+             (map (lambda (p) (kind-of (edoc-of p))) (list make-point point? point-x point-y point-y-set!))
+             (signature-summary (car (edoc-of point-x))) (signature-summary (car (edoc-of point?)))
+             (map (lambda (a) (list (argument-name a) (argument-type a))) (signature-arguments (car (edoc-of point-y-set!)))))
+       '(parameter #f value procedure (f x) syntax #f (constructor predicate accessor accessor mutator)
+          "The x of a point: the column" "Whether a value is a point." ((point (record point)) (value integer))))
+     (check 'entries-follow-the-kind
+       (map (lambda (name sigs) (let ([entry (edoc-entry name sigs)]) (list (cadr entry) (caddr entry))))
+            '(width limit swap! make-point point-y-set!)
+            (list (edoc-of width) (edoc-named 'limit) (edoc-named 'swap!) (edoc-of make-point) (edoc-of point-y-set!)))
+       '(((("parameter" . "(width [value])")) "integer: in columns")
+         ((("variable" . "limit")) "integer")
+         ((("syntax" . "(swap! a b)")) #f)
+         ((("procedure" . "(make-point x y)")) #f)
+         ((("procedure" . "(point-y-set! point value)")) #f)))
+
      (let ([sig (car (edoc-of add))])
        (check 'signature-reads-back
          (list (length (edoc-of add)) (signature-formals sig) (signature-summary sig)
@@ -46,18 +79,20 @@
 
      (check 'presentation-helpers
        (list (edoc-template 'visit '(path . more)) (first-sentence "Add two numbers. Slowly.") (first-sentence "No end")
-             (type-text '(one-of utf-8 latin-1)) (type-text '(or string #f)) (type-text '(list-of buffer))
-             (edoc-type? 'file) (edoc-type? '(list-of (or window buffer))) (edoc-type? 'nonsense) (edoc-type? '(list-of)))
-       '("(visit path . more)" "Add two numbers." "No end" "one of utf-8 or latin-1" "string or #f" "list of buffer" #t #t #f #f))
+             (type-text '(one-of utf-8 latin-1)) (type-text '(or string #f)) (type-text '(list-of buffer)) (type-text '(record frame))
+             (edoc-type? 'file) (edoc-type? '(list-of (or window buffer))) (edoc-type? '(record frame))
+             (edoc-type? 'nonsense) (edoc-type? '(list-of)))
+       '("(visit path . more)" "Add two numbers." "No end" "one of utf-8 or latin-1" "string or #f" "list of buffer"
+         "frame record" #t #t #t #f #f))
 
      (check 'describe-entry-is-shaped-from-the-signatures
-       (let ([entry (edoc-entry 'visit visit)])
+       (let ([entry (edoc-entry 'visit (edoc-of visit))])
          (list (car entry) (cadr entry) (caddr entry) (cadddr entry) (list-ref entry 4) (list-ref entry 5) (list-ref entry 6)
                (list-ref entry 7)))
        '((visit) (("procedure" . "(visit path)") ("procedure" . "(visit path encoding)")) #f () edoc "Documented definitions" #f
          "Visit a file.\nVisit a file in an encoding.\n\n- `path` (file)\n- `encoding` (one of utf-8 or latin-1)"))
      (check 'returns-and-notes-reach-the-entry
-       (let ([entry (edoc-entry 'add add)]) (list (caddr entry) (list-ref entry 7)))
+       (let ([entry (edoc-entry 'add (edoc-of add))]) (list (caddr entry) (list-ref entry 7)))
        '("integer" "Add two numbers. Slowly, for the test.\n\n- `x` (integer): the first addend\n- `y` (integer)"))
 
      ;; Malformed forms are rejected while expanding, with the reason.
@@ -77,13 +112,21 @@
            (edefine (f x) (edoc "text" (x integer 7)) x)
            (edefine (f x) (edoc "text" (x integer)))
            (edefine (f x) x)
-           (edoc "text")))
+           (edoc "text")
+           (edefine v (edoc "text" (value integer) (x integer)) 3)
+           (edefine v (edoc "text" (x integer) (x string)) (lambda (x) x))
+           (edefine-syntax s (edoc "text" (a nonsense)) (syntax-rules () [(_ a) a]))
+           (edefine-record-type r (edoc "text" (x integer) (z integer)) (fields x))
+           (edefine-record-type r (edoc "text") (fields x))
+           (edefine-record-type r (edoc "text" (x integer) (x integer)) (fields x))))
        '("every formal needs an edoc clause" "an edoc clause names a formal" "unknown edoc type"
          "the edoc summary must be a string" "one edoc clause per formal" "a rest parameter is a list-of"
          "one returns clause at most" "edoc notes must be strings"
-         "expected (edefine (name . formals) (edoc summary clause ...) body ...) or a case-lambda whose clauses open with edoc"
-         "expected (edefine (name . formals) (edoc summary clause ...) body ...) or a case-lambda whose clauses open with edoc"
-         "edoc belongs at the head of an edefine body"))
+         "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
+         "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
+         "edoc belongs at the head of an edefine, edefine-syntax or edefine-record-type"
+         "a value clause stands alone" "one edoc clause per name" "unknown edoc type"
+         "an edoc clause names a field" "every field needs an edoc clause" "one edoc clause per field"))
 
      ;; The command layer's converted definitions read back, and every
      ;; documented editor procedure's clauses match its formals.
@@ -103,7 +146,9 @@
        '((file) ((list-of boolean)) () boolean "(edit)"))
      (check 'documented-clauses-match-their-formals
        (filter (lambda (sym)
-                 (not (for-all (lambda (sig) (equal? (map argument-name (signature-arguments sig)) (formal-list (signature-formals sig))))
+                 (not (for-all (lambda (sig)
+                                 (or (not (eq? (signature-kind sig) 'procedure))
+                                     (equal? (map argument-name (signature-arguments sig)) (formal-list (signature-formals sig)))))
                                (edoc-of (top-level-value sym)))))
                documented)
        '())
