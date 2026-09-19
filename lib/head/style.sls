@@ -10,10 +10,11 @@
 ;; cached by content, not by face definitions, so a redefinition must
 ;; repaint everything).
 
-(library (style)
+(import (only (edoc) elibrary))
+(elibrary (style)
   (export (rename (compile-style compile)) (rename (style-escape escape)) (rename (set-style! set!)) (rename (style-code code))
           (rename (set-styles-changed-hook! set-changed-hook!)) color-scheme! fill-range!)
-  (import (rnrs) (only (edoc) edefine edoc)
+  (import (rnrs)
           (only (chezscheme) format void)
           (prefix (kernel) kernel:)
           (prefix (string) string:))
@@ -97,10 +98,10 @@
                 "color must be named, 0..255, (rgb red green blue), or default"
                 value)])))
 
-  (edefine (compile-style expression)
-    (edoc "Compile a declarative style, ((foreground 244) italic) say, into the SGR parameter string terminals take."
-          (expression list "the style clauses")
-          (returns string))
+  (edoc "Compile a declarative style, ((foreground 244) italic) say, into the SGR parameter string terminals take."
+        (expression list "the style clauses")
+        (returns string))
+  (define (compile-style expression)
     ;; Compile a declarative style into the raw SGR parameter string used by
     ;; terminals: ((foreground 244) italic), for example.
     (unless (list? expression)
@@ -128,10 +129,10 @@
                         (if (null? codes) '(0) codes))
                    ";")))
 
-  (edefine (style-escape expression)
-    (edoc "The escape sequence selecting a declarative style."
-          (expression list "the style clauses")
-          (returns string))
+  (edoc "The escape sequence selecting a declarative style."
+        (expression list "the style clauses")
+        (returns string))
+  (define (style-escape expression)
     (format "\x1b;[~am" (compile-style expression)))
 
   ;;; Faces -------------------------------------------------------------------
@@ -144,9 +145,9 @@
   ;; failure here never loses the override.
   (define styles-changed-hook #f)
 
-  (edefine (set-styles-changed-hook! proc)
-    (edoc "Install the hook run when a face or the color scheme changes."
-          (proc procedure "the hook"))
+  (edoc "Install the hook run when a face or the color scheme changes."
+        (proc procedure "the hook"))
+  (define (set-styles-changed-hook! proc)
     (set! styles-changed-hook proc))
 
   (define (styles-changed!)
@@ -155,9 +156,9 @@
 
   (define current-color-scheme 'dark)
 
-  (edefine (color-scheme! scheme)
-    (edoc "Adopt the terminal's color scheme, dark or light, restyling every face; #f means dark."
-          (scheme (or (one-of dark light) #f) "the scheme"))
+  (edoc "Adopt the terminal's color scheme, dark or light, restyling every face; #f means dark."
+        (scheme (or (one-of dark light) #f) "the scheme"))
+  (define (color-scheme! scheme)
     (unless (memq scheme '(dark light #f))
       (error 'color-scheme! "expected dark, light or #f" scheme))
     (let ([next (or scheme 'dark)])
@@ -165,10 +166,10 @@
         (set! current-color-scheme next)
         (styles-changed!))))
 
-  (edefine (set-style! style spec)
-    (edoc "Override a face: a color number, a raw SGR parameter string, or declarative style clauses."
-          (style symbol "the face")
-          (spec (or integer string list) "its look"))
+  (edoc "Override a face: a color number, a raw SGR parameter string, or declarative style clauses."
+        (style symbol "the face")
+        (spec (or integer string list) "its look"))
+  (define (set-style! style spec)
     (kernel:registry-add!
       style-overrides
       (cons style
@@ -225,10 +226,10 @@
           (cons 'candidate (style-escape '(bold (background (rgb 226 235 250)))))
           (cons 'candidate-hover (style-escape '(bold (background (rgb 226 235 250)) dotted-underline (underline-color 248))))))
 
-  (edefine (style-code style)
-    (edoc "The SGR parameter string of a face, or of layered faces such as (editor mark); a surface's raw parameters pass through."
-          (style (or symbol string list) "the face")
-          (returns string))
+  (edoc "The SGR parameter string of a face, or of layered faces such as (editor mark); a surface's raw parameters pass through."
+        (style (or symbol string list) "the face")
+        (returns string))
+  (define (style-code style)
     ;; Layer semantic faces without copying their colors into another face:
     ;; (editor mark), for example, keeps the current editor color and underlines.
     (if (list? style) (apply string-append (map style-code style))
@@ -244,12 +245,12 @@
           (if hit (cdr hit) (cdar default-styles))))))
   ;;; Styles vectors --------------------------------------------------------------
 
-  (edefine (fill-range! v from to face)
-    (edoc "Set a face into a per-column styles vector over [from, to)."
-          (v vector "the styles")
-          (from integer "the first column")
-          (to integer "the column after the last")
-          (face symbol "the face"))
+  (edoc "Set a face into a per-column styles vector over [from, to)."
+        (v vector "the styles")
+        (from integer "the first column")
+        (to integer "the column after the last")
+        (face symbol "the face"))
+  (define (fill-range! v from to face)
     ;; face into the per-column styles vector v over [from, to)
     (let loop ([i from])
       (when (< i to) (vector-set! v i face) (loop (+ i 1)))))

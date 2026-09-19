@@ -25,7 +25,8 @@
 ;; (row . col) points, and prints as the expression that rebuilds it,
 ;; like buffers do:  (region (buffer "e") '(0 . 0) '(12 . 5)).
 
-(library (edit)
+(import (only (edoc) elibrary))
+(elibrary (edit)
   (export init!
           region region? region-buffer region-start region-end
           regions-of region-text
@@ -96,18 +97,27 @@
 
     app-event-position app-event-buffer-position app-event-button
   )
-  ;; The system-specific layer -- libc, termios, signals -- comes
-  ;; from (sys).
-  (import (chezscheme) (only (edoc) edefine edefine-record-type edoc) (prefix (sys) sys:)
-          (prefix (store) store:) (prefix (text) text:) (prefix (datum) datum:)
+  (import (chezscheme)
+          (prefix (sys) sys:)
+          (prefix (store) store:)
+          (prefix (text) text:)
+          (prefix (datum) datum:)
           (prefix (property) property:)
-          (prefix (kernel) kernel:) (prefix (actor) actor:)
-          (prefix (log) log:) (prefix (style) style:)
-          (prefix (keymap) keymap:) (prefix (tty) tty:)
-          (prefix (echo) echo:) (prefix (head) head:)
-          (prefix (paint) paint:) (prefix (string) string:)
-          (prefix (render) render:) (prefix (glyph) glyph:) (prefix (table) table:)
-          (prefix (mode) mode:) (prefix (file) file:)
+          (prefix (kernel) kernel:)
+          (prefix (actor) actor:)
+          (prefix (log) log:)
+          (prefix (style) style:)
+          (prefix (keymap) keymap:)
+          (prefix (tty) tty:)
+          (prefix (echo) echo:)
+          (prefix (head) head:)
+          (prefix (paint) paint:)
+          (prefix (string) string:)
+          (prefix (render) render:)
+          (prefix (glyph) glyph:)
+          (prefix (table) table:)
+          (prefix (mode) mode:)
+          (prefix (file) file:)
           (prefix (prompt) prompt:)
           (prefix (doc) doc:))
 
@@ -120,10 +130,10 @@
                 (environment-symbols (scheme-environment)))
       table))
 
-  (edefine (editor-symbol? sym)
-    (edoc "Whether a symbol is bound at the top level by the editor or its modules rather than by Chez Scheme itself."
-          (sym symbol "the name to classify")
-          (returns boolean))
+  (edoc "Whether a symbol is bound at the top level by the editor or its modules rather than by Chez Scheme itself."
+        (sym symbol "the name to classify")
+        (returns boolean))
+  (define (editor-symbol? sym)
     (and (top-level-bound? sym)
          (not (eq-hashtable-ref baseline-bindings sym #f))))
 
@@ -376,11 +386,11 @@
       [(_ label body ...)
        (call-with-recorded-edit! label (lambda () body ...))]))
 
-  (edefine (call-as-one-edit! label thunk)
-    (edoc "Bundle every edit the thunk makes into one labeled undo step per buffer it touches; nested groups defer to the outermost."
-          (label (or string #f) "the undo label")
-          (thunk thunk "the edits to group")
-          (returns any "what the thunk returns"))
+  (edoc "Bundle every edit the thunk makes into one labeled undo step per buffer it touches; nested groups defer to the outermost."
+        (label (or string #f) "the undo label")
+        (thunk thunk "the edits to group")
+        (returns any "what the thunk returns"))
+  (define (call-as-one-edit! label thunk)
     ;; Bundle every edit thunk makes into one labeled undo step per
     ;; buffer it touches -- and none for buffers it does not edit.
     ;; Nested groups defer to the outermost.
@@ -393,10 +403,9 @@
       (error 'undo-scope "expected mine or all" scope))
     scope)
 
-  (edefine undo-scope
-    (edoc "The default scope of undo!: mine, this head's own latest live action, or all, any actor's."
-          (value (one-of mine all)))
-    (make-parameter 'mine check-undo-scope))
+  (edoc "The default scope of undo!: mine, this head's own latest live action, or all, any actor's."
+        (value (one-of mine all)))
+  (define undo-scope (make-parameter 'mine check-undo-scope))
 
   (define (no-history verb)
     (format "No further ~a information" (string-downcase verb)))
@@ -458,27 +467,27 @@
           (local-history-shift! from to verb scope)))
     message)
 
-  (edefine (undo! . scope)
-    (edoc "Undo one action in the current buffer: this head's latest with scope mine, any actor's with all; omitted, the undo-scope preference decides."
-          (scope (list-of (one-of mine all)) "at most one scope")
-          (returns string "the report shown in the echo area"))
+  (edoc "Undo one action in the current buffer: this head's latest with scope mine, any actor's with all; omitted, the undo-scope preference decides."
+        (scope (list-of (one-of mine all)) "at most one scope")
+        (returns string "the report shown in the echo area"))
+  (define (undo! . scope)
     (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
     (history-shift! 0 1 "Undo"
                     (if (pair? scope) (check-undo-scope (car scope)) (undo-scope))))
 
-  (edefine (redo!)
-    (edoc "Reverse this head's latest undo."
-          (returns string "the report shown in the echo area"))
+  (edoc "Reverse this head's latest undo."
+        (returns string "the report shown in the echo area"))
+  (define (redo!)
     (history-shift! 1 0 "Redo" 'mine))
 
-  (edefine (undo-actor! who)
-    (edoc "Undo an actor's latest live action in the current shared buffer."
-          (who datum "the actor's identity")
-          (returns string "the report shown in the echo area"))
+  (edoc "Undo an actor's latest live action in the current shared buffer."
+        (who datum "the actor's identity")
+        (returns string "the report shown in the echo area"))
+  (define (undo-actor! who)
     (history-shift! 0 1 "Undo" (list 'actor who)))
 
-  (edefine (undo-actor!!)
-    (edoc "Choose another actor from completion and undo its latest live action in the current shared buffer.")
+  (edoc "Choose another actor from completion and undo its latest live action in the current shared buffer.")
+  (define (undo-actor!!)
     (let* ([b (head:window-buffer current-window)]
            [id (head:buffer-store-id b)]
            [authors (if id (store:undo-authors id) '())]
@@ -515,32 +524,32 @@
     (set! point-row (max 0 (min point-row (- (vlen) 1))))
     (set! point-col (max 0 (min point-col (string-length (current-display-line))))))
 
-  (edefine (move-left!)
-    (edoc "Move point one character left, crossing to the end of the previous line.")
+  (edoc "Move point one character left, crossing to the end of the previous line.")
+  (define (move-left!)
     (cond [(> point-col 0) (set! point-col (- point-col 1))]
           [(> point-row 0)
            (set! point-row (- point-row 1))
            (set! point-col (string-length (current-display-line)))]))
 
-  (edefine (move-right!)
-    (edoc "Move point one character right, crossing to the start of the next line.")
+  (edoc "Move point one character right, crossing to the start of the next line.")
+  (define (move-right!)
     (cond [(< point-col (string-length (current-display-line)))
            (set! point-col (+ point-col 1))]
           [(< point-row (- (vlen) 1))
            (set! point-row (+ point-row 1)) (set! point-col 0)]))
 
-  (edefine (move-horizontal! delta)
-    (edoc "Move point a number of characters, negative to the left, crossing line ends as single steps do."
-          (delta integer "how far, negative for left"))
+  (edoc "Move point a number of characters, negative to the left, crossing line ends as single steps do."
+        (delta integer "how far, negative for left"))
+  (define (move-horizontal! delta)
     ;; Move point delta characters, negative to the left, crossing line
     ;; ends the way repeated single steps do.
     (if (< delta 0)
         (do ([i 0 (- i 1)]) ((= i delta)) (move-left!))
         (do ([i 0 (+ i 1)]) ((= i delta)) (move-right!))))
 
-  (edefine (goto-point! p)
-    (edoc "Move point straight to a (row . col) position, clamped into the buffer."
-          (p position "where point goes"))
+  (edoc "Move point straight to a (row . col) position, clamped into the buffer."
+        (p position "where point goes"))
+  (define (goto-point! p)
     ;; Point belongs to the selected window, for apps and text alike.
     ;; Move it straight to (row . col), clamped into its displayed rows.
     (head:follow-app! current-window #f)
@@ -570,9 +579,9 @@
          (if breaks
              (render:column frame row (paint:segment-start breaks (paint:segment-of breaks col))) 0))))
 
-  (edefine (move-vertical! delta)
-    (edoc "Move point a number of lines, negative for up, aiming for the goal column; visual rows in a wrapping window."
-          (delta integer "how far, negative for up"))
+  (edoc "Move point a number of lines, negative for up, aiming for the goal column; visual rows in a wrapping window."
+        (delta integer "how far, negative for up"))
+  (define (move-vertical! delta)
     ;; By buffer lines -- or by visual rows in a soft-wrapping window,
     ;; where up and down walk a long line's segments (C-a and C-e
     ;; still treat it as one line). The goal column is always in cells.
@@ -623,9 +632,9 @@
                (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
               [else (loop (+ i 1) start acc)]))))
 
-  (edefine (insert-text! s)
-    (edoc "Insert text at point as one undo entry; its newlines become line breaks."
-          (s string "the text to insert"))
+  (edoc "Insert text at point as one undo entry; its newlines become line breaks."
+        (s string "the text to insert"))
+  (define (insert-text! s)
     (insert-text-as! s (format "insert ~s" s)))
 
   (define (insert-text-as! s label)
@@ -641,12 +650,12 @@
             (submit-edit! b (text:make-span row col row col) parts))
           (changed!)))))
 
-  (edefine (newline!)
-    (edoc "Insert a line break at point.")
+  (edoc "Insert a line break at point.")
+  (define (newline!)
     (insert-text-as! "\n" "newline"))
 
-  (edefine (delete-forward!)
-    (edoc "Delete the character after point, or join the next line at a line end.")
+  (edoc "Delete the character after point, or join the next line at a line end.")
+  (define (delete-forward!)
     (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
            [row point-row] [col point-col] [line (current-line)])
       (cond [(< col (string-length line))
@@ -660,8 +669,8 @@
                  (submit-edit! b (text:make-span row col (+ row 1) 0) '("")))
                (changed!))])))
 
-  (edefine (backspace!)
-    (edoc "Delete the character before point, or join with the previous line at a line start.")
+  (edoc "Delete the character before point, or join with the previous line at a line start.")
+  (define (backspace!)
     (when (or (> point-col 0) (> point-row 0))
       (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
              [end-row point-row] [end-col point-col]
@@ -677,16 +686,15 @@
 
   ;;; Kill and yank ---------------------------------------------------------
 
-  (edefine forward-kill-ring-to-system-clipboard
-    (edoc "Whether every kill also reaches the terminal's clipboard, through OSC 52."
-          (value boolean))
-    (make-parameter
-      #f
-      (lambda (enabled?)
-        (unless (boolean? enabled?)
-          (error 'forward-kill-ring-to-system-clipboard
-                 "expected a boolean" enabled?))
-        enabled?)))
+  (edoc "Whether every kill also reaches the terminal's clipboard, through OSC 52."
+        (value boolean))
+  (define forward-kill-ring-to-system-clipboard (make-parameter
+                                                  #f
+                                                  (lambda (enabled?)
+                                                    (unless (boolean? enabled?)
+                                                      (error 'forward-kill-ring-to-system-clipboard
+                                                        "expected a boolean" enabled?))
+                                                    enabled?)))
 
   (define base64-alphabet
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
@@ -735,9 +743,9 @@
     (set! kill-ring (if (killing?) (string-append kill-ring text) text))
     (publish-system-clipboard! kill-ring))
 
-  (edefine (copy-to-kill-buffer! text)
-    (edoc "Replace the kill ring's text without changing a buffer or point; C-y yanks it."
-          (text string "the new kill ring text"))
+  (edoc "Replace the kill ring's text without changing a buffer or point; C-y yanks it."
+        (text string "the new kill ring text"))
+  (define (copy-to-kill-buffer! text)
     ;; Replace the text yanked by C-y without changing a buffer or point.
     (unless (string? text)
       (error 'copy-to-kill-buffer! "expected a string" text))
@@ -745,8 +753,8 @@
     (publish-system-clipboard! kill-ring)
     (void))
 
-  (edefine (kill-line!)
-    (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate.")
+  (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate.")
+  (define (kill-line!)
     (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
            [row point-row] [col point-col] [s (current-line)] [n (string-length s)])
       (cond [(< col n)
@@ -760,15 +768,15 @@
              (delete-forward!)
              (kill! "\n")])))
 
-  (edefine (current-kill-ring)
-    (edoc "The kill ring's text."
-          (returns string))
+  (edoc "The kill ring's text."
+        (returns string))
+  (define (current-kill-ring)
     ;; The kill ring's text, for consumers outside the buffer -- the
     ;; terminal's yank, a future clipboard bridge.
     kill-ring)
 
-  (edefine (yank!)
-    (edoc "Insert the kill ring's text at point.")
+  (edoc "Insert the kill ring's text at point.")
+  (define (yank!)
     ;; Kill-ring entries can span lines after consecutive C-k commands.  Insert
     ;; newlines as buffer structure rather than embedding them in a line string.
     (unless (string=? kill-ring "")
@@ -790,11 +798,11 @@
     (submit-edit! (head:window-buffer current-window)
                   (text:make-span sr sc er ec) '("")))
 
-  (edefine (replace-region-text! start end text)
-    (edoc "Replace the text between two ordered points with new text, in one structural edit."
-          (start position "where the replaced text starts")
-          (end position "where it ends")
-          (text string "the replacement"))
+  (edoc "Replace the text between two ordered points with new text, in one structural edit."
+        (start position "where the replaced text starts")
+        (end position "where it ends")
+        (text string "the replacement"))
+  (define (replace-region-text! start end text)
     ;; Replace one ordered buffer range in a single structural operation.
     ;; Bulk editors use this instead of rebuilding a line once per match.
     (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
@@ -804,8 +812,8 @@
           (submit-edit! b (text:make-span (car start) (cdr start) (car end) (cdr end)) parts))
         (changed!))))
 
-  (edefine (copy-region!)
-    (edoc "Copy the text between mark and point to the kill ring without deleting it; the mark deactivates.")
+  (edoc "Copy the text between mark and point to the kill ring without deleting it; the mark deactivates.")
+  (define (copy-region!)
     ;; Save the region to the kill ring without deleting it -- M-w, as
     ;; in Emacs.  The mark deactivates; C-y reinserts.
     (if (not mark-active?)
@@ -818,8 +826,8 @@
                 (set! mark-active? #f)
                 (set! message "Copied"))))))
 
-  (edefine (kill-region!)
-    (edoc "Kill the text between mark and point into the kill ring.")
+  (edoc "Kill the text between mark and point into the kill ring.")
+  (define (kill-region!)
     (if (not mark-active?)
         (set! message "The mark is not set now")
         (let-values ([(sr sc er ec) (ordered-region)])
@@ -834,9 +842,9 @@
 
   ;;; Files -----------------------------------------------------------------
 
-  (edefine (default-directory)
-    (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
-          (returns directory))
+  (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
+        (returns directory))
+  (define (default-directory)
     ;; A file's parent, an app's working directory, or the head's launch
     ;; directory. All callers get an absolute, abbreviated directory with
     ;; a trailing slash, ready for appending another path component.
@@ -846,11 +854,11 @@
                      (current-directory)))])
       (file:abbreviate (if (string:suffix? "/" dir) dir (string-append dir "/")))))
 
-  (edefine (set-buffer-name! b name)
-    (edoc "Rename a buffer."
-          (b buffer "the buffer to rename")
-          (name string "its new name")
-          (returns buffer))
+  (edoc "Rename a buffer."
+        (b buffer "the buffer to rename")
+        (name string "its new name")
+        (returns buffer))
+  (define (set-buffer-name! b name)
     (head:buffer-name-set! b name)
     b)
 
@@ -905,9 +913,9 @@
                        (parameterize ([message-source 'visit-file!])
                          (set-message! (format "Cannot reread ~a" path)))]))))))))))
 
-  (edefine (visit-file! path)
-    (edoc "Visit a file in the current window, creating or reusing its buffer; nothing is written to disk."
-          (path file "the file to visit"))
+  (edoc "Visit a file in the current window, creating or reusing its buffer; nothing is written to disk."
+        (path file "the file to visit"))
+  (define (visit-file! path)
     ;; Direct visits and the interactive picker share acquisition and the
     ;; buffer-only merge/reread/cancel flow. Visiting never writes to disk.
     (guard (ex [else
@@ -941,10 +949,10 @@
     (unless (property:matches? review facts)
       (refuse-file! "Buffer's file or baseline changed; operation cancelled. Review the file again.")))
 
-  (edefine (save-file! target)
-    (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, ask whether to overwrite, merge three-way or cancel."
-          (target file "where to write: the buffer's own file, or a new destination it visits from then on")
-          (returns boolean "whether the file was written"))
+  (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, ask whether to overwrite, merge three-way or cancel."
+        (target file "where to write: the buffer's own file, or a new destination it visits from then on")
+        (returns boolean "whether the file was written"))
+  (define (save-file! target)
     ;; Saving is guarded by content, not clocks: the disk is read and
     ;; compared with the buffer's base (what it loaded or last saved).
     ;; A mismatch means somebody changed the file meanwhile -- the
@@ -1169,17 +1177,17 @@
           [(not n) #f]
           [else (ask)]))))
 
-  (edefine (buffer-text b)
-    (edoc "A buffer's text as its file would hold it: the lines joined with newlines, ending in one when the buffer keeps a trailing newline."
-          (b buffer "the buffer to read")
-          (returns string))
+  (edoc "A buffer's text as its file would hold it: the lines joined with newlines, ending in one when the buffer keeps a trailing newline."
+        (b buffer "the buffer to read")
+        (returns string))
+  (define (buffer-text b)
     ;; b's text as its file would hold it
     (file:text (head:buffer-lines b) (head:buffer-trailing b)))
 
-  (edefine (buffer-clean? b)
-    (edoc "Whether a buffer can be discarded without losing work: unmodified, or marked disposable; #f when its state cannot be read."
-          (b buffer "the buffer to judge")
-          (returns boolean))
+  (edoc "Whether a buffer can be discarded without losing work: unmodified, or marked disposable; #f when its state cannot be read."
+        (b buffer "the buffer to judge")
+        (returns boolean))
+  (define (buffer-clean? b)
     ;; Discard decisions use one current snapshot, not an empty/stale
     ;; head cache.  Read-only protects editing, not the lifetime of work.
     ;; Generated tools explicitly opt into disposal; failed reads fail closed.
@@ -1189,9 +1197,9 @@
 
   ;;; Buffer and window commands ---------------------------------------------
 
-  (edefine (show-buffer! b)
-    (edoc "Show a buffer in the current window and put it first in the recency list."
-          (b buffer "the buffer to show"))
+  (edoc "Show a buffer in the current window and put it first in the recency list."
+        (b buffer "the buffer to show"))
+  (define (show-buffer! b)
     (head:add-buffer! b)
     ;; The picker is inventory, not a document visit, including when its
     ;; own row is opened. Keep it behind documents in the recency list.
@@ -1201,17 +1209,17 @@
 
   ;; Read-only views of the editor's state, for M-x and modules; mutation
   ;; goes through the command API.
-  (edefine (current-buffer)
-    (edoc "The buffer shown in the selected window."
-          (returns buffer))
+  (edoc "The buffer shown in the selected window."
+        (returns buffer))
+  (define (current-buffer)
     (head:window-buffer current-window))
-  (edefine (buffer-list)
-    (edoc "The buffers in recency order, the most recently shown first, as a fresh list."
-          (returns (list-of buffer)))
+  (edoc "The buffers in recency order, the most recently shown first, as a fresh list."
+        (returns (list-of buffer)))
+  (define (buffer-list)
     (list-copy buffers))
-  (edefine (set-message! s)
-    (edoc "Show a message in the echo area; with a message-source it is logged too, with #f it is a plain indicator."
-          (s string "the message"))
+  (edoc "Show a message in the echo area; with a message-source it is logged too, with #f it is a plain indicator."
+        (s string "the message"))
+  (define (set-message! s)
     ;; A stamped message is a log entry -- recorded and shown; with
     ;; (message-source #f) it is an indicator, shown and forgotten,
     ;; like a CapsLock light, and an empty message merely clears the
@@ -1222,31 +1230,31 @@
       (if (and src (> (string-length s) 0))
           (log:add! src s)
           (paint:show-message! s #f))))
-  (edefine (point)
-    (edoc "Point in the selected window, as (row . col)."
-          (returns position))
+  (edoc "Point in the selected window, as (row . col)."
+        (returns position))
+  (define (point)
     (cons point-row point-col))
-  (edefine (mark)
-    (edoc "The mark of the current buffer as (row . col) while it is active, else #f."
-          (returns (or position #f)))
+  (edoc "The mark of the current buffer as (row . col) while it is active, else #f."
+        (returns (or position #f)))
+  (define (mark)
     (and mark-active? (cons mark-row mark-col)))
-  (edefine (buffer-line-count b)
-    (edoc "How many lines a buffer has."
-          (b buffer "the buffer to measure")
-          (returns integer))
+  (edoc "How many lines a buffer has."
+        (b buffer "the buffer to measure")
+        (returns integer))
+  (define (buffer-line-count b)
     (vector-length (head:buffer-lines b)))
-  (edefine (buffer-line b n)
-    (edoc "One line of a buffer, by zero-based row."
-          (b buffer "the buffer to read")
-          (n integer "the row")
-          (returns string))
+  (edoc "One line of a buffer, by zero-based row."
+        (b buffer "the buffer to read")
+        (n integer "the row")
+        (returns string))
+  (define (buffer-line b n)
     (vector-ref (head:buffer-lines b) n))
 
-  (edefine (call-with-buffer b thunk)
-    (edoc "Run a thunk with a buffer temporarily current: in the window already showing it, else invisibly in the current window."
-          (b buffer "the buffer to make current")
-          (thunk thunk "what to run")
-          (returns any "what the thunk returns"))
+  (edoc "Run a thunk with a buffer temporarily current: in the window already showing it, else invisibly in the current window."
+        (b buffer "the buffer to make current")
+        (thunk thunk "what to run")
+        (returns any "what the thunk returns"))
+  (define (call-with-buffer b thunk)
     ;; Run thunk with b temporarily the current buffer: in the window
     ;; already showing it when there is one -- point moves where the
     ;; user sees them -- else invisibly in the current window with the
@@ -1267,10 +1275,10 @@
            thunk
            (lambda () (head:set-window-buffer! current-window old))))]))
 
-  (edefine (fresh-buffer name)
-    (edoc "A named tool buffer, emptied for rebuilding; the same name reuses its own local buffer."
-          (name string "the tool's name")
-          (returns buffer))
+  (edoc "A named tool buffer, emptied for rebuilding; the same name reuses its own local buffer."
+        (name string "the tool's name")
+        (returns buffer))
+  (define (fresh-buffer name)
     ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
     ;; use head:register-view! instead.  The stable tool key reuses its
     ;; own local buffer, never an ordinary buffer with the same label.
@@ -1294,8 +1302,8 @@
   ;; window geometry helpers live in (head); the commands over them are
   ;; here.
 
-  (edefine (line-numbers!)
-    (edoc "Toggle line numbers in the current buffer.")
+  (edoc "Toggle line numbers in the current buffer.")
+  (define (line-numbers!)
     (let ([b (current-buffer)])
       (head:buffer-line-numbers-setting-set! b (not (head:buffer-line-numbers b)))
       (paint:invalidate-screen-cache!)
@@ -1309,10 +1317,9 @@
   ;; shown is the head's side, here: set-message! and the echo-area
   ;; presenter that init! installs on the log.
 
-  (edefine message-source
-    (edoc "Who a message came from, for the log's attribution: components parameterize it around their messages; #f makes a message a plain indicator, shown and never logged."
-          (value (or symbol #f)))
-    (make-parameter 'e))
+  (edoc "Who a message came from, for the log's attribution: components parameterize it around their messages; #f makes a message a plain indicator, shown and never logged."
+        (value (or symbol #f)))
+  (define message-source (make-parameter 'e))
 
   (define message-progress
     ;; When true, a logged message supersedes its component's newest
@@ -1321,16 +1328,16 @@
     ;; records every step regardless.
     log:progress)
 
-  (edefine (present-log-entry! e)
-    (edoc "Show an existing log record in the echo area without logging it again."
-          (e datum "the log record"))
+  (edoc "Show an existing log record in the echo area without logging it again."
+        (e datum "the log record"))
+  (define (present-log-entry! e)
     ;; Present an existing record in the echo area without logging it again.
     (present-log-entries! (list e)))
 
-  (edefine (present-log-entries! entries . tail)
-    (edoc "Queue several existing log records for the echo area and repaint once."
-          (entries (list-of datum) "the log records")
-          (tail (list-of string) "a ghost text after the last one, at most one"))
+  (edoc "Queue several existing log records for the echo area and repaint once."
+        (entries (list-of datum) "the log records")
+        (tail (list-of string) "a ghost text after the last one, at most one"))
+  (define (present-log-entries! entries . tail)
     ;; Queue several existing records and repaint once, avoiding a full echo
     ;; geometry change and terminal redraw for every streamed line.
     (let loop ([left entries])
@@ -1350,10 +1357,10 @@
   ;; results shown in *eval* can be pasted straight into the next
   ;; expression: (buffer-line-count (buffer "e")).  The lookup is by
   ;; name at evaluation time -- a killed buffer's form reports itself.
-  (edefine (lookup-buffer name)
-    (edoc "The buffer with a given name, as buffers print: (buffer name); an error when there is none."
-          (name string "the buffer's name")
-          (returns buffer))
+  (edoc "The buffer with a given name, as buffers print: (buffer name); an error when there is none."
+        (name string "the buffer's name")
+        (returns buffer))
+  (define (lookup-buffer name)
     (or (head:buffer-named name) (error 'buffer "no buffer named" name)))
 
   (define buffer-printing
@@ -1367,10 +1374,10 @@
   ;; again: (window 1) is the window numbered 1 at the left of its
   ;; status line.  Numbers are reused, so the form names whatever
   ;; window holds the number when it is evaluated.
-  (edefine (lookup-window n)
-    (edoc "The window numbered n at the left of its status line, as windows print: (window n); an error when there is none."
-          (n integer "the window's number")
-          (returns window))
+  (edoc "The window numbered n at the left of its status line, as windows print: (window n); an error when there is none."
+        (n integer "the window's number")
+        (returns window))
+  (define (lookup-window n)
     (or (head:window-numbered n) (error 'window "no window numbered" n)))
 
   (define window-printing
@@ -1384,20 +1391,20 @@
     (sort string<? (filter (lambda (n) (string:prefix? s n))
                            (map head:buffer-name buffers))))
 
-  (edefine (switch-buffer!!)
-    (edoc "Open the filterable buffers app, as list-buffers! does.")
+  (edoc "Open the filterable buffers app, as list-buffers! does.")
+  (define (switch-buffer!!)
     (list-buffers!))
 
-  (edefine (new-buffer!!)
-    (edoc "Ask for a name and show a new empty buffer here; empty input or cancellation changes nothing.")
+  (edoc "Ask for a name and show a new empty buffer here; empty input or cancellation changes nothing.")
+  (define (new-buffer!!)
     ;; Creation stays explicit when an empty switcher result is a typo.
     (let ([name (prompt:read! "New buffer: " #f)])
       (when (and name (not (string=? name "")))
         (show-buffer! (head:new-buffer name)))))
 
-  (edefine (kill-buffer! b)
-    (edoc "Kill a buffer: delete its shared text if it has any, and forget it here."
-          (b buffer "the buffer to kill"))
+  (edoc "Kill a buffer: delete its shared text if it has any, and forget it here."
+        (b buffer "the buffer to kill"))
+  (define (kill-buffer! b)
     (when (head:buffer-store-id b)
       (store:delete! head:ui-actor (head:buffer-store-id b)))
     (retire-buffer! b))
@@ -1414,8 +1421,8 @@
                  (and (= revision current) (equal? facts current-facts))))
            (begin (retire-buffer! b) #t))))
 
-  (edefine (kill-buffer!!)
-    (edoc "Ask which buffer to kill, the current one by default, confirming when it has unsaved changes.")
+  (edoc "Ask which buffer to kill, the current one by default, confirming when it has unsaved changes.")
+  (define (kill-buffer!!)
     (let* ([current (head:window-buffer current-window)]
            [s (prompt:read! (format "Kill buffer (default ~a): "
                               (head:buffer-name current))
@@ -1445,8 +1452,8 @@
       (head:dispatch-app-event! "FOCUS"))
     current-window)
 
-  (edefine (other-window!)
-    (edoc "Select the next window in layout order.")
+  (edoc "Select the next window in layout order.")
+  (define (other-window!)
     (focus-window! (next-window current-window)))
 
   (define (focus-window-direction! direction)
@@ -1476,30 +1483,30 @@
                   (loop (cdr entries) (car entries) d)
                   (loop (cdr entries) best best-distance)))))))
 
-  (edefine (focus-window-up!)
-    (edoc "Select the window above the cursor, the cursor's column choosing among stacked candidates.")
+  (edoc "Select the window above the cursor, the cursor's column choosing among stacked candidates.")
+  (define (focus-window-up!)
     (focus-window-direction! 'up))
-  (edefine (focus-window-down!)
-    (edoc "Select the window below the cursor, the cursor's column choosing among stacked candidates.")
+  (edoc "Select the window below the cursor, the cursor's column choosing among stacked candidates.")
+  (define (focus-window-down!)
     (focus-window-direction! 'down))
-  (edefine (focus-window-left!)
-    (edoc "Select the window left of the cursor, the cursor's row choosing among side-by-side candidates.")
+  (edoc "Select the window left of the cursor, the cursor's row choosing among side-by-side candidates.")
+  (define (focus-window-left!)
     (focus-window-direction! 'left))
-  (edefine (focus-window-right!)
-    (edoc "Select the window right of the cursor, the cursor's row choosing among side-by-side candidates.")
+  (edoc "Select the window right of the cursor, the cursor's row choosing among side-by-side candidates.")
+  (define (focus-window-right!)
     (focus-window-direction! 'right))
 
-  (edefine (selected-window)
-    (edoc "The selected window, an opaque token to hold, compare and give back to select-window!."
-          (returns window))
+  (edoc "The selected window, an opaque token to hold, compare and give back to select-window!."
+        (returns window))
+  (define (selected-window)
     ;; The current window, an opaque token: hold it, compare it, give
     ;; it back to select-window!.
     current-window)
 
-  (edefine (select-window! w)
-    (edoc "Select a window when it is still on screen; the pop-up is never selected."
-          (w window "the window to select")
-          (returns boolean "whether the window was selected"))
+  (edoc "Select a window when it is still on screen; the pop-up is never selected."
+        (w window "the window to select")
+        (returns boolean "whether the window was selected"))
+  (define (select-window! w)
     (and (memq w windows) (not (head:popup? w)) (begin (focus-window! w) #t)))
 
   (define (split-current-window! orientation b . first?)
@@ -1527,33 +1534,33 @@
              (head:replace-layout-window! current-window node)
              w))))
 
-  (edefine (split-window-below!)
-    (edoc "Split the selected window into a stacked pair; the new window is below and shows the same buffer.")
+  (edoc "Split the selected window into a stacked pair; the new window is below and shows the same buffer.")
+  (define (split-window-below!)
     ;; Split only the selected leaf, as in Emacs.
     (unless (split-current-window! 'below (head:window-buffer current-window))
       (set! message "Not enough room to split")))
 
-  (edefine (split-window-right!)
-    (edoc "Split the selected window into a side-by-side pair; the new window is to the right.")
+  (edoc "Split the selected window into a side-by-side pair; the new window is to the right.")
+  (define (split-window-right!)
     (unless (split-current-window! 'right (head:window-buffer current-window))
       (set! message "Not enough room to split"))
     (void))
 
-  (edefine (split-window-above!)
-    (edoc "Split the selected window into a stacked pair; the new window is above.")
+  (edoc "Split the selected window into a stacked pair; the new window is above.")
+  (define (split-window-above!)
     (unless (split-current-window! 'below (head:window-buffer current-window) #t)
       (set! message "Not enough room to split"))
     (void))
 
-  (edefine (split-window-left!)
-    (edoc "Split the selected window into a side-by-side pair; the new window is to the left.")
+  (edoc "Split the selected window into a side-by-side pair; the new window is to the left.")
+  (define (split-window-left!)
     (unless (split-current-window! 'right (head:window-buffer current-window) #t)
       (set! message "Not enough room to split"))
     (void))
 
-  (edefine (wrap! . on)
-    (edoc "Toggle soft wrapping of long lines in the current window, or set it."
-          (on (list-of boolean) "an explicit setting instead of a toggle"))
+  (edoc "Toggle soft wrapping of long lines in the current window, or set it."
+        (on (list-of boolean) "an explicit setting instead of a toggle"))
+  (define (wrap! . on)
     (head:window-wrap-set! current-window
                            (if (pair? on) (car on)
                              (not (paint:window-wrapped? current-window))))
@@ -1563,9 +1570,9 @@
                           (if (paint:window-wrapped? current-window) "on" "off")))
     (void))
 
-  (edefine (resize-window! delta)
-    (edoc "Move the boundary of the nearest enclosing stacked split."
-          (delta integer "rows to give the selected side; negative takes them"))
+  (edoc "Move the boundary of the nearest enclosing stacked split."
+        (delta integer "rows to give the selected side; negative takes them"))
+  (define (resize-window! delta)
     (let loop ([child current-window])
       (let ([parent (head:layout-parent layout-root child)])
         (cond
@@ -1580,8 +1587,8 @@
                parent (max 1 (- (head:layout-split-second-weight parent) signed))))]
           [else (loop parent)]))))
 
-  (edefine (delete-window!)
-    (edoc "Close the selected window; its sibling subtree takes the space. The last window and the pop-up stay.")
+  (edoc "Close the selected window; its sibling subtree takes the space. The last window and the pop-up stay.")
+  (define (delete-window!)
     (cond
       [(head:popup? current-window) (set! message "The pop-up window stays")]
       [(null? (cdr (remq (head:popup) (head:layout-leaves layout-root))))
@@ -1595,14 +1602,14 @@
          (head:replace-layout-window! parent sibling)
          (focus-window! next))]))
 
-  (edefine (delete-other-windows!)
-    (edoc "Keep only the selected window.")
+  (edoc "Keep only the selected window.")
+  (define (delete-other-windows!)
     (head:set-layout-root! current-window))
 
-  (edefine (display-buffer! b)
-    (edoc "Show a buffer without leaving the current window: in the window already showing it, else the next window, else a fresh split below."
-          (b buffer "the buffer to show")
-          (returns (or window #f) "the window, or #f when the screen has no room for one"))
+  (edoc "Show a buffer without leaving the current window: in the window already showing it, else the next window, else a fresh split below."
+        (b buffer "the buffer to show")
+        (returns (or window #f) "the window, or #f when the screen has no room for one"))
+  (define (display-buffer! b)
     ;; Show b without leaving the current window: in the window already
     ;; showing it, else the next window, else a fresh split.  The window,
     ;; or #f when the screen has no room for one.
@@ -1616,10 +1623,10 @@
       [(split-current-window! 'below b)]
       [else #f]))
 
-  (edefine (pop-up-or-reuse! b)
-    (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current one; focus stays where it was."
-          (b buffer "the buffer to show")
-          (returns (or window #f) "the window, or #f when there was no room"))
+  (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current one; focus stays where it was."
+        (b buffer "the buffer to show")
+        (returns (or window #f) "the window, or #f when there was no room"))
+  (define (pop-up-or-reuse! b)
     ;; Help-like buffers never appropriate another leaf: reuse an existing
     ;; window displaying b, otherwise create a new tile below the current one.
     ;; Focus stays where it was so the buffer remains a reference alongside
@@ -1628,10 +1635,10 @@
     (or (find (lambda (w) (eq? (head:window-buffer w) b)) windows)
         (split-current-window! 'below b)))
 
-  (edefine (buffer-append! b . new-lines)
-    (edoc "Append lines to a buffer, transcript style: a fresh buffer's single empty line is replaced, and point follows to the last line in every window showing it."
-          (b buffer "the buffer to extend")
-          (new-lines (list-of string) "the lines to add"))
+  (edoc "Append lines to a buffer, transcript style: a fresh buffer's single empty line is replaced, and point follows to the last line in every window showing it."
+        (b buffer "the buffer to extend")
+        (new-lines (list-of string) "the lines to add"))
+  (define (buffer-append! b . new-lines)
     ;; Append lines to b, transcript style: a fresh buffer's single empty
     ;; line is replaced, and the display follows -- point moves to the
     ;; last line in every window showing b, and in ones that show it later.
@@ -1659,17 +1666,17 @@
   ;; The mode registry -- records, detection, the memoized stylers --
   ;; lives in (mode); these two settings are commands' business.
 
-  (edefine (set-buffer-read-only! b flag)
-    (edoc "Protect a buffer from editing: #t forbids every edit, a procedure decides per edit, #f allows them."
-          (b buffer "the buffer to protect")
-          (flag (or boolean procedure) "the guard"))
+  (edoc "Protect a buffer from editing: #t forbids every edit, a procedure decides per edit, #f allows them."
+        (b buffer "the buffer to protect")
+        (flag (or boolean procedure) "the guard"))
+  (define (set-buffer-read-only! b flag)
     (head:buffer-read-only-set! b flag))
 
-  (edefine (set-buffer-wrap! b setting)
-    (edoc "Set how a buffer's long lines wrap: default, #t, #f, clean for wrapping at full width without continuation marks, or (clean . columns) capping the width."
-          (b buffer "the buffer to set")
-          (setting (or (one-of default #t #f clean) pair) "the wrap setting")
-          (returns buffer))
+  (edoc "Set how a buffer's long lines wrap: default, #t, #f, clean for wrapping at full width without continuation marks, or (clean . columns) capping the width."
+        (b buffer "the buffer to set")
+        (setting (or (one-of default #t #f clean) pair) "the wrap setting")
+        (returns buffer))
+  (define (set-buffer-wrap! b setting)
     ;; clean wraps like #t but draws no continuation marks and lets the
     ;; text use the full width -- for formatted read-only presentations;
     ;; (clean . n) additionally caps the wrapping width at n columns.
@@ -1699,17 +1706,17 @@
   (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
   (define formatters (kernel:make-registry))  ; entries (mode proc)
 
-  (edefine (register-indenter! name proc . tab)
-    (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on by default."
-          (name string "the mode")
-          (proc procedure "the indenter")
-          (tab (list-of boolean) "whether TAB indents, at most one"))
+  (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on by default."
+        (name string "the mode")
+        (proc procedure "the indenter")
+        (tab (list-of boolean) "whether TAB indents, at most one"))
+  (define (register-indenter! name proc . tab)
     (kernel:registry-add! indenters (list name proc (or (null? tab) (car tab)))))
 
-  (edefine (register-formatter! name proc)
-    (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
-          (name string "the mode")
-          (proc procedure "the formatter"))
+  (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
+        (name string "the mode")
+        (proc procedure "the formatter"))
+  (define (register-formatter! name proc)
     (kernel:registry-add! formatters (list name proc)))
 
   (define (mode-entry registry)
@@ -1819,8 +1826,8 @@
               (apply-indent! from cols #f))
             #t))))
 
-  (edefine (indent-line!)
-    (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation.")
+  (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation.")
+  (define (indent-line!)
     ;; TAB's work: indent the current line, cycling through its stops
     ;; -- the nearest stop right of the current indentation, wrapping
     ;; -- and land on the indentation (a blank line pads out to it);
@@ -1843,17 +1850,17 @@
                   (set! point-col col)))))))
     (void))
 
-  (edefine (indent-tab!)
-    (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing.")
+  (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing.")
+  (define (indent-tab!)
     ;; TAB: the mode indents when it asked to; otherwise nothing.
     (let ([entry (mode-entry indenters)])
       (when (and entry (caddr entry))
         (indent-line!))))
 
-  (edefine (indent-on-tab! name flag)
-    (edoc "Set whether TAB indents in a mode, overriding the flag its indenter registered with."
-          (name string "the mode")
-          (flag boolean "whether TAB indents"))
+  (edoc "Set whether TAB indents in a mode, overriding the flag its indenter registered with."
+        (name string "the mode")
+        (flag boolean "whether TAB indents"))
+  (define (indent-on-tab! name flag)
     ;; Configuration: whether TAB auto-indents in the named mode,
     ;; overriding the flag its indenter registered with.
     (let ([entry (kernel:registry-find indenters
@@ -1861,8 +1868,8 @@
       (unless entry (error 'indent-on-tab! "no indenter for mode" name))
       (kernel:registry-add! indenters (list name (cadr entry) flag))))
 
-  (edefine (indent-region!)
-    (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop.")
+  (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop.")
+  (define (indent-region!)
     (if (not mark-active?)
         (set! message "The mark is not set now")
         (let ([from (min mark-row point-row)]
@@ -1872,8 +1879,8 @@
                                   (if (= from to) "" "s"))))))
     (void))
 
-  (edefine (indent-buffer!)
-    (edoc "Indent every line of the current buffer by the mode's indenter.")
+  (edoc "Indent every line of the current buffer by the mode's indenter.")
+  (define (indent-buffer!)
     (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
       (when (indent-rows! 0 (- n 1))
         (set! message (format "Indented ~a lines" n))))
@@ -1931,8 +1938,8 @@
                                (if (= last (- (vector-length v) 1)) '((trailing . #t)) '())))
               #t]))])))
 
-  (edefine (format-region!)
-    (edoc "Rewrite the lines between mark and point with the mode's formatter.")
+  (edoc "Rewrite the lines between mark and point with the mode's formatter.")
+  (define (format-region!)
     (if (not mark-active?)
         (set! message "The mark is not set now")
         (let ([from (min mark-row point-row)]
@@ -1941,8 +1948,8 @@
             (set! message "Formatted region"))))
     (void))
 
-  (edefine (format-buffer!)
-    (edoc "Rewrite the whole current buffer with the mode's formatter.")
+  (edoc "Rewrite the whole current buffer with the mode's formatter.")
+  (define (format-buffer!)
     (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
       (when (format-rows! 0 (- n 1))
         (set! message (format "Formatted ~a lines" n))))
@@ -2006,15 +2013,15 @@
                           [else middle])])
         (land! top point))))
 
-  (edefine (page-window-fraction! direction fraction)
-    (edoc "Scroll the selected window by a fraction of its height and put point in the middle: negative direction up, positive down; fraction 1 is a page, 8 an eighth."
-          (direction integer "negative for up, positive for down")
-          (fraction integer "the divisor of the window height"))
+  (edoc "Scroll the selected window by a fraction of its height and put point in the middle: negative direction up, positive down; fraction 1 is a page, 8 an eighth."
+        (direction integer "negative for up, positive for down")
+        (fraction integer "the divisor of the window height"))
+  (define (page-window-fraction! direction fraction)
     (page-window! direction fraction))
 
-  (edefine (set-point-without-scroll! position)
-    (edoc "Place point at a (row . col) position, clamped into the window's text, leaving the viewport where it is."
-          (position position "where point goes"))
+  (edoc "Place point at a (row . col) position, clamped into the window's text, leaving the viewport where it is."
+        (position position "where point goes"))
+  (define (set-point-without-scroll! position)
     (let* ([v (head:window-lines current-window)]
            [row (max 0 (min (car position) (- (vector-length v) 1)))])
       (head:window-prow-set! current-window row)
@@ -2026,8 +2033,8 @@
   ;; The head's side of the interaction protocol: another actor's
   ;; question waits in the echo area as an unlogged indicator until
   ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
-  (edefine (answer!!)
-    (edoc "Answer the oldest question another actor posed through the interaction protocol.")
+  (edoc "Answer the oldest question another actor posed through the interaction protocol.")
+  (define (answer!!)
     ;; Answer the oldest question another actor posed (the interaction
     ;; protocol: actor.sls).
     (let ([asks (actor:pending head:ui-actor)])
@@ -2096,8 +2103,8 @@
         (string-append (file:base-name (substring path 0 (- (string-length path) 1))) "/")
         (file:base-name path)))
 
-  (edefine (save!!)
-    (edoc "Save the current buffer to its file, prompting for a path when it has none.")
+  (edoc "Save the current buffer to its file, prompting for a path when it has none.")
+  (define (save!!)
     (if file-name
         (save-file! file-name)
         (let ([s (parameterize ([prompt:completion-label file-completion-label]
@@ -2108,8 +2115,8 @@
           (when (and s (> (string-length s) 0)) (save-file! s))))
     (void))
 
-  (edefine (save-as!!)
-    (edoc "Prompt for a path, prefilled with the current file, and save the buffer there; it visits the new file from then on.")
+  (edoc "Prompt for a path, prefilled with the current file, and save the buffer there; it visits the new file from then on.")
+  (define (save-as!!)
     ;; Prompt for a path -- prefilled with the current file, ready to
     ;; edit -- and save the buffer there: the buffer visits the new
     ;; file from then on, its name and mode following.
@@ -2125,7 +2132,10 @@
 
   (define find-file-drafts (make-weak-eq-hashtable))
 
-  (edefine find-file!!
+  (edoc "Read a file path with completion, history and validation, then visit it; with a directory procedure, read a path to create instead: missing parents and an empty file are made on disk, or just directories for a trailing slash, existing targets are refused, and a created directory goes to the procedure. An initial path seeds the prompt."
+        (directory-action (or procedure #f) "what to do with a created directory; #f to visit instead")
+        (initial (or string #f) "the path to start from; #f for the default directory"))
+  (define find-file!!
     ;; Validate/acquire while the path is still editable; show it only
     ;; after the temporary view has returned the window. Focus loss keeps
     ;; a per-window draft, while acceptance and explicit cancellation end it.
@@ -2133,16 +2143,10 @@
     ;; (or just directories for a trailing slash), refusing existing targets.
     (case-lambda
       [()
-       (edoc "Read a file path with completion, history and validation, then visit it; directories stay in path entry, nothing is created on disk.")
        (find-file!! #f #f)]
       [(directory-action)
-       (edoc "Read a path to create: missing parents and an empty file are made on disk, or just directories for a trailing slash; existing targets are refused, and a created directory goes to the procedure."
-             (directory-action (or procedure #f) "what to do with a created directory; #f to visit instead"))
        (find-file!! directory-action #f)]
       [(directory-action initial)
-       (edoc "Read a path to visit or create, the prompt seeded with an initial path."
-             (directory-action (or procedure #f) "what to do with a created directory; #f to visit instead")
-             (initial (or string #f) "the path to start from; #f for the default directory"))
        (unless (and (or (not directory-action) (procedure? directory-action))
                     (or (not initial) (string? initial)))
          (error 'find-file!! "expected a directory action and an initial path" directory-action initial))
@@ -2203,8 +2207,8 @@
               (set! message "")))
           (set-message! "The <buffers> app is not available"))))
 
-  (edefine (quit!!)
-    (edoc "Quit the editor, asking first when buffers are modified: yes, no, or view them.")
+  (edoc "Quit the editor, asking first when buffers are modified: yes, no, or view them.")
+  (define (quit!!)
     (let review ([changed? #f])
       (let-values ([(unsaved valid?) (head:prepare-quit)])
         (let ([answer
@@ -2270,9 +2274,9 @@
   ;; wheel scrolls the window under the pointer, wherever the focus is.
   ;; The cost is the terminal's native mouse selection -- hold Shift
   ;; for that -- so mouse! turns the whole thing on or off at run time.
-  (edefine (mouse! on)
-    (edoc "Turn mouse tracking on or off; off restores the terminal's native selection."
-          (on boolean "whether to track the mouse"))
+  (edoc "Turn mouse tracking on or off; off restores the terminal's native selection."
+        (on boolean "whether to track the mouse"))
+  (define (mouse! on)
     ;; Turn mouse tracking on or off (off restores native selection).
     (tty:mouse-reporting! on)
     (head:set-mouse-position! #f)
@@ -2595,45 +2599,45 @@
 
   ;;; Small commands and key description -------------------------------------
 
-  (edefine (set-mark-command!)
-    (edoc "Set the mark at point and activate it.")
+  (edoc "Set the mark at point and activate it.")
+  (define (set-mark-command!)
     (when (head:buffer-selectable? (current-buffer))
       (set! mark-row point-row) (set! mark-col point-col)
       (set! mark-active? #t))
     (set! message (if mark-active? "Mark set" "")))
-  (edefine (beginning-of-line!)
-    (edoc "Move point to the start of its line.")
+  (edoc "Move point to the start of its line.")
+  (define (beginning-of-line!)
     (set! point-col 0))
-  (edefine (end-of-line!)
-    (edoc "Move point to the end of its line.")
+  (edoc "Move point to the end of its line.")
+  (define (end-of-line!)
     (set! point-col (string-length (current-display-line))))
-  (edefine (keyboard-quit!)
-    (edoc "Deactivate the mark and abandon what was pending.")
+  (edoc "Deactivate the mark and abandon what was pending.")
+  (define (keyboard-quit!)
     (set! mark-active? #f) (set! message "Quit"))
-  (edefine (redraw-command!)
-    (edoc "Erase and repaint the screen, asking the terminal for its color scheme again.")
+  (edoc "Erase and repaint the screen, asking the terminal for its color scheme again.")
+  (define (redraw-command!)
     (tty:query-color-scheme!)
     (paint:mark-size-dirty!) (paint:erase-screen!) (set! message "Screen redrawn"))
-  (edefine (open-line!)
-    (edoc "Insert a line break after point, leaving point where it is.")
+  (edoc "Insert a line break after point, leaving point where it is.")
+  (define (open-line!)
     (parameterize ([edit-point 'start]) (newline!)))
-  (edefine (page-up!)
-    (edoc "Scroll the selected window up by a page and put point in the middle; at the top, move point to the first line.")
+  (edoc "Scroll the selected window up by a page and put point in the middle; at the top, move point to the first line.")
+  (define (page-up!)
     (page-window! -1 1))
-  (edefine (page-down!)
-    (edoc "Scroll the selected window down by a page and put point in the middle; at the bottom, move point to the last line.")
+  (edoc "Scroll the selected window down by a page and put point in the middle; at the bottom, move point to the last line.")
+  (define (page-down!)
     (page-window! 1 1))
-  (edefine (previous-line!)
-    (edoc "Move point up one line, or one visual row in a wrapping window, keeping the goal column.")
+  (edoc "Move point up one line, or one visual row in a wrapping window, keeping the goal column.")
+  (define (previous-line!)
     (move-vertical! -1))
-  (edefine (next-line!)
-    (edoc "Move point down one line, or one visual row in a wrapping window, keeping the goal column.")
+  (edoc "Move point down one line, or one visual row in a wrapping window, keeping the goal column.")
+  (define (next-line!)
     (move-vertical! 1))
-  (edefine (beginning-of-buffer!)
-    (edoc "Move point to the start of the buffer.")
+  (edoc "Move point to the start of the buffer.")
+  (define (beginning-of-buffer!)
     (set! point-row 0) (set! point-col 0))
-  (edefine (end-of-buffer!)
-    (edoc "Move point to the end of the buffer.")
+  (edoc "Move point to the end of the buffer.")
+  (define (end-of-buffer!)
     (set! point-row (- (vlen) 1))
     (set! point-col (string-length (current-display-line))))
 
@@ -2667,8 +2671,8 @@
             (loop (append sequence (list (head:read-key-event #f)))))
           sequence)))
 
-  (edefine (describe-key!!)
-    (edoc "Read a key sequence and show in the help buffer what it runs, who bound it and what it shadows.")
+  (edoc "Read a key sequence and show in the help buffer what it runs, who bound it and what it shadows.")
+  (define (describe-key!!)
     (parameterize ([message-source #f])
       (set-message! "Describe key: "))
     (paint:redraw!)
@@ -2727,11 +2731,11 @@
 
   ;;; Regions and the generic helpers ------------------------------------------
 
-  (edefine-record-type (region-record make-region region?)
-    (edoc "A slice of one buffer between two (row . col) points."
-          (buffer buffer "the buffer the slice is in")
-          (start position "where it starts")
-          (end position "where it ends"))
+  (edoc "A slice of one buffer between two (row . col) points."
+        (buffer buffer "the buffer the slice is in")
+        (start position "where it starts")
+        (end position "where it ends"))
+  (define-record-type (region-record make-region region?)
     (fields (immutable buffer region-buffer)
             (immutable start region-start)
             (immutable end region-end)))
@@ -2740,12 +2744,12 @@
     (or (< (car a) (car b))
         (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
 
-  (edefine (region b start end)
-    (edoc "The slice of buffer b between two (row . col) points, given in either order."
-          (b buffer "the buffer the slice is in")
-          (start position "one end")
-          (end position "the other end")
-          (returns region))
+  (edoc "The slice of buffer b between two (row . col) points, given in either order."
+        (b buffer "the buffer the slice is in")
+        (start position "one end")
+        (end position "the other end")
+        (returns region))
+  (define (region b start end)
     ;; The slice of buffer b between two (row . col) points, either order.
     (if (point<? end start)
         (make-region b end start)
@@ -2765,10 +2769,10 @@
       (make-region b '(0 . 0)
                    (cons last (string-length (buffer-line b last))))))
 
-  (edefine (regions-of where)
-    (edoc "The regions a where argument denotes: #f for the selected region or the whole current buffer, a buffer or its name for all of it, a region itself, a predicate for the buffers it accepts, or a list of any of these."
-          (where (or buffer string region procedure list #f) "what to operate on")
-          (returns (list-of region)))
+  (edoc "The regions a where argument denotes: #f for the selected region or the whole current buffer, a buffer or its name for all of it, a region itself, a predicate for the buffers it accepts, or a list of any of these."
+        (where (or buffer string region procedure list #f) "what to operate on")
+        (returns (list-of region)))
+  (define (regions-of where)
     ;; The regions a `where` argument denotes (see the header).
     (cond [(not where)
            (list (let ([m (mark)])
@@ -2819,22 +2823,22 @@
 
   ;;; Commands ----------------------------------------------------------------
 
-  (edefine (count-matches needle . where)
-    (edoc "How many times needle occurs inside where."
-          (needle string "the text to count, within one line")
-          (where (list-of (or buffer string region procedure list)) "what to operate on: omitted, the selected region or the whole current buffer; a buffer or its name; a region; a predicate on buffers; or a list of these")
-          (returns integer))
+  (edoc "How many times needle occurs inside where."
+        (needle string "the text to count, within one line")
+        (where (list-of (or buffer string region procedure list)) "what to operate on: omitted, the selected region or the whole current buffer; a buffer or its name; a region; a predicate on buffers; or a list of these")
+        (returns integer))
+  (define (count-matches needle . where)
     (fold-left (lambda (n r)
                  (+ n (for-matches! r needle
                         (lambda (row col) (string-length needle)))))
                0 (regions-of (where-of where))))
 
-  (edefine (replace-all! from to . where)
-    (edoc "Replace every occurrence of from with to inside where: one undo step per buffer touched, point left where it was."
-          (from string "the text to find, within one line")
-          (to string "its replacement")
-          (where (list-of (or buffer string region procedure list)) "what to operate on: omitted, the selected region or the whole current buffer; a buffer or its name; a region; a predicate on buffers; or a list of these")
-          (returns integer "how many occurrences were replaced"))
+  (edoc "Replace every occurrence of from with to inside where: one undo step per buffer touched, point left where it was."
+        (from string "the text to find, within one line")
+        (to string "its replacement")
+        (where (list-of (or buffer string region procedure list)) "what to operate on: omitted, the selected region or the whole current buffer; a buffer or its name; a region; a predicate on buffers; or a list of these")
+        (returns integer "how many occurrences were replaced"))
+  (define (replace-all! from to . where)
     (define m (string-length from))
     (define (replace-line s)
       ;; Accumulate pieces and join once instead of copying the growing line
@@ -2883,10 +2887,10 @@
                          count))))))))
       0 (regions-of (where-of where))))
 
-  (edefine (region-text r)
-    (edoc "The text inside a region, rows joined with newlines."
-          (r region "the region to read")
-          (returns string))
+  (edoc "The text inside a region, rows joined with newlines."
+        (r region "the region to read")
+        (returns string))
+  (define (region-text r)
     ;; The text inside r, rows joined with newlines.
     (let* ([b (region-buffer r)]
            [start (region-start r)]
@@ -2920,9 +2924,9 @@
                  (cons row hit)
                  (loop (+ row 1) 0))))))
 
-  (edefine (replace!! . args)
-    (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered; y or SPC replaces, n or DEL skips, q, RET, C-g or ESC stops. Prompts for whichever of from and to are not given; the whole run is one undo step."
-          (args (list-of string) "from and then to, either or both omitted to be prompted for"))
+  (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered; y or SPC replaces, n or DEL skips, q, RET, C-g or ESC stops. Prompts for whichever of from and to are not given; the whole run is one undo step."
+        (args (list-of string) "from and then to, either or both omitted to be prompted for"))
+  (define (replace!! . args)
     ;; Query-replace in the current buffer, from point to the end: each
     ;; occurrence of from is highlighted and offered -- y (or SPC)
     ;; replaces, n (or DEL) skips, q / RET / C-g / ESC stops.  Prompts
@@ -3029,8 +3033,8 @@
                                   (buffer-line (current-buffer) r))))))])
       (do ([i 0 (+ i 1)]) ((= i n)) (delete-forward!))))
 
-  (edefine (next-conflict!)
-    (edoc "Move point to the next merge conflict marker, wrapping around at the end of the buffer.")
+  (edoc "Move point to the next merge conflict marker, wrapping around at the end of the buffer.")
+  (define (next-conflict!)
     ;; Point to the next conflict's <<<<<<< line, wrapping around.
     (let* ([b (current-buffer)]
            [n (buffer-line-count b)]
@@ -3045,8 +3049,8 @@
           (set-message! "No conflicts"))
       (void)))
 
-  (edefine (keep-mine!)
-    (edoc "Resolve the merge conflict at point in the buffer's favor, as one undo step.")
+  (edoc "Resolve the merge conflict at point in the buffer's favor, as one undo step.")
+  (define (keep-mine!)
     ;; Resolve the conflict at point in the buffer's favor.
     (let ([c (conflict-at (car (point)))])
       (if c
@@ -3060,8 +3064,8 @@
           (set-message! "Not in a conflict"))
       (void)))
 
-  (edefine (keep-disk!)
-    (edoc "Resolve the merge conflict at point in the disk's favor, as one undo step.")
+  (edoc "Resolve the merge conflict at point in the disk's favor, as one undo step.")
+  (define (keep-disk!)
     ;; Resolve the conflict at point in the disk's favor.
     (let ([c (conflict-at (car (point)))])
       (if c
@@ -3374,8 +3378,8 @@
           (refresh-buffers-view!)
           buffers-view)))
 
-  (edefine (list-buffers!)
-    (edoc "Show the buffers app with the most recently used other buffer selected: type to filter, arrows choose, Enter switches, Esc returns.")
+  (edoc "Show the buffers app with the most recently used other buffer selected: type to filter, arrows choose, Enter switches, Esc returns.")
+  (define (list-buffers!)
     ;; Both switch shortcuts use one app. The app itself never displaces the
     ;; previous document as the default, even after repeated quick switches.
     (let ([b (buffers-view-buffer)]
@@ -3398,8 +3402,8 @@
   ;; Everything the layer registers -- owned by edit, so a reload
   ;; retracts and remakes it; what the loop and the seams ask of the
   ;; commands is installed here too.
-  (edefine (init!)
-    (edoc "Install the command layer: log presentation, the file formatters, status hints, the mouse handler, the default key bindings, the loop's hooks and the buffers app.")
+  (edoc "Install the command layer: log presentation, the file formatters, status hints, the mouse handler, the default key bindings, the loop's hooks and the buffers app.")
+  (define (init!)
     ;; One module-owned subscriber per head. All records wake its shared
     ;; history view; echo presentation belongs to the originating head.
     ;; Presentation mode is captured with the record, not read on delivery.

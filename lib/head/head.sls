@@ -14,7 +14,8 @@
 ;; state through identifier-syntax facades. Hooks connect the pump and
 ;; loop to painting, mouse handling, and the reloadable commands.
 
-(library (head)
+(import (only (edoc) elibrary))
+(elibrary (head)
   (export buffer make-buffer buffer?
           buffer-name buffer-name-set!
           buffer-lines buffer-lines-raw-set!
@@ -105,7 +106,8 @@
           app-refresh-error-set! app-cursor-visible?
           app-cursor-visible?-set! app-status-position
           app-status-position-set! make-app app?)
-  (import (rnrs) (only (edoc) edefine edefine-record-type edefine-condition-type edoc) (rnrs r5rs)
+  (import (rnrs)
+          (rnrs r5rs)
           (only (chezscheme) keyboard-interrupt-handler getenv eval interaction-environment open-input-string
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
@@ -134,26 +136,26 @@
   ;; store.  A local buffer has no store id: its text and local-facts
   ;; live here alone.  Selection, saved position, and line-number
   ;; toggles belong to this seat in either case.
-  (edefine-record-type buffer
-    (edoc "A buffer as this seat sees it: a cache of a store buffer's text plus per-seat presentation, or a local buffer of its own."
-          (name string "the label: a shared buffer's cached, a local one's own")
-          (lines vector "the text, an immutable vector of lines")
-          (revision integer "the seat's repaint counter")
-          (history vector "local undo, (undo-entries redo-entries)")
-          (mark-row integer "the mark's row")
-          (mark-col integer "the mark's column")
-          (marked boolean "whether the mark is active")
-          (spot-row integer "point's row when last displayed")
-          (spot-col integer "point's column when last displayed")
-          (spot-top integer "the top row when last displayed")
-          (line-numbers (or boolean (one-of default)) "line numbers here: #t, #f, or default for the global setting")
-          (store-id (or integer #f) "the twin in the store, or #f for a local buffer")
-          (store-rev (or integer #f) "the store revision the lines last agreed with")
-          (local-rev integer "the local content revision")
-          (changes any "the bounded ring of adopted deltas")
-          (local-facts hashtable "a local buffer's facts")
-          (rendition (or (record frame) #f) "the cached cell projection")
-          (constructor name lines revision history mark-row mark-col marked spot-row spot-col spot-top line-numbers store-id store-rev))
+  (edoc "A buffer as this seat sees it: a cache of a store buffer's text plus per-seat presentation, or a local buffer of its own."
+        (name string "the label: a shared buffer's cached, a local one's own")
+        (lines vector "the text, an immutable vector of lines")
+        (revision integer "the seat's repaint counter")
+        (history vector "local undo, (undo-entries redo-entries)")
+        (mark-row integer "the mark's row")
+        (mark-col integer "the mark's column")
+        (marked boolean "whether the mark is active")
+        (spot-row integer "point's row when last displayed")
+        (spot-col integer "point's column when last displayed")
+        (spot-top integer "the top row when last displayed")
+        (line-numbers (or boolean (one-of default)) "line numbers here: #t, #f, or default for the global setting")
+        (store-id (or integer #f) "the twin in the store, or #f for a local buffer")
+        (store-rev (or integer #f) "the store revision the lines last agreed with")
+        (local-rev integer "the local content revision")
+        (changes any "the bounded ring of adopted deltas")
+        (local-facts hashtable "a local buffer's facts")
+        (rendition (or (record frame) #f) "the cached cell projection")
+        (constructor name lines revision history mark-row mark-col marked spot-row spot-col spot-top line-numbers store-id store-rev))
+  (define-record-type buffer
     (fields (mutable name buffer-name buffer-name-raw-set!)
                                    ; shared label cache or local <name>
             (mutable lines buffer-lines buffer-lines-raw-set!)
@@ -186,23 +188,23 @@
                spot-row spot-col spot-top line-numbers store-id store-rev
                0 #f (make-eq-hashtable) #f)))))
 
-  (edefine-record-type (window %make-window window?)
-    (edoc "A window: a view of a buffer at a place in the layout."
-          (index integer "the number at the left of its status line")
-          (buffer buffer "the buffer shown")
-          (top integer "the first visible line")
-          (topseg integer "the first visible segment of the top line")
-          (left integer "the first visible column")
-          (prow integer "point's row")
-          (pcol integer "point's column")
-          (size integer "the text height, laid out")
-          (xoff integer "the first screen column")
-          (width integer "the width in columns")
-          (wrap (or boolean (one-of default)) "whether long lines wrap here")
-          (following? boolean "whether it follows its shared app")
-          (view any "a local app's presentation of its rows, or #f")
-          (full-capture? boolean "whether every key goes to the app")
-          (status-actions list "the painted status-line controls"))
+  (edoc "A window: a view of a buffer at a place in the layout."
+        (index integer "the number at the left of its status line")
+        (buffer buffer "the buffer shown")
+        (top integer "the first visible line")
+        (topseg integer "the first visible segment of the top line")
+        (left integer "the first visible column")
+        (prow integer "point's row")
+        (pcol integer "point's column")
+        (size integer "the text height, laid out")
+        (xoff integer "the first screen column")
+        (width integer "the width in columns")
+        (wrap (or boolean (one-of default)) "whether long lines wrap here")
+        (following? boolean "whether it follows its shared app")
+        (view any "a local app's presentation of its rows, or #f")
+        (full-capture? boolean "whether every key goes to the app")
+        (status-actions list "the painted status-line controls"))
+  (define-record-type (window %make-window window?)
     (fields
       ;; the window's number, shown at the left of its status line: 0
       ;; for the first, and every new window the smallest number no
@@ -243,27 +245,27 @@
                     (not (buffer-selectable? b))) v
                (begin (window-view-set! w #f) #f)))))
 
-  (edefine (window-lines w)
-    (edoc "The lines a window shows: its local app view's, else its buffer's."
-          (w window "the window")
-          (returns vector))
+  (edoc "The lines a window shows: its local app view's, else its buffer's."
+        (w window "the window")
+        (returns vector))
+  (define (window-lines w)
     (let ([v (window-view-current w)])
       (if v (view-lines v) (buffer-lines (window-buffer w)))))
 
-  (edefine (window-rendition w)
-    (edoc "The cell projection of what a window shows: its view's frame, else its buffer's rendition."
-          (w window "the window")
-          (returns (or (record frame) #f)))
+  (edoc "The cell projection of what a window shows: its view's frame, else its buffer's rendition."
+        (w window "the window")
+        (returns (or (record frame) #f)))
+  (define (window-rendition w)
     (let ([v (window-view-current w)])
       (if v (view-frame v) (buffer-rendition (window-buffer w)))))
 
-  (edefine-record-type layout-split
-    (edoc "A split of the layout into two children, stacked or side by side, sharing the space by weight."
-          (orientation (one-of below right) "how the children are arranged")
-          (first (or window (record layout-split)) "the first child")
-          (second (or window (record layout-split)) "the second child")
-          (first-weight integer "the first child's share")
-          (second-weight integer "the second child's share"))
+  (edoc "A split of the layout into two children, stacked or side by side, sharing the space by weight."
+        (orientation (one-of below right) "how the children are arranged")
+        (first (or window (record layout-split)) "the first child")
+        (second (or window (record layout-split)) "the second child")
+        (first-weight integer "the first child's share")
+        (second-weight integer "the second child's share"))
+  (define-record-type layout-split
     (fields orientation (mutable first) (mutable second)
             (mutable first-weight) (mutable second-weight)))
 
@@ -287,58 +289,58 @@
   (define the-popup #f)
   (define popup-buffer #f)      ; its placeholder while hidden, outside the buffer list
   (define the-popup-rows 0)
-  (edefine (popup)
-    (edoc "The pop-up window, window 0: hidden until something is shown in it."
-          (returns window))
+  (edoc "The pop-up window, window 0: hidden until something is shown in it."
+        (returns window))
+  (define (popup)
     the-popup)
-  (edefine (popup? w)
-    (edoc "Whether a window is the pop-up."
-          (w window "the window")
-          (returns boolean))
+  (edoc "Whether a window is the pop-up."
+        (w window "the window")
+        (returns boolean))
+  (define (popup? w)
     (eq? w the-popup))
-  (edefine (popup-rows)
-    (edoc "How many text rows the pop-up has now; 0 while it is hidden."
-          (returns integer))
+  (edoc "How many text rows the pop-up has now; 0 while it is hidden."
+        (returns integer))
+  (define (popup-rows)
     the-popup-rows)
-  (edefine (show-popup! rows)
-    (edoc "Give the pop-up a number of text rows, the windows above keeping their minimum, and repaint."
-          (rows integer "the text rows"))
+  (edoc "Give the pop-up a number of text rows, the windows above keeping their minimum, and repaint."
+        (rows integer "the text rows"))
+  (define (show-popup! rows)
     ;; Give the pop-up rows text rows (the layout keeps the windows above
     ;; their minimum) and repaint.
     (unless (and (integer? rows) (exact? rows) (> rows 0))
       (error 'show-popup! "expected a positive row count" rows))
     (set! the-popup-rows rows)
     (request-repaint!))
-  (edefine (hide-popup!)
-    (edoc "Hide the pop-up, restoring its own buffer, and repaint.")
+  (edoc "Hide the pop-up, restoring its own buffer, and repaint.")
+  (define (hide-popup!)
     (set! the-popup-rows 0)
     (unless (eq? (window-buffer the-popup) popup-buffer)
       (set-window-buffer! the-popup popup-buffer))
     (request-repaint!))
 
-  (edefine (buffers)
-    (edoc "The seat's buffers, most recently shown first."
-          (returns (list-of buffer)))
+  (edoc "The seat's buffers, most recently shown first."
+        (returns (list-of buffer)))
+  (define (buffers)
     the-buffers)
-  (edefine (set-buffers! bs)
-    (edoc "Replace the seat's buffer list."
-          (bs (list-of buffer) "the buffers, most recent first"))
+  (edoc "Replace the seat's buffer list."
+        (bs (list-of buffer) "the buffers, most recent first"))
+  (define (set-buffers! bs)
     (set! the-buffers bs))
-  (edefine (windows)
-    (edoc "Every live window, in layout order."
-          (returns (list-of window)))
+  (edoc "Every live window, in layout order."
+        (returns (list-of window)))
+  (define (windows)
     the-windows)
-  (edefine (set-windows! ws)
-    (edoc "Replace the seat's window list."
-          (ws (list-of window) "the windows"))
+  (edoc "Replace the seat's window list."
+        (ws (list-of window) "the windows"))
+  (define (set-windows! ws)
     (set! the-windows ws))
-  (edefine (root)
-    (edoc "The root of the layout tree."
-          (returns (or window (record layout-split))))
+  (edoc "The root of the layout tree."
+        (returns (or window (record layout-split))))
+  (define (root)
     the-root)
-  (edefine (set-root! node)
-    (edoc "Replace the root of the layout tree without rederiving the windows."
-          (node (or window (record layout-split)) "the tree"))
+  (edoc "Replace the root of the layout tree without rederiving the windows."
+        (node (or window (record layout-split)) "the tree"))
+  (define (set-root! node)
     (set! the-root node))
 
   (define (free-window-index)
@@ -347,101 +349,100 @@
       (let loop ([n 0])
         (if (memv n taken) (loop (+ n 1)) n))))
 
-  (edefine (make-window buffer top topseg left prow pcol size xoff width wrap)
-    (edoc "A new window on a buffer, numbered with the smallest free number; the layout it joins decides its geometry."
-          (buffer buffer "the buffer shown")
-          (top integer "the first visible line")
-          (topseg integer "the first visible segment of the top line")
-          (left integer "the first visible column")
-          (prow integer "point's row")
-          (pcol integer "point's column")
-          (size integer "the text height")
-          (xoff integer "the first screen column")
-          (width integer "the width in columns")
-          (wrap (or boolean (one-of default)) "whether long lines wrap")
-          (returns window))
+  (edoc "A new window on a buffer, numbered with the smallest free number; the layout it joins decides its geometry."
+        (buffer buffer "the buffer shown")
+        (top integer "the first visible line")
+        (topseg integer "the first visible segment of the top line")
+        (left integer "the first visible column")
+        (prow integer "point's row")
+        (pcol integer "point's column")
+        (size integer "the text height")
+        (xoff integer "the first screen column")
+        (width integer "the width in columns")
+        (wrap (or boolean (one-of default)) "whether long lines wrap")
+        (returns window))
+  (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (%make-window (free-window-index) buffer top topseg left prow pcol
                   size xoff width wrap #t #f #f '()))
 
-  (edefine (set-full-capture! w full?)
-    (edoc "Say whether a window sends every key to its app, and repaint."
-          (w window "the window")
-          (full? boolean "whether to capture everything"))
+  (edoc "Say whether a window sends every key to its app, and repaint."
+        (w window "the window")
+        (full? boolean "whether to capture everything"))
+  (define (set-full-capture! w full?)
     (unless (boolean? full?) (error 'set-full-capture! "expected a boolean" full?))
     (window-full-capture?-set! w full?)
     (request-repaint!))
 
-  (edefine (window-numbered n)
-    (edoc "The live window numbered n, or #f."
-          (n integer "the number")
-          (returns (or window #f)))
+  (edoc "The live window numbered n, or #f."
+        (n integer "the number")
+        (returns (or window #f)))
+  (define (window-numbered n)
     ;; the live window numbered n, or #f
     (find (lambda (w) (eqv? (window-index w) n)) the-windows))
 
   ;; The seat's kill ring: one string, the last kill; commands and
   ;; prompts read and replace it.
   (define the-kill-ring "")
-  (edefine (kill-ring)
-    (edoc "The seat's kill ring: the last kill, one string."
-          (returns string))
+  (edoc "The seat's kill ring: the last kill, one string."
+        (returns string))
+  (define (kill-ring)
     the-kill-ring)
-  (edefine (set-kill-ring! s)
-    (edoc "Replace the seat's kill ring."
-          (s string "the text"))
+  (edoc "Replace the seat's kill ring."
+        (s string "the text"))
+  (define (set-kill-ring! s)
     (set! the-kill-ring s))
 
   ;; The text of the bracketed paste just consumed: the pump's paste
   ;; handler stashes it, the PASTE key's command reads it.
   (define pending-paste "")
-  (edefine (read-paste)
-    (edoc "The text of the bracketed paste just consumed."
-          (returns string))
+  (edoc "The text of the bracketed paste just consumed."
+        (returns string))
+  (define (read-paste)
     pending-paste)
-  (edefine (set-pending-paste! text)
-    (edoc "Stash the text of a bracketed paste for the PASTE key's command."
-          (text string "the pasted text"))
+  (edoc "Stash the text of a bracketed paste for the PASTE key's command."
+        (text string "the pasted text"))
+  (define (set-pending-paste! text)
     (set! pending-paste text))
-  (edefine (current)
-    (edoc "The selected window."
-          (returns window))
+  (edoc "The selected window."
+        (returns window))
+  (define (current)
     the-current)
-  (edefine (set-current! w)
-    (edoc "Select a window, without telling the apps."
-          (w window "the window"))
+  (edoc "Select a window, without telling the apps."
+        (w window "the window"))
+  (define (set-current! w)
     (set! the-current w))
-  (edefine (dividers)
-    (edoc "The divider rectangles of the last tiling, for painting and drag hit-testing."
-          (returns list))
+  (edoc "The divider rectangles of the last tiling, for painting and drag hit-testing."
+        (returns list))
+  (define (dividers)
     the-dividers)
-  (edefine (set-dividers! ds)
-    (edoc "Replace the divider rectangles."
-          (ds list "the dividers"))
+  (edoc "Replace the divider rectangles."
+        (ds list "the dividers"))
+  (define (set-dividers! ds)
     (set! the-dividers ds))
 
-  (edefine min-window-lines
-    (edoc "The smallest text height a split may leave a window."
-          (value integer))
-    ;; the smallest text height a split may leave a window
+  (edoc "The smallest text height a split may leave a window."
+        (value integer))
+  (define min-window-lines ;; the smallest text height a split may leave a window
     (make-parameter 3 (lambda (v) (max 1 v))))
 
   ;;; Tree geometry ----------------------------------------------------------------
 
-  (edefine (layout-leaves node)
-    (edoc "The windows of a layout subtree, in layout order."
-          (node (or window (record layout-split)) "the subtree")
-          (returns (list-of window)))
+  (edoc "The windows of a layout subtree, in layout order."
+        (node (or window (record layout-split)) "the subtree")
+        (returns (list-of window)))
+  (define (layout-leaves node)
     (if (layout-split? node)
         (append (layout-leaves (layout-split-first node))
                 (layout-leaves (layout-split-second node)))
         (list node)))
 
-  (edefine (layout-replace node old replacement)
-    (edoc "A layout tree with one node replaced by another, rewritten in place."
-          (node (or window (record layout-split)) "the tree")
-          (old (or window (record layout-split)) "the node to replace")
-          (replacement (or window (record layout-split)) "its replacement")
-          (returns (or window (record layout-split))))
+  (edoc "A layout tree with one node replaced by another, rewritten in place."
+        (node (or window (record layout-split)) "the tree")
+        (old (or window (record layout-split)) "the node to replace")
+        (replacement (or window (record layout-split)) "its replacement")
+        (returns (or window (record layout-split))))
+  (define (layout-replace node old replacement)
     (cond
       [(eq? node old) replacement]
       [(layout-split? node)
@@ -452,11 +453,11 @@
        node]
       [else node]))
 
-  (edefine (layout-parent node child)
-    (edoc "The split holding a child directly within a tree, or #f."
-          (node (or window (record layout-split)) "the tree")
-          (child (or window (record layout-split)) "the child")
-          (returns (or (record layout-split) #f)))
+  (edoc "The split holding a child directly within a tree, or #f."
+        (node (or window (record layout-split)) "the tree")
+        (child (or window (record layout-split)) "the child")
+        (returns (or (record layout-split) #f)))
+  (define (layout-parent node child)
     (and (layout-split? node)
          (if (or (eq? child (layout-split-first node))
                  (eq? child (layout-split-second node)))
@@ -464,25 +465,25 @@
              (or (layout-parent (layout-split-first node) child)
                  (layout-parent (layout-split-second node) child)))))
 
-  (edefine (set-layout-root! root)
-    (edoc "Make a tree the seat's layout, so its leaves are the windows; the pop-up stays the root split's second leaf whatever tree arrives."
-          (root (or window (record layout-split)) "the tree"))
+  (edoc "Make a tree the seat's layout, so its leaves are the windows; the pop-up stays the root split's second leaf whatever tree arrives."
+        (root (or window (record layout-split)) "the tree"))
+  (define (set-layout-root! root)
     ;; the tree is the seat's windows: replacing it replaces them; the
     ;; pop-up stays the root split's second leaf whatever tree arrives
     (set! the-root (if (memq the-popup (layout-leaves root)) root
                        (make-layout-split 'below root the-popup 1 1)))
     (set! the-windows (layout-leaves the-root)))
 
-  (edefine (replace-layout-window! old replacement)
-    (edoc "Replace a node of the layout by another and adopt the result."
-          (old (or window (record layout-split)) "the node to replace")
-          (replacement (or window (record layout-split)) "its replacement"))
+  (edoc "Replace a node of the layout by another and adopt the result."
+        (old (or window (record layout-split)) "the node to replace")
+        (replacement (or window (record layout-split)) "its replacement"))
+  (define (replace-layout-window! old replacement)
     (set-layout-root! (layout-replace the-root old replacement)))
 
-  (edefine (fit-layout! width height)
-    (edoc "Collapse the layout to the current window beside the pop-up when the screen is too small for its splits."
-          (width integer "the screen width")
-          (height integer "the height above the echo area"))
+  (edoc "Collapse the layout to the current window beside the pop-up when the screen is too small for its splits."
+        (width integer "the screen width")
+        (height integer "the height above the echo area"))
+  (define (fit-layout! width height)
     ;; A screen too small for the splits collapses the tree back to
     ;; one window -- the current one -- beside the pop-up.
     (let ([rest (layout-split-first the-root)])
@@ -493,10 +494,10 @@
                               the-current
                               (car (layout-leaves rest)))))))
 
-  (edefine (layout-min-width node)
-    (edoc "The narrowest width a layout subtree fits in."
-          (node (or window (record layout-split)) "the subtree")
-          (returns integer))
+  (edoc "The narrowest width a layout subtree fits in."
+        (node (or window (record layout-split)) "the subtree")
+        (returns integer))
+  (define (layout-min-width node)
     (if (layout-split? node)
         (if (eq? (layout-split-orientation node) 'right)
             (+ 1 (layout-min-width (layout-split-first node))
@@ -505,10 +506,10 @@
                  (layout-min-width (layout-split-second node))))
         (if (popup? node) 0 20)))
 
-  (edefine (layout-min-height node)
-    (edoc "The shortest height a layout subtree fits in, status lines included."
-          (node (or window (record layout-split)) "the subtree")
-          (returns integer))
+  (edoc "The shortest height a layout subtree fits in, status lines included."
+        (node (or window (record layout-split)) "the subtree")
+        (returns integer))
+  (define (layout-min-height node)
     (if (layout-split? node)
         (if (eq? (layout-split-orientation node) 'below)
             (+ (layout-min-height (layout-split-first node))
@@ -520,26 +521,26 @@
               [(> the-popup-rows 0) (+ the-popup-rows 1)]
               [else 0])))
 
-  (edefine (weighted-first total minimum-first minimum-second a b)
-    (edoc "The extent of the first of two weighted siblings within a total, each side keeping its minimum."
-          (total integer "the extent to share")
-          (minimum-first integer "the first side's minimum")
-          (minimum-second integer "the second side's minimum")
-          (a integer "the first weight")
-          (b integer "the second weight")
-          (returns integer))
+  (edoc "The extent of the first of two weighted siblings within a total, each side keeping its minimum."
+        (total integer "the extent to share")
+        (minimum-first integer "the first side's minimum")
+        (minimum-second integer "the second side's minimum")
+        (a integer "the first weight")
+        (b integer "the second weight")
+        (returns integer))
+  (define (weighted-first total minimum-first minimum-second a b)
     (min (- total minimum-second)
          (max minimum-first (quotient (* total (max 1 a))
                                       (+ (max 1 a) (max 1 b))))))
 
-  (edefine (layout-node! node x y width height)
-    (edoc "Lay out a subtree into a rectangle, status rows included and one divider column between side-by-side nodes: ((window start text-height) ...), the dividers accumulating for the painter and the mouse."
-          (node (or window (record layout-split)) "the subtree")
-          (x integer "the left column")
-          (y integer "the top row")
-          (width integer "the width")
-          (height integer "the height")
-          (returns list))
+  (edoc "Lay out a subtree into a rectangle, status rows included and one divider column between side-by-side nodes: ((window start text-height) ...), the dividers accumulating for the painter and the mouse."
+        (node (or window (record layout-split)) "the subtree")
+        (x integer "the left column")
+        (y integer "the top row")
+        (width integer "the width")
+        (height integer "the height")
+        (returns list))
+  (define (layout-node! node x y width height)
     ;; Lay out one persistent subtree. Rectangles include leaf status rows;
     ;; side-by-side nodes reserve one visible divider column.  Divider
     ;; rectangles accumulate in (dividers) for the painter and the
@@ -612,17 +613,17 @@
   ;; a frame, so expiry, eviction and replacement need no alarm cancellation.
   (define frame-deadline #f)
 
-  (edefine (request-frame-at! deadline)
-    (edoc "Ask for a frame by a monotonic deadline, the earliest request winning."
-          (deadline any "a monotonic time"))
+  (edoc "Ask for a frame by a monotonic deadline, the earliest request winning."
+        (deadline any "a monotonic time"))
+  (define (request-frame-at! deadline)
     (unless (and (time? deadline) (eq? (time-type deadline) 'time-monotonic))
       (error 'request-frame-at! "expected a monotonic deadline" deadline))
     (when (or (not frame-deadline) (time<? deadline frame-deadline))
       (set! frame-deadline (copy-time deadline))))
 
-  (edefine (run-on-main! thunk)
-    (edoc "Run a thunk on the main thread: now when the main loop is pumping, else at the top of its loop."
-          (thunk thunk "what to run"))
+  (edoc "Run a thunk on the main thread: now when the main loop is pumping, else at the top of its loop."
+        (thunk thunk "what to run"))
+  (define (run-on-main! thunk)
     ;; run thunk on the main thread: immediately when the main loop is
     ;; the one pumping the mailbox, otherwise at the top of its loop
     (kernel:mailbox-post! mailbox (cons 'run thunk)))
@@ -635,8 +636,8 @@
   (define wake-lock (make-mutex))
   (define wake-queued #f)
 
-  (edefine (wake-main!)
-    (edoc "Wake the main loop for a frame, once per burst of events.")
+  (edoc "Wake the main loop for a frame, once per burst of events.")
+  (define (wake-main!)
     (when (with-mutex wake-lock
             (and (not wake-queued) (begin (set! wake-queued #t) #t)))
       (kernel:mailbox-post! mailbox '(wake))))
@@ -648,18 +649,17 @@
   ;; may run right away.  Nested pumps (prompts, i-search, key
   ;; describers) leave it #f and defer them, so a foreign thunk never
   ;; runs in the middle of a modal read.
-  (edefine in-main-pump
-    (edoc "Whether the main loop itself pumps the mailbox, so posted thunks may run right away; nested pumps defer them."
-          (value boolean))
-    (make-parameter #f))
+  (edoc "Whether the main loop itself pumps the mailbox, so posted thunks may run right away; nested pumps defer them."
+        (value boolean))
+  (define in-main-pump (make-parameter #f))
 
   (define (run-posted! thunk)
     ;; a posted thunk's error is news, not a crash
     (guard (ex [else (log:add! 'run-on-main! (kernel:condition-text ex))])
       (thunk)))
 
-  (edefine (run-deferred!)
-    (edoc "Run the thunks a nested pump set aside, oldest first.")
+  (edoc "Run the thunks a nested pump set aside, oldest first.")
+  (define (run-deferred!)
     ;; the thunks a nested pump set aside, oldest first
     (let ([runs (reverse deferred)])
       (set! deferred '())
@@ -674,22 +674,22 @@
   ;; Last reported pointer cell (1-based x . y). Keyboard input retires
   ;; mouse emphasis; the next report restores it without moving point.
   (define the-mouse-position #f)
-  (edefine (mouse-position)
-    (edoc "The pointer's last reported (column . row), or #f."
-          (returns (or pair #f)))
+  (edoc "The pointer's last reported (column . row), or #f."
+        (returns (or pair #f)))
+  (define (mouse-position)
     the-mouse-position)
-  (edefine (set-mouse-position! position)
-    (edoc "Record the pointer's position, or #f when unknown."
-          (position (or pair #f) "(column . row)"))
+  (edoc "Record the pointer's position, or #f when unknown."
+        (position (or pair #f) "(column . row)"))
+  (define (set-mouse-position! position)
     (set! the-mouse-position position))
 
-  (edefine (set-frame-hook! proc)
-    (edoc "Install the frame hook, which prepares and paints a frame."
-          (proc thunk "the hook"))
+  (edoc "Install the frame hook, which prepares and paints a frame."
+        (proc thunk "the hook"))
+  (define (set-frame-hook! proc)
     (set! frame-hook proc))
-  (edefine (set-mouse-handler! proc)
-    (edoc "Install the mouse handler: (handler handle? c b x y) applies a decoded mouse report."
-          (proc procedure "the handler"))
+  (edoc "Install the mouse handler: (handler handle? c b x y) applies a decoded mouse report."
+        (proc procedure "the handler"))
+  (define (set-mouse-handler! proc)
     (set! mouse-handler proc))
 
   ;; What the loop asks of the commands, installed by them: how to open
@@ -702,42 +702,42 @@
   (define departure (lambda () (quit!)))
   (define review-viewer void)
 
-  (edefine (set-file-opener! proc)
-    (edoc "Install how the loop opens its file argument."
-          (proc procedure "(open path)"))
+  (edoc "Install how the loop opens its file argument."
+        (proc procedure "(open path)"))
+  (define (set-file-opener! proc)
     (set! file-opener proc))
-  (edefine (set-quit-command! proc)
-    (edoc "Install the quit command, the modified-buffers check."
-          (proc thunk "the command"))
+  (edoc "Install the quit command, the modified-buffers check."
+        (proc thunk "the command"))
+  (define (set-quit-command! proc)
     (set! quit-command proc))
-  (edefine (set-after-key! proc)
-    (edoc "Install what runs after every key."
-          (proc thunk "the hook"))
+  (edoc "Install what runs after every key."
+        (proc thunk "the hook"))
+  (define (set-after-key! proc)
     (set! after-key-hook proc))
-  (edefine (set-departure! proc)
-    (edoc "Install how the editor leaves once quitting is confirmed."
-          (proc thunk "the departure"))
+  (edoc "Install how the editor leaves once quitting is confirmed."
+        (proc thunk "the departure"))
+  (define (set-departure! proc)
     (set! departure proc))
-  (edefine (set-review-viewer! proc)
-    (edoc "Install how modified buffers are shown for review before quitting."
-          (proc thunk "the viewer"))
+  (edoc "Install how modified buffers are shown for review before quitting."
+        (proc thunk "the viewer"))
+  (define (set-review-viewer! proc)
     (set! review-viewer proc))
 
-  (edefine (open-file! path)
-    (edoc "Open a file through the installed opener."
-          (path file "the file"))
+  (edoc "Open a file through the installed opener."
+        (path file "the file"))
+  (define (open-file! path)
     (file-opener path))
-  (edefine (quit-command!)
-    (edoc "Run the installed quit command.")
+  (edoc "Run the installed quit command.")
+  (define (quit-command!)
     (quit-command))
-  (edefine (after-key!)
-    (edoc "Run the installed after-key hook.")
+  (edoc "Run the installed after-key hook.")
+  (define (after-key!)
     (after-key-hook))
-  (edefine (depart!)
-    (edoc "Leave the editor through the installed departure.")
+  (edoc "Leave the editor through the installed departure.")
+  (define (depart!)
     (departure))
-  (edefine (view-review!)
-    (edoc "Show the modified buffers through the installed viewer.")
+  (edoc "Show the modified buffers through the installed viewer.")
+  (define (view-review!)
     (review-viewer))
 
   (define (frame!)
@@ -753,16 +753,16 @@
   (define host-color-scheme-value #f)
   (define host-color-scheme-reported? #f)
 
-  (edefine (host-color-scheme)
-    (edoc "The terminal's color scheme as detected: dark, light or #f."
-          (returns (or (one-of dark light) #f)))
+  (edoc "The terminal's color scheme as detected: dark, light or #f."
+        (returns (or (one-of dark light) #f)))
+  (define (host-color-scheme)
     host-color-scheme-value)
 
   (define color-scheme-hooks (kernel:make-registry))
 
-  (edefine (add-color-scheme-hook! hook)
-    (edoc "Register a hook run with the scheme when the terminal reports one."
-          (hook procedure "(hook scheme)"))
+  (edoc "Register a hook run with the scheme when the terminal reports one."
+        (hook procedure "(hook scheme)"))
+  (define (add-color-scheme-hook! hook)
     (unless (procedure? hook)
       (error 'add-color-scheme-hook! "expected a procedure" hook))
     (kernel:registry-add! color-scheme-hooks hook))
@@ -777,12 +777,12 @@
   ;; The seat's lifetime, and the command the dispatcher ran last (kill
   ;; chaining and typed runs ask).
   (define quit-requested #f)
-  (edefine (quit!)
-    (edoc "Request that the main loop end.")
+  (edoc "Request that the main loop end.")
+  (define (quit!)
     (set! quit-requested #t))
-  (edefine (quitting?)
-    (edoc "Whether quitting was requested."
-          (returns boolean))
+  (edoc "Whether quitting was requested."
+        (returns boolean))
+  (define (quitting?)
     quit-requested)
 
   (define (local-quit-state)
@@ -794,8 +794,8 @@
                (datum:copy (filter (lambda (entry) (memq (car entry) '(disposable modified file trailing))) facts)))))
       (filter (lambda (b) (not (buffer-store-id b))) (buffers))))
 
-  (edefine (prepare-quit)
-    (edoc "Count the local buffers with unsaved changes: (values unsaved valid?), valid? a thunk confirming their state is unchanged.")
+  (edoc "Count the local buffers with unsaved changes: (values unsaved valid?), valid? a thunk confirming their state is unchanged.")
+  (define (prepare-quit)
     ;; Ordinary quit and base shutdown use one local snapshot/recheck rule.
     (let* ([local (local-quit-state)]
            [clean (map (lambda (state)
@@ -813,29 +813,29 @@
             (local-quit-state))))))
 
   (define the-last-command #f)
-  (edefine (last-command)
-    (edoc "The command the last key ran, for commands that chain, such as consecutive kills."
-          (returns any))
+  (edoc "The command the last key ran, for commands that chain, such as consecutive kills."
+        (returns any))
+  (define (last-command)
     the-last-command)
-  (edefine (set-last-command! c)
-    (edoc "Record the command the last key ran."
-          (c any "the command"))
+  (edoc "Record the command the last key ran."
+        (c any "the command"))
+  (define (set-last-command! c)
     (set! the-last-command c))
 
   ;; the key sequence being dispatched -- the self-inserting command
   ;; reads its character here
   (define the-current-keys '())
-  (edefine (current-keys)
-    (edoc "The key sequence being dispatched; the self-inserting command reads its character here."
-          (returns list))
+  (edoc "The key sequence being dispatched; the self-inserting command reads its character here."
+        (returns list))
+  (define (current-keys)
     the-current-keys)
-  (edefine (set-current-keys! keys)
-    (edoc "Record the key sequence being dispatched."
-          (keys list "the events"))
+  (edoc "Record the key sequence being dispatched."
+        (keys list "the events"))
+  (define (set-current-keys! keys)
     (set! the-current-keys keys))
 
-  (edefine (start-input-reader!)
-    (edoc "Start the thread that reads terminal events into the pump's mailbox.")
+  (edoc "Start the thread that reads terminal events into the pump's mailbox.")
+  (define (start-input-reader!)
     (let ([stdin (sys:duplicate-standard-input-port)])
       (fork-thread
         (lambda ()
@@ -845,20 +845,18 @@
               (kernel:mailbox-post! mailbox (cons 'key event))
               (unless (eof-object? event) (loop))))))))
 
-  (edefine read-key-event
+  (edoc "Read the next key from the pump, applying mouse reports unless handle-mouse? is #f, in which case they are consumed without being applied, for a context that must not change focus; frames and posted thunks run while waiting."
+        (handle-mouse? boolean "whether to apply mouse reports")
+        (returns (or char string any) "a character, an event string, or eof"))
+  (define read-key-event
     ;; Consumers see the same names whether they are the main editor,
     ;; I-search, a prompt, or a key describer.  A context that must not
     ;; change editor focus passes #f: mouse reports are consumed
     ;; without being applied.
     (case-lambda
       [()
-       (edoc "Read the next key from the pump, applying mouse reports; frames and posted thunks run while waiting."
-             (returns (or char string any) "a character, an event string, or eof"))
        (read-key-event #t)]
       [(handle-mouse?)
-       (edoc "Read the next key from the pump; with handle-mouse? #f, mouse reports are consumed without being applied, for a context that must not change focus."
-             (handle-mouse? boolean "whether to apply mouse reports")
-             (returns (or char string any) "a character, an event string, or eof"))
        (let pump ()
          (let ([message (kernel:mailbox-receive! mailbox frame-deadline #t)])
            (case (and message (car message))
@@ -917,28 +915,28 @@
 
   (define the-layout '())
 
-  (edefine (layout)
-    (edoc "The entries of the last tiling."
-          (returns list))
+  (edoc "The entries of the last tiling."
+        (returns list))
+  (define (layout)
     the-layout)
 
-  (edefine (tile! width height)
-    (edoc "Tile the layout into a width and height, remembering the entries and dividers: ((window start text-height) ...)."
-          (width integer "the screen width")
-          (height integer "the height above the echo area")
-          (returns list))
+  (edoc "Tile the layout into a width and height, remembering the entries and dividers: ((window start text-height) ...)."
+        (width integer "the screen width")
+        (height integer "the height above the echo area")
+        (returns list))
+  (define (tile! width height)
     ;; Tile the tree into width x height (the screen minus the echo
     ;; area).  -> the entries, also remembered along with the dividers.
     (set! the-dividers '())
     (set! the-layout (layout-node! the-root 0 0 width height))
     the-layout)
 
-  (edefine (window-at x0 r0 receiver)
-    (edoc "Call a receiver with the layout entry under a 0-based screen position, text rows or status line; #f in the echo area or on a divider."
-          (x0 integer "the column")
-          (r0 integer "the row")
-          (receiver procedure "(receiver entry)")
-          (returns any))
+  (edoc "Call a receiver with the layout entry under a 0-based screen position, text rows or status line; #f in the echo area or on a divider."
+        (x0 integer "the column")
+        (r0 integer "the row")
+        (receiver procedure "(receiver entry)")
+        (returns any))
+  (define (window-at x0 r0 receiver)
     ;; Call receiver with the layout entry containing 0-based screen
     ;; position (x0, r0) (text rows or the status line); #f in the
     ;; echo area or on a divider.
@@ -953,20 +951,18 @@
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
-  (edefine window-buttons
-    (edoc "The status-line buttons: (action . label) for splitting below, splitting right and closing."
-          (value list))
-    '((below . "↕") (right . "↔") (close . "×")))
-  (edefine window-buttons-width
-    (edoc "The columns the status-line buttons take."
-          (value integer))
-    (+ 1 (apply + (map (lambda (b) (+ 1 (string-length (cdr b)))) window-buttons))))
+  (edoc "The status-line buttons: (action . label) for splitting below, splitting right and closing."
+        (value list))
+  (define window-buttons '((below . "↕") (right . "↔") (close . "×")))
+  (edoc "The columns the status-line buttons take."
+        (value integer))
+  (define window-buttons-width (+ 1 (apply + (map (lambda (b) (+ 1 (string-length (cdr b)))) window-buttons))))
 
-  (edefine (window-button-at x0 r0)
-    (edoc "The (action . window) of the status-line button under a screen position, or #f."
-          (x0 integer "the column")
-          (r0 integer "the row")
-          (returns (or pair #f)))
+  (edoc "The (action . window) of the status-line button under a screen position, or #f."
+        (x0 integer "the column")
+        (r0 integer "the row")
+        (returns (or pair #f)))
+  (define (window-button-at x0 r0)
     ;; Paint and hit-test the same single-cell labels, flush right,
     ;; with an inert │ before each label and after the final one.
     ;; Inline controls carry painted, window-relative cell ranges. Return
@@ -989,11 +985,11 @@
                        (if (<= column width) (cons (caar buttons) w)
                            (loop (cdr buttons) (- column width 1))))))))))))
 
-  (edefine (divider-at x0 r0)
-    (edoc "The divider descriptor under a screen position, or #f; a crossing belongs to the horizontal split."
-          (x0 integer "the column")
-          (r0 integer "the row")
-          (returns (or list #f)))
+  (edoc "The divider descriptor under a screen position, or #f; a crossing belongs to the horizontal split."
+        (x0 integer "the column")
+        (r0 integer "the row")
+        (returns (or list #f)))
+  (define (divider-at x0 r0)
     ;; The divider descriptor under (x0, r0), or #f.  A crossing
     ;; visually belongs to the spanning horizontal split.
     (define (hit? orientation d)
@@ -1008,10 +1004,10 @@
     (or (find (lambda (d) (hit? 'below d)) the-dividers)
         (find (lambda (d) (hit? 'right d)) the-dividers)))
 
-  (edefine (transfer-split! split delta)
-    (edoc "Move a split's boundary by delta cells, normalizing its weights to the realized extents first."
-          (split (record layout-split) "the split")
-          (delta integer "cells toward the second side"))
+  (edoc "Move a split's boundary by delta cells, normalizing its weights to the realized extents first."
+        (split (record layout-split) "the split")
+        (delta integer "cells toward the second side"))
+  (define (transfer-split! split delta)
     ;; Normalize stale ratio weights to the currently realized cell
     ;; extents, then move the boundary by delta cells -- so a mouse
     ;; drag (or a keyboard step) is exact even after a resize.
@@ -1055,21 +1051,21 @@
   (define the-drag #f)
   (define the-last-press #f)  ; (x y ms) of the previous button press
 
-  (edefine (drag)
-    (edoc "The mouse gesture in progress: a divider being dragged, the (window . buffer) of a text selection, or #f."
-          (returns any))
+  (edoc "The mouse gesture in progress: a divider being dragged, the (window . buffer) of a text selection, or #f."
+        (returns any))
+  (define (drag)
     the-drag)
-  (edefine (set-drag! d)
-    (edoc "Record the mouse gesture in progress."
-          (d any "the gesture, or #f"))
+  (edoc "Record the mouse gesture in progress."
+        (d any "the gesture, or #f"))
+  (define (set-drag! d)
     (set! the-drag d))
 
-  (edefine (double-click? x y now)
-    (edoc "Record a press at a cell at a time in milliseconds; whether it repeats the previous press's cell within half a second."
-          (x integer "the column")
-          (y integer "the row")
-          (now number "the time in milliseconds")
-          (returns boolean))
+  (edoc "Record a press at a cell at a time in milliseconds; whether it repeats the previous press's cell within half a second."
+        (x integer "the column")
+        (y integer "the row")
+        (now number "the time in milliseconds")
+        (returns boolean))
+  (define (double-click? x y now)
     ;; Record a press at (x, y) at time now (ms); #t when it repeats
     ;; the previous press's cell within half a second.
     (let ([prev the-last-press])
@@ -1101,10 +1097,10 @@
     (let ([pending (display-update)])
       (if pending (set-box! pending #t) (repaint-hook))))
 
-  (edefine (call-with-display-update thunk)
-    (edoc "Compose seat changes into one repaint notification; nested updates share it."
-          (thunk thunk "the changes")
-          (returns any "what the thunk returns"))
+  (edoc "Compose seat changes into one repaint notification; nested updates share it."
+        (thunk thunk "the changes")
+        (returns any "what the thunk returns"))
+  (define (call-with-display-update thunk)
     ;; Compose seat changes before notifying the painter. Nested updates
     ;; share one notification; callbacks run outside the scope and may
     ;; start another update. This batches notification, not rollback or
@@ -1120,13 +1116,13 @@
                 (repaint-hook)))))))
   (define adopt-hook (lambda (b) (void)))
 
-  (edefine (set-repaint-hook! proc)
-    (edoc "Install the hook that requests a repaint."
-          (proc thunk "the hook"))
+  (edoc "Install the hook that requests a repaint."
+        (proc thunk "the hook"))
+  (define (set-repaint-hook! proc)
     (set! repaint-hook proc))
-  (edefine (set-adopt-hook! proc)
-    (edoc "Install the hook run after text is adopted from the store."
-          (proc procedure "the hook"))
+  (edoc "Install the hook run after text is adopted from the store."
+        (proc procedure "the hook"))
+  (define (set-adopt-hook! proc)
     (set! adopt-hook proc))
 
   (define (line-count b) (vector-length (buffer-lines b)))
@@ -1151,22 +1147,22 @@
   ;;   stale   a detected external change, worn as a red !! until a
   ;;           save settles it
 
-  (edefine (buffer-fact b key fallback)
-    (edoc "A buffer's fact by key, from the store for a shared buffer, else its local facts; the fallback when absent."
-          (b buffer "the buffer")
-          (key symbol "the fact")
-          (fallback any "the value when absent")
-          (returns any))
+  (edoc "A buffer's fact by key, from the store for a shared buffer, else its local facts; the fallback when absent."
+        (b buffer "the buffer")
+        (key symbol "the fact")
+        (fallback any "the value when absent")
+        (returns any))
+  (define (buffer-fact b key fallback)
     (let ([id (buffer-store-id b)])
       (if id
           (store:property id key fallback)
           (hashtable-ref (buffer-local-facts b) key fallback))))
 
-  (edefine (buffer-fact-set! b key value)
-    (edoc "Set one fact of a buffer."
-          (b buffer "the buffer")
-          (key symbol "the fact")
-          (value any "its value"))
+  (edoc "Set one fact of a buffer."
+        (b buffer "the buffer")
+        (key symbol "the fact")
+        (value any "its value"))
+  (define (buffer-fact-set! b key value)
     (buffer-facts-set! b (list (cons key value))))
 
   (define (local-facts-match? b expected)
@@ -1175,12 +1171,12 @@
              (let-values ([(text revision facts) (buffer-state b)])
                (property:matches? expected facts)))))
 
-  (edefine (buffer-facts-set! b updates . options)
-    (edoc "Set several facts of a buffer at once, optionally only while a review of expected facts holds, and optionally renaming it; whether the update was accepted."
-          (b buffer "the buffer")
-          (updates list "(key . value) facts")
-          (options (list-of any) "a fact review, then a new name")
-          (returns boolean))
+  (edoc "Set several facts of a buffer at once, optionally only while a review of expected facts holds, and optionally renaming it; whether the update was accepted."
+        (b buffer "the buffer")
+        (updates list "(key . value) facts")
+        (options (list-of any) "a fact review, then a new name")
+        (returns boolean))
+  (define (buffer-facts-set! b updates . options)
     (store:validate-properties updates)
     (unless (<= (length options) 2) (error 'buffer-facts-set! "expected fact review and optional name" options))
     (let ([id (buffer-store-id b)]
@@ -1208,9 +1204,9 @@
                    (when name (buffer-name-raw-set! b name))
                    #t))))))
 
-  (edefine (buffer-state b)
-    (edoc "The current truth of a buffer for save and discard decisions, shared text not yet adopted here included: (values text revision facts)."
-          (b buffer "the buffer"))
+  (edoc "The current truth of a buffer for save and discard decisions, shared text not yet adopted here included: (values text revision facts)."
+        (b buffer "the buffer"))
+  (define (buffer-state b)
     ;; Unlike the command basis, this is current shared truth for save
     ;; and discard decisions, including text not yet adopted by the head.
     (if (buffer-store-id b)
@@ -1219,95 +1215,95 @@
           (values (buffer-lines b) (content-revision b)
                   (map cons (vector->list keys) (vector->list data))))))
 
-  (edefine (buffer-file b)
-    (edoc "A buffer's file fact: the path it visits, or #f."
-          (b buffer "the buffer")
-          (returns (or file #f)))
+  (edoc "A buffer's file fact: the path it visits, or #f."
+        (b buffer "the buffer")
+        (returns (or file #f)))
+  (define (buffer-file b)
     (buffer-fact b 'file #f))
-  (edefine (buffer-file-set! b v)
-    (edoc "Set a buffer's file fact."
-          (b buffer "the buffer")
-          (v (or file #f) "the new value"))
+  (edoc "Set a buffer's file fact."
+        (b buffer "the buffer")
+        (v (or file #f) "the new value"))
+  (define (buffer-file-set! b v)
     (buffer-fact-set! b 'file v))
-  (edefine (buffer-trailing b)
-    (edoc "A buffer's trailing fact: whether its text ends in a newline."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "A buffer's trailing fact: whether its text ends in a newline."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (buffer-trailing b)
     (buffer-fact b 'trailing #t))
-  (edefine (buffer-trailing-set! b v)
-    (edoc "Set a buffer's trailing fact."
-          (b buffer "the buffer")
-          (v boolean "the new value"))
+  (edoc "Set a buffer's trailing fact."
+        (b buffer "the buffer")
+        (v boolean "the new value"))
+  (define (buffer-trailing-set! b v)
     (buffer-fact-set! b 'trailing v))
-  (edefine (buffer-modified b)
-    (edoc "A buffer's modified fact: whether a local buffer has unsaved changes."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "A buffer's modified fact: whether a local buffer has unsaved changes."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (buffer-modified b)
     (buffer-fact b 'modified #f))
-  (edefine (buffer-modified-set! b v)
-    (edoc "Set a buffer's modified fact."
-          (b buffer "the buffer")
-          (v boolean "the new value"))
+  (edoc "Set a buffer's modified fact."
+        (b buffer "the buffer")
+        (v boolean "the new value"))
+  (define (buffer-modified-set! b v)
     (buffer-fact-set! b 'modified v))
-  (edefine (buffer-modified-at b)
-    (edoc "A buffer's modified-at fact: when it was last edited, or #f."
-          (b buffer "the buffer")
-          (returns (or integer #f)))
+  (edoc "A buffer's modified-at fact: when it was last edited, or #f."
+        (b buffer "the buffer")
+        (returns (or integer #f)))
+  (define (buffer-modified-at b)
     (buffer-fact b 'modified-at #f))
 
   (define (note-local-modification! b)
     (let ([now (current-time 'time-utc)])
       (hashtable-set! (buffer-local-facts b) 'modified-at
         (+ (* (time-second now) 1000000000) (time-nanosecond now)))))
-  (edefine (buffer-mode-auto b)
-    (edoc "A buffer's mode-auto fact: whether its mode follows detection."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "A buffer's mode-auto fact: whether its mode follows detection."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (buffer-mode-auto b)
     (buffer-fact b 'mode-auto #t))
-  (edefine (buffer-mode-auto-set! b v)
-    (edoc "Set a buffer's mode-auto fact."
-          (b buffer "the buffer")
-          (v boolean "the new value"))
+  (edoc "Set a buffer's mode-auto fact."
+        (b buffer "the buffer")
+        (v boolean "the new value"))
+  (define (buffer-mode-auto-set! b v)
     (buffer-fact-set! b 'mode-auto v))
-  (edefine (buffer-read-only b)
-    (edoc "A buffer's read-only fact: #t, #f, or a procedure deciding per edit."
-          (b buffer "the buffer")
-          (returns (or boolean procedure)))
+  (edoc "A buffer's read-only fact: #t, #f, or a procedure deciding per edit."
+        (b buffer "the buffer")
+        (returns (or boolean procedure)))
+  (define (buffer-read-only b)
     (buffer-fact b 'read-only #f))
-  (edefine (buffer-read-only-set! b v)
-    (edoc "Set a buffer's read-only fact."
-          (b buffer "the buffer")
-          (v (or boolean procedure) "the new value"))
+  (edoc "Set a buffer's read-only fact."
+        (b buffer "the buffer")
+        (v (or boolean procedure) "the new value"))
+  (define (buffer-read-only-set! b v)
     (buffer-fact-set! b 'read-only v))
-  (edefine (buffer-stamp b)
-    (edoc "A buffer's stamp fact: the disk stamp of its file when read, or #f."
-          (b buffer "the buffer")
-          (returns any))
+  (edoc "A buffer's stamp fact: the disk stamp of its file when read, or #f."
+        (b buffer "the buffer")
+        (returns any))
+  (define (buffer-stamp b)
     (buffer-fact b 'stamp #f))
-  (edefine (buffer-stamp-set! b v)
-    (edoc "Set a buffer's stamp fact."
-          (b buffer "the buffer")
-          (v any "the new value"))
+  (edoc "Set a buffer's stamp fact."
+        (b buffer "the buffer")
+        (v any "the new value"))
+  (define (buffer-stamp-set! b v)
     (buffer-fact-set! b 'stamp v))
-  (edefine (buffer-base b)
-    (edoc "A buffer's base fact: the text its file held when loaded or last saved, or #f."
-          (b buffer "the buffer")
-          (returns (or string #f)))
+  (edoc "A buffer's base fact: the text its file held when loaded or last saved, or #f."
+        (b buffer "the buffer")
+        (returns (or string #f)))
+  (define (buffer-base b)
     (buffer-fact b 'base #f))
-  (edefine (buffer-base-set! b v)
-    (edoc "Set a buffer's base fact."
-          (b buffer "the buffer")
-          (v (or string #f) "the new value"))
+  (edoc "Set a buffer's base fact."
+        (b buffer "the buffer")
+        (v (or string #f) "the new value"))
+  (define (buffer-base-set! b v)
     (buffer-fact-set! b 'base v))
-  (edefine (buffer-stale b)
-    (edoc "A buffer's stale fact: whether its file changed on disk since."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "A buffer's stale fact: whether its file changed on disk since."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (buffer-stale b)
     (buffer-fact b 'stale #f))
-  (edefine (buffer-stale-set! b v)
-    (edoc "Set a buffer's stale fact."
-          (b buffer "the buffer")
-          (v boolean "the new value"))
+  (edoc "Set a buffer's stale fact."
+        (b buffer "the buffer")
+        (v boolean "the new value"))
+  (define (buffer-stale-set! b v)
     (buffer-fact-set! b 'stale v))
 
   (define (local-name name)
@@ -1324,10 +1320,10 @@
          (string-append "<" (substring name 1 (- n 1)) ">")]
         [else (string-append "<" name ">")])))
 
-  (edefine (buffer-name-set! b name)
-    (edoc "Rename a buffer, a shared one through the store; the name must be nonempty."
-          (b buffer "the buffer")
-          (name string "its new name"))
+  (edoc "Rename a buffer, a shared one through the store; the name must be nonempty."
+        (b buffer "the buffer")
+        (name string "its new name"))
+  (define (buffer-name-set! b name)
     (unless (and (buffer? b) (string? name) (> (string-length name) 0))
       (error 'buffer-name-set! "expected a buffer and nonempty name" b name))
     (when (buffer-store-id b) (ensure-buffer-visible! b))
@@ -1390,10 +1386,10 @@
         (buffer-local-rev-set! b revision))
     (bump-buffer-revision! b))
 
-  (edefine (snapshot-since b basis)
-    (edoc "A buffer's text, revision and changes since a content revision, ending at this head's cached source: (values text revision changes)."
-          (b buffer "the buffer")
-          (basis (or integer #f) "the earlier content revision, or #f"))
+  (edoc "A buffer's text, revision and changes since a content revision, ending at this head's cached source: (values text revision changes)."
+        (b buffer "the buffer")
+        (basis (or integer #f) "the earlier content revision, or #f"))
+  (define (snapshot-since b basis)
     ;; Like store:snapshot-since, but ends at this head's cached source,
     ;; including for local buffers.  Read on the head's pump: it does not
     ;; pull newer store text or run callbacks.  #f omits an earlier basis.
@@ -1411,9 +1407,9 @@
                               (scan (+ next 1) (cons (list (car entry) (cadr entry) (caddr entry)) out)))))))])
       (values text revision changes)))
 
-  (edefine (adopt-store! b)
-    (edoc "Make a buffer's cache the store's current text, by reference, and refit its positions and rendition."
-          (b buffer "the buffer"))
+  (edoc "Make a buffer's cache the store's current text, by reference, and refit its positions and rendition."
+        (b buffer "the buffer"))
+  (define (adopt-store! b)
     ;; make the cache the store's current text -- the vectors are
     ;; immutable, so adoption is reference sharing, never a copy
     (let-values ([(text revision) (store:snapshot (buffer-store-id b))])
@@ -1422,10 +1418,10 @@
       (refresh-buffer-rendition! b)
       (invalidate-buffer-marks! (buffer-store-id b))))
 
-  (edefine (buffer-rendition b)
-    (edoc "The projection of a visible buffer's text into cells, built on demand, or #f when its visibility cannot be read."
-          (b buffer "the buffer")
-          (returns (or (record frame) #f)))
+  (edoc "The projection of a visible buffer's text into cells, built on demand, or #f when its visibility cannot be read."
+        (b buffer "the buffer")
+        (returns (or (record frame) #f)))
+  (define (buffer-rendition b)
     ;; Optional presentation fails closed when visibility cannot be read.
     ;; The next frame retries; a store outage must not stop the head pump.
     (guard (ex [else #f])
@@ -1435,12 +1431,12 @@
                ;; before the next surface demand. Adopted text is sufficient.
                (render:prepare #f #f (buffer-lines b) (content-revision b) '())))))
 
-  (edefine (read-rendition b ranges . follow-height)
-    (edoc "A projection of a buffer's current text for the demanded row ranges, following a surface with a height."
-          (b buffer "the buffer")
-          (ranges list "the (from . to) row ranges")
-          (follow-height (list-of integer) "the rows to follow a surface with, at most one")
-          (returns (record frame)))
+  (edoc "A projection of a buffer's current text for the demanded row ranges, following a surface with a height."
+        (b buffer "the buffer")
+        (ranges list "the (from . to) row ranges")
+        (follow-height (list-of integer) "the rows to follow a surface with, at most one")
+        (returns (record frame)))
+  (define (read-rendition b ranges . follow-height)
     (read-source-rendition b (buffer-lines b) (content-revision b) ranges
                            (if (null? follow-height) 0 (car follow-height))))
 
@@ -1506,8 +1502,8 @@
         (when (rendition-ready? facts next)
           (install-buffer-rendition! b next following facts)))))
 
-  (edefine (refresh-renditions!)
-    (edoc "Rebuild the cell projection of every buffer shown in a window.")
+  (edoc "Rebuild the cell projection of every buffer shown in a window.")
+  (define (refresh-renditions!)
     (for-each refresh-buffer-rendition!
       (fold-left (lambda (seen w)
                    (let ([b (window-buffer w)]) (if (memq b seen) seen (cons b seen))))
@@ -1523,12 +1519,12 @@
     (let ([revision (+ (buffer-local-rev b) 1)])
       (adopt-text! b text revision (and delta (list (list revision ui-actor delta))))))
 
-  (edefine (store-reset! b new-lines . options)
-    (edoc "Replace a buffer's baseline, loading or rereading, with new lines and facts, optionally only while a reviewed state still matches; the accepted revision, or #f."
-          (b buffer "the buffer")
-          (new-lines vector "the lines")
-          (options (list-of any) "facts, then a reviewed (revision fact ...) state")
-          (returns (or integer #f)))
+  (edoc "Replace a buffer's baseline, loading or rereading, with new lines and facts, optionally only while a reviewed state still matches; the accepted revision, or #f."
+        (b buffer "the buffer")
+        (new-lines vector "the lines")
+        (options (list-of any) "facts, then a reviewed (revision fact ...) state")
+        (returns (or integer #f)))
+  (define (store-reset! b new-lines . options)
     ;; Explicit baseline replacement (loading/rereading), never an
     ;; automatic response to a failed edit.  Failure leaves the cache
     ;; untouched; a later frame cannot write it back over shared text.
@@ -1551,20 +1547,20 @@
                      (buffer-facts-set! b updates)
                      (content-revision b))))))))
 
-  (edefine (edit-basis b)
-    (edoc "What a proposal is computed from: (lines store-id revision) of a buffer now."
-          (b buffer "the buffer")
-          (returns list))
+  (edoc "What a proposal is computed from: (lines store-id revision) of a buffer now."
+        (b buffer "the buffer")
+        (returns list))
+  (define (edit-basis b)
     ;; A proposal retains the text it was computed from, its owner, and
     ;; its revision even if a callback advances the head while computing.
     (list (buffer-lines b) (buffer-store-id b) (content-revision b)))
 
-  (edefine (store-edit! b span replacement . options)
-    (edoc "Submit a declared edit of a buffer, a span replaced by lines, to the store under its lock, with optional presentation, head placements and a retained basis; errors propagate, never into a local fork."
-          (b buffer "the buffer")
-          (span any "the text span replaced")
-          (replacement list "the replacement lines")
-          (options (list-of any) "presentation properties, then (place . desired) placements, then an edit basis"))
+  (edoc "Submit a declared edit of a buffer, a span replaced by lines, to the store under its lock, with optional presentation, head placements and a retained basis; errors propagate, never into a local fork."
+        (b buffer "the buffer")
+        (span any "the text span replaced")
+        (replacement list "the replacement lines")
+        (options (list-of any) "presentation properties, then (place . desired) placements, then an edit basis"))
+  (define (store-edit! b span replacement . options)
     ;; The store rebases this declared intent under its mutation lock.
     ;; A stale result is already an unresolvable overlap/missing basis,
     ;; not permission to recompute a replacement against newer text.
@@ -1687,10 +1683,10 @@
     (let ([row (max 0 (min (car p) (- (vector-length text) 1)))])
       (cons row (max 0 (min (cdr p) (string-length (vector-ref text row)))))))
 
-  (edefine (buffer-placements b)
-    (edoc "The anchors of a buffer that travel through edits and resume: spot, spot-top, mark and every window's point."
-          (b buffer "the buffer")
-          (returns list))
+  (edoc "The anchors of a buffer that travel through edits and resume: spot, spot-top, mark and every window's point."
+        (b buffer "the buffer")
+        (returns list))
+  (define (buffer-placements b)
     ;; The same anchors travel through edits, derived refits and resume.
     (append
       (list (cons 'spot (cons (buffer-spot-row b) (buffer-spot-col b)))
@@ -1702,11 +1698,11 @@
                      (cons (cons 'top w) (cons (window-top w) 0))))
           (filter (lambda (w) (eq? (window-buffer w) b)) the-windows)))))
 
-  (edefine (store-history! b direction scope)
-    (edoc "Undo or redo in a shared buffer through the store's attributed journal: (values status detail), status applied, nothing or blocked."
-          (b buffer "the buffer")
-          (direction (one-of undo redo) "which way")
-          (scope any "whose actions: mine, all, or (actor who)"))
+  (edoc "Undo or redo in a shared buffer through the store's attributed journal: (values status detail), status applied, nothing or blocked."
+        (b buffer "the buffer")
+        (direction (one-of undo redo) "which way")
+        (scope any "whose actions: mine, all, or (actor who)"))
+  (define (store-history! b direction scope)
     ;; Shared text always uses the store's attributed inverse journal.
     ;; A head snapshot is presentation state, never a source of shared
     ;; replacement text.  Only the store call maps errors to refusal;
@@ -1722,21 +1718,23 @@
            (flush-ui-audit! (buffer-store-id b)))
          (values status detail))]))
 
-  (edefine new-buffer
+  (edoc "Create a shared buffer with a name, and with lines and facts or one empty line, and adopt it here."
+        (name string "the buffer name")
+        (lines list "the lines")
+        (facts list "the (key . value) facts")
+        (returns buffer))
+  (define new-buffer
     (case-lambda
       [(name)
-       (edoc "Create a shared buffer with a name and one empty line, and adopt it here." (name string "the buffer name") (returns buffer))
        (new-buffer name '("") '())]
       [(name lines facts)
-       (edoc "Create a shared buffer with lines and facts, and adopt it here."
-             (name string "the buffer name") (lines list "the lines") (facts list "the (key . value) facts") (returns buffer))
        (require-store-buffer! (store:create! ui-actor name lines (complete-buffer-facts facts)))]))
 
-  (edefine (visit-file! name lines facts)
-    (edoc "Visit a file as a shared buffer, reusing one already visiting it: (values buffer created?)."
-          (name string "the buffer name")
-          (lines vector "the lines read")
-          (facts list "the file facts"))
+  (edoc "Visit a file as a shared buffer, reusing one already visiting it: (values buffer created?)."
+        (name string "the buffer name")
+        (lines vector "the lines read")
+        (facts list "the file facts"))
+  (define (visit-file! name lines facts)
     (let-values ([(id created?) (store:visit! ui-actor name lines (complete-buffer-facts facts))])
       (values (require-store-buffer! id) created?)))
 
@@ -1749,10 +1747,10 @@
   (define (require-store-buffer! id)
     (or (adopt-store-buffer! id) (error 'head "buffer is no longer visible" id)))
 
-  (edefine (new-local-buffer name)
-    (edoc "A local buffer, this head's alone, with one empty line; the caller adds or shows it."
-          (name string "the buffer name")
-          (returns buffer))
+  (edoc "A local buffer, this head's alone, with one empty line; the caller adds or shows it."
+        (name string "the buffer name")
+        (returns buffer))
+  (define (new-local-buffer name)
     ;; Local construction has no shared lifecycle. Its caller decides when
     ;; to add/show it; opaque local facts and generated content stay here.
     (let ([b (make-buffer (local-name name) (vector "") 0 (vector '() '())
@@ -1772,9 +1770,9 @@
       (when (and current (not (eq? current b)))
         (error 'head "buffer record has been retired" (buffer-name b)))))
 
-  (edefine (add-buffer! b)
-    (edoc "Enter a buffer into the head's list without changing the recency order, claiming its label."
-          (b buffer "the buffer"))
+  (edoc "Enter a buffer into the head's list without changing the recency order, claiming its label."
+        (b buffer "the buffer"))
+  (define (add-buffer! b)
     ;; Enter the head's buffer list without changing its MRU order.
     ;; Claim a local label here too: another buffer may have taken
     ;; the constructor's suggested name before this one was shown.
@@ -1786,10 +1784,10 @@
       (set! the-buffers (append the-buffers (list b))))
     b)
 
-  (edefine (find-tool-buffer key)
-    (edoc "The live local tool buffer with a key, or #f."
-          (key string "the tool key")
-          (returns (or buffer #f)))
+  (edoc "The live local tool buffer with a key, or #f."
+        (key string "the tool key")
+        (returns (or buffer #f)))
+  (define (find-tool-buffer key)
     ;; A tool's key is stable across label changes and module reloads.
     ;; The live buffer list owns its lifetime; no second registry of
     ;; buffer identities needs cleanup or reload reconciliation.
@@ -1799,10 +1797,10 @@
                       (equal? (buffer-fact b 'tool-key #f) key)))
                the-buffers)))
 
-  (edefine (tool-buffer key)
-    (edoc "The local tool buffer with a stable key, created disposable when there is none."
-          (key string "the tool key")
-          (returns buffer))
+  (edoc "The local tool buffer with a stable key, created disposable when there is none."
+        (key string "the tool key")
+        (returns buffer))
+  (define (tool-buffer key)
     (unless (and (string? key) (> (string-length key) 0))
       (error 'tool-buffer "expected a nonempty string key" key))
     (or (find-tool-buffer key)
@@ -1811,22 +1809,22 @@
           (buffer-fact-set! b 'disposable #t)
           (add-buffer! b))))
 
-  (edefine (bump-buffer-revision! b)
-    (edoc "Advance a buffer's repaint counter."
-          (b buffer "the buffer"))
+  (edoc "Advance a buffer's repaint counter."
+        (b buffer "the buffer"))
+  (define (bump-buffer-revision! b)
     (buffer-revision-set! b (+ (buffer-revision b) 1)))
 
-  (edefine (buffer-of-store-id id)
-    (edoc "This head's buffer for a store id, or #f."
-          (id (or integer #f) "the store id")
-          (returns (or buffer #f)))
+  (edoc "This head's buffer for a store id, or #f."
+        (id (or integer #f) "the store id")
+        (returns (or buffer #f)))
+  (define (buffer-of-store-id id)
     (and id
          (find (lambda (b) (eqv? (buffer-store-id b) id)) the-buffers)))
 
-  (edefine (adopt-store-buffer! id)
-    (edoc "Adopt a store buffer visible to this head, creating its record from one snapshot, or #f when it is not visible."
-          (id integer "the store id")
-          (returns (or buffer #f)))
+  (edoc "Adopt a store buffer visible to this head, creating its record from one snapshot, or #f when it is not visible."
+        (id integer "the store id")
+        (returns (or buffer #f)))
+  (define (adopt-store-buffer! id)
     ;; Initial content and audience come from one snapshot. Register the
     ;; record before detection can reenter adoption; a hook may also hide
     ;; or delete it, so never unconditionally add it again afterward.
@@ -1853,15 +1851,15 @@
                                   (forget-buffer! b)
                                   #f)))))))))))
 
-  (edefine (buffer-lines-set! b new-lines)
-    (edoc "Replace a buffer's text as a new baseline, through store-reset!."
-          (b buffer "the buffer")
-          (new-lines vector "the lines"))
+  (edoc "Replace a buffer's text as a new baseline, through store-reset!."
+        (b buffer "the buffer")
+        (new-lines vector "the lines"))
+  (define (buffer-lines-set! b new-lines)
     (store-reset! b new-lines))
 
-  (edefine (clamp-buffer-positions! b)
-    (edoc "Keep a buffer's selection, saved position and every window showing it inside its current lines."
-          (b buffer "the buffer"))
+  (edoc "Keep a buffer's selection, saved position and every window showing it inside its current lines."
+        (b buffer "the buffer"))
+  (define (clamp-buffer-positions! b)
     ;; Keep selection, saved position/viewport, and every window inside
     ;; the (possibly shorter) current lines.
     (let* ([v (buffer-lines b)]
@@ -1909,9 +1907,9 @@
               (cons (cons id (vector (buffer-name b) rev rev 1 now))
                     ui-audit-bursts))))))
 
-  (edefine (flush-ui-audit! which)
-    (edoc "Send this head's batched audit records: a buffer id's, the stale ones, or all."
-          (which (or integer (one-of stale all)) "which records"))
+  (edoc "Send this head's batched audit records: a buffer id's, the stale ones, or all."
+        (which (or integer (one-of stale all)) "which records"))
+  (define (flush-ui-audit! which)
     ;; which: a buffer id, 'stale (idle bursts), or 'all
     (let ([now (time-second (current-time 'time-monotonic))])
       (let-values ([(flushed kept)
@@ -2013,9 +2011,9 @@
         (when (> revision basis) (flush-ui-audit! (buffer-store-id b)))
         (adopt-snapshot! b basis text revision changes '()))))
 
-  (edefine (sync-foreign-edits! . changed-ids)
-    (edoc "Adopt the store's pending changes, and those of given buffer ids, before a frame."
-          (changed-ids (list-of integer) "store ids to adopt as well"))
+  (edoc "Adopt the store's pending changes, and those of given buffer ids, before a frame."
+        (changed-ids (list-of integer) "store ids to adopt as well"))
+  (define (sync-foreign-edits! . changed-ids)
     (let* ([pending (take-store-changes!)]
            [ids (append
                   (if pending (append initial-store-ids (map car pending))
@@ -2194,11 +2192,11 @@
   (define resume-registry (kernel:make-registry car))
   (define last-checkpoint #f)
 
-  (edefine (register-resume! kind capture restore)
-    (edoc "Register how a kind of local view is captured for a checkpoint and restored on resume."
-          (kind symbol "the view kind")
-          (capture procedure "the capture")
-          (restore procedure "the restore"))
+  (edoc "Register how a kind of local view is captured for a checkpoint and restored on resume."
+        (kind symbol "the view kind")
+        (capture procedure "the capture")
+        (restore procedure "the restore"))
+  (define (register-resume! kind capture restore)
     (unless (and (symbol? kind) (not (memq kind '(shared tool)))
                  (procedure? capture) (procedure? restore))
       (error 'register-resume! "expected a local view kind and two procedures"))
@@ -2237,9 +2235,9 @@
   (define checkpoint-sent-at #f)
   (define checkpoint-interval (make-time 'time-duration 0 1))
 
-  (edefine (checkpoint! . mode)
-    (edoc "Publish this head's screen state to the store for a later resume, buffers, layout and positions as painted; unchanged, nothing is sent."
-          (mode (list-of symbol) "idle for an idle-time publication, at most one"))
+  (edoc "Publish this head's screen state to the store for a later resume, buffers, layout and positions as painted; unchanged, nothing is sent."
+        (mode (list-of symbol) "idle for an idle-time publication, at most one"))
+  (define (checkpoint! . mode)
     ;; No store reads here: every coordinate describes exactly the adopted
     ;; text/view the head just painted. Unchanged wake frames send nothing.
     (let* ([slots (map cons the-buffers (iota (length the-buffers)))]
@@ -2275,11 +2273,11 @@
              (cons (car entry) (clamp-text-position lines (fold-left text:rebase-position (cdr entry) deltas))))
         positions)))
 
-  (edefine (resume-source id basis positions)
-    (edoc "Adopt a resumed buffer at its saved revision and bring its positions forward: (values buffer positions)."
-          (id integer "the store id")
-          (basis integer "the saved revision")
-          (positions list "the saved positions"))
+  (edoc "Adopt a resumed buffer at its saved revision and bring its positions forward: (values buffer positions)."
+        (id integer "the store id")
+        (basis integer "the saved revision")
+        (positions list "the saved positions"))
+  (define (resume-source id basis positions)
     ;; Local projections and ordinary shared buffers use one source path.
     ;; Ask for the complete chain at the saved revision, adopt current truth,
     ;; then account for any reentrant adoption before returning coordinates.
@@ -2398,8 +2396,8 @@
           (request-repaint!)
           #t)) state))
 
-  (edefine (resume!)
-    (edoc "Restore this head's windows and positions from its last publication, by names rather than stale coordinates.")
+  (edoc "Restore this head's windows and positions from its last publication, by names rather than stale coordinates.")
+  (define (resume!)
     ;; Recover the old publication's *names*, not its stale coordinates.
     ;; The ordinary exact-revision diff removes abandoned windows/regions,
     ;; including buffers no longer displayed, without touching custom marks.
@@ -2429,14 +2427,14 @@
   ;; event handler with first refusal on keys (what it declines goes through
   ;; the keymaps). A view is the degenerate app with no handler. Apps act on
   ;; the selected window -- their own, when it is selected.
-  (edefine-record-type app
-    (edoc "A local app: a buffer rebuilt by a refresh procedure and fed events by a handler."
-          (buffer buffer "the buffer the app owns")
-          (refresh! thunk "rebuilds the buffer")
-          (handle-event! (or procedure #f) "(handle-event! event) takes a key or pointer event, or #f")
-          (refresh-error (or string #f) "the last failed refresh's text, or #f")
-          (cursor-visible? (or boolean procedure symbol) "whether the cursor shows: a boolean, a procedure, or default")
-          (status-position (or procedure #f) "a procedure giving the status line's position text, or #f"))
+  (edoc "A local app: a buffer rebuilt by a refresh procedure and fed events by a handler."
+        (buffer buffer "the buffer the app owns")
+        (refresh! thunk "rebuilds the buffer")
+        (handle-event! (or procedure #f) "(handle-event! event) takes a key or pointer event, or #f")
+        (refresh-error (or string #f) "the last failed refresh's text, or #f")
+        (cursor-visible? (or boolean procedure symbol) "whether the cursor shows: a boolean, a procedure, or default")
+        (status-position (or procedure #f) "a procedure giving the status line's position text, or #f"))
+  (define-record-type app
     (fields buffer refresh! handle-event!
             (mutable refresh-error)
             (mutable cursor-visible?) (mutable status-position)))
@@ -2446,22 +2444,22 @@
   (define shutdown-hook-registry (kernel:make-registry))
   (define pre-redraw-hook-registry (kernel:make-registry))
 
-  (edefine (add-buffer-kill-hook! proc)
-    (edoc "Register a hook run with a buffer when this head forgets it."
-          (proc procedure "(hook buffer)"))
+  (edoc "Register a hook run with a buffer when this head forgets it."
+        (proc procedure "(hook buffer)"))
+  (define (add-buffer-kill-hook! proc)
     (unless (procedure? proc)
       (error 'add-buffer-kill-hook! "expected a procedure" proc))
     (kernel:registry-add! buffer-kill-hook-registry proc))
 
-  (edefine (add-pre-redraw-hook! proc)
-    (edoc "Register a hook run before every frame, after foreign edits are adopted."
-          (proc thunk "the hook"))
+  (edoc "Register a hook run before every frame, after foreign edits are adopted."
+        (proc thunk "the hook"))
+  (define (add-pre-redraw-hook! proc)
     (unless (procedure? proc)
       (error 'add-pre-redraw-hook! "expected a procedure" proc))
     (kernel:registry-add! pre-redraw-hook-registry proc))
 
-  (edefine (before-frame!)
-    (edoc "Adopt the store's news and refresh the renditions and views before a frame paints.")
+  (edoc "Adopt the store's news and refresh the renditions and views before a frame paints.")
+  (define (before-frame!)
     ;; Adopt the store's news before the layers above refresh their
     ;; views.  A frame never writes an old shared cache back to the store.
     ;; The painter supplies current terminal geometry before this fence.
@@ -2473,36 +2471,36 @@
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
               (kernel:registry-items pre-redraw-hook-registry)))
 
-  (edefine (add-shutdown-hook! proc)
-    (edoc "Register a hook run when the head shuts down."
-          (proc thunk "the hook"))
+  (edoc "Register a hook run when the head shuts down."
+        (proc thunk "the hook"))
+  (define (add-shutdown-hook! proc)
     (unless (procedure? proc)
       (error 'add-shutdown-hook! "expected a procedure" proc))
     (kernel:registry-add! shutdown-hook-registry proc))
 
-  (edefine (run-shutdown-hooks!)
-    (edoc "Run the shutdown hooks, ignoring their errors.")
+  (edoc "Run the shutdown hooks, ignoring their errors.")
+  (define (run-shutdown-hooks!)
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
               (kernel:registry-items shutdown-hook-registry)))
 
-  (edefine (registered-apps)
-    (edoc "The registered local apps."
-          (returns (list-of (record app))))
+  (edoc "The registered local apps."
+        (returns (list-of (record app))))
+  (define (registered-apps)
     (kernel:registry-items app-registry))
 
-  (edefine (app-of b)
-    (edoc "The local app registered on a buffer, or #f."
-          (b buffer "the buffer")
-          (returns (or (record app) #f)))
+  (edoc "The local app registered on a buffer, or #f."
+        (b buffer "the buffer")
+        (returns (or (record app) #f)))
+  (define (app-of b)
     (find (lambda (a) (eq? (app-buffer a) b)) (registered-apps)))
 
   (define (app-fact facts key fallback)
     (let ([entry (and facts (assq key facts))]) (if entry (cdr entry) fallback)))
 
-  (edefine (app-facts b)
-    (edoc "One owned batch of a shared app buffer's facts, audience and endpoint identity included, or #f."
-          (b buffer "the buffer")
-          (returns (or list #f)))
+  (edoc "One owned batch of a shared app buffer's facts, audience and endpoint identity included, or #f."
+        (b buffer "the buffer")
+        (returns (or list #f)))
+  (define (app-facts b)
     ;; Read one owned fact batch, including audience and endpoint identity.
     ;; Ordinary buffers avoid copying unrelated facts such as a file baseline.
     (guard (ex [else #f])
@@ -2515,46 +2513,42 @@
 
   (define (app-live? facts) (eq? (app-fact facts 'alive #f) #t))
 
-  (edefine (app-buffer? b)
-    (edoc "Whether a buffer belongs to a local app or a live shared one."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "Whether a buffer belongs to a local app or a live shared one."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (app-buffer? b)
     (or (and (app-of b) #t) (app-live? (app-facts b))))
 
-  (edefine (buffer-selectable? b)
-    (edoc "Whether text in a buffer can be selected: any ordinary buffer, and an app that allows it."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "Whether text in a buffer can be selected: any ordinary buffer, and an app that allows it."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (buffer-selectable? b)
     (or (not (app-of b)) (buffer-fact b 'selectable #t)))
 
-  (edefine (buffer-marked-set! b marked?)
-    (edoc "Activate or deactivate a buffer's mark; a non-selectable app's stays off."
-          (b buffer "the buffer")
-          (marked? boolean "whether the mark is active"))
+  (edoc "Activate or deactivate a buffer's mark; a non-selectable app's stays off."
+        (b buffer "the buffer")
+        (marked? boolean "whether the mark is active"))
+  (define (buffer-marked-set! b marked?)
     (buffer-marked-raw-set! b (and marked? (buffer-selectable? b))))
 
   ;; Mouse context is head-owned; edit reexports these same parameters.
   ;; Position is a one-based viewport cell pair, buffer position is an
   ;; unclamped character pair, and button is the raw xterm code.
-  (edefine app-event-position
-    (edoc "The viewport cell a pointer event hit, one-based (column . row), while an app handler runs."
-          (value (or pair #f)))
-    (make-thread-parameter #f))
-  (edefine app-event-buffer-position
-    (edoc "The unclamped character position, (row . col), a pointer event hit, while an app handler runs."
-          (value (or pair #f)))
-    (make-thread-parameter #f))
-  (edefine app-event-button
-    (edoc "The raw xterm button code of the pointer event an app handler is running for."
-          (value (or integer #f)))
-    (make-thread-parameter #f))
+  (edoc "The viewport cell a pointer event hit, one-based (column . row), while an app handler runs."
+        (value (or pair #f)))
+  (define app-event-position (make-thread-parameter #f))
+  (edoc "The unclamped character position, (row . col), a pointer event hit, while an app handler runs."
+        (value (or pair #f)))
+  (define app-event-buffer-position (make-thread-parameter #f))
+  (edoc "The raw xterm button code of the pointer event an app handler is running for."
+        (value (or integer #f)))
+  (define app-event-button (make-thread-parameter #f))
   ;; The window with keyboard focus when a pointer event began.  The app's
   ;; own window is selected while its handler runs; a control panel that
   ;; acts on the focused window addresses this one instead.
-  (edefine app-event-focus
-    (edoc "The window with keyboard focus when a pointer event began, while an app handler runs in the app's own window."
-          (value (or window #f)))
-    (make-thread-parameter #f))
+  (edoc "The window with keyboard focus when a pointer event began, while an app handler runs in the app's own window."
+        (value (or window #f)))
+  (define app-event-focus (make-thread-parameter #f))
 
   (define (captures? rule event)
     (or (eq? rule 'all)
@@ -2562,18 +2556,18 @@
              (if (eq? (car rule) 'except) (not (member event (cdr rule)))
                  (and (member event rule) #t)))))
 
-  (edefine (app-following? w)
-    (edoc "Whether a window follows a live shared app whose surface has a header."
-          (w window "the window")
-          (returns boolean))
+  (edoc "Whether a window follows a live shared app whose surface has a header."
+        (w window "the window")
+        (returns boolean))
+  (define (app-following? w)
     (and (window-following? w) (app-live? (app-facts (window-buffer w)))
          (let ([header (render:header (buffer-rendition (window-buffer w)))])
            (and header (caddr header) #t))))
 
-  (edefine (follow-app! w following?)
-    (edoc "Say whether a window follows its shared app's cursor and viewport."
-          (w window "the window")
-          (following? boolean "whether to follow"))
+  (edoc "Say whether a window follows its shared app's cursor and viewport."
+        (w window "the window")
+        (following? boolean "whether to follow"))
+  (define (follow-app! w following?)
     (unless (boolean? following?) (error 'follow-app! "expected a boolean" following?))
     (window-following?-set! w following?)
     (void))
@@ -2596,17 +2590,17 @@
             (max 0 (- cell (window-content-width w) -1)
                  (min (window-left w) cell (max 0 (- (cadr (cadddr header)) (window-content-width w))))))))))
 
-  (edefine (app-status b)
-    (edoc "A shared app's status text from its facts, or #f."
-          (b buffer "the buffer")
-          (returns (or string #f)))
+  (edoc "A shared app's status text from its facts, or #f."
+        (b buffer "the buffer")
+        (returns (or string #f)))
+  (define (app-status b)
     (let ([facts (app-facts b)])
       (and facts (app-fact facts 'status #f))))
 
   (define last-app-size #f)
 
-  (edefine (request-app-size!)
-    (edoc "Offer the focused shared app its window's text grid size, once per endpoint, window and grid.")
+  (edoc "Offer the focused shared app its window's text grid size, once per endpoint, window and grid.")
+  (define (request-app-size!)
     ;; One offer per focused endpoint/window/grid. The producer decides which
     ;; head owns sizing. Install the receipt before delivery can reenter.
     (let* ([w the-current] [b (window-buffer w)] [facts (app-facts b)]
@@ -2620,10 +2614,10 @@
                     (list 'request ui-actor (cadr next) 'resize (cdddr next)))
             (when (eq? last-app-size next) (set! last-app-size #f)))))))
 
-  (edefine (dispatch-app-event! event)
-    (edoc "Give the selected window's app an event: a local handler's result, else the shared app's capture decision."
-          (event string "the event")
-          (returns any))
+  (edoc "Give the selected window's app an event: a local handler's result, else the shared app's capture decision."
+        (event string "the event")
+        (returns any))
+  (define (dispatch-app-event! event)
     ;; Local handlers retain their result (including mouse focus decisions).
     ;; Shared capture is decided here, before sending an owned message.
     (when (string=? event "FOCUS") (set! last-app-size #f))
@@ -2649,9 +2643,9 @@
                      (list 'input ui-actor (buffer-store-id b) event
                            (if (string=? event "PASTE") (cons (cons 'paste (read-paste)) data) data)))))))))
 
-  (edefine (detach-app! b)
-    (edoc "Remove a buffer's app registration, keeping its text as an ordinary read-only buffer."
-          (b buffer "the app buffer"))
+  (edoc "Remove a buffer's app registration, keeping its text as an ordinary read-only buffer."
+        (b buffer "the app buffer"))
+  (define (detach-app! b)
     ;; Preserve the app's current buffer contents while removing its
     ;; dynamic refresh and event handler.  Its presentation facts stay
     ;; with the buffer but apply only while an app owns it (see the
@@ -2664,12 +2658,12 @@
       (buffer-read-only-set! b #t)
       b))
 
-  (edefine (register-app! target refresh! . handler)
-    (edoc "Register a local app on a buffer, or on a new tool buffer with a name: refresh! rebuilds it, the optional handler takes its events."
-          (target (or buffer string) "the buffer, or a tool name")
-          (refresh! thunk "the rebuild")
-          (handler (list-of procedure) "(handle event), at most one")
-          (returns buffer))
+  (edoc "Register a local app on a buffer, or on a new tool buffer with a name: refresh! rebuilds it, the optional handler takes its events."
+        (target (or buffer string) "the buffer, or a tool name")
+        (refresh! thunk "the rebuild")
+        (handler (list-of procedure) "(handle event), at most one")
+        (returns buffer))
+  (define (register-app! target refresh! . handler)
     ;; Validate before allocating a buffer or changing registrations.
     (unless (procedure? refresh!)
       (error 'register-app! "refresh must be a procedure" refresh!))
@@ -2696,11 +2690,11 @@
       (kernel:registry-add! app-registry a)
       b))
 
-  (edefine (set-app-cursor-visible! b visible?)
-    (edoc "Say whether an app buffer shows the cursor: a boolean, or a procedure deciding per frame."
-          (b buffer "the app buffer")
-          (visible? (or boolean procedure) "the visibility")
-          (returns buffer))
+  (edoc "Say whether an app buffer shows the cursor: a boolean, or a procedure deciding per frame."
+        (b buffer "the app buffer")
+        (visible? (or boolean procedure) "the visibility")
+        (returns buffer))
+  (define (set-app-cursor-visible! b visible?)
     (let ([a (app-of b)])
       (unless a (error 'set-app-cursor-visible! "not an app buffer" b))
       (unless (or (boolean? visible?) (procedure? visible?))
@@ -2709,11 +2703,11 @@
       (app-cursor-visible?-set! a visible?)
       b))
 
-  (edefine (set-app-manages-viewport! b manages?)
-    (edoc "Say whether an app manages its windows' viewports itself."
-          (b buffer "the app buffer")
-          (manages? boolean "whether it does")
-          (returns buffer))
+  (edoc "Say whether an app manages its windows' viewports itself."
+        (b buffer "the app buffer")
+        (manages? boolean "whether it does")
+        (returns buffer))
+  (define (set-app-manages-viewport! b manages?)
     (let ([a (app-of b)])
       (unless a (error 'set-app-manages-viewport! "not an app buffer" b))
       (unless (boolean? manages?)
@@ -2721,21 +2715,21 @@
       (buffer-fact-set! b 'manages-viewport manages?)
       b))
 
-  (edefine (set-app-selectable! b selectable?)
-    (edoc "Say whether text in an app buffer can be selected."
-          (b buffer "the app buffer")
-          (selectable? boolean "whether it can")
-          (returns buffer))
+  (edoc "Say whether text in an app buffer can be selected."
+        (b buffer "the app buffer")
+        (selectable? boolean "whether it can")
+        (returns buffer))
+  (define (set-app-selectable! b selectable?)
     (unless (and (app-of b) (boolean? selectable?))
       (error 'set-app-selectable! "expected an app buffer and boolean" b selectable?))
     (buffer-fact-set! b 'selectable selectable?)
     (unless selectable? (buffer-marked-raw-set! b #f))
     b)
 
-  (edefine (set-app-status-position! b position)
-    (edoc "Say how an app buffer's status line shows its position: a procedure giving the text, or #f for the buffer coordinates."
-          (b buffer "the app buffer")
-          (position (or procedure #f) "the position source"))
+  (edoc "Say how an app buffer's status line shows its position: a procedure giving the text, or #f for the buffer coordinates."
+        (b buffer "the app buffer")
+        (position (or procedure #f) "the position source"))
+  (define (set-app-status-position! b position)
     ;; A coordinate pair projects a source position; a string supplies
     ;; operation details in place of generated buffer coordinates/mode.
     (let ([a (app-of b)])
@@ -2746,10 +2740,10 @@
       (app-status-position-set! a position)
       b))
 
-  (edefine (app-cursor-visible-in? w)
-    (edoc "Whether the cursor shows in a window: its app's choice, a followed surface's, or yes."
-          (w window "the window")
-          (returns boolean))
+  (edoc "Whether the cursor shows in a window: its app's choice, a followed surface's, or yes."
+        (w window "the window")
+        (returns boolean))
+  (define (app-cursor-visible-in? w)
     (let* ([a (app-of (window-buffer w))]
            [visibility (and a (app-cursor-visible? a))])
       (cond [(and (not a) (app-following? w))
@@ -2768,28 +2762,28 @@
   ;; transcript) presents as an ordinary read-only buffer, its cursor
   ;; the read-only bar and its viewport the editor's to manage.
 
-  (edefine (app-manages-window-viewport? w)
-    (edoc "Whether the app shown in a window manages the viewport itself."
-          (w window "the window")
-          (returns boolean))
+  (edoc "Whether the app shown in a window manages the viewport itself."
+        (w window "the window")
+        (returns boolean))
+  (define (app-manages-window-viewport? w)
     (let ([b (window-buffer w)])
       (and (or (app-of b) (app-following? w)) (buffer-fact b 'manages-viewport #f))))
 
-  (edefine (app-cursor-style b)
-    (edoc "The cursor shape a local app asks for, or the followed shared app's, or #f."
-          (b buffer "the buffer")
-          (returns any))
+  (edoc "The cursor shape a local app asks for, or the followed shared app's, or #f."
+        (b buffer "the buffer")
+        (returns any))
+  (define (app-cursor-style b)
     ;; Local presentation or the followed shared app's shape, otherwise #f.
     (if (app-of b) (buffer-fact b 'cursor-style #f)
         (and (eq? b (window-buffer the-current)) (app-following? the-current)
              (app-fact (app-facts b) 'cursor-style #f))))
 
-  (edefine (set-app-presentation! b sticky-lines scrollbar . options)
-    (edoc "Configure a local app's presentation in every window: the sticky rows above the body, its scrollbar, #f, #t, left, right or auto, then optionally its wrap and cursor style."
-          (b buffer "the app buffer")
-          (sticky-lines integer "rows kept above the scrollable body")
-          (scrollbar (or boolean (one-of left right auto)) "the scrollbar")
-          (options (list-of any) "a wrap setting, then a cursor style"))
+  (edoc "Configure a local app's presentation in every window: the sticky rows above the body, its scrollbar, #f, #t, left, right or auto, then optionally its wrap and cursor style."
+        (b buffer "the app buffer")
+        (sticky-lines integer "rows kept above the scrollable body")
+        (scrollbar (or boolean (one-of left right auto)) "the scrollbar")
+        (options (list-of any) "a wrap setting, then a cursor style"))
+  (define (set-app-presentation! b sticky-lines scrollbar . options)
     ;; Configure presentation shared by every window showing this local
     ;; app.  Sticky rows stay above the scrollable body; scrollbar is
     ;; #f, #t (enabled using the configured side), left, right, or auto
@@ -2824,53 +2818,50 @@
       (request-repaint!)
       b))
 
-  (edefine (buffer-sticky-lines b)
-    (edoc "How many rows of an app buffer stay above the scrollable body."
-          (b buffer "the buffer")
-          (returns integer))
+  (edoc "How many rows of an app buffer stay above the scrollable body."
+        (b buffer "the buffer")
+        (returns integer))
+  (define (buffer-sticky-lines b)
     (if (app-buffer? b)
         (min (or (buffer-fact b 'sticky-lines #f) 0) (line-count b))
         0))
 
   ;; Ordinary buffers use the global setting. An app can force the bar on
   ;; with #t, force a particular side, or otherwise inherit the global choice.
-  (edefine scrollbar
-    (edoc "Whether ordinary buffers show a scrollbar."
-          (value boolean))
-    (make-parameter #f
-      (lambda (visible?)
-        (unless (boolean? visible?)
-          (error 'scrollbar "must be #t or #f" visible?))
-        visible?)))
-  (edefine scrollbar-position
-    (edoc "Which side a scrollbar shows on, left or right."
-          (value (one-of left right)))
-    (make-parameter 'right
-      (lambda (side)
-        (unless (memq side '(left right))
-          (error 'scrollbar-position "must be left or right" side))
-        side)))
+  (edoc "Whether ordinary buffers show a scrollbar."
+        (value boolean))
+  (define scrollbar (make-parameter #f
+                      (lambda (visible?)
+                        (unless (boolean? visible?)
+                          (error 'scrollbar "must be #t or #f" visible?))
+                        visible?)))
+  (edoc "Which side a scrollbar shows on, left or right."
+        (value (one-of left right)))
+  (define scrollbar-position (make-parameter 'right
+                               (lambda (side)
+                                 (unless (memq side '(left right))
+                                   (error 'scrollbar-position "must be left or right" side))
+                                 side)))
 
-  (edefine line-numbers
-    (edoc "Whether buffers show line numbers by default."
-          (value boolean))
-    (make-parameter #f
-      (lambda (visible?)
-        (unless (boolean? visible?)
-          (error 'line-numbers "must be #t or #f" visible?))
-        visible?)))
+  (edoc "Whether buffers show line numbers by default."
+        (value boolean))
+  (define line-numbers (make-parameter #f
+                         (lambda (visible?)
+                           (unless (boolean? visible?)
+                             (error 'line-numbers "must be #t or #f" visible?))
+                           visible?)))
 
-  (edefine (buffer-line-numbers b)
-    (edoc "Whether a buffer shows line numbers: its own setting, else the default."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "Whether a buffer shows line numbers: its own setting, else the default."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (buffer-line-numbers b)
     (let ([setting (buffer-line-numbers-setting b)])
       (if (eq? setting 'default) (line-numbers) setting)))
 
-  (edefine (window-line-number-width w)
-    (edoc "The columns a window's line numbers take, 0 without them."
-          (w window "the window")
-          (returns integer))
+  (edoc "The columns a window's line numbers take, 0 without them."
+        (w window "the window")
+        (returns integer))
+  (define (window-line-number-width w)
     (if (buffer-line-numbers (window-buffer w))
         (+ 1 (string-length
                (number->string (line-count (window-buffer w)))))
@@ -2881,16 +2872,16 @@
   ;; the verdict here, so geometry and hit-testing agree with the last frame.
   (define auto-scrollbars (make-weak-eq-hashtable))
 
-  (edefine (window-auto-scrollbar-set! w shown?)
-    (edoc "Record whether a window's auto scrollbar shows now, as its content overflows."
-          (w window "the window")
-          (shown? boolean "whether it shows"))
+  (edoc "Record whether a window's auto scrollbar shows now, as its content overflows."
+        (w window "the window")
+        (shown? boolean "whether it shows"))
+  (define (window-auto-scrollbar-set! w shown?)
     (hashtable-set! auto-scrollbars w (and shown? #t)))
 
-  (edefine (window-scrollbar? w)
-    (edoc "The side a window's scrollbar shows on, left or right, or #f."
-          (w window "the window")
-          (returns (or (one-of left right) #f)))
+  (edoc "The side a window's scrollbar shows on, left or right, or #f."
+        (w window "the window")
+        (returns (or (one-of left right) #f)))
+  (define (window-scrollbar? w)
     (let ([choice (buffer-fact (window-buffer w) 'scrollbar #f)])
       (cond [(memq choice '(left right)) choice]
             [(eq? choice 'auto)
@@ -2898,18 +2889,18 @@
             [(or choice (scrollbar)) (scrollbar-position)]
             [else #f])))
 
-  (edefine (window-content-width w)
-    (edoc "The columns of a window left for text, after its scrollbar and line numbers."
-          (w window "the window")
-          (returns integer))
+  (edoc "The columns of a window left for text, after its scrollbar and line numbers."
+        (w window "the window")
+        (returns integer))
+  (define (window-content-width w)
     (max 1 (- (window-width w)
               (if (window-scrollbar? w) 1 0)
               (window-line-number-width w))))
 
-  (edefine (buffer-narrowest-width b)
-    (edoc "The smallest content width among the windows showing a buffer, or #f."
-          (b buffer "the buffer")
-          (returns (or integer #f)))
+  (edoc "The smallest content width among the windows showing a buffer, or #f."
+        (b buffer "the buffer")
+        (returns (or integer #f)))
+  (define (buffer-narrowest-width b)
     ;; The smallest content width among the windows showing b, or #f
     ;; -- what a rendering shared by every window must fit.
     (let ([ws (filter (lambda (w) (eq? (window-buffer w) b)) the-windows)])
@@ -2918,10 +2909,10 @@
                       (window-content-width (car ws))
                       (cdr ws)))))
 
-  (edefine (buffer-window-size b)
-    (edoc "The text grid, (rows . columns), of the preferred window showing a buffer, the focused one first, or #f."
-          (b buffer "the buffer")
-          (returns (or pair #f)))
+  (edoc "The text grid, (rows . columns), of the preferred window showing a buffer, the focused one first, or #f."
+        (b buffer "the buffer")
+        (returns (or pair #f)))
+  (define (buffer-window-size b)
     ;; The text grid of the preferred window displaying b.  App-owned terminal
     ;; state uses one grid per buffer, so the focused window wins when several
     ;; windows mirror it.
@@ -2932,30 +2923,30 @@
                        the-windows))])
       (and w (cons (window-size w) (window-content-width w)))))
 
-  (edefine (window-scrollbar-column w)
-    (edoc "The screen column of a window's scrollbar, or #f."
-          (w window "the window")
-          (returns (or integer #f)))
+  (edoc "The screen column of a window's scrollbar, or #f."
+        (w window "the window")
+        (returns (or integer #f)))
+  (define (window-scrollbar-column w)
     (case (window-scrollbar? w)
       [(left) (window-xoff w)]
       [(right) (+ (window-xoff w) (window-width w) -1)]
       [else #f]))
 
-  (edefine (register-view! target refresh!)
-    (edoc "Register a local view: an app without an event handler."
-          (target (or buffer string) "the buffer, or a tool name")
-          (refresh! thunk "the rebuild")
-          (returns buffer))
+  (edoc "Register a local view: an app without an event handler."
+        (target (or buffer string) "the buffer, or a tool name")
+        (refresh! thunk "the rebuild")
+        (returns buffer))
+  (define (register-view! target refresh!)
     (register-app! target refresh!))
 
-  (edefine (view-buffer? b)
-    (edoc "Whether a buffer is an app or view buffer."
-          (b buffer "the buffer")
-          (returns boolean))
+  (edoc "Whether a buffer is an app or view buffer."
+        (b buffer "the buffer")
+        (returns boolean))
+  (define (view-buffer? b)
     (app-buffer? b))
 
-  (edefine (refresh-visible-views!)
-    (edoc "Rebuild every registered app shown in a window, reporting a failed refresh in its buffer.")
+  (edoc "Rebuild every registered app shown in a window, reporting a failed refresh in its buffer.")
+  (define (refresh-visible-views!)
     (for-each (lambda (a)
                 (when (find (lambda (w) (eq? (window-buffer w) (app-buffer a)))
                             the-windows)
@@ -2972,14 +2963,15 @@
               (filter (lambda (a) (memq (app-buffer a) the-buffers))
                       (registered-apps))))
 
-  (edefine view-append!
+  (edoc "Append lines to a local view buffer, tail anchors following the new end; with a prefix length to drop, surviving anchors keep their text and expired ones go to the start."
+        (b buffer "the local view buffer")
+        (lines list "the lines")
+        (drop integer "the rows to drop from the start"))
+  (define view-append!
     (case-lambda
       [(b lines)
-       (edoc "Append lines to a local view buffer, tail anchors following the new end." (b buffer "the local view buffer") (lines list "the lines"))
        (view-append! b lines 0)]
       [(b lines drop)
-       (edoc "Append lines to a local view buffer while dropping a prefix of rows; surviving anchors keep their text, expired ones go to the start."
-             (b buffer "the local view buffer") (lines list "the lines") (drop integer "the rows to drop from the start"))
        ;; Append while optionally expiring a prefix. Tail points follow the
        ;; new end; surviving anchors keep their text, expired ones go to the
        ;; start. Reuse replacement's one adoption before repaint can reenter.
@@ -3006,11 +2998,11 @@
                               [else (cons (- (cadr entry) drop) (cddr entry))])))
                     (buffer-placements b))))))]))
 
-  (edefine (view-replace! b lines . options)
-    (edoc "Adopt a local view's rendering as one state: its lines, optional facts, numeric placements and per-window presentations."
-          (b buffer "the local view buffer")
-          (lines list "the rendered lines")
-          (options (list-of any) "facts, then placements, then (window . lines) presentations"))
+  (edoc "Adopt a local view's rendering as one state: its lines, optional facts, numeric placements and per-window presentations."
+        (b buffer "the local view buffer")
+        (lines list "the rendered lines")
+        (options (list-of any) "facts, then placements, then (window . lines) presentations"))
+  (define (view-replace! b lines . options)
     ;; Adopt a local rendering, optional facts, and numeric placements as
     ;; one state before repaint callbacks can reenter.  Unplaced anchors
     ;; keep their coordinates, clamped into the new text.  A top placement
@@ -3080,26 +3072,26 @@
       (when (or text-changed? facts-changed? views-changed?) (request-repaint!))))
 
 
-  (edefine (buffer-named name)
-    (edoc "The buffer with a name, or #f."
-          (name string "the name")
-          (returns (or buffer #f)))
+  (edoc "The buffer with a name, or #f."
+        (name string "the name")
+        (returns (or buffer #f)))
+  (define (buffer-named name)
     (find (lambda (b) (string=? (buffer-name b) name)) the-buffers))
 
-  (edefine (buffer-point b)
-    (edoc "Point in a buffer: its selected or first window's, else its saved spot; (row . col)."
-          (b buffer "the buffer")
-          (returns position))
+  (edoc "Point in a buffer: its selected or first window's, else its saved spot; (row . col)."
+        (b buffer "the buffer")
+        (returns position))
+  (define (buffer-point b)
     ;; Reading a position must not switch a window or invoke callbacks.
     (let ([w (if (eq? (window-buffer the-current) b) the-current
                  (find (lambda (w) (eq? (window-buffer w) b)) the-windows))])
       (if w (cons (window-prow w) (window-pcol w))
           (cons (buffer-spot-row b) (buffer-spot-col b)))))
 
-  (edefine (set-window-buffer! w b)
-    (edoc "Show a buffer in a window, saving point in the old buffer and restoring where it last was in the new one."
-          (w window "the window")
-          (b buffer "the buffer"))
+  (edoc "Show a buffer in a window, saving point in the old buffer and restoring where it last was in the new one."
+        (w window "the window")
+        (b buffer "the buffer"))
+  (define (set-window-buffer! w b)
     ;; Display b in w, remembering where point was in the old buffer and
     ;; restoring where it last was in the new one. Redisplaying the same
     ;; buffer preserves the live window; saved spots belong to hidden ones.
@@ -3123,9 +3115,9 @@
       ;; Identity, geometry, and rendition agree before a callback can switch.
       (unless (eq? old b) (request-repaint!))))
 
-  (edefine (forget-buffer! b)
-    (edoc "Retire this head's record of a buffer, moving windows off it and running the kill hooks; the store content stays."
-          (b buffer "the buffer"))
+  (edoc "Retire this head's record of a buffer, moving windows off it and running the kill hooks; the store content stays."
+        (b buffer "the buffer"))
+  (define (forget-buffer! b)
     ;; Retire this head's record, never the store content. Keep its store
     ;; id: a retained reference to hidden/deleted content cannot turn local.
     ;; Remove it from fallback candidates and move windows before cleanup
@@ -3163,8 +3155,8 @@
   ;; evaluation just as it cancels a prompt.  Limitation: only running
   ;; Scheme can be interrupted this way -- a blocking foreign call runs
   ;; to completion.
-  (edefine-condition-type &interrupted &serious make-interrupted interrupted?
-    (edoc "A computation was interrupted by C-g."))
+  (edoc "A computation was interrupted by C-g.")
+  (define-condition-type &interrupted &serious make-interrupted interrupted?)
 
   ;; Interaction owns C-g; interruption applies to computation.  While
   ;; the editor waits for the user -- a prompt, a key query, a search --
@@ -3178,10 +3170,10 @@
       (set! isig-on? on)
       (sys:terminal-isig! on)))
 
-  (edefine (call-uninterrupted thunk)
-    (edoc "Run an interaction during which C-g is an ordinary key rather than an interrupt."
-          (thunk thunk "the interaction")
-          (returns any "what the thunk returns"))
+  (edoc "Run an interaction during which C-g is an ordinary key rather than an interrupt."
+        (thunk thunk "the interaction")
+        (returns any "what the thunk returns"))
+  (define (call-uninterrupted thunk)
     ;; run thunk as an interaction: C-g is a key while it lasts
     (let ([old isig-on?])
       (dynamic-wind
@@ -3189,10 +3181,10 @@
         thunk
         (lambda () (set-isig! old)))))
 
-  (edefine (call-with-interrupt thunk)
-    (edoc "Run a computation that C-g interrupts, raising an interrupted condition."
-          (thunk thunk "the computation")
-          (returns any "what the thunk returns"))
+  (edoc "Run a computation that C-g interrupts, raising an interrupted condition."
+        (thunk thunk "the computation")
+        (returns any "what the thunk returns"))
+  (define (call-with-interrupt thunk)
     ;; Run thunk interruptibly by C-g.
     (let ([saved (keyboard-interrupt-handler)]
           [old isig-on?])
@@ -3231,10 +3223,9 @@
 
   ;; another actor's message to this head wakes its loop; the question
   ;; is presented before the next frame
-  (edefine ui-actor
-    (edoc "This head's actor identity in the store and the interaction protocol."
-          (value any))
-    ;; Claim and subscribe together before creating buffers or marks. Both
+  (edoc "This head's actor identity in the store and the interaction protocol."
+        (value any))
+  (define ui-actor ;; Claim and subscribe together before creating buffers or marks. Both
     ;; process-root registrations outlive any extension that first imports
     ;; the head. A presence callback can immediately write to the store, so
     ;; its subscriber captures the identity before ui-actor is initialized.

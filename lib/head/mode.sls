@@ -15,7 +15,8 @@
 ;; (mode:register! "scheme" '(".ss") '("scheme") styler),
 ;; (mode:of b), ((mode:styles m) line).
 
-(library (mode)
+(import (only (edoc) elibrary))
+(elibrary (mode)
   (export (rename (mode-name name)
                   (mode-extensions extensions)
                   (mode-interpreters interpreters)
@@ -30,7 +31,7 @@
                   (memoize-buffer-analysis memoize-analysis)
                   (refresh-buffer-modes! refresh!))
           mode? key-context)
-  (import (rnrs) (only (edoc) edefine edefine-record-type edoc)
+  (import (rnrs)
           (only (chezscheme)
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
                 vector-copy void)
@@ -50,14 +51,14 @@
   ;; line.  Brackets styled 'delimiter take part in bracket matching;
   ;; in a buffer without a mode every bracket counts.
 
-  (edefine-record-type mode
-    (edoc "A mode: how the buffers it matches are styled and rendered."
-          (name string "the mode's name")
-          (extensions (list-of string) "the file-name endings it claims")
-          (interpreters (list-of string) "the #! interpreter names it claims")
-          (styles (or procedure #f) "line to per-column style symbols, or #f for unstyled")
-          (render (or procedure #f) "(render buffer row line) giving a same-length display transform, or #f")
-          (row-styles (or procedure #f) "(row-styles buffer row line) giving a styles vector, or #f for the plain styles"))
+  (edoc "A mode: how the buffers it matches are styled and rendered."
+        (name string "the mode's name")
+        (extensions (list-of string) "the file-name endings it claims")
+        (interpreters (list-of string) "the #! interpreter names it claims")
+        (styles (or procedure #f) "line to per-column style symbols, or #f for unstyled")
+        (render (or procedure #f) "(render buffer row line) giving a same-length display transform, or #f")
+        (row-styles (or procedure #f) "(row-styles buffer row line) giving a styles vector, or #f for the plain styles"))
+  (define-record-type mode
     (fields name extensions interpreters styles
             ;; optional display transform: (render buffer row line) ->
             ;; a string of the SAME character length, or a same-length vector
@@ -80,13 +81,13 @@
 
   (define mode-extension-additions (kernel:make-registry))
 
-  (edefine (register-mode! name extensions interpreters styles . extra)
-    (edoc "Register a mode: its name, the file-name endings it claims, the interpreters of a #! line, a line styles function, then optionally a render transform and a buffer-aware row-styles procedure."
-          (name string "the mode's name")
-          (extensions (list-of string) "the file-name endings")
-          (interpreters (list-of string) "the #! interpreter names")
-          (styles (or procedure #f) "line to styles vector, or #f")
-          (extra (list-of (or procedure #f)) "a render transform, then a row-styles procedure"))
+  (edoc "Register a mode: its name, the file-name endings it claims, the interpreters of a #! line, a line styles function, then optionally a render transform and a buffer-aware row-styles procedure."
+        (name string "the mode's name")
+        (extensions (list-of string) "the file-name endings")
+        (interpreters (list-of string) "the #! interpreter names")
+        (styles (or procedure #f) "line to styles vector, or #f")
+        (extra (list-of (or procedure #f)) "a render transform, then a row-styles procedure"))
+  (define (register-mode! name extensions interpreters styles . extra)
     ;; extra: an optional render transform, then an optional
     ;; buffer-aware row-styles procedure (see the mode record).
     (kernel:registry-add! modes
@@ -94,10 +95,10 @@
                  (and (pair? extra) (car extra))
                  (and (pair? extra) (pair? (cdr extra)) (cadr extra)))))
 
-  (edefine (add-mode-extension! name extension)
-    (edoc "Give an existing mode another file-name ending, as a registry entry that config reload retracts."
-          (name string "the mode")
-          (extension string "the ending, with its dot"))
+  (edoc "Give an existing mode another file-name ending, as a registry entry that config reload retracts."
+        (name string "the mode")
+        (extension string "the ending, with its dot"))
+  (define (add-mode-extension! name extension)
     ;; Add a suffix to an existing mode without replacing its implementation.
     ;; This is a registry so config-owned additions disappear on config reload.
     (unless (and (string? extension) (> (string-length extension) 1)
@@ -111,11 +112,11 @@
               (head:buffers))
     (void))
 
-  (edefine (detect-mode path first-line)
-    (edoc "The mode for a file, by its extension then by the #! interpreter line, or #f."
-          (path (or file #f) "the file")
-          (first-line string "its first line")
-          (returns (or (record mode) #f)))
+  (edoc "The mode for a file, by its extension then by the #! interpreter line, or #f."
+        (path (or file #f) "the file")
+        (first-line string "its first line")
+        (returns (or (record mode) #f)))
+  (define (detect-mode path first-line)
     ;; The mode for a file: by extension, then by the #! interpreter line.
     (or (and path
              (let ([addition
@@ -136,30 +137,30 @@
                                           (string-length first-line)))
                          (mode-interpreters m)))))))
 
-  (edefine (assign-mode! b)
-    (edoc "Give a buffer the mode its file and first line detect, following detection from then on."
-          (b buffer "the buffer"))
+  (edoc "Give a buffer the mode its file and first line detect, following detection from then on."
+        (b buffer "the buffer"))
+  (define (assign-mode! b)
     (set-mode-of! b
       (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0)) #t))
 
-  (edefine (find-mode name)
-    (edoc "The registered mode called name, or #f."
-          (name string "the mode's name")
-          (returns (or (record mode) #f)))
+  (edoc "The registered mode called name, or #f."
+        (name string "the mode's name")
+        (returns (or (record mode) #f)))
+  (define (find-mode name)
     (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name))))
 
-  (edefine (set-buffer-mode! b name)
-    (edoc "Give a buffer the registered mode called name, or none with #f, regardless of its file name."
-          (b buffer "the buffer")
-          (name (or string #f) "the mode's name"))
+  (edoc "Give a buffer the registered mode called name, or none with #f, regardless of its file name."
+        (b buffer "the buffer")
+        (name (or string #f) "the mode's name"))
+  (define (set-buffer-mode! b name)
     ;; Give b the registered mode called name (#f for none), regardless of
     ;; its file name -- how transcript buffers get their highlighting.
     (set-mode-of! b (and name (find-mode name)) #f))
 
-  (edefine (key-context b)
-    (edoc "The keymap context of a buffer's mode, named after it, or #f; a capture context needs a live app."
-          (b buffer "the buffer")
-          (returns (or symbol #f)))
+  (edoc "The keymap context of a buffer's mode, named after it, or #f; a capture context needs a live app."
+        (b buffer "the buffer")
+        (returns (or symbol #f)))
+  (define (key-context b)
     ;; A mode may carry its own key bindings under a context named
     ;; after it; they take precedence over the global map while a
     ;; buffer of that mode is current. Capture contexts require a live app;
@@ -170,17 +171,17 @@
              (and (or (not (keymap:context-capture context)) (head:app-buffer? b))
                   context)))))
 
-  (edefine (buffer-mode-name b)
-    (edoc "The name of a buffer's mode, or #f without one."
-          (b buffer "the buffer")
-          (returns (or string #f)))
+  (edoc "The name of a buffer's mode, or #f without one."
+        (b buffer "the buffer")
+        (returns (or string #f)))
+  (define (buffer-mode-name b)
     ;; The name of b's mode, or #f without one.
     (let ([m (mode-of b)]) (and m (mode-name m))))
 
-  (edefine (mode-of b)
-    (edoc "A buffer's mode record, or #f."
-          (b buffer "the buffer")
-          (returns (or (record mode) #f)))
+  (edoc "A buffer's mode record, or #f."
+        (b buffer "the buffer")
+        (returns (or (record mode) #f)))
+  (define (mode-of b)
     (let ([n (head:buffer-fact b 'mode #f)]) (and n (find-mode n))))
 
   (define (set-mode-of! b m . auto?)
@@ -198,10 +199,10 @@
 
   (define style-cache (make-weak-eq-hashtable))
 
-  (edefine (buffer-line-styles b)
-    (edoc "The memoized line styles function of a buffer's mode; every line plain without one, and a raising mode styles plain."
-          (b buffer "the buffer")
-          (returns procedure))
+  (edoc "The memoized line styles function of a buffer's mode; every line plain without one, and a raising mode styles plain."
+        (b buffer "the buffer")
+        (returns procedure))
+  (define (buffer-line-styles b)
     ;; The line-styles function of b's mode; unstyled without one.
     (let ([m (mode-of b)])
       (if m
@@ -217,10 +218,10 @@
                     styles))))
           no-styles)))
 
-  (edefine (memoize-buffer-analysis analyze)
-    (edoc "Turn a whole-buffer analyzer into a row provider that reruns it at most once per buffer revision."
-          (analyze procedure "(analyze buffer) giving the analysis")
-          (returns procedure))
+  (edoc "Turn a whole-buffer analyzer into a row provider that reruns it at most once per buffer revision."
+        (analyze procedure "(analyze buffer) giving the analysis")
+        (returns procedure))
+  (define (memoize-buffer-analysis analyze)
     ;; Turn a whole-buffer analyzer into a row provider.  Buffer content has
     ;; one revision stamp, so validation is O(1) and analysis runs at most
     ;; once between edits, however many visible rows ask for its result.
@@ -236,8 +237,8 @@
             (and (< row (vector-length product))
                  (vector-ref product row)))))))
 
-  (edefine (refresh-buffer-modes!)
-    (edoc "Re-resolve every buffer's mode by name, so buffers pick up a reloaded mode or lose one that is gone.")
+  (edoc "Re-resolve every buffer's mode by name, so buffers pick up a reloaded mode or lose one that is gone.")
+  (define (refresh-buffer-modes!)
     ;; Re-resolve every buffer's mode by name, so buffers pick up a
     ;; reloaded mode's new styles (or lose a mode that is gone).
     (for-each (lambda (b)

@@ -19,7 +19,8 @@
 ;; above it.  Exported names drop the module stem: (prompt:read! "Find
 ;; file: " file:complete), (prompt:confirm? "Really?"), (prompt:active?).
 
-(library (prompt)
+(import (only (edoc) elibrary))
+(elibrary (prompt)
   (export (rename (prompt! read!) (query-key! key!) (prompt-active? active?)
                   (prompt-ghost ghost) (prompt-inspector inspector)
                   (prompt-multiline multiline) (prompt-edge-motion edge-motion)
@@ -27,7 +28,8 @@
                   (validate-input validate) (draft-input draft)
                   (make-content-view make-content))
           confirm? make-completer make-candidate completion-label completion-highlight content line allow! interaction transient)
-  (import (rnrs) (only (edoc) edefine edefine-record-type edoc) (rnrs r5rs)
+  (import (rnrs)
+          (rnrs r5rs)
           (only (chezscheme)
                 make-parameter parameterize box unbox set-box! format void
                 make-weak-eq-hashtable make-list list-head iota
@@ -66,10 +68,10 @@
 
   ;;; Interaction -------------------------------------------------------------------
 
-  (edefine (interaction thunk)
-    (edoc "Run an interaction that owns C-g and the cursor: uninterrupted, the cursor following its rules rather than a parked evaluation's."
-          (thunk thunk "the interaction")
-          (returns any "what the thunk returns"))
+  (edoc "Run an interaction that owns C-g and the cursor: uninterrupted, the cursor following its rules rather than a parked evaluation's."
+        (thunk thunk "the interaction")
+        (returns any "what the thunk returns"))
+  (define (interaction thunk)
     ;; An interaction owns C-g (head:call-uninterrupted) and the cursor:
     ;; while it runs, the cursor follows the interaction's rules, not a
     ;; parked evaluation's.
@@ -84,21 +86,21 @@
   ;; show (a command that would nest a prompt is refused with one).
   (define allowed-commands (kernel:make-registry))
 
-  (edefine (allow! command . stand-in)
-    (edoc "Allow a global command to run from inside a prompt without losing its input, or a prompt-safe stand-in for it."
-          (command procedure "the command")
-          (stand-in (list-of procedure) "a replacement to run instead, at most one"))
+  (edoc "Allow a global command to run from inside a prompt without losing its input, or a prompt-safe stand-in for it."
+        (command procedure "the command")
+        (stand-in (list-of procedure) "a replacement to run instead, at most one"))
+  (define (allow! command . stand-in)
     (kernel:registry-add! allowed-commands
       (cons command (and (pair? stand-in) (car stand-in)))))
 
   ;;; Questions, completions, and the prompt ------------------------------------------
 
-  (edefine (query-key! question allowed . rest)
-    (edoc "Ask a single-key question in the echo area and read one of the allowed characters; a marked option, m)erge, shows its letter bold. #f when cancelled."
-          (question string "the question")
-          (allowed string "the acceptable characters")
-          (rest (list-of thunk) "a repaint to run before waiting, at most one")
-          (returns (or char #f)))
+  (edoc "Ask a single-key question in the echo area and read one of the allowed characters; a marked option, m)erge, shows its letter bold. #f when cancelled."
+        (question string "the question")
+        (allowed string "the acceptable characters")
+        (rest (list-of thunk) "a repaint to run before waiting, at most one")
+        (returns (or char #f)))
+  (define (query-key! question allowed . rest)
     ;; A focused single-key question. Decode complete terminal events so an
     ;; arrow's leading ESC cannot cancel the question and leave its remaining
     ;; bytes to move point. Callers mark an option as m)erge internally; the
@@ -180,23 +182,20 @@
 
   (define active-refresh (make-parameter #f))
   (define window-owner (make-parameter #f))
-  (edefine (prompt-active?)
-    (edoc "Whether a prompt is reading input now."
-          (returns boolean))
+  (edoc "Whether a prompt is reading input now."
+        (returns boolean))
+  (define (prompt-active?)
     (or (and (active-refresh) #t) (and echo-cursor #t)))
 
-  (edefine prompt-in-window
-    (edoc "Whether a prompt shows its completions and content in the pop-up window rather than the echo area."
-          (value boolean))
-    (make-parameter #f))
-  (edefine completion-label
-    (edoc "How a completion value is labelled in the list: (label value) gives the shown text."
-          (value procedure))
-    (make-parameter (lambda (value) value)))
-  (edefine completion-highlight
-    (edoc "Which completion labels take the editor face: (highlight? label)."
-          (value procedure))
-    (make-parameter (lambda (label) #f)))
+  (edoc "Whether a prompt shows its completions and content in the pop-up window rather than the echo area."
+        (value boolean))
+  (define prompt-in-window (make-parameter #f))
+  (edoc "How a completion value is labelled in the list: (label value) gives the shown text."
+        (value procedure))
+  (define completion-label (make-parameter (lambda (value) value)))
+  (edoc "Which completion labels take the editor face: (highlight? label)."
+        (value procedure))
+  (define completion-highlight (make-parameter (lambda (label) #f)))
   ;; A cursor-aware source returns (values start end expansions candidates).
   ;; Expansions may be a thunk: resolve only for a new Tab normalization,
   ;; not when refreshing the live list or cycling already prepared results.
@@ -207,92 +206,82 @@
   ;; after a sole match has been inserted and returns the (text . position)
   ;; to continue with: M-x closes forms and steps to the next argument.
   (define-record-type (completer %make-completer completer?) (fields lookup settle))
-  (edefine make-completer
+  (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted."
+        (lookup procedure "the completion source")
+        (settle procedure "the settle step"))
+  (define make-completer
     (case-lambda
       [(lookup)
-       (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates); start #f means no completable token."
-             (lookup procedure "the completion source"))
        (%make-completer lookup #f)]
       [(lookup settle)
-       (edoc "A cursor-aware completer with a settle step, (settle text position) giving the (text . position) to continue with after a sole match is inserted."
-             (lookup procedure "the completion source")
-             (settle procedure "the settle step"))
        (%make-completer lookup settle)]))
   ;; A display label and its character styles are independent of the string
   ;; inserted on selection. The lookup result owns both, including during cycling.
-  (edefine-record-type candidate
-    (edoc "A completion candidate."
-          (value string "the text inserted on selection")
-          (label string "the text shown in the list")
-          (styles (or vector #f) "the label's styles"))
+  (edoc "A completion candidate."
+        (value string "the text inserted on selection")
+        (label string "the text shown in the list")
+        (styles (or vector #f) "the label's styles"))
+  (define-record-type candidate
     (fields value label styles))
   ;; A live completion view supplies its minimum height, renderer and key
   ;; handler. (render input window available-height page) returns styled lines
   ;; and a page count. Choices replace input or run an action returning new
   ;; input (#f leaves it alone, e.g. when sorting a column).
-  (edefine-record-type content-view
-    (edoc "A live completion view below a prompt's input."
-          (minimum-height integer "the rows it needs at least")
-          (render procedure "(render input window available-height page) giving styled lines and a page count")
-          (handle (or procedure #f) "(handle event) giving new input, or #f to leave it"))
+  (edoc "A live completion view below a prompt's input."
+        (minimum-height integer "the rows it needs at least")
+        (render procedure "(render input window available-height page) giving styled lines and a page count")
+        (handle (or procedure #f) "(handle event) giving new input, or #f to leave it"))
+  (define-record-type content-view
     (fields minimum-height render handle))
-  (edefine content
-    (edoc "The content view a prompt in a window shows below its input, or #f."
-          (value (or (record content-view) #f)))
-    (make-parameter #f))
+  (edoc "The content view a prompt in a window shows below its input, or #f."
+        (value (or (record content-view) #f)))
+  (define content (make-parameter #f))
   ;; A validator returns #f to accept, a short explanation to keep editing,
   ;; or (transient text) for an inline-only notice that expires after two
   ;; seconds. Its deadline travels with the note, so keys that retain it
   ;; cannot restart its lifetime. Editing discards it like any other note.
   (define-record-type (notice make-notice notice?)
     (fields text deadline))
-  (edefine (transient text)
-    (edoc "A validation notice shown inline for two seconds, bracketed."
-          (text string "the notice")
-          (returns (record notice)))
+  (edoc "A validation notice shown inline for two seconds, bracketed."
+        (text string "the notice")
+        (returns (record notice)))
+  (define (transient text)
     (make-notice (string-append " [" text "]")
       (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2))))
   ;; A draft box carries (input . cursor) across invocations.
-  (edefine validate-input
-    (edoc "The prompt's validator: (validate input) gives #f to accept, a note to keep editing, or a transient notice."
-          (value (or procedure #f)))
-    (make-parameter #f))
-  (edefine draft-input
-    (edoc "A box carrying (input . cursor) across invocations of a prompt, or #f."
-          (value (or any #f)))
-    (make-parameter #f))
-  (edefine prompt-ghost
-    (edoc "The prompt's suggestion: (ghost input) gives the grey text after the input, or #f."
-          (value procedure))
-    (make-parameter (lambda (s) #f)))
-  (edefine prompt-inspector
-    (edoc "What M-. does in a prompt: (inspect input position), or #f for nothing."
-          (value (or procedure #f)))
-    (make-parameter #f))
-  (edefine prompt-multiline
-    (edoc "How M-RET and a paste insert a line break: (insert input position text) gives the new (input . position), or #f to insert none."
-          (value (or procedure #f)))
-    (make-parameter #f))
-  (edefine prompt-edge-motion
-    (edoc "What C-a and C-e do: (move action input position repeated?) gives the new position, or #f for the input's ends."
-          (value (or procedure #f)))
-    (make-parameter #f))
-  (edefine prompt-reindent
-    (edoc "How the input is reindented after an edit: (reindent input position) gives the new (input . position), or #f for none."
-          (value (or procedure #f)))
-    (make-parameter #f))
+  (edoc "The prompt's validator: (validate input) gives #f to accept, a note to keep editing, or a transient notice."
+        (value (or procedure #f)))
+  (define validate-input (make-parameter #f))
+  (edoc "A box carrying (input . cursor) across invocations of a prompt, or #f."
+        (value (or any #f)))
+  (define draft-input (make-parameter #f))
+  (edoc "The prompt's suggestion: (ghost input) gives the grey text after the input, or #f."
+        (value procedure))
+  (define prompt-ghost (make-parameter (lambda (s) #f)))
+  (edoc "What M-. does in a prompt: (inspect input position), or #f for nothing."
+        (value (or procedure #f)))
+  (define prompt-inspector (make-parameter #f))
+  (edoc "How M-RET and a paste insert a line break: (insert input position text) gives the new (input . position), or #f to insert none."
+        (value (or procedure #f)))
+  (define prompt-multiline (make-parameter #f))
+  (edoc "What C-a and C-e do: (move action input position repeated?) gives the new position, or #f for the input's ends."
+        (value (or procedure #f)))
+  (define prompt-edge-motion (make-parameter #f))
+  (edoc "How the input is reindented after an edit: (reindent input position) gives the new (input . position), or #f for none."
+        (value (or procedure #f)))
+  (define prompt-reindent (make-parameter #f))
 
   ;; Rows retain their source coordinates. The same mapping places the
   ;; cursor and handles mouse input after wrapping, paging or clipping.
   ;; input is a source interval; choices are (start end value [hover-face]) intervals.
   (define-record-type row (fields text styles input choices))
-  (edefine (line text styles choices . hover-face)
-    (edoc "A row of a content view: its text, styles and (start end value) choices, hovered with a face."
-          (text string "the row text")
-          (styles (or vector #f) "its styles")
-          (choices list "(start end value) intervals")
-          (hover-face (list-of symbol) "the face of a hovered choice, at most one")
-          (returns (record row)))
+  (edoc "A row of a content view: its text, styles and (start end value) choices, hovered with a face."
+        (text string "the row text")
+        (styles (or vector #f) "its styles")
+        (choices list "(start end value) intervals")
+        (hover-face (list-of symbol) "the face of a hovered choice, at most one")
+        (returns (record row)))
+  (define (line text styles choices . hover-face)
     (make-row text styles #f
       (map (lambda (choice) (append choice (if (null? hover-face) '(hover) hover-face))) choices)))
   ;; Cache only styles and numeric choice spans: a row also owns its text,
@@ -467,11 +456,11 @@
              [(> (length sequence) 1) (lambda () "")]
              [else #f]))))
 
-  (edefine (prompt! label . rest)
-    (edoc "Read a line of input in the echo area with editing, history and completion; #f when cancelled."
-          (label string "the prompt text")
-          (rest (list-of any) "in order, each optional: a completer or completion procedure, the initial input, a history box, an alternate completer and a normalizer")
-          (returns (or string #f)))
+  (edoc "Read a line of input in the echo area with editing, history and completion; #f when cancelled."
+        (label string "the prompt text")
+        (rest (list-of any) "in order, each optional: a completer or completion procedure, the initial input, a history box, an alternate completer and a normalizer")
+        (returns (or string #f)))
+  (define (prompt! label . rest)
     ;; Each call owns its input, candidates and temporary view. A nested
     ;; call can borrow the echo area without changing its parent's state.
     (define (optional n)
@@ -925,10 +914,10 @@
               (set! echo-cursor #f) (set! echo-indent #f) (set! echo-input-end #f)
               (set! echo-scroll 0) (set! message-ghost "")))))))
 
-  (edefine (confirm? label)
-    (edoc "Ask a yes-or-no question with a single key."
-          (label string "the question")
-          (returns boolean))
+  (edoc "Ask a yes-or-no question with a single key."
+        (label string "the question")
+        (returns boolean))
+  (define (confirm? label)
     (let ([answer (query-key! (string-append label " y)es or n)o") "yn")])
       (and answer (memv (char->integer answer) '(121 89)))))
 )

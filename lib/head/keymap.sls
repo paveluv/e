@@ -11,7 +11,8 @@
 ;; or a buffer mode's name for mode-local maps, or a synthetic scope
 ;; like 'isearch.
 
-(library (keymap)
+(import (only (edoc) elibrary))
+(elibrary (keymap)
   (export (rename (key-spec spec)) sequence-text
           (rename (bind-key! bind!)) (rename (bind-default-key! bind-default!)) (rename (unbind-key! unbind!))
           (rename (key-binding binding)) (rename (key-event-binding event-binding)) binding-prefix?
@@ -20,7 +21,7 @@
           binding-context binding-sequence binding-action
           binding-kind binding-spec same-sequence?
           set-context-capture! context-capture)
-  (import (rnrs) (only (edoc) edefine edoc)
+  (import (rnrs)
           (only (chezscheme)
                 cons* format iota top-level-bound? top-level-value)
           (prefix (kernel) kernel:)
@@ -73,10 +74,10 @@
       [(special-key-name? s) s]
       [else (error 'bind-key! "unrecognized key" s)]))
 
-  (edefine (key-spec spec)
-    (edoc "A human key spelling, C-x C-f say, as its canonical event tokens."
-          (spec string "the spelling")
-          (returns (list-of string)))
+  (edoc "A human key spelling, C-x C-f say, as its canonical event tokens."
+        (spec string "the spelling")
+        (returns (list-of string)))
+  (define (key-spec spec)
     ;; a human spelling -- "C-x C-f" -- into canonical event tokens
     (unless (and (string? spec) (> (string-length spec) 0))
       (error 'bind-key! "key specification must be a nonempty string" spec))
@@ -91,10 +92,10 @@
                  (cons (key-token (substring spec start i)) parts))]
           [else (loop (+ i 1) start parts)]))))
 
-  (edefine (sequence-text sequence)
-    (edoc "Event tokens spelled as one key sequence, space-separated."
-          (sequence (list-of string) "the tokens")
-          (returns string))
+  (edoc "Event tokens spelled as one key sequence, space-separated."
+        (sequence (list-of string) "the tokens")
+        (returns string))
+  (define (sequence-text sequence)
     (string:join sequence " "))
 
   ;;; The binding table ---------------------------------------------------------
@@ -103,31 +104,41 @@
 
   (define (binding-item context sequence action kind spec)
     (list context sequence action kind spec))
-  (edefine (binding-context b)
-    (edoc "The keymap context of a binding." (b list "the binding") (returns symbol))
+  (edoc "The keymap context of a binding."
+        (b list "the binding")
+        (returns symbol))
+  (define (binding-context b)
     (car b))
 
-  (edefine (binding-sequence b)
-    (edoc "The event tokens of a binding." (b list "the binding") (returns (list-of string)))
+  (edoc "The event tokens of a binding."
+        (b list "the binding")
+        (returns (list-of string)))
+  (define (binding-sequence b)
     (cadr b))
 
-  (edefine (binding-action b)
-    (edoc "What a binding runs: a procedure, a symbol for a keymap action, or #f when it unbinds." (b list "the binding") (returns (or procedure symbol #f)))
+  (edoc "What a binding runs: a procedure, a symbol for a keymap action, or #f when it unbinds."
+        (b list "the binding")
+        (returns (or procedure symbol #f)))
+  (define (binding-action b)
     (caddr b))
 
-  (edefine (binding-kind b)
-    (edoc "Whether a binding is a user or default one." (b list "the binding") (returns (one-of user default)))
+  (edoc "Whether a binding is a user or default one."
+        (b list "the binding")
+        (returns (one-of user default)))
+  (define (binding-kind b)
     (cadddr b))
 
-  (edefine (binding-spec b)
-    (edoc "The spelling a binding was made with." (b list "the binding") (returns string))
+  (edoc "The spelling a binding was made with."
+        (b list "the binding")
+        (returns string))
+  (define (binding-spec b)
     (car (cddddr b)))
 
-  (edefine (same-sequence? a b)
-    (edoc "Whether two key sequences spell the same events."
-          (a (list-of string) "one sequence")
-          (b (list-of string) "the other")
-          (returns boolean))
+  (edoc "Whether two key sequences spell the same events."
+        (a (list-of string) "one sequence")
+        (b (list-of string) "the other")
+        (returns boolean))
+  (define (same-sequence? a b)
     (and (= (length a) (length b))
          (for-all string=? a b)))
 
@@ -147,26 +158,26 @@
                 sequence (binding-sequence b)))))
       (kernel:registry-entries key-bindings)))
 
-  (edefine (choose-binding entries)
-    (edoc "The binding that wins among owned entries: a user binding, else a default."
-          (entries list "(owner . binding) entries")
-          (returns (or pair #f)))
+  (edoc "The binding that wins among owned entries: a user binding, else a default."
+        (entries list "(owner . binding) entries")
+        (returns (or pair #f)))
+  (define (choose-binding entries)
     (or (find (lambda (owned) (eq? (binding-kind (cdr owned)) 'user))
               entries)
         (find (lambda (owned) (eq? (binding-kind (cdr owned)) 'default))
               entries)))
 
-  (edefine (resolved-binding context sequence)
-    (edoc "The winning owned binding of a key sequence in a context, or #f."
-          (context symbol "the keymap context")
-          (sequence (list-of string) "the event tokens")
-          (returns (or pair #f)))
+  (edoc "The winning owned binding of a key sequence in a context, or #f."
+        (context symbol "the keymap context")
+        (sequence (list-of string) "the event tokens")
+        (returns (or pair #f)))
+  (define (resolved-binding context sequence)
     (choose-binding (matching-bindings context sequence #t)))
 
-  (edefine (sequence-bindings sequence)
-    (edoc "Every owned binding whose spelling matches a sequence exactly, in any context: describe-key's raw material."
-          (sequence (list-of string) "the event tokens")
-          (returns list))
+  (edoc "Every owned binding whose spelling matches a sequence exactly, in any context: describe-key's raw material."
+        (sequence (list-of string) "the event tokens")
+        (returns list))
+  (define (sequence-bindings sequence)
     ;; every owned entry whose spelling matches the sequence exactly,
     ;; any context: ((owner . item) ...) -- describe-key's raw material
     (filter
@@ -196,32 +207,34 @@
                 (eq? owned (hashtable-ref chosen (binding-sequence (cdr owned)) #f)))
               entries)))
 
-  (edefine key-binding
+  (edoc "The action bound to a key spelling in a context, or #f."
+        (context symbol "the keymap context")
+        (spec string "the spelling")
+        (returns (or procedure symbol #f)))
+  (define key-binding
     (case-lambda
       [(spec)
-       (edoc "The action bound to a key spelling in the global map, or #f." (spec string "the spelling") (returns (or procedure symbol #f)))
        (key-binding 'global spec)]
       [(context spec)
-       (edoc "The action bound to a key spelling in a context, or #f." (context symbol "the keymap context") (spec string "the spelling") (returns (or procedure symbol #f)))
        (let ([hit (resolved-binding context (key-spec spec))])
          (and hit (binding-action (cdr hit))))]))
 
-  (edefine (key-event-binding context . events)
-    (edoc "The action bound to runtime events in a context, or #f; events are canonical tokens, not spellings."
-          (context symbol "the keymap context")
-          (events (list-of string) "the event tokens")
-          (returns (or procedure symbol #f)))
+  (edoc "The action bound to runtime events in a context, or #f; events are canonical tokens, not spellings."
+        (context symbol "the keymap context")
+        (events (list-of string) "the event tokens")
+        (returns (or procedure symbol #f)))
+  (define (key-event-binding context . events)
     ;; Runtime events are already canonical tokens.  Do not feed them
     ;; back through the human key-spec parser: its spaces are separators,
     ;; while a typed space is itself the literal " " event.
     (let ([hit (resolved-binding context events)])
       (and hit (binding-action (cdr hit)))))
 
-  (edefine (binding-prefix? context sequence)
-    (edoc "Whether a sequence begins a longer binding in a context, so more keys should be read."
-          (context symbol "the keymap context")
-          (sequence (list-of string) "the event tokens")
-          (returns boolean))
+  (edoc "Whether a sequence begins a longer binding in a context, so more keys should be read."
+        (context symbol "the keymap context")
+        (sequence (list-of string) "the event tokens")
+        (returns boolean))
+  (define (binding-prefix? context sequence)
     (let ([exact (resolved-binding context sequence)])
       (exists
         (lambda (owned)
@@ -246,35 +259,36 @@
                           (binding-item context (key-spec spec) action
                                         kind spec)))
 
-  (edefine bind-key!
+  (edoc "Bind a key spelling as a user binding, which wins over defaults: in a context, or in the global map when none is given."
+        (context symbol "the keymap context")
+        (spec string "the spelling")
+        (action (or procedure symbol) "the command, or a keymap action"))
+  (define bind-key!
     (case-lambda
       [(spec action)
-       (edoc "Bind a key spelling in the global map as a user binding, which wins over defaults."
-             (spec string "the spelling") (action (or procedure symbol) "the command, or a keymap action"))
        (add-key-binding! 'global spec action 'user)]
       [(context spec action)
-       (edoc "Bind a key spelling in a context as a user binding."
-             (context symbol "the keymap context") (spec string "the spelling") (action (or procedure symbol) "the command, or a keymap action"))
        (add-key-binding! context spec action 'user)]))
 
-  (edefine bind-default-key!
+  (edoc "Bind a key spelling as a module's default, which user bindings override: in a context, or in the global map when none is given."
+        (context symbol "the keymap context")
+        (spec string "the spelling")
+        (action (or procedure symbol) "the command, or a keymap action"))
+  (define bind-default-key!
     (case-lambda
       [(spec action)
-       (edoc "Bind a key spelling in the global map as a module's default, which user bindings override."
-             (spec string "the spelling") (action (or procedure symbol) "the command, or a keymap action"))
        (add-key-binding! 'global spec action 'default)]
       [(context spec action)
-       (edoc "Bind a key spelling in a context as a module's default."
-             (context symbol "the keymap context") (spec string "the spelling") (action (or procedure symbol) "the command, or a keymap action"))
        (add-key-binding! context spec action 'default)]))
 
-  (edefine unbind-key!
+  (edoc "Unbind a key spelling as a user override, in a context or in the global map when none is given."
+        (context symbol "the keymap context")
+        (spec string "the spelling"))
+  (define unbind-key!
     (case-lambda
       [(spec)
-       (edoc "Unbind a key spelling in the global map, as a user override." (spec string "the spelling"))
        (add-key-binding! 'global spec #f 'user)]
       [(context spec)
-       (edoc "Unbind a key spelling in a context, as a user override." (context symbol "the keymap context") (spec string "the spelling"))
        (add-key-binding! context spec #f 'user)]))
 
   ;;; Capture controls -----------------------------------------------------------
@@ -285,12 +299,12 @@
   ;; Both declarations retract with their owning module on reload.
   (define context-captures (kernel:make-registry))
 
-  (edefine (set-context-capture! context spec toggle keys)
-    (edoc "Declare a context's capture control: the key that toggles full capture, and the keys left to the editor in partial capture."
-          (context symbol "the keymap context")
-          (spec string "the toggle key")
-          (toggle procedure "the toggle command")
-          (keys (list-of string) "the keys the editor keeps"))
+  (edoc "Declare a context's capture control: the key that toggles full capture, and the keys left to the editor in partial capture."
+        (context symbol "the keymap context")
+        (spec string "the toggle key")
+        (toggle procedure "the toggle command")
+        (keys (list-of string) "the keys the editor keeps"))
+  (define (set-context-capture! context spec toggle keys)
     (define (single-key spec)
       (let ([tokens (key-spec spec)])
         (unless (null? (cdr tokens))
@@ -302,10 +316,10 @@
       (bind-default-key! context spec toggle)
       (kernel:registry-add! context-captures (cons* context key toggle keys))))
 
-  (edefine (context-capture context)
-    (edoc "A context's capture policy, (toggle-key toggle-procedure editor-key ...), or #f."
-          (context symbol "the keymap context")
-          (returns (or list #f)))
+  (edoc "A context's capture policy, (toggle-key toggle-procedure editor-key ...), or #f."
+        (context symbol "the keymap context")
+        (returns (or list #f)))
+  (define (context-capture context)
     ;; (toggle-key toggle-procedure editor-key ...) or #f. Return owned
     ;; key strings so a caller cannot change a registered capture policy.
     (cond [(kernel:registry-find context-captures (lambda (entry) (eq? (car entry) context)))
@@ -315,10 +329,10 @@
 
   ;;; Reverse lookup -------------------------------------------------------------
 
-  (edefine (command-keys sym)
-    (edoc "Every global key spelling currently bound to the top-level command named sym, read live."
-          (sym symbol "the command's name")
-          (returns (list-of string)))
+  (edoc "Every global key spelling currently bound to the top-level command named sym, read live."
+        (sym symbol "the command's name")
+        (returns (list-of string)))
+  (define (command-keys sym)
     ;; Every global key spec currently resolved to the top-level command
     ;; named sym. Bindings are read live, so overrides and module reloads are
     ;; reflected immediately.
@@ -330,18 +344,18 @@
                          (effective-bindings 'global)))
             '()))))
 
-  (edefine (command-key sym)
-    (edoc "The most recently registered key bound to the command named sym, or #f."
-          (sym symbol "the command's name")
-          (returns (or string #f)))
+  (edoc "The most recently registered key bound to the command named sym, or #f."
+        (sym symbol "the command's name")
+        (returns (or string #f)))
+  (define (command-key sym)
     ;; The most recently registered key currently bound to sym, or #f.
     (let ([keys (command-keys sym)])
       (and (pair? keys) (car keys))))
 
-  (edefine (command-hint syms)
-    (edoc "Command names with their current keys, M-n next-conflict! say, comma-separated; bare when unbound."
-          (syms (list-of symbol) "the command names")
-          (returns string))
+  (edoc "Command names with their current keys, M-n next-conflict! say, comma-separated; bare when unbound."
+        (syms (list-of symbol) "the command names")
+        (returns string))
+  (define (command-hint syms)
     ;; "M-n next-conflict!, M-m keep-mine!" for a list of command
     ;; names: each with its current key, or bare when unbound.
     (string:join
