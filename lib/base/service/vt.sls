@@ -10,7 +10,7 @@
                   (terminal-emulator-state emulator-state) (terminal-emulator-input emulator-input)
                   (terminal-emulator-mouse-input emulator-mouse-input) (terminal-emulator-replies emulator-replies)
                   (terminal-emulator-unsupported emulator-unsupported) (terminal-color-scheme! color-scheme!)))
-  (import (chezscheme) (prefix (kernel) kernel:) (prefix (string) string:)
+  (import (only (edoc) edefine edoc) (chezscheme) (prefix (kernel) kernel:) (prefix (string) string:)
           (prefix (activity) activity:)
           (prefix (datum) datum:) (prefix (sys) sys:) (prefix (actor) actor:)
           (prefix (store) store:) (prefix (surface) surface:) (prefix (text) text:)
@@ -181,13 +181,17 @@
            [shown (if (> (string-length body) 80)
                       (string-append (substring body 0 77) "...") body)])
       (format "~a ~s" family shown)))
-  (define terminal-scrollback
+  (edefine terminal-scrollback
+    (edoc "How many scrolled-off lines a terminal keeps."
+          (value integer))
     (make-parameter 10000
       (lambda (lines)
         (unless (and (integer? lines) (exact? lines) (>= lines 0))
           (error 'terminal-scrollback "must be a nonnegative integer" lines))
         lines)))
-  (define terminal-shell
+  (edefine terminal-shell
+    (edoc "The shell a terminal runs without a command: SHELL, or /bin/sh."
+          (value string))
     (make-parameter
       (let ([shell (getenv "SHELL")])
         (if (and shell (not (string=? shell ""))) shell "/bin/sh"))
@@ -255,16 +259,27 @@
       '(8)                                       ; extra modes
       (make-vector rows 'single) #f #f))         ; line attributes
 
-  (define (terminal-emulator? value) (terminal-state? value))
+  (edefine (terminal-emulator? value)
+    (edoc "Whether a value is a terminal emulator."
+          (value any "the value")
+          (returns boolean))
+    (terminal-state? value))
 
-  (define (make-terminal-emulator rows cols)
+  (edefine (make-terminal-emulator rows cols)
+    (edoc "A standalone terminal emulator of a size, for tests and tools."
+          (rows integer "the rows")
+          (cols integer "the columns")
+          (returns (record terminal-state)))
     (unless (and (integer? rows) (exact? rows) (> rows 0)
                  (integer? cols) (exact? cols) (> cols 0))
       (error 'make-terminal-emulator
              "rows and columns must be positive exact integers" rows cols))
     (blank-terminal-state #f #f #f rows cols #f))
 
-  (define (terminal-emulator-feed! emulator text)
+  (edefine (terminal-emulator-feed! emulator text)
+    (edoc "Feed program output to an emulator."
+          (emulator (record terminal-state) "the emulator")
+          (text string "the output"))
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-feed! "expected a terminal emulator" emulator))
     (unless (string? text)
@@ -274,7 +289,11 @@
       (unless (string=? text "") (terminal-state-dirty-set! emulator #t)))
     (void))
 
-  (define (terminal-emulator-resize! emulator rows cols)
+  (edefine (terminal-emulator-resize! emulator rows cols)
+    (edoc "Resize an emulator's screen."
+          (emulator (record terminal-state) "the emulator")
+          (rows integer "the rows")
+          (cols integer "the columns"))
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-resize! "expected a terminal emulator" emulator))
     (unless (and (integer? rows) (exact? rows) (> rows 0)
@@ -300,28 +319,40 @@
     (unless (terminal-emulator? emulator) (error who "expected a terminal emulator" emulator))
     (with-mutex (terminal-state-lock emulator) (datum:copy (thunk))))
 
-  (define (terminal-emulator-screen emulator)
+  (edefine (terminal-emulator-screen emulator)
+    (edoc "An emulator's screen as a vector of row strings."
+          (emulator (record terminal-state) "the emulator")
+          (returns vector))
     (read-emulator emulator 'emulator-screen
       (lambda ()
         (list->vector
           (map (lambda (row) (cell-row->string (displayed-screen-row emulator row)))
                (screen-row-indexes emulator))))))
 
-  (define (terminal-emulator-styles emulator)
+  (edefine (terminal-emulator-styles emulator)
+    (edoc "An emulator's screen styles, a vector of per-cell style rows."
+          (emulator (record terminal-state) "the emulator")
+          (returns vector))
     (read-emulator emulator 'emulator-styles
       (lambda ()
         (list->vector
           (map (lambda (row) (effective-style-row emulator (displayed-style-row emulator row)))
                (screen-row-indexes emulator))))))
 
-  (define (terminal-emulator-hyperlinks emulator)
+  (edefine (terminal-emulator-hyperlinks emulator)
+    (edoc "The hyperlinks on an emulator's screen, a vector of per-cell link rows."
+          (emulator (record terminal-state) "the emulator")
+          (returns vector))
     (read-emulator emulator 'emulator-hyperlinks
       (lambda ()
         (list->vector
           (map (lambda (row) (vector-map cell-style-link (displayed-style-row emulator row)))
                (screen-row-indexes emulator))))))
 
-  (define (terminal-emulator-state emulator)
+  (edefine (terminal-emulator-state emulator)
+    (edoc "An emulator's state as an alist: size, scrollback, wrapped rows, cursor, modes and more."
+          (emulator (record terminal-state) "the emulator")
+          (returns list))
     (read-emulator emulator 'emulator-state
       (lambda ()
         `((rows . ,(terminal-state-rows emulator))
@@ -365,15 +396,25 @@
           (default-colors . ,(cons (terminal-state-default-foreground emulator)
                                (terminal-state-default-background emulator)))))))
 
-  (define (terminal-emulator-input emulator event)
+  (edefine (terminal-emulator-input emulator event)
+    (edoc "The bytes a key event sends to the program, under the emulator's input modes."
+          (emulator (record terminal-state) "the emulator")
+          (event string "the key event")
+          (returns string))
     (unless (string? event)
       (error 'terminal-emulator-input "expected an event string" event))
     (read-emulator emulator 'emulator-input (lambda () (event-bytes emulator event))))
 
-  (define (terminal-emulator-replies emulator)
+  (edefine (terminal-emulator-replies emulator)
+    (edoc "The replies the emulator owes the program, oldest first."
+          (emulator (record terminal-state) "the emulator")
+          (returns list))
     (read-emulator emulator 'emulator-replies (lambda () (reverse (terminal-state-replies emulator)))))
 
-  (define (terminal-emulator-unsupported emulator)
+  (edefine (terminal-emulator-unsupported emulator)
+    (edoc "The control sequences the emulator saw and does not implement."
+          (emulator (record terminal-state) "the emulator")
+          (returns list))
     (read-emulator emulator 'emulator-unsupported
       (lambda () (unsupported emulator))))
 
@@ -3006,7 +3047,10 @@
                            (run (+ end 1)) end))])
             (scan end (cons (cons (string-length (vector-ref cells at)) (- end at)) out))))))
 
-  (define (terminal-emulator-frame emulator)
+  (edefine (terminal-emulator-frame emulator)
+    (edoc "One owned (text rows cursor size facts) snapshot for the surface publisher, or #f during a synchronized update."
+          (emulator (record terminal-state) "the emulator")
+          (returns (or list #f)))
     ;; One owned (text rows cursor size facts) snapshot, ready for the
     ;; store/surface publisher. A child composing a synchronized frame gets
     ;; its existing bounded hold; older inspection APIs still read raw state.
@@ -3213,7 +3257,14 @@
                        (+ 32 (min x 223))
                        (+ 32 (min y 223)))]))))
 
-  (define (terminal-emulator-mouse-input emulator code x y release?)
+  (edefine (terminal-emulator-mouse-input emulator code x y release?)
+    (edoc "The bytes a mouse event sends to the program, under the emulator's mouse modes."
+          (emulator (record terminal-state) "the emulator")
+          (code integer "the button code")
+          (x integer "the column")
+          (y integer "the row")
+          (release? boolean "whether the button was released")
+          (returns string))
     (unless (and (integer? code) (integer? x) (> x 0)
                  (integer? y) (> y 0) (boolean? release?))
       (error 'terminal-emulator-mouse-input
@@ -3233,7 +3284,10 @@
 
   (define (instances) (with-mutex (runtime-lock live) (runtime-apps live)))
 
-  (define (transcript snapshot)
+  (edefine (transcript snapshot)
+    (edoc "A saved VT buffer's snapshot as a read-only transcript, for the session file."
+          (snapshot list "the buffer snapshot")
+          (returns list))
     ;; Convert only a VT-owned source, including one whose process already
     ;; ended. Save the last accepted store text, not concurrent emulator data.
     (let* ([facts (list-ref snapshot 4)] [app (cond [(assq 'app facts) => cdr] [else #f])])
@@ -3245,7 +3299,9 @@
 
   ;; Monotonic owner identities distinguish replacement processes. Copy the
   ;; inventory first, then inspect each emulator without nesting its locks.
-  (define (running)
+  (edefine (running)
+    (edoc "The owner identities of the terminals whose processes still run."
+          (returns list))
     (filter values
       (map (lambda (state)
              (with-mutex (terminal-state-lock state)
@@ -3275,17 +3331,23 @@
         (sys:close-terminal-process! (terminal-state-process state))
         (wake! state))))
 
-  (define (close! id)
+  (edefine (close! id)
+    (edoc "Close a terminal by its buffer id, ending its process."
+          (id integer "the buffer id"))
     (activity:call-with
       (lambda ()
         (cond [(instance id) => close-state!])
         (void))))
 
-  (define (close-all!)
+  (edefine (close-all!)
+    (edoc "Close every terminal, at base shutdown.")
     ;; Called by the base runtime owner, independent of head attachment.
     (activity:call-with-retirement (lambda () (for-each close-state! (instances)))))
 
-  (define (terminal-color-scheme! scheme . source)
+  (edefine (terminal-color-scheme! scheme . source)
+    (edoc "Tell the terminals the color scheme, dark, light or #f, so their default colors follow it."
+          (scheme (or (one-of dark light) #f) "the scheme")
+          (source (list-of any) "which head reported it, at most one"))
     (unless (memq scheme '(dark light #f))
       (error 'color-scheme! "expected dark, light, or #f" scheme))
     (set-box! default-scheme scheme)
@@ -3325,7 +3387,14 @@
                           [(color-scheme) (memq data '(dark light #f))] [else #f])]
              [else #f]))))
 
-  (define (send! from id text size paste? . scheme)
+  (edefine (send! from id text size paste? . scheme)
+    (edoc "Send text to a terminal's program as typed or pasted input, with the sender's screen size."
+          (from any "the sending head")
+          (id integer "the buffer id")
+          (text string "the text")
+          (size list "(rows cols)")
+          (paste? boolean "whether it is a paste")
+          (scheme (list-of any) "the color scheme, at most one"))
     (unless (and (actor:identity? from) (string? text) (size? size) (boolean? paste?))
       (error 'send! "expected actor, text, size, and paste flag"))
     (let ([owner (store:property id 'app)])
@@ -3574,7 +3643,15 @@
                   (wake! state)
                   (loop))))))))
 
-  (define (open! from command directory rows cols . scheme)
+  (edefine (open! from command directory rows cols . scheme)
+    (edoc "Open a terminal running a command, or the shell, in a directory at a size; its buffer id."
+          (from any "the opening head")
+          (command (or string #f) "the command line, or #f for the shell")
+          (directory directory "the working directory")
+          (rows integer "the rows")
+          (cols integer "the columns")
+          (scheme (list-of any) "the color scheme, at most one")
+          (returns integer))
     (activity:call-with
       (lambda ()
         (unless (and (actor:identity? from) (or (not command) (string? command))
@@ -3612,7 +3689,8 @@
             (fork-thread (lambda () (actor:call-as owner (lambda () (reader-loop state)))))
             id)))))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Install the terminal service: its store subscription and runtime registrations, refreshed on reload.")
     (kernel:call-with-runtime-registrations
       (lambda ()
         (with-mutex (runtime-lock live)

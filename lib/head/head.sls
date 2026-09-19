@@ -2539,22 +2539,22 @@
   (edefine app-event-position
     (edoc "The viewport cell a pointer event hit, one-based (column . row), while an app handler runs."
           (value (or pair #f)))
-    (make-parameter #f))
+    (make-thread-parameter #f))
   (edefine app-event-buffer-position
     (edoc "The unclamped character position, (row . col), a pointer event hit, while an app handler runs."
           (value (or pair #f)))
-    (make-parameter #f))
+    (make-thread-parameter #f))
   (edefine app-event-button
     (edoc "The raw xterm button code of the pointer event an app handler is running for."
           (value (or integer #f)))
-    (make-parameter #f))
+    (make-thread-parameter #f))
   ;; The window with keyboard focus when a pointer event began.  The app's
   ;; own window is selected while its handler runs; a control panel that
   ;; acts on the focused window addresses this one instead.
   (edefine app-event-focus
     (edoc "The window with keyboard focus when a pointer event began, while an app handler runs in the app's own window."
           (value (or window #f)))
-    (make-parameter #f))
+    (make-thread-parameter #f))
 
   (define (captures? rule event)
     (or (eq? rule 'all)

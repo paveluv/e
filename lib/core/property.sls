@@ -3,12 +3,17 @@
   (export select validate-expected matches? edit-keys
           (rename (validate-properties validate)
                   (writable-properties writable) (validate-edit-context edit-context)))
-  (import (rnrs) (prefix (identity) identity:))
+  (import (only (edoc) edefine edoc) (rnrs) (prefix (identity) identity:))
 
   ;; Maintained by the text owner and carried with incremental edit replies.
-  (define edit-keys '(modified modified-at))
+  (edefine edit-keys
+    (edoc "The facts the text owner maintains and carries with edit replies: modified and modified-at."
+          (value (list-of symbol)))
+    '(modified modified-at))
 
-  (define (validate-properties updates)
+  (edefine (validate-properties updates)
+    (edoc "Check a batch of (key . value) facts before either owner installs any of it; an error names the fault."
+          (updates list "the facts"))
     ;; A pure boundary shared with head-local facts.  Validate the whole
     ;; batch before either owner can install any part of it.
     (unless
@@ -40,7 +45,10 @@
       (error 'validate-properties "expected unique symbol keys and valid fact values" updates))
     updates)
 
-  (define (writable-properties updates)
+  (edefine (writable-properties updates)
+    (edoc "Validate facts a writer may set: not the text owner's modification facts, nor the publication identity."
+          (updates list "the facts")
+          (returns list))
     (validate-properties updates)
     (when (exists (lambda (entry) (memq (car entry) edit-keys)) updates)
       (error 'store "modification facts are maintained by the text owner"))
@@ -48,12 +56,18 @@
       (error 'store "publication identity belongs to publish!"))
     updates)
 
-  (define (select facts keys)
+  (edefine (select facts keys)
+    (edoc "The expectations for keys among facts: the (key . value) present, or the bare key for an absent one."
+          (facts list "the facts")
+          (keys (list-of symbol) "the keys")
+          (returns list))
     ;; A pair expects that exact value; a bare key expects absence. In
     ;; particular, absence and an explicit #f can have different defaults.
     (map (lambda (key) (or (assq key facts) key)) keys))
 
-  (define (validate-expected expected)
+  (edefine (validate-expected expected)
+    (edoc "Check a fact review: #f, or a list of distinct bare keys and (key . value) pairs."
+          (expected any "the review"))
     (unless (or (not expected)
                 (and (list? expected)
                      (let valid ([rest expected] [seen '()])
@@ -65,14 +79,20 @@
     (when expected (validate-properties (filter pair? expected)))
     expected)
 
-  (define (matches? expected facts)
+  (edefine (matches? expected facts)
+    (edoc "Whether facts satisfy a review: each pair present exactly, each bare key absent."
+          (expected any "the review, or #f")
+          (facts list "the facts")
+          (returns boolean))
     (or (not expected)
         (for-all (lambda (entry)
                    (if (pair? entry) (equal? entry (assq (car entry) facts))
                        (not (assq entry facts))))
                  expected)))
 
-  (define (validate-edit-context context)
+  (edefine (validate-edit-context context)
+    (edoc "Check an edit context: a group label and optional undo, commit and expected facts, no key in two sets."
+          (context any "the context, or #f"))
     ;; Undo facts travel with the inverse.  Commit facts describe external
     ;; state (e.g. a disk baseline) and survive undo, but commit atomically
     ;; with the text. A key cannot appear in both sets. Expected facts

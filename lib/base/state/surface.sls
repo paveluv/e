@@ -3,7 +3,7 @@
 ;; the head must pair it with text at that frame's store revision.
 (library (surface)
   (export init! publish! withdraw! snapshot rows subscribe! unsubscribe!)
-  (import (rnrs)
+  (import (only (edoc) edefine edoc) (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void)
           (prefix (kernel) kernel:) (prefix (activity) activity:)
           (prefix (store) store:)
@@ -76,7 +76,14 @@
             entry))
         changes)))
 
-  (define (publish! id basis revision changes cursor size)
+  (edefine (publish! id basis revision changes cursor size)
+    (edoc "Publish an app's surface frame for a buffer at a text revision: the changed rows, cursor and size, against the previous frame generation; applied with the generation, or stale."
+          (id integer "the buffer id")
+          (basis (or integer #f) "the previous frame generation")
+          (revision integer "the text revision")
+          (changes list "the changed rows")
+          (cursor any "the cursor")
+          (size list "(rows cols)"))
     (activity:call-with
       (lambda ()
         ;; basis is the previous frame generation, or #f for first publication.
@@ -136,7 +143,10 @@
            (enqueue! (list 'surface id generation #f 'all #f #f))
            generation)))
 
-  (define (withdraw! id basis)
+  (edefine (withdraw! id basis)
+    (edoc "Withdraw a buffer's surface frame, by generation."
+          (id integer "the buffer id")
+          (basis (or integer #f) "the frame generation"))
     (activity:call-with
       (lambda ()
         (unless (and (positive-integer? id) (or (not basis) (positive-integer? basis)))
@@ -154,13 +164,22 @@
     ;; A delete may have committed while its cleanup notification is queued.
     (let ([frame (frame-of id)]) (and frame (store:exists? id) frame)))
 
-  (define (snapshot id)
+  (edefine (snapshot id)
+    (edoc "A buffer's live frame header, (generation text-revision cursor size), or #f."
+          (id integer "the buffer id")
+          (returns (or list #f)))
     ;; -> (generation text-revision cursor size), or #f. The revision can
     ;; lag the store: render only with text at EXACTLY this revision.
     (with-mutex (state-lock data)
       (let ([frame (live-frame id)]) (and frame (datum:copy (header frame))))))
 
-  (define (rows id generation from to)
+  (edefine (rows id generation from to)
+    (edoc "Owned row data of a frame for [from, to), or #f when withdrawn or superseded."
+          (id integer "the buffer id")
+          (generation integer "the frame generation")
+          (from integer "the first row")
+          (to integer "the row after the last")
+          (returns (or list #f)))
     ;; Owned row data for [from,to), including (row . #f) for plain rows.
     ;; #f means withdrawn or superseded; never combine ranges across frames.
     (unless (and (positive-integer? id) (positive-integer? generation)
@@ -176,7 +195,11 @@
                      (cons (cons row (datum:copy (hashtable-ref (frame-table frame) row #f)))
                            (read (+ row 1))))))))))
 
-  (define (subscribe! id procedure)
+  (edefine (subscribe! id procedure)
+    (edoc "Subscribe to a buffer's frame changes, or every buffer's with #f; the token unsubscribes."
+          (id (or integer #f) "the buffer, or #f for all")
+          (procedure procedure "the subscriber")
+          (returns integer))
     (unless (and (or (not id) (positive-integer? id)) (procedure? procedure))
       (error 'subscribe! "expected buffer id or #f and a procedure" id procedure))
     (let ([token (with-mutex (state-lock data) (next-serial!))])
@@ -184,7 +207,9 @@
         (make-subscription token id procedure (make-eqv-hashtable)))
       token))
 
-  (define (unsubscribe! token)
+  (edefine (unsubscribe! token)
+    (edoc "Cancel a surface subscription by token."
+          (token integer "the token"))
     (kernel:registry-remove! (state-subscriptions data)
       (lambda (entry) (eqv? (subscription-token entry) token)))
     (void))
@@ -224,7 +249,8 @@
         (kernel:call-with-runtime-registrations
           (lambda () (kernel:registry-items (state-subscriptions data)))))))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Install the surface service's store subscription, refreshed on reload.")
     ;; The base cleanup subscription outlives an initializer that first
     ;; imports this seam. Refresh its code on reload, preserving live frames
     ;; and subscriptions; sweep deletions missed during listener replacement.

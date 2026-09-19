@@ -18,7 +18,7 @@
           current call-as identity? audience? in-audience? send!
           ask! answer! cancel! cancel-owned! pending pending-tickets checkpoint checkpoint!
           head-names export import! valid-import?)
-  (import (rnrs)
+  (import (only (edoc) edefine edoc) (rnrs)
           (only (chezscheme) void make-mutex with-mutex
                 current-time time-second parameterize)
           (prefix (kernel) kernel:) (prefix (activity) activity:)
@@ -47,7 +47,11 @@
   (define current identity:current)
   (define call-as identity:call-as)
 
-  (define register!
+  (edefine register!
+    (edoc "Register an actor with its delivery procedure and optional capabilities; a head's registration replaces an earlier one atomically."
+          (actor any "the identity")
+          (deliver! procedure "(deliver! message)")
+          (capabilities any "policy description, optional"))
     (activity:wrap
       (case-lambda
         [(actor deliver!) (register! actor deliver! #f)]
@@ -78,17 +82,28 @@
       (datum:copy (list actor (car actor) (if (string? name) name (symbol->string name))
                         (registration-attached-at entry) (registration-capabilities entry)))))
 
-  (define (attached)
+  (edefine (attached)
+    (edoc "The registered actors, oldest first, as directory entries."
+          (returns list))
     ;; Oldest registration first; like kernel reads, initializers can
     ;; inspect their staged view. Other threads only see committed actors.
     (map directory-entry (reverse (kernel:registry-items registrations))))
 
-  (define (describe actor)
+  (edefine (describe actor)
+    (edoc "An actor's directory entry, or #f."
+          (actor any "the actor identity")
+          (returns (or list #f)))
     (let ([entry (registration-of actor)]) (and entry (directory-entry entry))))
 
-  (define (registered? actor) (and (registration-of actor) #t))
+  (edefine (registered? actor)
+    (edoc "Whether an actor is registered."
+          (actor any "the actor identity")
+          (returns boolean))
+    (and (registration-of actor) #t))
 
-  (define (detach! actor)
+  (edefine (detach! actor)
+    (edoc "Remove an actor's registration; deliveries already selected may finish."
+          (actor any "the actor identity"))
     (activity:call-with-retirement
       (lambda ()
         ;; Removes the captured endpoint only, never a concurrent replacement.
@@ -96,7 +111,10 @@
         (kernel:registry-remove! registrations
                                  (lambda (entry) (equal? (registration-identity entry) actor))))))
 
-  (define (subscribe! proc)
+  (edefine (subscribe! proc)
+    (edoc "Watch the directory: (proc batch) with (detached actor) and (attached actor) entries per commit; the token unsubscribes."
+          (proc procedure "the observer")
+          (returns any))
     ;; One batch of (detached actor)/(attached actor) per commit; an
     ;; atomic replacement reports both in the same batch, without a gap.
     (unless (procedure? proc) (error 'subscribe! "expected a procedure" proc))
@@ -108,9 +126,16 @@
                 (map (lambda (entry) (list 'attached (datum:copy (registration-identity entry))))
                      (reverse added)))))))
 
-  (define (unsubscribe! token) (kernel:registry-unobserve! token))
+  (edefine (unsubscribe! token)
+    (edoc "Stop watching the directory, by token."
+          (token any "the token"))
+    (kernel:registry-unobserve! token))
 
-  (define (send! to message)
+  (edefine (send! to message)
+    (edoc "Deliver a plain message to an actor; #f when unreachable or delivery fails."
+          (to any "the recipient identity")
+          (message datum "the message")
+          (returns boolean))
     (activity:call-with
       (lambda ()
         ;; Deliver an owned plain message; #f if unreachable or delivery fails.
@@ -137,23 +162,33 @@
   (define ticket-counter 0)
   (define protocol-lock (make-mutex))
 
-  (define (checkpoint actor)
+  (edefine (checkpoint actor)
+    (edoc "A copy of a head's last screen checkpoint, or #f."
+          (actor any "the actor identity")
+          (returns any))
     (let ([entry (known-head actor)])
       (and entry (datum:copy (with-mutex protocol-lock (head-state-checkpoint entry))))))
 
-  (define (head-names)
+  (edefine (head-names)
+    (edoc "The names of the known heads."
+          (returns (list-of string)))
     ;; Status needs identities, not copies of opaque screen/kill contents.
     (map (lambda (entry) (string-copy (cadr (head-state-identity entry))))
       (kernel:registry-items known-heads)))
 
-  (define (export)
+  (edefine (export)
+    (edoc "The known heads' checkpoints for the session file, (name checkpoint) each."
+          (returns list))
     ;; The lifecycle barrier stabilizes the directory before this read.
     ;; Checkpoint bodies stay opaque: missing targets and old views are valid.
     (let ([heads (kernel:registry-items known-heads)])
       (with-mutex protocol-lock
         (map (lambda (entry) (datum:copy (list (cadr (head-state-identity entry)) (head-state-checkpoint entry)))) heads))))
 
-  (define (valid-import? entries)
+  (edefine (valid-import? entries)
+    (edoc "Whether a value is a saved checkpoint directory."
+          (entries any "the value")
+          (returns boolean))
     (and (list? entries)
          (let ([names (make-hashtable string-hash string=?)])
            (for-all
@@ -164,7 +199,9 @@
                     (guard (ex [(datum:invalid? ex) #f] [else (raise ex)]) (datum:copy (cadr entry)) #t)
                     (begin (hashtable-set! names (car entry) #t) #t))) entries))))
 
-  (define (import! entries)
+  (edefine (import! entries)
+    (edoc "Restore the known heads' checkpoints from the session file."
+          (entries list "the saved directory"))
     (unless (valid-import? entries) (error 'import! "invalid checkpoint directory"))
     (let ([entries (datum:copy entries)])
       (activity:call-with
@@ -178,10 +215,15 @@
                             (kernel:registry-add! known-heads (make-head-state (list 'head (car entry)) (cadr entry))))
                   entries))))))))
 
-  (define (pending-tickets)
+  (edefine (pending-tickets)
+    (edoc "The tickets of every unanswered question."
+          (returns list))
     (with-mutex protocol-lock (map (lambda (entry) (vector-ref entry 0)) pending-asks)))
 
-  (define (checkpoint! actor state)
+  (edefine (checkpoint! actor state)
+    (edoc "Record a head's screen checkpoint; a kept kill slot keeps the previous kill text."
+          (actor any "the actor identity")
+          (state datum "the checkpoint"))
     (activity:call-with
       (lambda ()
         ;; A screen checkpoint whose kill slot is the symbol kept keeps the
@@ -200,7 +242,15 @@
                                               (cdddr state)))
                                           state)))))))
 
-  (define ask!
+  (edefine ask!
+    (edoc "Ask an actor a question through the interaction protocol; the reply procedure receives the answer, and an owner may withdraw it. The ticket."
+          (from any "the asker")
+          (to any "the asked actor")
+          (question string "the question")
+          (choices (list-of string) "the offered answers")
+          (reply! procedure "(reply! answer)")
+          (owner any "the session owning it, optional")
+          (returns any))
     (activity:wrap
       (case-lambda
         [(from to question choices reply!) (ask! from to question choices reply! #f)]
@@ -227,7 +277,10 @@
                       ticket
                       (begin (cancel! ticket) #f)))))])))
 
-  (define (pending to)
+  (edefine (pending to)
+    (edoc "The questions awaiting an actor, oldest first: (ticket from question choices) each."
+          (to any "the asked actor")
+          (returns list))
     ;; the questions awaiting an actor, oldest first:
     ;; ((ticket from question choices) ...)
     (fold-right (lambda (entry acc)
@@ -264,7 +317,12 @@
       (when entry (notify-pending! (list entry)))
       entry))
 
-  (define answer!
+  (edefine answer!
+    (edoc "Answer a question by its ticket; #t, or #f for a stale ticket."
+          (ticket any "the ticket")
+          (answer any "the answer")
+          (to any "who answers, optional")
+          (returns boolean))
     (activity:wrap
       ;; Resolve an ask: the answer routes to the asker's reply
       ;; procedure (on this thread).  -> #t, or #f for a stale ticket.
@@ -284,7 +342,10 @@
                        #t)]
                  [else #f]))])))
 
-  (define cancel!
+  (edefine cancel!
+    (edoc "Withdraw a question by its ticket; a session may withdraw only its own."
+          (ticket any "the ticket")
+          (owner any "the session, optional"))
     (activity:wrap
       ;; A session may withdraw only its own question; the trusted one-argument
       ;; form keeps the in-process ticket API. Checks and consumption are atomic.
@@ -293,7 +354,9 @@
         [(ticket owner)
          (and (take-ticket! ticket (lambda (entry) (or (not owner) (eq? (vector-ref entry 6) owner)))) #t)])))
 
-  (define (cancel-owned! owner)
+  (edefine (cancel-owned! owner)
+    (edoc "Withdraw every question a session owner asked."
+          (owner any "the owner"))
     (activity:call-with-retirement
       (lambda ()
         (unless owner (error 'cancel-owned! "expected a question owner"))

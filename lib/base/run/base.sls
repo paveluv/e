@@ -1,7 +1,7 @@
 ;; base.sls -- process lifetime and the local daemon. Base runtime only.
 (library (base)
   (export call-with-runtime run connection-policy connection-owner closing-hook)
-  (import (chezscheme)
+  (import (only (edoc) edefine edefine-condition-type edoc) (chezscheme)
           (prefix (kernel) kernel:) (prefix (daemon) daemon:)
           (prefix (activity) activity:) (prefix (startup) startup:)
           (prefix (sys) sys:) (prefix (wire) wire:)
@@ -22,9 +22,14 @@
   ;; The closing notice of a connection goes through this hook with the
   ;; connection, the reason and the thunk that sends it; a test's base
   ;; configuration may lose the notice to model a broken transport.
-  (define closing-hook (make-parameter (lambda (connection reason send!) (send!))))
+  (edefine closing-hook
+    (edoc "How a connection's closing notice is sent: (hook connection reason send!), send! sending it; a test may lose it."
+          (value procedure))
+    (make-parameter (lambda (connection reason send!) (send!))))
 
-  (define connection-policy
+  (edefine connection-policy
+    (edoc "The policy a connecting actor gets: (policy actor) giving a policy record; heads get everything, others the reader tier."
+          (value procedure))
     (make-parameter
       (lambda (actor)
         (if (eq? (car actor) 'head) (policy:make 'all 100000000 'any 8000)
@@ -32,12 +37,17 @@
 
   ;; Routing is independent of permission. An agent can ask its configured
   ;; owner while the owner's head is absent; no connection supplies grants.
-  (define connection-owner
+  (edefine connection-owner
+    (edoc "Who an actor's questions go to: (owner actor) giving an identity, or #f."
+          (value procedure))
     (make-parameter (lambda (actor) (and (eq? (car actor) 'head) actor))))
 
   (define source-fingerprint #f)
 
-  (define (call-with-runtime thunk)
+  (edefine (call-with-runtime thunk)
+    (edoc "Run the base under its runtime: pin the modules, keep the audit, and clean up when the thunk returns."
+          (thunk thunk "the base")
+          (returns any))
     ;; Ownership and diagnostics are already established by the loader.
     ;; Ending a head connection never enters this cleanup.
     (kernel:pin-modules! (cons* "base" "cache" modules))
@@ -261,8 +271,11 @@
   (define lifecycle-state (make-lifecycle #f #f #f 0))
   (define-record-type review
     (fields token heads terminals agents tickets))
-  (define-condition-type &busy &error make-busy busy? (phase busy-phase))
-  (define-condition-type &stale-base &error make-stale-base stale-base?)
+  (edefine-condition-type &busy &error make-busy busy?
+    (edoc "The base is busy in a lifecycle phase." (phase symbol "the phase"))
+    (phase busy-phase))
+  (edefine-condition-type &stale-base &error make-stale-base stale-base?
+    (edoc "The base runs sources older than the connecting head's."))
 
   (define (phase)
     (if (eq? (activity:phase) 'running)
@@ -641,7 +654,9 @@
               (kernel:retract-module! owner)))
           (when writer (thread-join writer))))))
 
-  (define (run)
+  (edefine (run)
+    (edoc "Run the base: listen on its socket, admit heads and agents, and serve them until stopped."
+          (returns any))
     ;; Bind last, after module initialization and configuration have succeeded.
     ;; The loader still holds the directory's lifetime lock during all cleanup.
     (let* ([path (daemon:socket)] [control daemon:control]

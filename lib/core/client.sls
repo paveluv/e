@@ -4,11 +4,12 @@
 (library (client)
   (export call-with-runtime identity request subscribe! unsubscribe!
           set-wake! pump! close! watch! ended? leave! inbox-limits)
-  (import (chezscheme)
+  (import (only (edoc) edefine edefine-condition-type edoc) (chezscheme)
           (prefix (kernel) kernel:) (prefix (startup) startup:) (prefix (daemon) daemon:)
           (prefix (wire) wire:) (prefix (sys) sys:) (prefix (datum) datum:))
 
-  (define-condition-type &ended &condition make-ended ended?)
+  (edefine-condition-type &ended &condition make-ended ended?
+    (edoc "The connection to the base ended."))
   (define-condition-type &stale-base &error make-stale-base stale-base? (status stale-status))
   (define closing-reason #f)
   (define departure #f)
@@ -34,10 +35,18 @@
   (define subscriptions (kernel:make-registry car))
   (define deliveries (kernel:make-delivery-queue))
 
-  (define (identity) (datum:copy who))
-  (define (set-wake! procedure) (with-mutex lock (set! wake procedure)))
+  (edefine (identity)
+    (edoc "A copy of this head's actor identity."
+          (returns any))
+    (datum:copy who))
+  (edefine (set-wake! procedure)
+    (edoc "Install the procedure that wakes the head when base events arrive."
+          (procedure thunk "the wake"))
+    (with-mutex lock (set! wake procedure)))
 
-  (define (close! . reason)
+  (edefine (close! . reason)
+    (edoc "Close the connection to the base with a reason, waking the head; requests then raise ended."
+          (reason (list-of string) "why, at most one"))
     (let ([notify
            (with-mutex lock
              (unless failure
@@ -143,7 +152,11 @@
                  (identity)]
                 [else (error 'client "base refused attachment" hello)])))))))
 
-  (define (request operation . args)
+  (edefine (request operation . args)
+    (edoc "Send one request to the base and wait for its reply; an interrupted call closes the connection."
+          (operation symbol "the request")
+          (args (list-of any) "its arguments")
+          (returns any))
     ;; Exactly one call in flight. An interrupted call closes the socket:
     ;; an unknown commit is never replayed on this or a replacement session.
     (with-mutex requests
@@ -169,13 +182,22 @@
                     (error operation (cadddr result))))))
           (lambda () (unless completed? (close! "Connection interrupted; reattach to inspect the base")))))))
 
-  (define (subscribe! kind procedure)
+  (edefine (subscribe! kind procedure)
+    (edoc "Subscribe a procedure to a kind of base event; the token unsubscribes."
+          (kind symbol "the event kind")
+          (procedure procedure "(procedure batch)")
+          (returns any))
     (let ([token (list kind procedure)])
       (kernel:registry-add! subscriptions (list token kind procedure)) token))
-  (define (unsubscribe! token)
+  (edefine (unsubscribe! token)
+    (edoc "Cancel a subscription by its token."
+          (token any "the token"))
     (kernel:registry-remove! subscriptions (lambda (entry) (eq? (car entry) token))))
 
-  (define (watch! kind notify)
+  (edefine (watch! kind notify)
+    (edoc "Subscribe to a kind of event, merging batches until asked: (values token take), take giving the pending batch."
+          (kind symbol "the event kind")
+          (notify thunk "run when events arrive"))
     (let ([pending '()])
       (let ([token (subscribe! kind
                      (lambda (batch)
@@ -186,7 +208,8 @@
             (pump!)
             (let ([batch pending]) (set! pending '()) batch))))))
 
-  (define (pump!)
+  (edefine (pump!)
+    (edoc "Deliver the pending base events to their subscribers, on the pump thread only.")
     ;; Output workers can append a log record, but its delivery must not
     ;; drain store/UI callbacks there. The reader already wakes the head.
     (when (eqv? pump-thread (get-thread-id))
@@ -225,7 +248,10 @@
       (daemon:status-summary status "attached head"))
     (flush-output-port (current-error-port)))
 
-  (define (leave! shutdown-on-exit?)
+  (edefine (leave! shutdown-on-exit?)
+    (edoc "Tell the base this head is leaving, and whether it should shut down when the last head leaves."
+          (shutdown-on-exit? boolean "whether the base may stop")
+          (returns any))
     (let ([result (request 'leaving shutdown-on-exit?)])
       (unless (and (pair? result) (eq? (car result) 'last)) (set! departure result))
       result))
@@ -235,7 +261,9 @@
 
   ;; Pending base events a head may hold before it detaches as overloaded:
   ;; (count . bytes). Configuration may lower them for small screens or tests.
-  (define inbox-limits
+  (edefine inbox-limits
+    (edoc "How many pending base events, and bytes, a head may hold before it detaches as overloaded: (count . bytes)."
+          (value pair))
     (make-parameter (cons 256 #x2000000)
       (lambda (limits)
         (unless (and (pair? limits) (exact? (car limits)) (positive? (car limits))
@@ -243,7 +271,10 @@
           (error 'inbox-limits "expected (count . bytes)" limits))
         limits)))
 
-  (define (call-with-runtime thunk)
+  (edefine (call-with-runtime thunk)
+    (edoc "Run a head under the base connection: pin the runtime modules, connect, and report a stale base or a lost connection."
+          (thunk thunk "the head")
+          (returns integer "the exit status"))
     (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
                      "property" "reference" "startup" "store" "string" "surface" "sys" "text" "vt" "wire")])
       (kernel:pin-modules! (cons* "client" "cache" modules))

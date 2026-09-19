@@ -20,21 +20,38 @@
           (rename (git-patch-line? patch-line?)) (rename (git-patch-line-kind patch-line-kind)) (rename (git-patch-line-text patch-line-text))
           (rename (git-file-patch file-patch))
           (rename (git-error? error?)) (rename (git-error-code error-code)) (rename (git-error-command error-command)) (rename (git-error-stderr error-stderr)))
-  (import (chezscheme)
+  (import (only (edoc) edefine edefine-record-type edefine-condition-type edoc) (chezscheme)
           (prefix (sys) sys:)
           (prefix (doc) doc:))
 
-  (define-record-type git-repository-record
+  (edefine-record-type git-repository-record
+    (edoc "An opened git repository." (path directory "the worktree path"))
     (fields (immutable path git-repository-path)))
-  (define (git-repository? value) (git-repository-record? value))
+  (edefine (git-repository? value)
+    (edoc "Whether a value is an opened git repository."
+          (value any "the value")
+          (returns boolean))
+    (git-repository-record? value))
 
-  (define-record-type git-status-entry
+  (edefine-record-type git-status-entry
+    (edoc "One line of git status."
+          (path string "the file")
+          (original-path (or string #f) "where a renamed file came from")
+          (index char "the index status letter")
+          (worktree char "the worktree status letter"))
     (fields (immutable path git-status-path)
             (immutable original-path git-status-original-path)
             (immutable index git-status-index)
             (immutable worktree git-status-worktree)))
 
-  (define-record-type git-branch
+  (edefine-record-type git-branch
+    (edoc "A branch of the repository."
+          (name string "the branch name")
+          (current? boolean "whether it is checked out")
+          (hash string "the commit it points at")
+          (upstream (or string #f) "the tracked remote branch")
+          (ahead integer "commits ahead of the upstream")
+          (behind integer "commits behind the upstream"))
     (fields (immutable name git-branch-name)
             (immutable current? git-branch-current?)
             (immutable hash git-branch-hash)
@@ -42,7 +59,15 @@
             (immutable ahead git-branch-ahead)
             (immutable behind git-branch-behind)))
 
-  (define-record-type git-commit
+  (edefine-record-type git-commit
+    (edoc "A commit."
+          (hash string "the full hash")
+          (parents (list-of string) "the parent hashes")
+          (author-name string "who wrote it")
+          (author-email string "the author's email")
+          (time integer "when, in seconds since the epoch")
+          (subject string "the first line of the message")
+          (body string "the whole message"))
     (fields (immutable hash git-commit-hash)
             (immutable parents git-commit-parents)
             (immutable author-name git-commit-author-name)
@@ -51,21 +76,36 @@
             (immutable subject git-commit-subject)
             (immutable body git-commit-body)))
 
-  (define-record-type git-diff-entry
+  (edefine-record-type git-diff-entry
+    (edoc "A changed file."
+          (status char "the change letter: A, M, D, R and so on")
+          (path string "the file")
+          (original-path (or string #f) "where a renamed file came from"))
     (fields (immutable status git-diff-status)
             (immutable path git-diff-path)
             (immutable original-path git-diff-original-path)))
 
-  (define-record-type git-patch
+  (edefine-record-type git-patch
+    (edoc "A commit's patch to one file."
+          (commit string "the commit hash")
+          (path string "the file")
+          (lines (list-of (record git-patch-line)) "the patch lines"))
     (fields (immutable commit git-patch-commit)
             (immutable path git-patch-path)
             (immutable lines git-patch-lines)))
 
-  (define-record-type git-patch-line
+  (edefine-record-type git-patch-line
+    (edoc "One line of a patch."
+          (kind symbol "header, hunk, add, remove or context")
+          (text string "the line"))
     (fields (immutable kind git-patch-line-kind)
             (immutable text git-patch-line-text)))
 
-  (define-condition-type &git-error &error make-git-error git-error?
+  (edefine-condition-type &git-error &error make-git-error git-error?
+    (edoc "A git command failed."
+          (code integer "its exit code")
+          (command (list-of string) "the command line")
+          (stderr string "what it wrote to stderr"))
     (code git-error-code)
     (command git-error-command)
     (stderr git-error-stderr))
@@ -116,12 +156,18 @@
                (loop (+ i 1) (+ i 1) (cons (substring text start i) parts))]
               [else (loop (+ i 1) start parts)]))))
 
-  (define (repository-path repository)
+  (edefine (repository-path repository)
+    (edoc "The worktree path of a repository; an error for anything else."
+          (repository (record git-repository-record) "the repository")
+          (returns directory))
     (if (git-repository? repository)
         (git-repository-path repository)
         (error 'git "expected a git repository" repository)))
 
-  (define (git-open . path)
+  (edefine (git-open . path)
+    (edoc "Open the git worktree containing a path, the current directory by default."
+          (path (list-of string) "a path inside the worktree, at most one")
+          (returns (record git-repository-record)))
     (let* ([candidate (if (null? path) "." (car path))]
            [directory (if (file-directory? candidate)
                           candidate
@@ -135,7 +181,10 @@
           (run-git directory
                    '("rev-parse" "--show-toplevel"))))))
 
-  (define (git-current-branch repository)
+  (edefine (git-current-branch repository)
+    (edoc "The name of a repository's current branch, or #f when detached."
+          (repository (record git-repository-record) "the repository")
+          (returns (or string #f)))
     (let ([name (trim-newlines
                   (run-git (repository-path repository)
                            '("branch" "--show-current")))])
@@ -155,7 +204,10 @@
       [(#\T) 'type-changed]
       [else (string->symbol (string ch))]))
 
-  (define (git-status repository)
+  (edefine (git-status repository)
+    (edoc "A repository's status entries, untracked files included."
+          (repository (record git-repository-record) "the repository")
+          (returns (list-of (record git-status-entry))))
     (let loop ([tokens (split-at
                          (run-git (repository-path repository)
                                   '("status" "--porcelain=v1" "-z"
@@ -186,7 +238,10 @@
             (or (string->number (substring text start end)) 0))
           0)))
 
-  (define (git-branches repository)
+  (edefine (git-branches repository)
+    (edoc "A repository's branches with their upstreams and ahead and behind counts."
+          (repository (record git-repository-record) "the repository")
+          (returns (list-of (record git-branch))))
     (map (lambda (line)
            (let ([fields (split-at line #\nul)])
              (make-git-branch
@@ -210,7 +265,11 @@
     (filter (lambda (x) (> (string-length x) 0))
             (split-at text #\space)))
 
-  (define (git-log repository . limit)
+  (edefine (git-log repository . limit)
+    (edoc "A repository's newest commits, 50 by default."
+          (repository (record git-repository-record) "the repository")
+          (limit (list-of integer) "how many at most, at most one")
+          (returns (list-of (record git-commit))))
     (let* ([count (if (null? limit) 50 (car limit))]
            [tokens (split-at
                      (run-git
@@ -245,7 +304,11 @@
                           (diff-state code) path original)
                         entries))))))
 
-  (define (git-diff repository . staged)
+  (edefine (git-diff repository . staged)
+    (edoc "The changed files of the worktree, or of the index when staged."
+          (repository (record git-repository-record) "the repository")
+          (staged (list-of boolean) "whether to diff the index, at most one")
+          (returns (list-of (record git-diff-entry))))
     (parse-name-status
       (run-git (repository-path repository)
                (append '("diff" "--name-status" "-z")
@@ -255,7 +318,11 @@
   (define (commit-id commit)
     (if (git-commit? commit) (git-commit-hash commit) commit))
 
-  (define (git-commit-files repository commit)
+  (edefine (git-commit-files repository commit)
+    (edoc "The files a commit changed, with their statuses."
+          (repository (record git-repository-record) "the repository")
+          (commit (or (record git-commit) string) "the commit, or its hash")
+          (returns (list-of (record git-diff-entry))))
     (parse-name-status
       (run-git (repository-path repository)
                (list "diff-tree" "--root" "--no-commit-id"
@@ -272,7 +339,12 @@
           [(prefix? "\\" line) 'meta]
           [else 'context]))
 
-  (define (git-file-patch repository commit path)
+  (edefine (git-file-patch repository commit path)
+    (edoc "The patch a commit made to one file, its lines classified."
+          (repository (record git-repository-record) "the repository")
+          (commit (or (record git-commit) string) "the commit, or its hash")
+          (path string "the file")
+          (returns (record git-patch)))
     (let ([id (commit-id commit)])
       (make-git-patch
         id path
@@ -283,7 +355,8 @@
                               id "--" path))
                #\newline)))))
 
-  (define (init!)
+  (edefine (init!)
+    (edoc "Register the describe entries of the git service.")
     (doc:register!
       '(((git:open) (("procedure" . "(git:open [path])")) "git-repository"
          ("(git)") git "Git" #f

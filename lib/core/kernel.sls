@@ -19,7 +19,7 @@
           make-mailbox mailbox-post! mailbox-receive!
           make-delivery-queue enqueue-delivery! drain-deliveries!
           condition-text)
-  (import (rnrs)
+  (import (only (edoc) edefine edefine-condition-type edoc) (rnrs)
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
                 make-parameter make-thread-parameter current-directory format interaction-environment eval
@@ -34,7 +34,10 @@
 
   ;;; Conditions --------------------------------------------------------------
 
-  (define (condition-text ex)
+  (edefine (condition-text ex)
+    (edoc "A raised object as the text the log and the echo area show for it."
+          (ex any "the condition or object")
+          (returns string))
     ;; a caught condition -- or any raised object -- as the text the
     ;; log and the echo area show for it
     (if (condition? ex)
@@ -47,9 +50,10 @@
   ;; rather than exception reports: an edit refused by a read-only
   ;; buffer, and a command the user declined mid-flight (an edit in a
   ;; buffer whose file changed on disk, say).
-  (define-condition-type &read-only &error make-read-only-error
-    read-only-error?)
-  (define-condition-type &refused &error make-refusal refusal?)
+  (edefine-condition-type &read-only &error make-read-only-error read-only-error?
+    (edoc "An edit was refused because the buffer is read-only."))
+  (edefine-condition-type &refused &error make-refusal refusal?
+    (edoc "A command the user declined mid-flight, or the store refused."))
 
   ;;; Mailboxes ---------------------------------------------------------------
 
@@ -60,10 +64,15 @@
   (define-record-type (mailbox %make-mailbox mailbox?)
     (fields lock signal (mutable head) (mutable tail)))
 
-  (define (make-mailbox)
+  (edefine (make-mailbox)
+    (edoc "A thread-safe FIFO mailbox."
+          (returns any))
     (%make-mailbox (make-mutex) (make-condition) '() '()))
 
-  (define (mailbox-post! mb message)
+  (edefine (mailbox-post! mb message)
+    (edoc "Post a message to a mailbox, waking a receiver."
+          (mb any "the mailbox")
+          (message any "the message"))
     (with-mutex (mailbox-lock mb)
       (with-interrupts-disabled
         (mailbox-tail-set! mb (cons message (mailbox-tail mb))))
@@ -71,15 +80,29 @@
 
   (define signal-check-interval (make-time 'time-duration 100000000 0))
 
-  (define mailbox-receive!
+  (edefine mailbox-receive!
     ;; Strictly FIFO. A monotonic deadline returns #f on timeout. Signal
     ;; owners can opt into bounded waits and an interrupt check outside the
     ;; mailbox lock. These checks neither return a timeout nor replace an
     ;; evaluation's timer; only actual messages/deadlines reach the caller.
     (case-lambda
-      [(mb) (mailbox-receive! mb #f #f)]
-      [(mb deadline) (mailbox-receive! mb deadline #f)]
+      [(mb)
+       (edoc "Take the next message from a mailbox, waiting for one."
+             (mb any "the mailbox")
+             (returns any))
+       (mailbox-receive! mb #f #f)]
+      [(mb deadline)
+       (edoc "Take the next message from a mailbox, or #f at a monotonic deadline."
+             (mb any "the mailbox")
+             (deadline (or any #f) "a monotonic time, or #f to wait")
+             (returns any))
+       (mailbox-receive! mb deadline #f)]
       [(mb deadline service-signals?)
+       (edoc "Take the next message from a mailbox by a deadline, optionally checking for interrupts between bounded waits."
+             (mb any "the mailbox")
+             (deadline (or any #f) "a monotonic time, or #f to wait")
+             (service-signals? boolean "whether to check interrupts")
+             (returns any))
        (unless (or (not deadline) (and (time? deadline) (eq? (time-type deadline) 'time-monotonic)))
          (error 'mailbox-receive! "expected a monotonic deadline or #f" deadline))
        (unless (boolean? service-signals?)
@@ -127,10 +150,15 @@
   (define-record-type (delivery-queue %make-delivery-queue delivery-queue?)
     (fields lock (mutable front) (mutable back) (mutable active?)))
 
-  (define (make-delivery-queue)
+  (edefine (make-delivery-queue)
+    (edoc "A queue of deliveries, thunks drained on one thread."
+          (returns any))
     (%make-delivery-queue (make-mutex) '() '() #f))
 
-  (define (enqueue-delivery! queue thunk)
+  (edefine (enqueue-delivery! queue thunk)
+    (edoc "Queue a delivery thunk."
+          (queue any "the queue")
+          (thunk thunk "the delivery"))
     (with-mutex (delivery-queue-lock queue)
       (delivery-queue-back-set! queue (cons thunk (delivery-queue-back queue)))))
 
@@ -144,7 +172,9 @@
              (delivery-queue-front-set! queue (cdr (delivery-queue-front queue)))
              next))))
 
-  (define (drain-deliveries! queue)
+  (edefine (drain-deliveries! queue)
+    (edoc "Run the queued deliveries in order, once, on the calling thread."
+          (queue any "the queue"))
     (let ([entered? #f] [owns? #f])
       (dynamic-wind
         (lambda ()
@@ -188,14 +218,17 @@
   ;; (M-x, say) have owner #f and survive reloads.  Lookups prefer
   ;; newer entries.
 
-  (define registering-module (make-thread-parameter #f))
+  (edefine registering-module
+    (edoc "The module whose registrations are being made, or #f for none."
+          (value (or string #f)))
+    (make-thread-parameter #f))
   (define registry-lock (make-mutex))
   (define-record-type (registry %make-registry registry?)
     (fields key-of (mutable contents)))
   (define-record-type registration
     (fields owner key item))
-  (define-condition-type &registration-conflict &error make-registration-conflict
-    registration-conflict?)
+  (edefine-condition-type &registration-conflict &error make-registration-conflict registration-conflict?
+    (edoc "Two registrations claimed the same key in one registry."))
   (define registries '())
 
   ;; Registration updates stage entry identities, never whole snapshots.
@@ -207,7 +240,10 @@
     (fields registry (mutable additions) (mutable removals)))
   (define current-registration-update (make-thread-parameter #f))
 
-  (define (call-with-runtime-registrations thunk)
+  (edefine (call-with-runtime-registrations thunk)
+    (edoc "Run a thunk whose registrations belong to no module and no staged update, as a runtime effect independent of its trigger."
+          (thunk thunk "the effect")
+          (returns any))
     ;; A runtime effect is independent of any initializer that triggered
     ;; it: resolve published callbacks, and do not give their registrations
     ;; the caller's staging or module ownership. Explicit ownership inside
@@ -257,10 +293,16 @@
     (with-mutex registry-lock
       (visible-registry-entries r (active-registration-update))))
 
-  (define make-registry
+  (edefine make-registry
     (case-lambda
-      [() (make-registry #f)]
+      [()
+       (edoc "A registry of items owned by the modules that register them."
+             (returns any))
+       (make-registry #f)]
       [(key-of)
+       (edoc "A registry whose items have keys, unique across one publication."
+             (key-of (or procedure #f) "(key-of item) giving the key, or #f")
+             (returns any))
        (unless (or (not key-of) (procedure? key-of))
          (error 'make-registry "expected a key procedure or #f" key-of))
        (let ([r (%make-registry key-of '())]) ; newest first
@@ -273,7 +315,10 @@
   (define (mutate-registrations! thunk)
     (if (active-registration-update) (thunk) (call-with-registration-update thunk)))
 
-  (define (registry-add! r item)
+  (edefine (registry-add! r item)
+    (edoc "Add an item to a registry, owned by the registering module and published with the current update."
+          (r any "the registry")
+          (item any "the item"))
     ;; Extract the stable key once, outside the lock. Uniqueness is
     ;; checked against the whole candidate state at outer publication.
     (let ([entry (make-registration (registering-module)
@@ -285,15 +330,26 @@
               (registration-delta-additions-set! delta
                 (cons entry (registration-delta-additions delta)))))))))
 
-  (define (registry-items r) (map registration-item (registry-read r)))
+  (edefine (registry-items r)
+    (edoc "A registry's items, newest first."
+          (r any "the registry")
+          (returns list))
+    (map registration-item (registry-read r)))
 
-  (define (registry-entries r)
+  (edefine (registry-entries r)
+    (edoc "A registry's (owner . item) entries, newest first."
+          (r any "the registry")
+          (returns list))
     ;; Preserve the public shape without exposing ownership/identity
     ;; wrappers to mutation. The registering module still owns its item.
     (map (lambda (entry) (cons (registration-owner entry) (registration-item entry)))
          (registry-read r)))
 
-  (define (registry-find r match?)
+  (edefine (registry-find r match?)
+    (edoc "The first registry item satisfying a predicate, or #f."
+          (r any "the registry")
+          (match? procedure "the predicate")
+          (returns any))
     ;; Predicates run against one snapshot, outside registry-lock.
     (let loop ([entries (registry-read r)])
       (cond [(null? entries) #f]
@@ -308,7 +364,10 @@
         (registration-delta-removals-set! delta
           (append entries (registration-delta-removals delta))))))
 
-  (define (registry-remove! r match?)
+  (edefine (registry-remove! r match?)
+    (edoc "Remove the registry entries whose items satisfy a predicate, whoever owns them."
+          (r any "the registry")
+          (match? procedure "the predicate"))
     ;; drop entries whose item satisfies match?, whoever owns them --
     ;; for registrations with an explicit revocation handle (a store
     ;; subscription's token, say), alongside ownership retraction.
@@ -319,7 +378,9 @@
           (with-mutex registry-lock
             (remove-registration-entries! r entries (active-registration-update)))))))
 
-  (define (retract-module! owner)
+  (edefine (retract-module! owner)
+    (edoc "Remove every registration a module owns, from every registry."
+          (owner string "the module"))
     (mutate-registrations!
       (lambda ()
         (with-mutex registry-lock
@@ -332,7 +393,11 @@
                   update))
               registries))))))
 
-  (define (registry-observe! r proc)
+  (edefine (registry-observe! r proc)
+    (edoc "Watch a registry: (proc removed-items added-items) once per commit; the token unobserves."
+          (r any "the registry")
+          (proc procedure "the observer")
+          (returns any))
     ;; proc receives (removed-items added-items), one batch per commit.
     ;; Like store subscribers, observers only hear future commits and
     ;; can revoke callbacks already queued, but not one already running.
@@ -341,7 +406,9 @@
       (registry-add! registration-observers (list token r proc))
       token))
 
-  (define (registry-unobserve! token)
+  (edefine (registry-unobserve! token)
+    (edoc "Stop watching a registry, by the token registry-observe! gave."
+          (token any "the token"))
     (registry-remove! registration-observers (lambda (entry) (eq? (car entry) token))))
 
   (define (commit-registrations! changes)
@@ -414,7 +481,10 @@
       (registration-update-deltas-set! update '())
       queued?))
 
-  (define (call-with-registration-update thunk)
+  (edefine (call-with-registration-update thunk)
+    (edoc "Publish the registry changes a thunk makes atomically, or none when it raises."
+          (thunk thunk "the changes")
+          (returns any))
     ;; Atomic publication of registry changes only, not arbitrary state
     ;; or resource rollback. Do not publish new handles to other threads
     ;; until this returns. Module loading/reloading runs on the main pump.
@@ -454,7 +524,11 @@
   (define-record-type cell-initialization
     (fields thread signal))
 
-  (define (persistent-cell key make-initial)
+  (edefine (persistent-cell key make-initial)
+    (edoc "A box that survives module reloads: the first request under a key initializes it, other callers wait for that."
+          (key any "the cell's key")
+          (make-initial thunk "the constructor")
+          (returns any))
     ;; A box that survives module reloads: the first request under a
     ;; key initializes it, with other callers waiting for that result.
     ;; Constructors run outside cells-lock and may request other keys.
@@ -504,7 +578,9 @@
 
   (define restart-roots '("kernel"))
 
-  (define (pin-modules! names)
+  (edefine (pin-modules! names)
+    (edoc "Keep modules linked for the life of this image, so a restart cannot discard them."
+          (names (list-of string) "the modules"))
     ;; Monotonic for this image: a running owner cannot discard its linkage.
     (set! restart-roots
       (append (map string-copy names) restart-roots)))
@@ -515,19 +591,27 @@
   (define module-catalog (make-registry))
   (define module-catalog-owner (list 'kernel-module-catalog))
 
-  (define (loaded-modules) (reverse (registry-items module-catalog)))
+  (edefine (loaded-modules)
+    (edoc "The loaded modules, in load order."
+          (returns (list-of string)))
+    (reverse (registry-items module-catalog)))
 
   (define (record-module! name)
     (parameterize ([registering-module module-catalog-owner])
       (registry-add! module-catalog name)))
 
-  (define (module-source name)
+  (edefine (module-source name)
+    (edoc "The source file of a module, in the first library directory holding it."
+          (name string "the module")
+          (returns file))
     (let loop ([directories (library-directories)])
       (let ([path (format "~a/~a.sls" (caar directories) name)])
         (if (or (file-exists? path) (null? (cdr directories))) path
             (loop (cdr directories))))))
 
-  (define (init-module! name)
+  (edefine (init-module! name)
+    (edoc "Import a module's library into the editor's top level, compiling it when stale, and run its init! owning its registrations."
+          (name string "the module"))
     ;; Import the module's library into the editor's top level
     ;; (compiling it when stale) and run its init!, if any, owning its
     ;; registrations.
@@ -547,7 +631,9 @@
           (eval `(let () (import (only ,lib init!)) (init!))
                 (interaction-environment))))))
 
-  (define (load-module! name)
+  (edefine (load-module! name)
+    (edoc "Load a module once: import it, run its init!, and record it; a failed first initialization discards its staged registrations."
+          (name string "the module"))
     ;; Loading is idempotent.  A failed first initialization also
     ;; discards any registrations it staged before raising.
     (unless (member name (loaded-modules))
@@ -556,7 +642,10 @@
           (init-module! name)
           (record-module! name)))))
 
-  (define (load-modules! names)
+  (edefine (load-modules! names)
+    (edoc "Load modules in order, continuing past failures; ((file . condition) ...) for those that failed."
+          (names (list-of string) "the modules")
+          (returns list))
     ;; Bootstrap selects the modules explicitly. A broken module must not
     ;; keep the others from loading; return ((file . condition) ...) as before.
     (fold-left
@@ -566,7 +655,11 @@
           failures))
       '() names))
 
-  (define (module-requires? name target)
+  (edefine (module-requires? name target)
+    (edoc "Whether a module's library builds on another, directly or through others."
+          (name string "the module")
+          (target string "the module it may need")
+          (returns boolean))
     ;; Does library (name) build on (target), directly or through
     ;; others?
     (let ([t (string->symbol target)]
@@ -587,9 +680,14 @@
   ;; Bootstrap sets the installation explicitly, independently of source
   ;; lookup and runtime overlays. Direct library users default to their
   ;; initial working directory; capture an absolute name when it is set.
-  (define installation-directory (make-parameter (current-directory) path:canonical))
+  (edefine installation-directory
+    (edoc "The installation's root directory, canonical."
+          (value directory))
+    (make-parameter (current-directory) path:canonical))
 
-  (define (fingerprint)
+  (edefine (fingerprint)
+    (edoc "A hash of the installation's sources, independent of timestamps and caches: consistency, not authentication."
+          (returns string))
     ;; Source consistency, independent of runtime roots, timestamps and cache.
     ;; FNV-1a/64 over sorted relative paths and raw contents, each prefixed by
     ;; its byte length (u64 little-endian). This is not an authentication hash.
@@ -636,15 +734,21 @@
       [(base) 'base-config]
       [else (error 'config-file "expected base or head" side)]))
 
-  (define config-file
+  (edefine config-file
     (case-lambda
-      [() (config-file 'head)]
+      [()
+       (edoc "The head's configuration file, config.e in the installation."
+             (returns file))
+       (config-file 'head)]
       [(side)
+       (edoc "The configuration file of a side, head or base."
+             (side (one-of head base) "the side")
+             (returns file))
        (path:canonical
          (string-append (installation-directory) "/"
                         (symbol->string (config-owner side)) ".e"))]))
 
-  (define load-config!
+  (edefine load-config!
     ;; The user's configuration: config.e, plain expressions evaluated
     ;; in the editor's top level (the M-x environment).  Loaded at
     ;; startup once the modules are up, and again after every module
@@ -655,8 +759,14 @@
     ;; when it loaded cleanly, or the condition an error raised (the
     ;; rest of the file unread) for the caller to report.
     (case-lambda
-      [() (load-config! 'head)]
+      [()
+       (edoc "Load the head's config.e into the editor's top level: absent, #t, or the condition an error raised."
+             (returns any))
+       (load-config! 'head)]
       [(side)
+       (edoc "Load a side's configuration file, its registrations owned like a module's and retracted before each load."
+             (side (one-of head base) "the side")
+             (returns any))
        (let ([path (config-file side)] [owner (config-owner side)])
          (if (not (file-exists? path))
            'absent
@@ -673,7 +783,9 @@
   ;; reloaded module's name and run inside the reload's rollback guard.
   (define after-reload-hooks (make-registry))
 
-  (define (add-after-reload-hook! proc)
+  (edefine (add-after-reload-hook! proc)
+    (edoc "Register a hook run after a module reload republishes its registrations."
+          (proc thunk "the hook"))
     (registry-add! after-reload-hooks proc))
 
   (define (reload-order name)
@@ -690,7 +802,9 @@
             (unless next (error 'reload-module! "cyclic module dependencies" pending))
             (loop (remove next pending) (cons next out))))))
 
-  (define (reload-module! name*)
+  (edefine (reload-module! name*)
+    (edoc "Reload a module in place from its edited source, with every loaded module built on it, re-running their init! before publishing."
+          (name* (or string symbol) "the module"))
     ;; Reload a module in place: redefine its library from the
     ;; (edited) source, likewise every loaded module built on it, then
     ;; stage retraction and run every init! afresh before publishing the

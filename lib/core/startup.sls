@@ -3,7 +3,7 @@
 (library (startup)
   (export call-with-options mode name file base-working-directory default-base-working-directory
           default-name restart? force?)
-  (import (rnrs)
+  (import (only (edoc) edefine edoc) (rnrs)
           (only (chezscheme) make-thread-parameter parameterize getenv get-process-id
                 current-directory path-absolute? path-parent path-last)
           (prefix (kernel) kernel:)
@@ -15,11 +15,26 @@
   ;; Direct library clients get the same generated identity as the loader.
   (define options (make-thread-parameter '(head #f #f #f #f #f)))
 
-  (define (mode) (car (options)))
-  (define (name) (and (cadr (options)) (string-copy (cadr (options)))))
-  (define (file) (and (caddr (options)) (string-copy (caddr (options)))))
-  (define (restart?) (list-ref (options) 4))
-  (define (force?) (list-ref (options) 5))
+  (edefine (mode)
+    (edoc "What the command line asked for: head, base or help."
+          (returns symbol))
+    (car (options)))
+  (edefine (name)
+    (edoc "The head name from the command line, or #f."
+          (returns (or string #f)))
+    (and (cadr (options)) (string-copy (cadr (options)))))
+  (edefine (file)
+    (edoc "The file argument, canonical, or #f."
+          (returns (or file #f)))
+    (and (caddr (options)) (string-copy (caddr (options)))))
+  (edefine (restart?)
+    (edoc "Whether a base restart was asked for."
+          (returns boolean))
+    (list-ref (options) 4))
+  (edefine (force?)
+    (edoc "Whether the restart may proceed despite modified buffers."
+          (returns boolean))
+    (list-ref (options) 5))
   (define (resolve-directory directory)
     ;; Resolve existing symlinks before collapsing .., including an existing
     ;; parent of a directory that has not been created yet. No startup effects.
@@ -31,16 +46,22 @@
             (if (or (not parent) (string=? path parent)) (path:canonical path)
                 (path:canonical (string-append (resolve parent) "/" (path-last path))))))))
 
-  (define (default-base-working-directory)
+  (edefine (default-base-working-directory)
+    (edoc "The base's working directory when none is given: .base in the installation."
+          (returns directory))
     (resolve-directory (string-append (kernel:installation-directory) "/.base")))
 
-  (define (base-working-directory)
+  (edefine (base-working-directory)
+    (edoc "The base's working directory, from the command line or the default."
+          (returns directory))
     (cond [(cadddr (options)) => string-copy]
           [else (default-base-working-directory)]))
 
   (define (nonempty text) (and text (> (string-length text) 0) text))
 
-  (define (default-name)
+  (edefine (default-name)
+    (edoc "A head's default name: user@host:tty, or the pid without a terminal."
+          (returns string))
     (string-append
       (or (nonempty (getenv "USER")) (nonempty (getenv "LOGNAME")) "unknown")
       "@" (or (nonempty (sys:host-name)) "unknown")
@@ -87,7 +108,11 @@
         [file (error 'e "expected at most one file" (car args))]
         [else (loop (cdr args) mode name (string-copy (car args)) directory restart? force? help? flags?)])))
 
-  (define (call-with-options args thunk)
+  (edefine (call-with-options args thunk)
+    (edoc "Parse the command line and run a thunk with the options in effect."
+          (args (list-of string) "the arguments")
+          (thunk thunk "the program")
+          (returns any))
     ;; Select help before the loader imports a runtime or loads config.
     (let ([parsed (parse args)])
       (parameterize ([options (list (if (list-ref parsed 6) 'help (car parsed)) (cadr parsed)
