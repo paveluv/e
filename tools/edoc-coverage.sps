@@ -83,6 +83,10 @@
                  [(define)
                   (let ([target (cadr form)])
                     (cond [(pair? target) (list (cons (car target) 'procedure))]
+                          [(and (pair? (cddr form)) (pair? (caddr form)) (eq? (car (caddr form)) 'attach-name!)
+                                (pair? (cdr (caddr form))) (pair? (cadr (caddr form))) (eq? (car (cadr (caddr form))) 'quote))
+                           ;; (define x (attach-name! 'name '(edoc ...))): the edoc library's own keywords
+                           (list (cons (cadr (cadr (caddr form))) 'edefine))]
                           [(and (pair? (cddr form)) (symbol? (caddr form)))
                            (list (cons target (list 'alias (caddr form))))]
                           [(and (pair? (cddr form)) (pair? (caddr form)))
@@ -173,7 +177,9 @@
             (if origin (classify (car origin) (cdr origin) (+ depth 1)) (loop (cdr specs)))))))
   (let* ([library (library-named name)]
          [internal (let ([e (and library (assq external (exports-of library)))]) (if e (cdr e) external))]
-         [def (assq internal (definitions-of name))])
+         [defs (definitions-of name)]
+         ;; a keyword documented by hand has two entries; the edefine wins
+         [def (or (find (lambda (d) (and (eq? (car d) internal) (eq? (cdr d) 'edefine))) defs) (assq internal defs))])
     (cond
       [(equal? name '(rnrs)) 'standard]
       [(or (not library) (> depth 8)) 'elsewhere]

@@ -146,6 +146,8 @@ for the top-level definitions the registry does not already cover, so a
 documented definition gets a describe page and the `M-x` parameter
 suggestion without a `doc:register!` batch. The types are meant for
 tooling: they describe what an argument is, and later choose how it is
-completed; they are never checked at run time. `tools/edoc-coverage.sps`
-reports, library by library, which exports carry an edoc and what kind of
-definition the others are; `--list` names them.
+completed; they are never checked at run time. Every export of every
+library carries an edoc, the standard procedures the sandbox passes on
+excepted; `tools/edoc-coverage.sps` reports, library by library, which
+exports do and what kind of definition the others are, and `--list` names
+them.

@@ -92,6 +92,11 @@
        (map (lambda (sig) (cons (signature-formals sig) (map argument-type (signature-arguments sig)))) (edoc-of visit))
        '(((path) file) ((path encoding) file (one-of utf-8 latin-1))))
      (check 'undocumented-procedures-have-no-signature (list (edoc-of car) (edoc-of (lambda (x) x)) (edoc-of 3)) '(#f #f #f))
+     (check 'the-edoc-library-documents-itself
+       (list (map (lambda (name) (signature-kind (car (edoc-named name)))) '(edoc edefine edefine-syntax edefine-record-type edefine-condition-type))
+             (signature-kind (car (edoc-of edoc-of))) (signature-library (car (edoc-of edoc-of)))
+             (signature-kind (car (edoc-of signature-kind))) (signature-kind (car (edoc-of edoc-types))))
+       '((syntax syntax syntax syntax syntax) procedure "(edoc)" accessor value))
 
      (check 'presentation-helpers
        (list (edoc-template 'visit '(path . more)) (first-sentence "Add two numbers. Slowly.") (first-sentence "No end")

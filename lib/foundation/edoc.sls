@@ -70,15 +70,44 @@
 
   (meta define known-types (vocabulary))
   (meta define meta-type-ok? (type-checker))
-  (define edoc-types (vocabulary))
   (define type-ok? (type-checker))
-  (define (edoc-type? t) (type-ok? edoc-types t))
+
+  ;;; Attachments --------------------------------------------------------------------
+
+  ;; Attached edocs: the forms that document an object rather than a lambda
+  ;; body record their datum here when the definition runs, and edoc-of
+  ;; consults it before a procedure's source. Objects without identity --
+  ;; numbers, characters, booleans, symbols and the like -- and syntax
+  ;; keywords are recorded by name instead.
+  (define attached (make-weak-eq-hashtable))
+  (define named (make-eq-hashtable))
+
+  (define (identity? object)
+    (not (or (number? object) (char? object) (boolean? object) (symbol? object)
+             (null? object) (eof-object? object) (eq? object (void)))))
+
+  (define (attach! name object spec)
+    (if (identity? object)
+        (eq-hashtable-set! attached object spec)
+        (eq-hashtable-set! named name spec))
+    object)
+
+  (define (attach-name! name spec) (eq-hashtable-set! named name spec) name)
 
   ;;; Checking, shared by the forms -------------------------------------------------
 
   (define-syntax edoc
     (lambda (x)
       (syntax-violation 'edoc "edoc belongs at the head of an edefine, edefine-syntax, edefine-record-type or edefine-condition-type" x)))
+
+  ;; The two forms that cannot document themselves record their edocs by
+  ;; hand; the tool reads these attach-name! definitions as documentation.
+  (define edoc-documentation
+    (attach-name! 'edoc
+      '(edoc "The documentation form: a summary, then typed clauses; it belongs at the head of an edefine, edefine-syntax, edefine-record-type or edefine-condition-type."
+         (summary string "the description, its first sentence the short one")
+         (clause list "(name type note ...) for a formal or field, or (returns type note ...)")
+         ("kind" syntax) ("library" "(edoc)"))))
 
   (meta define (source-library x)
     ;; the library the form x appears in, from its source file, or #f when
@@ -144,7 +173,36 @@
 
   ;;; The forms ---------------------------------------------------------------------
 
-  (define-syntax edefine
+  (define-syntax edefine-syntax
+    ;; (edefine-syntax name (edoc summary clause ...) transformer): the edoc
+    ;; is recorded under the name, since a keyword has no object. Clauses
+    ;; describe the form's parts.
+    (lambda (x)
+      (syntax-case x (edoc)
+        [(_ name (edoc . doc) transformer)
+         (identifier? #'name)
+         (begin
+           (check-free-clauses! 'edefine-syntax x #'doc)
+           (with-syntax ([kept (kept-spec x #'doc '(("kind" syntax)))]
+                         [(tmp) (generate-temporaries '(edoc))])
+             #'(begin
+                 (define-syntax name transformer)
+                 (define tmp (attach-name! 'name '(edoc . kept))))))]
+        [_ (syntax-violation 'edefine-syntax
+             "expected (edefine-syntax name (edoc summary clause ...) transformer)" x)])))
+
+  (define edefine-syntax-documentation
+    (attach-name! 'edefine-syntax
+      '(edoc "Define a keyword whose edoc is recorded under its name, the clauses describing the form's parts."
+         (name symbol "the keyword")
+         (transformer any "the transformer, as define-syntax takes it")
+         ("kind" syntax) ("library" "(edoc)"))))
+
+  (edefine-syntax edefine
+    (edoc "Define a documented procedure, (edefine (name . formals) (edoc ...) body ...) or a case-lambda whose clauses open with an edoc, or a documented value, (edefine name (edoc ...) expression)."
+          (name symbol "the name defined")
+          (formals list "the lambda list, each formal with an edoc clause")
+          (body any "the body, which may open with definitions"))
     (lambda (x)
       (define (formal-names formals)
         ;; ((identifier . rest?) ...) for a lambda list
@@ -231,25 +289,10 @@
              "expected (edefine (name . formals) (edoc summary clause ...) body ...), a case-lambda whose clauses open with edoc, or (edefine name (edoc summary clause ...) expression)"
              x)])))
 
-  (define-syntax edefine-syntax
-    ;; (edefine-syntax name (edoc summary clause ...) transformer): the edoc
-    ;; is recorded under the name, since a keyword has no object. Clauses
-    ;; describe the form's parts.
-    (lambda (x)
-      (syntax-case x (edoc)
-        [(_ name (edoc . doc) transformer)
-         (identifier? #'name)
-         (begin
-           (check-free-clauses! 'edefine-syntax x #'doc)
-           (with-syntax ([kept (kept-spec x #'doc '(("kind" syntax)))]
-                         [(tmp) (generate-temporaries '(edoc))])
-             #'(begin
-                 (define-syntax name transformer)
-                 (define tmp (attach-name! 'name '(edoc . kept))))))]
-        [_ (syntax-violation 'edefine-syntax
-             "expected (edefine-syntax name (edoc summary clause ...) transformer)" x)])))
-
-  (define-syntax edefine-record-type
+  (edefine-syntax edefine-record-type
+    (edoc "A define-record-type whose constructor, predicate and field procedures carry edocs derived from one edoc naming every field; a (constructor field ...) clause documents a protocol's constructor."
+          (spec any "the record name, or (name constructor predicate)")
+          (clause list "the define-record-type clauses: fields, protocol and the rest"))
     ;; (edefine-record-type spec (edoc summary (field type note ...) ...)
     ;; clause ...): a define-record-type whose constructor, predicate and
     ;; field procedures carry edocs derived from the record's. Every field
@@ -375,7 +418,13 @@
         [_ (syntax-violation who
              "expected (edefine-record-type spec (edoc summary (field type note ...) ...) clause ...)" x)])))
 
-  (define-syntax edefine-condition-type
+  (edefine-syntax edefine-condition-type
+    (edoc "A define-condition-type whose constructor, predicate and accessors carry edocs derived from one edoc naming every field."
+          (name symbol "the condition type, &name")
+          (parent symbol "its parent condition type")
+          (constructor symbol "the constructor's name")
+          (predicate symbol "the predicate's name")
+          (field list "(field accessor) per field"))
     ;; (edefine-condition-type &name &parent constructor predicate (edoc
     ;; summary (field type note ...) ...) (field accessor) ...): a
     ;; define-condition-type whose constructor, predicate and accessors
@@ -434,32 +483,34 @@
 
   ;;; Reading it back -------------------------------------------------------------
 
+  (edefine edoc-types
+    (edoc "The type vocabulary: the editor's notions, then the language's; compounds are (one-of literal ...), (or type ...), (list-of type) and (record name)."
+          (value (list-of symbol)))
+    (vocabulary))
+
+  (edefine (edoc-type? t)
+    (edoc "Whether a value is an edoc type over the vocabulary." (t datum "the value") (returns boolean))
+    (type-ok? edoc-types t))
+
   ;; A signature: the kind of definition -- procedure, parameter, value,
   ;; syntax, constructor, predicate, accessor or mutator -- its lambda list
   ;; when it has one, the summary, the typed arguments, the return and the
   ;; defining library.
-  (define-record-type signature (fields kind formals summary arguments returns library))
-  (define-record-type argument (fields name type notes))
-
-  ;; Attached edocs: the forms that document an object rather than a lambda
-  ;; body record their datum here when the definition runs, and edoc-of
-  ;; consults it before a procedure's source. Objects without identity --
-  ;; numbers, characters, booleans, symbols and the like -- and syntax
-  ;; keywords are recorded by name instead.
-  (define attached (make-weak-eq-hashtable))
-  (define named (make-eq-hashtable))
-
-  (define (identity? object)
-    (not (or (number? object) (char? object) (boolean? object) (symbol? object)
-             (null? object) (eof-object? object) (eq? object (void)))))
-
-  (define (attach! name object spec)
-    (if (identity? object)
-        (eq-hashtable-set! attached object spec)
-        (eq-hashtable-set! named name spec))
-    object)
-
-  (define (attach-name! name spec) (eq-hashtable-set! named name spec) name)
+  (edefine-record-type signature
+    (edoc "What one definition, or one clause of a case-lambda, was documented with."
+          (kind symbol "procedure, parameter, value, syntax, constructor, predicate, accessor or mutator")
+          (formals list "the lambda list, for a procedure")
+          (summary string "the description")
+          (arguments (list-of (record argument)) "the typed arguments")
+          (returns (or (record argument) #f) "the return, as an argument named returns")
+          (library (or string #f) "the defining library, (edit) say"))
+    (fields kind formals summary arguments returns library))
+  (edefine-record-type argument
+    (edoc "One typed clause of an edoc."
+          (name symbol "the formal or field")
+          (type datum "its edoc type")
+          (notes (list-of string) "its notes"))
+    (fields name type notes))
 
   (define (spec-signature kind formals spec library)
     ;; The signature of one (edoc summary clause ...) datum, or #f.
@@ -524,9 +575,10 @@
 
   (define cache (make-weak-eq-hashtable))
 
-  (define (edoc-of object)
-    ;; The signatures object was defined with -- an attached edoc, else the
-    ;; clauses of a procedure's source -- or #f.
+  (edefine (edoc-of object)
+    (edoc "The signatures an object was defined with, from its attached edoc or a procedure's source, or #f."
+          (object any "the procedure, parameter or value")
+          (returns (or (list-of (record signature)) #f)))
     (cond
       [(eq-hashtable-ref attached object #f)
        => (lambda (spec) (attached-signatures spec (procedure? object)))]
@@ -539,17 +591,19 @@
                        found)]))]
       [else #f]))
 
-  (define (edoc-named name)
-    ;; The signatures recorded under a name -- a syntax keyword's, or a
-    ;; value's without identity -- or #f.
+  (edefine (edoc-named name)
+    (edoc "The signatures recorded under a name: a syntax keyword's, or a value's without identity; or #f."
+          (name symbol "the name")
+          (returns (or (list-of (record signature)) #f)))
     (let ([spec (eq-hashtable-ref named name #f)])
       (and spec (attached-signatures spec #f))))
 
   ;;; Presenting ------------------------------------------------------------------
 
-  (define (type-text t)
-    ;; a type as prose: file, one of utf-8 or latin-1, string or #f, list of
-    ;; buffer, frame record
+  (edefine (type-text t)
+    (edoc "An edoc type as prose: file, one of utf-8 or latin-1, string or #f, list of buffer, frame record."
+          (t datum "the type")
+          (returns string))
     (cond
       [(symbol? t) (symbol->string t)]
       [(and (pair? t) (eq? (car t) 'one-of))
@@ -564,8 +618,8 @@
     (if (null? parts) ""
         (fold-left (lambda (out part) (string-append out separator part)) (car parts) (cdr parts))))
 
-  (define (first-sentence text)
-    ;; text up to and including its first sentence end
+  (edefine (first-sentence text)
+    (edoc "A text up to and including its first sentence end." (text string "the text") (returns string))
     (let ([n (string-length text)])
       (let loop ([i 0])
         (cond [(>= i n) text]
@@ -574,8 +628,11 @@
                (substring text 0 (+ i 1))]
               [else (loop (+ i 1))]))))
 
-  (define (edoc-template name formals)
-    ;; the call template in the corpus's form: (name a b . rest)
+  (edefine (edoc-template name formals)
+    (edoc "A call template in the describe corpus's form: (name a b . rest)."
+          (name symbol "the procedure")
+          (formals list "its lambda list")
+          (returns string))
     (format "~s" (cons name formals)))
 
   (define (value-kind? sig) (and (memq (signature-kind sig) '(value parameter)) #t))
@@ -594,10 +651,11 @@
         [(procedure) (cons "procedure" (edoc-template name (signature-formals sig)))]
         [else (cons "procedure" (edoc-template name names))])))
 
-  (define (edoc-entry name sigs)
-    ;; A describe entry -- (names forms returns libraries source chapter url
-    ;; description) -- for the signatures of the definition bound to name,
-    ;; or #f without signatures. A value's type stands where a return does.
+  (edefine (edoc-entry name sigs)
+    (edoc "A describe entry, (names forms returns libraries source chapter url description), for the signatures of the definition bound to a name, or #f without signatures; a value's type stands where a return does."
+          (name symbol "the name")
+          (sigs (or (list-of (record signature)) #f) "its signatures")
+          (returns (or list #f)))
     (and (pair? sigs)
          (let* ([returns (find values (map (lambda (sig) (or (signature-returns sig) (value-argument sig))) sigs))]
                 [library (signature-library (car sigs))]
