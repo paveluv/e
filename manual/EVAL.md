@@ -10,9 +10,9 @@ evaluations.
 
 ## Commands
 
-### `eval:run!!` — interactive M-x evaluation
+### `eval:prompt!` — interactive M-x evaluation
 
-`M-x` is bound to `eval:run!!`. It prompts for a Scheme expression and evaluates
+`M-x` is bound to `eval:prompt!`. It prompts for a Scheme expression and evaluates
 it:
 
 ```scheme
@@ -294,7 +294,7 @@ Both commands publish structured describe entries. Use any of:
 
 ```scheme
 (describe:this eval:run!)
-(describe:show! 'eval:run!!)
+(describe:show! 'eval:prompt!)
 ```
 
 or press `C-h f` and complete the command name. The live describe page shows
@@ -308,7 +308,7 @@ the commands' current key bindings, including user rebinding from `config.e`.
 
 ;; Optional key rebinding examples.
 (keymap:bind! "C-c e" eval:run!)
-(keymap:bind! "M-X" eval:run!!)
+(keymap:bind! "M-X" eval:prompt!)
 ```
 
 `eval:copy-result` is a parameter and may also be changed temporarily with

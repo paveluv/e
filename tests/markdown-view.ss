@@ -251,7 +251,8 @@
                           (refused? (lambda () (markdown:edit! view)))
                           (refused? (lambda () (head:add-buffer! source)))
                           (and hidden? (store:mark head:ui-actor id 'point)))
-                    (list '((#f #f #f #f)) 1 (and hidden? #t) #t #t #f)))))
+                    ;; a killed document is trashed, not deleted: it stays in the store, hidden
+                    (list '((#f #f #f #f)) 1 (and (or hidden? (eq? action 'kill)) #t) #t #t #f)))))
        (list (list source 'kill) (list table 'delete)
              (list (make-source "private-own.md" '("# Own")) 'hide-own)
              (list (make-source "private-foreign.md" '("# Foreign")) 'hide-foreign)))

@@ -12,7 +12,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (search)
-  (export init! (rename (search!! incremental!!)) (rename (search-fold-case fold-case)))
+  (export init! (rename (search! incremental!)) (rename (search-fold-case fold-case)))
   (import (chezscheme)
           (except (edit) init!)
           (prefix (dispatch) dispatch:)
@@ -248,7 +248,7 @@
            (unless (head:quitting?) (loop needle match failed?))]))))
 
   (edoc "Start an incremental search in the current buffer: typing extends it, C-s repeats, M-c toggles case folding, Return accepts and C-g cancels.")
-  (define (search!!)
+  (define (search!)
     ;; The search owns C-g while it runs; the match highlighting goes
     ;; away however it exits.
     (prompt:interaction
@@ -263,11 +263,11 @@
   (edoc "Install incremental search: its describe entry, the match highlighter and the C-s binding with the search keymap.")
   (define (init!)
     (doc:register!
-      '(((search:incremental!!) (("procedure" . "(search:incremental!!)")) "void"
+      '(((search:incremental!) (("procedure" . "(search:incremental!)")) "void"
          ("(search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
     (paint:add-highlighter! search-highlights)
-    (keymap:bind-default! "C-s" search!!)
+    (keymap:bind-default! "C-s" search!)
     (for-each
       (lambda (entry)
         (keymap:bind-default! 'isearch (car entry) (cadr entry)))

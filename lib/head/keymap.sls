@@ -262,7 +262,7 @@
   (define (add-key-binding! context spec action kind)
     (unless (symbol? context)
       (error 'bind-key! "context must be a symbol" context))
-    (unless (or (procedure? action) (symbol? action) (not action))
+    (unless (or (procedure? action) (symbol? action) (string? action) (not action))
       (error 'bind-key! "action must be a procedure, symbol, or #f" action))
     (kernel:registry-add! key-bindings
                           (binding-item context (key-spec spec) action
@@ -271,7 +271,7 @@
   (edoc "Bind a key spelling as a user binding, which wins over defaults: in a context, or in the global map when none is given."
         (context symbol "the keymap context")
         (spec key "the spelling")
-        (action (or procedure symbol) "the command, or a keymap action"))
+        (action (or procedure symbol string) "the command, a keymap action, or an expression to evaluate at the top level, (edit:kill-buffer! (head:current-buffer)) say"))
   (define bind-key!
     (case-lambda
       [(spec action)
@@ -282,7 +282,7 @@
   (edoc "Bind a key spelling as a module's default, which user bindings override: in a context, or in the global map when none is given."
         (context symbol "the keymap context")
         (spec key "the spelling")
-        (action (or procedure symbol) "the command, or a keymap action"))
+        (action (or procedure symbol string) "the command, a keymap action, or an expression to evaluate at the top level, (edit:kill-buffer! (head:current-buffer)) say"))
   (define bind-default-key!
     (case-lambda
       [(spec action)

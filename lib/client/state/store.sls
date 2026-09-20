@@ -175,7 +175,9 @@
         (id integer "the buffer id")
         (returns boolean))
   (define (visible? actor id)
-    (and (exists? id) (identity:in-audience? actor (property id 'audience 'all))))
+    ;; as the base decides it: a trashed buffer is visible to nobody
+    (and (exists? id) (not (property id 'trashed #f))
+         (identity:in-audience? actor (property id 'audience 'all))))
 
   (define (capture id basis)
     ;; -> (label text revision facts changes): explicit captures (file

@@ -37,7 +37,7 @@ Quitting normally detaches the screen and keeps the base running.
 Set `(main:shutdown-on-exit #t)` in `config.e` to review shutting down the
 base when this is the last attached head. Cancelling the review keeps that
 head open. The default is `#f`; the setting accepts only booleans.
-`M-x (main:shutdown!!)` requests the same review explicitly, regardless of
+`M-x (main:shutdown!)` requests the same review explicitly, regardless of
 the setting. Shutdown requires an all-buffer head connection. Every graceful
 stop saves shared text and named views through the same path as SIGTERM;
 the next base restores them. Shared unsaved text needs no confirmation;
@@ -118,7 +118,7 @@ assignments and other Scheme effects that ran before the error remain applied.
 ## Common examples
 
 ```scheme
-(keymap:bind! "C-c s" edit:save!!)
+(keymap:bind! "C-c s" edit:save!)
 (keymap:unbind! "C-v")
 (mode:add-extension! "scheme" ".foo")
 (edit:indent-on-tab! "scheme" #f)

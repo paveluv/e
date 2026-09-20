@@ -252,15 +252,20 @@ The published API contains commands, read-only state, editing primitives, and
 extension registries. At the initial `M-x (` prompt, press Shift-Tab twice to
 list the current editor-defined symbols; `C-h f` describes documented values.
 
-Naming distinguishes interaction:
+Naming distinguishes effects:
 
-- a procedure ending in `!!` waits for user input and normally returns void;
-- a single-`!` procedure acts immediately on explicit state and may return a
-  useful value;
+- a procedure ending in `!` changes state, and may return a useful value;
+- a procedure without it is a query;
 - predicates end in `?` and parameters are ordinary callable Scheme values.
 
-Interactive wrappers should be thin. For example, `edit:find-file!!` prompts and
-then calls `edit:visit-file!`.
+Prompting is the exception, not a naming matter: a command that must wait
+for input, `edit:describe-key!` reading a key or `edit:replace!` asking per
+occurrence, says so in its documentation. Otherwise the M-x API with typed
+completion does the asking, and a key that used to prompt opens M-x with the
+call typed up to its argument: `C-c a` gives `M-x (edit:answer! `. A key may
+be bound to an expression as well as to a procedure,
+`(keymap:bind! "C-x k" "(edit:kill-buffer! (head:current-buffer))")`, which
+`C-h k` shows as written.
 
 `edit:call-with-buffer` temporarily evaluates against another buffer.
 `edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors should be

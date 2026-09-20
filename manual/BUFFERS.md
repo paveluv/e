@@ -61,29 +61,36 @@ print in that form.
 | Key | Action |
 |---|---|
 | `C-x b` / `C-x C-b` | Open the buffers app. Type to filter; Enter selects the most recently used other buffer or the chosen match. |
-| `M-x (edit:new-buffer!!)` | Ask for a name and create an empty unvisited buffer. |
+| `M-x (edit:new-buffer! "name")` | Create an empty unvisited buffer with that name and show it. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
-| `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
+| `C-x k` | Kill the current buffer at once; a document goes to the trash. |
 
 `C-x C-f` opens the [files app](FILES.md) for directory navigation and recursive
 filename filtering, with the same column-sorting controls as buffers.
-`M-x (edit:find-file!!)` reads a path [in the window](PROMPTS.md#prompts-in-the-window).
-Both buffer-switch shortcuts use the [live table](#the-buffers-app) below.
-An unmatched filter stays in the table; it never creates a buffer. Use
-`edit:new-buffer!!` for creation. Empty input cancels creation; an existing name
-receives a unique suffix.
+`M-x (edit:visit-file! ` completes a path. Both buffer-switch shortcuts use
+the [live table](#the-buffers-app) below. An unmatched filter stays in the
+table; it never creates a buffer. Use `edit:new-buffer!` for creation; an
+existing name receives a unique suffix.
 
-The kill prompt completes buffer names with Tab. Killing a modified buffer
-requires confirmation. If its shared text or facts change while the
-question is open, e reviews it again before deleting. A failed deletion reports
-the error and keeps the buffer. Killing a buffer removes its app registration,
-if any, and every window showing it changes to another live buffer. If the last
-buffer is killed, e creates a new `*scratch*` buffer.
+Killing asks nothing. `M-x (edit:kill-buffer! ` completes the live buffers,
+and `C-x k` kills the current one. A shared document goes to the trash
+rather than being deleted: it disappears from every head, its text, facts
+and undo history stay in the base, and the echo area says whether the work
+in it was unsaved. `M-x (edit:restore! ` completes the trashed names, newest
+first with how long ago each was killed, and brings one back into the
+current window; `(edit:trash)` lists them as `(name killed-at actor)`, and
+`(edit:empty-trash!)` deletes them for good. The trash survives a base
+restart and empties itself by age, thirty days by default through
+`(store:trash-retention days)` in `base-config.e`. Disposable output,
+generated tools, views and terminals, is deleted outright, and a local
+buffer is simply forgotten. Killing a buffer removes its app registration,
+if any, and every window showing it changes to another live buffer. If the
+last buffer is killed, e creates a new `*scratch*` buffer.
 
-Scratch text written by another actor is unsaved work too. Making a buffer
-read-only still leaves its unsaved text protected by kill and quit prompts.
-Generated tools and views declare that their output can be discarded.
+Scratch text written by another actor is unsaved work too, and goes to the
+trash with its buffer. Generated tools and views declare that their output
+can be discarded.
 
 Read-only buffers reject editing commands without creating an undo entry. The
 error is reported in the echo area rather than corrupting generated content.
@@ -102,13 +109,11 @@ The alphabetical traversal is stable: merely visiting a buffer does not move it
 in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.
 
-`C-x C-c` reviews this head's local unsaved work. It detaches if all are clean; otherwise it
-offers `yes`, `no`, and `view`; `view` opens this head's `<buffers>` list and
-moves focus there.
-If protected work changes during confirmation, e reviews it again before exiting.
-Disposable generated output can keep updating without requiring new confirmation.
-Shared unsaved text and terminal processes stay in the running daemon.
-`M-x (main:shutdown!!)` saves shared text and named views, reviewing only
+`C-x C-c` quits this head at once: shared text stays in the base, the
+screen is checkpointed for the next attach, and after the terminal is
+restored a notice in bold red names every buffer with unsaved work, the
+shared ones kept in the base and the local ones that went with the head.
+`M-x (main:shutdown!)` saves shared text and named views, reviewing only
 local drafts, other heads and live work that will end. Shared unsaved text
 needs no confirmation. With `(main:shutdown-on-exit #t)`, quitting the last
 head uses this shutdown; cancelling keeps the head open.
@@ -119,7 +124,7 @@ text do not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 ## File buffers
 
 `C-x C-f` opens the files app, `C-x C-s` saves, and `C-x C-w` saves under a
-new path. The direct path prompt, `M-x (edit:find-file!!)`, offers the current
+new path. The direct path prompt, `M-x (edit:visit-file!)`, offers the current
 file's directory, a terminal's launch directory, or the head's working
 directory for other buffers. Clearing the offered path
 and typing a relative name still uses that starting directory. Absolute paths
@@ -214,7 +219,7 @@ put this in `config.e` or evaluate it with `M-x`:
 ```
 
 `(edit:undo! 'mine)` and `(edit:undo! 'all)` override the setting for one call.
-`M-x edit:undo-actor!!` opens an actor picker; `(edit:undo-actor! actor)` selects an
+`M-x edit:undo-actor!` opens an actor picker; `(edit:undo-actor! actor)` selects an
 actor directly. Each selects that actor's latest live action without
 changing the preference. `C-M-_` or `(edit:redo!)` reverses this head's latest
 undo, including one that undid another actor's work. A new edit by this
@@ -530,7 +535,7 @@ buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
 entries. `edit:focus-window-up!`, `edit:focus-window-down!`, `edit:focus-window-left!`, and
 `edit:focus-window-right!` expose directional focus to Scheme. App authors should
 use `head:view-replace!` and `head:view-append!` for generated content. Run
-`M-x (describe:show!!)` for live signatures and registered command documentation.
+`M-x (describe:show!)` for live signatures and registered command documentation.
 
 `(head:new-buffer name)` creates a shared buffer with one empty line and
 adopts its canonical record into this head's buffer list. Use

@@ -71,7 +71,9 @@
               (let ([failures (kernel:load-modules! modules)])
                 (unless (null? failures) (raise (cdar failures))))
               (let ([result (kernel:load-config! 'base)])
-                (when (condition? result) (raise result)))))
+                (when (condition? result) (raise result)))
+              ;; the trash expires by age: at startup, then at each daily rotation
+              (store:expire-trash! '(base e))))
           (thunk))
         (lambda ()
           (dynamic-wind void vt:close-all!
@@ -698,7 +700,7 @@
             ;; The signal receiver posts here; the idle base needs no polling.
             (let loop ()
               (let ([message (kernel:mailbox-receive! control (daemon:log-deadline))])
-                (cond [(not message) (daemon:rotate-logs!) (loop)]
+                (cond [(not message) (daemon:rotate-logs!) (store:expire-trash! '(base e)) (loop)]
                       [(condition? message) (raise message)]
                       [(procedure? message)
                        (message)

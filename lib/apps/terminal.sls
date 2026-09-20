@@ -2,7 +2,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (terminal)
-  (export init! (rename (terminal!! open!!) (terminal-send! send!)
+  (export init! (rename (terminal! open!) (terminal-send! send!)
                         (terminal-yank! yank!) (terminal-close! close!)
                         (terminal-toggle-capture! toggle-capture!)
                         (terminal-color-scheme! color-scheme!)
@@ -68,7 +68,7 @@
 
   (edoc "Open a terminal in a new buffer, running a command or the shell, in the current file's directory."
         (command* (list-of string) "the command line to run, at most one; the shell by default"))
-  (define (terminal!! . command*)
+  (define (terminal! . command*)
     (let* ([prior (head:current-buffer)] [path (head:buffer-file prior)] [id #f] [buffer #f])
       (guard (ex [else
                   (when id
@@ -120,13 +120,13 @@
     (terminal-color-scheme! (head:host-color-scheme))
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (head:add-pre-redraw-hook! present-notices!)
-    (keymap:bind-default! "C-c t" terminal!!)
+    (keymap:bind-default! "C-c t" terminal!)
     (keymap:set-context-capture! 'terminal "C-]" terminal-toggle-capture! '("C-x" "M-x"))
     (keymap:bind-default! 'terminal "S-PAGEUP" (lambda () (page-window-fraction! -1 1)))
     (keymap:bind-default! 'terminal "S-PAGEDOWN" (lambda () (page-window-fraction! 1 1)))
     (doc:register!
-      '(((terminal:open!!)
-         (("procedure" . "(terminal:open!! [command])")) "void"
+      '(((terminal:open!)
+         (("procedure" . "(terminal:open! [command])")) "void"
          ("(terminal)") terminal "Terminal" #f
          "Open a new PTY-backed terminal buffer using the shell configured by `terminal:shell`, or interpret `command` with that shell when supplied. Partial capture is the default: C-x and M-x run e commands; other input reaches the child. C-] or the clickable status indicator toggles full capture for this window. Shift-PageUp/Down scroll in either mode.")
         ((terminal:toggle-capture!)
@@ -144,7 +144,7 @@
         ((terminal:shell)
          (("parameter" . "(terminal:shell [path])")) "string"
          ("(terminal)") terminal "Terminal" #f
-         "Get or set the shell used by terminal:open!!. It defaults to $SHELL, then /bin/sh.")
+         "Get or set the shell used by terminal:open!. It defaults to $SHELL, then /bin/sh.")
         ((terminal:color-scheme!)
          (("procedure" . "(terminal:color-scheme! scheme)")) "void"
          ("(terminal)") terminal "Terminal" #f

@@ -21,7 +21,7 @@
 (import (only (edoc) elibrary))
 (elibrary (store)
   (export create! visit! delete! discard! close! reset! rename! publication publish!
-          buffer-list exists? visible? buffer-name find-named find-file
+          buffer-list exists? visible? trash-retention expire-trash! buffer-name find-named find-file
           snapshot snapshot-since snapshot-state state revision line-count line extract
           edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
           set-mark! set-marks! mark drop-mark! marks
@@ -31,7 +31,7 @@
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq
-                current-time time-second time-nanosecond list-head)
+                current-time time-second time-nanosecond list-head make-parameter)
           (prefix (text) text:)
           (prefix (property) property:)
           (prefix (actor) actor:)
@@ -440,7 +440,7 @@
 
   ;;; Saved representation -------------------------------------------------
 
-  (define persistent-keys '(file base stamp trailing mode read-only modified-at))
+  (define persistent-keys '(file base stamp trailing mode read-only modified-at trashed))
   (define (integer-at-least? n minimum) (and (integer? n) (exact? n) (>= n minimum)))
 
   (define (persistent-facts? facts)
@@ -454,6 +454,9 @@
                         [(base) (or (not (cdr entry)) (string? (cdr entry)))]
                         [(trailing read-only) (boolean? (cdr entry))]
                         [(modified-at) (or (not (cdr entry)) (and (integer? (cdr entry)) (exact? (cdr entry))))]
+                        [(trashed) (let ([v (cdr entry)])
+                                     (or (not v) (and (list? v) (= (length v) 2) (integer? (car v)) (exact? (car v))
+                                                      (actor:identity? (cadr v)))))]
                         [(stamp)
                          (let ([stamp (cdr entry)])
                            (or (not stamp)
@@ -558,11 +561,39 @@
         (returns boolean))
   (define (visible? actor id)
     ;; Audience is presentation/routing, not permission to read the store.
-    ;; Missing content is never visible; an absent audience means all.
+    ;; Missing content is never visible; an absent audience means all; a
+    ;; trashed buffer is visible to nobody until restored.
     (locked
       (lambda ()
         (let ([b (hashtable-ref (store-buffers (current-store)) id #f)])
-          (and b (actor:in-audience? actor (property-value b 'audience 'all)))))))
+          (and b (not (property-value b 'trashed #f))
+               (actor:in-audience? actor (property-value b 'audience 'all)))))))
+
+  (edoc "How many days a trashed buffer is kept before it is deleted for good, or set it; 30 by default."
+        (days integer "the retention in days")
+        (returns integer))
+  (define trash-retention
+    (make-parameter 30
+      (lambda (days)
+        (unless (and (integer? days) (exact? days) (>= days 1)) (error 'trash-retention "expected a positive number of days" days))
+        days)))
+
+  (edoc "Delete the trashed buffers older than the retention, as the base does daily and at startup; how many went."
+        (actor actor "the actor identity")
+        (returns integer))
+  (define (expire-trash! actor)
+    (let ([cutoff (- (time-second (current-time 'time-utc)) (* (trash-retention) 86400))] [gone 0])
+      (transact! actor
+        (lambda (actor)
+          (for-each
+            (lambda (id)
+              (let* ([b (hashtable-ref (store-buffers (current-store)) id #f)]
+                     [trashed (and b (property-value b 'trashed #f))])
+                (when (and trashed (< (car trashed) cutoff))
+                  (delete-buffer! actor id)
+                  (set! gone (+ gone 1)))))
+            (vector->list (hashtable-keys (store-buffers (current-store)))))))
+      gone))
 
   (edoc "A copy of a buffer's name."
         (id integer "the buffer id")

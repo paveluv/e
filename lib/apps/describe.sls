@@ -5,7 +5,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (describe)
-  (export init! (rename (describe this) (describe! show!) (describe!! show!!)
+  (export init! (rename (describe this) (describe! show!)
                         (describe-at-point! at-point!)
                         (reference:fetch! fetch-data!)))
   (import (chezscheme)
@@ -34,10 +34,18 @@
                     (keymap:command-keys (caddr page)) (cons (car page) (cadr page)))])
           (when id (head:sync-foreign-edits! id))))))
 
+  (define (top-level-name value)
+    ;; the symbol the top level binds to a value, so a procedure written
+    ;; literally at M-x, (describe:show! edit:undo!), names itself
+    (find (lambda (sym) (and (top-level-bound? sym) (eq? (top-level-value sym) value)))
+          (environment-symbols (interaction-environment))))
+
   (edoc "Show every documentation entry for a name in the read-only Markdown describe buffer, or say there is none."
-        (name (or symbol string) "the documented name"))
+        (name (or symbol string procedure) "the documented name"))
   (define (describe! name)
-    (let* ([name (if (string? name) (string->symbol name) name)]
+    (let* ([name (cond [(string? name) (string->symbol name)]
+                       [(symbol? name) name]
+                       [else (or (top-level-name name) name)])]
            [id (reference:page! head:ui-actor name (keymap:command-keys name))])
       (if (not id)
           (set-message! (format "No documentation for ~a" name))
@@ -77,26 +85,6 @@
                   names (doc:names entry)))
               '() (reference:entries)))))
 
-  (edoc "Prompt for a documented name with completion and show its live describe page.")
-  (define (describe!!)
-    ;; Prompt for a documented name and display its live describe page.
-    (define label "Describe function: ")
-    (define (editor-name? text)
-      (and (> (string-length text) 0)
-           (kernel:editor-symbol? (string->symbol text))))
-    (define (described-name? text)
-      (and (> (string-length text) 0)
-           (pair? (reference:lookup (string->symbol text)))))
-    (let ([name (parameterize ([prompt:completion-highlight editor-name?]
-                               [paint:echo-highlight
-                                (paint:prompt-styler
-                                  label
-                                  (paint:completion-styler described-name?
-                                                           editor-name?))])
-                  (prompt:read! label complete-described-name))])
-      (when (and name (> (string-length name) 0))
-        (describe! (string->symbol name))))
-    (void))
 
   ;;; The symbol at point ---------------------------------------------------------
 
@@ -178,9 +166,6 @@
          (("procedure" . "(describe:at-point!)")) "void"
          ("(describe)") describe "Documentation commands" #f
          "Display documentation for the symbol at point in the current Scheme buffer.")
-        ((describe:show!!) (("procedure" . "(describe:show!!)")) "void"
-         ("(describe)") describe "Documentation commands" #f
-         "Prompt for a documented function name with completion, then display its live describe page.")
         ((style:compile) (("procedure" . "(style:compile expression)")) "string"
          ("(style)") style "Style customization" #f
          "Compile a style expression to terminal SGR parameters. The expression is a list containing attributes (`reset`, `bold`, `dim`, `italic`, `underline`, `blink`, `reverse`, `hidden`, or `strike`) and color clauses `(foreground color)` or `(background color)`; `fg` and `bg` are aliases. A color is a basic name from `black` through `white`, a `bright-` variant, an integer from 0 through 255, or `(rgb red green blue)`.")
@@ -233,8 +218,8 @@
          (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
          ("(head)") head "Editor lifecycle" #f
          "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
-        ((main:shutdown!!)
-         (("procedure" . "(main:shutdown!!)")) "does not return after acceptance"
+        ((main:shutdown!)
+         (("procedure" . "(main:shutdown!)")) "does not return after acceptance"
          ("(main)") main "Editor lifecycle" #f
          "Save shared text and named views through the same path as SIGTERM, then stop the base and every head. Requires an all-buffer head. Ask about local drafts, other heads, terminals, agent sessions and pending interactions; shared unsaved text is saved without a question. No, View, Esc and C-g cancel; View opens the buffers app. New transient work receives a fresh review. A failed pause or save resumes service. The next base restores the snapshot; processes, undo history and local drafts do not survive the stop.")
         ((main:shutdown-on-exit)
@@ -250,5 +235,5 @@
          ("(describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the reference database, and load it. Fetch progress is recorded in the log.")))
     (prompt:inspector describe-input!)
-    (keymap:bind-default! "C-h f" describe!!)
+    (keymap:bind-default! "C-h f" "(eval:prompt-with! \"(describe:show! \")")
     (keymap:bind-default! "M-." describe-at-point!)))

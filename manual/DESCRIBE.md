@@ -2,8 +2,8 @@
 
 ## Interactive commands
 
-`C-h f` runs `describe:show!!`, prompting for a documented Scheme name with
-completion. `M-.` describes the symbol at point in a Scheme buffer. `C-h k`
+`C-h f` opens M-x with `(describe:show! ` typed, so the documented name
+completes like any argument, and Enter shows its page. `M-.` describes the symbol at point in a Scheme buffer. `C-h k`
 describes a key, its resolved command, origin, shadowed bindings, and contextual
 meanings.
 
@@ -93,7 +93,7 @@ be finite plain data; cycles and runtime objects such as procedures are
 rejected. A bad registration batch publishes no entries. Update documentation
 through module registration or reload; changing a retained input has no effect.
 
-The `(edit)` module uses this mechanism for commands such as `edit:replace!!` and
+The `(edit)` module uses this mechanism for commands such as `edit:replace!` and
 `edit:replace-all!`. Registered forms also drive the grey parameter suggestion in
 `M-x`, so newly documented procedures receive prompt hints automatically.
 

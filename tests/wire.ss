@@ -535,7 +535,7 @@
                           (head:buffer-modified-set! b #t) #t))
                      (for-each
                        (lambda (key)
-                         (head-send! ui "\x1b;xmain:shutdown!!\r")
+                         (head-send! ui "\x1b;xmain:shutdown!\r")
                          (head-wait 'shutdown-review-question ui (lambda () (head-sees? ui "Stop the base?")))
                          (head-send! ui key)
                          (test:await 'ui-cancel-releases-review (lambda () (eq? (phase) 'running)))
@@ -576,7 +576,7 @@
                      (head-wait 'clean-head-ready ui (lambda () (head-sees? ui "*scratch*")))
                      (head-read ui '(begin (edit:insert-text! "shared unsaved work") #t))
                      (evaluator-close!)
-                     (head-send! ui "\x1b;xmain:shutdown!!\r")
+                     (head-send! ui "\x1b;xmain:shutdown!\r")
                      (head-wait 'clean-shutdown-needs-no-question ui (lambda () (head-sees? ui "e: the base shut down")))
                      (test:check 'shared-unsaved-work-is-saved-without-a-question
                        (list (occurrences (vector-ref ui 3) "Stop the base?")
@@ -967,7 +967,7 @@
                        (when review (cancel head review))
                        (list (car result)
                              (occurrences output
-                               (format "Base: alive (pid ~a; wire ~a; source ~a); ~a\nBase directory: ~s\nStop the base: M-x (main:shutdown!!) or kill -TERM ~a\nThe base holds ~a.\n"
+                               (format "Base: alive (pid ~a; wire ~a; source ~a); ~a\nBase directory: ~s\nStop the base: M-x (main:shutdown!) or kill -TERM ~a\nThe base holds ~a.\n"
                                  (car (cdr (assq 'instance before))) wire:version (cdr (assq 'fingerprint before)) phase base-directory
                                  (car (cdr (assq 'instance before)))
                                  "1 buffer (1 modified), 1 attached head, 0 running terminals and 0 agents"))
@@ -979,7 +979,7 @@
                                                    (if (eq? (cadr row) 'custom)
                                                        (string-append " --base-working-dir " (quote-shell base-directory)) "") "\n"))
                              (occurrences output "Attach:")
-                             (occurrences output "Describe: M-x (describe:this main:shutdown!!)")
+                             (occurrences output "Describe: M-x (describe:this main:shutdown!)")
                              (occurrences output "\x1b;") (equal? before after) (car (rpc head 'snapshot id)))))
                    '((running custom) (reviewing default) (running alias)))
                  (make-list 3 '(0 1 1 1 1 1 0 0 0 #t #("keep this text"))))))
@@ -1197,9 +1197,8 @@
        (call-with-restart-fixture
          (lambda (head control base original original-fingerprint
                    source-path source wire-path wire-source pid-path path temporary file hold restoring)
+           ;; quitting asks nothing: the draft goes with the head, named in the exit notice
            (head-send! head "\x18;\x03;")
-           (head-wait 'fixture-draft-is-reviewed head (lambda () (head-sees? head "Modified buffers exist")))
-           (head-send! head "y")
            (head-wait 'fixture-head-detaches head (lambda () (head-sees? head "e: detached")))
            (sys:reap-terminal-process! (vector-ref head 0))
            ;; No live work must include no evaluation agent.
@@ -1832,8 +1831,8 @@
                  (let ([ticket (reply-value (exchange agent
                                               '(request 71 ask (head "screen A") "Ready to continue?" ("yes" "no"))) 71)])
                    (head-send! a "\x03;a")
-                   (head-wait 'base-question a (lambda () (head-sees? a "Ready to continue?")))
-                   (head-send! a "yes\r")
+                   (head-wait 'base-question a (lambda () (head-sees? a "M-x (edit:answer! ")))
+                   (head-send! a "\"yes\"\r")
                    (test:check 'attached-questions-route-to-the-requesting-client-once
                      (list (receive-reply agent) (rpc agent 'cancel ticket)
                            (head-read a '(actor:pending head:ui-actor)))
@@ -1860,8 +1859,8 @@
                             (head-read a '(begin (echo:set-text! "Keep this message") #t))
                             (head-wait 'unrelated-echo a (lambda () (head-sees? a "Keep this message")))]
                            [(prompt)
-                            (head-send! a "\x03;adraft")
-                            (head-wait 'answer-being-written a (lambda () (head-sees? a "[...] draft")))])
+                            (head-send! a "\x03;a\"draft\"")
+                            (head-wait 'answer-being-written a (lambda () (head-sees? a "(edit:answer! \"draft\"")))])
                          (pump-head! a)
                          (vector-set! a 3 "")
                          (rpc agent 'cancel second)
@@ -1871,10 +1870,11 @@
                                   (case state
                                     [(idle) (not (head-sees? a "Second question?"))]
                                     [(message) (head-sees? a "Keep this message")]
-                                    [(prompt) (head-sees? a "[...] draft")]))))
+                                    [(prompt) (head-sees? a "(edit:answer! \"draft\"")]))))
                          (when (eq? state 'prompt)
                            (head-send! a "\r")
-                           (head-wait 'withdrawn-answer a (lambda () (head-sees? a "That question was withdrawn"))))
+                           ;; the answer arrives after the withdrawal: no question is pending any more
+                           (head-wait 'withdrawn-answer a (lambda () (head-sees? a "Nothing to answer"))))
                          (head-read a '(actor:pending head:ui-actor))))
                      '(idle message prompt))
                    '(() () ()))
@@ -2146,20 +2146,22 @@
                        (delete-file path)))
                    '(absent #f))
 
+                 ;; C-x k kills at once: a document with unsaved work goes to the
+                 ;; trash, hidden from every head with its text and history kept,
+                 ;; and restore! brings it back under its name.
                  (let ([doomed (rpc head 'create "kill review" '("work"))])
-                   (head-read a `(begin (edit:show-buffer! (head:adopt-store-buffer! ,doomed)) #t))
-                   (head-send! a "\x18;k\r")
-                   (head-wait 'kill-review a (lambda () (head-sees? a "modified; kill anyway")))
                    (rpc head 'edit doomed 0 '(0 4 0 4) '("!"))
-                   (rpc head 'rename doomed "kill review later")
-                   (head-wait 'kill-review-advanced a (lambda () (head-sees? a "work!")))
-                   (head-send! a "y")
-                   (head-wait 'kill-reviews-the-new-state a
-                     (lambda () (head-sees? a "Buffer kill review later modified")))
-                   (head-send! a "n")
-                   (test:check 'kill-confirmation-cannot-discard-a-racing-edit
-                     (list (head-read a `(begin (edit:show-buffer! (head:adopt-store-buffer! ,id)) #t))
-                           (car (rpc head 'snapshot doomed))) '(#t #("work!")))
+                   (head-read a `(begin (edit:show-buffer! (head:adopt-store-buffer! ,doomed)) #t))
+                   (head-send! a "\x18;k")
+                   (head-wait 'kill-trashes-unsaved-work a (lambda () (head-sees? a "its unsaved work is in the trash")))
+                   (test:check 'a-trashed-buffer-is-hidden-but-kept
+                     (head-read a `(list (store:exists? ,doomed) (store:visible? head:ui-actor ,doomed)
+                                         (map car (edit:trash)) (and (head:buffer-named "kill review") #t)))
+                     '(#t #f ("kill review") #f))
+                   (test:check 'restore-brings-the-buffer-back-with-its-text
+                     (head-read a '(let ([b (edit:restore! "kill review")])
+                                     (list (head:buffer-name b) (vector->list (head:buffer-lines b)) (edit:trash))))
+                     '("kill review" ("work!") ()))
                    (rpc head 'delete doomed))
 
                  (stop!)
@@ -2269,7 +2271,7 @@
                               (describe:show! 'describe:show!)
                               (reference:lookup 'attached-document))))
                    '(() ()))
-                 (head-read a '(begin (terminal:open!! "printf 'attached terminal'; read answer; printf '\\n%s' \"$answer\"; read done") #t))
+                 (head-read a '(begin (terminal:open! "printf 'attached terminal'; read answer; printf '\\n%s' \"$answer\"; read done") #t))
                  (head-wait 'attached-terminal a (lambda () (head-sees? a "attached terminal")))
                  (let ([terminal-id (head-read a '(head:buffer-store-id (head:current-buffer)))])
                    (head-read b `(begin (edit:show-buffer! (head:adopt-store-buffer! ,terminal-id)) #t))
@@ -2363,9 +2365,7 @@
                        (test:check 'returning-owner-sees-only-the-live-session-question
                          (head-read a '(actor:pending head:ui-actor))
                          (list (list question '(agent "second") "Continue agent work?" '("yes" "no"))))
-                       (head-send! a "\x1b;xedit:answer!!\r")
-                       (head-wait 'offline-question-prompt a (lambda () (head-sees? a "Continue agent work?")))
-                       (head-send! a "yes\r")
+                       (head-send! a "\x1b;xedit:answer! \"yes\"\r")
                        (test:check 'reattached-human-answers-the-surviving-agent-once
                          (list (receive-reply second) (rpc second 'cancel question)
                                (rpc head 'answer question "wrong head")

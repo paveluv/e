@@ -141,12 +141,13 @@
        #t)
 
      ;; the interaction protocol: an agent asks, the head answers through
-     ;; C-c a. Input stays ordered, so the answer follows the prompt; the
-     ;; callback publishes one complete datum by renaming.
+     ;; C-c a, which opens M-x with (edit:answer! typed; the choice completes
+     ;; and Enter sends it. Input stays ordered, so the answer follows the
+     ;; prompt; the callback publishes one complete datum by renaming.
      (send! (format "\x1b;xactor:ask! (quote (agent tester)) head:ui-actor \"Proceed with the plan?\" (list \"yes\" \"no\") (lambda (answer) (call-with-output-file ~s (lambda (p) (write answer p)) (quote replace)) (rename-file ~s ~s))\r"
               (string-append answer-file ".pending") (string-append answer-file ".pending") answer-file))
      (await! 'ask-indicator-shows (lambda () (echo-has? "asks: Proceed with the plan?")))
-     (send! "\x3;ayes\r")
+     (send! "\x3;a\"yes\"\r")
      (await! 'answer-arrives (lambda () (file-exists? answer-file)))
      (check 'answer-routes-to-the-asker (call-with-input-file answer-file read) "yes")
      (delete-file answer-file)
@@ -195,52 +196,6 @@
                 (edit:delete-other-windows!)
                 (list above left)))))
        '((1 below) (1 right)))
-
-     ;; -- quit reviews protected local work while input keeps arriving. A
-     ;; frame callback interleaves a change after the question is visible; a
-     ;; worker wakes the normal pump on the head thread, where local work lives.
-     (for-each
-       (lambda (kind)
-         (check 'quit-review-setup
-           (read-editor
-             `(let* ([target (head:new-local-buffer "quit work")] [armed? #t])
-                (head:add-buffer! target)
-                (head:store-reset! target '("keep"))
-                (head:buffer-modified-set! target #t)
-                ;; Model a file replaced by an unreadable directory.
-                (when (eq? ',kind 'local-facts) (head:buffer-file-set! target (current-directory)))
-                (head:buffer-fact-set! target 'source (head:current-buffer))
-                (parameterize ([kernel:registering-module 'wiring-quit])
-                  (head:add-pre-redraw-hook!
-                    (lambda ()
-                      (when (and armed? (prompt:active?) (string:prefix? "Modified buffers exist" (echo:text)))
-                        (set! armed? #f)
-                        (case ',kind
-                          [(local-text) (head:store-reset! target '("keep!"))]
-                          [else (head:buffer-trailing-set! target #f)])))))
-                (fork-thread
-                  (lambda ()
-                    (let wait ([tries 2000])
-                      (cond [(and (prompt:active?) (string:prefix? "Modified buffers exist" (echo:text)))
-                             (head:wake-main!)]
-                            [(zero? tries) (error 'quit-race "quit never reached review")]
-                            [else (sleep (make-time 'time-duration 5000000 0)) (wait (- tries 1))]))))
-                (list (not (head:buffer-store-id target)) (head:buffer-modified target))))
-           '(#t #t))
-         (send! "\x1b;xedit:quit!!\r")
-         (await! 'protected-work-prompts-before-exit (lambda () (echo-has? "Modified buffers exist")))
-         (send! "y")
-         (await! 'quit-reviews-a-change-during-confirmation (lambda () (echo-has? "Buffers changed")))
-         (send! "n")
-         (check 'cancelled-quit-keeps-work-and-the-store-open
-           (read-editor
-             `(let* ([b (head:buffer-named "<quit work>")]
-                     [result (list (head:buffer-line b 0) (not (head:buffer-store-id b)) (head:quitting?))])
-                (kernel:retract-module! 'wiring-quit)
-                (edit:kill-buffer! b)
-                result))
-           (list (if (eq? kind 'local-facts) "keep" "keep!") #t #f)))
-       '(local-text local-facts))
 
      ;; -- a shared surface paints without a local app, and a style/link-only
      ;; publisher wakes the otherwise idle editor ------------------------------
@@ -374,10 +329,14 @@
                 'replace))) #t))
      (define mouse-before-quit (bytevector? (vt:emulator-mouse-input mirror 35 2 2 #f)))
      (delete-file probe)
+     ;; quitting asks nothing; the exit notice names the unsaved work once
+     ;; the screen is given back
      (send! "\x18;\x03;")
-     (await! 'final-quit-reaches-confirmation (lambda () (echo-has? "Modified buffers exist")))
-     (send! "y")
      (test:await 'head-quit-exits (lambda () (pump! 25) exited?))
+     (check 'exit-notice-names-unsaved-work
+       (list (visible? "e: unsaved work stays in the base: *scratch*")
+             (visible? "e: unsaved local work went with this head: <quit review>"))
+       '(#t #t))
      (check 'head-quit-keeps-shared-admission-and-releases-mouse-reporting
        (list (call-with-input-file probe read) mouse-before-quit
              (map (lambda (key) (cdr (assq key (vt:emulator-state mirror)))) '(mouse-tracking sgr-mouse)))

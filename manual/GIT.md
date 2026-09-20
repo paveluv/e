@@ -64,11 +64,11 @@ The API is query-only: e never runs a Git command that changes the repository.
 
 ## History browser
 
-`C-x g` or M-x `(git-view:log!!)` opens the `<git-log>` app for the repository
+`C-x g` or M-x `(git-view:log!)` opens the `<git-log>` app for the repository
 containing the current file. Pass a path explicitly to browse another one:
 
 ```scheme
-(git-view:log!! "/src/e")
+(git-view:log! "/src/e")
 ```
 
 The app shows the latest 20 commits followed by each commit's changed files.

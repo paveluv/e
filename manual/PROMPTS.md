@@ -34,9 +34,7 @@ prompt scrolls while keeping its cursor visible.
 
 A prompt does not lock the window layout. The window-management commands
 -- focusing (Meta-arrows, `C-x o`), splitting (`C-x 2`, `C-x 3`),
-closing (`C-x 0`, `C-x 1`), and killing the focused buffer (`C-x k`,
-refused with a note when it has unsaved changes) -- keep working while a
-prompt runs, under whatever keys they are bound to: events resolve
+and closing (`C-x 0`, `C-x 1`) -- keep working while a prompt runs, under whatever keys they are bound to: events resolve
 through the live global keymap, so rebound or newly bound chords work in
 every prompt as well. Only self-inserting characters always stay with
 the input. The mouse works too: clicks focus windows and the status-bar
@@ -65,7 +63,7 @@ The repetition is command-based rather than inferred from the cursor position.
 
 ## Prompts in the window
 
-`M-x (edit:find-file!!)` reads its input in the current window instead of the
+`M-x (edit:visit-file!)` reads its input in the current window instead of the
 echo area. Each invocation creates a temporary local `<find-file>` view.
 The input sits at the bottom of the window, with the same editing keys,
 styles, suggestions and text
@@ -153,7 +151,7 @@ The indicator updates while idle as questions arrive or are withdrawn,
 advancing to the next question or clearing when none remain. It also refits
 immediately when you resize the terminal. Other messages and anything you are
 typing into a prompt stay intact.
-Press `C-c a` (`edit:answer!!`) to answer; Tab offers any supplied choices.
+Press `C-c a` (`edit:answer!`) to answer; Tab offers any supplied choices.
 Cancelling the prompt leaves the question pending so you can return to it.
 If it was withdrawn while you were typing, the editor says so when you submit.
 Once a named head has attached, questions can also arrive while it is absent.

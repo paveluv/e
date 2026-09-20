@@ -12,7 +12,7 @@
 (import (only (edoc) elibrary))
 (elibrary (main)
   (export run set-startup-page! load-config!
-          modules-reload-on-save config-reload-on-save shutdown!! shutdown-on-exit)
+          modules-reload-on-save config-reload-on-save shutdown! shutdown-on-exit)
   (import (chezscheme)
           (prefix (sys) sys:)
           (prefix (client) client:)
@@ -37,7 +37,7 @@
                                (unless (boolean? value) (error 'shutdown-on-exit "expected a boolean")) value)))
 
   (edoc "Stop the base and every head after reviewing modified buffers: yes, no, or view them.")
-  (define (shutdown!!)
+  (define (shutdown!)
     (let ([token #f])
       (dynamic-wind void
         (lambda ()
@@ -88,7 +88,7 @@
               (head:checkpoint!)
               (let ([result (client:leave! #t)])
                 (if (and (pair? result) (eq? (car result) 'last))
-                    (shutdown!!)
+                    (shutdown!)
                     (head:quit!))))))))
 
   ;;; Another actor's question --------------------------------------------------------
@@ -320,6 +320,29 @@
             (tty:mouse-reporting! #f)
             (paint:ansi "\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
             (flush-output-port (sys:terminal-output-port))
-            (sys:terminal-restore!))))))
+            (sys:terminal-restore!)
+            (report-unsaved-work!))))))
+
+  (define (report-unsaved-work!)
+    ;; After the screen is given back, in bold red on a terminal: the
+    ;; buffers whose work is unsaved, the shared ones kept in the base and
+    ;; the local ones that went with this head. Quitting asks nothing.
+    (let ([unsaved (filter (lambda (b)
+                             (and (head:buffer-modified b) (not (head:buffer-fact b 'disposable #f))))
+                           (head:buffers))])
+      (unless (null? unsaved)
+        (let* ([port (current-error-port)]
+               [term (getenv "TERM")]
+               [color? (and term (not (string=? term "dumb")))]
+               [names (lambda (bs) (string:join (map head:buffer-name bs) ", "))]
+               [shared (filter head:buffer-store-id unsaved)]
+               [local (filter (lambda (b) (not (head:buffer-store-id b))) unsaved)])
+          (define (say text)
+            (display (if color? (string-append "\x1b;[1;31m" text "\x1b;[0m\n") (string-append text "\n")) port))
+          (unless (null? shared)
+            (say (format "e: unsaved work stays in the base: ~a" (names shared))))
+          (unless (null? local)
+            (say (format "e: unsaved local work went with this head: ~a" (names local))))
+          (flush-output-port port)))))
 
 ) ;; library (main)

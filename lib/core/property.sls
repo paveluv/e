@@ -40,6 +40,10 @@
                           [(cursor-style) (memq (cdr entry) '(#f default text block underline bar
                                                               blinking-block blinking-underline blinking-bar))]
                           [(audience) (identity:audience? (cdr entry))]
+                          [(trashed) (let ([v (cdr entry)])
+                                       (or (not v)
+                                           (and (list? v) (= (length v) 2) (integer? (car v)) (exact? (car v))
+                                                (identity:valid? (cadr v)))))]
                           [else #t])
                         (valid (cdr rest) (cons (car entry) seen)))))))
       (error 'validate-properties "expected unique symbol keys and valid fact values" updates))

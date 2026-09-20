@@ -20,13 +20,15 @@
 (import (only (edoc) elibrary))
 (elibrary (eval)
   (export init! settle-completion completion-candidates completion-extensions
-          (rename (eval! run!)) (rename (eval!! run!!)) (rename (eval-copy-result copy-result)))
+          (rename (eval! run!)) (rename (eval-prompt! prompt!)) (rename (eval-prompt-with! prompt-with!))
+          (rename (eval-copy-result copy-result)))
   (import (chezscheme)
           (except (edit) init!)
           (prefix (prompt) prompt:)
           (prefix (head) head:)
           (prefix (mode) mode:)
           (prefix (kernel) kernel:)
+          (prefix (echo) echo:)
           (prefix (string) string:)
           (prefix (fuzzy) fuzzy:)
           (prefix (edoc) edoc:)
@@ -893,7 +895,10 @@
             '()))
         (lambda () (close-port terminal)))))
 
-  (define (report-evaluation! query outcome output-records)
+  (define (report-evaluation! query outcome output-records . spoken)
+    ;; A command run at M-x that spoke in the echo area, (edit:answer! ...)
+    ;; say, keeps its message: a void result is logged but not shown over
+    ;; it. Spoken is the echo text before the evaluation, when known.
     (let* ([failed? (string? outcome)]
            [void? (and (not failed?)
                        (or (null? outcome)
@@ -902,14 +907,18 @@
            [result (if failed?
                        outcome
                        (string:join (map (lambda (v) (format "~s" v)) outcome)
-                                    ", "))])
+                                    ", "))]
+           [spoke? (and void? (pair? spoken) (null? output-records)
+                        (let ([now (echo:text)])
+                          (and (string? now) (> (string-length now) 0) (not (equal? now (car spoken))))))])
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
               (log:add! 'eval (cons query (if void? "#<void>" result)) #f)])
         (when copied? (copy-to-kill-buffer! result))
-        (present-log-entries!
-          (append output-records (list result-record))
-          (if copied? " [stored in kill ring]" "")))))
+        (unless spoke?
+          (present-log-entries!
+            (append output-records (list result-record))
+            (if copied? " [stored in kill ring]" ""))))))
 
   (edoc "Evaluate the Scheme text in where, the whole current buffer by default, in the M-x interaction environment and show the last result in the echo area."
         (where* (list-of (or buffer string region procedure list)) "what to evaluate, at most one: a buffer, its name, a region, a predicate on buffers or a list of these"))
@@ -922,8 +931,9 @@
         (report-evaluation! query outcome output-records))
       (void)))
 
-  (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area.")
-  (define (eval!!)
+  (edoc "Open the M-x prompt with text already typed, the call up to its argument say, so completion does the asking; evaluate what is read in the editor top level and log the exchange."
+        (initial string "the text typed already"))
+  (define (eval-prompt-with! initial)
     ;; Read an expression -- the prompt pretypes "(", deletable, so a
     ;; bare symbol evaluates too -- and evaluate it in the editor's
     ;; own top level.  The expression is logged (component eval, which
@@ -934,23 +944,29 @@
                             [prompt:edge-motion mx-edge-motion]
                             [prompt:reindent reindent-scheme-input]
                             [paint:echo-highlight mx-echo-styles])
-               (prompt:read! "M-x " complete-symbol "("
+               (prompt:read! "M-x " complete-symbol initial
                              (box (log:history 'eval car))
                              complete-editor-symbol normalize-input))])
-      (when (and s (> (string-length s) 0) (not (string=? s "(")))
+      (when (and s (> (string-length s) 0) (not (string=? s "(")) (not (string=? s initial)))
         ;; Keep the prompt on screen while its expression evaluates --
         ;; forgiven parentheses included -- with the cursor parked at
         ;; its end, drawn as the evaluation-in-progress underline.
         ;; An indicator, not a record: the expression is already
         ;; logged under eval.
         (paint:show-prompt-message! "M-x " s mx-echo-styles)
-        (let-values ([(outcome output-records)
-                      (parameterize ([paint:cursor-in-echo #t])
-                        (paint:redraw!)
-                        (evaluation-outcome s s))])
-          ;; One structured record per exchange: history reads the query,
-          ;; while the view and echo show the formatted pair.
-          (report-evaluation! s outcome output-records)))))
+        (let ([spoken (echo:text)])
+          (let-values ([(outcome output-records)
+                        (parameterize ([paint:cursor-in-echo #t])
+                          (paint:redraw!)
+                          (evaluation-outcome s s))])
+            ;; One structured record per exchange: history reads the query,
+            ;; while the view and echo show the formatted pair.
+            (report-evaluation! s outcome output-records spoken))))))
+
+  (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area.")
+  (define (eval-prompt!)
+    ;; the prompt pretypes "(", deletable, so a bare symbol evaluates too
+    (eval-prompt-with! "("))
 
   (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e and M-x bindings.")
   (define (init!)
@@ -958,9 +974,9 @@
       '(((eval:run!) (("procedure" . "(eval:run! [where])")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
-        ((eval:run!!) (("procedure" . "(eval:run!!)")) "void"
+        ((eval:prompt!) (("procedure" . "(eval:prompt!)")) "void"
          ("(eval)") eval "Evaluation commands" #f
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (log:register-formatter! 'eval format-exchange style-exchange)
     (keymap:bind-default! "C-x C-e" eval!)
-    (keymap:bind-default! "M-x" eval!!)))
+    (keymap:bind-default! "M-x" eval-prompt!)))

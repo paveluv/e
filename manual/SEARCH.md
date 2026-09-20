@@ -33,8 +33,9 @@ including query replacement, remain exact.
 
 ## Query replacement
 
-`M-%` runs `edit:replace!!` from point to the end of the current buffer. It prompts
-for any omitted arguments and highlights each occurrence before asking:
+`M-%` opens M-x with `(edit:replace! ` typed; give the text to find and its
+replacement as strings. From point to the end of the current buffer it
+highlights each occurrence before asking:
 
 | Key | Action |
 |---|---|

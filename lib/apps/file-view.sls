@@ -434,7 +434,7 @@
                              (line first-row text
                                (list (list 0 (string-length text) (path-input (car row) (directory:directory? (cdr row)))))))) shown))))
           pages))))
-  (define (path!!)
+  (define (path!)
     ;; The prompt owns the literal path; the browsing filter is set aside
     ;; and comes back when path entry is cancelled or a file is created.
     ;; A created directory is entered fresh: the filter seeded its path.
@@ -445,7 +445,7 @@
         (lambda ()
           (parameterize ([prompt:content (prompt:make-content (+ first-row 1)
                                            (lambda (input w height page) (path-lines input w height page base)) path-event!)])
-            (find-file!! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
+            (prompt-file! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
         (lambda ()
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
           (when (and view (memq view (head:buffers)) (head:app-buffer? view)) (start-scan!))))))
@@ -474,7 +474,7 @@
                (when target (show-buffer! target)))) #t]
           [(string=? event "C-u") (filter! "") #t]
           [(string=? event "C-r") (refresh!) #t]
-          [(string=? event "M-c") (path!!) #t]
+          [(string=? event "M-c") (path!) #t]
           [(string=? event "M-.") (show-hidden (not (show-hidden))) (filter! query) #t]
           [(member event '("BACKSPACE" "C-h"))
            (if (string=? query "") (parent!)

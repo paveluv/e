@@ -21,6 +21,13 @@
 
   ;;; Key dispatch ---------------------------------------------------------------------
 
+  (define expression-actions (make-hashtable string-hash string=?))
+  (define (expression-action text)
+    (or (hashtable-ref expression-actions text #f)
+        (let ([thunk (eval `(lambda () ,(read (open-string-input-port text))) (interaction-environment))])
+          (hashtable-set! expression-actions text thunk)
+          thunk)))
+
   (define (run-key-action! action capture)
     ;; Run a resolved binding's action and remember it as the last
     ;; command (an error still counts); an unbound key, or a context
@@ -30,6 +37,12 @@
            (unless (and capture (eq? action (cadr capture)))
              (head:follow-app! (head:current-window) #f))
            (dynamic-wind void action
+             (lambda () (head:set-last-command! action)))]
+          [(string? action)
+           ;; an expression bound to a key runs in the top level M-x uses,
+           ;; compiled once; describe-key shows it as written
+           (head:follow-app! (head:current-window) #f)
+           (dynamic-wind void (expression-action action)
              (lambda () (head:set-last-command! action)))]
           [(not action)
            (head:set-last-command! #f)

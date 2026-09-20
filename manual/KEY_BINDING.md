@@ -14,8 +14,8 @@ any meanings the key has inside prompts, incremental search, or query-replace.
 
 ```scheme
 (keymap:bind! "M-l" log-view:show!)
-(keymap:bind! "C-c s" edit:save!!)
-(keymap:bind! "C-c C-f" edit:find-file!!)
+(keymap:bind! "C-c s" edit:save!)
+(keymap:bind! "C-c C-f" edit:visit-file!)
 ```
 
 Global specifications may contain any number of space-separated key events.
@@ -24,7 +24,7 @@ is entered, e waits for the rest of the chord and displays the partial sequence
 in the echo area.
 
 A command must be a procedure callable with no arguments. Existing commands
-such as `edit:save!!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `edit:other-window!` can be
+such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `edit:other-window!` can be
 used directly. A lambda can adapt a command that needs arguments:
 
 ```scheme
@@ -237,7 +237,7 @@ buffer while their state refers to the old one.
 returns one effective global key specification:
 
 ```scheme
-(keymap:command-key 'save!!)
+(keymap:command-key 'save!)
 ```
 
 `keymap:command-keys` returns every effective global binding for the command. This is

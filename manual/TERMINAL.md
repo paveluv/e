@@ -4,7 +4,7 @@ e can host a real pseudo-terminal inside an app buffer. Start one with
 `C-c t` or:
 
 ```scheme
-(terminal:open!!)
+(terminal:open!)
 ```
 
 The command opens `*terminal*` in the current window and starts
@@ -25,15 +25,15 @@ Set the shell in `config.e` when desired:
 Pass a shell command to run it instead:
 
 ```scheme
-(terminal:open!! "top")
-(terminal:open!! "python3")
-(terminal:open!! "e README.md")
-(terminal:open!! "legmacs README.md")
+(terminal:open! "top")
+(terminal:open! "python3")
+(terminal:open! "e README.md")
+(terminal:open! "legmacs README.md")
 ```
 
 Explicit command strings are interpreted by the configured shell with `-c`,
 so quoting, pipelines, redirection, and compound shell commands work. A bare
-`(terminal:open!!)` executes the configured shell directly.
+`(terminal:open!)` executes the configured shell directly.
 
 This is a PTY, not redirected pipes. The child sees `TERM=xterm-256color`, a
 controlling terminal, and the terminal buffer's actual row and column count.
@@ -268,7 +268,7 @@ Headless emulators record the same signatures, readable through
 ## Scheme API
 
 ```scheme
-(terminal:open!! [command])
+(terminal:open! [command])
 (terminal:send! text)
 (terminal:close! [buffer])
 (terminal:scrollback [lines])

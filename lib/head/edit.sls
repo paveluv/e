@@ -29,7 +29,7 @@
 (elibrary (edit)
   (export init!
           regions-of region-text
-          replace-all! count-matches replace!!
+          replace-all! count-matches replace!
           next-conflict! keep-mine! keep-disk!
           list-buffers!
     ;; state, read-only
@@ -37,12 +37,12 @@
     buffer-text buffer-clean?
 
     ;; buffers, windows, files
-    visit-file! save-file! save!! save-as!! find-file!! default-directory
+    visit-file! save-file! save! prompt-file! default-directory
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
     fresh-buffer
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
     call-with-buffer
-    switch-buffer!! new-buffer!! kill-buffer!!
+    new-buffer! trash restore! empty-trash!
     split-window-below! split-window-right! split-window-above! split-window-left!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
@@ -50,7 +50,7 @@
     line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
-    kill-line! kill-region! copy-region! yank! undo! redo! undo-scope undo-actor! undo-actor!!
+    kill-line! kill-region! copy-region! yank! undo! redo! undo-scope undo-actor!
     copy-to-kill-buffer! current-kill-ring
     forward-kill-ring-to-system-clipboard
     set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
@@ -62,10 +62,10 @@
     call-as-one-edit!
     indent-line! indent-region! indent-buffer! format-region! format-buffer!
     move-horizontal! move-vertical! goto-point!
-    quit!!
+    quit!
     ;; extending the editor
 
-    describe-key!!
+    describe-key!
 
     register-indenter! register-formatter!
 
@@ -76,7 +76,7 @@
     select-window!
     set-message!
     mouse!
-    answer!!
+    answer!
     present-log-entry! present-log-entries!
 
 
@@ -459,26 +459,6 @@
         (returns string "the report shown in the echo area"))
   (define (undo-actor! who)
     (history-shift! 0 1 "Undo" (list 'actor who)))
-
-  (edoc "Choose another actor from completion and undo its latest live action in the current shared buffer.")
-  (define (undo-actor!!)
-    (let* ([b (head:window-buffer current-window)]
-           [id (head:buffer-store-id b)]
-           [authors (if id (store:undo-authors id) '())]
-           [choices (map (lambda (who) (cons (format "~s" who) who))
-                         (filter (lambda (who) (not (equal? who head:ui-actor))) authors))])
-      (if (null? choices)
-          (set! message "No other actors have undoable changes in this buffer")
-          (let ([answer (prompt:read! "Undo actor: "
-                          (lambda (prefix)
-                            (filter (lambda (name) (string:prefix? prefix name))
-                                    (map car choices))))])
-            (when answer
-              (let ([choice (assoc answer choices)])
-                (if choice (undo-actor! (cdr choice))
-                    (set! message "Choose an actor from the completion list")))))))
-    (void))
-
 
   ;;; Point, mark, and editing ----------------------------------------------
 
@@ -1317,55 +1297,83 @@
     (predicate (lambda (v) (and (procedure? v) (logbit? 0 (procedure-arity-mask v)))))
     (write action-name))
 
-  (define (complete-buffer-name s)
-    (sort string<? (filter (lambda (n) (string:prefix? s n))
-                           (map head:buffer-name buffers))))
+  (edoc "Create an empty shared buffer with a name, suffixed when the name is taken, and show it here."
+        (name string "the buffer's name")
+        (returns buffer))
+  (define (new-buffer! name)
+    (let ([b (head:new-buffer name)])
+      (show-buffer! b)
+      b))
 
-  (edoc "Open the filterable buffers app, as list-buffers! does.")
-  (define (switch-buffer!!)
-    (list-buffers!))
+  (define (age-text seconds)
+    ;; how long ago, in the coarsest unit that is not zero
+    (cond [(< seconds 60) (format "~a s" seconds)]
+          [(< seconds 3600) (format "~a min" (quotient seconds 60))]
+          [(< seconds 86400) (format "~a h" (quotient seconds 3600))]
+          [else (format "~a d" (quotient seconds 86400))]))
 
-  (edoc "Ask for a name and show a new empty buffer here; empty input or cancellation changes nothing.")
-  (define (new-buffer!!)
-    ;; Creation stays explicit when an empty switcher result is a typo.
-    (let ([name (prompt:read! "New buffer: " #f)])
-      (when (and name (not (string=? name "")))
-        (show-buffer! (head:new-buffer name)))))
+  (define (now-seconds) (time-second (current-time 'time-utc)))
 
-  (edoc "Kill a buffer: delete its shared text if it has any, and forget it here."
+  (define (trashed-ids)
+    (filter (lambda (id) (store:property id 'trashed #f)) (store:buffer-list)))
+
+  (edoc "Kill a buffer at once: a shared document goes to the trash, where restore! finds it under its name for store:trash-retention days; disposable output is deleted and a local buffer forgotten."
         (b buffer "the buffer to kill"))
   (define (kill-buffer! b)
-    (when (head:buffer-store-id b)
-      (store:delete! head:ui-actor (head:buffer-store-id b)))
-    (retire-buffer! b))
+    (let ([id (head:buffer-store-id b)] [name (head:buffer-name b)])
+      (let-values ([(text revision facts) (head:buffer-state b)])
+        (let ([unsaved? (not (file:state-clean? text facts))]
+              [disposable? (cond [(assq 'disposable facts) => cdr] [else #f])])
+          (cond [(not id) (void)]
+                [disposable? (store:delete! head:ui-actor id)]
+                [else (store:set-properties! head:ui-actor id (list (list 'trashed (now-seconds) head:ui-actor)))])
+          (head:forget-buffer! b)
+          (parameterize ([message-source 'kill-buffer!])
+            (set-message!
+              (cond [(or (not id) disposable?) (format "Killed ~a" name)]
+                    [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
+                    [else (format "Killed ~a; it is in the trash" name)])))))))
 
-  (define (retire-buffer! b)
-    (head:forget-buffer! b)
-    (parameterize ([message-source 'kill-buffer!])
-      (set-message! (format "Killed ~a" (head:buffer-name b)))))
+  (edoc "The trashed buffers, newest first, as (name killed-at actor): killed-at in UTC seconds; each expires store:trash-retention days after it was killed."
+        (returns (list-of list)))
+  (define (trash)
+    (list-sort (lambda (a b) (> (cadr a) (cadr b)))
+      (map (lambda (id)
+             (let ([t (store:property id 'trashed #f)])
+               (list (store:buffer-name id) (car t) (cadr t))))
+           (trashed-ids))))
 
-  (define (discard-reviewed! b revision facts)
-    (let ([id (head:buffer-store-id b)])
-      (and (if id (store:discard! head:ui-actor id revision facts)
-               (let-values ([(text current current-facts) (head:buffer-state b)])
-                 (and (= revision current) (equal? facts current-facts))))
-           (begin (retire-buffer! b) #t))))
+  (edoc-type trashed "the name of a buffer in the trash"
+    (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
+    (complete (lambda (partial)
+                (let ([now (now-seconds)])
+                  (map (lambda (entry) (cons (car entry) (format "killed ~a ago" (age-text (- now (cadr entry))))))
+                       (trash)))))
+    (write (lambda (v) (format "~s" v)))
+    (within string))
 
-  (edoc "Ask which buffer to kill, the current one by default, confirming when it has unsaved changes.")
-  (define (kill-buffer!!)
-    (let* ([current (head:window-buffer current-window)]
-           [s (prompt:read! (format "Kill buffer (default ~a): "
-                              (head:buffer-name current))
-                            complete-buffer-name)])
-      (when s
-        (let ([b (if (string=? s "") current (head:buffer-named s))])
-          (if (not b) (set! message (format "No buffer named ~a" s))
-              (let review ()
-                (let-values ([(text revision facts) (head:buffer-state b)])
-                  (when (or (file:state-clean? text facts)
-                            (prompt:confirm? (format "Buffer ~a modified; kill anyway?"
-                                               (head:buffer-name b))))
-                    (unless (discard-reviewed! b revision facts) (review))))))))))
+  (edoc "Bring a buffer back from the trash, with its text and history, and show it in the current window."
+        (name trashed "the buffer's name in the trash")
+        (returns buffer))
+  (define (restore! name)
+    (let ([id (find (lambda (id) (string=? (store:buffer-name id) name)) (trashed-ids))])
+      (unless id (error 'restore! "no such buffer in the trash" name))
+      (store:set-properties! head:ui-actor id '((trashed . #f)))
+      (let ([b (head:adopt-store-buffer! id)])
+        (unless b (error 'restore! "the buffer did not come back" name))
+        (show-buffer! b)
+        (parameterize ([message-source 'restore!])
+          (set-message! (format "Restored ~a" (head:buffer-name b))))
+        b)))
+
+  (edoc "Delete every trashed buffer for good; how many went."
+        (returns integer))
+  (define (empty-trash!)
+    (let ([ids (trashed-ids)])
+      (for-each (lambda (id) (store:delete! head:ui-actor id)) ids)
+      (parameterize ([message-source 'empty-trash!])
+        (set-message! (format "Emptied the trash: ~a buffer~a" (length ids) (if (= (length ids) 1) "" "s"))))
+      (length ids)))
 
   (define (next-window w)
     ;; the ring of ordinary windows: the pop-up is never in it
@@ -1956,46 +1964,28 @@
   ;; The head's side of the interaction protocol: another actor's
   ;; question waits in the echo area as an unlogged indicator until
   ;; C-c a answers it -- nobody's keyboard is stolen mid-thought.
-  (edoc "Answer the oldest question another actor posed through the interaction protocol.")
-  (define (answer!!)
-    ;; Answer the oldest question another actor posed (the interaction
-    ;; protocol: actor.sls).
+  (edoc-type answer "an answer to the oldest pending question, one of its choices"
+    (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
+    (complete (lambda (partial)
+                (let ([asks (actor:pending head:ui-actor)])
+                  (if (null? asks) '()
+                      (let ([ask (car asks)])
+                        (map (lambda (choice) (cons choice (caddr ask))) (cadddr ask)))))))
+    (write (lambda (v) (format "~s" v)))
+    (within string))
+
+  (edoc "Answer the oldest question another actor posed through the interaction protocol; its choices complete."
+        (choice answer "the answer"))
+  (define (answer! choice)
     (let ([asks (actor:pending head:ui-actor)])
-      (if (null? asks)
-          (set! message "Nothing to answer")
-          (let* ([ask (car asks)]
-                 [choices (cadddr ask)]
-                 [reply
-                  (prompt:read! (format "~a [~a] "
-                                  (caddr ask)
-                                  (if (null? choices)
-                                      "..."
-                                      (string:join choices "/")))
-                                (and (pair? choices)
-                                  (lambda (s)
-                                    (filter
-                                      (lambda (choice)
-                                        (string:prefix? s choice))
-                                      choices))))])
-            (when (and reply (> (string-length reply) 0))
-              (if (actor:answer! (car ask) reply)
-                  (set! message "Answered")
-                  (set! message "That question was withdrawn")))))))
+      (cond [(null? asks) (set! message "Nothing to answer")]
+            [(actor:answer! (car (car asks)) choice) (set! message "Answered")]
+            [else (set! message "That question was withdrawn")])))
 
   ;;; File commands -----------------------------------------------------------
 
   ;; The prompt -- the modal loop, completions, single-key questions --
   ;; lives in (prompt); the commands that ask are here.
-
-  (define (prompt-kill-buffer!)
-    ;; kill-buffer!!'s prompt-safe stand-in: no nested prompt, and a
-    ;; buffer with protected unsaved changes is refused with a note.
-    (let ([b (head:current-buffer)])
-      (guard (ex [else (string-append "  " (kernel:condition-text ex))])
-        (let-values ([(text revision facts) (head:buffer-state b)])
-          (cond [(not (file:state-clean? text facts)) (format "  ~a has unsaved changes" (head:buffer-name b))]
-            [(discard-reviewed! b revision facts) ""]
-            [else "  Buffer changed; review it again"])))))
 
   (define (file-prompt-styler label . directory)
     ;; Existence shown in the face, component-wise: the typed path's
@@ -2026,99 +2016,73 @@
         (string-append (file:base-name (substring path 0 (- (string-length path) 1))) "/")
         (file:base-name path)))
 
-  (edoc "Save the current buffer to its file, prompting for a path when it has none.")
-  (define (save!!)
+  (edoc "Save the current buffer to its file; a buffer without one refuses and names save-file!, which takes a path."
+        (returns boolean "whether the file was written"))
+  (define (save!)
     (if file-name
         (save-file! file-name)
-        (let ([s (parameterize ([prompt:completion-label file-completion-label]
-                                [paint:echo-highlight
-                                 (file-prompt-styler "Write file: ")])
-                   (prompt:read! "Write file: " file:complete
-                                 (default-directory)))])
-          (when (and s (> (string-length s) 0)) (save-file! s))))
-    (void))
-
-  (edoc "Prompt for a path, prefilled with the current file, and save the buffer there; it visits the new file from then on.")
-  (define (save-as!!)
-    ;; Prompt for a path -- prefilled with the current file, ready to
-    ;; edit -- and save the buffer there: the buffer visits the new
-    ;; file from then on, its name and mode following.
-    (let ([s (parameterize ([prompt:completion-label file-completion-label]
-                            [paint:echo-highlight (file-prompt-styler "Save as: ")])
-               (prompt:read! "Save as: " file:complete
-                             (if file-name
-                               (file:abbreviate (file:absolute file-name))
-                               (default-directory))
-                             (box (log:history 'save-file! cdr))))])
-      (when (and s (> (string-length s) 0)) (save-file! s)))
-    (void))
+        (refuse-file! "This buffer has no file: (edit:save-file! path) saves it under one")))
 
   (define find-file-drafts (make-weak-eq-hashtable))
 
   (edoc "Read a file path with completion, history and validation, then visit it; with a directory procedure, read a path to create instead: missing parents and an empty file are made on disk, or just directories for a trailing slash, existing targets are refused, and a created directory goes to the procedure. An initial path seeds the prompt."
         (directory-action (or procedure #f) "what to do with a created directory; #f to visit instead")
         (initial (or string #f) "the path to start from; #f for the default directory"))
-  (define find-file!!
+  (define (prompt-file! directory-action initial)
     ;; Validate/acquire while the path is still editable; show it only
     ;; after the temporary view has returned the window. Focus loss keeps
     ;; a per-window draft, while acceptance and explicit cancellation end it.
     ;; A browser's Create prompt makes missing parents and an empty file
     ;; (or just directories for a trailing slash), refusing existing targets.
-    (case-lambda
-      [()
-       (find-file!! #f #f)]
-      [(directory-action)
-       (find-file!! directory-action #f)]
-      [(directory-action initial)
-       (unless (and (or (not directory-action) (procedure? directory-action))
-                    (or (not initial) (string? initial)))
-         (error 'find-file!! "expected a directory action and an initial path" directory-action initial))
-       (let* ([owner current-window] [before (head:current-buffer)]
-              [saved (and (not initial) (hashtable-ref find-file-drafts owner #f))]
-              [directory (if saved (car saved) (default-directory))]
-              [draft (if saved (cdr saved) (box #f))]
-              [label (if directory-action "Create file: " "Find file: ")]
-              [ready #f])
-         (define (resolve s) (file:absolute s directory))
-         (define (complete s) (file:complete s directory))
-         (define (normalize s)
-           (if (and (not directory-action) (> (string-length s) 0) (not (string:suffix? "/" s))
+    (unless (and (or (not directory-action) (procedure? directory-action))
+                 (or (not initial) (string? initial)))
+      (error 'prompt-file! "expected a directory action and an initial path" directory-action initial))
+    (let* ([owner current-window] [before (head:current-buffer)]
+           [saved (and (not initial) (hashtable-ref find-file-drafts owner #f))]
+           [directory (if saved (car saved) (default-directory))]
+           [draft (if saved (cdr saved) (box #f))]
+           [label (if directory-action "Create file: " "Find file: ")]
+           [ready #f])
+      (define (resolve s) (file:absolute s directory))
+      (define (complete s) (file:complete s directory))
+      (define (normalize s)
+        (if (and (not directory-action) (> (string-length s) 0) (not (string:suffix? "/" s))
                  (guard (ex [else #f]) (file-directory? (file:expand (resolve s)))))
-             (string-append s "/") s))
-         (define (validate s)
-           (set! ready #f)
-           (guard (ex [(head:interrupted? ex) "Interrupted; edit the path or try again"]
-                    [(and directory-action (i/o-file-already-exists-error? ex))
-                     (prompt:transient
-                       (if (string:suffix? "/" s) "directory already exists" "file already exists"))]
-                    [(i/o-file-protection-error? ex) "Permission denied"]
-                    [(kernel:refusal? ex) (condition-message ex)]
-                    [else (kernel:condition-text ex)])
-             (if (string=? s "") #f
-               (head:call-with-interrupt
-                 (lambda ()
-                   (let* ([path (file:canonical (file:expand (resolve s)))]
-                          [directory? (string:suffix? "/" s)])
-                     (when directory-action
-                       (file:make-directories! (file:directory-part path))
-                       (file:create! (resolve s)))
-                     (cond [directory?
-                            (if (not directory-action)
-                              (if (file-directory? path) "Directory; Tab to list files" "Not an existing directory")
-                              (begin (set! ready (lambda () (directory-action path))) #f))]
-                           [else (set! ready (prepare-file-visit path)) #f])))))))
-         (let ([s (parameterize ([prompt:completion-label file-completion-label]
-                                 [paint:echo-highlight (file-prompt-styler label directory)]
-                                 [prompt:in-window #t] [prompt:validate validate] [prompt:draft draft])
-                    (prompt:read! label complete (or initial directory)
-                      (box (fold-right (lambda (path recent) (cons path (remove path recent)))
-                             '() (log:history 'visit-file! cdr head:ui-actor)))
-                      #f normalize))])
-           (if (and (not s) (memq owner windows) (not (eq? owner current-window))
+            (string-append s "/") s))
+      (define (validate s)
+        (set! ready #f)
+        (guard (ex [(head:interrupted? ex) "Interrupted; edit the path or try again"]
+                   [(and directory-action (i/o-file-already-exists-error? ex))
+                    (prompt:transient
+                      (if (string:suffix? "/" s) "directory already exists" "file already exists"))]
+                   [(i/o-file-protection-error? ex) "Permission denied"]
+                   [(kernel:refusal? ex) (condition-message ex)]
+                   [else (kernel:condition-text ex)])
+          (if (string=? s "") #f
+              (head:call-with-interrupt
+                (lambda ()
+                  (let* ([path (file:canonical (file:expand (resolve s)))]
+                         [directory? (string:suffix? "/" s)])
+                    (when directory-action
+                      (file:make-directories! (file:directory-part path))
+                      (file:create! (resolve s)))
+                    (cond [directory?
+                           (if (not directory-action)
+                             (if (file-directory? path) "Directory; Tab to list files" "Not an existing directory")
+                             (begin (set! ready (lambda () (directory-action path))) #f))]
+                          [else (set! ready (prepare-file-visit path)) #f])))))))
+      (let ([s (parameterize ([prompt:completion-label file-completion-label]
+                              [paint:echo-highlight (file-prompt-styler label directory)]
+                              [prompt:in-window #t] [prompt:validate validate] [prompt:draft draft])
+                 (prompt:read! label complete (or initial directory)
+                   (box (fold-right (lambda (path recent) (cons path (remove path recent)))
+                          '() (log:history 'visit-file! cdr head:ui-actor)))
+                   #f normalize))])
+        (if (and (not s) (memq owner windows) (not (eq? owner current-window))
                  (eq? (head:window-buffer owner) before))
-             (hashtable-set! find-file-drafts owner (cons directory draft))
-             (hashtable-delete! find-file-drafts owner))
-           (when (and s ready) (ready))))]))
+            (hashtable-set! find-file-drafts owner (cons directory draft))
+            (hashtable-delete! find-file-drafts owner))
+        (when (and s ready) (ready)))))
 
   (define (view-quit-buffers!)
     (let ([b (head:find-tool-buffer "*buffers*")])
@@ -2130,22 +2094,9 @@
               (set! message "")))
           (set-message! "The <buffers> app is not available"))))
 
-  (edoc "Quit the editor, asking first when buffers are modified: yes, no, or view them.")
-  (define (quit!!)
-    (let review ([changed? #f])
-      (let-values ([(unsaved valid?) (head:prepare-quit)])
-        (let ([answer
-               (if (zero? unsaved) #\y
-                 (prompt:key!
-                   (if changed?
-                       "Buffers changed; quit anyway? y)es, n)o, v)iew"
-                       "Modified buffers exist; quit anyway? y)es, n)o, v)iew")
-                   "ynv"))])
-          (case (and answer (char-downcase answer))
-            [(#\y)
-             (if (head:call-uninterrupted valid?) (head:depart!) (review #t))]
-            [(#\v) (head:view-review!)]
-            [else (void)])))))
+  (edoc "Quit this head at once: shared text stays in the base, the screen is checkpointed for the next attach, and the exit notice names every buffer with unsaved work.")
+  (define (quit!)
+    (head:depart!))
 
   ;;; Pasting and typed runs --------------------------------------------------
 
@@ -2568,6 +2519,7 @@
     (cond
       [(not action) "unbound"]
       [(symbol? action) (symbol->string action)]
+      [(string? action) action]
       [else
        (let ([sym
               (find
@@ -2595,7 +2547,7 @@
           sequence)))
 
   (edoc "Read a key sequence and show in the help buffer what it runs, who bound it and what it shadows.")
-  (define (describe-key!!)
+  (define (describe-key!)
     (parameterize ([message-source #f])
       (set-message! "Describe key: "))
     (paint:redraw!)
@@ -2814,71 +2766,66 @@
                  (cons row hit)
                  (loop (+ row 1) 0))))))
 
-  (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered; y or SPC replaces, n or DEL skips, q, RET, C-g or ESC stops. Prompts for whichever of from and to are not given; the whole run is one undo step."
-        (args (list-of string) "from and then to, either or both omitted to be prompted for"))
-  (define (replace!! . args)
+  (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered, y or SPC replaces, n or DEL skips, q stops; one undo step, point following."
+        (from string "the text to find, within one line")
+        (to string "its replacement"))
+  (define (replace! from to)
     ;; Query-replace in the current buffer, from point to the end: each
     ;; occurrence of from is highlighted and offered -- y (or SPC)
-    ;; replaces, n (or DEL) skips, q / RET / C-g / ESC stops.  Prompts
-    ;; for whichever of from and to are not supplied.  The whole run is
-    ;; one undo step; point follows, ending after the last replacement
-    ;; (or at the start of the last skipped or stopped-at match).  The
-    ;; report -- how many replaced and skipped -- is echoed.
-    (let* ([from (if (pair? args) (car args) (prompt:read! "Replace: "))]
-           [to (and from
-                    (if (and (pair? args) (pair? (cdr args)))
-                        (cadr args)
-                        (prompt:read! (format "Replace ~s with: " from))))])
-      (if (or (not from) (not to) (string=? from ""))
-          (void)                      ; cancelled at a prompt
-          (let ([b (head:current-buffer)]
-                [m (string-length from)]
-                [question (format "Replace ~s with ~s? (y, n, q)" from to)]
-                [replaced 0]
-                [skipped 0])
-            (dynamic-wind
-              void
-              (lambda ()
-                (call-as-one-edit! (format "(replace!! ~s ~s)" from to)
-                  (lambda ()
-                    (let loop ([row (car (point))] [col (cdr (point))])
-                      (let ([hit (find-from b from row col)])
-                        (when hit
-                          (set! query-match
-                            (list (car hit) (cdr hit) (+ (cdr hit) m)))
-                          (goto-point! (cons (car hit) (+ (cdr hit) m)))
-                          (parameterize ([message-source #f]) ; an indicator
-                            (set-message! question))
-                          (paint:redraw!)     ; the match highlight, not the message
-                          (let* ([event (head:read-key-event #f)]
-                                 [action (and (not (eof-object? event))
-                                              (keymap:event-binding
-                                                'query-replace event))])
-                            (case action
-                              [(replace)
-                               (replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
-                               (set! replaced (+ replaced 1))
-                               (loop (car (point)) (cdr (point)))]
-                              [(skip)
-                               (set! skipped (+ skipped 1))
-                               (goto-point! hit)
-                               (loop (car hit) (+ (cdr hit) m))]
-                              [(stop) (goto-point! hit)]
-                              [(quit-prefix)
-                               (let ([next (head:read-key-event #f)])
-                                 (when (and (not (eof-object? next))
-                                            (eq? (keymap:event-binding
-                                                   'query-replace "C-x" next)
-                                              'quit-editor))
-                                   (quit!!))
-                                 (goto-point! hit))]
-                              [else
-                               (if (eof-object? event)
-                                   (goto-point! hit)
-                                   (loop (car hit) (cdr hit)))]))))))))
-              (lambda () (set! query-match #f)))
-            (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
-            (void)))))
+    ;; replaces, n (or DEL) skips, q / RET / C-g / ESC stops.  The whole
+    ;; run is one undo step; point follows, ending after the last
+    ;; replacement (or at the start of the last skipped or stopped-at
+    ;; match).  The report -- how many replaced and skipped -- is echoed.
+    (if (string=? from "")
+        (void)
+        (let ([b (head:current-buffer)]
+              [m (string-length from)]
+              [question (format "Replace ~s with ~s? (y, n, q)" from to)]
+              [replaced 0]
+              [skipped 0])
+          (dynamic-wind
+            void
+            (lambda ()
+              (call-as-one-edit! (format "(replace! ~s ~s)" from to)
+                (lambda ()
+                  (let loop ([row (car (point))] [col (cdr (point))])
+                    (let ([hit (find-from b from row col)])
+                      (when hit
+                        (set! query-match
+                          (list (car hit) (cdr hit) (+ (cdr hit) m)))
+                        (goto-point! (cons (car hit) (+ (cdr hit) m)))
+                        (parameterize ([message-source #f]) ; an indicator
+                          (set-message! question))
+                        (paint:redraw!)     ; the match highlight, not the message
+                        (let* ([event (head:read-key-event #f)]
+                               [action (and (not (eof-object? event))
+                                            (keymap:event-binding
+                                              'query-replace event))])
+                          (case action
+                            [(replace)
+                             (replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
+                             (set! replaced (+ replaced 1))
+                             (loop (car (point)) (cdr (point)))]
+                            [(skip)
+                             (set! skipped (+ skipped 1))
+                             (goto-point! hit)
+                             (loop (car hit) (+ (cdr hit) m))]
+                            [(stop) (goto-point! hit)]
+                            [(quit-prefix)
+                             (let ([next (head:read-key-event #f)])
+                               (when (and (not (eof-object? next))
+                                          (eq? (keymap:event-binding
+                                                 'query-replace "C-x" next)
+                                               'quit-editor))
+                                 (quit!))
+                               (goto-point! hit))]
+                            [else
+                             (if (eof-object? event)
+                                 (goto-point! hit)
+                                 (loop (car hit) (cdr hit)))]))))))))
+            (lambda () (set! query-match #f)))
+          (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
+          (void))))
 
   ;;; Conflict resolution ---------------------------------------------------------
 
@@ -3337,8 +3284,7 @@
                       focus-window-left! focus-window-right!
                       other-window! split-window-below! split-window-right!
                       split-window-above! split-window-left!
-                      delete-window! delete-other-windows!))
-      (prompt:allow! kill-buffer!! prompt-kill-buffer!))
+                      delete-window! delete-other-windows!)))
     ;; The pump lives in (head); its mouse report handler is the
     ;; commands' and is installed here.
     (head:set-mouse-handler! apply-mouse-event!)
@@ -3365,15 +3311,15 @@
           ("END" ,end-of-line!) ("DELETE" ,delete-forward!)
           ("PAGEUP" ,page-up!) ("PAGEDOWN" ,page-down!)
           ("PASTE" ,paste-into-buffer!) ("SELF-INSERT" ,self-insert-command!)
-          ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!!)
-          ("C-x C-w" ,save-as!!) ("C-x C-c" ,quit!!)
-          ("C-x b" ,switch-buffer!!)
-          ("C-x k" ,kill-buffer!!) ("C-x o" ,other-window!)
+          ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!)
+          ("C-x C-w" "(eval:prompt-with! \"(edit:save-file! \\\"\")") ("C-x C-c" ,quit!)
+          ("C-x b" ,list-buffers!)
+          ("C-x k" "(edit:kill-buffer! (head:current-buffer))") ("C-x o" ,other-window!)
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
           ("C-x 2" ,split-window-below!) ("C-x 3" ,split-window-right!)
           ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
-          ("C-h k" ,describe-key!!)
-          ("C-c a" ,answer!!)))
+          ("C-h k" ,describe-key!)
+          ("C-c a" "(eval:prompt-with! \"(edit:answer! \")")))
       (for-each
         (lambda (entry)
           (keymap:bind-default! 'prompt (car entry) (cadr entry)))
@@ -3392,7 +3338,7 @@
     ;; after every key
     (begin
       (head:set-file-opener! visit-file!)
-      (head:set-quit-command! quit!!)
+      (head:set-quit-command! quit!)
       (head:set-review-viewer! view-quit-buffers!)
       (head:set-after-key! clamp-point!))
 
@@ -3410,17 +3356,10 @@
         ((undo-actor!) (("procedure" . "(undo-actor! actor)")) "string"
          ("(edit)") edit "Editing commands" #f
          "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")
-        ((undo-actor!!) (("procedure" . "(undo-actor!!)")) "void"
-         ("(edit)") edit "Editing commands" #f
-         "Choose another actor from completion and undo its latest live action in the current shared buffer. Eligibility and overlap are rechecked after the choice. Use `redo!` to reverse that undo.")
         ((replace-all!)
          (("procedure" . "(replace-all! from to [where])"))
          "integer" ("(edit)") edit "Editing commands" #f
          "Replace every occurrence of `from` with `to` in `where`. Each buffer is changed as one undo step and point is preserved. If `where` is omitted, use the selected region or the whole current buffer; it may also be a buffer, buffer name, region, buffer predicate, or list of these.")
-        ((replace!!)
-         (("procedure" . "(replace!! [from] [to] [where])"))
-         "void" ("(edit)") edit "Editing commands" #f
-         "Interactively visit occurrences of `from` in `where`, asking whether to replace each one with `to`. Any omitted arguments are prompted for. The query accepts `y` or Space to replace, `n` to skip, and `q` or Return to stop.")
         ((next-conflict!) (("procedure" . "(next-conflict!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Move point to the next merge conflict marker in the current buffer, wrapping at the end. Report a message if the buffer has no conflicts.")
@@ -3433,18 +3372,9 @@
         ((default-directory) (("procedure" . "(default-directory)")) "string"
          ("(edit)") edit "Files" #f
          "The current file's parent, an app's working directory, or the head's launch directory, absolute with home abbreviated and a trailing slash. This is the common starting directory for path prompts and browsers.")
-        ((find-file!!) (("procedure" . "(find-file!! [on-directory [initial-path]])")) "void"
-         ("(edit)") edit "Files" #f
-         "Read a file path with completion, history and validation, then visit it. With an optional directory procedure, use a Create file prompt: acceptance creates missing parents and an empty file on disk, or just a directory for a trailing slash. Existing targets are refused, and each new path is logged with parents first. After cleanup, the procedure receives the created absolute directory path, or the new file's buffer opens. An optional initial path seeds the prompt. Without the procedure, visiting never creates files on disk, directories stay in path entry for completion, and missing parents are reported. The files app uses this to share path editing and file identity.")
         ((list-buffers!) (("procedure" . "(list-buffers!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Show `<buffers>` with the most recently used other buffer selected. Type to filter names and paths, use arrows to choose, and press Enter to switch. Esc/C-g returns to the invoking document; C-u clears the filter. Click headings or use F1 through F6 in column order to cycle ascending, descending, then off; superscripts show sort-key priority. Modified shows the last edit time for unsaved buffers and sorts by the full timestamp. A side-panel click changes the focused window without taking focus.")
-        ((switch-buffer!!) (("procedure" . "(switch-buffer!!)")) "void"
-         ("(edit)") edit "Editing commands" #f
-         "Open the filterable buffers app, just like `list-buffers!`. C-x b and C-x C-b share this workflow; Enter immediately selects the most recently used other buffer.")
-        ((new-buffer!!) (("procedure" . "(new-buffer!!)")) "void"
-         ("(edit)") edit "Editing commands" #f
-         "Ask for a name and create an empty shared buffer here. Empty input or cancellation leaves the document unchanged. A name already in use receives a unique suffix; an unmatched switcher filter never creates a buffer.")
         ((previous-buffer!) (("procedure" . "(previous-buffer!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning.")
@@ -3500,7 +3430,7 @@
     (keymap:bind-default! "C-x C-b" list-buffers!)
     (keymap:bind-default! "M-S-UP" previous-buffer!)
     (keymap:bind-default! "M-S-DOWN" next-buffer!)
-    (keymap:bind-default! "M-%" replace!!)
+    (keymap:bind-default! "M-%" "(eval:prompt-with! \"(edit:replace! \")")
     (keymap:bind-default! "M-n" next-conflict!)
     (keymap:bind-default! "M-m" keep-mine!)
     (keymap:bind-default! "M-d" keep-disk!)
