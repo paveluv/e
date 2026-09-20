@@ -106,9 +106,9 @@
   (define (symbol-at-point)
     ;; The symbol the cursor is on -- or just after, as at the end of a
     ;; word -- in the current buffer; #f when point is not at one.
-    (let* ([b (current-buffer)]
+    (let* ([b (head:current-buffer)]
            [p (point)]
-           [s (buffer-line b (car p))]
+           [s (head:buffer-line b (car p))]
            [n (string-length s)]
            [on? (lambda (i)
                   (and (>= i 0) (< i n)
@@ -124,7 +124,7 @@
   (define (scheme-buffer?)
     ;; Scheme under any dress: the scheme mode itself and the
     ;; pretty-scheme-* renderings, which draw the same buffer text.
-    (let ([m (mode:name-of (current-buffer))])
+    (let ([m (mode:name-of (head:current-buffer))])
       (and m (or (string=? m "scheme")
                  (string:prefix? "pretty-scheme" m)))))
 

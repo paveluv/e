@@ -28,8 +28,8 @@
      (define refused? test:raises?)
      (define (find-row b text)
        (let loop ([r 0])
-         (cond [(= r (buffer-line-count b)) (error 'find-row "missing line" text)]
-               [(string=? (buffer-line b r) text) r]
+         (cond [(= r (head:buffer-line-count b)) (error 'find-row "missing line" text)]
+               [(string=? (head:buffer-line b r) text) r]
                [else (loop (+ r 1))])))
      (define (make-source name lines)
        (let ([b (head:new-buffer name)])
@@ -48,7 +48,7 @@
      (head:buffer-history-set! source history)
      (show-buffer! source)
      (goto-point! '(2 . 1))
-     (define w1 (head:current))
+     (define w1 (head:current-window))
      (head:window-width-set! w1 80)
      (head:window-size-set! w1 12)
      (define w2 (head:make-window source 0 0 0 0 0 12 80 80 'default))
@@ -62,9 +62,9 @@
      (define subscription
        (store:subscribe! #f (lambda (event) (set! events (cons event events)))))
      (define companion (markdown:companion! source))
-     (define companion-keeps-focus (and (eq? (current-buffer) source) (equal? (point) '(2 . 1))))
+     (define companion-keeps-focus (and (eq? (head:current-buffer) source) (equal? (point) '(2 . 1))))
      (markdown:view!)
-     (define view (current-buffer))
+     (define view (head:current-buffer))
      (check 'companion-is-independent-of-window-selection
             (list (eq? view source) (eq? view companion) companion-keeps-focus
                   (eq? (markdown:companion source) view)) '(#f #t #t #t))
@@ -83,7 +83,7 @@
      (check 'viewing-keeps-store-buffers (list-sort < (store:buffer-list)) original-buffers)
      (check 'viewing-emits-no-store-events events '())
      (markdown:edit!)
-     (check 'toggle-returns-source (eq? (current-buffer) source) #t)
+     (check 'toggle-returns-source (eq? (head:current-buffer) source) #t)
      (check 'toggle-keeps-source-row (point) '(2 . 0))
      (check 'toggle-does-not-restore-text (store:revision id) original-revision)
      (check 'toggle-does-not-write-facts (store:properties id) original-facts)
@@ -93,7 +93,7 @@
      (set-buffer-name! source "renamed.md")
      (head:buffer-read-only-set! source #t)
      (markdown:view!)
-     (check 'source-rename-keeps-companion (eq? (current-buffer) view) #t)
+     (check 'source-rename-keeps-companion (eq? (head:current-buffer) view) #t)
      (markdown:edit!)
      (check 'source-read-only-is-preserved (head:buffer-read-only source) #t)
      (head:buffer-read-only-set! source #f)
@@ -114,7 +114,7 @@
            "" "After table")))
      (show-buffer! table)
      (markdown:view!)
-     (define table-view (current-buffer))
+     (define table-view (head:current-buffer))
      (head:set-window-buffer! w2 table-view)
      (define after (find-row table-view "After table"))
      (head:window-prow-set! w2 after)
@@ -132,16 +132,16 @@
      (check 'table-refit-changes-row-count
             (> (find-row table-view "After table") after) #t)
      (check 'refit-keeps-other-window-content
-            (buffer-line table-view (head:window-prow w2)) "After table")
+            (head:buffer-line table-view (head:window-prow w2)) "After table")
      (check 'refit-keeps-other-window-top
-            (buffer-line table-view (head:window-top w2)) "After table")
+            (head:buffer-line table-view (head:window-top w2)) "After table")
      (check 'refit-keeps-selected-window-row (head:window-prow w1) 0)
      (check 'refit-keeps-selection-mark
-            (buffer-line table-view (head:buffer-mark-row table-view)) "After table")
+            (head:buffer-line table-view (head:buffer-mark-row table-view)) "After table")
      (check 'refit-keeps-saved-position
-            (buffer-line table-view (head:buffer-spot-row table-view)) "After table")
+            (head:buffer-line table-view (head:buffer-spot-row table-view)) "After table")
      (check 'refit-keeps-saved-viewport
-            (buffer-line table-view (head:buffer-spot-top table-view)) "After table")
+            (head:buffer-line table-view (head:buffer-spot-top table-view)) "After table")
 
      ;; Rebind an already registered runtime companion from its input.
      (define callback (head:app-refresh! (head:app-of table-view)))
@@ -152,7 +152,7 @@
      (check 'reload-keeps-source-reference
             (eq? (head:buffer-fact table-view 'markdown-input #f) table) #t)
      (check 'reload-keeps-rendered-text
-            (buffer-line table-view (head:window-prow w2)) "After table")
+            (head:buffer-line table-view (head:window-prow w2)) "After table")
 
      ;; Literal markdown belongs to local app input, never a shared target.
      (define literal (head:new-local-buffer "literal markdown"))
@@ -182,14 +182,14 @@
      (markdown:view!)
      (goto-point! '(0 . 0))
      (head:tile! 80 12)
-     (let* ([w (head:current)] [cell (paint:window-screen-position w 0 1)])
+     (let* ([w (head:current-window)] [cell (paint:window-screen-position w 0 1)])
        (head:set-mouse-position! (cons (cdr cell) (car cell)))
        (check 'markdown-link-hover-uses-the-link-label-without-moving-point
          (list (filter (lambda (range) (eq? (car range) w)) (paint:highlight-ranges)) (point))
          (list (list (list w 0 0 5 'hover)) '(0 . 0)))
        (head:set-mouse-position! #f))
      ((keymap:binding 'markdown-view "RET"))
-     (define child-view (current-buffer))
+     (define child-view (head:current-buffer))
      (define child (head:buffer-fact child-view 'markdown-input #f))
      (check 'relative-link-visits-source-directory (head:buffer-file child) child-path)
      (check 'relative-link-opens-local-view (head:buffer-store-id child-view) #f)
@@ -200,7 +200,7 @@
      (goto-point! '(0 . 0))
      ((keymap:binding 'markdown-view "RET"))
      (check 'absolute-link-reuses-child-source
-            (eq? (head:buffer-fact (current-buffer) 'markdown-input #f) child) #t)
+            (eq? (head:buffer-fact (head:current-buffer) 'markdown-input #f) child) #t)
      (delete-file child-path)
      (delete-directory (string-append directory "/docs"))
      (delete-directory directory)
@@ -211,7 +211,7 @@
      (check 'killing-view-preserves-source (store:exists? id) #t)
      (show-buffer! source)
      (markdown:view!)
-     (define replacement-view (current-buffer))
+     (define replacement-view (head:current-buffer))
      (check 'killed-view-is-recreated (eq? replacement-view view) #f)
      ;; Hiding and deleting share local retirement. A source in one window
      ;; and its companion in another disappear before any repaint callback.
@@ -225,7 +225,7 @@
                 [hidden? (memq action '(hide-own hide-foreign))])
            (show-buffer! source)
            (markdown:view!)
-           (let ([view (current-buffer)] [observations '()])
+           (let ([view (head:current-buffer)] [observations '()])
              (set! retiring source)
              (set! cleanup-count 0)
              (head:set-window-buffer! w2 source)
@@ -262,9 +262,9 @@
      (mode:choose! local-source "markdown")
      (show-buffer! local-source)
      (markdown:view!)
-     (check 'local-source-gets-local-view (head:buffer-store-id (current-buffer)) #f)
+     (check 'local-source-gets-local-view (head:buffer-store-id (head:current-buffer)) #f)
      (check 'local-source-stays-source (head:buffer-lines local-source) '#("# Local"))
      (markdown:edit!)
-     (check 'return-to-local-source (eq? (current-buffer) local-source) #t)
+     (check 'return-to-local-source (eq? (head:current-buffer) local-source) #t)
 
      (test:finish! 'markdown-view)))

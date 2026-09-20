@@ -141,7 +141,7 @@
 
   (define (buffer-of-id id)
     (find (lambda (b) (eqv? (head:buffer-store-id b) id))
-          (buffer-list)))
+          (head:buffers)))
 
   (define (blame-highlights)
     (let* ([now (current-time 'time-monotonic)]
@@ -162,7 +162,7 @@
   (edoc "Say who recently wrote the text at point, from the store log of the current shared buffer.")
   (define (blame-at-point!)
     ;; who recently wrote the text at point, from the store's log
-    (let* ([b (current-buffer)]
+    (let* ([b (head:current-buffer)]
            [id (head:buffer-store-id b)]
            [p (point)])
       (set-message!

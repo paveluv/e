@@ -63,7 +63,7 @@
          (list-tail (lines) 3)))
      (define (location)
        (list (head:buffer-fact (view) 'directory #f) (head:buffer-fact (view) 'file-filter #f)))
-     (define (chosen-is? prefix) (string:prefix? prefix (buffer-line (current-buffer) (car (point)))))
+     (define (chosen-is? prefix) (string:prefix? prefix (head:buffer-line (head:current-buffer) (car (point)))))
      (define (group-count name)
        (let ([line (find (lambda (s) (string:prefix? name s)) (lines))])
          (and line (substring line (- (string-length line) 3) (string-length line)))))
@@ -75,7 +75,7 @@
      (check 'files-list-has-only-subdirectories-and-files-with-a-full-directory-path
        (list (list-head (labels) 4) (cadr (lines))
              (and (member "odd\\xA;name.txt" (labels)) #t) (and (member ".dot" (labels)) #t)
-             (head:buffer-store-id (view)) (head:app-cursor-visible-in? (selected-window))
+             (head:buffer-store-id (view)) (head:app-cursor-visible-in? (head:current-window))
              (head:buffer-selectable? (view))
              (eq? (keymap:binding "C-x C-f") (top-level-value 'file-view:open!)))
        (list '("empty/" "large/" "small/" "a 日本語 long (name).txt") (string-append "Directory: " root "/")
@@ -86,10 +86,10 @@
      (press! "RET")
      (define visited
        (begin (goto-point! '(1 . 1)) (insert-text! "!")
-              (list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer)))))
+              (list (head:buffer-store-id (head:current-buffer)) (point) (buffer-text (head:current-buffer)))))
      (files-open! root) (filter! "only") (press! "RET")
      (check 'files-reopening-reuses-unsaved-buffer-and-window-point
-       (list (head:buffer-store-id (current-buffer)) (point) (buffer-text (current-buffer))) visited)
+       (list (head:buffer-store-id (head:current-buffer)) (point) (buffer-text (head:current-buffer))) visited)
 
      ;; A filter names entries unless it contains a slash: a directory whose
      ;; name matches does not claim its contents, while its path does.
@@ -150,7 +150,7 @@
      (define inside-link (location))
      (filter! "needle-only.txt") (press! "RET")
      (check 'files-typed-link-path-remains-navigable-without-recursively-following-links
-       (list route inside-link (head:buffer-file (current-buffer)))
+       (list route inside-link (head:buffer-file (head:current-buffer)))
        (list '("linked@/") (list (path "linked") "linked/needle") (path "small/nested/needle-only.txt")))
      (delete-file (path "linked"))
      (files-open! (path "small/nested"))
@@ -191,21 +191,21 @@
        (begin (guard (ex [else #f]) (set-mark-command!)) (head:buffer-marked (view))) #f)
      (filter! "日本語") (press! "RET")
      (check 'files-unicode-filter-opens-the-complete-path
-       (head:buffer-file (current-buffer)) (path "a 日本語 long (name).txt"))
+       (head:buffer-file (head:current-buffer)) (path "a 日本語 long (name).txt"))
 
      ;; Identity: a killed view's scan is rejected by its recreation, and a
      ;; real reload replaces the worker's owner while restoring the app state.
      (files-open! root)
      (head:dispatch-app-event! "n")
-     (kill-buffer! (current-buffer))
+     (kill-buffer! (head:current-buffer))
      (files-open! (path "empty"))
      (check 'files-kill-and-recreate-rejects-the-old-scan
        (list (car (location)) (car (lines)) (head:app-buffer? (view))) (list (path "empty") "Filter: " #t))
      (define same-view
-       (let ([before (current-buffer)])
+       (let ([before (head:current-buffer)])
          (head:dispatch-app-event! "n") (head:dispatch-app-event! "M-.")
          (kernel:reload-module! "file-view")
-         (eq? before (current-buffer))))
+         (eq? before (head:current-buffer))))
      (settle!)
      (check 'files-reload-replaces-worker-ownership-and-restores-app-state
        (list same-view (visible? "No matching files") (car (location)) (car (lines))

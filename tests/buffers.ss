@@ -23,20 +23,20 @@
      (define (sequence proc items)
        ;; map does not promise effect order; event sequences do.
        (reverse (fold-left (lambda (acc item) (cons (proc item) acc)) '() items)))
-     (define (rows) (cddr (vector->list (head:buffer-lines (current-buffer)))))
-     (define (heading) (vector-ref (head:buffer-lines (current-buffer)) 1))
+     (define (rows) (cddr (vector->list (head:buffer-lines (head:current-buffer)))))
+     (define (heading) (vector-ref (head:buffer-lines (head:current-buffer)) 1))
      (define (name-in line)
        (let ([start (string:search line "<" 0 (string-length line))])
          (and start (substring line start (+ 1 (string:search line ">" start (string-length line)))))))
      (define (names) (map name-in (rows)))
-     (define (selected) (name-in (buffer-line (current-buffer) (car (point)))))
-     (define (state) (list (head:buffer-name (current-buffer)) (point)))
+     (define (selected) (name-in (head:buffer-line (head:current-buffer) (car (point)))))
+     (define (state) (list (head:buffer-name (head:current-buffer)) (point)))
      (define (order tags) (map (lambda (tag) (format "<picker-~a>" tag)) tags))
      (define picker-all (order '(alpha beta gamma)))
      (define (row-of name)
        (find (lambda (line) (string:search line name 0 (string-length line))) (rows)))
 
-     (define origin (current-buffer))
+     (define origin (head:current-buffer))
      (parameterize ([kernel:registering-module 'picker-fixture])
        (for-each (lambda (name) (mode:register! name '() '() (lambda (line) #f))) '("pick-a" "pick-z")))
      (for-each
@@ -65,7 +65,7 @@
        '((1 "<picker-beta>") (1 "<picker-beta>") (1 "<picker-alpha>")))
      (press! "C-u") (type! "no-such-buffer") (press! "RET")
      (check 'empty-results-never-create-a-buffer-or-leave-the-list
-       (list (rows) (head:buffer-name (current-buffer)) (head:buffer-named "no-such-buffer"))
+       (list (rows) (head:buffer-name (head:current-buffer)) (head:buffer-named "no-such-buffer"))
        '(("No matching buffers") "<buffers>" #f))
      (press! "C-g")
      (check 'cancel-restores-the-origin-and-its-point (state) '("<picker-beta>" (4 . 1)))
@@ -151,17 +151,17 @@
      (kill-buffer! (head:find-tool-buffer "*buffers*"))
      (list-buffers!)
      (check 'recreated-switcher-lists-itself-with-current-metadata
-       (let* ([b (current-buffer)] [lines (head:buffer-lines b)]
+       (let* ([b (head:current-buffer)] [lines (head:buffer-lines b)]
               [needle (format "<buffers>  ~a" (vector-length lines))])
-         (list (head:app-buffer? b) (head:buffer-selectable? b) (head:app-cursor-visible-in? (selected-window))
-               (= (vector-length lines) (+ 2 (length (buffer-list))))
+         (list (head:app-buffer? b) (head:buffer-selectable? b) (head:app-cursor-visible-in? (head:current-window))
+               (= (vector-length lines) (+ 2 (length (head:buffers))))
                (exists (lambda (line) (and (string:search line needle 0 (string-length line)) #t))
                  (vector->list lines))))
        '(#t #f #f #t #t))
      (type! "picker-beta") (press! "RET")
-     (kill-buffer! (current-buffer))
+     (kill-buffer! (head:current-buffer))
      (check 'retiring-a-visited-buffer-does-not-return-to-the-switcher
-       (list (eq? (current-buffer) (head:find-tool-buffer "*buffers*")) (and (memq (current-buffer) (buffer-list)) #t))
+       (list (eq? (head:current-buffer) (head:find-tool-buffer "*buffers*")) (and (memq (head:current-buffer) (head:buffers)) #t))
        '(#f #t))
 
      (show-buffer! origin)

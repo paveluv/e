@@ -37,7 +37,7 @@
     (and (terminal-facts buffer) (head:buffer-store-id buffer)))
 
   (define (send-input! text paste?)
-    (let* ([w (selected-window)] [id (terminal-id (current-buffer))])
+    (let* ([w (head:current-window)] [id (terminal-id (head:current-buffer))])
       (unless id (error 'terminal "current buffer is not a terminal"))
       (head:follow-app! w #t)
       (vt:send! head:ui-actor id text
@@ -53,13 +53,13 @@
     (send-input! (current-kill-ring) #t) (void))
   (edoc "Toggle whether the current terminal window captures every key, C-x and M-x included.")
   (define (terminal-toggle-capture!)
-    (unless (and (terminal-id (current-buffer)) (head:app-buffer? (current-buffer)))
+    (unless (and (terminal-id (head:current-buffer)) (head:app-buffer? (head:current-buffer)))
       (error 'toggle-capture! "current buffer is not a live terminal"))
-    (let ([w (selected-window)]) (head:set-full-capture! w (not (head:full-capture? w)))))
+    (let ([w (head:current-window)]) (head:set-full-capture! w (not (head:full-capture? w)))))
   (edoc "Close the terminal of a buffer, the current one by default, ending its process."
         (buffer* (list-of buffer) "the terminal buffer, at most one"))
   (define (terminal-close! . buffer*)
-    (cond [(terminal-id (if (pair? buffer*) (car buffer*) (current-buffer))) => vt:close!])
+    (cond [(terminal-id (if (pair? buffer*) (car buffer*) (head:current-buffer))) => vt:close!])
     (void))
   (edoc "Tell the terminals the host's color scheme, so their default colors follow it."
         (scheme symbol "light or dark"))
@@ -69,15 +69,15 @@
   (edoc "Open a terminal in a new buffer, running a command or the shell, in the current file's directory."
         (command* (list-of string) "the command line to run, at most one; the shell by default"))
   (define (terminal!! . command*)
-    (let* ([prior (current-buffer)] [path (head:buffer-file prior)] [id #f] [buffer #f])
+    (let* ([prior (head:current-buffer)] [path (head:buffer-file prior)] [id #f] [buffer #f])
       (guard (ex [else
                   (when id
                     (vt:close! id)
                     (when (store:exists? id) (store:delete! head:ui-actor id)))
-                  (when (eq? (current-buffer) buffer) (show-buffer! prior))
+                  (when (eq? (head:current-buffer) buffer) (show-buffer! prior))
                   (raise ex)])
         (paint:window-layout)
-        (let ([w (selected-window)])
+        (let ([w (head:current-window)])
           (set! id (vt:open! head:ui-actor (and (pair? command*) (car command*))
                      (if path (file:directory-part path) (current-directory))
                      (max 1 (head:window-size w)) (head:window-content-width w)
@@ -85,7 +85,7 @@
         (set! buffer (head:adopt-store-buffer! id))
         (head:buffer-line-numbers-setting-set! buffer #f)
         (show-buffer! buffer)
-        (head:set-full-capture! (selected-window) #f)
+        (head:set-full-capture! (head:current-window) #f)
         (void))))
 
   ;; UI effects consume published data on the head pump. Claims precede

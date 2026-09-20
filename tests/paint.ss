@@ -206,7 +206,7 @@
        (list->vector
          (map (lambda (row) (format "paint row ~a" row)) (iota 200))))
      (head:add-buffer! document)
-     (head:set-window-buffer! (head:current) document)
+     (head:set-window-buffer! (head:current-window) document)
      ;; Let initial size detection settle, then use a fixed test grid.
      (painted paint:redraw!)
      (paint:set-screen-rows! 24)
@@ -217,7 +217,7 @@
      (let ([view (head:register-view! (head:new-local-buffer "status projection") void)])
        (head:view-replace! view '("generated"))
        (head:buffer-stale-set! view #t)
-       (head:set-window-buffer! (head:current) view)
+       (head:set-window-buffer! (head:current-window) view)
        (check 'app-status-projection-keeps-default-coordinates-and-operation-text-coherent
          (map (lambda (value)
                 (head:set-app-status-position! view (and value (lambda (b) value)))
@@ -229,16 +229,16 @@
        (check 'hidden-cursor-still-follows-keyboard-selection
          (map (lambda (visible?)
                 (head:set-app-cursor-visible! view visible?)
-                (head:window-prow-set! (head:current) 49)
-                (head:window-top-set! (head:current) 0)
+                (head:window-prow-set! (head:current-window) 49)
+                (head:window-top-set! (head:current-window) 0)
                 (let ([frame (painted paint:redraw!)])
-                  (list (> (head:window-top (head:current)) 0)
+                  (list (> (head:window-top (head:current-window)) 0)
                         (contains? frame "\x1b;[?25h")))) '(#t #f))
          '((#t #t) (#t #f)))
        ;; Clickable status spans use cell geometry, including wide/combining
        ;; labels. Ellipsizing a control makes the entire control inert.
        (let* ([prefix "界e\x301; 🔒"] [toggle void]
-              [start (+ (glyph:cells (format "~a▏~a" (head:window-index (head:current)) prefix)) 1)]
+              [start (+ (glyph:cells (format "~a▏~a" (head:window-index (head:current-window)) prefix)) 1)]
               [edge (+ start 2 head:window-buttons-width 1)])
          (define (hits)
            (let* ([entry (car (head:layout))] [row (+ (cadr entry) (caddr entry))])
@@ -253,7 +253,7 @@
            (map (lambda (width) (paint:set-screen-cols! width) (painted paint:redraw!) (hits))
              (list 80 edge (+ edge 1)))
            '((#f #t #t #f) (#f #f #f #f) (#f #t #t #f)))
-         (head:set-window-buffer! (head:current) document)
+         (head:set-window-buffer! (head:current-window) document)
          (check 'replacing-buffer-clears-painted-controls (hits) '(#f #f #f #f))
          (kernel:retract-module! 'paint-control-test)
          (paint:set-screen-cols! 80))
@@ -265,7 +265,7 @@
        (parameterize ([kernel:registering-module 'paint-prepare-test])
          (head:add-pre-redraw-hook!
            (lambda ()
-             (set! prepared (cons (list (paint:screen-cols) (head:window-width (head:current))) prepared))
+             (set! prepared (cons (list (paint:screen-cols) (head:window-width (head:current-window))) prepared))
              (when (null? (cdr prepared))
                (paint:echo-queue! 'eval "42" #f #f " [stored in kill ring]")
                (paint:show-message! "Prepared\nmessage" #f)))))
@@ -344,21 +344,21 @@
        #t)
      (paint:set-screen-cols! 80)
      (echo:settle!)
-     (define top-before (head:window-top (head:current)))
+     (define top-before (head:window-top (head:current-window)))
      (define scrolling
        (let loop ([row 0] [frames '()])
          (if (= row 40)
              (reverse frames)
              (begin
-               (head:window-prow-set! (head:current) row)
+               (head:window-prow-set! (head:current-window) row)
                (let ([frame (painted paint:redraw!)])
                  (loop (+ row 1) (cons frame frames)))))))
      (check 'scrolling-frames-are-synchronized
             (map sync-events scrolling) (make-list 40 '(begin end)))
      (check 'scrolling-moves-the-viewport
-            (> (head:window-top (head:current)) top-before) #t)
+            (> (head:window-top (head:current-window)) top-before) #t)
      (define (current-top-line)
-       (vector-ref (head:buffer-lines document) (head:window-top (head:current))))
+       (vector-ref (head:buffer-lines document) (head:window-top (head:current-window))))
      (check 'scrolling-paints-visible-text
             (contains? (car (reverse scrolling)) (current-top-line)) #t)
 

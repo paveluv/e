@@ -90,8 +90,16 @@
             [(symbol? f) (cons f #t)]
             [else #f])))
 
+  (define (callable-formals sig)
+    ;; the lambda list of a documented callable: a procedure's own, a record
+    ;; procedure's from its argument names, in order; #f for the rest
+    (case (edoc:signature-kind sig)
+      [(procedure) (edoc:signature-formals sig)]
+      [(constructor accessor mutator predicate) (map edoc:argument-name (edoc:signature-arguments sig))]
+      [else #f]))
+
   (define (argument-type sym index)
-    ;; the type documented for argument index of the procedure bound to sym,
+    ;; the type documented for argument index of the callable bound to sym,
     ;; the union of its lambda lists' answers, or #f
     (let* ([value (and (top-level-bound? sym) (top-level-value sym))]
            [signatures (and (procedure? value) (edoc:edoc-of value))])
@@ -99,8 +107,8 @@
            (let ([types
                   (fold-left
                     (lambda (types sig)
-                      (let* ([formal (and (eq? (edoc:signature-kind sig) 'procedure)
-                                          (formal-at (edoc:signature-formals sig) index))]
+                      (let* ([formals (callable-formals sig)]
+                             [formal (and formals (formal-at formals index))]
                              [argument (and formal (find (lambda (a) (eq? (edoc:argument-name a) (car formal)))
                                                          (edoc:signature-arguments sig)))])
                         (if (not argument) types
@@ -141,13 +149,17 @@
 
   (define (type-fits? wanted produced)
     ;; whether a produced type serves a wanted one: the same, one refining
-    ;; it, a member of a wanted union, or a union with a serving member
+    ;; it, a named type and the record type it denotes either way round, a
+    ;; member of a wanted union, or a union with a serving member
     (define (refines? produced fuel)
       (let ([record (and (symbol? produced) (> fuel 0) (edoc:type-named produced))])
         (and record (edoc:type-within record)
              (or (type-fits? wanted (edoc:type-within record)) (refines? (edoc:type-within record) (- fuel 1))))))
+    (define (record-of? t) (and (pair? t) (eq? (car t) 'record)))
     (or (equal? wanted produced)
         (refines? produced 8)
+        (and (record-of? wanted) (symbol? produced) (edoc:type-denotes-record? produced (cadr wanted)))
+        (and (record-of? produced) (symbol? wanted) (edoc:type-denotes-record? wanted (cadr produced)))
         (and (pair? wanted) (eq? (car wanted) 'or) (exists (lambda (m) (type-fits? m produced)) (cdr wanted)))
         (and (pair? produced) (eq? (car produced) 'or) (exists (lambda (m) (type-fits? wanted m)) (cdr produced)))))
 
@@ -223,15 +235,16 @@
                    [producing
                     (filter (lambda (sig)
                               (case (edoc:signature-kind sig)
-                                [(procedure) (let ([returns (edoc:signature-returns sig)])
-                                               (and returns (type-fits? type (edoc:argument-type returns))))]
+                                [(procedure constructor accessor)
+                                 (let ([returns (edoc:signature-returns sig)])
+                                   (and returns (type-fits? type (edoc:argument-type returns))))]
                                 [(parameter) (let ([value (find (lambda (a) (eq? (edoc:argument-name a) 'value)) (edoc:signature-arguments sig))])
                                                (and value (type-fits? type (edoc:argument-type value))))]
                                 [else #f]))
                       (cdr entry))])
               (if (null? producing) out
                 (let* ([sig (car producing)]
-                       [formals (if (eq? (edoc:signature-kind sig) 'procedure) (edoc:signature-formals sig) '())]
+                       [formals (or (callable-formals sig) '())]
                        [label (edoc:edoc-template sym formals)]
                        [text (string-append "(" name)]
                        [insert (if (null? formals) label text)])
@@ -268,7 +281,7 @@
     ;; ((option . fragments) ...) for an argument context, best first, or #f
     ;; when the type offers nothing the token matches: the token aligns with
     ;; a candidate's text as it would with a symbol, so (bu matches both
-    ;; (buffer "a.txt") and (current-buffer), and name matches no formal
+    ;; (buffer "a.txt") and (head:current-buffer), and name matches no formal
     (let* ([type (car context)] [token (cadddr context)] [in-string? (car (cddddr context))]
            [all (append (value-options type token in-string?)
                         (if in-string? '() (producer-options type))
@@ -901,7 +914,7 @@
   (edoc "Evaluate the Scheme text in where, the whole current buffer by default, in the M-x interaction environment and show the last result in the echo area."
         (where* (list-of (or buffer string region procedure list)) "what to evaluate, at most one: a buffer, its name, a region, a predicate on buffers or a list of these"))
   (define (eval! . where*)
-    (let* ([where (if (pair? where*) (car where*) (current-buffer))]
+    (let* ([where (if (pair? where*) (car where*) (head:current-buffer))]
            [query (if (pair? where*) (format "(eval! ~s)" where) "(eval!)")]
            [text (string:join (map region-text (regions-of where)) "\n")])
       (let-values ([(outcome output-records)

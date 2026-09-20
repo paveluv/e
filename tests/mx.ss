@@ -26,32 +26,32 @@
          ("(split-window-right!" "(split-window-right!)")
          ("(head:window-index" "(head:window-index ")
          ;; the last argument closes the form, an earlier one steps on
-         ("(head:window-index (head:current" "(head:window-index (head:current))")
+         ("(head:window-index (head:current-window" "(head:window-index (head:current-window))")
          ("(text:make-span 1 2" "(text:make-span 1 2 ")
          ;; closing a form settles it as an argument of its parent, recursively
-         ("(head:window-numbered (head:window-index (head:current" "(head:window-numbered (head:window-index (head:current)))")
+         ("(head:window-numbered (head:window-index (head:current-window" "(head:window-numbered (head:window-index (head:current-window)))")
          ;; brackets close with their own kind; a closed form settles as an
          ;; argument of its parent, or stops at an operator without an arity
-         ("(vector-ref {head:current" "(vector-ref {head:current} ")
-         ("(let ([x (head:current" "(let ([x (head:current)")
+         ("(vector-ref {head:current-window" "(vector-ref {head:current-window} ")
+         ("(let ([x (head:current-window" "(let ([x (head:current-window)")
          ;; rest and optional parameters, syntax, and unbound names are unknown arities
          ("(list foo" "(list foo")
          ("(define foo" "(define foo")
          ("(no-such-procedure-here" "(no-such-procedure-here")
          ;; a quoted or quasiquoted form is data
          ("'(split-window-right!" "'(split-window-right!")
-         ("`(head:current" "`(head:current")
-         ("(list '(head:current" "(list '(head:current")
+         ("`(head:current-window" "`(head:current-window")
+         ("(list '(head:current-window" "(list '(head:current-window")
          ;; too many arguments already: nothing to close
-         ("(head:current x" "(head:current x")
+         ("(head:current-window x" "(head:current-window x")
          ;; a bare symbol has no form
-         ("head:current" "head:current")))
+         ("head:current-window" "head:current-window")))
 
      ;; Text after the cursor is left alone; blank text after it is kept.
      (check 'text-after-the-symbol-stops-the-settling
-       (eval:settle-completion "(head:current 1)" 13) '("(head:current 1)" . 13))
+       (eval:settle-completion "(head:current-window 1)" 20) '("(head:current-window 1)" . 20))
      (check 'blank-tail-is-kept
-       (eval:settle-completion "(head:current  " 13) '("(head:current)  " . 14))
+       (eval:settle-completion "(head:current-window  " 20) '("(head:current-window)  " . 21))
 
      ;; At an argument position the type documented for it decides what Tab
      ;; offers: the type's values as expressions, the procedures producing
@@ -62,7 +62,7 @@
      (eval '(define myb (buffer "*scratch*")) (interaction-environment))
      (check 'a-buffer-argument-offers-buffers-producers-and-variables
        (let ([offered (labels "(show-buffer! ")])
-         (list (has? "(buffer \"*scratch*\")" offered) (has? "(current-buffer)" offered)
+         (list (has? "(buffer \"*scratch*\")" offered) (has? "(head:current-buffer)" offered)
                (has? "(fresh-buffer name)" offered) (has? "(head:new-local-buffer name)" offered) (has? "myb" offered)
                ;; a typed token narrows, and the buffer's spelling leads
                (car (labels "(show-buffer! scr")) (has? "myb" (labels "(show-buffer! my"))
@@ -86,7 +86,7 @@
                (extensions "(set-buffer-wrap! b 'c") (extensions "(visit-file! \"man")
                ;; a quoted form, or one whose operator is undocumented, completes symbols
                (labels "(show-buffer! '(bu") (labels "(list (bu")))
-       '(#t #t #f ("(current-buffer)") ("(current-buffer)") ("(buffer") ("(buffer") ("myb") ("")
+       '(#t #t #f ("(head:current-buffer)") ("(head:current-buffer)") ("(buffer") ("(buffer") ("myb") ("")
          ("'clean") ("manual/") #f #f))
      (check 'literals-and-strings-complete-in-place
        (list (has? "'clean" (labels "(set-buffer-wrap! b ")) (has? "#f" (labels "(set-buffer-wrap! b "))
@@ -119,5 +119,12 @@
              (labels "(actor:send! (agent \"h") (extensions "(actor:send! (agent \"h")
              (labels "(actor:send! (agent \"helper\") "))
        '(#t #t #t #t ("(agent") #f ("helper") ("helper\"") #f))
+
+     ;; Record procedures complete like any documented callable: an accessor's
+     ;; argument is typed, the named type meets the record type it denotes,
+     ;; and an accessor returning a buffer is one of its producers.
+     (check 'record-procedures-complete-by-their-signatures
+       (list (has? "(region b start end)" (labels "(region-buffer ")) (has? "(region-buffer region)" (labels "(show-buffer! ")))
+       '(#t #t))
 
      (test:finish! 'mx)))

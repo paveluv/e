@@ -82,7 +82,7 @@
      (vector-set! lines 0 "界e\x301;Z")
      (define id (store:create! author "*surface-render*" lines '((read-only . #t) (wrap . #t))))
      (define b (head:adopt-store-buffer! id))
-     (define w (head:current))
+     (define w (head:current-window))
      (define (grid face attrs)
        (list 0 (vector face 'ignored 'bold 'plain)
              (vector (list uri "wide") (list "https://ignored.example" #f)

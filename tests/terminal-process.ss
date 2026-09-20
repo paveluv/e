@@ -200,7 +200,7 @@
      (let* ([child (format "/tmp/e-terminal-frame-~a.ss" (get-process-id))]
             [marker (string-append child ".phase")]
             [first '(head "first")] [second '(head "second")]
-            [previous (head:window-buffer (head:current))]
+            [previous (head:window-buffer (head:current-window))]
             [id #f] [owner #f] [buffer #f] [subscription #f]
             ;; Keep this caller's exports before reload rebinds M-x's prefix.
             [send! vt:send!] [close! vt:close!]
@@ -219,7 +219,7 @@
        (define (send from text size) (send! from id text size #f))
        (define (offer from size) (actor:send! owner (list 'request from id 'resize size)))
        (define (head-view)
-         (let ([frame (head:buffer-rendition buffer)] [w (head:current)])
+         (let ([frame (head:buffer-rendition buffer)] [w (head:current-window)])
            (list (head:buffer-lines buffer) (head:buffer-store-rev buffer)
                  (render:header frame) (render:row frame (head:window-top w))
                  (head:window-prow w) (head:window-pcol w) (head:window-top w))))
@@ -312,8 +312,8 @@
              '(#t "*" (#f #f #f #f #f)))
            (set! buffer (head:adopt-store-buffer! id))
            (head:buffer-line-numbers-setting-set! buffer #f)
-           (head:window-size-set! (head:current) 3)
-           (head:window-width-set! (head:current) 24)
+           (head:window-size-set! (head:current-window) 3)
+           (head:window-width-set! (head:current-window) 24)
            (head:set-repaint-hook!
              (lambda ()
                (when (eq? phase 'initial)
@@ -343,12 +343,12 @@
                  (test:await 'producer-during-repaint (lambda () (published? "NEW")))
                  (head:before-frame!)
                  (set! complete? #t))))
-           (head:set-window-buffer! (head:current) buffer)
+           (head:set-window-buffer! (head:current-window) buffer)
            (test:await 'shared-title (lambda () (string=? (store:buffer-name id) "*fixture*")))
            (test:check 'reentrant-adoption-uses-coherent-shared-rendition
              (list coherent? complete? gap-result (head:app-of buffer)
                    (substring (store:line id 1) 0 6) (has? "history0")
-                   (head:app-cursor-style buffer) (head:app-cursor-visible-in? (head:current))
+                   (head:app-cursor-style buffer) (head:app-cursor-visible-in? (head:current-window))
                    (paint:buffer-line-hyperlinks buffer 1)
                    (store:property id 'clipboard) (store:buffer-name id))
              `(#t #t (#t #t #t #t) #f "界q\x301;NEW" #t bar #f ((0 6 "https://frame.example" "live"))
@@ -397,7 +397,7 @@
            ;; endpoints must still reach the worker created by the old code.
            (kernel:reload-module! "vt")
            (test:check 'engine-and-facade-reload-retain-the-base-actor (store:property id 'app) owner)
-           (head:set-window-buffer! (head:current) previous)
+           (head:set-window-buffer! (head:current-window) previous)
            (send second "finish\n" '(4 26))
            (wait-stage 'finish-ready)
            (actor:register! '(head "pause checkpoint") void)

@@ -77,7 +77,7 @@
 
 (define base-types
   '(string char integer number boolean list pair vector bytevector hashtable port procedure thunk condition
-     symbol datum any file directory buffer window region position command key mode style))
+     symbol datum any file directory buffer window region position command key mode style actor head))
 
 (define defined-types (make-eq-hashtable))
 (define used-types '())   ; ((type library name) ...)

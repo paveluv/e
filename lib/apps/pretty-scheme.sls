@@ -18,6 +18,7 @@
 (elibrary (pretty-scheme)
   (export init! (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!)) (rename (pretty-scheme-rainbow! rainbow!)))
   (import (chezscheme)
+          (prefix (head) head:)
           (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
@@ -229,10 +230,10 @@
   (define (buffer-vector b)
     ;; The buffer's lines as a vector of (shared) strings, through the
     ;; public accessors.
-    (let* ([n (buffer-line-count b)]
+    (let* ([n (head:buffer-line-count b)]
            [v (make-vector n)])
       (do ([i 0 (+ i 1)]) ((= i n) v)
-        (vector-set! v i (buffer-line b i)))))
+        (vector-set! v i (head:buffer-line b i)))))
 
   (define cluster-row (mode:memoize-analysis analyze))
   (define depth-row (mode:memoize-analysis analyze-depth))
@@ -269,14 +270,14 @@
   (define (pretty-buffer?)
     ;; The modes whose display hides the source characters -- they get
     ;; the REPL-style closing and the source hint.
-    (member (mode:name-of (current-buffer))
+    (member (mode:name-of (head:current-buffer))
             '("pretty-scheme-clusters" "pretty-scheme-depth")))
 
   (define (innermost-opener)
     ;; The source character of the innermost construct still open at
     ;; point: #\( or #\[, or #f outside any.
     (let ([target (point)] [stack '()])
-      (walk (buffer-vector (current-buffer))
+      (walk (buffer-vector (head:current-buffer))
         (lambda (r c ch)
           (when (or (< r (car target))
                     (and (= r (car target)) (< c (cdr target))))
@@ -295,8 +296,8 @@
         (insert-text! (string typed))))
 
   (define (toggle-mode! name)
-    (mode:choose! (current-buffer)
-                  (if (equal? (mode:name-of (current-buffer)) name)
+    (mode:choose! (head:current-buffer)
+                  (if (equal? (mode:name-of (head:current-buffer)) name)
                       "scheme"
                       name))
     (void))
@@ -344,7 +345,7 @@
       (lambda ()
         (and (pretty-buffer?)
              (let* ([p (point)]
-                    [s (buffer-line (current-buffer) (car p))]
+                    [s (head:buffer-line (head:current-buffer) (car p))]
                     [c (and (< (cdr p) (string-length s))
                             (string-ref s (cdr p)))])
                (and c (memv c '(#\( #\) #\[ #\]))

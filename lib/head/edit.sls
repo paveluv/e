@@ -39,9 +39,8 @@
             (paint:wrap-lines wrap-lines)
             (paint:scroll-margin scroll-margin))
     ;; state, read-only
-    current-buffer buffer-list point mark
+    point mark
     buffer-text buffer-clean?
-    buffer-line  buffer-line-count
 
     editor-symbol?
     ;; buffers, windows, files
@@ -81,7 +80,7 @@
 
 
 
-    selected-window select-window!
+    select-window!
     set-message!
     mouse!
     answer!!
@@ -161,7 +160,7 @@
     (identifier-syntax [id (head:root)]
       [(set! id v) (head:set-root! v)]))
   (define-syntax current-window
-    (identifier-syntax [id (head:current)]
+    (identifier-syntax [id (head:current-window)]
       [(set! id v) (head:set-current! v)]))
   ;; The (store) is the master copy of every buffer's text; this
   ;; seat is one of its clients.  A buffer record's lines field is a
@@ -563,7 +562,7 @@
 
   (define (goal-position wrapped?)
     ;; Equal row/column numbers alone do not identify a navigation context.
-    (let ([b (current-buffer)])
+    (let ([b (head:current-buffer)])
       (list current-window b (caddr (head:edit-basis b))
             (head:window-lines current-window)
             (and wrapped? (paint:wrap-width current-window))
@@ -848,7 +847,7 @@
     ;; a trailing slash, ready for appending another path component.
     (let ([dir (file:absolute
                  (or (and file-name (file:directory-part file-name))
-                     (head:buffer-fact (current-buffer) 'directory #f)
+                     (head:buffer-fact (head:current-buffer) 'directory #f)
                      (current-directory)))])
       (file:abbreviate (if (string:suffix? "/" dir) dir (string-append dir "/")))))
 
@@ -1207,14 +1206,6 @@
 
   ;; Read-only views of the editor's state, for M-x and modules; mutation
   ;; goes through the command API.
-  (edoc "The buffer shown in the selected window."
-        (returns buffer))
-  (define (current-buffer)
-    (head:window-buffer current-window))
-  (edoc "The buffers in recency order, the most recently shown first, as a fresh list."
-        (returns (list-of buffer)))
-  (define (buffer-list)
-    (list-copy buffers))
   (edoc "Show a message in the echo area; with a message-source it is logged too, with #f it is a plain indicator."
         (s string "the message"))
   (define (set-message! s)
@@ -1236,18 +1227,6 @@
         (returns (or position #f)))
   (define (mark)
     (and mark-active? (cons mark-row mark-col)))
-  (edoc "How many lines a buffer has."
-        (b buffer "the buffer to measure")
-        (returns integer))
-  (define (buffer-line-count b)
-    (vector-length (head:buffer-lines b)))
-  (edoc "One line of a buffer, by zero-based row."
-        (b buffer "the buffer to read")
-        (n integer "the row")
-        (returns string))
-  (define (buffer-line b n)
-    (vector-ref (head:buffer-lines b) n))
-
   (edoc "Run a thunk with a buffer temporarily current: in the window already showing it, else invisibly in the current window."
         (b buffer "the buffer to make current")
         (thunk thunk "what to run")
@@ -1302,7 +1281,7 @@
 
   (edoc "Toggle line numbers in the current buffer.")
   (define (line-numbers!)
-    (let ([b (current-buffer)])
+    (let ([b (head:current-buffer)])
       (head:buffer-line-numbers-setting-set! b (not (head:buffer-line-numbers b)))
       (paint:invalidate-screen-cache!)
       (set-message!
@@ -1469,13 +1448,6 @@
   (edoc "Select the window right of the cursor, the cursor's row choosing among side-by-side candidates.")
   (define (focus-window-right!)
     (focus-window-direction! 'right))
-
-  (edoc "The selected window, an opaque token to hold, compare and give back to select-window!."
-        (returns window))
-  (define (selected-window)
-    ;; The current window, an opaque token: hold it, compare it, give
-    ;; it back to select-window!.
-    current-window)
 
   (edoc "Select a window when it is still on screen; the pop-up is never selected."
         (w window "the window to select")
@@ -1944,7 +1916,7 @@
     (let* ([w current-window]
            [v (head:window-lines w)]
            [n (vector-length v)]
-           [sticky (min (head:buffer-sticky-lines (current-buffer)) (- n 1))]
+           [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- n 1))]
            [height (paint:page-size)]
            [wrapped? (paint:window-wrapped? w)]
            [visual-col (visual-column w point-row point-col)])
@@ -2041,7 +2013,7 @@
   (define (prompt-kill-buffer!)
     ;; kill-buffer!!'s prompt-safe stand-in: no nested prompt, and a
     ;; buffer with protected unsaved changes is refused with a note.
-    (let ([b (current-buffer)])
+    (let ([b (head:current-buffer)])
       (guard (ex [else (string-append "  " (kernel:condition-text ex))])
         (let-values ([(text revision facts) (head:buffer-state b)])
           (cond [(not (file:state-clean? text facts)) (format "  ~a has unsaved changes" (head:buffer-name b))]
@@ -2124,7 +2096,7 @@
        (unless (and (or (not directory-action) (procedure? directory-action))
                     (or (not initial) (string? initial)))
          (error 'find-file!! "expected a directory action and an initial path" directory-action initial))
-       (let* ([owner current-window] [before (current-buffer)]
+       (let* ([owner current-window] [before (head:current-buffer)]
               [saved (and (not initial) (hashtable-ref find-file-drafts owner #f))]
               [directory (if saved (car saved) (default-directory))]
               [draft (if saved (cdr saved) (box #f))]
@@ -2399,7 +2371,7 @@
                   (set! mouse-gesture (cons w (head:window-buffer w)))
                   ;; A mode may act on the click -- following a link,
                   ;; say -- through a MOUSE-CLICK binding in its keymap.
-                  (let ([context (mode:key-context (current-buffer))])
+                  (let ([context (mode:key-context (head:current-buffer))])
                     (when context
                       (let ([action (keymap:event-binding context
                                                           "MOUSE-CLICK")])
@@ -2575,7 +2547,7 @@
 
   (edoc "Set the mark at point and activate it.")
   (define (set-mark-command!)
-    (when (head:buffer-selectable? (current-buffer))
+    (when (head:buffer-selectable? (head:current-buffer))
       (set! mark-row point-row) (set! mark-col point-col)
       (set! mark-active? #t))
     (set! message (if mark-active? "Mark set" "")))
@@ -2706,9 +2678,9 @@
   ;;; Regions and the generic helpers ------------------------------------------
 
   (define (whole-buffer b)
-    (let ([last (- (buffer-line-count b) 1)])
+    (let ([last (- (head:buffer-line-count b) 1)])
       (region b '(0 . 0)
-              (cons last (string-length (buffer-line b last))))))
+              (cons last (string-length (head:buffer-line b last))))))
 
   (edoc "The regions a where argument denotes: #f for the selected region or the whole current buffer, a buffer or its name for all of it, a region itself, a predicate for the buffers it accepts, or a list of any of these."
         (where (or buffer string region procedure list #f) "what to operate on")
@@ -2718,12 +2690,12 @@
     (cond [(not where)
            (list (let ([m (mark)])
                    (if m
-                       (region (current-buffer) m (point))
-                       (whole-buffer (current-buffer)))))]
+                       (region (head:current-buffer) m (point))
+                       (whole-buffer (head:current-buffer)))))]
           [(region? where) (list where)]
           [(head:buffer? where) (list (whole-buffer where))]
           [(string? where) (list (whole-buffer (buffer where)))]
-          [(procedure? where) (regions-of (filter where (buffer-list)))]
+          [(procedure? where) (regions-of (filter where (head:buffers)))]
           [(list? where) (apply append (map regions-of where))]
           [else (error 'regions-of
                        "not a buffer, name, region, predicate, or list"
@@ -2744,10 +2716,10 @@
            [end (region-end r)]
            [count 0])
       (let row-loop ([row (max 0 (car start))])
-        (when (<= row (min (car end) (- (buffer-line-count b) 1)))
+        (when (<= row (min (car end) (- (head:buffer-line-count b) 1)))
           (let col-loop ([at (if (= row (car start)) (cdr start) 0)]
                          [shift 0])
-            (let* ([s (buffer-line b row)]
+            (let* ([s (head:buffer-line b row)]
                    [limit (if (= row (car end))
                               (min (+ (cdr end) shift) (string-length s))
                               (string-length s))]
@@ -2799,11 +2771,11 @@
       (let* ([b (region-buffer r)]
              [start (region-start r)]
              [end (region-end r)]
-             [last (min (car end) (- (buffer-line-count b) 1))])
+             [last (min (car end) (- (head:buffer-line-count b) 1))])
         (let loop ([row (max 0 (car start))] [lines '()] [count 0])
           (if (> row last)
               (values (string:join (reverse lines) "\n") count)
-              (let* ([s (buffer-line b row)]
+              (let* ([s (head:buffer-line b row)]
                      [n (string-length s)]
                      [from-col (if (= row (car start)) (min (cdr start) n) 0)]
                      [to-col (if (= row (car end)) (min (cdr end) n) n)])
@@ -2836,12 +2808,12 @@
     (let* ([b (region-buffer r)]
            [start (region-start r)]
            [end (region-end r)]
-           [last (min (car end) (- (buffer-line-count b) 1))])
+           [last (min (car end) (- (head:buffer-line-count b) 1))])
       (string:join
         (let loop ([row (max 0 (car start))] [acc '()])
           (if (> row last)
               (reverse acc)
-              (let* ([s (buffer-line b row)]
+              (let* ([s (head:buffer-line b row)]
                      [n (string-length s)]
                      [from (if (= row (car start)) (min (cdr start) n) 0)]
                      [to (if (= row (car end)) (min (cdr end) n) n)])
@@ -2858,8 +2830,8 @@
     ;; The first match of needle at or after (row . col): (row . start),
     ;; or #f.  Needles are single-line.
     (let loop ([row row] [col col])
-      (and (< row (buffer-line-count b))
-           (let* ([s (buffer-line b row)]
+      (and (< row (head:buffer-line-count b))
+           (let* ([s (head:buffer-line b row)]
                   [hit (string:search s needle col (string-length s))])
              (if hit
                  (cons row hit)
@@ -2882,7 +2854,7 @@
                         (prompt:read! (format "Replace ~s with: " from))))])
       (if (or (not from) (not to) (string=? from ""))
           (void)                      ; cancelled at a prompt
-          (let ([b (current-buffer)]
+          (let ([b (head:current-buffer)]
                 [m (string-length from)]
                 [question (format "Replace ~s with ~s? (y, n, q)" from to)]
                 [replaced 0]
@@ -2938,13 +2910,13 @@
   ;; conflict at point, each as one undo step.
 
   (define (conflict-marker? b row prefix)
-    (and (>= row 0) (< row (buffer-line-count b))
-         (string:prefix? prefix (buffer-line b row))))
+    (and (>= row 0) (< row (head:buffer-line-count b))
+         (string:prefix? prefix (head:buffer-line b row))))
 
   (define (conflict-at row)
     ;; The (start mid end) marker rows of the conflict containing row,
     ;; or #f.
-    (let ([b (current-buffer)])
+    (let ([b (head:current-buffer)])
       (let up ([r row])
         (cond
           [(< r 0) #f]
@@ -2952,11 +2924,11 @@
           [(conflict-marker? b r "<<<<<<<")
            (let mid ([m (+ r 1)])
              (cond
-               [(>= m (buffer-line-count b)) #f]
+               [(>= m (head:buffer-line-count b)) #f]
                [(conflict-marker? b m "=======")
                 (let end ([e (+ m 1)])
                   (cond
-                    [(>= e (buffer-line-count b)) #f]
+                    [(>= e (head:buffer-line-count b)) #f]
                     [(conflict-marker? b e ">>>>>>>")
                      (and (>= e row) (list r m e))]
                     [else (end (+ e 1))]))]
@@ -2971,14 +2943,14 @@
                    n
                    (loop (+ r 1)
                          (+ n 1 (string-length
-                                  (buffer-line (current-buffer) r))))))])
+                                  (head:buffer-line (head:current-buffer) r))))))])
       (do ([i 0 (+ i 1)]) ((= i n)) (delete-forward!))))
 
   (edoc "Move point to the next merge conflict marker, wrapping around at the end of the buffer.")
   (define (next-conflict!)
     ;; Point to the next conflict's <<<<<<< line, wrapping around.
-    (let* ([b (current-buffer)]
-           [n (buffer-line-count b)]
+    (let* ([b (head:current-buffer)]
+           [n (head:buffer-line-count b)]
            [from (car (point))]
            [hit (let scan ([r (+ from 1)] [left n])
                   (cond [(zero? left) #f]
@@ -3088,7 +3060,7 @@
 
   (define (buffer-data b)
     (vector (and (head:buffer-modified b) (head:buffer-modified-at b))
-            (and (head:buffer-read-only b) #t) (head:buffer-name b) (buffer-line-count b)
+            (and (head:buffer-read-only b) #t) (head:buffer-name b) (head:buffer-line-count b)
             (or (mode:name-of b) "") (or (head:buffer-file b) "")))
 
   (define (buffer-cell data column)
@@ -3213,7 +3185,7 @@
   (define (buffers-status-hint)
     ;; Ordinary status hints are called only for the focused window, even
     ;; when another window shows this same app. Keep whole hints that fit.
-    (and (eq? (current-buffer) buffers-view)
+    (and (eq? (head:current-buffer) buffers-view)
          (let ([room (- (head:window-width current-window)
                         head:window-buttons-width
                         (glyph:cells (format "~a▏~a "
@@ -3281,10 +3253,10 @@
 
   (define (switch-buffer-by-row! delta)
     ;; Global alphabetical traversal is independent of the table's filter/sort.
-    (let* ([current (current-buffer)]
+    (let* ([current (head:current-buffer)]
            [listed (sort (lambda (a b)
                            (string-ci<? (head:buffer-name a) (head:buffer-name b)))
-                         (buffer-list))]
+                         (head:buffers))]
            [tail (memq current listed)])
       (when (and tail (pair? (cdr listed)))
         (let ([next
@@ -3303,7 +3275,7 @@
 
   (define (buffers-view-buffer)
     ;; Created at startup, or recreated after the user kills the view.
-    (or (and buffers-view (memq buffers-view (buffer-list)) buffers-view)
+    (or (and buffers-view (memq buffers-view (head:buffers)) buffers-view)
         (begin
           (set! buffers-view (head:register-app! "*buffers*"
                                refresh-buffers-view!
@@ -3324,7 +3296,7 @@
     ;; Both switch shortcuts use one app. The app itself never displaces the
     ;; previous document as the default, even after repeated quick switches.
     (let ([b (buffers-view-buffer)]
-          [was (current-buffer)])
+          [was (head:current-buffer)])
       (head:call-with-display-update
         (lambda ()
           (set! buffer-filter "")
@@ -3522,8 +3494,8 @@
       (lambda ()
         ;; Strong blue describes the focused document in other panes. Bold and
         ;; a subtle tint mark the hovered row or focused list's candidate.
-        (if (and buffers-view (memq buffers-view (buffer-list)))
-            (let ([active-row (buffer-row (current-buffer))]
+        (if (and buffers-view (memq buffers-view (head:buffers)))
+            (let ([active-row (buffer-row (head:current-buffer))]
                   [row-range
                    (lambda (w row face)
                      (list w row 0

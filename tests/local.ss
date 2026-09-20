@@ -17,7 +17,7 @@
 
      (define check test:check)
 
-     (define scratch (head:window-buffer (head:current)))
+     (define scratch (head:window-buffer (head:current-window)))
      (define scratch-id (head:buffer-store-id scratch))
      (define initial-store (list-sort < (store:buffer-list)))
      (define events '())
@@ -27,7 +27,7 @@
      (define local (head:new-local-buffer "*local-test*"))
      (define other (head:new-local-buffer "*other-local*"))
      (head:set-buffers! (append (head:buffers) (list local other)))
-     (head:set-window-buffer! (head:current) local)
+     (head:set-window-buffer! (head:current-window) local)
 
      (check 'local-label (head:buffer-name local) "<local-test>")
      (check 'plain-local-label
@@ -68,15 +68,15 @@
      (head:store-edit! local (text:make-span 0 1 0 4) '("L"))
      (check 'local-edit (head:buffer-lines local) '#("aLa" "bravo"))
      (check 'old-text-stays-unchanged lines '#("alpha" "bravo"))
-     (head:window-prow-set! (head:current) 1)
-     (head:window-pcol-set! (head:current) 5)
+     (head:window-prow-set! (head:current-window) 1)
+     (head:window-pcol-set! (head:current-window) 5)
      (head:view-append! local '("charlie"))
      (check 'appended-lines (head:buffer-lines local) '#("aLa" "bravo" "charlie"))
      (check 'append-follows-tail
-            (cons (head:window-prow (head:current))
-                  (head:window-pcol (head:current)))
+            (cons (head:window-prow (head:current-window))
+                  (head:window-pcol (head:current-window)))
             '(2 . 7))
-     (let* ([windows (head:windows)] [w (head:current)]
+     (let* ([windows (head:windows)] [w (head:current-window)]
             [reading (head:make-window local 1 0 0 1 2 4 0 80 #f)])
        (head:set-windows! (append windows (list reading)))
        (head:window-top-set! w 2)
@@ -108,15 +108,15 @@
        (lambda ()
          (set! painted-point (head:buffer-point local))
          (head:set-repaint-hook! void)
-         (head:view-replace! local '("newer") '() (list (cons (head:current) '(0 . 2))))))
+         (head:view-replace! local '("newer") '() (list (cons (head:current-window) '(0 . 2))))))
      (head:view-append! local '("delta"))
      (check 'append-adopts-point-before-reentrant-repaint
        (list painted-point (head:buffer-lines local) (head:buffer-point local))
        '((3 . 5) #("newer") (0 . 2)))
      (head:view-replace! local '("x"))
      (check 'replacement-clamps-point
-            (cons (head:window-prow (head:current))
-                  (head:window-pcol (head:current)))
+            (cons (head:window-prow (head:current-window))
+                  (head:window-pcol (head:current-window)))
             '(0 . 1))
      (define revision (head:buffer-revision local))
      (head:view-replace! local '("x"))
@@ -130,7 +130,7 @@
             (store:marks head:ui-actor scratch-id) '())
      (head:forget-buffer! local)
      (check 'forgotten-from-list (memq local (head:buffers)) #f)
-     (check 'window-falls-back (eq? (head:window-buffer (head:current)) scratch) #t)
+     (check 'window-falls-back (eq? (head:window-buffer (head:current-window)) scratch) #t)
      (head:forget-buffer! other)
      (check 'store-list-unchanged (list-sort < (store:buffer-list)) initial-store)
      (check 'local-lifecycle-emits-no-store-events events '())

@@ -478,7 +478,7 @@
     (define ghost (prompt-ghost))
     (define in-window? (and (prompt-in-window) (not (window-owner))))
     (define body (and in-window? (content)))
-    (define owner (head:current))
+    (define owner (head:current-window))
     (define input (if (and draft (unbox draft)) (car (unbox draft)) initial))
     (define position (if (and draft (unbox draft)) (cdr (unbox draft)) (string-length input)))
     (define note "")
@@ -541,7 +541,7 @@
     (define (window-lost?)
       (and in-window?
            (or (not (memq owner (head:windows)))
-               (not (eq? owner (head:current)))
+               (not (eq? owner (head:current-window)))
                (not (eq? (head:window-buffer owner) view))
                (not (memq view (head:buffers))))))
     (define (status-text b)
@@ -565,7 +565,7 @@
         [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN")))
          (set! page (mod (+ page (if (string=? event "WHEEL-UP") -1 1)) pages)) #t]
         [(and (string=? event "MOUSE-CLICK")
-              (or (not in-window?) (eq? (head:current) owner)))
+              (or (not in-window?) (eq? (head:current-window) owner)))
          (let ([at (head:app-event-buffer-position)])
            (when (and at (<= 0 (car at)) (< (car at) (vector-length shown-rows)))
              (let* ([row (vector-ref shown-rows (car at))] [source (row-input row)]

@@ -191,7 +191,7 @@
                    (head:buffer-marked b) (head:buffer-mark-row b) (head:buffer-mark-col b)))
            (insert-text! "keep")
            (head:buffer-marked-set! b #t)
-           (unless shared? (head:buffer-fact-set! b 'source (head:current)))
+           (unless shared? (head:buffer-fact-set! b 'source (head:current-window)))
            (check 'reviewed-reset-refusal-keeps-either-owner-and-head-state
              (map
                (lambda (change)
@@ -322,7 +322,7 @@
                                    (property:select facts '(file base stamp trailing mode mode-auto wrap modified)))))
                              (set! opened
                                (if (eq? effect 'revisit)
-                                   (begin (visit-file! target) (current-buffer))
+                                   (begin (visit-file! target) (head:current-buffer))
                                    (head:adopt-store-buffer! id)))
                              (case effect
                                [(edit revisit) (insert! id 0 "agent ")]
@@ -341,7 +341,7 @@
                                (list (cons 'file target) (if content (cons 'base content) 'base)
                                      (if content (cons 'stamp stamp) 'stamp) (cons 'trailing trailing)
                                      (cons 'mode mode) '(mode-auto . #t) '(wrap . default) '(modified . #f))))
-                           (eq? opened (current-buffer)) kept?
+                           (eq? opened (head:current-buffer)) kept?
                            (equal? (reverse events)
                              (case effect [(edit) '(create edit)]
                                [(revisit) (if content '(create property property edit) '(create edit))]

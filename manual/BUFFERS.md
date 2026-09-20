@@ -506,11 +506,11 @@ split tree's ownership and minimum sizes.
 
 ## Buffer API
 
-The public Scheme API exposes read-only inspection through `current-buffer`,
-`buffer-list`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `buffer-text`,
+The public Scheme API exposes read-only inspection through `head:current-buffer`,
+`head:buffers`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `buffer-text`,
 `buffer-clean?`, `head:buffer-modified`, `head:buffer-modified-at`,
 `head:buffer-read-only`, `mode:name-of`,
-`buffer-line`, `buffer-line-count`, and `mode:line-styles`.
+`head:buffer-line`, `head:buffer-line-count`, and `mode:line-styles`.
 
 `(head:buffer-modified-at b)` returns the last content-change time as an exact
 integer of UTC nanoseconds, or `#f` before a change has been recorded.

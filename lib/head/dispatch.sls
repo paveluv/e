@@ -28,7 +28,7 @@
     ;; as no command at all.
     (cond [(procedure? action)
            (unless (and capture (eq? action (cadr capture)))
-             (head:follow-app! (head:current) #f))
+             (head:follow-app! (head:current-window) #f))
            (dynamic-wind void action
              (lambda () (head:set-last-command! action)))]
           [(not action)
@@ -42,7 +42,7 @@
     ;; Resolve a key sequence: the buffer's mode context first, then the
     ;; global map. Once a prefix reaches e, the whole command stays here,
     ;; including synchronous prompts; an app cannot consume its suffix.
-    (let* ([buffer (head:window-buffer (head:current))]
+    (let* ([buffer (head:window-buffer (head:current-window))]
            [mode-context (mode:key-context buffer)]
            [capture (and mode-context (keymap:context-capture mode-context))])
       (let loop ([sequence (list first)])
@@ -88,12 +88,12 @@
     ;; to the keymaps even inside a capturing app: the app's handler
     ;; sees only the keys its context leaves unbound, so a terminal
     ;; cannot swallow its capture control or a reserved editor prefix.
-    (let ([context (mode:key-context (head:window-buffer (head:current)))])
+    (let ([context (mode:key-context (head:window-buffer (head:current-window)))])
       (and context
            (let ([sequence (list event)] [capture (keymap:context-capture context)])
              (or (keymap:resolved-binding context sequence)
                  (keymap:binding-prefix? context sequence)
-                 (and capture (not (head:full-capture? (head:current)))
+                 (and capture (not (head:full-capture? (head:current-window)))
                       (member event (cddr capture)))))
            #t)))
 

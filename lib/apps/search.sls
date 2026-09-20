@@ -64,9 +64,9 @@
     ;; with the current match on top.
     (if (string=? needle-now "")
         '()
-        (let* ([b (current-buffer)]
+        (let* ([b (head:current-buffer)]
                [len (string-length needle-now)]
-               [rows (buffer-line-count b)])
+               [rows (head:buffer-line-count b)])
           (let loop ([row 0]
                      [acc (if (and current-match
                                    (eq? (car current-match) b))
@@ -77,7 +77,7 @@
                               '())])
             (if (= row rows)
                 acc
-                (let ([line (buffer-line b row)])
+                (let ([line (head:buffer-line b row)])
                   (let scan ([from 0] [acc acc])
                     (let ([hit (string:search line needle-now from
                                               (string-length line)
@@ -93,17 +93,17 @@
     ;; wrap once.  The first pass covers the starting line from
     ;; start-col onward, so the wrap pass covers matches beginning
     ;; before start-col -- including ones that straddle it.
-    (let* ([b (current-buffer)]
-           [rows (buffer-line-count b)])
+    (let* ([b (head:current-buffer)]
+           [rows (head:buffer-line-count b)])
       (let loop ([row start-row] [col start-col] [remaining rows])
         (if (= remaining 0)
-            (let* ([line (buffer-line b start-row)]
+            (let* ([line (head:buffer-line b start-row)]
                    [found (string:search line needle 0
                             (min (+ start-col (string-length needle) -1)
                                  (string-length line))
                             (fold-for needle))])
               (and found (cons start-row found)))
-            (let* ([line (buffer-line b row)]
+            (let* ([line (head:buffer-line b row)]
                    [found (string:search line needle col
                                          (string-length line)
                                          (fold-for needle))])
@@ -138,10 +138,10 @@
                       v))))))
 
   (define (run-search!)
-    (define origin-window (selected-window))
+    (define origin-window (head:current-window))
     (define origin (point))
     (define (match-here? match)
-      (and match (eq? (car match) (current-buffer))))
+      (and match (eq? (car match) (head:current-buffer))))
     (define (anchor match)
       ;; Where the next search starts: the current match when it is in
       ;; this buffer, else point.
@@ -149,7 +149,7 @@
           (cons (cadr match) (caddr match))
           (point)))
     (define (found hit needle)
-      (list (current-buffer) (car hit) (cdr hit) (string-length needle)))
+      (list (head:current-buffer) (car hit) (cdr hit) (string-length needle)))
     (define (dispatch! event)
       ;; Keys the search does not use run through the ordinary
       ;; dispatch, so windows and buffers can be switched without
@@ -186,7 +186,7 @@
            (dispatch:key! event)]
           [(eq? action 'toggle-case)
            (set! fold-override (if (fold-for needle) 'exact 'fold))
-           (let ([home (if (eq? (selected-window) origin-window)
+           (let ([home (if (eq? (head:current-window) origin-window)
                            origin
                            (point))])
              (if (string=? needle "")
@@ -224,7 +224,7 @@
                (loop needle match failed?)
                (let ([shorter (substring needle 0
                                 (- (string-length needle) 1))]
-                     [home (if (eq? (selected-window) origin-window)
+                     [home (if (eq? (head:current-window) origin-window)
                                origin
                                (point))])
                  (if (string=? shorter "")

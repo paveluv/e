@@ -105,9 +105,9 @@
 
      ;; Pause after head adoption and let a writer commit before publication.
      ;; Reset's normal repaint hook provides the barrier without a test hook.
-     (define b (head:window-buffer (head:current)))
+     (define b (head:window-buffer (head:current-window)))
      (define hid (head:buffer-store-id b))
-     (define w (head:current))
+     (define w (head:current-window))
      (head:store-reset! b '("abcdef"))
      (head:window-pcol-set! w 4)
      (head:buffer-mark-col-set! b 1)

@@ -42,7 +42,7 @@
      ;; A missed multiline insertion precedes this head's character.
      ;; Nonselected windows and saved/selection positions must follow too.
      (define b (fresh "position-before" '("abcdef" "tail")))
-     (define w (head:current))
+     (define w (head:current-window))
      (define w2 (head:make-window b 1 0 0 1 2 12 80 80 'default))
      (define w3 (head:make-window b 0 0 0 0 5 12 80 80 'default))
      (head:set-windows! (append (head:windows) (list w2 w3)))

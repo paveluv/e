@@ -19,9 +19,9 @@
 
      (define check test:check)
 
-     (define b (head:window-buffer (head:current)))
+     (define b (head:window-buffer (head:current-window)))
      (define id (head:buffer-store-id b))
-     (define w (head:current))
+     (define w (head:current-window))
      (define bot '(agent sync-test))
      (define (point) (cons (head:window-prow w) (head:window-pcol w)))
      (define (edit! span replacement)
@@ -393,12 +393,12 @@
      ;; cache. The table covers rebasing, old versions and unavailable views.
      (let ([b (head:new-buffer "resume positions")])
        (head:set-buffers! (list b))
-       (head:set-layout-root! (head:current))
-       (head:set-window-buffer! (head:current) b)
+       (head:set-layout-root! (head:current-window))
+       (head:set-window-buffer! (head:current-window) b)
        (for-each
          (lambda (kind expected)
            (head:store-reset! b '("zero" "middle" "last"))
-           (let ([w (head:current)] [id (head:buffer-store-id b)])
+           (let ([w (head:current-window)] [id (head:buffer-store-id b)])
              (head:window-prow-set! w 1)
              (head:window-pcol-set! w 3)
              (head:window-top-set! w 1)
@@ -428,7 +428,7 @@
                (check (list 'resume-from-saved-revision kind)
                  (list (head:resume!)
                        (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:kill-ring)
-                       (head:full-capture? (head:current))
+                       (head:full-capture? (head:current-window))
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
                  (list #t expected #t "saved kill" #t #t)))))
          '(edit reset expired missing-provider)

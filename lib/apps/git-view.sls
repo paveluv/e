@@ -124,13 +124,13 @@
     (unless repository (error 'git-log-refresh! "Git log is not open"))
     (load-log! repository)
     (refresh-log!)
-    (when (eq? (current-buffer) log-buffer)
+    (when (eq? (head:current-buffer) log-buffer)
       (goto-point! (cons (if (null? log-rows) 0 1) 0)))
     (set-message! "Git log refreshed"))
 
   (edoc "Reload the git log app's commits and redraw, showing the refresh as a pressed button.")
   (define (git-log-refresh!)
-    (let ([visible? (eq? (current-buffer) log-buffer)]
+    (let ([visible? (eq? (head:current-buffer) log-buffer)]
           [started (real-time)])
       (dynamic-wind
         (lambda ()
@@ -157,7 +157,7 @@
                   (list refresh-column (+ refresh-column (string-length refresh-label)) 'refresh)]
                  [(and (<= 1 row (length log-rows))
                        (eq? (car (list-ref log-rows (- row 1))) 'file))
-                  (list 0 (string-length (buffer-line log-buffer row)) 'file)]
+                  (list 0 (string-length (head:buffer-line log-buffer row)) 'file)]
                  [else #f]))))
 
   (define (handle-log-event! event)
@@ -236,7 +236,7 @@
         (path (list-of file) "a path inside the repository, at most one"))
   (define (git-log!! . path)
     (let ([source (if (pair? path) (car path)
-                      (or (head:buffer-file (current-buffer)) "."))])
+                      (or (head:buffer-file (head:current-buffer)) "."))])
       (ensure-git-buffers!)
       (set! repository (git:open source))
       (load-log! repository)
@@ -272,12 +272,12 @@
               (and (eq? (head:window-buffer w) log-buffer) (log-hit (cons row column)))))
           ;; Keyboard navigation is bold; only actionable mouse targets
           ;; get the shared hover face, scoped to the pointed window.
-          (if (and log-buffer (memq log-buffer (buffer-list)))
+          (if (and log-buffer (memq log-buffer (head:buffers)))
               (let ([row (call-with-buffer log-buffer
                            (lambda () (car (point))))])
-                (if (<= 1 row (- (buffer-line-count log-buffer) 1))
+                (if (<= 1 row (- (head:buffer-line-count log-buffer) 1))
                     (list (list log-buffer row 0
-                                (string-length (buffer-line log-buffer row))
+                                (string-length (head:buffer-line log-buffer row))
                                 'candidate))
                     '()))
               '()))))

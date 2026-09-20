@@ -314,10 +314,10 @@
 
   (define (select! row)
     (when row
-      (choice-selected-set! (choice-for (selected-window)) (car row))
+      (choice-selected-set! (choice-for (head:current-window)) (car row))
       (goto-point! (cons (row-index (car row)) 0))))
   (define (move! delta)
-    (let* ([row (candidate (selected-window))]
+    (let* ([row (candidate (head:current-window))]
            [index (if row (row-index (car row)) (- first-row 1))])
       (set! hover #f)
       (when (pair? rows)
@@ -351,8 +351,8 @@
     (unless (string=? location "/")
       (up-to! (directory:parent location))))
   (define (activate! directories-only?)
-    (let* ([choice (choice-for (selected-window))]
-           [row (candidate (selected-window))] [entry (and row (cdr row))]
+    (let* ([choice (choice-for (head:current-window))]
+           [row (candidate (head:current-window))] [entry (and row (cdr row))]
            ;; A remembered directory can be reentered before its fresh
            ;; inventory arrives. Rapid Right presses then retrace Left
            ;; presses without dropping input or reading disk on this thread.
@@ -448,7 +448,7 @@
             (find-file!! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
         (lambda ()
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
-          (when (and view (memq view (buffer-list)) (head:app-buffer? view)) (start-scan!))))))
+          (when (and view (memq view (head:buffers)) (head:app-buffer? view)) (start-scan!))))))
   (edoc "Rescan the directory the files view shows.")
   (define (refresh!)
     (when view (start-scan!)) (void))
@@ -462,15 +462,15 @@
           [(member event '("END" "C-e" "M->")) (move! (length rows)) #t]
           [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
            (move! (* (if (member event '("PAGEUP" "M-v")) -1 1)
-                     (max 1 (- (head:window-size (selected-window)) first-row)))) #t]
+                     (max 1 (- (head:window-size (head:current-window)) first-row)))) #t]
           [(string=? event "LEFT") (parent!) #t]
           [(string=? event "RIGHT") (activate! #t) #t]
           [(string=? event "RET") (activate! #f) #t]
           [(member event '("ESC" "C-g"))
-           (let ([origin (choice-origin (choice-for (selected-window)))])
+           (let ([origin (choice-origin (choice-for (head:current-window)))])
              (set! hover #f)
-             (let ([target (if (memq origin (buffer-list)) origin
-                               (find (lambda (b) (not (eq? b view))) (buffer-list)))])
+             (let ([target (if (memq origin (head:buffers)) origin
+                               (find (lambda (b) (not (eq? b view))) (head:buffers)))])
                (when target (show-buffer! target)))) #t]
           [(string=? event "C-u") (filter! "") #t]
           [(string=? event "C-r") (refresh!) #t]
@@ -486,21 +486,21 @@
           [(tty:key-event-character event) => (lambda (c) (filter! (string-append query (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
            (let* ([at (app-event-buffer-position)] [row (and at (at-row (car at)))]
-                  [column (column-at (selected-window) at)])
-             (set! hover (cond [row (cons (selected-window) (car row))]
-                               [column (cons (selected-window) (car column))] [else #f]))) #t]
+                  [column (column-at (head:current-window) at)])
+             (set! hover (cond [row (cons (head:current-window) (car row))]
+                               [column (cons (head:current-window) (car column))] [else #f]))) #t]
           [(member event '("MOUSE-LEAVE" "BLUR")) (set! hover #f) #t]
-          [(member event '("MOUSE-RELEASE" "MOUSE-DRAG")) (select! (keyboard-row (selected-window))) #t]
+          [(member event '("MOUSE-RELEASE" "MOUSE-DRAG")) (select! (keyboard-row (head:current-window))) #t]
           [(string=? event "MOUSE-CLICK")
            (let* ([at (app-event-buffer-position)] [row (and at (at-row (car at)))]
-                  [breadcrumb (and at (breadcrumb-hit (selected-window) (car at) (cdr at)))]
-                  [column (column-at (selected-window) at)]
+                  [breadcrumb (and at (breadcrumb-hit (head:current-window) (car at) (cdr at)))]
+                  [column (column-at (head:current-window) at)]
                   ;; Navigation from another pane ends path entry through the
                   ;; prompt's normal focus-loss rule; its input must not undo it.
                   [navigation (if path-part #t 'keep-focus)])
              (cond [row (set! hover #f) (select! row) (activate! #f) navigation]
                    [breadcrumb (up-to! (caddr breadcrumb)) navigation]
-                   [column (cycle! (car column)) (set! hover (cons (selected-window) (car column))) 'keep-focus]
+                   [column (cycle! (car column)) (set! hover (cons (head:current-window) (car column))) 'keep-focus]
                    [else 'ignore-click]))]
           [else #f]))
 
@@ -512,16 +512,16 @@
       (when (or (zero? row) (and (= row 1) (string:prefix? "Directory: " line)))
         (style:fill-range! out 0 (min (vector-length out) (if (zero? row) 8 11)) 'chrome)) out))
   (define (hints)
-    (and (eq? (current-buffer) view)
-         (let ([room (- (head:window-width (selected-window))
+    (and (eq? (head:current-buffer) view)
+         (let ([room (- (head:window-width (head:current-window))
                         head:window-buttons-width
-                        (glyph:cells (format "~a▏~a " (head:window-index (selected-window)) (head:buffer-name view))))])
+                        (glyph:cells (format "~a▏~a " (head:window-index (head:current-window)) (head:buffer-name view))))])
            (fold-left (lambda (text hint)
                         (if (<= (+ (glyph:cells text) 2 (glyph:cells hint)) room)
                             (string-append text "  " hint) text)) ""
              '("M-c create" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
   (define (ensure!)
-    (unless (and view (memq view (buffer-list)) (head:app-buffer? view))
+    (unless (and view (memq view (head:buffers)) (head:app-buffer? view))
       (set! view (head:register-app! "*files*" render! handle!))
       (set! location (head:buffer-fact view 'directory (file:canonical (file:expand (default-directory)))))
       (set! query (head:buffer-fact view 'file-filter ""))
@@ -540,11 +540,11 @@
   (define (open! . path)
     (unless (or (null? path) (and (null? (cdr path)) (string? (car path))))
       (error 'open! "expected an optional directory path" path))
-    (let* ([was (current-buffer)] [dir (if (pair? path) (car path) (default-directory))]
+    (let* ([was (head:current-buffer)] [dir (if (pair? path) (car path) (default-directory))]
            [selected (head:buffer-file was)])
       (ensure!)
       (unless (eq? was view)
-        (hashtable-set! choices (selected-window) (make-choice was selected '() (make-hashtable string-hash string=?))))
+        (hashtable-set! choices (head:current-window) (make-choice was selected '() (make-hashtable string-hash string=?))))
       (show-buffer! view)
       (if (and (eq? was view) (null? path)) (refresh!)
           (navigate! dir #f selected))) (void))
@@ -575,7 +575,7 @@
                      (append
                        (if column (list (list w 2 (cadr column)
                                           (min (caddr column) (+ (cadr column) (string-length (heading (car column))))) 'hover)) '())
-                       (if (and row (or (eq? w (selected-window)) (string? over)))
+                       (if (and row (or (eq? w (head:current-window)) (string? over)))
                          (list (list w row 0 (string-length (vector-ref (head:window-lines w) row))
                                  (if (string? over) 'candidate-hover 'candidate))) '()))))
               (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))))))

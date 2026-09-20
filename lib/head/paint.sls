@@ -352,7 +352,7 @@
   (define (region-span row line-length)
     ;; The columns of `row` inside the selected window's active
     ;; region, as (start . end), or #f.
-    (let* ([w (head:current)] [b (head:window-buffer w)])
+    (let* ([w (head:current-window)] [b (head:window-buffer w)])
       (and (head:buffer-marked b)
            (let* ([mr (head:buffer-mark-row b)] [mc (head:buffer-mark-col b)]
                   [pr (head:window-prow w)] [pc (head:window-pcol w)]
@@ -840,7 +840,7 @@
            [info (mode-info b)]
            [styles-of (vector-ref info 3)]
            [mode-tag (vector-ref info 0)]
-           [current? (eq? w (head:current))])
+           [current? (eq? w (head:current-window))])
       ;; Walk buffer lines from the top -- its first visible segment --
       ;; a soft-wrapping window painting a long line as successive
       ;; slices (the same line at successive left offsets), others one
@@ -1065,7 +1065,7 @@
     (unless (string=? cursor-style-shown "\x1b;[0 q")
       (ansi "\x1b;[0 q")))
   (define visual-bell-deadline #f)
-  (define (current-lines) (head:buffer-lines (head:window-buffer (head:current))))
+  (define (current-lines) (head:buffer-lines (head:window-buffer (head:current-window))))
 
   ;;; Terminal size ---------------------------------------------------------
 
@@ -1109,10 +1109,10 @@
   (define (page-size)
     ;; The scrollable body height. Sticky app rows are fixed chrome and do not
     ;; form part of a page.
-    (let ([height (caddr (assq (head:current) (window-layout)))])
+    (let ([height (caddr (assq (head:current-window) (window-layout)))])
       (max 1 (- height
                 (min height
-                     (head:buffer-sticky-lines (head:window-buffer (head:current))))))))
+                     (head:buffer-sticky-lines (head:window-buffer (head:current-window))))))))
 
   ;; Soft wrap breaks at word boundaries: each line has a break table
   ;; -- the start position of every visual segment -- computed
@@ -1168,8 +1168,8 @@
   (edoc "Whether the selected window's point is on screen."
         (returns boolean))
   (define (point-visible?)
-    (let* ([entry (assq (head:current) (window-layout))]
-           [p (window-screen-position (head:current) (head:window-prow (head:current)) (head:window-pcol (head:current)))])
+    (let* ([entry (assq (head:current-window) (window-layout))]
+           [p (window-screen-position (head:current-window) (head:window-prow (head:current-window)) (head:window-pcol (head:current-window)))])
       (and entry (< (cadr entry) (car p))
            (<= (car p) (+ (cadr entry) (caddr entry))))))
 
@@ -1752,7 +1752,7 @@
   (edoc "Set the terminal's title to the current buffer's name when it changed.")
   (define (update-terminal-title!)
     ;; OSC 2 is understood by GNOME Terminal, xterm, and nested e terminals.
-    (let ([title (string-append "e: " (head:buffer-name (head:window-buffer (head:current))))])
+    (let ([title (string-append "e: " (head:buffer-name (head:window-buffer (head:current-window))))])
       (unless (equal? title terminal-title-shown)
         (set! terminal-title-shown title)
         (ansi "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
@@ -1795,17 +1795,17 @@
     ;; when an interaction is about to wait for a key, so its cursor
     ;; rules take effect without a repaint.
     (let* ([cursor (echo-cursor-now)]
-           [a (head:app-of (head:window-buffer (head:current)))]
-           [visible? (or cursor (head:app-cursor-visible-in? (head:current)))])
+           [a (head:app-of (head:window-buffer (head:current-window)))]
+           [visible? (or cursor (head:app-cursor-visible-in? (head:current-window)))])
       (if cursor
           (let ([p (echo-position cursor)])
             (goto (+ (- rows (echo:live-height)) (- (car p) (echo:scroll)) 1)
               (min (+ (echo-box-offset) 1 (cdr p) 1) cols)))
           (when visible?
-            (let ([p (window-screen-position (head:current)
-                                             (head:window-prow (head:current)) (head:window-pcol (head:current)))])
+            (let ([p (window-screen-position (head:current-window)
+                                             (head:window-prow (head:current-window)) (head:window-pcol (head:current-window)))])
               (goto (min (car p) rows) (min (cdr p) cols)))))
-      (let* ([app-style (head:app-cursor-style (head:window-buffer (head:current)))]
+      (let* ([app-style (head:app-cursor-style (head:window-buffer (head:current-window)))]
              [style (cond
                       [(cursor-in-echo) "\x1b;[3 q"]
                       ;; a prompt: the cursor is in the echo area's input,
@@ -1821,7 +1821,7 @@
                          [(blinking-underline) "\x1b;[3 q"]
                          [(blinking-bar) "\x1b;[5 q"])]
                       ;; a bar where typing cannot land: a read-only buffer
-                      [(head:buffer-read-only (head:window-buffer (head:current)))
+                      [(head:buffer-read-only (head:window-buffer (head:current-window)))
                        "\x1b;[5 q"]
                       [else "\x1b;[0 q"])])
         (unless (string=? style cursor-style-shown)

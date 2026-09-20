@@ -962,7 +962,7 @@
   (define (markdown-view! . b*)
     ;; Show a local companion in this window; other windows can keep
     ;; editing the original source at the same time.
-    (let ([source (if (pair? b*) (car b*) (current-buffer))])
+    (let ([source (if (pair? b*) (car b*) (head:current-buffer))])
       (head:call-with-display-update
         (lambda ()
           (let ([row (car (head:buffer-point source))]
@@ -977,7 +977,7 @@
   (define (markdown-edit! . b*)
     ;; Return to the live source, without restoring any old snapshot or
     ;; changing its mode, read-only state, file facts, or undo history.
-    (let ([b (if (pair? b*) (car b*) (current-buffer))])
+    (let ([b (if (pair? b*) (car b*) (head:current-buffer))])
       (unless (equal? (mode:name-of b) "markdown-view")
         (error 'markdown-edit! "not a markdown view" b))
       (let ([source (render-input b)])
@@ -1011,7 +1011,7 @@
       "'"))
 
   (define (link-at-point)
-    (let* ([b (current-buffer)]
+    (let* ([b (head:current-buffer)]
            [pt (point)]
            [links (view-row-links b (car pt) #f)])
       (find (lambda (l) (and (<= (car l) (cdr pt)) (< (cdr pt) (cadr l))))
@@ -1033,7 +1033,7 @@
         [(string:prefix? "#" url)
          (set-message! "Anchor links are not followed yet")]
         [else
-         (let* ([b (current-buffer)]
+         (let* ([b (head:current-buffer)]
                 [input (render-input b)]
                 [base (head:buffer-file (if (head:buffer? input) input b))]
                 [dir (if base (or (file:directory-part base) "") "")]
@@ -1043,7 +1043,7 @@
            (visit-file! target)
            ;; a linked markdown document arrives already formatted
            (when (and (markdown-file? url)
-                      (equal? (mode:name-of (current-buffer))
+                      (equal? (mode:name-of (head:current-buffer))
                               "markdown"))
              (guard (ex [else (void)]) (markdown-view!)))
            (set-message! (format "Followed ~a" url)))])))
@@ -1068,7 +1068,7 @@
   (define (link-hint)
     (unless (or (prompt:active?) (equal? hint-point (point)))
       (set! hint-point (point))
-      (let ([link (and (equal? (mode:name-of (current-buffer))
+      (let ([link (and (equal? (mode:name-of (head:current-buffer))
                                "markdown-view")
                        (link-at-point))])
         (cond

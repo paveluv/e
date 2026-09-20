@@ -60,7 +60,8 @@
           layout-min-width layout-min-height weighted-first
           layout-node!
           min-window-lines
-          windows set-windows! root set-root! current set-current!
+          windows set-windows! root set-root! (rename (current current-window)) set-current!
+          current-buffer buffer-line buffer-line-count
           dividers set-dividers!
           read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
           run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
@@ -318,18 +319,20 @@
       (set-window-buffer! the-popup popup-buffer))
     (request-repaint!))
 
-  (edoc "The seat's buffers, most recently shown first."
+  (edoc "The seat's buffers, most recently shown first, as a fresh list."
         (returns (list-of buffer)))
   (define (buffers)
-    the-buffers)
+    ;; collections the head hands out are snapshots: callers keep them
+    ;; without seeing later changes, and cannot disturb the seat's own
+    (append the-buffers '()))
   (edoc "Replace the seat's buffer list."
         (bs (list-of buffer) "the buffers, most recent first"))
   (define (set-buffers! bs)
     (set! the-buffers bs))
-  (edoc "Every live window, in layout order."
+  (edoc "Every live window, in layout order, as a fresh list."
         (returns (list-of window)))
   (define (windows)
-    the-windows)
+    (append the-windows '()))
   (edoc "Replace the seat's window list."
         (ws (list-of window) "the windows"))
   (define (set-windows! ws)
@@ -408,6 +411,10 @@
         (returns window))
   (define (current)
     the-current)
+  (edoc "The buffer shown in the selected window."
+        (returns buffer))
+  (define (current-buffer)
+    (window-buffer the-current))
   (edoc "Select a window, without telling the apps."
         (w window "the window"))
   (define (set-current! w)
@@ -1851,6 +1858,17 @@
                                   (forget-buffer! b)
                                   #f)))))))))))
 
+  (edoc "How many lines a buffer has."
+        (b buffer "the buffer to measure")
+        (returns integer))
+  (define (buffer-line-count b)
+    (vector-length (buffer-lines b)))
+  (edoc "One line of a buffer, by zero-based row."
+        (b buffer "the buffer to read")
+        (row integer "the row")
+        (returns string))
+  (define (buffer-line b row)
+    (vector-ref (buffer-lines b) row))
   (edoc "Replace a buffer's text as a new baseline, through store-reset!."
         (b buffer "the buffer")
         (new-lines vector "the lines"))

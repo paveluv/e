@@ -27,8 +27,8 @@
          (store:edit! bot id (store:revision id) span replacement)))
      (define (find-row b line)
        (let find ([row 0])
-         (cond [(= row (buffer-line-count b)) (error 'find-row "missing content" line)]
-               [(string=? (buffer-line b row) line) row]
+         (cond [(= row (head:buffer-line-count b)) (error 'find-row "missing content" line)]
+               [(string=? (head:buffer-line b row) line) row]
                [else (find (+ row 1))])))
      (define (fresh name local?)
        (let ([b ((if local? head:new-local-buffer head:new-buffer) name)])
@@ -56,12 +56,12 @@
      (define (anchors b)
        (append
          (map (lambda (w)
-                (list (buffer-line b (head:window-prow w)) (head:window-pcol w)
-                      (buffer-line b (head:window-top w)) (head:window-topseg w)))
+                (list (head:buffer-line b (head:window-prow w)) (head:window-pcol w)
+                      (head:buffer-line b (head:window-top w)) (head:window-topseg w)))
               (list w1 w2))
-         (list (list (buffer-line b (head:buffer-spot-row b)) (head:buffer-spot-col b)
-                     (buffer-line b (head:buffer-spot-top b)))
-               (list (buffer-line b (head:buffer-mark-row b)) (head:buffer-mark-col b)
+         (list (list (head:buffer-line b (head:buffer-spot-row b)) (head:buffer-spot-col b)
+                     (head:buffer-line b (head:buffer-spot-top b)))
+               (list (head:buffer-line b (head:buffer-mark-row b)) (head:buffer-mark-col b)
                      (head:buffer-marked b)))))
      (define (expected first second backward?)
        (list (list (if backward? second first) (if backward? 2 3) first 0)
@@ -72,11 +72,11 @@
 
      (md-mode:init!)
      (parameterize ([kernel:registering-module 'markdown-anchor]) (markdown:init!))
-     (define w1 (head:current))
+     (define w1 (head:current-window))
      (head:window-width-set! w1 80)
      (head:window-size-set! w1 12)
      (define source (fresh "anchors.md" #f))
-     (define view (current-buffer))
+     (define view (head:current-buffer))
      (define w2 (head:make-window view 4 0 0 4 2 12 80 80 'default))
      (head:set-layout-root! (head:make-layout-split 'right w1 w2 1 1))
      (goto-point! '(2 . 3))
@@ -94,9 +94,9 @@
      (foreign! source (text:make-span 6 7 6 7) '("!"))
      (head:before-frame!)
      (check 'foreign-insertion-keeps-middle
-            (buffer-line view (head:window-prow w1)) "Middle")
+            (head:buffer-line view (head:window-prow w1)) "Middle")
      (check 'foreign-insertion-keeps-other-window
-            (buffer-line view (head:window-prow w2)) "Omega!")
+            (head:buffer-line view (head:window-prow w2)) "Omega!")
      (check 'foreign-insertion-keeps-all-anchors (anchors view) (expected "Middle" "Omega!" #f))
      (foreign! source (text:make-span 0 0 2 0) '(""))
      (head:before-frame!)
@@ -114,14 +114,14 @@
      (check 'refresh-uses-adopted-source (head:buffer-lines view) before-unadopted)
      (markdown:edit!)
      (check 'toggle-before-adoption-finds-current-source-row
-            (buffer-line source (car (point))) "# Omega!")
+            (head:buffer-line source (car (point))) "# Omega!")
      (head:before-frame!)
      (check 'source-point-follows-later-adoption
-            (buffer-line source (car (point))) "# Omega!")
+            (head:buffer-line source (car (point))) "# Omega!")
 
      (for-each
        (lambda (local?)
-         (let* ([source (fresh "private-or-shared.md" local?)] [view (current-buffer)]
+         (let* ([source (fresh "private-or-shared.md" local?)] [view (head:current-buffer)]
                 [source-window (head:make-window source 0 0 0 0 0 12 80 80 'default)])
            (head:set-windows! (list w1 w2 source-window))
            (place! view "Middle" "Omega" #f)
@@ -196,7 +196,7 @@
              (head:store-edit! source (text:make-span 0 0 0 0) '("" "")))
            (head:before-frame!)
            (check 'expired-source-history-clamps-instead-of-guessing
-                  (buffer-line view (head:window-prow w1)) "")
+                  (head:buffer-line view (head:window-prow w1)) "")
            (check 'expired-source-history-adopts-current-rendering
                   (vector-ref (head:buffer-fact view 'markdown-rendering #f) 8)
                   (caddr (head:edit-basis source)))
@@ -207,7 +207,7 @@
      ;; Both the callback's first observation and the final state must
      ;; contain matching text, styles, source provenance, and positions.
      (define table (fresh "reentrant-table.md" #f))
-     (define table-view (current-buffer))
+     (define table-view (head:current-buffer))
      (head:buffer-lines-set! table
        '#("|alpha beta gamma delta epsilon|x|" "|-|-|" "|long entry|y|"
           "" "# After table" "" "# Tail"))
@@ -228,7 +228,7 @@
                (let ([r (head:buffer-fact table-view 'markdown-rendering #f)])
                  (set! coherent
                    (and (eq? (vector-ref r 3) (head:buffer-lines table))
-                        (= (vector-length (vector-ref r 0)) (buffer-line-count table-view))
+                        (= (vector-length (vector-ref r 0)) (head:buffer-line-count table-view))
                         (string=? (vector-ref (vector-ref r 3)
                                               (vector-ref (vector-ref r 2) (head:window-prow w1)))
                                   "# After table"))))
@@ -241,7 +241,7 @@
        (lambda () (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))))
      (check 'repaint-observes-installed-anchors entered (expected "After table" "Tail" #f))
      (check 'repaint-observes-coherent-rendering coherent #t)
-     (check 'reentrant-render-keeps-newest-text (buffer-line table-view 0) "Later")
+     (check 'reentrant-render-keeps-newest-text (head:buffer-line table-view 0) "Later")
      (check 'reentrant-render-keeps-newest-anchors (anchors table-view) (expected "After table" "Tail" #f))
      (check 'reentrant-refit-moves-the-table-end (> (head:window-prow w1) (+ before-row 4)) #t)
      (check 'reentrant-render-keeps-newest-basis

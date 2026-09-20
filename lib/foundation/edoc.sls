@@ -36,7 +36,7 @@
           signature-arguments signature-returns signature-library
           argument? argument-name argument-type argument-notes
           edoc-types edoc-type? type-text edoc-entry edoc-template first-sentence
-          type-named type-owner type-within type-read type-prose type-accepts? type-completions type-spelling)
+          type-named type-owner type-within type-denotes-record? type-read type-prose type-accepts? type-completions type-spelling)
   (import (rnrs)
           (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! eq-hashtable-contains? format syntax->list
@@ -431,17 +431,18 @@
             (loop (cdr names)))))
       (let* ([clauses (syntax->datum field-clauses)]
              [tail (if library (list (list "library" library)) '())]
-             [instance (list type-name (list 'record type-name))]
+             [instance (list (string->symbol noun) (list 'record type-name))]
+             [made (list 'returns (list 'record type-name))]
              [attachment
               (lambda (object summary clauses kind)
                 (cons object (append (list 'edoc summary) clauses (list (list "kind" kind)) tail)))])
         (append
           (list (attachment type summary clauses 'record))
           (cond
-            [plain-constructor? (list (attachment constructor summary clauses 'constructor))]
+            [plain-constructor? (list (attachment constructor summary (append clauses (list made)) 'constructor))]
             [(and constructor constructor-clause)
              (list (attachment constructor summary
-                     (map (lambda (f) (assq f clauses)) (cdr (syntax->datum constructor-clause)))
+                     (append (map (lambda (f) (assq f clauses)) (cdr (syntax->datum constructor-clause))) (list made))
                      'constructor))]
             [else '()])
           (if predicate
@@ -852,6 +853,12 @@
   (edefine (type-within type)
     (edoc "The type this one refines, head within actor say, or #f." (type (record type) "the type record") (returns (or symbol #f)))
     (type-within-of type))
+
+  (edefine (type-denotes-record? t name)
+    (edoc "Whether a named type is a documented record's type, region and region-record say: its predicate is the record's."
+          (t symbol "the type's name") (name symbol "the record type's name") (returns boolean))
+    (let ([type (type-named t)] [predicate (eq-hashtable-ref record-predicates name #f)])
+      (and type predicate (eq? (type-predicate-of type) predicate))))
 
   (edefine (type-read type)
     (edoc "A type's reader, text to value, or #f." (type (record type) "the type record") (returns (or procedure #f)))

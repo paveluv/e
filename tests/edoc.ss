@@ -157,7 +157,7 @@
        '(((("parameter" . "(width [value])")) "integer: in columns")
          ((("variable" . "limit")) "integer")
          ((("syntax" . "(swap! a b)")) #f)
-         ((("procedure" . "(make-place x y)")) #f)
+         ((("procedure" . "(make-place x y)")) "place record")
          ((("procedure" . "(place-y-set! place value)")) #f)
          ((("procedure" . "(plain n)") ("procedure" . "(plain n step)")) "integer")
          ((("record" . "place")) #f)))

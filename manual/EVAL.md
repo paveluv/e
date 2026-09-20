@@ -15,7 +15,7 @@ immediately available to later evaluations.
 it:
 
 ```scheme
-M-x (head:buffer-name (current-buffer))
+M-x (head:buffer-name (head:current-buffer))
 M-x (define answer 42)
 M-x answer
 ```
@@ -92,7 +92,7 @@ a procedure of no arguments closes its form with the matching `)`, `]` or
 `}`, one expecting more arguments leaves the cursor one space on, at the next
 argument, and a completed last argument closes the form. A closed form is then
 settled as an argument of its parent, so `(head:window-index (head:curr` Tab
-yields `(head:window-index (head:current))`. Optional and rest parameters,
+yields `(head:window-index (head:current-window))`. Optional and rest parameters,
 syntax, unbound names, quoted or quasiquoted forms, and text after the
 cursor all leave the cursor at the end of the symbol without appending a
 space or changing the arguments. Strings, comments and character literals
@@ -119,18 +119,18 @@ At an argument position of a documented procedure, Tab completes by the
 argument's type instead of by symbol. `(show-buffer! ` offers every live
 buffer as the expression that denotes it, `(buffer "edit.sls")`, with the
 buffer's file, mode and state as its hint; then the documented procedures
-and parameters that produce a buffer, `(current-buffer)` and
+and parameters that produce a buffer, `(head:current-buffer)` and
 `(fresh-buffer name)` say, which insert their opening and settle to their
 first argument; then the top-level variables holding one, so a buffer you
 bound with `define` at M-x is offered by name. The token matches a
 candidate's own spelling the way it matches a symbol, by parts starting at
 any punctuation, so `scr` finds `(buffer "*scratch*")` and `cur` finds
-`(current-buffer)`, while the formals shown in a producer's label take no
+`(head:current-buffer)`, while the formals shown in a producer's label take no
 part. Tab extends the token to the longest text every current candidate
 still matches: `bu` becomes `(buffer` when everything offered is a form,
 and stays bare while a variable such as `myb` is among the matches. The
 operator position of a nested form takes the enclosing argument's type,
-so `(show-buffer! (cu` completes to `(current-buffer)` rather than to every
+so `(show-buffer! (cu` completes to `(head:current-buffer)` rather than to every
 symbol; a form under a quote, or under an undocumented operator, completes
 symbols as before. A `one-of` type offers its literals, a boolean `#t` and
 `#f`, and inside a string literal the type's string values complete the
@@ -188,7 +188,7 @@ Examples:
 (eval:run!)
 (eval:run! (buffer "scratch.scm"))
 (eval:run! "helpers.scm")
-(eval:run! (region (current-buffer) '(10 . 0) '(18 . 0)))
+(eval:run! (region (head:current-buffer) '(10 . 0) '(18 . 0)))
 (eval:run! (lambda (b) (string=? (mode:name-of b) "scheme")))
 ```
 

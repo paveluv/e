@@ -15,6 +15,7 @@
 (elibrary (scheme-mode)
   (export init! (rename (scheme-format-on-save format-on-save)))
   (import (chezscheme)
+          (prefix (head) head:)
           (except (edit) init!)
           (prefix (file) file:)
           (prefix (style) style:)
@@ -181,10 +182,10 @@
   ;; standalone scheme-format tool; these adapters feed it buffer lines.
 
   (define (buffer-vector b)
-    (let* ([n (buffer-line-count b)]
+    (let* ([n (head:buffer-line-count b)]
            [v (make-vector n)])
       (do ([i 0 (+ i 1)]) ((= i n) v)
-        (vector-set! v i (buffer-line b i)))))
+        (vector-set! v i (head:buffer-line b i)))))
 
   (define (scheme-indent b from to)
     (scheme-format:indent-lines (buffer-vector b) from to))
@@ -194,7 +195,7 @@
 
   (define (format-on-save! path)
     (when (and (scheme-format-on-save)
-               (equal? (mode:name-of (current-buffer)) "scheme"))
+               (equal? (mode:name-of (head:current-buffer)) "scheme"))
       (format-buffer!)))
 
   (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries.")

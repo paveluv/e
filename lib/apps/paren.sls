@@ -12,6 +12,7 @@
 (elibrary (paren)
   (export init! (rename (matching-paren-style matching-style)))
   (import (chezscheme)
+          (prefix (head) head:)
           (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
@@ -47,8 +48,8 @@
     ;; Find the bracket balancing the one at (start-row, start-col),
     ;; scanning forward (dir 1) or backward (dir -1).  The scan is bounded
     ;; so pathological buffers stay responsive; #f when nothing balances.
-    (define count (buffer-line-count b))
-    (define (line r) (buffer-line b r))
+    (define count (head:buffer-line-count b))
+    (define (line r) (head:buffer-line b r))
     (let walk ([row start-row] [col start-col]
                [styles (styles-of (line start-row))]
                [depth 0] [budget 50000])
@@ -74,11 +75,11 @@
   (define (paren-highlights)
     ;; The bracket at point and its partner, as (row start end) ranges;
     ;; empty when neither applies.
-    (let* ([b (current-buffer)]
+    (let* ([b (head:current-buffer)]
            [styles-of (mode:line-styles b)]
            [pt (point)]
            [row (car pt)]
-           [line (buffer-line b row)]
+           [line (head:buffer-line b row)]
            [styles (styles-of line)])
       (define (bracket-at col kinds)
         (and (>= col 0) (< col (string-length line))

@@ -47,10 +47,10 @@
      (check 'registered-local-is-listed (and (memq explicit (head:buffers)) #t) #t)
      (check 'register-existing-shared-refused
             (refused? (lambda ()
-                        (head:register-view! (head:window-buffer (head:current)) void)))
+                        (head:register-view! (head:window-buffer (head:current-window)) void)))
             #t)
      (check 'rejected-shared-registration-keeps-flags
-            (head:buffer-read-only (head:window-buffer (head:current))) #f)
+            (head:buffer-read-only (head:window-buffer (head:current-window))) #f)
 
      ;; A view never captures an ordinary buffer's label as identity.
      (define ordinary (head:new-buffer "<app-collision>"))
@@ -74,7 +74,7 @@
      (check 'view-replacement-validates-placement-owner
             (refused? (lambda ()
                         (head:view-replace! app '("bad") '((custom . wrong))
-                          (list (cons (head:current) '(0 . 0)))))) #t)
+                          (list (cons (head:current-window) '(0 . 0)))))) #t)
      (check 'view-replacement-requires-numeric-placements
             (refused? (lambda () (head:view-replace! app '("bad") '((custom . wrong)) '((mark . end))))) #t)
      (check 'view-replacement-rejects-negative-positions
@@ -109,13 +109,13 @@
      (show-buffer! explicit)
      (goto-point! '(2 . 5))
      (set-mark-command!)
-     (head:window-top-set! (head:current) 2)
+     (head:window-top-set! (head:current-window) 2)
      (show-buffer! app)
      (head:view-replace! explicit '("x"))
      (show-buffer! explicit)
      (check 'shorter-view-clamps-saved-point (point) '(0 . 1))
      (check 'shorter-view-clamps-selection (mark) '(0 . 1))
-     (check 'shorter-view-clamps-saved-viewport (head:window-top (head:current)) 0)
+     (check 'shorter-view-clamps-saved-viewport (head:window-top (head:current-window)) 0)
      (head:set-app-selectable! explicit #f)
      (define disabled-mark (mark))
      (set-mark-command!)
@@ -131,7 +131,7 @@
 
      ;; One model can publish different row layouts to its windows. Geometry
      ;; reads the same presentation, while resizing changes no source text.
-     (let* ([root (head:root)] [w (head:current)] [was (current-buffer)]
+     (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
             [b (head:register-view! "window presentation" void)]
             [other (head:make-window b 0 0 0 0 0 4 41 20 'default)]
             [source '("heading" "complete source row")]
@@ -342,7 +342,7 @@
 
      ;; Views keep a recent window independently of the larger journal. Expiry
      ;; removes complete multiline records and gaps from other components.
-     (let ([formatted 0] [w (head:current)])
+     (let ([formatted 0] [w (head:current-window)])
        (log:retention 10000)
        (log:register-formatter! 'retention
          (lambda (datum) (set! formatted (+ formatted 1)) datum))
@@ -396,7 +396,7 @@
              '(3 (#t 3))))))
 
      ;; Mouse routing needs the handler's focus decision, not only truth.
-     (let* ([previous (current-buffer)] [result #f]
+     (let* ([previous (head:current-buffer)] [result #f]
             [b (head:register-app! "dispatch-results" void (lambda (event) result))])
        (show-buffer! b)
        (check 'local-dispatch-preserves-focus-results
@@ -408,7 +408,7 @@
 
      ;; One shared app exercises the complete head adapter. Its endpoint only
      ;; receives data; no head app record or terminal renderer is registered.
-     (let* ([previous (current-buffer)] [w (head:current)] [owner '(app adapter-test)]
+     (let* ([previous (head:current-buffer)] [w (head:current-window)] [owner '(app adapter-test)]
             [messages (test:recorder)] [reenter #f]
             [text (make-vector 50 "abc")])
        (define (receive message)
@@ -487,7 +487,7 @@
              (check 'delivery-cannot-mutate-head-identity-or-context
                (list (car head:ui-actor) (actor:current) (app-event-buffer-position)) (list 'head identity #f))))
          (let ([before (length (received 'input))] [ran? #f] [commands 0])
-           (define (toggle!) (head:set-full-capture! (head:current) (not (head:full-capture? (head:current)))))
+           (define (toggle!) (head:set-full-capture! (head:current-window) (not (head:full-capture? (head:current-window)))))
            (mode:register! "adapter-test" '() '() (lambda (line) #f))
            (mode:choose! b "adapter-test")
            (keymap:bind-default! 'adapter-test "UP" (lambda () (set! ran? #t)))
