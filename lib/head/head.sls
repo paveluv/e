@@ -3212,7 +3212,7 @@
            thunk
            (lambda () (set-window-buffer! the-current old))))]))
 
-  (edoc "Run body with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change: (with-buffer (buffer \"notes.md\") (edit:replace-all! \"x\" \"y\"))."
+  (edoc "Run body with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change: (with-buffer (buffer \"notes.md\") (search:replace-all! \"x\" \"y\"))."
         (b buffer "the buffer to make current")
         (body (list-of any) "the forms to run"))
   (define-syntax with-buffer

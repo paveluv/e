@@ -1203,7 +1203,7 @@
           thunk
           (lambda () (select! saved-mark saved-point saved-active))))))
 
-  (edoc "Run body with a region selected: its buffer current, the mark at its start and point at its end; the previous selection and point return on exit and on escape: (with-region (region (buffer \"a\") '(0 . 0) '(4 . 0)) (replace-all! \"x\" \"y\"))."
+  (edoc "Run body with a region selected: its buffer current, the mark at its start and point at its end; the previous selection and point return on exit and on escape: (with-region (region (buffer \"a\") '(0 . 0) '(4 . 0)) (search:replace-all! \"x\" \"y\"))."
         (r region "the region to select")
         (body (list-of any) "the forms to run"))
   (define-syntax with-region
