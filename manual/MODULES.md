@@ -362,8 +362,8 @@ matching, selections, and app candidates use this mechanism.
 text hit test; see [App buffers](APPS.md). It shares click and navigation
 geometry and keeps mouse emphasis separate from keyboard selection.
 
-Language layout remains modular through `edit:register-indenter!` and
-`edit:register-formatter!`. See [Formatting](FORMATTING.md).
+Language layout remains modular through `mode:register-indenter!` and
+`mode:register-formatter!`. See [Formatting](FORMATTING.md).
 
 ## Apps and views
 

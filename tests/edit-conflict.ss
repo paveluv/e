@@ -217,7 +217,7 @@
      (mode:register! "conflict-indent" '() '() (lambda (line) #f))
      (mode:choose! indented "conflict-indent")
      (head:goto! '(0 . 2))
-     (register-indenter! "conflict-indent"
+     (mode:register-indenter! "conflict-indent"
        (lambda (b from to)
          (foreign! b (text:make-span 0 0 0 4) '("R"))
          '(6)))

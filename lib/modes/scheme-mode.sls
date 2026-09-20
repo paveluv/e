@@ -204,8 +204,8 @@
                     '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")
                     '("scheme" "petite" "chez" "guile" "racket")
                     scheme-styles #f scheme-row-styles)
-    (register-indenter! "scheme" scheme-indent)
-    (register-formatter! "scheme" scheme-format)
+    (mode:register-indenter! "scheme" scheme-indent)
+    (mode:register-formatter! "scheme" scheme-format)
     (doc:register!
       '(((scheme-format:intrusive)
          (("parameter" . "(scheme-format:intrusive [enabled?])")) "boolean"

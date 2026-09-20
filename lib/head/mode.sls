@@ -30,7 +30,8 @@
                   (buffer-line-styles line-styles)
                   (memoize-buffer-analysis memoize-analysis)
                   (refresh-buffer-modes! refresh!))
-          mode? key-context)
+          mode? key-context
+          register-indenter! register-formatter! indent-on-tab! indenter indent-on-tab? formatter)
   (import (rnrs)
           (only (chezscheme)
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
@@ -198,6 +199,63 @@
     (head:buffer-facts-set! b
       (cons (cons 'mode (and m (mode-name m)))
             (if (pair? auto?) (list (cons 'mode-auto (car auto?))) '()))))
+
+  ;;; Indenters and formatters ------------------------------------------------------
+
+  ;; Both are provided per mode by modules and consumed by edit's
+  ;; indentation and formatting commands.  An indenter maps rows to where
+  ;; their text should start: (proc buffer from to) -> one entry per row
+  ;; of from..to -- #f leaving a row alone, a column, or an ascending list
+  ;; of columns when several indentations are valid.  A formatter rewrites
+  ;; rows wholesale: (proc buffer from to) -> the replacement lines, or #f
+  ;; when the rows cannot be formatted.
+  (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
+  (define formatters (kernel:make-registry))  ; entries (mode proc)
+
+  (define (indenter-entry name)
+    (kernel:registry-find indenters (lambda (x) (string=? (car x) name))))
+
+  (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
+        (name mode "the mode")
+        (proc procedure "the indenter")
+        (tab boolean "whether TAB indents"))
+  (define register-indenter!
+    (case-lambda
+      [(name proc) (register-indenter! name proc #t)]
+      [(name proc tab) (kernel:registry-add! indenters (list name proc tab))]))
+
+  (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
+        (name mode "the mode")
+        (proc procedure "the formatter"))
+  (define (register-formatter! name proc)
+    (kernel:registry-add! formatters (list name proc)))
+
+  (edoc "Set whether TAB indents in a mode, overriding the flag its indenter registered with."
+        (name mode "the mode")
+        (flag boolean "whether TAB indents"))
+  (define (indent-on-tab! name flag)
+    (let ([entry (indenter-entry name)])
+      (unless entry (error 'indent-on-tab! "no indenter for mode" name))
+      (kernel:registry-add! indenters (list name (cadr entry) flag))))
+
+  (edoc "A mode's indenter, (proc buffer from to), or #f."
+        (name string "the mode's name")
+        (returns (or procedure #f)))
+  (define (indenter name)
+    (let ([entry (indenter-entry name)]) (and entry (cadr entry))))
+
+  (edoc "Whether TAB runs a mode's indenter."
+        (name string "the mode's name")
+        (returns boolean))
+  (define (indent-on-tab? name)
+    (let ([entry (indenter-entry name)]) (and entry (caddr entry) #t)))
+
+  (edoc "A mode's formatter, (proc buffer from to), or #f."
+        (name string "the mode's name")
+        (returns (or procedure #f)))
+  (define (formatter name)
+    (let ([entry (kernel:registry-find formatters (lambda (x) (string=? (car x) name)))])
+      (and entry (cadr entry))))
 
   (define (no-styles s) #f)
 

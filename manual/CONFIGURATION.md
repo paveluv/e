@@ -121,7 +121,7 @@ assignments and other Scheme effects that ran before the error remain applied.
 (keymap:bind! "C-c s" edit:save!)
 (keymap:unbind! "C-v")
 (mode:add-extension! "scheme" ".foo")
-(edit:indent-on-tab! "scheme" #f)
+(mode:indent-on-tab! "scheme" #f)
 (paint:wrap-lines #f)
 (head:scrollbar #t)
 (head:scrollbar-position 'right)

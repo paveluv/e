@@ -234,7 +234,7 @@
 
      ;; Validate all inputs before either owner changes text or facts.
      (mode:register! "invalid-line-output" '() '() (lambda (line) #f))
-     (register-formatter! "invalid-line-output" (lambda args '("embedded\nnewline")))
+     (mode:register-formatter! "invalid-line-output" (lambda args '("embedded\nnewline")))
      (for-each
        (lambda (shared?)
          (let ([b (fresh (if shared? "validate-shared" "validate-local") shared?)])

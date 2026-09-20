@@ -176,7 +176,7 @@
      (define formatted (fresh "position-format-source" '("abc" "tail")))
      (mode:choose! formatted "position-format")
      (head:goto! '(0 . 2))
-     (register-formatter! "position-format"
+     (mode:register-formatter! "position-format"
        (lambda (b from to)
          (foreign! b (text:make-span 0 0 0 0) '("Q"))
          (head:before-frame!)
@@ -195,7 +195,7 @@
 
      (define conflict (fresh "position-format-conflict" '("abc")))
      (mode:choose! conflict "position-format")
-     (register-formatter! "position-format"
+     (mode:register-formatter! "position-format"
        (lambda (b from to)
          (foreign! b (text:make-span 0 1 0 2) '("R"))
          (head:before-frame!)
@@ -209,7 +209,7 @@
      (head:goto! '(1 . 2))
      (set-mark-command!)
      (head:goto! '(0 . 3))
-     (register-indenter! "position-format"
+     (mode:register-indenter! "position-format"
        (lambda (b from to)
          (foreign! b (text:make-span 0 0 0 0) '("pre" ""))
          (head:before-frame!)
@@ -240,7 +240,7 @@
      (check 'local-other-window-follows-undo (wpoint w2) '(1 . 2))
      (check 'local-undo-restores-command-point (head:point) '(0 . 1))
      (mode:choose! local "position-format")
-     (register-formatter! "position-format"
+     (mode:register-formatter! "position-format"
        (lambda (b from to)
          (head:buffer-lines-set! b '#("new local text"))
          '("ABC" "tail")))

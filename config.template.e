@@ -53,7 +53,7 @@
 ;;                              ; update after kills and copies; the host
 ;;                              ; terminal may ignore or prohibit the request,
 ;;                              ; so this might not work in every terminal
-;; (edit:indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
+;; (mode:indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
 ;; (mode:add-extension! "scheme" ".foo") ; highlight *.foo as Scheme
 ;; (scheme-format:brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
 ;; (scheme-format:tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)

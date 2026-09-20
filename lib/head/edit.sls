@@ -54,9 +54,7 @@
     ;; extending the editor
 
 
-    register-indenter! register-formatter!
 
-    indent-on-tab!
 
 
 
@@ -1313,27 +1311,10 @@
   ;; replacement lines, or #f when the rows cannot be formatted.  TAB
   ;; indents the current line when the mode registered its indenter
   ;; with the tab flag on (the default).
-  (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
-  (define formatters (kernel:make-registry))  ; entries (mode proc)
-
-  (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
-        (name mode "the mode")
-        (proc procedure "the indenter")
-        (tab boolean "whether TAB indents"))
-  (define register-indenter!
-    (case-lambda
-      [(name proc) (register-indenter! name proc #t)]
-      [(name proc tab) (kernel:registry-add! indenters (list name proc tab))]))
-
-  (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
-        (name mode "the mode")
-        (proc procedure "the formatter"))
-  (define (register-formatter! name proc)
-    (kernel:registry-add! formatters (list name proc)))
-
-  (define (mode-entry registry)
+  (define (mode-tool registered)
+    ;; the current buffer's mode's registered indenter, formatter or flag, or #f
     (let ([m (mode:name-of (head:window-buffer current-window))])
-      (and m (kernel:registry-find registry (lambda (x) (string=? (car x) m))))))
+      (and m (registered m))))
 
   (define (leading-blanks s)
     (let loop ([i 0])
@@ -1415,8 +1396,8 @@
   (define (indent-rows! from to)
     ;; Indent rows [from, to] by the mode's indenter, each settling on
     ;; the stop nearest its current indentation; -> #f without one.
-    (let ([entry (mode-entry indenters)])
-      (if (not entry)
+    (let ([indent (mode-tool mode:indenter)])
+      (if (not indent)
           (begin (set! message "No indenter for this mode") #f)
           (let* ([b (head:window-buffer current-window)]
                  [source (head:edit-basis b)]
@@ -1424,7 +1405,7 @@
                  [wanted (head:point)] [selected (head:mark)]
                  [last (min to (- (vector-length v) 1))]
                  [cols (let settle ([r from]
-                                    [cs ((cadr entry) b from last)]
+                                    [cs (indent b from last)]
                                     [acc '()])
                          (if (null? cs)
                              (reverse acc)
@@ -1444,15 +1425,15 @@
     ;; -- the nearest stop right of the current indentation, wrapping
     ;; -- and land on the indentation (a blank line pads out to it);
     ;; point already past it stays with its text.
-    (let ([entry (mode-entry indenters)])
-      (if (not entry)
+    (let ([indent (mode-tool mode:indenter)])
+      (if (not indent)
           (set! message "No indenter for this mode")
           (let* ([b (head:window-buffer current-window)]
                  [source (head:edit-basis b)]
                  [wanted (head:point)] [selected (head:mark)]
                  [row (car wanted)]
                  [lead (leading-blanks (vector-ref (car source) row))]
-                 [cols ((cadr entry) b row row)]
+                 [cols (indent b row row)]
                  [col (and (pair? cols)
                            (cycle-stops (car cols) lead))])
             (when col
@@ -1465,20 +1446,8 @@
   (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing.")
   (define (indent-tab!)
     ;; TAB: the mode indents when it asked to; otherwise nothing.
-    (let ([entry (mode-entry indenters)])
-      (when (and entry (caddr entry))
-        (indent-line!))))
-
-  (edoc "Set whether TAB indents in a mode, overriding the flag its indenter registered with."
-        (name mode "the mode")
-        (flag boolean "whether TAB indents"))
-  (define (indent-on-tab! name flag)
-    ;; Configuration: whether TAB auto-indents in the named mode,
-    ;; overriding the flag its indenter registered with.
-    (let ([entry (kernel:registry-find indenters
-                                       (lambda (x) (string=? (car x) name)))])
-      (unless entry (error 'indent-on-tab! "no indenter for mode" name))
-      (kernel:registry-add! indenters (list name (cadr entry) flag))))
+    (when (mode-tool mode:indent-on-tab?)
+      (indent-line!)))
 
   (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop.")
   (define (indent-region!)
@@ -1522,16 +1491,16 @@
   (define (format-rows! from to)
     ;; Format rows [from, to] by the mode's formatter; -> whether the
     ;; buffer changed.
-    (let ([entry (mode-entry formatters)])
+    (let ([format-lines (mode-tool mode:formatter)])
       (cond
-        [(not entry) (set! message "No formatter for this mode") #f]
+        [(not format-lines) (set! message "No formatter for this mode") #f]
         [else
          (let* ([b (head:window-buffer current-window)]
                 [source (head:edit-basis b)]
                 [v (car source)]
                 [wanted (head:point)]
                 [last (min to (- (vector-length v) 1))]
-                [lines ((cadr entry) b from last)])
+                [lines (format-lines b from last)])
            (cond
              [(not lines) (set! message "Cannot format these lines") #f]
              [(and (or (< last (- (vector-length v) 1)) trailing-newline?)
