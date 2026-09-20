@@ -240,8 +240,8 @@ Edits from different actors combine when their ranges do not overlap. If
 another edit consumes the text being changed, e reports `Edit not applied`
 and refreshes the buffer; shared text and history stay intact
 ([details](BUFFERS.md#switching-creating-and-killing)). `C-_` undoes this
-head's latest action by default; `(undo-scope 'all)` includes every actor and
-`M-x undo-actor!!` picks one ([undo](BUFFERS.md#undo-selections-and-the-kill-buffer)).
+head's latest action by default; `(edit:undo-scope 'all)` includes every actor and
+`M-x edit:undo-actor!!` picks one ([undo](BUFFERS.md#undo-selections-and-the-kill-buffer)).
 Another actor's fresh text is tinted briefly in its own color, and
 `M-x blame:at-point!` reports authorship from the retained edit log
 ([attribution](BUFFERS.md#recent-edit-attribution)). Saving captures the
@@ -253,7 +253,7 @@ shared work stays in the base.
 
 An agent or another actor can leave a question for you. The echo area shows
 the oldest pending question when no other message or prompt occupies it, and
-`C-c a` (`answer!!`) answers it, with Tab offering any supplied choices; see
+`C-c a` (`edit:answer!!`) answers it, with Tab offering any supplied choices; see
 [prompts](PROMPTS.md#questions-from-other-actors) for the interaction.
 
 Extensions in the base use

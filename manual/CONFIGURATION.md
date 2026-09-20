@@ -118,15 +118,15 @@ assignments and other Scheme effects that ran before the error remain applied.
 ## Common examples
 
 ```scheme
-(keymap:bind! "C-c s" save!!)
+(keymap:bind! "C-c s" edit:save!!)
 (keymap:unbind! "C-v")
 (mode:add-extension! "scheme" ".foo")
-(indent-on-tab! "scheme" #f)
-(wrap-lines #f)
-(scrollbar #t)
-(scrollbar-position 'right)
-(line-numbers #f)
-(undo-scope 'all) ; include other actors' changes; default is 'mine
+(edit:indent-on-tab! "scheme" #f)
+(paint:wrap-lines #f)
+(head:scrollbar #t)
+(head:scrollbar-position 'right)
+(head:line-numbers #f)
+(edit:undo-scope 'all) ; include other actors' changes; default is 'mine
 (scheme-format:width 100)
 (style:set! 'editor '((foreground 135) bold))
 ```

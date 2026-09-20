@@ -65,7 +65,7 @@ The repetition is command-based rather than inferred from the cursor position.
 
 ## Prompts in the window
 
-`M-x (find-file!!)` reads its input in the current window instead of the
+`M-x (edit:find-file!!)` reads its input in the current window instead of the
 echo area. Each invocation creates a temporary local `<find-file>` view.
 The input sits at the bottom of the window, with the same editing keys,
 styles, suggestions and text
@@ -153,7 +153,7 @@ The indicator updates while idle as questions arrive or are withdrawn,
 advancing to the next question or clearing when none remain. It also refits
 immediately when you resize the terminal. Other messages and anything you are
 typing into a prompt stay intact.
-Press `C-c a` (`answer!!`) to answer; Tab offers any supplied choices.
+Press `C-c a` (`edit:answer!!`) to answer; Tab offers any supplied choices.
 Cancelling the prompt leaves the question pending so you can return to it.
 If it was withdrawn while you were typing, the editor says so when you submit.
 Once a named head has attached, questions can also arrive while it is absent.

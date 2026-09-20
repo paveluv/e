@@ -93,8 +93,8 @@ be finite plain data; cycles and runtime objects such as procedures are
 rejected. A bad registration batch publishes no entries. Update documentation
 through module registration or reload; changing a retained input has no effect.
 
-The `(edit)` module uses this mechanism for commands such as `replace!!` and
-`replace-all!`. Registered forms also drive the grey parameter suggestion in
+The `(edit)` module uses this mechanism for commands such as `edit:replace!!` and
+`edit:replace-all!`. Registered forms also drive the grey parameter suggestion in
 `M-x`, so newly documented procedures receive prompt hints automatically.
 
 ### Documented definitions

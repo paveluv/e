@@ -204,7 +204,7 @@
     ;; the editor's top-level names bound to documented values, with their signatures
     (fold-right
       (lambda (sym out)
-        (let ([signatures (and (editor-symbol? sym) (edoc:edoc-of (top-level-value sym)))])
+        (let ([signatures (and (kernel:editor-symbol? sym) (edoc:edoc-of (top-level-value sym)))])
           (if signatures (cons (cons sym signatures) out) out)))
       '() (environment-symbols (interaction-environment))))
 
@@ -257,7 +257,7 @@
         (list-sort option<?
           (fold-right
             (lambda (sym out)
-              (let ([value (and (editor-symbol? sym) (top-level-value sym))])
+              (let ([value (and (kernel:editor-symbol? sym) (top-level-value sym))])
                 (if (and value (guard (ex [else #f]) (edoc:type-accepts? type value)))
                   (let ([name (symbol->string sym)])
                     (cons (make-option name name name
@@ -400,7 +400,7 @@
            [hint (completion-hint (string->symbol name))]
            [label (if (string=? hint "") name (string-append name "  " hint))]
            [styles (make-vector (string-length label) 'chrome)]
-           [face (if (editor-symbol? (string->symbol name)) 'editor 'plain)]
+           [face (if (kernel:editor-symbol? (string->symbol name)) 'editor 'plain)]
            [matched (list face 'mark)])
       (style:fill-range! styles 0 (string-length name) face)
       (for-each
@@ -436,7 +436,7 @@
       (lambda (text pos) (settle-completion text pos))))
 
   (define complete-symbol (symbol-completer (lambda (sym) #t) #t))
-  (define complete-editor-symbol (symbol-completer editor-symbol? #f))
+  (define complete-editor-symbol (symbol-completer kernel:editor-symbol? #f))
 
   ;;; Signatures ----------------------------------------------------------------
 
@@ -728,7 +728,7 @@
                     (end (+ j 1))
                     (begin
                       (when (and (guard (ex [else #f])
-                                   (editor-symbol?
+                                   (kernel:editor-symbol?
                                      (string->symbol (substring text i j))))
                                  (memq (vector-ref styles i) '(plain italic)))
                         (let fill ([k i])

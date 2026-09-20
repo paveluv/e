@@ -14,8 +14,8 @@ any meanings the key has inside prompts, incremental search, or query-replace.
 
 ```scheme
 (keymap:bind! "M-l" log-view:show!)
-(keymap:bind! "C-c s" save!!)
-(keymap:bind! "C-c C-f" find-file!!)
+(keymap:bind! "C-c s" edit:save!!)
+(keymap:bind! "C-c C-f" edit:find-file!!)
 ```
 
 Global specifications may contain any number of space-separated key events.
@@ -24,19 +24,19 @@ is entered, e waits for the rest of the chord and displays the partial sequence
 in the echo area.
 
 A command must be a procedure callable with no arguments. Existing commands
-such as `save!!`, `undo!`, `beginning-of-buffer!`, and `other-window!` can be
+such as `edit:save!!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `edit:other-window!` can be
 used directly. A lambda can adapt a command that needs arguments:
 
 ```scheme
-(keymap:bind! "M-g" (lambda () (goto-point! '(0 . 0))))
-(keymap:bind! "C-c n" (lambda () (move-vertical! 10)))
+(keymap:bind! "M-g" (lambda () (edit:goto-point! '(0 . 0))))
+(keymap:bind! "C-c n" (lambda () (edit:move-vertical! 10)))
 ```
 
 Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:
 
 ```scheme
-(keymap:bind! ";" (lambda () (insert-text! " — ")))
+(keymap:bind! ";" (lambda () (edit:insert-text! " — ")))
 ```
 
 ## Key names
@@ -78,9 +78,9 @@ text with a dotted underline where supported, without moving keyboard focus.
 Examples:
 
 ```scheme
-(keymap:bind! "C-c SPC" set-mark-command!)
-(keymap:bind! "PAGEUP" beginning-of-buffer!)
-(keymap:bind! "C-c LEFT" beginning-of-line!)
+(keymap:bind! "C-c SPC" edit:set-mark-command!)
+(keymap:bind! "PAGEUP" edit:beginning-of-buffer!)
+(keymap:bind! "C-c LEFT" edit:beginning-of-line!)
 ```
 
 Terminal protocols cannot distinguish every physical key combination. In
@@ -102,10 +102,10 @@ Binding the same specification again replaces its effective meaning. An exact
 user binding can also reclaim a key used as a default prefix:
 
 ```scheme
-(keymap:bind! "C-h" backspace!)
+(keymap:bind! "C-h" edit:backspace!)
 ```
 
-Here `C-h` runs `backspace!` immediately instead of waiting for the default
+Here `C-h` runs `edit:backspace!` immediately instead of waiting for the default
 `C-h k` chord. A user-defined longer chord still makes its initial keys act as
 a prefix.
 

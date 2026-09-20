@@ -33,7 +33,7 @@ including query replacement, remain exact.
 
 ## Query replacement
 
-`M-%` runs `replace!!` from point to the end of the current buffer. It prompts
+`M-%` runs `edit:replace!!` from point to the end of the current buffer. It prompts
 for any omitted arguments and highlights each occurrence before asking:
 
 | Key | Action |
@@ -45,12 +45,12 @@ for any omitted arguments and highlights each occurrence before asking:
 The complete run is one undo step. Point follows the operation and finishes at
 the last replaced, skipped, or pending occurrence.
 
-For noninteractive replacement, `replace-all!` accepts an optional target:
+For noninteractive replacement, `edit:replace-all!` accepts an optional target:
 
 ```scheme
-(replace-all! "old" "new")
-(replace-all! "old" "new" (buffer "notes.md"))
-(replace-all! "old" "new" head:buffer-file)
+(edit:replace-all! "old" "new")
+(edit:replace-all! "old" "new" (buffer "notes.md"))
+(edit:replace-all! "old" "new" head:buffer-file)
 ```
 
 Targets may be buffers, buffer names, regions, predicates over buffers, or

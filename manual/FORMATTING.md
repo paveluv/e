@@ -2,7 +2,7 @@
 
 ## Indentation
 
-Modes opt into indentation with `register-indenter!`. Scheme indentation is
+Modes opt into indentation with `edit:register-indenter!`. Scheme indentation is
 Emacs-like: body forms such as `define`, `lambda`, the `let` family, and `when`
 indent their bodies two columns beyond the opener. A lone closing delimiter
 aligns with its opener.
@@ -21,19 +21,19 @@ Tab cycles through the available stops, beginning with the nearest stop to the
 right and wrapping around. On a blank line it inserts enough spaces to reach
 the chosen stop.
 
-`indent-region!` and `indent-buffer!` process lines from top to bottom as one
+`edit:indent-region!` and `edit:indent-buffer!` process lines from top to bottom as one
 undo step. A line already on a valid stop remains there; otherwise the nearest
 appropriate stop is chosen.
 
 Per-mode automatic Tab indentation can be changed with:
 
 ```scheme
-(indent-on-tab! "scheme" #f)
+(edit:indent-on-tab! "scheme" #f)
 ```
 
 ## Conservative formatting
 
-`format-region!` and `format-buffer!` perform indentation and also:
+`edit:format-region!` and `edit:format-buffer!` perform indentation and also:
 
 - expand tabs outside strings according to `scheme-format:tab-width`;
 - trim trailing whitespace;
@@ -97,8 +97,8 @@ input on standard error, exits unsuccessfully and leaves that file untouched.
 Modes register indentation and formatting independently:
 
 ```scheme
-(register-indenter! "mode-name" indenter)
-(register-formatter! "mode-name" formatter)
+(edit:register-indenter! "mode-name" indenter)
+(edit:register-formatter! "mode-name" formatter)
 ```
 
 This keeps the editing commands generic while allowing language modules to own

@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (edoc) (prefix (test) test:))
+     (import (except (edit) init!) (edoc) (prefix (kernel) kernel:) (prefix (test) test:))
 
      (define check test:check)
 
@@ -224,7 +224,7 @@
        (let loop ([f formals] [out '()])
          (cond [(null? f) (reverse out)] [(pair? f) (loop (cdr f) (cons (car f) out))] [else (reverse (cons f out))])))
      (define editor-procedures
-       (filter (lambda (sym) (and (editor-symbol? sym) (procedure? (top-level-value sym))))
+       (filter (lambda (sym) (and (kernel:editor-symbol? sym) (procedure? (top-level-value sym))))
                (environment-symbols (interaction-environment))))
      (define documented (filter (lambda (sym) (edoc-of (top-level-value sym))) editor-procedures))
      (check 'the-command-layer-reads-back

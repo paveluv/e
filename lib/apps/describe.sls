@@ -10,6 +10,7 @@
                         (reference:fetch! fetch-data!)))
   (import (chezscheme)
           (except (edit) init!)
+          (prefix (kernel) kernel:)
           (prefix (doc) doc:)
           (prefix (reference) reference:)
           (prefix (prompt) prompt:)
@@ -52,7 +53,7 @@
                         (set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))
     (void))
 
-  (edoc "Show the describe page of a name written literally: (describe visit-file!)."
+  (edoc "Show the describe page of a name written literally: (describe edit:visit-file!)."
         (name symbol "the name, unquoted"))
   (define-syntax describe
     (syntax-rules ()
@@ -82,7 +83,7 @@
     (define label "Describe function: ")
     (define (editor-name? text)
       (and (> (string-length text) 0)
-           (editor-symbol? (string->symbol text))))
+           (kernel:editor-symbol? (string->symbol text))))
     (define (described-name? text)
       (and (> (string-length text) 0)
            (pair? (reference:lookup (string->symbol text)))))
@@ -200,24 +201,6 @@
          (("parameter" . "(markdown:browser [command])")) "string"
          ("(markdown)") markdown "Markdown viewing" #f
          "Get or set the command that opens a markdown view's web links; it receives the quoted URL as its argument. The default is `xdg-open`.")
-        ((answer!!) (("procedure" . "(answer!!)")) "void"
-         ("(edit)") edit "Interaction" #f
-         "Answer the oldest question another actor posed through the interaction protocol (`actor:ask!`): a prompt shows the question with its choices completing on Tab, and the answer routes back to the asker. Bound to `C-c a`; pending questions wait as an echo-area indicator.")
-        ((line-numbers!) (("procedure" . "(line-numbers!)")) "void"
-         ("(edit)") edit "Buffer display" #f
-         "Toggle the non-editable line-number gutter for the current buffer. Every window showing that buffer shares the setting. The initial state follows the `line-numbers` configuration parameter.")
-        ((focus-window-up!) (("procedure" . "(focus-window-up!)")) "void"
-         ("(edit)") edit "Window commands" #f
-         "Cast a ray upward from point and focus the first window it crosses.")
-        ((focus-window-down!) (("procedure" . "(focus-window-down!)")) "void"
-         ("(edit)") edit "Window commands" #f
-         "Cast a ray downward from point and focus the first window it crosses.")
-        ((focus-window-left!) (("procedure" . "(focus-window-left!)")) "void"
-         ("(edit)") edit "Window commands" #f
-         "Cast a ray leftward from point and focus the first window it crosses.")
-        ((focus-window-right!) (("procedure" . "(focus-window-right!)")) "void"
-         ("(edit)") edit "Window commands" #f
-         "Cast a ray rightward from point and focus the first window it crosses.")
         ((mode:add-extension!)
          (("procedure" . "(mode:add-extension! mode extension)")) "void"
          ("(mode)") mode "Mode customization" #f
@@ -226,10 +209,6 @@
          (("procedure" . "(head:register-app! key-or-buffer refresh! [handle-event!])"))
          "buffer" ("(head)") head "App buffers" #f
          "Create or update a local, read-only head app by stable string key, or attach it to an existing local buffer. Labels are suffixed on collision; renaming keeps the tool identity. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
-        ((app-event-buffer-position)
-         (("parameter" . "(app-event-buffer-position)")) "pair or #f"
-         ("(edit)") edit "App buffers" #f
-         "During a mouse-click app event, return the unclamped zero-based buffer position addressed by the pointer. The row may be beyond the buffer, allowing apps to distinguish empty viewport space from their last line. Return false outside such an event.")
         ((head:set-app-cursor-visible!)
          (("procedure" . "(head:set-app-cursor-visible! buffer visibility)")) "buffer"
          ("(head)") head "App buffers" #f
@@ -238,14 +217,6 @@
          (("procedure" . "(head:detach-app! buffer)")) "buffer"
          ("(head)") head "App buffers" #f
          "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, its event handler, and app presentation.")
-        ((set-buffer-wrap!)
-         (("procedure" . "(set-buffer-wrap! buffer setting)")) "buffer"
-         ("(edit)") edit "Buffers" #f
-         "Set a buffer-wide wrapping override to #t or #f, or use `default` to follow each window and the global wrapping preference.")
-        ((set-buffer-name!)
-         (("procedure" . "(set-buffer-name! buffer name)")) "buffer"
-         ("(edit)") edit "Buffers" #f
-         "Rename a buffer, adding the usual numeric suffix when another buffer already uses the requested name.")
         ((head:set-app-presentation!)
          (("procedure" . "(head:set-app-presentation! buffer sticky-lines head:scrollbar [wrap cursor-style])"))
          "buffer" ("(head)") head "App buffers" #f

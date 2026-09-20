@@ -157,14 +157,14 @@
      (check 'window-numbers-are-reused-and-print-as-literals
        (read-editor
          '(let ([indices (lambda () (list-sort < (map head:window-index (head:windows))))])
-            (split-window-below!) (split-window-below!)
+            (edit:split-window-below!) (edit:split-window-below!)
             (let ([split (indices)])
-              (select-window! (window 1)) (delete-window!)
+              (edit:select-window! (window 1)) (edit:delete-window!)
               (paint:window-layout)
               (let ([deleted (indices)])
-                (split-window-below!)
+                (edit:split-window-below!)
                 (let ([reused (indices)] [literal (format "~s" (window 2))])
-                  (select-window! (window 1)) (delete-other-windows!)
+                  (edit:select-window! (window 1)) (edit:delete-other-windows!)
                   (list split deleted reused literal))))))
        '((0 1 2 3) (0 2 3) (0 1 2 3) "(window 2)"))
      (check 'status-lines-lead-with-the-number
@@ -174,8 +174,8 @@
      (check 'the-pop-up-is-window-0-and-stays-out-of-the-way
        (read-editor
          '(list (head:window-index (head:popup)) (head:popup-rows)
-                (select-window! (window 0)) (eq? (other-window!) (head:current-window))
-                (begin (delete-window!) (head:window-index (head:current-window)))
+                (edit:select-window! (window 0)) (eq? (edit:other-window!) (head:current-window))
+                (begin (edit:delete-window!) (head:window-index (head:current-window)))
                 (head:window? (head:layout-split-first (head:root)))
                 (eq? (head:layout-split-second (head:root)) (head:popup))))
        '(0 0 #f #t 1 #t #t))
@@ -187,12 +187,12 @@
                 [position (lambda ()
                             (let ([leaves (head:layout-leaves (head:layout-split-first (head:root)))])
                               (- (length leaves) (length (memq (head:current-window) leaves)))))])
-            (split-window-above!)
+            (edit:split-window-above!)
             (let ([above (list (position) (head:layout-split-orientation (rest)))])
-              (delete-other-windows!)
-              (split-window-left!)
+              (edit:delete-other-windows!)
+              (edit:split-window-left!)
               (let ([left (list (position) (head:layout-split-orientation (rest)))])
-                (delete-other-windows!)
+                (edit:delete-other-windows!)
                 (list above left)))))
        '((1 below) (1 right)))
 
@@ -227,7 +227,7 @@
                             [else (sleep (make-time 'time-duration 5000000 0)) (wait (- tries 1))]))))
                 (list (not (head:buffer-store-id target)) (head:buffer-modified target))))
            '(#t #t))
-         (send! "\x1b;xquit!!\r")
+         (send! "\x1b;xedit:quit!!\r")
          (await! 'protected-work-prompts-before-exit (lambda () (echo-has? "Modified buffers exist")))
          (send! "y")
          (await! 'quit-reviews-a-change-during-confirmation (lambda () (echo-has? "Buffers changed")))
@@ -237,7 +237,7 @@
              `(let* ([b (head:buffer-named "<quit work>")]
                      [result (list (head:buffer-line b 0) (not (head:buffer-store-id b)) (head:quitting?))])
                 (kernel:retract-module! 'wiring-quit)
-                (kill-buffer! b)
+                (edit:kill-buffer! b)
                 result))
            (list (if (eq? kind 'local-facts) "keep" "keep!") #t #f)))
        '(local-text local-facts))
@@ -248,13 +248,13 @@
        (read-editor
          '(let ([id (store:create! '(app surface-live) "*surface-live*"
                                    '("界e\x301;Z") '((read-only . #t) (wrap . #t)))])
-            (delete-other-windows!)
+            (edit:delete-other-windows!)
             (head:scrollbar #f)
             (surface:publish! id #f 0
               '((0 #("31" "31" "1" #f)
                  #(("https://surface.example" "wide") ("https://surface.example" "wide") #f #f)
                  ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4))
-            (show-buffer! (head:adopt-store-buffer! id))
+            (edit:show-buffer! (head:adopt-store-buffer! id))
             (head:buffer-line-numbers-setting-set! (head:current-buffer) #f)
             id)))
      (check 'surface-paints-real-shared-text-and-cell-links
@@ -272,8 +272,8 @@
      (await! 'surface-only-worker-wakes-idle-head
        (lambda () (equal? (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1)
                           '("https://updated.example" #f))))
-     (read-editor `(begin (show-buffer! (buffer "*scratch*"))
-                          (kill-buffer! (head:buffer-of-store-id ,surface-id)) #t))
+     (read-editor `(begin (edit:show-buffer! (buffer "*scratch*"))
+                          (edit:kill-buffer! (head:buffer-of-store-id ,surface-id)) #t))
 
      ;; One live describe page exercises the source/companion boundary and
      ;; head-app reloads and core refusal. Fresh commands resolve the exports;
@@ -297,7 +297,7 @@
                     (keymap:bind! 'markdown "F12" (top-level-value 'markdown:view!))
                     (keymap:bind-default! "C-c F11" (top-level-value 'markdown:view!))
                     (keymap:bind! "C-c F12" (top-level-value 'markdown:view!))))))
-            (delete-other-windows!)
+            (edit:delete-other-windows!)
             (show! 'describe:show!)
             (let* ([id (car (page))] [source (head:buffer-of-store-id id)]
                    [view (markdown:companion source)]
@@ -305,8 +305,8 @@
                     (list (eq? request-window (head:current-window)) (eq? request-buffer (head:current-buffer))
                           (not (head:buffer-store-id view)) (head:buffer-name view)
                           (mode:name-of source) (head:buffer-read-only source))])
-              (set-buffer-name! source "reference source")
-              (set-buffer-name! view "reference view")
+              (edit:set-buffer-name! source "reference source")
+              (edit:set-buffer-name! view "reference view")
               (show! 'markdown:view!)
               (let* ([reloads
                       (fold-left
@@ -339,17 +339,17 @@
                         (kernel:retract-module! 'wired-reference-fixture)
                         (head:before-frame!)
                         (list (keymap:command-keys 'markdown:view!) (store:line id 0)))])
-                (kill-buffer! view)
-                (delete-other-windows!)
+                (edit:kill-buffer! view)
+                (edit:delete-other-windows!)
                 (show! 'markdown:view!)
                 (let* ([replacement (markdown:companion source)]
                        [keeps-source (and (= id (car (page))) (not (eq? view replacement)))])
-                  (kill-buffer! source)
+                  (edit:kill-buffer! source)
                   (head:before-frame!)
                   (let ([retired (list (page) (store:exists? id)
                                        (and (memq replacement (head:buffers)) #t))])
                     (kernel:retract-module! 'wired-reference-fixture)
-                    (delete-other-windows!)
+                    (edit:delete-other-windows!)
                     (list initial reloads labels unbound keeps-source retired)))))))
        '((#t #t #t "<describe>" "markdown" #t)
          ((reloaded #t markdown:view! #t #f #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)

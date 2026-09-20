@@ -223,7 +223,7 @@ of outbound clipboard forwarding in `config.e`:
 
 OSC 52 clipboard queries are ignored: a child may offer text to its containing
 editor, but it cannot read unrelated contents from e's kill ring. When
-`forward-kill-ring-to-system-clipboard` is enabled, imported text follows the
+`edit:forward-kill-ring-to-system-clipboard` is enabled, imported text follows the
 same outbound path as `M-w` and `C-k`, allowing it to continue through another
 multiplexer or supporting host terminal.
 OSC 4 changes and queries the 256-color palette, including multiple indexed

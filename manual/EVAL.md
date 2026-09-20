@@ -2,10 +2,11 @@
 
 e is a live Scheme environment. Both evaluation commands run code in the
 editor's interaction environment: the same top level used by `config.e` and
-the module loader, with Chez Scheme, the command layer `(edit)`, the literals `(literal)`,
-every loaded module's exports, and the seam modules under their prefixes (`store:`,
-`head:`, `keymap:`, ...) in scope. Definitions persist for the rest of the session and are
-immediately available to later evaluations.
+the module loader, with Chez Scheme, every loaded module's exports under its
+prefix (`edit:`, `store:`, `head:`, `keymap:`, ...) and the literals of
+`(literal)` bare, `(buffer "name")` and `(window n)`, in scope. Definitions
+persist for the rest of the session and are immediately available to later
+evaluations.
 
 ## Commands
 
@@ -52,25 +53,25 @@ While the prompt is active:
 
 Symbol completion matches contiguous segments beginning at the start of a
 symbol or immediately after `-` or `:`. Segments may appear in a different
-order: `splitright` and `rightsplit` both find `split-window-right!`. Each
+order: `splitright` and `rightsplit` both find `edit:split-window-right!`. Each
 character occurrence can be used only once, so `xx` requires two `x` characters.
 Matching is case-sensitive; other punctuation, including `_`, does not create
 a boundary. Longer intact segments, fewer reorderings, and matches nearer the
 beginning rank first.
 
 Typed `-` and `:` stay inside literal segments, just like letters. Thus
-`split-w` matches `split-window-below!`, but `s-w` and `w-s` do not abbreviate it.
+`split-w` matches `edit:split-window-below!`, but `s-w` and `w-s` do not abbreviate it.
 You can omit separators when typing prefixes: `spwir` finds
-`split-window-right!` as `sp` + `wi` + `r`. Reordering still works with
+`edit:split-window-right!` as `sp` + `wi` + `r`. Reordering still works with
 punctuation when the literal pieces exist: `window-split` can match
-`split-window-right!` as `window-` + `split`.
+`edit:split-window-right!` as `window-` + `split`.
 
 Tab chooses a longest extension that the original query can match and that
 still matches every candidate. This preserves exactly the same match set,
 including its boundary constraints. For example, `splitwindow` and
 `windowsplit` normalize to `split-window-` while all four split commands
 remain. Adding `r` would lose the other three, so it is not inserted yet.
-Typing `r` and pressing Tab then produces `split-window-right!`, including
+Typing `r` and pressing Tab then produces `edit:split-window-right!`, including
 the `!`.
 The same rule applies to separators: `ker:` cannot abbreviate the literal
 prefix `kernel:`. Tab cannot add a colon after `ker` merely because all
@@ -116,11 +117,11 @@ itself. The hint is display-only: clicking anywhere in a candidate's rows
 inserts just the symbol.
 
 At an argument position of a documented procedure, Tab completes by the
-argument's type instead of by symbol. `(show-buffer! ` offers every live
+argument's type instead of by symbol. `(edit:show-buffer! ` offers every live
 buffer as the expression that denotes it, `(buffer "edit.sls")`, with the
 buffer's file, mode and state as its hint; then the documented procedures
 and parameters that produce a buffer, `(head:current-buffer)` and
-`(fresh-buffer name)` say, which insert their opening and settle to their
+`(edit:fresh-buffer name)` say, which insert their opening and settle to their
 first argument; then the top-level variables holding one, so a buffer you
 bound with `define` at M-x is offered by name. The token matches a
 candidate's own spelling the way it matches a symbol, by parts starting at
@@ -130,11 +131,11 @@ part. Tab extends the token to the longest text every current candidate
 still matches: `bu` becomes `(buffer` when everything offered is a form,
 and stays bare while a variable such as `myb` is among the matches. The
 operator position of a nested form takes the enclosing argument's type,
-so `(show-buffer! (cu` completes to `(head:current-buffer)` rather than to every
+so `(edit:show-buffer! (cu` completes to `(head:current-buffer)` rather than to every
 symbol; a form under a quote, or under an undocumented operator, completes
 symbols as before. A `one-of` type offers its literals, a boolean `#t` and
 `#f`, and inside a string literal the type's string values complete the
-literal: `(visit-file! "man` lists paths under `manual/`, `(buffer "`
+literal: `(edit:visit-file! "man` lists paths under `manual/`, `(buffer "`
 lists buffer names. An actor argument lists the registered actors as
 `(head "desk")` or `(agent "claude")`, the identities' own spelling. The language's own types, `string` or `integer`, offer
 no producers, and an argument whose type offers nothing the token matches
@@ -262,7 +263,7 @@ Reader and evaluation failures are reported as `error: ...` eval results.
 They are logged and shown in the echo area but are not copied to the kill
 buffer. `C-g` interrupts running evaluation and records `interrupted`.
 
-An evaluation is wrapped in `call-as-one-edit!`. Any editor buffer changes
+An evaluation is wrapped in `edit:call-as-one-edit!`. Any editor buffer changes
 made by the evaluated code form one undo step per affected buffer, labeled by
 the M-x expression or the corresponding `eval:run!` invocation. This grouping
 does not roll back Scheme definitions or external effects when later code

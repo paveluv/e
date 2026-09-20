@@ -32,17 +32,10 @@
           replace-all! count-matches replace!!
           next-conflict! keep-mine! keep-disk!
           list-buffers!
-    ;; the command layer
-    (rename (head:scrollbar scrollbar)
-            (head:scrollbar-position scrollbar-position)
-            (head:line-numbers line-numbers)
-            (paint:wrap-lines wrap-lines)
-            (paint:scroll-margin scroll-margin))
     ;; state, read-only
     point mark
     buffer-text buffer-clean?
 
-    editor-symbol?
     ;; buffers, windows, files
     visit-file! save-file! save!! save-as!! find-file!! default-directory
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
@@ -117,22 +110,6 @@
           (prefix (file) file:)
           (prefix (prompt) prompt:)
           (prefix (doc) doc:))
-
-  ;; The bindings Chez itself provides, so that the editor's public API
-  ;; (and module definitions) can be told apart from builtins -- M-x
-  ;; completion highlights them.
-  (define baseline-bindings
-    (let ([table (make-eq-hashtable)])
-      (for-each (lambda (sym) (eq-hashtable-set! table sym #t))
-                (environment-symbols (scheme-environment)))
-      table))
-
-  (edoc "Whether a symbol is bound at the top level by the editor or its modules rather than by Chez Scheme itself."
-        (sym symbol "the name to classify")
-        (returns boolean))
-  (define (editor-symbol? sym)
-    (and (top-level-bound? sym)
-         (not (eq-hashtable-ref baseline-bindings sym #f))))
 
   ;;; Buffers and windows ----------------------------------------------------
 
@@ -851,7 +828,7 @@
                      (current-directory)))])
       (file:abbreviate (if (string:suffix? "/" dir) dir (string-append dir "/")))))
 
-  (edoc "Rename a buffer."
+  (edoc "Rename a buffer, adding the usual numeric suffix when another buffer already uses the requested name."
         (b buffer "the buffer to rename")
         (name string "its new name")
         (returns buffer))
@@ -1279,7 +1256,7 @@
   ;; window geometry helpers live in (head); the commands over them are
   ;; here.
 
-  (edoc "Toggle line numbers in the current buffer.")
+  (edoc "Toggle the line-number gutter of the current buffer: every window showing the buffer shares the setting, whose initial state follows the head:line-numbers parameter.")
   (define (line-numbers!)
     (let ([b (head:current-buffer)])
       (head:buffer-line-numbers-setting-set! b (not (head:buffer-line-numbers b)))

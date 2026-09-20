@@ -13,7 +13,7 @@
           registration-conflict?
           retract-module! call-with-registration-update call-with-runtime-registrations
           module-source loaded-modules
-          init-module! load-module! load-modules! module-requires? pin-modules!
+          init-module! editor-symbol? load-module! load-modules! module-requires? pin-modules!
           reload-module! add-after-reload-hook!
           installation-directory fingerprint config-file load-config!
           make-read-only-error read-only-error? make-refusal refusal?
@@ -24,6 +24,7 @@
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
                 make-parameter make-thread-parameter current-directory format interaction-environment eval
+                scheme-environment environment-symbols top-level-bound?
                 library-exports library-requirements library-requirements-options
                 library-directories load directory-list file-directory? file-regular? path-extension
                 parameterize make-mutex with-mutex make-condition
@@ -600,6 +601,22 @@
         (if (or (file-exists? path) (null? (cdr directories))) path
             (loop (cdr directories))))))
 
+  ;; The bindings Chez itself provides, so that the editor's public API and
+  ;; the modules' definitions can be told apart from builtins: M-x completion
+  ;; highlights them, and typed completion scans only them.
+  (define baseline-bindings
+    (let ([table (make-eq-hashtable)])
+      (for-each (lambda (sym) (hashtable-set! table sym #t))
+                (environment-symbols (scheme-environment)))
+      table))
+
+  (edoc "Whether a symbol is bound at the top level by the editor or its modules rather than by Chez Scheme itself."
+        (sym symbol "the name to classify")
+        (returns boolean))
+  (define (editor-symbol? sym)
+    (and (top-level-bound? sym)
+         (not (hashtable-ref baseline-bindings sym #f))))
+
   (edoc "Import a module's library into the editor's top level, compiling it when stale, and run its init! owning its registrations."
         (name string "the module"))
   (define (init-module! name)
@@ -607,12 +624,11 @@
     ;; (compiling it when stale) and run its init!, if any, owning its
     ;; registrations.
     (let ([lib (list (string->symbol name))])
-      ;; every module but two arrives prefixed in the editor's top level,
+      ;; every module but one arrives prefixed in the editor's top level,
       ;; exactly as code imports it -- M-x says (store:edit! ...) and
-      ;; (terminal:open!!) too. (literal) is bare because its names are how
-      ;; values print, (buffer "name") and (window n); (edit) is bare for
-      ;; now, being what M-x is for
-      (eval (if (member name '("edit" "literal"))
+      ;; (edit:save! ...) too. (literal) is bare because its names are how
+      ;; values print, (buffer "name") and (window n)
+      (eval (if (string=? name "literal")
                 `(import ,lib)
                 `(import (prefix ,lib
                                  ,(string->symbol

@@ -61,17 +61,17 @@ print in that form.
 | Key | Action |
 |---|---|
 | `C-x b` / `C-x C-b` | Open the buffers app. Type to filter; Enter selects the most recently used other buffer or the chosen match. |
-| `M-x (new-buffer!!)` | Ask for a name and create an empty unvisited buffer. |
+| `M-x (edit:new-buffer!!)` | Ask for a name and create an empty unvisited buffer. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Prompt for a buffer to kill, defaulting to the current buffer. |
 
 `C-x C-f` opens the [files app](FILES.md) for directory navigation and recursive
 filename filtering, with the same column-sorting controls as buffers.
-`M-x (find-file!!)` reads a path [in the window](PROMPTS.md#prompts-in-the-window).
+`M-x (edit:find-file!!)` reads a path [in the window](PROMPTS.md#prompts-in-the-window).
 Both buffer-switch shortcuts use the [live table](#the-buffers-app) below.
 An unmatched filter stays in the table; it never creates a buffer. Use
-`new-buffer!!` for creation. Empty input cancels creation; an existing name
+`edit:new-buffer!!` for creation. Empty input cancels creation; an existing name
 receives a unique suffix.
 
 The kill prompt completes buffer names with Tab. Killing a modified buffer
@@ -119,7 +119,7 @@ text do not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 ## File buffers
 
 `C-x C-f` opens the files app, `C-x C-s` saves, and `C-x C-w` saves under a
-new path. The direct path prompt, `M-x (find-file!!)`, offers the current
+new path. The direct path prompt, `M-x (edit:find-file!!)`, offers the current
 file's directory, a terminal's launch directory, or the head's working
 directory for other buffers. Clearing the offered path
 and typing a relative name still uses that starting directory. Absolute paths
@@ -205,20 +205,20 @@ resolved. A read-only `<merge-name>` buffer records the merge report.
 
 Undo and redo history are per buffer. One typed run, pasted block, formatting
 operation, replacement, or grouped API edit normally forms one undo entry.
-`C-_` and `(undo!)` undo this head's latest action by default, preserving
+`C-_` and `(edit:undo!)` undo this head's latest action by default, preserving
 other actors' disjoint changes. To make ordinary undo include every actor,
 put this in `config.e` or evaluate it with `M-x`:
 
 ```scheme
-(undo-scope 'all)              ; default: 'mine
+(edit:undo-scope 'all)              ; default: 'mine
 ```
 
-`(undo! 'mine)` and `(undo! 'all)` override the setting for one call.
-`M-x undo-actor!!` opens an actor picker; `(undo-actor! actor)` selects an
+`(edit:undo! 'mine)` and `(edit:undo! 'all)` override the setting for one call.
+`M-x edit:undo-actor!!` opens an actor picker; `(edit:undo-actor! actor)` selects an
 actor directly. Each selects that actor's latest live action without
-changing the preference. `C-M-_` or `(redo!)` reverses this head's latest
+changing the preference. `C-M-_` or `(edit:redo!)` reverses this head's latest
 undo, including one that undid another actor's work. A new edit by this
-head clears its redo; changing `undo-scope` does not.
+head clears its redo; changing `edit:undo-scope` does not.
 
 Shared undo applies an attributed inverse and retains both the original
 author and the requesting head in history. An overlapping edit, a changed
@@ -235,13 +235,13 @@ another. Consecutive kill commands accumulate, so repeated `C-k` followed by
 `C-y` reconstructs the complete block.
 
 Kill-ring updates may also be sent to the host terminal with OSC 52. Thus,
-`M-w`, `C-w`, repeated `C-k`, and Scheme calls to `copy-to-kill-buffer!` can
+`M-w`, `C-w`, repeated `C-k`, and Scheme calls to `edit:copy-to-kill-buffer!` can
 place the exact UTF-8 text in the desktop clipboard without selecting padded
 terminal cells. The host terminal retains final control over whether clipboard
 writes are permitted. Enable forwarding in `config.e` when desired:
 
 ```scheme
-(forward-kill-ring-to-system-clipboard #t) ; default is #f
+(edit:forward-kill-ring-to-system-clipboard #t) ; default is #f
 ```
 
 OSC 52 can work over SSH: a supporting terminal on the local desktop decodes
@@ -271,7 +271,7 @@ buffer, so every window displaying it agrees. New and otherwise untoggled
 buffers follow the configurable default:
 
 ```scheme
-(line-numbers #t) ; default is #f
+(head:line-numbers #t) ; default is #f
 ```
 
 The gutter is left of the text (and right of a left-side scrollbar). It expands
@@ -410,7 +410,7 @@ The public app API is documented in [App buffers](APPS.md).
 
 ## Scrollbars
 
-Ordinary buffers show no scrollbar by default; `(scrollbar #t)` in config.e
+Ordinary buffers show no head:scrollbar by default; `(head:scrollbar #t)` in config.e
 enables a one-column vertical bar for them, and `<buffers>` shows one while
 its rows overflow the window. The thin `│` is the track and the centered heavy
 `┃` is the visible extent. Thumb size reflects the proportion of the buffer
@@ -426,13 +426,13 @@ Mouse clicks and wheel events also settle the echo area.
 Configure scrollbars in `config.e`:
 
 ```scheme
-(scrollbar #f)                 ; default; #t shows ordinary-buffer scrollbars
-(scrollbar-position 'right)    ; default; the alternative is 'left
+(head:scrollbar #f)                 ; default; #t shows ordinary-buffer scrollbars
+(head:scrollbar-position 'right)    ; default; the alternative is 'left
 ```
 
 An app may force a scrollbar, a side, or an automatic bar through
 `head:set-app-presentation!`. `<buffers>` uses the automatic bar: it appears
-on the `scrollbar-position` side only when the list is taller than the
+on the `head:scrollbar-position` side only when the list is taller than the
 window.
 
 Every frame is a cached repaint -- rows are painted only when their content
@@ -441,7 +441,7 @@ scrolling does not flicker. e does not use the terminal's native scrolling.
 
 ## Scrolling, wrapping, and windows
 
-`(scroll-margin 8)` keeps point that many rows away from the top and bottom when
+`(paint:scroll-margin 8)` keeps point that many rows away from the top and bottom when
 the buffer has room. PageUp and PageDown operate on the viewport rather than
 point: in the middle they shift its top by exactly one full window body and put
 point in the middle of the result. A partial page clamps at the first or last
@@ -457,7 +457,7 @@ wheel ticks move point sideways.
 
 Long lines soft-wrap by default. A continuation row ends in `\`. With wrapping
 off, truncated lines end in `$` and the window scrolls horizontally to follow
-point. `(wrap-lines #f)` changes the default, and `C-x t` toggles wrapping for
+point. `(paint:wrap-lines #f)` changes the default, and `C-x t` toggles wrapping for
 one window.
 
 Wrapping, Up/Down, and paging measure screen cells, keeping the visual column
@@ -469,9 +469,9 @@ column still count characters.
 
 Each split has independent point, scrolling, wrapping, and status. Splits form
 a tree, so either half may be split again in either direction: `C-x 2`
-(`split-window-below!`) divides only the current window into a stacked pair,
-and `C-x 3` (`split-window-right!`) divides only it into a side-by-side pair;
-`split-window-above!` and `split-window-left!` make the same splits with the
+(`edit:split-window-below!`) divides only the current window into a stacked pair,
+and `C-x 3` (`edit:split-window-right!`) divides only it into a side-by-side pair;
+`edit:split-window-above!` and `edit:split-window-left!` make the same splits with the
 new window first, and have no default keys. Deleting a window with `C-x 0`
 promotes its complete sibling subtree; the `×` button at the right edge of
 every status line performs the
@@ -507,8 +507,8 @@ split tree's ownership and minimum sizes.
 ## Buffer API
 
 The public Scheme API exposes read-only inspection through `head:current-buffer`,
-`head:buffers`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `buffer-text`,
-`buffer-clean?`, `head:buffer-modified`, `head:buffer-modified-at`,
+`head:buffers`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `edit:buffer-text`,
+`edit:buffer-clean?`, `head:buffer-modified`, `head:buffer-modified-at`,
 `head:buffer-read-only`, `mode:name-of`,
 `head:buffer-line`, `head:buffer-line-count`, and `mode:line-styles`.
 
@@ -521,14 +521,14 @@ whether there are unsaved changes.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
-`head:new-buffer`, `head:new-local-buffer`, `fresh-buffer`, `show-buffer!`,
-`display-buffer!`,
-`pop-up-or-reuse!`, `kill-buffer!`,
-`buffer-append!`, `mode:choose!`, and `set-buffer-read-only!` provide
-controlled mutation and display. `call-with-buffer` temporarily makes another
-buffer current, and `call-as-one-edit!` groups mutations into coherent undo
-entries. `focus-window-up!`, `focus-window-down!`, `focus-window-left!`, and
-`focus-window-right!` expose directional focus to Scheme. App authors should
+`head:new-buffer`, `head:new-local-buffer`, `edit:fresh-buffer`, `edit:show-buffer!`,
+`edit:display-buffer!`,
+`edit:pop-up-or-reuse!`, `edit:kill-buffer!`,
+`edit:buffer-append!`, `mode:choose!`, and `edit:set-buffer-read-only!` provide
+controlled mutation and display. `edit:call-with-buffer` temporarily makes another
+buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
+entries. `edit:focus-window-up!`, `edit:focus-window-down!`, `edit:focus-window-left!`, and
+`edit:focus-window-right!` expose directional focus to Scheme. App authors should
 use `head:view-replace!` and `head:view-append!` for generated content. Run
 `M-x (describe:show!!)` for live signatures and registered command documentation.
 
@@ -541,7 +541,7 @@ are preserved. As with other text inputs, the line container is copied and
 its strings must be treated as immutable. Fact values are copied.
 `(head:new-local-buffer name)` creates a buffer belonging only to this
 head, with one empty line and no store id; its caller decides when to add
-it to the list. Use `show-buffer!` or `display-buffer!`
+it to the list. Use `edit:show-buffer!` or `edit:display-buffer!`
 to display the result in a window. The same text, mode, and fact accessors
 work on either kind. A local buffer's facts and generated text stay in the head and
 produce no store notifications; local points and selections are not
@@ -561,7 +561,7 @@ Lookup and creation happen together; a reused buffer keeps all its existing
 state. Prepare disk text and initial facts before calling it.
 `(head:visit-file! name lines facts)` uses the same head defaults as
 `head:new-buffer` and returns the adopted buffer plus that creation flag.
-The ordinary `visit-file!` command also performs the usual disk-change review
+The ordinary `edit:visit-file!` command also performs the usual disk-change review
 when it reuses a buffer. Local file buffers remain local to their head.
 
 `(store:create! actor name lines [facts])` returns a store id. The optional
@@ -582,7 +582,7 @@ deletion releases it. `store:buffer-name` returns the current name and
 `store:find-named` returns its id or `#f`. Returned strings are copies.
 `rename!` returns the name accepted at that commit; a subscriber can rename
 or delete the buffer before the call returns. For a head record, use
-`(set-buffer-name! b name)` or `(head:buffer-name-set! b name)` to commit and
+`(edit:set-buffer-name! b name)` or `(head:buffer-name-set! b name)` to commit and
 adopt its current name. A failed rename preserves the cached label and
 reports the error.
 
@@ -599,7 +599,7 @@ retained hidden or superseded records cannot be added or displayed again.
 `(head:buffer-point b)` reads point in the selected window when it shows
 `b`, otherwise in another window showing it, otherwise from its saved
 position. It does not switch windows or run repaint callbacks.
-`show-buffer!` on the already displayed buffer preserves the live cursor
+`edit:show-buffer!` on the already displayed buffer preserves the live cursor
 and viewport. To compose window changes and cursor placement before repaint
 callbacks run, use `(head:call-with-display-update thunk)`; nested calls
 produce one notification after all changes. The thunk's return values are
@@ -628,7 +628,7 @@ adds a buffer to the list without displaying it and claims its label.
 `(head:tool-buffer key)` returns or creates a local tool buffer under a
 stable string key; `(head:find-tool-buffer key)` only looks it up.
 Renaming the displayed buffer does not change its tool key.  App
-registration and `fresh-buffer` use this same lookup, so a snapshot
+registration and `edit:fresh-buffer` use this same lookup, so a snapshot
 tool rebuilds its own buffer and preserves ordinary buffers with a
 matching label.  Killing a tool buffer removes that instance.
 Names supplied as `name`, `<name>`, or `*name*` get the local label

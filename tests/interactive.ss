@@ -189,15 +189,15 @@
      ;; the prompt's end hides the pop-up again -------------------------------
      (send! "\x1b;xwindowsplit\t")
      (wait-for! 'first-tab-normalizes-without-choosing
-       (lambda () (and (find-cell "M-x (split-window")
+       (lambda () (and (find-cell "M-x (edit:split-window")
                        (not (find-cell "<completions>")))) 5000)
      (send! "\t")
      (wait-for! 'completions-take-the-window
                 (lambda () (and (find-cell "<completions>")
                                 ;; each candidate carries its edoc hint, one per
                                 ;; row, a long hint wrapping under itself
-                                (find-cell "split-window-below!  ()  Split the selected")
-                                (find-cell "split-window-above!  ()  Split the selected")
+                                (find-cell "edit:split-window-below!  ()  Split the selected")
+                                (find-cell "edit:split-window-above!  ()  Split the selected")
                                 (find-cell "shows the same buffer.")))
                 5000)
      (send! "\x7;")                     ; C-g
@@ -205,7 +205,7 @@
                 (lambda () (not (find-cell "<completions>"))) 5000)
      ;; An argument whose type is documented completes to its values: the
      ;; buffers, spelled as the expressions that denote them.
-     (send! "\x1b;xshow-buffer! \t\t")
+     (send! "\x1b;xedit:show-buffer! \t\t")
      (wait-for! 'a-typed-argument-lists-its-values
                 (lambda () (and (find-cell "<completions>")
                                 (find-cell "(buffer \"*scratch*\")")
@@ -249,7 +249,7 @@
      ;; head's contribution to the query, with no registry batch involved. Read
      ;; the screen: an evaluation right after a full-page repaint would wait on
      ;; the wire while the head waits on the PTY.
-     (send! "\x8;fsplit-window-left!\r")
+     (send! "\x8;fedit:split-window-left!\r")
      (wait-for! 'edoc-documents-a-definition-without-a-registry-entry
        (lambda () (and (find-cell "libraries: (edit)")
                        (find-cell "source: edoc, Documented definitions")

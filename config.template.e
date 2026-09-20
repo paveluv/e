@@ -25,14 +25,14 @@
 ;; (main:config-reload-on-save #t)     ; saving config.e applies it on the spot
 ;; (main:shutdown-on-exit #f)          ; #t: last screen's quit reviews stopping the base
 ;; (scheme-mode:format-on-save #t)     ; Scheme buffers format as they are saved
-;; (scroll-margin 8)              ; rows kept between the cursor and the edges
-;; (scrollbar #f)                 ; #t: show position bars in ordinary buffers
-;; (scrollbar-position 'right)    ; position bars on the left or right edge
+;; (paint:scroll-margin 8)              ; rows kept between the cursor and the edges
+;; (head:scrollbar #f)                 ; #t: show position bars in ordinary buffers
+;; (head:scrollbar-position 'right)    ; position bars on the left or right edge
 ;; (paint:echo-box-width 100)     ; the echo area's bordered box: at most this
 ;;                                ; wide, centered; a narrower screen is the box
 ;; (paint:echo-box-border "┊")    ; the one-cell glyph on both sides of that box
-;; (line-numbers #f)              ; #t: show line numbers in every untoggled buffer
-;; (wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
+;; (head:line-numbers #f)              ; #t: show line numbers in every untoggled buffer
+;; (paint:wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
 ;; (paren:matching-style 'bold)   ; matched brackets: bold, underline,
 ;;                                ; box, or colored -- or design your
 ;;                                ; own marking with the style DSL:
@@ -47,13 +47,13 @@
 ;;                                ; ignore case, a capital makes them exact,
 ;;                                ; M-c toggles (#f: always exact)
 ;; (eval:copy-result #t)          ; copy non-void eval:run! and M-x results for C-y
-;; (undo-scope 'mine)            ; 'all: undo the latest action by any actor
-;; (forward-kill-ring-to-system-clipboard #f)
+;; (edit:undo-scope 'mine)            ; 'all: undo the latest action by any actor
+;; (edit:forward-kill-ring-to-system-clipboard #f)
 ;;                              ; #t: also request an OSC 52 system-clipboard
 ;;                              ; update after kills and copies; the host
 ;;                              ; terminal may ignore or prohibit the request,
 ;;                              ; so this might not work in every terminal
-;; (indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
+;; (edit:indent-on-tab! "scheme" #t)   ; #f: TAB stops auto-indenting Scheme
 ;; (mode:add-extension! "scheme" ".foo") ; highlight *.foo as Scheme
 ;; (scheme-format:brackets #t)    ; #f: format-* leaves ( ) and [ ] as written
 ;; (scheme-format:tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
@@ -71,7 +71,7 @@
 ;;                              ; children into e's kill ring
 ;; (head:min-window-lines 3)      ; minimum text height allowed by a split
 ;; (prompt:in-window #t)          ; default #f; every prompt takes the window, as
-;;                                ; find-file!! does, instead of the echo area
+;;                                ; edit:find-file!! does, instead of the echo area
 ;; (style:set! 'ghost '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground
@@ -82,7 +82,7 @@
 ;;                                ; ghost styles suggestions and notices;
 ;;                                ; chrome styles prompt labels and log prefixes
 ;; (keymap:bind! "M-l" log-view:show!)    ; pop the <log> view with one chord
-;; (keymap:bind! "C-c s" save!!)     ; arbitrary multi-key chords work
+;; (keymap:bind! "C-c s" edit:save!!)     ; arbitrary multi-key chords work
 ;; (keymap:unbind! "C-v")            ; remove a global binding
 ;; (keymap:bind! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
 ;; (keymap:unbind! 'isearch "M-c")

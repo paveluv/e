@@ -13,7 +13,7 @@ echo area.
 The next keyboard event, mouse click, or wheel event settles the echo area back
 to its live line.
 
-Messages whose `message-source` is `#f` are temporary indicators. They appear
+Messages whose `edit:message-source` is `#f` are temporary indicators. They appear
 in the echo area but are not recorded. Prompts and modes use indicators for
 state that is useful now but not historical.
 
@@ -22,14 +22,14 @@ state that is useful now but not historical.
 Code may mark a message as progress:
 
 ```scheme
-(parameterize ([message-progress #t])
+(parameterize ([edit:message-progress #t])
   (log:add! 'download "Receiving page 4"))
 ```
 
 A progress entry supersedes the newest visible entry from the same component
 instead of stacking. It never replaces another component's entry. Every
 progress update still receives its own record in `<log>`.
-`message-progress` is the command layer's alias for `log:progress`. Its value
+`edit:message-progress` is the command layer's alias for `log:progress`. Its value
 is local to the calling thread and captured when the record is appended, so
 concurrent or deferred delivery preserves the requested presentation.
 
@@ -153,9 +153,9 @@ of presentation is separate from the base's operation order.
 - `(log:history component [selector [actor]])` derives strings for interactive
   history. The selector receives each record's datum and defaults to identity.
 - `log:register-formatter!` installs component presentation.
-- `present-log-entry!` and `present-log-entries!` expose the shared echo
+- `edit:present-log-entry!` and `edit:present-log-entries!` expose the shared echo
   presentation path.
-- `set-message!` records or displays according to `message-source`.
+- `edit:set-message!` records or displays according to `edit:message-source`.
 - `paint:show-message!` displays an explicit transient message and styles.
 
 `(log:subscribe! procedure)` returns a token for `log:unsubscribe!`. The

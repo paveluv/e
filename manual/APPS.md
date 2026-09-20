@@ -48,13 +48,13 @@ from the clicked cell even though the buffer is read-only.
 Drag and release belong to the window and buffer that accepted the press.
 An ignored click arms neither, and an action that opens another buffer cannot
 move that new buffer's point when the mouse button is released.
-During clicks, drags, releases, and wheel events, `(app-event-buffer-position)`
+During clicks, drags, releases, and wheel events, `(edit:app-event-buffer-position)`
 returns the unclamped zero-based `(row . character-column)` addressed by the
 pointer, using that window's presentation when it has one. It may lie beyond
 the buffer's last line, allowing an app to ignore
-empty viewport space. `(app-event-position)` is a one-based `(x . y)` cell
+empty viewport space. `(edit:app-event-position)` is a one-based `(x . y)` cell
 position within the text viewport, excluding the scrollbar and line-number
-gutter. `(app-event-button)` is the raw xterm button code, including motion and
+gutter. `(edit:app-event-button)` is the raw xterm button code, including motion and
 modifier bits. These thread-local parameters are also exported by `head:`;
 the command-layer names reference the same context. They are `#f` outside
 pointer delivery. `(head:app-event-focus)` is the window that had keyboard
@@ -327,7 +327,7 @@ key; changing the displayed label keeps that identity. Local renames
 retain angle brackets, and duplicate labels become `<example 2>`.
 
 Apps act on the selected window -- their own, when it is selected.  Use
-`show-buffer!` to show an app here, or `display-buffer!` to show it without
+`edit:show-buffer!` to show an app here, or `edit:display-buffer!` to show it without
 leaving the current window.
 
 Table-like apps can request shared presentation chrome:
@@ -373,8 +373,8 @@ name and adds keyboard hints only in the focused window. Status text fits
 terminal cells, including wide characters, so window controls keep their
 positions. `#f` restores the default.
 
-The same bar is off for ordinary buffers by default; `(scrollbar #t)`
-enables it there. `(scrollbar-position 'left)` and `(scrollbar-position 'right)`
+The same bar is off for ordinary buffers by default; `(head:scrollbar #t)`
+enables it there. `(head:scrollbar-position 'left)` and `(head:scrollbar-position 'right)`
 select the global side, which defaults to the right. An app's explicit side
 overrides that position. `<buffers>` uses `auto`: its bar appears on the
 global side when the list is taller than its window and disappears when
@@ -384,9 +384,9 @@ everything fits.
 
 There is no notion of an app's "target window": an app acts on the
 selected window, its own included.  A command that shows another buffer
-(`show-buffer!`) replaces the app in the window the user is in; one that
+(`edit:show-buffer!`) replaces the app in the window the user is in; one that
 wants the app to stay visible shows the buffer elsewhere
-(`display-buffer!`).  The window tree is the only source of windows, and
+(`edit:display-buffer!`).  The window tree is the only source of windows, and
 the user's window commands and mouse gestures move between them as usual
 while an app is focused.
 Each window keeps its own point and viewport, including multiple

@@ -10,10 +10,10 @@ Imports may point down or sideways; no library imports a runtime entrypoint.
 The loader locates the adjacent libraries and object caches and configures
 Chez. It admits options through `startup`, then selects the base or client runtime.
 Plain `e` starts or connects to the base, checks source and wire compatibility,
-and claims the connection before importing the command layer
-(`edit`, bare -- the names M-x sees), the literals (`literal`, bare too:
-`(buffer "name")`, `(window n)`, `(region ...)` and `(head "desk")` read back
-as they print) and `main`, and runs `(main:run)`.
+and claims the connection before importing the modules, each under its
+prefix, the literals (`literal`, bare: `(buffer "name")`, `(window n)`,
+`(region ...)` and `(head "desk")` read back as they print) and `main`, and
+runs `(main:run)`.
 `--base` acquires the directory's lifetime lock and runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
@@ -99,12 +99,12 @@ head's prompts, key annotations, and Markdown display. `reference:page!`
 publishes a private Markdown source per requesting head; the head uses the
 ordinary local Markdown companion to display it.
 
-Every library but `edit` and `literal` is imported with its own prefix, and
-that is also how M-x sees it: `store:`, `keymap:`, `terminal:`, `git:`,
-`sys:`. `edit`'s names are bare, and so are `literal`'s, the constructors
-that read a printed value back, `(buffer "name")`, `(window n)`,
-`(region b start end)` and the identities `(head "desk")`, `(agent "claude")`
-and `(base 'e)`, with the region's predicate and accessors. Modules
+Every library is imported with its own prefix, and that is also how M-x
+sees it: `edit:`, `store:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only
+`literal`'s names are bare, the constructors that read a printed value
+back, `(buffer "name")`, `(window n)`, `(region b start end)` and the
+identities `(head "desk")`, `(agent "claude")` and `(base 'e)`, with the
+region's predicate and accessors. Modules
 are named in the singular (`style`, `file`, `mode`,
 `string`, `actor`, `doc`), and their exported names drop the module's stem: the
 prefix says it once -- `style:set!`, not `styles:set-style!`; `keymap:bind!`,
@@ -121,7 +121,7 @@ An extension exports `init!`, which performs its registrations:
 ```scheme
 (library (my-mode)
   (export init!)
-  (import (chezscheme) (except (edit) init!)   ; the command layer, bare
+  (import (chezscheme) (except (edit) init!)   ; the command layer
           (prefix (mode) mode:))             ; seams, prefixed
 
   (define (my-styles line) ...)
@@ -259,11 +259,11 @@ Naming distinguishes interaction:
   useful value;
 - predicates end in `?` and parameters are ordinary callable Scheme values.
 
-Interactive wrappers should be thin. For example, `find-file!!` prompts and
-then calls `visit-file!`.
+Interactive wrappers should be thin. For example, `edit:find-file!!` prompts and
+then calls `edit:visit-file!`.
 
-`call-with-buffer` temporarily evaluates against another buffer.
-`call-as-one-edit!` groups mutations into a labeled undo step. Errors should be
+`edit:call-with-buffer` temporarily evaluates against another buffer.
+`edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors should be
 raised normally; the command loop reports unexpected conditions in the echo
 area and log.
 
@@ -331,8 +331,8 @@ matching, selections, and app candidates use this mechanism.
 text hit test; see [App buffers](APPS.md). It shares click and navigation
 geometry and keeps mouse emphasis separate from keyboard selection.
 
-Language layout remains modular through `register-indenter!` and
-`register-formatter!`. See [Formatting](FORMATTING.md).
+Language layout remains modular through `edit:register-indenter!` and
+`edit:register-formatter!`. See [Formatting](FORMATTING.md).
 
 ## Apps and views
 
