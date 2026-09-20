@@ -94,9 +94,9 @@
   ;;; Sessions ----------------------------------------------------------------
 
   (edoc "An actor's admission under a policy."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (policy (record policy) "the policy")
-        (owner any "the actor asked when more is needed, or #f")
+        (owner (or actor #f) "the actor asked when more is needed, or #f")
         (env any "the granted evaluation environment")
         (revoked any "a box, #t once revoked")
         (close thunk "the one-shot connection cleanup"))
@@ -143,9 +143,9 @@
                      `(only (sandbox) ,@grants))))
 
   (edoc "Mint a session for an actor under a policy; the optional owner is consulted beyond the grant, and the close procedure of a connection runs once on revocation."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (p (record policy) "the policy")
-        (owner any "the consulted identity, optional")
+        (owner (or actor #f) "the consulted identity, optional")
         (close! thunk "the connection's close, optional")
         (returns (record session)))
   (define mint! (activity:wrap
@@ -195,7 +195,7 @@
     (unbox (session-revoked s)))
 
   (edoc "Revoke every live session of an actor; how many were selected."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns integer))
   (define (revoke-actor! actor)
     ;; Trusted control selects one inventory version. Reentrant cleanup or a
@@ -368,7 +368,7 @@
 
   (edoc "Send a message to another actor as the session, in an envelope naming the session as its sender."
         (s (record session) "the session")
-        (to any "the recipient identity")
+        (to actor "the recipient identity")
         (message any "the payload"))
   (define (session-send! s to message)
     (call-as-session s
@@ -381,7 +381,7 @@
 
   (edoc "Ask an actor a question through the interaction protocol, the session's owner when none is named; the reply procedure receives the answer."
         (s (record session) "the session")
-        (to any "the actor asked")
+        (to actor "the actor asked")
         (question string "the question")
         (choices (list-of string) "the offered answers, or none")
         (reply! procedure "(reply! answer)"))

@@ -297,7 +297,10 @@ reachable when that registration update commits; see [module registration](MODUL
 
 Actors have a directory as well as a mailbox. `actor:register! who deliver!
 [capabilities]` claims an identity `(kind name ...)`; names may be strings or
-symbols. Duplicate identities raise a registration-conflict condition,
+symbols. Identities are literals: `(head "desk")`, `(agent "claude")` and
+`(base 'e)` call the constructors in `(literal)`, which check the name and
+return the list, so an identity reads back as it prints, and M-x completes
+an actor argument from the directory in that spelling. Duplicate identities raise a registration-conflict condition,
 including races between staged updates. Replace an endpoint by detaching and
 registering it in one `kernel:call-with-registration-update` scope. Directory
 metadata and delivery follow the same module ownership and rollback rules.

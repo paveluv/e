@@ -295,11 +295,17 @@
                     (choices (cdr rest) (if ordered? seen (cons spelling seen)))))))))
         #f)))
 
-  (edoc "The safe extensions of a query: the longer strings every current match still matches, the query itself included."
+  (edoc "The safe extensions of a query: the longer strings every current match still matches, the query itself included; a predicate over texts confines them to what the caller can insert."
         (query string "the typed characters")
         (names (list-of (or symbol string)) "the current matches")
+        (acceptable? procedure "(acceptable? text) admitting an extension; omitted, every text is")
         (returns (list-of string)))
-  (define (expansions query names)
+  (define expansions
+    (case-lambda
+      [(query names) (extensions query names (lambda (text) #t))]
+      [(query names acceptable?) (extensions query names acceptable?)]))
+
+  (define (extensions query names acceptable?)
     ;; A safe extension E satisfies query <= E <= every current match under
     ;; this same relation. Boundary-starting alignments compose, so transitivity
     ;; guarantees that E cannot introduce a name the query did not match.
@@ -317,7 +323,8 @@
                (let ([hit (hashtable-ref known text #f)])
                  (if hit (car hit)
                      (let* ([candidate (build-source text)]
-                            [yes? (for-all (lambda (source) (and (align candidate source) #t)) sources)])
+                            [yes? (and (acceptable? text)
+                                       (for-all (lambda (source) (and (align candidate source) #t)) sources))])
                        (hashtable-set! known text (list yes?)) yes?))))
              (define (refines? text) (align prepared (build-source text)))
              (when (fx>? limit size)

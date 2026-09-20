@@ -36,7 +36,7 @@
           signature-arguments signature-returns signature-library
           argument? argument-name argument-type argument-notes
           edoc-types edoc-type? type-text edoc-entry edoc-template first-sentence
-          type-named type-owner type-read type-prose type-accepts? type-completions type-spelling)
+          type-named type-owner type-within type-read type-prose type-accepts? type-completions type-spelling)
   (import (rnrs)
           (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! eq-hashtable-contains? format syntax->list
@@ -50,7 +50,7 @@
     ;; record instance is (record name); #f stands for itself, for unions
     ;; such as (or string #f).
     (syntax-rules ()
-      [(_) '(file directory buffer window region position command symbol key mode style
+      [(_) '(file directory buffer window region position command symbol key mode style actor head
               string char integer number boolean list pair vector bytevector hashtable
               port procedure thunk condition datum any)]))
 
@@ -113,15 +113,15 @@
   (define-record-type (type make-type type?)
     (fields (immutable name type-name-of) (immutable prose type-prose-of) (immutable predicate type-predicate-of)
             (immutable complete type-complete-of) (immutable read type-read-of) (immutable write type-write-of)
-            (immutable owner type-owner-of)))
+            (immutable owner type-owner-of) (immutable within type-within-of)))
   (define types (make-eq-hashtable))
   (define record-predicates (make-eq-hashtable))
 
-  (define (register-type! name prose predicate complete read write owner)
+  (define (register-type! name prose predicate complete read write owner within)
     (let ([existing (eq-hashtable-ref types name #f)])
       (when (and existing (type-owner-of existing) (not (equal? (type-owner-of existing) owner)))
         (error 'edoc-type (format "type ~a is defined by ~a" name (type-owner-of existing)) owner))
-      (eq-hashtable-set! types name (make-type name prose predicate complete read write owner))))
+      (eq-hashtable-set! types name (make-type name prose predicate complete read write owner within))))
 
   (define (register-record-type! name predicate)
     (eq-hashtable-set! record-predicates name predicate))
@@ -158,9 +158,9 @@
 
   (define base-types
     (begin
-      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(edoc)")
+      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(edoc)" #f)
       (for-each
-        (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(edoc)"))
+        (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(edoc)" #f))
         (list (list 'string "a string" string?)
               (list 'char "a character" char?)
               (list 'integer "an exact integer" (lambda (v) (and (integer? v) (exact? v))))
@@ -179,10 +179,11 @@
               (list 'datum "plain data: pairs, vectors, strings and atoms" plain-datum?)
               (list 'any "anything" always)))
       (for-each
-        (lambda (entry) (register-type! (car entry) (cadr entry) always #f #f #f #f))
+        (lambda (entry) (register-type! (car entry) (cadr entry) always #f #f #f #f #f))
         '((file "a file, by its path") (directory "a directory, by its path") (buffer "a buffer")
           (window "a window") (region "a region of a buffer") (position "a (row . col) position")
-          (command "a command") (key "a key spelling") (mode "a mode") (style "a face")))
+          (command "a command") (key "a key spelling") (mode "a mode") (style "a face")
+          (actor "an actor's identity") (head "a head's identity")))
       'registered))
 
   ;;; Checking, shared by the forms -------------------------------------------------
@@ -199,10 +200,10 @@
   ;; the coverage tool reads these attach-name! definitions as documentation.
   (define edoc-type-documentation
     (attach-name! 'edoc-type
-      '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (read r) (write w)), the last three optional; registered when the library initializes."
+      '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (read r) (write w) (within t)), all but the predicate optional; registered when the library initializes."
          (name symbol "the type's name")
          (prose string "what values of the type are")
-         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (read r) text to value, (write w) value to expression text")
+         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (read r) text to value, (write w) value to expression text, (within t) the type this one refines")
          ("kind" syntax) ("library" "(edoc)"))))
 
   (define edoc-documentation
@@ -541,16 +542,20 @@
                  (and hit (syntax-case hit () [(_ e) #'e] [_ (syntax-violation who "expected (field expression)" form hit)]))))
              (for-each
                (lambda (f)
-                 (unless (exists (lambda (key) (head-is? f key)) '(predicate complete read write))
-                   (syntax-violation who "expected a predicate, complete, read or write field" form f)))
+                 (unless (exists (lambda (key) (head-is? f key)) '(predicate complete read write within))
+                   (syntax-violation who "expected a predicate, complete, read, write or within field" form f)))
                fields)
              (unless (field-of 'predicate) (syntax-violation who "a type needs a predicate" form))
              (with-syntax ([predicate (field-of 'predicate)]
                            [complete (or (field-of 'complete) #'#f)]
                            [read (or (field-of 'read) #'#f)]
                            [write (or (field-of 'write) #'#f)]
+                           [within (let ([w (field-of 'within)])
+                                     (cond [(not w) #'#f]
+                                           [(identifier? w) (list #'quote w)]
+                                           [else (syntax-violation who "within names a type" form w)]))]
                            [library library-name])
-               #'(register-type! 'name prose predicate complete read write library)))]
+               #'(register-type! 'name prose predicate complete read write library within)))]
           [_ (syntax-violation who "expected (edoc-type name prose (predicate p) field ...)" form)]))
       (define (export-identifiers exports)
         ;; the internal identifiers the export clause names
@@ -841,8 +846,12 @@
     (eq-hashtable-ref types name #f))
 
   (edefine (type-owner type)
-    (edoc "The library that defined a type, (edit) say, or #f for a placeholder." (type (record type) "the type record") (returns (or string #f)))
+    (edoc "The library that defined a type, (literal) say, or #f for a placeholder." (type (record type) "the type record") (returns (or string #f)))
     (type-owner-of type))
+
+  (edefine (type-within type)
+    (edoc "The type this one refines, head within actor say, or #f." (type (record type) "the type record") (returns (or symbol #f)))
+    (type-within-of type))
 
   (edefine (type-read type)
     (edoc "A type's reader, text to value, or #f." (type (record type) "the type record") (returns (or procedure #f)))

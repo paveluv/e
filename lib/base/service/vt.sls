@@ -3394,7 +3394,7 @@
              [else #f]))))
 
   (edoc "Send text to a terminal's program as typed or pasted input, with the sender's screen size."
-        (from any "the sending head")
+        (from head "the sending head")
         (id integer "the buffer id")
         (text string "the text")
         (size list "(rows cols)")
@@ -3650,7 +3650,7 @@
                   (loop))))))))
 
   (edoc "Open a terminal running a command, or the shell, in a directory at a size; its buffer id."
-        (from any "the opening head")
+        (from head "the opening head")
         (command (or string #f) "the command line, or #f for the shell")
         (directory directory "the working directory")
         (rows integer "the rows")

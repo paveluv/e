@@ -43,14 +43,14 @@
   (define (check-head head)
     (unless (equal? head (client:identity)) (error 'reference "a head addresses its own page")))
   (edoc "This head's describe page receipt, (id revision selected-name), or #f."
-        (head any "the head's identity")
+        (head head "the head's identity")
         (returns (or list #f)))
   (define (page head)
     (check-head head)
     (when (eq? current 'unknown) (set! current (client:request 'reference-page)))
     (datum:copy current))
   (edoc "Publish or refresh this head's describe page for a name, sending its documented definitions along."
-        (head any "the head's identity")
+        (head head "the head's identity")
         (name (or symbol string) "the documented name")
         (keys (list-of string) "the key spellings bound to it")
         (basis (list-of pair) "(id . revision) to refresh, at most one"))

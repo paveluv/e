@@ -215,7 +215,7 @@
             name))))
 
   (edoc "Create a buffer with a name, lines and optional facts, publishing them together; its id."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (buffer-name string "the name")
         (lines (or list vector) "the lines; empty means one empty line")
         (facts (list-of list) "a fact batch, at most one")
@@ -258,7 +258,7 @@
     (locked (lambda () (file-id path))))
 
   (edoc "Visit a file as a buffer, concurrent visitors sharing the first: (values id created?)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (name string "the name")
         (lines (or list vector) "the lines read")
         (facts list "the file facts"))
@@ -274,7 +274,7 @@
                 (values (create-buffer! actor name text updates) #t)))))))
 
   (edoc "Replace a buffer's baseline wholesale, clearing its history, optionally with facts and a reviewed state that must still match; the new revision, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (lines (or list vector) "the lines")
         (options (list-of any) "facts, then a reviewed (revision fact ...) state")
@@ -324,7 +324,7 @@
           (vector->list (hashtable-keys (store-buffers (current-store))))))
 
   (edoc "The id of a producer's generated source under a key, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (key datum "the publication key")
         (returns (or integer #f)))
   (define (publication actor key)
@@ -334,7 +334,7 @@
       (locked (lambda () (publication-id identity)))))
 
   (edoc "Create or replace a producer's generated source atomically; an (id revision fact ...) basis refuses stale refreshes. The id, or #f when refused."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (key datum "the publication key")
         (name string "the buffer name")
         (lines (or list vector) "the lines")
@@ -382,7 +382,7 @@
             updates))
 
   (edoc "Rename a buffer; the accepted name."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (new-name string "the wanted name")
         (returns string))
@@ -401,7 +401,7 @@
       (string-copy name)))
 
   (edoc "Delete a buffer."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id"))
   (define (delete! actor id)
     (transact! actor
@@ -415,7 +415,7 @@
     (enqueue-event! `(delete ,id ,actor)))
 
   (edoc "Delete a buffer only while its reviewed revision and facts still hold; whether it was deleted."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (revision integer "the reviewed revision")
         (facts list "the reviewed facts")
@@ -553,7 +553,7 @@
         (and (hashtable-ref (store-buffers (current-store)) id #f) #t))))
 
   (edoc "Whether an actor is in a buffer's audience; a missing buffer is never visible."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (returns boolean))
   (define (visible? actor id)
@@ -801,7 +801,7 @@
         b (bounded (cons group (remq group (buffer-undo b))) delta-log-limit))))
 
   (edoc "Apply an edit against a basis revision, rebased across what landed since: (values applied revision), or (values stale overlap|basis-too-old)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (basis integer "the revision edited")
         (span (record span) "the span replaced")
@@ -821,7 +821,7 @@
       (values status (if (eq? status 'applied) (car detail) detail))))
 
   (edoc "Apply an edit like edit!, acknowledging with (revision text changes edit-facts) before subscribers can write again."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (basis integer "the revision edited")
         (span (record span) "the span replaced")
@@ -978,7 +978,7 @@
                 (if (eq? scope 'mine) actor (cadr scope)))))
 
   (edoc "Undo or redo in a buffer under a scope: (values status detail), status applied, blocked, nothing or refused."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (direction (one-of undo redo) "which way")
         (scope any "mine, all or (actor who)")
@@ -1030,7 +1030,7 @@
                                        (undo-group-label group)) values)))))))])))))
 
   (edoc "Undo in a buffer: (values status detail), the detail the new revision when applied."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (scope (list-of any) "mine, all or (actor who), at most one"))
   (define (undo! actor id . scope)
@@ -1042,7 +1042,7 @@
       (values status (if (eq? status 'applied) (car detail) detail))))
 
   (edoc "Redo the actor's latest undo in a buffer: (values status detail)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id"))
   (define (redo! actor id)
     (let-values ([(status detail) (history-step! actor id 'redo 'mine)])
@@ -1179,7 +1179,7 @@
         (inside? value)))
 
   (edoc "Set and drop an actor's marks in a buffer as one publication against a basis: (values applied revision) or (values stale revision)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (basis (or integer #f) "the revision the positions describe, or #f for current")
         (updates list "(name . position) marks")
@@ -1218,7 +1218,7 @@
                   (values 'applied (buffer-revision b)))))))))
 
   (edoc "Set one mark of an actor in a buffer against the current text."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (mark-name datum "the mark")
         (position any "a position or span"))
@@ -1228,7 +1228,7 @@
       (void)))
 
   (edoc "The current position of an actor's mark in a buffer, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (mark-name datum "the mark")
         (returns any))
@@ -1242,7 +1242,7 @@
               [else #f]))))
 
   (edoc "Remove an actor's mark from a buffer."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (mark-name datum "the mark"))
   (define (drop-mark! actor id mark-name)
@@ -1250,7 +1250,7 @@
       (void)))
 
   (edoc "An actor's marks in a buffer, (name . position) each."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (returns list))
   (define (marks actor id)
@@ -1280,7 +1280,7 @@
   ;; delete!.  Subscribers hear (property id key actor).
 
   (edoc "Set one fact of a buffer."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (key symbol "the fact")
         (value datum "its value"))
@@ -1288,7 +1288,7 @@
     (set-properties! actor id (list (cons key value))))
 
   (edoc "Set facts of a buffer, optionally only while a review still holds, and optionally renaming it; whether accepted."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (updates list "(key . value) facts")
         (options (list-of any) "a fact review, then a new name")
@@ -1316,7 +1316,7 @@
                    #t)))))))
 
   (edoc "Remove a fact from a buffer."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (key symbol "the fact"))
   (define (drop-property! actor id key)

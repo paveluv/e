@@ -21,7 +21,7 @@
     (or (eq? audience 'all) (and (list? audience) (for-all identity? audience))))
 
   (edoc "Whether an actor is in an audience."
-        (actor any "the identity")
+        (actor actor "the identity")
         (audience any "the audience")
         (returns boolean))
   (define (in-audience? actor audience)
@@ -32,12 +32,12 @@
   (define current-actor (make-thread-parameter #f))
 
   (edoc "A copy of the identity whose work is running, or #f."
-        (returns any))
+        (returns (or actor #f)))
   (define (current)
     (datum:copy (current-actor)))
 
   (edoc "Run a thunk attributed to an actor."
-        (actor any "the identity")
+        (actor actor "the identity")
         (thunk thunk "the work")
         (returns any))
   (define (call-as actor thunk)

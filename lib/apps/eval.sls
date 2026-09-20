@@ -140,9 +140,14 @@
                [else #f])))))
 
   (define (type-fits? wanted produced)
-    ;; whether a produced type serves a wanted one: the same, a member of a
-    ;; wanted union, or a union with a serving member
+    ;; whether a produced type serves a wanted one: the same, one refining
+    ;; it, a member of a wanted union, or a union with a serving member
+    (define (refines? produced fuel)
+      (let ([record (and (symbol? produced) (> fuel 0) (edoc:type-named produced))])
+        (and record (edoc:type-within record)
+             (or (type-fits? wanted (edoc:type-within record)) (refines? (edoc:type-within record) (- fuel 1))))))
     (or (equal? wanted produced)
+        (refines? produced 8)
         (and (pair? wanted) (eq? (car wanted) 'or) (exists (lambda (m) (type-fits? m produced)) (cdr wanted)))
         (and (pair? produced) (eq? (car produced) 'or) (exists (lambda (m) (type-fits? wanted m)) (cdr produced)))))
 
@@ -285,19 +290,27 @@
                   (map (lambda (entry) (cons (car entry) (fuzzy:fragments (cdr entry))))
                        (list-sort (lambda (a b) (quality<? (fuzzy:score (cdr a)) (fuzzy:score (cdr b)))) matched)))))])))
 
-  (define (typed-inserts token options)
+  (define (typed-inserts s context options)
     ;; what Tab puts in place of the token: a sole candidate whole, else the
     ;; safe extensions of the token over the candidates' texts, the longest
-    ;; that every current match still matches, as for symbols
-    (if (null? (cdr options))
-        (list (option-insert (car (car options))))
-        (let ([seen (make-hashtable string-hash string=?)])
-          (fuzzy:expansions token
-            (fold-right (lambda (entry out)
-                          (let ([text (option-text (car entry))])
-                            (if (hashtable-ref seen text #f) out
-                                (begin (hashtable-set! seen text #t) (cons text out)))))
-                        '() options)))))
+    ;; that every current match still matches, as for symbols, and that
+    ;; leaves the cursor at a typed argument: an extension opening a string
+    ;; after an operator nobody documents, (hea" say, would strand it
+    (let ([start (cadr context)] [end (caddr context)] [token (cadddr context)])
+      (define (typed-still? text)
+        (and (argument-context (string-append (substring s 0 start) text (substring s end (string-length s)))
+                               (+ start (string-length text)))
+             #t))
+      (if (null? (cdr options))
+          (list (option-insert (car (car options))))
+          (let ([seen (make-hashtable string-hash string=?)])
+            (fuzzy:expansions token
+              (fold-right (lambda (entry out)
+                            (let ([text (option-text (car entry))])
+                              (if (hashtable-ref seen text #f) out
+                                  (begin (hashtable-set! seen text #t) (cons text out)))))
+                          '() options)
+              typed-still?)))))
 
   (define (typed-candidate entry)
     ;; a prompt candidate from (option . fragments): the label with its
@@ -328,7 +341,7 @@
         (returns (or (list-of string) #f)))
   (define (completion-extensions text pos)
     (let* ([context (argument-context text pos)] [options (and context (typed-options context))])
-      (and options (typed-inserts (cadddr context) options))))
+      (and options (typed-inserts text context options))))
 
   (define hint-cache (make-weak-eq-hashtable))
 
@@ -403,7 +416,7 @@
                [options (and context (typed-options context))])
           (if (not options) (symbols)
               (values (cadr context) (caddr context)
-                (lambda () (typed-inserts (cadddr context) options))
+                (lambda () (typed-inserts s context options))
                 (map typed-candidate options)))))
       ;; a closure: the completers are built while the module loads, before
       ;; the settling procedures below are defined

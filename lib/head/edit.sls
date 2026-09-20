@@ -479,7 +479,7 @@
     (history-shift! 1 0 "Redo" 'mine))
 
   (edoc "Undo an actor's latest live action in the current shared buffer."
-        (who datum "the actor's identity")
+        (who actor "the actor's identity")
         (returns string "the report shown in the echo area"))
   (define (undo-actor! who)
     (history-shift! 0 1 "Undo" (list 'actor who)))

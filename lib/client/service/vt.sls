@@ -24,7 +24,7 @@
   (define (own-head actor)
     (unless (equal? actor (client:identity)) (error 'vt "an attached head acts as itself")))
   (edoc "Ask the base to open a terminal for this head; its buffer id."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (command (or string #f) "the command line, or #f for the shell")
         (directory directory "the working directory")
         (rows integer "the rows")
@@ -35,7 +35,7 @@
     (own-head actor)
     (client:request 'vt-open command directory rows cols scheme))
   (edoc "Send text to a terminal as this head, typed or pasted."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (text string "the text")
         (size list "(rows cols)")
@@ -50,7 +50,7 @@
     (client:request 'vt-close id))
   (edoc "Tell the terminals this head's color scheme."
         (scheme (or (one-of dark light) #f) "the scheme")
-        (actor any "the actor identity"))
+        (actor actor "the actor identity"))
   (define (color-scheme! scheme actor)
     (own-head actor)
     (client:request 'vt-color scheme))

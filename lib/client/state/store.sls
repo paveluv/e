@@ -171,7 +171,7 @@
        (cond [(assq key (cadddr (required id))) => (lambda (fact) (datum:copy (cdr fact)))]
          [else fallback])]))
   (edoc "Whether an actor is in a buffer's audience."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (returns boolean))
   (define (visible? actor id)
@@ -243,7 +243,7 @@
       (stale! id 'facts)
       result))
   (edoc "Create a buffer in the base with a name, lines and optional facts; its id."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (name string "the name")
         (lines (or list vector) "the lines")
         (facts (list-of list) "a fact batch, at most one")
@@ -252,7 +252,7 @@
     (check-actor actor)
     (apply client:request 'create name lines facts))
   (edoc "Visit a file as a buffer in the base: (values id created?)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (name string "the name")
         (lines (or list vector) "the lines read")
         (facts list "the file facts"))
@@ -262,12 +262,12 @@
       (forget! (car result))
       (apply values result)))
   (edoc "Delete a buffer."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id"))
   (define (delete! actor id)
     (mutate actor id 'delete '()) (void))
   (edoc "Delete a buffer only while its reviewed revision and facts still hold; whether it was deleted."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (revision integer "the reviewed revision")
         (facts list "the reviewed facts")
@@ -275,7 +275,7 @@
   (define (discard! actor id revision facts)
     (mutate actor id 'discard (list revision facts)))
   (edoc "Replace a buffer's baseline wholesale, with optional facts and a reviewed state; the new revision, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (lines (or list vector) "the lines")
         (options (list-of any) "facts, then a reviewed state")
@@ -283,14 +283,14 @@
   (define (reset! actor id lines . options)
     (mutate actor id 'reset (cons lines options)))
   (edoc "Rename a buffer; the accepted name."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (name string "the wanted name")
         (returns string))
   (define (rename! actor id name)
     (mutate actor id 'rename (list name)))
   (edoc "Set facts of a buffer, optionally under a review and with a new name; whether accepted."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (updates list "(key . value) facts")
         (options (list-of any) "a fact review, then a new name")
@@ -298,7 +298,7 @@
   (define (set-properties! actor id updates . options)
     (mutate actor id 'properties (cons updates options)))
   (edoc "Set one fact of a buffer."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (key symbol "the fact")
         (value datum "its value"))
@@ -306,7 +306,7 @@
     (set-properties! actor id (list (cons key value))))
 
   (edoc "Apply an edit against a basis, acknowledged with (revision text changes edit-facts) that advances the head's cache."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (basis integer "the revision edited")
         (span (record span) "the span replaced")
@@ -345,7 +345,7 @@
               (list revision text changes (datum:copy (cadddr detail))))
             detail))))
   (edoc "Apply an edit against a basis: (values applied revision), or (values stale reason)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (basis integer "the revision edited")
         (span (record span) "the span replaced")
@@ -355,7 +355,7 @@
     (let-values ([(status detail) (apply edit-with-snapshot! actor id basis span replacement options)])
       (values status (if (eq? status 'applied) (car detail) detail))))
   (edoc "Undo or redo in a buffer under a scope: (values status detail)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (direction (one-of undo redo) "which way")
         (scope any "mine, all or (actor who)")
@@ -382,7 +382,7 @@
     (map (lambda (entry) (cons (text:datum->span (car entry)) (cdr entry)))
       (apply client:request 'blame id count)))
   (edoc "Set and drop this head's marks in a buffer against a basis: (values applied revision) or (values stale revision)."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (basis (or integer #f) "the revision the positions describe")
         (updates list "(name . position) marks")
@@ -396,7 +396,7 @@
                                    (list 'span (text:span->datum (cdr entry))) (cdr entry)))) updates)
         drops)))
   (edoc "This head's marks in a buffer, (name . position) each."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (id integer "the buffer id")
         (returns list))
   (define (marks actor id)

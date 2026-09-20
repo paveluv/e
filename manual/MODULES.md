@@ -12,8 +12,8 @@ Chez. It admits options through `startup`, then selects the base or client runti
 Plain `e` starts or connects to the base, checks source and wire compatibility,
 and claims the connection before importing the command layer
 (`edit`, bare -- the names M-x sees), the literals (`literal`, bare too:
-`(buffer "name")`, `(window n)` and `(region ...)` read back as they print)
-and `main`, and runs `(main:run)`.
+`(buffer "name")`, `(window n)`, `(region ...)` and `(head "desk")` read back
+as they print) and `main`, and runs `(main:run)`.
 `--base` acquires the directory's lifetime lock and runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
@@ -102,8 +102,9 @@ ordinary local Markdown companion to display it.
 Every library but `edit` and `literal` is imported with its own prefix, and
 that is also how M-x sees it: `store:`, `keymap:`, `terminal:`, `git:`,
 `sys:`. `edit`'s names are bare, and so are `literal`'s, the constructors
-that read a printed value back, `(buffer "name")`, `(window n)` and
-`(region b start end)`, with the region's predicate and accessors. Modules
+that read a printed value back, `(buffer "name")`, `(window n)`,
+`(region b start end)` and the identities `(head "desk")`, `(agent "claude")`
+and `(base 'e)`, with the region's predicate and accessors. Modules
 are named in the singular (`style`, `file`, `mode`,
 `string`, `actor`, `doc`), and their exported names drop the module's stem: the
 prefix says it once -- `style:set!`, not `styles:set-style!`; `keymap:bind!`,

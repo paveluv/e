@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (head) head:) (prefix (text) text:)
+     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (head) head:) (prefix (text) text:)
              (prefix (string) string:) (prefix (test) test:))
 
      (define check test:check)
@@ -100,5 +100,24 @@
      (check 'a-completed-value-settles-its-form
        (list (settled "(show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))
        '(("(show-buffer! (buffer \"*scratch*\"))" . 35) ("(visit-file! \"manual/EVAL.md\")" . 30)))
+
+     ;; Identities are literals too: (head "desk") and (agent "claude") read
+     ;; back as they print, and an actor argument completes from the directory.
+     (check 'identities-read-back-as-they-print
+       (list (head "desk") (agent 'tester) (base 'e) (guard (ex [else 'refused]) (head "")))
+       '((head "desk") (agent tester) (base e) refused))
+     (actor:register! '(agent "helper") (lambda (m) (void)))
+     (check 'an-actor-argument-offers-the-directory
+       (list (has? "(agent \"helper\")" (labels "(actor:send! ")) (has? "(agent \"helper\")" (labels "(actor:describe "))
+             ;; the constructors produce identities, a head's refining an actor's
+             (has? "(head name . more)" (labels "(actor:send! ")) (has? "(actor:current)" (labels "(actor:send! "))
+             ;; the token extends to what the value and the constructor share,
+             ;; never into a string no documented operator opened
+             (extensions "(actor:send! (age")
+             (exists (lambda (e) (memv #\" (string->list e))) (extensions "(actor:send! (he"))
+             ;; inside the constructor the name completes from the directory
+             (labels "(actor:send! (agent \"h") (extensions "(actor:send! (agent \"h")
+             (labels "(actor:send! (agent \"helper\") "))
+       '(#t #t #t #t ("(agent") #f ("helper") ("helper\"") #f))
 
      (test:finish! 'mx)))

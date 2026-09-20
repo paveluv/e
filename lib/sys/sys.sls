@@ -739,7 +739,7 @@
     (list (get-process-id) (process-generation (get-process-id))))
 
   (edoc "Whether a process identity no longer names a live process."
-        (identity list "the identity")
+        (identity actor "the identity")
         (returns boolean))
   (define (process-exited? identity)
     ;; Read-only waiting for an announced stop. A reused pid is already a

@@ -3224,7 +3224,7 @@
   ;; another actor's message to this head wakes its loop; the question
   ;; is presented before the next frame
   (edoc "This head's actor identity in the store and the interaction protocol."
-        (value any))
+        (value head))
   (define ui-actor ;; Claim and subscribe together before creating buffers or marks. Both
     ;; process-root registrations outlive any extension that first imports
     ;; the head. A presence callback can immediately write to the store, so

@@ -45,7 +45,7 @@
         (start integer "the first index")
         (limit (or integer #f) "how many at most")
         (component (or symbol #f) "the component, or #f for all")
-        (actor any "the actor, or #f for all"))
+        (actor (or actor #f) "the actor, or #f for all"))
   (define snapshot
     (case-lambda
       [()

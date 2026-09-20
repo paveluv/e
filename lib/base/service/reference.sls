@@ -37,7 +37,7 @@
       (error 'reference "expected a requesting head" head)))
 
   (edoc "A head's describe page receipt, (id revision selected-name), or #f when absent or hidden."
-        (head any "the head's identity")
+        (head head "the head's identity")
         (returns (or list #f)))
   (define (page head)
     ;; -> (id revision selected-name), or #f if absent/hidden. This receipt
@@ -53,7 +53,7 @@
                       (list id revision (cdr (assq 'reference-query facts))))))))))
 
   (edoc "Publish or refresh a head's describe page for a name, annotated with its keys; a basis (id . revision) refreshes an existing page."
-        (head any "the head's identity")
+        (head head "the head's identity")
         (name (or symbol string) "the documented name")
         (keys (list-of string) "the key spellings bound to it")
         (basis (list-of pair) "(id . revision) to refresh, at most one"))

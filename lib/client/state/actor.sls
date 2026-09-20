@@ -21,7 +21,7 @@
   (define pending-questions '())
   (define (forget-pending!) (set! pending-known? #f))
   (edoc "Bind this head's delivery procedure, and its capabilities when given, to its claimed identity."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (deliver! procedure "(deliver! message)")
         (capabilities any "policy description, or #f"))
   (define register!
@@ -45,17 +45,17 @@
   (define (attached)
     (client:request 'actors))
   (edoc "An actor's directory entry, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns (or list #f)))
   (define (describe actor)
     (find (lambda (entry) (equal? (car entry) actor)) (attached)))
   (edoc "Whether an actor is registered."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns boolean))
   (define (registered? actor)
     (and (describe actor) #t))
   (edoc "Detach this head by closing its connection; a head detaches only itself."
-        (actor any "the actor identity"))
+        (actor actor "the actor identity"))
   (define (detach! actor)
     (unless (equal? actor (client:identity)) (error 'detach! "a head detaches itself"))
     (client:close!))
@@ -78,13 +78,13 @@
             (procedure batch))))))
   (define unsubscribe! client:unsubscribe!)
   (edoc "Deliver a plain message to an actor through the base."
-        (to any "the recipient identity")
+        (to actor "the recipient identity")
         (message datum "the message")
         (returns any))
   (define (send! to message)
     (client:request 'send to message))
   (edoc "The questions awaiting this head, oldest first."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns list))
   (define (pending actor)
     (unless (equal? actor (client:identity)) (error 'pending "a head reads its own questions"))
@@ -103,12 +103,12 @@
     (unless (equal? actor (client:identity)) (error 'checkpoint "a head owns its own checkpoint"))
     (apply client:request 'checkpoint state))
   (edoc "This head's last screen checkpoint, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns any))
   (define (checkpoint actor)
     (own-checkpoint actor))
   (edoc "Record this head's screen checkpoint in the base."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (state datum "the checkpoint"))
   (define (checkpoint! actor state)
     (own-checkpoint actor state) (void))

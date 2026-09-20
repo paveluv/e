@@ -135,7 +135,8 @@ symbol; a form under a quote, or under an undocumented operator, completes
 symbols as before. A `one-of` type offers its literals, a boolean `#t` and
 `#f`, and inside a string literal the type's string values complete the
 literal: `(visit-file! "man` lists paths under `manual/`, `(buffer "`
-lists buffer names. The language's own types, `string` or `integer`, offer
+lists buffer names. An actor argument lists the registered actors as
+`(head "desk")` or `(agent "claude")`, the identities' own spelling. The language's own types, `string` or `integer`, offer
 no producers, and an argument whose type offers nothing the token matches
 falls back to symbol completion. `S-Tab` always completes symbols.
 

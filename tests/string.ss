@@ -99,6 +99,12 @@
          ("a-b" "ax-b:a-b" (0 0 5 0 8) ((0 5 3)))
          ("" "abc" (0 0 0 0 3) ())))
 
+     ;; A caller's predicate confines the extensions to texts it can insert.
+     (check 'fuzzy-expand-within-limits
+       (list (fuzzy:expansions "ab" '("ab-x" "ab-y"))
+             (fuzzy:expansions "ab" '("ab-x" "ab-y") (lambda (text) (not (memv #\- (string->list text))))))
+       '(("ab-") ("ab")))
+
      (define symbols '("file-view:sort-by!" "split-window!" "split-window-right!"))
      (for-each
        (lambda (case)

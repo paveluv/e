@@ -51,7 +51,7 @@
   (define call-as identity:call-as)
 
   (edoc "Register an actor with its delivery procedure and optional capabilities; a head's registration replaces an earlier one atomically."
-        (actor any "the identity")
+        (actor actor "the identity")
         (deliver! procedure "(deliver! message)")
         (capabilities any "policy description, optional"))
   (define register! (activity:wrap
@@ -92,19 +92,19 @@
     (map directory-entry (reverse (kernel:registry-items registrations))))
 
   (edoc "An actor's directory entry, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns (or list #f)))
   (define (describe actor)
     (let ([entry (registration-of actor)]) (and entry (directory-entry entry))))
 
   (edoc "Whether an actor is registered."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns boolean))
   (define (registered? actor)
     (and (registration-of actor) #t))
 
   (edoc "Remove an actor's registration; deliveries already selected may finish."
-        (actor any "the actor identity"))
+        (actor actor "the actor identity"))
   (define (detach! actor)
     (activity:call-with-retirement
       (lambda ()
@@ -134,7 +134,7 @@
     (kernel:registry-unobserve! token))
 
   (edoc "Deliver a plain message to an actor; #f when unreachable or delivery fails."
-        (to any "the recipient identity")
+        (to actor "the recipient identity")
         (message datum "the message")
         (returns boolean))
   (define (send! to message)
@@ -165,7 +165,7 @@
   (define protocol-lock (make-mutex))
 
   (edoc "A copy of a head's last screen checkpoint, or #f."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (returns any))
   (define (checkpoint actor)
     (let ([entry (known-head actor)])
@@ -223,7 +223,7 @@
     (with-mutex protocol-lock (map (lambda (entry) (vector-ref entry 0)) pending-asks)))
 
   (edoc "Record a head's screen checkpoint; a kept kill slot keeps the previous kill text."
-        (actor any "the actor identity")
+        (actor actor "the actor identity")
         (state datum "the checkpoint"))
   (define (checkpoint! actor state)
     (activity:call-with
@@ -245,8 +245,8 @@
                                           state)))))))
 
   (edoc "Ask an actor a question through the interaction protocol; the reply procedure receives the answer, and an owner may withdraw it. The ticket."
-        (from any "the asker")
-        (to any "the asked actor")
+        (from actor "the asker")
+        (to actor "the asked actor")
         (question string "the question")
         (choices (list-of string) "the offered answers")
         (reply! procedure "(reply! answer)")
@@ -279,7 +279,7 @@
                             (begin (cancel! ticket) #f)))))])))
 
   (edoc "The questions awaiting an actor, oldest first: (ticket from question choices) each."
-        (to any "the asked actor")
+        (to actor "the asked actor")
         (returns list))
   (define (pending to)
     ;; the questions awaiting an actor, oldest first:
@@ -321,7 +321,7 @@
   (edoc "Answer a question by its ticket; #t, or #f for a stale ticket."
         (ticket any "the ticket")
         (answer any "the answer")
-        (to any "who answers, optional")
+        (to (or actor #f) "who answers, optional")
         (returns boolean))
   (define answer! (activity:wrap
                     ;; Resolve an ask: the answer routes to the asker's reply
