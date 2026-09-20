@@ -9,18 +9,18 @@
 ;; imports it bare, so the names read as literals at the top level while
 ;; every other module arrives under its prefix.
 
-(import (only (edoc) elibrary))
-(elibrary (literal)
+(import (only (foundation edoc) elibrary))
+(elibrary (head literal)
   (export buffer window region region? region-buffer region-start region-end
           head agent base)
   (import (chezscheme)
-          (prefix (head) head:)
-          (prefix (file) file:)
-          (prefix (mode) mode:)
-          (prefix (string) string:)
-          (prefix (text) text:)
-          (prefix (identity) identity:)
-          (prefix (actor) actor:))
+          (prefix (head head) head:)
+          (prefix (service file) file:)
+          (prefix (head mode) mode:)
+          (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
+          (prefix (core identity) identity:)
+          (prefix (state actor) actor:))
 
   ;;; Buffers and windows -------------------------------------------------------
 

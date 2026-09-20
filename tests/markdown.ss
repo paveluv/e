@@ -11,7 +11,7 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (prefix (markdown) markdown:) (prefix (scheme-mode) scheme-mode:))
+             (prefix (apps markdown) markdown:) (prefix (modes scheme-mode) scheme-mode:))
 
      (scheme-mode:init!)
 

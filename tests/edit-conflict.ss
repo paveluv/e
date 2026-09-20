@@ -11,12 +11,12 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (except (edit) init!)
-             (prefix (head) head:)
-             (prefix (store) store:)
-             (prefix (text) text:)
-             (prefix (mode) mode:)
-             (prefix (kernel) kernel:))
+             (except (head edit) init!)
+             (prefix (head head) head:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:)
+             (prefix (head mode) mode:)
+             (prefix (core kernel) kernel:))
 
      (define bot '(agent conflict-test))
      (define check test:check)

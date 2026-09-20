@@ -1,13 +1,13 @@
 ;; journal.sls -- the base's log writer, history, and ordered delivery.
-(import (only (edoc) elibrary))
-(elibrary (journal)
+(import (only (foundation edoc) elibrary))
+(elibrary (state journal)
   (export add! snapshot retention subscribe! unsubscribe! progress)
   (import (rnrs)
           (only (chezscheme) current-time time-second time-nanosecond
                 make-mutex with-mutex void make-parameter make-thread-parameter parameterize)
-          (prefix (kernel) kernel:)
-          (prefix (actor) actor:)
-          (prefix (datum) datum:))
+          (prefix (core kernel) kernel:)
+          (prefix (state actor) actor:)
+          (prefix (foundation datum) datum:))
 
   ;; This owner is pinned for the base's lifetime. Absolute append indexes
   ;; survive eviction; the ring bounds retained records, not payload bytes.

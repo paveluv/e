@@ -1,7 +1,7 @@
 ;; vt.sls -- base-owned terminal emulator, PTY actors, and shared publication.
 
-(import (only (edoc) elibrary))
-(elibrary (vt)
+(import (only (foundation edoc) elibrary))
+(elibrary (service vt)
   (export init! open! send! close! close-all! running transcript
           (rename (terminal-scrollback scrollback) (terminal-shell shell)
                   (make-terminal-emulator make-emulator) (terminal-emulator? emulator?)
@@ -12,17 +12,17 @@
                   (terminal-emulator-mouse-input emulator-mouse-input) (terminal-emulator-replies emulator-replies)
                   (terminal-emulator-unsupported emulator-unsupported) (terminal-color-scheme! color-scheme!)))
   (import (chezscheme)
-          (prefix (kernel) kernel:)
-          (prefix (string) string:)
-          (prefix (activity) activity:)
-          (prefix (datum) datum:)
-          (prefix (sys) sys:)
-          (prefix (actor) actor:)
-          (prefix (store) store:)
-          (prefix (surface) surface:)
-          (prefix (text) text:)
-          (prefix (glyph) glyph:)
-          (prefix (color) color:))
+          (prefix (core kernel) kernel:)
+          (prefix (foundation string) string:)
+          (prefix (sys activity) activity:)
+          (prefix (foundation datum) datum:)
+          (prefix (sys sys) sys:)
+          (prefix (state actor) actor:)
+          (prefix (state store) store:)
+          (prefix (state surface) surface:)
+          (prefix (foundation text) text:)
+          (prefix (sys glyph) glyph:)
+          (prefix (foundation color) color:))
 
   (define-record-type terminal-state
     (nongenerative e-vt-terminal-state-v1)

@@ -11,9 +11,9 @@
 
 (eval
   '(begin
-     (import (prefix (head) head:)
-             (prefix (store) store:)
-             (prefix (text) text:) (prefix (test) test:))
+     (import (prefix (head head) head:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:) (prefix (test) test:))
 
      (define check test:check)
 

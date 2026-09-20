@@ -14,8 +14,8 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (prefix (head) head:) (prefix (kernel) kernel:) (prefix (keymap) keymap:)
-             (prefix (string) string:) (prefix (test) test:))
+     (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:)
+             (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
      ;; Load through the kernel so the reload below replaces the real module.

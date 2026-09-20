@@ -12,12 +12,12 @@
 
 (eval
   '(begin
-     (import (prefix (policy) policy:)
-             (prefix (store) store:)
-             (prefix (text) text:)
-             (prefix (actor) actor:)
-             (prefix (kernel) kernel:)
-             (prefix (log) log:)
+     (import (prefix (service policy) policy:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:)
+             (prefix (state actor) actor:)
+             (prefix (core kernel) kernel:)
+             (prefix (service log) log:)
              (prefix (test) test:))
 
      (define check test:check)

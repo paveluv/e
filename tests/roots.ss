@@ -4,16 +4,9 @@
 
 (define (test-roots! runtime)
   (unless (memq runtime '(base client)) (error 'test-roots! "expected base or client" runtime))
-  ;; The loader's rule: every leaf directory under lib is a root, the
-  ;; runtime's implementation tree and the common kinds; tests adds (test).
+  ;; The loader's rule: the runtime's implementation tree in front of lib,
+  ;; a library (kind leaf) at <root>/kind/leaf.sls; tests adds (test), flat.
   (let ([here (current-directory)] [objects (format "~a/eo/~a" (current-directory) runtime)])
-    (define (leaves parent)
-      (map (lambda (name) (cons (string-append parent "/" name) objects))
-        (list-sort string<?
-          (filter (lambda (name)
-                    (and (not (member name '("base" "client")))
-                         (file-directory? (string-append parent "/" name))))
-                  (directory-list parent)))))
     (compile-imported-libraries #t)
     ;; The loader admits options through the common libraries from eo/base
     ;; before it selects a runtime, so a head's client objects are compiled
@@ -24,15 +17,15 @@
     ;; a pair with that same object directory, so mixed pairs would take a
     ;; stale object as it is.
     (library-directories
-      (map (lambda (root) (cons (car root) (format "~a/eo/base" here)))
-           (append (leaves (format "~a/lib/base" here)) (leaves (string-append here "/lib")))))
-    (eval '(import (prefix (startup) startup:) (prefix (kernel) kernel:) (prefix (sys) sys:) (prefix (daemon) daemon:))
+      (list (cons (format "~a/lib/base" here) (format "~a/eo/base" here))
+            (cons (string-append here "/lib") (format "~a/eo/base" here))))
+    (eval '(import (prefix (core startup) startup:) (prefix (core kernel) kernel:) (prefix (sys sys) sys:) (prefix (core daemon) daemon:))
       (interaction-environment))
     (library-directories
-      (append (leaves (format "~a/lib/~a" here runtime))
-              (leaves (string-append here "/lib"))
-              (list (cons (string-append here "/tests") objects))))
+      (list (cons (format "~a/lib/~a" here runtime) objects)
+            (cons (string-append here "/lib") objects)
+            (cons (string-append here "/tests") objects)))
     (eval '(begin
-             (import (prefix (kernel) kernel:))
+             (import (prefix (core kernel) kernel:))
              (kernel:installation-directory (current-directory)))
       (interaction-environment))))

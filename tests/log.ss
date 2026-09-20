@@ -8,8 +8,8 @@
 
 (eval
   '(begin
-     (import (prefix (log) log:) (prefix (actor) actor:)
-             (prefix (kernel) kernel:) (prefix (test) test:))
+     (import (prefix (service log) log:) (prefix (state actor) actor:)
+             (prefix (core kernel) kernel:) (prefix (test) test:))
      (define (record-count)
        (let-values ([(records end first) (log:snapshot 0 0)]) end))
      (test:check 'default-retention (log:retention) 1000000)

@@ -8,8 +8,8 @@
 ;; terminal (or without libc) they become no-ops and sys:terminal-size
 ;; returns #f.
 
-(import (only (edoc) elibrary))
-(elibrary (sys)
+(import (only (foundation edoc) elibrary))
+(elibrary (sys sys)
   (export terminal-raw! terminal-restore! terminal-isig!
           terminal-size watch-terminal-resize! call-with-streamed-output
           duplicate-standard-output-port duplicate-output-port
@@ -32,7 +32,7 @@
           terminal-process-pid resize-terminal-process!
           close-terminal-process! reap-terminal-process!
           time-scale duration after durable-sync-hook)
-  (import (chezscheme) (prefix (activity) activity:))
+  (import (chezscheme) (prefix (sys activity) activity:))
 
   ;; Waits the editor imposes on itself -- connection deadlines, quiescence
   ;; before a stop, a synchronized-output hold -- are seconds multiplied by

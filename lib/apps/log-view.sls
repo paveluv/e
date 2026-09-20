@@ -8,17 +8,17 @@
 ;; like <log eval>, one timestamped, actor/component-prefixed row per line,
 ;; appended incrementally past a high-water mark.
 
-(import (only (edoc) elibrary))
-(elibrary (log-view)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps log-view)
   (export init! (rename (log-view! buffer!)) (rename (show-log! show!)))
   (import (chezscheme)
-          (prefix (style) style:)
-          (prefix (mode) mode:)
-          (prefix (string) string:)
-          (prefix (head) head:)
-          (prefix (window) window:)
-          (prefix (log) log:)
-          (prefix (doc) doc:))
+          (prefix (head style) style:)
+          (prefix (head mode) mode:)
+          (prefix (foundation string) string:)
+          (prefix (head head) head:)
+          (prefix (head window) window:)
+          (prefix (service log) log:)
+          (prefix (service doc) doc:))
 
   (define (log-line-prefix e)
     ;; The view's row prefix; the stored time keeps nanoseconds, the

@@ -4,8 +4,8 @@
 ;; Enter before service locks or side effects, including child creation.
 ;; A scope includes callbacks; reentry on that same thread is already
 ;; admitted. Forked workers inherit parameters, but not their parent's id.
-(import (only (edoc) elibrary))
-(elibrary (activity)
+(import (only (foundation edoc) elibrary))
+(elibrary (sys activity)
   (export lock phase call-with call-with-retirement wrap pause! resume! stop! stopped?)
   (import (chezscheme))
 

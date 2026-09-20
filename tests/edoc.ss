@@ -13,8 +13,8 @@
 
 (eval
   '(begin
-     (import (except (edit) init!)
-             (prefix (window) window:) (edoc) (prefix (kernel) kernel:) (prefix (test) test:))
+     (import (except (head edit) init!)
+             (prefix (head window) window:) (foundation edoc) (prefix (core kernel) kernel:) (prefix (test) test:))
 
      (define check test:check)
 
@@ -128,7 +128,7 @@
              (type-completions 'hue "") (type-completions '(one-of utf-8 latin-1) "") (type-completions '(or hue #f) "x")
              (type-spelling 'hue 'red) (type-spelling 'string "a") (type-spelling '(one-of a b) 'a) (type-spelling '(or string hue) 'blue)
              (edoc-type? 'hue) (edoc-type? 'nonsense) (edoc-type? '(list-of hue)))
-       '("(probe)" "(edoc)" #f "a hue, by name" "an exact integer" "hue or #f"
+       '("(probe)" "(foundation edoc)" #f "a hue, by name" "an exact integer" "hue or #f"
          #t #f #t #f #t #f #t #f #t #f #t #f #t #t #f #t
          ((red . "a hue") (green . "a hue") (blue . "a hue")) ((utf-8 . #f) (latin-1 . #f))
          ((red . "a hue") (green . "a hue") (blue . "a hue") (#f . #f))
@@ -217,7 +217,7 @@
        (list (map (lambda (name) (signature-kind (car (edoc-named name)))) '(edoc elibrary))
              (signature-kind (car (edoc-of edoc-of))) (signature-library (car (edoc-of edoc-of)))
              (signature-kind (car (edoc-of signature-kind))) (signature-kind (car (edoc-of edoc-types))))
-       '((syntax syntax) procedure "(edoc)" accessor value))
+       '((syntax syntax) procedure "(foundation edoc)" accessor value))
 
      ;; The command layer's definitions read back, and every documented
      ;; editor procedure's clauses match its formals.
@@ -234,7 +234,7 @@
              (signature-arguments (car (edoc-of window:split-below!)))
              (argument-type (signature-returns (car (edoc-of window:focus!))))
              (signature-library (car (edoc-of window:delete!))))
-       '((file) ((list-of datum)) () boolean "(window)"))
+       '((file) ((list-of datum)) () boolean "(head window)"))
      (check 'documented-clauses-match-their-formals
        (filter (lambda (sym)
                  (not (for-all (lambda (sig)

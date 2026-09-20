@@ -1,17 +1,17 @@
 ;; client.sls -- one attached head's socket, reader, and main-pump delivery.
 ;; Replies never wait behind UI callbacks. Invalidations coalesce; actor
 ;; mail and log presentation have the same finite budget as the base outbox.
-(import (only (edoc) elibrary))
-(elibrary (client)
+(import (only (foundation edoc) elibrary))
+(elibrary (core client)
   (export call-with-runtime identity request subscribe! unsubscribe!
           set-wake! pump! close! watch! ended? leave! inbox-limits)
   (import (chezscheme)
-          (prefix (kernel) kernel:)
-          (prefix (startup) startup:)
-          (prefix (daemon) daemon:)
-          (prefix (wire) wire:)
-          (prefix (sys) sys:)
-          (prefix (datum) datum:))
+          (prefix (core kernel) kernel:)
+          (prefix (core startup) startup:)
+          (prefix (core daemon) daemon:)
+          (prefix (foundation wire) wire:)
+          (prefix (sys sys) sys:)
+          (prefix (foundation datum) datum:))
 
   (edoc "The connection to the base ended.")
   (define-condition-type &ended &condition make-ended ended?)

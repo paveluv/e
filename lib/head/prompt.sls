@@ -19,8 +19,8 @@
 ;; above it.  Exported names drop the module stem: (prompt:read! "Find
 ;; file: " file:complete), (prompt:confirm? "Really?"), (prompt:active?).
 
-(import (only (edoc) elibrary))
-(elibrary (prompt)
+(import (only (foundation edoc) elibrary))
+(elibrary (head prompt)
   (export (rename (prompt! read!) (query-key! key!) (prompt-active? active?)
                   (prompt-ghost ghost) (prompt-inspector inspector)
                   (prompt-multiline multiline) (prompt-edge-motion edge-motion)
@@ -34,16 +34,16 @@
                 make-parameter parameterize box unbox set-box! format void
                 make-weak-eq-hashtable make-list list-head iota
                 current-time add-duration make-time time<?)
-          (prefix (kernel) kernel:)
-          (prefix (head) head:)
-          (prefix (echo) echo:)
-          (prefix (paint) paint:)
-          (prefix (keymap) keymap:)
-          (prefix (tty) tty:)
-          (prefix (mode) mode:)
-          (prefix (glyph) glyph:)
-          (prefix (string) string:)
-          (prefix (style) style:))
+          (prefix (core kernel) kernel:)
+          (prefix (head head) head:)
+          (prefix (head echo) echo:)
+          (prefix (head paint) paint:)
+          (prefix (head keymap) keymap:)
+          (prefix (sys tty) tty:)
+          (prefix (head mode) mode:)
+          (prefix (sys glyph) glyph:)
+          (prefix (foundation string) string:)
+          (prefix (head style) style:))
 
   ;;; The echo area, as the prompt writes it --------------------------------------
 

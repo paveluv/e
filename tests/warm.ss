@@ -12,31 +12,35 @@
   (if (and (pair? (command-line-arguments)) (string=? (car (command-line-arguments)) "client")) 'client 'base))
 (test-roots! runtime)
 
-(define (stems directory)
+(define (libraries directory qualified?)
+  ;; the library names of the .sls files below directory: (kind stem) under
+  ;; a kind directory, (stem) for the flat ones of the tests root
   (let loop ([names (directory-list directory)] [acc '()])
     (cond [(null? names) acc]
           [(file-directory? (string-append directory "/" (car names)))
-           (loop (cdr names) (append (stems (string-append directory "/" (car names))) acc))]
+           (loop (cdr names) (append (libraries (string-append directory "/" (car names)) qualified?) acc))]
           [(let ([name (car names)] [n (string-length (car names))])
              (and (> n 4) (string=? (substring name (- n 4) n) ".sls")))
-           (loop (cdr names) (cons (substring (car names) 0 (- (string-length (car names)) 4)) acc))]
+           (let ([stem (string->symbol (substring (car names) 0 (- (string-length (car names)) 4)))])
+             (loop (cdr names)
+                   (cons (if qualified? (list (string->symbol (path-last directory)) stem) (list stem)) acc)))]
           [else (loop (cdr names) acc)])))
 
-(define (library-stems)
-  (append (stems (string-append "lib/" (symbol->string runtime)))
+(define (library-names)
+  (append (libraries (string-append "lib/" (symbol->string runtime)) #t)
           (apply append
-            (map (lambda (kind) (stems (string-append "lib/" kind)))
+            (map (lambda (kind) (libraries (string-append "lib/" kind) #t))
               (filter (lambda (name) (and (not (member name '("base" "client")))
                                           (file-directory? (string-append "lib/" name))))
                 (directory-list "lib"))))
-          (stems "tests")))
+          (libraries "tests" #f)))
 
 (for-each
-  (lambda (stem)
+  (lambda (name)
     ;; cache is bootstrap-only, loaded from source by the loader; the daemon
     ;; entrypoint and the base-only services stay out of the client runtime.
-    (unless (or (string=? stem "cache")
-                (and (eq? runtime 'client) (member stem '("base" "policy" "sandbox"))))
-      (eval `(import (,(string->symbol stem))) (interaction-environment))))
-  (list-sort string<? (library-stems)))
+    (unless (or (equal? name '(sys cache))
+                (and (eq? runtime 'client) (member name '((run base) (service policy) (service sandbox)))))
+      (eval `(import ,name) (interaction-environment))))
+  (list-sort (lambda (a b) (string<? (format "~s" a) (format "~s" b))) (library-names)))
 (display (format "~a libraries current\n" runtime))

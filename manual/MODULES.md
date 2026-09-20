@@ -28,14 +28,16 @@ checkpoints before module initialization and `base-config.e`; the listener
 binds last. Session serialization uses the store and VT representation
 boundaries and does not import a head.
 
-Plain `e` selects the `lib/client` implementation tree; `e --base` selects
-`lib/base`. Both then search every other leaf directory under
-`lib/`: `foundation`, `sys`, `core`, `service`, `head`, `apps`, `modes` and
-`run`. The loader discovers these roots from the tree instead of naming
-them; the parent directories `lib/`, `lib/base/` and `lib/client/` are not
-source roots. Attached heads import the same `edit` and `main` consumers.
-Chez's `.so` objects live in `eo/client` or `eo/base`, with one flat cache
-per runtime. An installation-wide `eo/lock` serializes expansion, dependency
+A library is named by its kind directory and its file: `lib/core/kernel.sls`
+declares `(core kernel)`, `lib/head/edit.sls` declares `(head edit)`, and
+code imports them so, `(prefix (core kernel) kernel:)`; the prefix is the
+last component. Plain `e` selects the `lib/client` implementation tree;
+`e --base` selects `lib/base`. Each runtime searches two roots, its own
+tree in front of `lib/`, so `(state store)` resolves to the runtime's
+`state/store.sls` and every other name to `lib/`'s. Attached heads import
+the same `edit` and `main` consumers. Chez's `.so` objects live in
+`eo/client` or `eo/base`, mirroring the kind directories, one cache per
+runtime. An installation-wide `eo/lock` serializes expansion, dependency
 checks and automatic compilation across processes. The small `cache` library
 loads directly from source before the first cached import; it holds no lock
 while editor commands run. Source lookup and reload follow the active implementation. The loader sets
@@ -119,11 +121,11 @@ state that was not intentionally published.
 An extension exports `init!`, which performs its registrations:
 
 ```scheme
-(library (my-mode)
+(library (modes my-mode)
   (export init!)
   (import (chezscheme)
-          (prefix (edit) edit:)              ; the command layer, a seam like any
-          (prefix (mode) mode:))             ; seams, prefixed
+          (prefix (head edit) edit:)              ; the command layer, a seam like any
+          (prefix (head mode) mode:))             ; seams, prefixed
 
   (define (my-styles line) ...)
 

@@ -1,7 +1,7 @@
 ;; terminal.sls -- head commands and presentation for base-owned VT apps.
 
-(import (only (edoc) elibrary))
-(elibrary (terminal)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps terminal)
   (export init! (rename (terminal! open!) (terminal-send! send!)
                         (terminal-yank! edit:yank!) (terminal-close! close!)
                         (terminal-toggle-capture! toggle-capture!)
@@ -9,17 +9,17 @@
                         (vt:scrollback scrollback) (vt:shell shell)
                         (terminal-forward-clipboard-to-kill-ring forward-clipboard-to-kill-ring)))
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (vt) vt:)
-          (prefix (head) head:)
-          (prefix (paint) paint:)
-          (prefix (mode) mode:)
-          (prefix (keymap) keymap:)
-          (prefix (kernel) kernel:)
-          (prefix (file) file:)
-          (prefix (store) store:)
-          (prefix (log) log:)
-          (prefix (doc) doc:))
+          (prefix (head edit) edit:)
+          (prefix (service vt) vt:)
+          (prefix (head head) head:)
+          (prefix (head paint) paint:)
+          (prefix (head mode) mode:)
+          (prefix (head keymap) keymap:)
+          (prefix (core kernel) kernel:)
+          (prefix (service file) file:)
+          (prefix (state store) store:)
+          (prefix (service log) log:)
+          (prefix (service doc) doc:))
 
   (edoc "Whether text a terminal program puts on the clipboard through OSC 52 also becomes the kill ring's."
         (value boolean))
@@ -126,27 +126,27 @@
     (doc:register!
       '(((terminal:open!)
          (("procedure" . "(terminal:open! [command])")) "void"
-         ("(terminal)") terminal "Terminal" #f
+         ("(apps terminal)") terminal "Terminal" #f
          "Open a new PTY-backed terminal buffer using the shell configured by `terminal:shell`, or interpret `command` with that shell when supplied. Partial capture is the default: C-x and M-x run e commands; other input reaches the child. C-] or the clickable status indicator toggles full capture for this window. Shift-PageUp/Down scroll in either mode.")
         ((terminal:toggle-capture!)
          (("procedure" . "(terminal:toggle-capture!)")) "void"
-         ("(terminal)") terminal "Terminal" #f
+         ("(apps terminal)") terminal "Terminal" #f
          "Toggle capture in the selected live terminal window without changing cursor following or other windows. Partial capture (◐) leaves C-x and M-x to e; full capture (●) forwards them to the child. Capture controls are unavailable after the process exits.")
         ((terminal:send!)
          (("procedure" . "(terminal:send! text)")) "void"
-         ("(terminal)") terminal "Terminal" #f
+         ("(apps terminal)") terminal "Terminal" #f
          "Send text to the process in the current terminal buffer.")
         ((terminal:close!)
          (("procedure" . "(terminal:close! [buffer])")) "void"
-         ("(terminal)") terminal "Terminal" #f
+         ("(apps terminal)") terminal "Terminal" #f
          "Terminate and detach the process owned by a terminal buffer.")
         ((terminal:shell)
          (("parameter" . "(terminal:shell [path])")) "string"
-         ("(terminal)") terminal "Terminal" #f
+         ("(apps terminal)") terminal "Terminal" #f
          "Get or set the shell used by terminal:open!. It defaults to $SHELL, then /bin/sh.")
         ((terminal:color-scheme!)
          (("procedure" . "(terminal:color-scheme! scheme)")) "void"
-         ("(terminal)") terminal "Terminal" #f
+         ("(apps terminal)") terminal "Terminal" #f
          "Record the host's color scheme (dark, light, or #f for unknown) and report the change to terminal children subscribed with private mode 2031. Wired to the host's own reports at startup."))))
 
 ) ;; library (terminal)

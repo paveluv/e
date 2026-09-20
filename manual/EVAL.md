@@ -4,7 +4,7 @@ e is a live Scheme environment. Both evaluation commands run code in the
 editor's interaction environment: the same top level used by `config.e` and
 the module loader, with Chez Scheme, every loaded module's exports under its
 prefix (`edit:`, `store:`, `head:`, `keymap:`, ...) and the literals of
-`(literal)` bare, `(buffer "name")` and `(window n)`, in scope. Definitions
+`(head literal)` bare, `(buffer "name")` and `(window n)`, in scope. Definitions
 persist for the rest of the session and are immediately available to later
 evaluations.
 

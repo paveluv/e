@@ -1,8 +1,8 @@
 ;; Symbol completion by disjoint, boundary-starting segments. One matching
 ;; relation governs admission, ranking alignments and safe normalization.
 
-(import (only (edoc) elibrary))
-(elibrary (fuzzy)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation fuzzy)
   (export matches expansions rank
           (rename (match-name name) (match-score score) (match-fragments fragments)))
   (import (rnrs) (only (chezscheme) make-mutex with-mutex vector-copy iota void))

@@ -10,7 +10,7 @@
 
 (eval
   '(begin
-     (import (prefix (text) text:) (prefix (string) string:)
+     (import (prefix (foundation text) text:) (prefix (foundation string) string:)
              (prefix (test) test:))
 
      (define check test:check)

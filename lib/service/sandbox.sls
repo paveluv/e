@@ -1,10 +1,10 @@
 ;; sandbox.sls -- the read-only capability environment for expression
-;; evaluation: the library (sandbox), for any constrained actor; pure
+;; evaluation: the library (service sandbox), for any constrained actor; pure
 ;; infrastructure with no init!.
 ;;
 ;; Safety here is enforcement, not detection: an expression evaluated
-;; in (environment '(sandbox)) -- or in the narrower (environment
-;; '(only (sandbox) name ...)) a policy grant builds -- can only
+;; in (environment '(service sandbox)) -- or in the narrower (environment
+;; '(only (service sandbox) name ...)) a policy grant builds -- can only
 ;; reach the bindings listed below: pure computation, string and list
 ;; work, and bounded read-only views of the editor.  No mutators, no
 ;; file system, no processes, no eval, and no way to conjure them: an
@@ -27,8 +27,8 @@
 ;;      reads below retain their interrupt mask; corpus loading remains
 ;;      interruptible and uses its own wind-protected mutex.
 
-(import (only (edoc) elibrary))
-(elibrary (sandbox)
+(import (only (foundation edoc) elibrary))
+(elibrary (service sandbox)
   (export
     ;; syntax
     quote quasiquote unquote unquote-splicing lambda define if cond
@@ -79,10 +79,10 @@
                 string-titlecase last-pair cons* vector-sort nan?
                 exact->inexact open-output-string get-output-string
                 put-string disable-interrupts enable-interrupts)
-          (prefix (store) store:)
-          (prefix (only (log) entries format-entry) log:)
-          (prefix (only (reference) lookup) reference:)
-          (prefix (only (doc) forms returns libraries description) doc:))
+          (prefix (state store) store:)
+          (prefix (only (service log) entries format-entry) log:)
+          (prefix (only (service reference) lookup) reference:)
+          (prefix (only (service doc) forms returns libraries description) doc:))
 
   ;; Rule 2 above: nothing between disable and enable may raise
   ;; without the wind exit running, and nothing here evaluates actor

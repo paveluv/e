@@ -18,8 +18,8 @@
 ;; Naming reads behind the import prefix: (store:edit! ...),
 ;; (store:snapshot ...).
 
-(import (only (edoc) elibrary))
-(elibrary (store)
+(import (only (foundation edoc) elibrary))
+(elibrary (state store)
   (export create! visit! delete! discard! close! reset! rename! publication publish!
           buffer-list exists? visible? trash-retention expire-trash! buffer-name find-named find-file
           snapshot snapshot-since snapshot-state state revision line-count line extract
@@ -32,12 +32,12 @@
           (only (chezscheme)
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq
                 current-time time-second time-nanosecond list-head make-parameter)
-          (prefix (text) text:)
-          (prefix (property) property:)
-          (prefix (actor) actor:)
-          (prefix (activity) activity:)
-          (prefix (datum) datum:)
-          (prefix (kernel) kernel:))
+          (prefix (foundation text) text:)
+          (prefix (core property) property:)
+          (prefix (state actor) actor:)
+          (prefix (sys activity) activity:)
+          (prefix (foundation datum) datum:)
+          (prefix (core kernel) kernel:))
 
   ;;; The store -------------------------------------------------------------
 

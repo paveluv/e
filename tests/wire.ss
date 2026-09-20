@@ -15,9 +15,9 @@
 
 (eval
   '(begin
-     (import (prefix (wire) wire:) (prefix (sys) sys:) (prefix (test) test:)
+     (import (prefix (foundation wire) wire:) (prefix (sys sys) sys:) (prefix (test) test:)
              (prefix (fixture) fixture:)
-             (prefix (string) string:) (prefix (kernel) kernel:) (prefix (text) text:) (prefix (vt) vt:))
+             (prefix (foundation string) string:) (prefix (core kernel) kernel:) (prefix (foundation text) text:) (prefix (service vt) vt:))
 
      (define encoded wire:encode)
      (define (raw text)
@@ -1733,17 +1733,19 @@
                  ;; Exercise the installed save hook, including first load,
                  ;; reload, inactive roots and pinned code.
                  (let* ([probe (string-append sources "/apps/layout-probe.sls")]
-                        [ignored (list (cons (string-append sources "/base/state/layout-inactive.sls") "layout-inactive")
-                                       (cons (string-append root "/layout-outside.sls") "layout-outside"))])
-                   (define (publish path name version)
+                        [ignored (list (cons (string-append sources "/base/state/layout-inactive.sls") '(state layout-inactive))
+                                       (cons (string-append root "/layout-outside.sls") '(layout-outside)))])
+                   (define (publish path library version)
+                     ;; a module declares the library its place names, (kind name)
+                     ;; under a root's kind directory, (name) flat
                      (write-forms path
-                       `((library (,(string->symbol name)) (export init! value) (import (rnrs))
+                       `((library ,library (export init! value) (import (rnrs))
                            (define (value) ,version) (define (init!) (value))))))
-                   (publish probe "layout-probe" 1)
+                   (publish probe '(apps layout-probe) 1)
                    (for-each (lambda (entry) (publish (car entry) (cdr entry) 0)) ignored)
                    (let ([first (head-read a `(begin (file:run-post-save-hooks! ,probe)
                                                      (eval '(layout-probe:value))))])
-                     (publish probe "layout-probe" 2)
+                     (publish probe '(apps layout-probe) 2)
                      (test:check 'save-hook-follows-active-sls-roots-and-pinned-lifetimes
                        (list first
                              (head-read a

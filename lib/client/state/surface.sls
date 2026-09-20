@@ -1,10 +1,10 @@
 ;; Demand only the rows a head renders. Headers are invalidated by surface
 ;; publication and withdrawal; generations still guard every range, and a
 ;; text commit that outruns its surface renders plainly until the notice.
-(import (only (edoc) elibrary))
-(elibrary (surface)
+(import (only (foundation edoc) elibrary))
+(elibrary (state surface)
   (export snapshot rows subscribe! unsubscribe!)
-  (import (chezscheme) (prefix (client) client:) (prefix (kernel) kernel:) (prefix (datum) datum:))
+  (import (chezscheme) (prefix (core client) client:) (prefix (core kernel) kernel:) (prefix (foundation datum) datum:))
   (define headers (make-eqv-hashtable))
   (define (invalidate! batch)
     (if batch (for-each (lambda (entry) (hashtable-delete! headers (car entry))) batch)

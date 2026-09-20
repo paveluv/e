@@ -11,8 +11,8 @@
 
 (eval
   '(begin
-     (import (edit) (prefix (style) style:) (prefix (test) test:)
-             (prefix (kernel) kernel:))
+     (import (head edit) (prefix (head style) style:) (prefix (test) test:)
+             (prefix (core kernel) kernel:))
 
      (define check test:check)
 

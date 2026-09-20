@@ -7,11 +7,11 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (vt) vt:) (prefix (git) git:)
-             (prefix (head) head:) (prefix (paint) paint:) (prefix (render) render:)
-             (prefix (actor) actor:) (prefix (store) store:) (prefix (surface) surface:)
-             (prefix (kernel) kernel:) (prefix (text) text:)
-             (prefix (activity) activity:)
+     (import (prefix (sys sys) sys:) (prefix (service vt) vt:) (prefix (service git) git:)
+             (prefix (head head) head:) (prefix (head paint) paint:) (prefix (head render) render:)
+             (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state surface) surface:)
+             (prefix (core kernel) kernel:) (prefix (foundation text) text:)
+             (prefix (sys activity) activity:)
              (prefix (test) test:))
 
      (define (check label true?)
@@ -453,7 +453,7 @@
            (for-each (lambda (file) (when (file-exists? file) (delete-file file))) (list child marker)))))
 
      ;; Store lifetime owns the process even if no head ever adopts it.
-     (let* ([open! (eval '(begin (import (prefix (vt) refreshed:)) refreshed:open!))]
+     (let* ([open! (eval '(begin (import (prefix (service vt) refreshed:)) refreshed:open!))]
             [id (open! '(agent "fixture") "printf ready; read value" (current-directory) 2 12)]
             [owner (store:property id 'app)])
        (test:await 'deletion-child-ready (lambda () (contains? (store:line id 0) "ready")))

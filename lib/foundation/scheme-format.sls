@@ -22,12 +22,12 @@
 ;; row -- trailing blank lines dropped, so a file ends with exactly
 ;; one newline.
 
-(import (only (edoc) elibrary))
-(elibrary (scheme-format)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation scheme-format)
   (export (rename (scheme-indent-lines indent-lines)) (rename (scheme-format-lines lines)) (rename (scheme-delimiter? delimiter?))
           (rename (scheme-format-brackets brackets)) (rename (scheme-tab-width tab-width))
           (rename (scheme-format-intrusive intrusive)) (rename (scheme-format-width width)))
-  (import (chezscheme) (prefix (string) string:))
+  (import (chezscheme) (prefix (foundation string) string:))
 
   ;; Configuration: bracket convention, tab expansion, and the opt-in
   ;; width-aware layout pass.

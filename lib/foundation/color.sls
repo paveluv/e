@@ -1,10 +1,10 @@
 ;; color.sls -- OSC color specifications shared by terminal input and the
 ;; embedded terminal. A parsed color is three 8-bit RGB components, or #f.
 
-(import (only (edoc) elibrary))
-(elibrary (color)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation color)
   (export parse)
-  (import (rnrs) (prefix (string) string:))
+  (import (rnrs) (prefix (foundation string) string:))
 
   (define (hex-component text)
     (and (<= 1 (string-length text) 4)

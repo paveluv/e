@@ -10,10 +10,10 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (prefix (kernel) kernel:)
-             (prefix (sys) sys:)
-             (prefix (store) store:)
-             (prefix (actor) actor:))
+             (prefix (core kernel) kernel:)
+             (prefix (sys sys) sys:)
+             (prefix (state store) store:)
+             (prefix (state actor) actor:))
 
      (define test-lock (make-mutex))
 
@@ -498,7 +498,7 @@
        (write-library name
          `(library (,(string->symbol name))
             (export init! version)
-            (import (rnrs) (only (chezscheme) unbox) (prefix (kernel) kernel:))
+            (import (rnrs) (only (chezscheme) unbox) (prefix (core kernel) kernel:))
             (define (version) ',version)
             (define (init!)
               ((unbox (kernel:persistent-cell '(kernel-fixture ,name)

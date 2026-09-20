@@ -2,8 +2,8 @@
 (library (fixture)
   (export start! stop! call-with-base command directory process diagnostics quote-shell
           terminal-reader query evaluator evaluate)
-  (import (except (chezscheme) process) (prefix (sys) sys:) (prefix (string) string:)
-          (prefix (wire) wire:) (prefix (kernel) kernel:))
+  (import (except (chezscheme) process) (prefix (sys sys) sys:) (prefix (foundation string) string:)
+          (prefix (foundation wire) wire:) (prefix (core kernel) kernel:))
 
   (define (evaluator installation base-directory who)
     ;; A wire client that only carries evaluation mail. Its hello must match

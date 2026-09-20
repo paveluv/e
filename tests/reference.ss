@@ -9,10 +9,10 @@
 
 (eval
   '(begin
-     (import (prefix (reference) reference:) (prefix (doc) doc:)
-             (prefix (datum) datum:)
-             (prefix (kernel) kernel:) (prefix (https) https:)
-             (prefix (log) log:) (prefix (store) store:) (prefix (test) test:))
+     (import (prefix (service reference) reference:) (prefix (service doc) doc:)
+             (prefix (foundation datum) datum:)
+             (prefix (core kernel) kernel:) (prefix (sys https) https:)
+             (prefix (service log) log:) (prefix (state store) store:) (prefix (test) test:))
 
      (define root (format "/tmp/e-reference-~a" (get-process-id)))
      (define source (kernel:module-source "reference"))
@@ -307,7 +307,7 @@
                                (map reference:page page-heads))])
              (load source)
              (test:check 'fresh-base-instance-recovers-corpus-and-selected-page
-               (let ([next (eval `(begin (import (prefix (reference) reference:))
+               (let ([next (eval `(begin (import (prefix (service reference) reference:))
                                          (list (reference:entries) (map reference:page ',page-heads))))])
                  (list (map fields (car next)) (cadr next)))
                before))))

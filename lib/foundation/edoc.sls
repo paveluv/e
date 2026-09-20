@@ -14,7 +14,7 @@
 ;; documentation from their origin. When the library is initialized the
 ;; edocs are attached to the objects they document, or recorded under the
 ;; name for a keyword, a record type or a value without identity. A library
-;; file starts with (import (only (edoc) elibrary)) and the elibrary form.
+;; file starts with (import (only (foundation edoc) elibrary)) and the elibrary form.
 ;;
 ;; Types are data. A name in a clause resolves, when the library
 ;; initializes, to a type record with prose, a predicate and optionally a
@@ -30,7 +30,7 @@
 ;; in the describe corpus's eight-field format. This library documents
 ;; itself with the same helpers, through forms of its own.
 
-(library (edoc)
+(library (foundation edoc)
   (export elibrary edoc edoc-type
           edoc-of edoc-named signature? signature-kind signature-formals signature-summary signature-flags
           signature-arguments signature-returns signature-library
@@ -161,9 +161,9 @@
 
   (define base-types
     (begin
-      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(edoc)" #f)
+      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(foundation edoc)" #f)
       (for-each
-        (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(edoc)" #f))
+        (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(foundation edoc)" #f))
         (list (list 'string "a string" string?)
               (list 'char "a character" char?)
               (list 'integer "an exact integer" (lambda (v) (and (integer? v) (exact? v))))
@@ -207,14 +207,14 @@
          (name symbol "the type's name")
          (prose string "what values of the type are")
          (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (read r) text to value, (write w) value to expression text, (within t) the type this one refines")
-         ("kind" syntax) ("library" "(edoc)"))))
+         ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (define edoc-documentation
     (attach-name! 'edoc
       '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents."
          (summary string "the description, its first sentence the short one")
          (clause list "(name type note ...) for a formal or field, (returns type note ...), or a flag the effects check reads: (prompts) for a command that waits for input, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's")
-         ("kind" syntax) ("library" "(edoc)"))))
+         ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (meta define (kept-datum doc extra library)
     ;; the datum recorded for introspection: (edoc summary clause ...), then
@@ -727,7 +727,7 @@
          (exports list "the export clause")
          (imports list "the import clause")
          (body any "the definitions, annotated")
-         ("kind" syntax) ("library" "(edoc)"))))
+         ("kind" syntax) ("library" "(foundation edoc)"))))
 
   ;;; This library's own definitions --------------------------------------------------
 
@@ -742,7 +742,7 @@
          (begin
            (check-formals! 'edefine x (list #'formals) #'doc)
            (with-syntax ([datum (datum->syntax #'edoc
-                                  (kept-datum #'doc (list (list "kind" 'procedure) (list "formals" (syntax->datum #'formals))) "(edoc)"))]
+                                  (kept-datum #'doc (list (list "kind" 'procedure) (list "formals" (syntax->datum #'formals))) "(foundation edoc)"))]
                          [(tmp) (generate-temporaries '(edoc))])
              #'(begin
                  (define (name . formals) body ...)
@@ -750,14 +750,14 @@
         [(_ name (edoc . doc) expression)
          (begin
            (check-value-doc! 'edefine x #'doc)
-           (with-syntax ([datum (datum->syntax #'edoc (kept-datum #'doc (list (list "kind" 'value)) "(edoc)"))])
+           (with-syntax ([datum (datum->syntax #'edoc (kept-datum #'doc (list (list "kind" 'value)) "(foundation edoc)"))])
              #'(define name (attach! 'name expression 'datum))))])))
 
   (define-syntax edefine-record-type
     (lambda (x)
       (syntax-case x (edoc)
         [(_ spec (edoc . doc) body ...)
-         (let ([attachments (record-attachments 'edefine-record-type x #'spec #'doc (syntax->list #'(body ...)) "(edoc)")]
+         (let ([attachments (record-attachments 'edefine-record-type x #'spec #'doc (syntax->list #'(body ...)) "(foundation edoc)")]
                [type (car (record-parts 'edefine-record-type x #'spec (syntax->list #'(body ...))))])
            (with-syntax ([(attachment ...) (attachment-forms attachments (list type))]
                          [(tmp) (generate-temporaries '(edoc))])

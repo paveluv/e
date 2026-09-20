@@ -14,8 +14,8 @@
 ;; state through identifier-syntax facades. Hooks connect the pump and
 ;; loop to painting, mouse handling, and the reloadable commands.
 
-(import (only (edoc) elibrary))
-(elibrary (head)
+(import (only (foundation edoc) elibrary))
+(elibrary (head head)
   (export buffer make-buffer buffer?
           buffer-name buffer-name-set!
           buffer-lines buffer-lines-raw-set!
@@ -115,19 +115,19 @@
                 make-time add-duration
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
-          (prefix (only (sys) terminal-isig! duplicate-standard-input-port) sys:)
-          (prefix (kernel) kernel:)
-          (prefix (startup) startup:)
-          (prefix (tty) tty:)
-          (prefix (store) store:)
-          (prefix (property) property:)
-          (prefix (file) file:)
-          (prefix (surface) surface:)
-          (prefix (render) render:)
-          (prefix (text) text:)
-          (prefix (datum) datum:)
-          (prefix (actor) actor:)
-          (prefix (log) log:))
+          (prefix (only (sys sys) terminal-isig! duplicate-standard-input-port) sys:)
+          (prefix (core kernel) kernel:)
+          (prefix (core startup) startup:)
+          (prefix (sys tty) tty:)
+          (prefix (state store) store:)
+          (prefix (core property) property:)
+          (prefix (service file) file:)
+          (prefix (state surface) surface:)
+          (prefix (head render) render:)
+          (prefix (foundation text) text:)
+          (prefix (foundation datum) datum:)
+          (prefix (state actor) actor:)
+          (prefix (service log) log:))
 
   ;;; The records ----------------------------------------------------------------
 

@@ -1,8 +1,8 @@
 ;; glyph.sls -- shared terminal-cell widths and cluster boundaries.
-(import (only (edoc) elibrary))
-(elibrary (glyph)
+(import (only (foundation edoc) elibrary))
+(elibrary (sys glyph)
   (export width extends? clusters cells fit)
-  (import (chezscheme) (prefix (sys) sys:))
+  (import (chezscheme) (prefix (sys sys) sys:))
 
   (edoc "The terminal cells one grapheme cluster takes: the widest character, 2 for emoji and flags."
         (text string "the cluster")

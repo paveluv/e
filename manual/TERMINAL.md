@@ -295,7 +295,7 @@ an attached head's `vt` client exposes terminal service calls and does not
 contain the emulator:
 
 ```scheme
-(import (prefix (vt) vt:))
+(import (prefix (service vt) vt:))
 (define vt (vt:make-emulator 24 80))
 (vt:emulator-feed! vt "\x1b;[2J\x1b;[10;20Hhello")
 (vt:emulator-resize! vt 40 100)

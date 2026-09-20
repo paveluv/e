@@ -10,7 +10,7 @@
 
 (eval
   '(begin
-     (import (prefix (datum) datum:) (prefix (test) test:))
+     (import (prefix (foundation datum) datum:) (prefix (test) test:))
 
      (define check test:check)
      (define (refused? thunk)

@@ -13,9 +13,9 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (literal) (prefix (head) head:) (prefix (mode) mode:) (prefix (kernel) kernel:)
-             (prefix (buffer-view) buffer-view:)
-             (prefix (string) string:) (prefix (test) test:))
+     (import (except (head edit) init!) (head literal) (prefix (head head) head:) (prefix (head mode) mode:) (prefix (core kernel) kernel:)
+             (prefix (apps buffer-view) buffer-view:)
+             (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
      (putenv "TZ" "UTC")               ; deterministic clock cells

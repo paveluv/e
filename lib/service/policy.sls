@@ -20,8 +20,8 @@
 ;; full-power eval owns the image; the confirmation gate stays the
 ;; in-process trust boundary.
 
-(import (only (edoc) elibrary))
-(elibrary (policy)
+(import (only (foundation edoc) elibrary))
+(elibrary (service policy)
   (export (rename (make-policy make)) policy?
           (rename (policy-grants grants)) (rename (policy-fuel fuel)) (rename (policy-buffers buffers))
           (rename (policy-cap cap)) (rename (reader-policy reader))
@@ -36,17 +36,17 @@
                 make-engine parameterize print-graph remq make-mutex with-mutex void
                 open-string-input-port open-output-string
                 get-output-string)
-          (prefix (store) store:)
-          (prefix (activity) activity:)
-          (prefix (text) text:)
-          (prefix (actor) actor:)
-          (prefix (datum) datum:)
-          (prefix (only (log) add!) log:)
-          (prefix (only (kernel) condition-text) kernel:))
+          (prefix (state store) store:)
+          (prefix (sys activity) activity:)
+          (prefix (foundation text) text:)
+          (prefix (state actor) actor:)
+          (prefix (foundation datum) datum:)
+          (prefix (only (service log) add!) log:)
+          (prefix (only (core kernel) condition-text) kernel:))
 
   ;;; Policies ----------------------------------------------------------------
 
-  ;; grants:  'all, or a list of (sandbox) export names -- the
+  ;; grants:  'all, or a list of (service sandbox) export names -- the
   ;;          session's evaluation environment holds those and
   ;;          nothing else
   ;; fuel:    engine ticks per evaluation
@@ -139,8 +139,8 @@
 
   (define (grant-environment grants)
     (environment (if (eq? grants 'all)
-                     '(sandbox)
-                     `(only (sandbox) ,@grants))))
+                     '(service sandbox)
+                     `(only (service sandbox) ,@grants))))
 
   (edoc "Mint a session for an actor under a policy; the optional owner is consulted beyond the grant, and the close procedure of a connection runs once on revocation."
         (actor actor "the actor identity")

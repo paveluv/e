@@ -9,10 +9,10 @@
 
 (eval
   '(begin
-     (import (prefix (head) head:)
-             (prefix (store) store:)
-             (prefix (text) text:)
-             (prefix (kernel) kernel:)
+     (import (prefix (head head) head:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:)
+             (prefix (core kernel) kernel:)
              (prefix (test) test:))
 
      (define bot '(agent mark-test))

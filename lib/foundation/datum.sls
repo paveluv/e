@@ -1,6 +1,6 @@
 ;; datum.sls -- owned snapshots of finite, plain protocol data.
-(import (only (edoc) elibrary))
-(elibrary (datum)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation datum)
   (export copy invalid?)
   (import (rnrs))
 

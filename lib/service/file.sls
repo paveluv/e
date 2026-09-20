@@ -17,8 +17,8 @@
 ;; (file:write! path lines trailing?), (file:merge path base mine
 ;; disk).
 
-(import (only (edoc) elibrary))
-(elibrary (file)
+(import (only (foundation edoc) elibrary))
+(elibrary (service file)
   (export read read-state stamp create! write! call-with-port
           lines ends-in-newline? text state-clean?
           merge conflict-count
@@ -28,13 +28,13 @@
           add-pre-save-hook! add-post-save-hook!
           run-pre-save-hooks! run-post-save-hooks!)
   (import (except (chezscheme) read expand merge call-with-port)
-          (prefix (only (sys) canonical-file-path) sys:)
-          (prefix (only (diff) merge3 merge-report-lines) diff:)
-          (prefix (path) path:)
-          (prefix (string) string:)
-          (prefix (text) text:)
-          (prefix (log) log:)
-          (prefix (kernel) kernel:))
+          (prefix (only (sys sys) canonical-file-path) sys:)
+          (prefix (only (foundation diff) merge3 merge-report-lines) diff:)
+          (prefix (sys path) path:)
+          (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
+          (prefix (service log) log:)
+          (prefix (core kernel) kernel:))
 
   ;; Discard consent is the same for local and shared buffers. Compare the
   ;; captured text outside its writer lock; an unreadable disk is not clean.

@@ -1,13 +1,13 @@
 ;; render.sls -- a head's text and demanded surface rows in terminal cells.
 ;; No head records, emulator, or terminal I/O: one projection supplies glyphs
 ;; and both coordinate directions. Public metadata reads own their data.
-(import (only (edoc) elibrary))
-(elibrary (render)
+(import (only (foundation edoc) elibrary))
+(elibrary (head render)
   (export prepare header row column character width present breaks)
   (import (rnrs)
-          (prefix (surface) surface:)
-          (prefix (datum) datum:)
-          (prefix (glyph) glyph:))
+          (prefix (state surface) surface:)
+          (prefix (foundation datum) datum:)
+          (prefix (sys glyph) glyph:))
 
   (define-record-type frame (fields id text header rows))
   (define-record-type line (fields shown styles links columns characters))

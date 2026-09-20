@@ -19,8 +19,8 @@
 ;; Naming reads behind the import prefix: (text:apply-edit ...),
 ;; (text:rebase-position ...).
 
-(import (only (edoc) elibrary))
-(elibrary (text)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation text)
   (export line? normalize from-string to-string content=? splice
           make-span span? span-start span-end
           span->datum datum->span delta->datum datum->delta
@@ -30,7 +30,7 @@
           delta? delta-span delta-new-end delta-removed delta-inserted
           delta-line-shift
           rebase-position rebase-span rebase-delta rebase-result-position)
-  (import (rnrs) (only (chezscheme) format) (prefix (datum) datum:))
+  (import (rnrs) (only (chezscheme) format) (prefix (foundation datum) datum:))
 
   ;;; Text boundaries ------------------------------------------------------
 

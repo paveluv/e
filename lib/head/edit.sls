@@ -25,8 +25,8 @@
 ;; buffer between two (row . col) points, and prints as the expression
 ;; that rebuilds it, like buffers do:  (region (buffer "e") '(0 . 0) '(12 . 5)).
 
-(import (only (edoc) elibrary))
-(elibrary (edit)
+(import (only (foundation edoc) elibrary))
+(elibrary (head edit)
   (export init!
           current-region region-text with-region
     ;; state, read-only
@@ -70,31 +70,31 @@
 
   )
   (import (chezscheme)
-          (literal)
-          (prefix (sys) sys:)
-          (prefix (store) store:)
-          (prefix (text) text:)
-          (prefix (datum) datum:)
-          (prefix (property) property:)
-          (prefix (kernel) kernel:)
-          (prefix (actor) actor:)
-          (prefix (log) log:)
-          (prefix (style) style:)
-          (prefix (keymap) keymap:)
-          (prefix (tty) tty:)
-          (prefix (echo) echo:)
-          (prefix (head) head:)
-          (prefix (window) window:)
-          (prefix (dispatch) dispatch:)
-          (prefix (paint) paint:)
-          (prefix (string) string:)
-          (prefix (render) render:)
-          (prefix (glyph) glyph:)
-          (prefix (table) table:)
-          (prefix (mode) mode:)
-          (prefix (file) file:)
-          (prefix (prompt) prompt:)
-          (prefix (doc) doc:))
+          (head literal)
+          (prefix (sys sys) sys:)
+          (prefix (state store) store:)
+          (prefix (foundation text) text:)
+          (prefix (foundation datum) datum:)
+          (prefix (core property) property:)
+          (prefix (core kernel) kernel:)
+          (prefix (state actor) actor:)
+          (prefix (service log) log:)
+          (prefix (head style) style:)
+          (prefix (head keymap) keymap:)
+          (prefix (sys tty) tty:)
+          (prefix (head echo) echo:)
+          (prefix (head head) head:)
+          (prefix (head window) window:)
+          (prefix (head dispatch) dispatch:)
+          (prefix (head paint) paint:)
+          (prefix (foundation string) string:)
+          (prefix (head render) render:)
+          (prefix (sys glyph) glyph:)
+          (prefix (head table) table:)
+          (prefix (head mode) mode:)
+          (prefix (service file) file:)
+          (prefix (head prompt) prompt:)
+          (prefix (service doc) doc:))
 
   ;;; Buffers and windows ----------------------------------------------------
 
@@ -1957,16 +1957,16 @@
 
     (doc:register!
       '(((undo-scope) (("parameter" . "(undo-scope [scope])")) "symbol"
-         ("(edit)") edit "Editing commands" #f
+         ("(head edit)") edit "Editing commands" #f
          "Choose the default scope of `undo!` and C-_. `mine` (the default) selects this head's latest live action; `all` selects the latest live action of any actor. The preference belongs to the head. Local buffers use their own history in either mode.")
         ((undo!) (("procedure" . "(undo!)")) "string"
-         ("(edit)") edit "Editing commands" #f
+         ("(head edit)") edit "Editing commands" #f
          "Undo one action in the current buffer within `undo-scope`, `mine` or `all`. Shared changes use attributed inverse edits; an overlap, changed text property, or unavailable history refuses without changing any part of the action.")
         ((redo!) (("procedure" . "(redo!)")) "string"
-         ("(edit)") edit "Editing commands" #f
+         ("(head edit)") edit "Editing commands" #f
          "Reverse this head's latest undo, including an undo of another actor's action. Redo uses the same overlap checks and is independent of `undo-scope`. A fresh edit by this head invalidates its redo.")
         ((undo-actor!) (("procedure" . "(undo-actor! actor)")) "string"
-         ("(edit)") edit "Editing commands" #f
+         ("(head edit)") edit "Editing commands" #f
          "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")))
   )
 

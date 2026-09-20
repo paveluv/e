@@ -13,9 +13,9 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (prefix (head) head:) (prefix (store) store:) (prefix (text) text:)
-             (prefix (paint) paint:) (prefix (kernel) kernel:) (prefix (log) log:)
-             (prefix (string) string:) (prefix (test) test:))
+     (import (except (head edit) init!) (prefix (head head) head:) (prefix (state store) store:) (prefix (foundation text) text:)
+             (prefix (head paint) paint:) (prefix (core kernel) kernel:) (prefix (service log) log:)
+             (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
      ;; Load through the kernel so a reload below replaces the real module.

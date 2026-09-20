@@ -22,7 +22,7 @@
 ;; (kernel:load-modules!, main:run!).
 ;;
 ;; scheme-script compiles this whole file before running any of it, and
-;; a literal (import (main)) would be resolved during that compilation
+;; a literal (import (run main)) would be resolved during that compilation
 ;; -- before the code below has said where the libraries live.  Hence
 ;; the eval at the bottom: it defers importing and starting the editor
 ;; until run time.  It evaluates in the interaction environment, the
@@ -55,21 +55,14 @@
     (if (path-absolute? dir) dir (string-append (current-directory) "/" dir))))
 
 (define (runtime-roots runtime)
-  ;; Every leaf directory under lib is a source root: the selected
-  ;; runtime's implementation tree (lib/base or lib/client) and the
-  ;; common kinds beside them.  Stems are unique within a runtime
-  ;; (tests/layers.ss), so the search order is immaterial: a stale
-  ;; object is recompiled from wherever its source is found.
+  ;; Two source roots: the selected runtime's implementation tree,
+  ;; lib/base or lib/client, in front of lib, the common kinds.  A
+  ;; library (kind leaf) is <root>/kind/leaf.sls, so the runtime's tree
+  ;; overlays lib for the libraries both implement, (state store) say,
+  ;; and stems are unique within a runtime (tests/layers.ss).
   (let ([objects (string-append e-home "/eo/" runtime)])
-    (define (leaves parent)
-      (map (lambda (name) (cons (string-append parent "/" name) objects))
-        (list-sort string<?
-          (filter (lambda (name)
-                    (and (not (member name '("base" "client")))
-                         (file-directory? (string-append parent "/" name))))
-                  (directory-list parent)))))
-    (append (leaves (string-append e-home "/lib/" runtime))
-            (leaves (string-append e-home "/lib")))))
+    (list (cons (string-append e-home "/lib/" runtime) objects)
+          (cons (string-append e-home "/lib") objects))))
 
 ;; Option admission imports only common facilities. Runtime consumers
 ;; are imported after choosing their implementation roots below.
@@ -80,12 +73,12 @@
 ;; dependency-free bootstrap library is loaded directly from source once;
 ;; its library identity is never a dependency of cached runtime code.
 (load (string-append e-home "/lib/sys/cache.sls"))
-(eval `(begin (import (prefix (cache) cache:))
+(eval `(begin (import (prefix (sys cache) cache:))
               (cache:install! ,(string-append e-home "/eo"))))
 
 (eval `(begin
-         (import (prefix (startup) startup:) (prefix (kernel) kernel:) (prefix (sys) sys:)
-                 (prefix (daemon) daemon:))
+         (import (prefix (core startup) startup:) (prefix (core kernel) kernel:) (prefix (sys sys) sys:)
+                 (prefix (core daemon) daemon:))
          (kernel:installation-directory (or (sys:canonical-file-path ,e-home) ,e-home))
          (guard (ex [else
                      (format (current-error-port) "e: ~a\n" (kernel:condition-text ex))
@@ -106,16 +99,16 @@
                     (daemon:call-with-base
                       (lambda ()
                         (eval '(begin
-                                 (import (prefix (base) base:))
+                                 (import (prefix (run base) base:))
                                  (base:call-with-runtime base:run!)))))]
                    [else
                     (daemon:call-with-head
                       (lambda ()
                         (library-directories ',(runtime-roots "client"))
                         (eval '(begin
-                                 (import (prefix (client) client:))
+                                 (import (prefix (core client) client:))
                                  (client:call-with-runtime
                                    (lambda ()
                                      (eval '(begin
-                                              (import (prefix (edit) edit:) (prefix (main) main:))
+                                              (import (prefix (head edit) edit:) (prefix (run main) main:))
                                               (main:run!)))))))))])))))))

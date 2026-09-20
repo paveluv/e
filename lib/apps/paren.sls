@@ -8,15 +8,15 @@
 ;; comments don't count, per the buffer's syntax styles; in a buffer
 ;; without a mode every bracket counts.
 
-(import (only (edoc) elibrary))
-(elibrary (paren)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps paren)
   (export init! (rename (matching-paren-style matching-style)))
   (import (chezscheme)
-          (prefix (head) head:)
-          (prefix (mode) mode:)
-          (prefix (paint) paint:)
-          (prefix (style) style:)
-          (prefix (doc) doc:))
+          (prefix (head head) head:)
+          (prefix (head mode) mode:)
+          (prefix (head paint) paint:)
+          (prefix (head style) style:)
+          (prefix (service doc) doc:))
 
   ;; The named looks for the matched pair, in the style DSL. Box draws a
   ;; line above and below the bracket -- the closest widely rendered
@@ -100,5 +100,5 @@
     (doc:register!
       '(((paren:matching-style)
          (("parameter" . "(paren:matching-style [name])")) "symbol"
-         ("(paren)") paren "Editing" #f
+         ("(apps paren)") paren "Editing" #f
          "Get or set how the matched bracket pair is marked: bold (the default; bold in the regular text color), underline, box (a line above and below), or colored (bold accent violet).")))))

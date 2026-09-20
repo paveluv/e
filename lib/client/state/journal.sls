@@ -1,8 +1,8 @@
 ;; The head formats and presents records, but keeps no second log history.
-(import (only (edoc) elibrary))
-(elibrary (journal)
+(import (only (foundation edoc) elibrary))
+(elibrary (state journal)
   (export add! snapshot retention subscribe! unsubscribe! progress)
-  (import (chezscheme) (prefix (client) client:) (prefix (identity) identity:))
+  (import (chezscheme) (prefix (core client) client:) (prefix (core identity) identity:))
   (edoc "Whether a logged message supersedes its component's newest echo line rather than stacking."
         (value boolean))
   (define progress (make-thread-parameter #f))

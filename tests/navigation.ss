@@ -7,13 +7,13 @@
 (test-roots! 'base)
 (eval
   '(begin
-     (import (except (edit) init!)
-             (prefix (head) head:)
-             (prefix (text) text:)
-             (prefix (mode) mode:)
-             (prefix (md-mode) md-mode:)
-             (prefix (markdown) markdown:)
-             (prefix (paint) paint:) (prefix (test) test:))
+     (import (except (head edit) init!)
+             (prefix (head head) head:)
+             (prefix (foundation text) text:)
+             (prefix (head mode) mode:)
+             (prefix (modes md-mode) md-mode:)
+             (prefix (apps markdown) markdown:)
+             (prefix (head paint) paint:) (prefix (test) test:))
 
      (define check test:check)
      (define (fresh name)

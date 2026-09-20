@@ -314,7 +314,7 @@
     open-fd-input-port open-fd-output-port open-fd-input/output-port))
 (define prompting-procedures
   ;; (library-name . names) whose call waits for a key
-  '(((head) read-key-event)))
+  '(((head head) read-key-event)))
 
 (define higher-order
   ;; (form . positions): arguments that are procedures the form calls

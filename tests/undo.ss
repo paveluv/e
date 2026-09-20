@@ -11,13 +11,13 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (except (edit) init!)
-             (prefix (head) head:)
-             (prefix (store) store:)
-             (prefix (text) text:)
-             (prefix (string) string:)
-             (prefix (mode) mode:)
-             (prefix (kernel) kernel:))
+             (except (head edit) init!)
+             (prefix (head head) head:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:)
+             (prefix (foundation string) string:)
+             (prefix (head mode) mode:)
+             (prefix (core kernel) kernel:))
 
      (define check test:check)
      (define bot '(agent undo-test))

@@ -13,8 +13,8 @@
 ;; Width is always passed in: this module knows how text folds, not
 ;; how wide the terminal is.
 
-(import (only (edoc) elibrary))
-(elibrary (echo)
+(import (only (foundation edoc) elibrary))
+(elibrary (head echo)
   (export text text-owner set-text! ghost set-ghost! styles set-styles!
           pending set-pending! cursor set-cursor!
           indent set-indent! input-end set-input-end!

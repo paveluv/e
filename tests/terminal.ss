@@ -7,8 +7,8 @@
 
 (eval
   '(begin
-     (import (prefix (terminal) terminal:) (prefix (vt) vt:) (prefix (test) test:)
-             (prefix (head) head:) (prefix (paint) paint:))
+     (import (prefix (apps terminal) terminal:) (prefix (service vt) vt:) (prefix (test) test:)
+             (prefix (head head) head:) (prefix (head paint) paint:))
 
      (define check test:check)
 

@@ -5,8 +5,8 @@
 ;; (string:tail s 2), (string:prefix? "C-" s), (string:join parts
 ;; " "), (string:lines text).
 
-(import (only (edoc) elibrary))
-(elibrary (string)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation string)
   (export tail prefix? suffix? join search lines common-prefix
           insert delete elide)
   (import (rnrs))

@@ -1,23 +1,23 @@
 ;; file-view.sls -- the local, filterable <files> app.
-(import (only (edoc) elibrary))
-(elibrary (file-view)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps file-view)
   (export init! open! open-directory! refresh! expansion-limit show-hidden)
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (head) head:)
-          (prefix (file) file:)
-          (prefix (directory) directory:)
-          (prefix (table) table:)
-          (prefix (glyph) glyph:)
-          (prefix (string) string:)
-          (prefix (mode) mode:)
-          (prefix (style) style:)
-          (prefix (paint) paint:)
-          (prefix (keymap) keymap:)
-          (prefix (tty) tty:)
-          (prefix (kernel) kernel:)
-          (prefix (doc) doc:)
-          (prefix (prompt) prompt:))
+          (prefix (head edit) edit:)
+          (prefix (head head) head:)
+          (prefix (service file) file:)
+          (prefix (service directory) directory:)
+          (prefix (head table) table:)
+          (prefix (sys glyph) glyph:)
+          (prefix (foundation string) string:)
+          (prefix (head mode) mode:)
+          (prefix (head style) style:)
+          (prefix (head paint) paint:)
+          (prefix (head keymap) keymap:)
+          (prefix (sys tty) tty:)
+          (prefix (core kernel) kernel:)
+          (prefix (service doc) doc:)
+          (prefix (head prompt) prompt:))
 
   (edoc "How many matching entries the files view expands a directory into while filtering."
         (value integer))
@@ -608,15 +608,15 @@
             (values view positions)) reference)))
     (doc:register!
       '(((file-view:open!) (("procedure" . "(file-view:open!)")) "void"
-         ("(file-view)") file-view "Files" #f
+         ("(apps file-view)") file-view "Files" #f
          "Open `<files>` in this window at the current file's directory; `(file-view:open-directory! path)` starts elsewhere. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. M-c sets the filter aside and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory with the previous filter. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
-         ("(file-view)") file-view "Files" #f
+         ("(apps file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")
         ((file-view:show-hidden) (("parameter" . "(file-view:show-hidden [boolean])")) "boolean"
-         ("(file-view)") file-view "Files" #f
+         ("(apps file-view)") file-view "Files" #f
          "Whether files scanning includes dot entries and traverses dot directories; default false. A filter with a path component starting with a dot also includes them. M-. toggles this setting and refreshes the view.")
         ((file-view:refresh!) (("procedure" . "(file-view:refresh!)")) "void"
-         ("(file-view)") file-view "Files" #f
+         ("(apps file-view)") file-view "Files" #f
          "Rescan the files app's current directory with its current filter and options, preserving candidate identities where possible."))))
 )

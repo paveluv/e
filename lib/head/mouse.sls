@@ -10,19 +10,19 @@
 ;; is the terminal's native mouse selection -- hold Shift for that -- so
 ;; track! turns the whole thing on or off at run time.
 
-(import (only (edoc) elibrary))
-(elibrary (mouse)
+(import (only (foundation edoc) elibrary))
+(elibrary (head mouse)
   (export init! track!)
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (kernel) kernel:)
-          (prefix (keymap) keymap:)
-          (prefix (mode) mode:)
-          (prefix (tty) tty:)
-          (prefix (head) head:)
-          (prefix (paint) paint:)
-          (prefix (window) window:)
-          (prefix (dispatch) dispatch:))
+          (prefix (head edit) edit:)
+          (prefix (core kernel) kernel:)
+          (prefix (head keymap) keymap:)
+          (prefix (head mode) mode:)
+          (prefix (sys tty) tty:)
+          (prefix (head head) head:)
+          (prefix (head paint) paint:)
+          (prefix (head window) window:)
+          (prefix (head dispatch) dispatch:))
 
   (edoc "Turn mouse tracking on or off; off restores the terminal's native selection."
         (on boolean "whether to track the mouse"))

@@ -4,15 +4,15 @@
 ;; and the text of a caught condition.  The kernel imports nothing
 ;; above itself and, like main, is never reloaded in place.
 
-(import (only (edoc) elibrary))
-(elibrary (kernel)
+(import (only (foundation edoc) elibrary))
+(elibrary (core kernel)
   (export persistent-cell
           registering-module make-registry registry-add!
           registry-items registry-entries registry-find
           registry-remove! registry-observe! registry-unobserve!
           registration-conflict?
           retract-module! call-with-registration-update call-with-runtime-registrations
-          module-source loaded-modules
+          module-source module-library loaded-modules
           init-module! editor-symbol? load-module! load-modules! module-requires? pin-modules!
           reload-module! add-after-reload-hook!
           installation-directory fingerprint config-file load-config!
@@ -32,7 +32,7 @@
                 with-interrupts-disabled make-time
                 current-time time? time-type time<? time-difference
                 get-thread-id box? display-condition void)
-          (prefix (path) path:))
+          (prefix (sys path) path:))
 
   ;;; Conditions --------------------------------------------------------------
 
@@ -594,14 +594,39 @@
     (parameterize ([registering-module module-catalog-owner])
       (registry-add! module-catalog name)))
 
-  (edoc "The source file of a module, in the first library directory holding it."
+  (define (module-location name)
+    ;; (path . library) of a module in the first library root holding it:
+    ;; flat in the root as <root>/<name>.sls, the library (name), else under
+    ;; a kind directory as <root>/<kind>/<name>.sls, the library (kind name);
+    ;; #f when no root has it
+    (let roots ([directories (library-directories)])
+      (if (null? directories) #f
+          (let* ([root (caar directories)] [flat (format "~a/~a.sls" root name)])
+            (if (file-exists? flat)
+                (cons flat (list (string->symbol name)))
+                (let scan ([kinds (guard (ex [else '()]) (directory-list root))])
+                  (cond
+                    [(null? kinds) (roots (cdr directories))]
+                    [(and (not (member (car kinds) '("base" "client")))
+                          (file-directory? (string-append root "/" (car kinds)))
+                          (file-exists? (format "~a/~a/~a.sls" root (car kinds) name)))
+                     (cons (format "~a/~a/~a.sls" root (car kinds) name)
+                           (list (string->symbol (car kinds)) (string->symbol name)))]
+                    [else (scan (cdr kinds))])))))))
+
+  (edoc "The source file of a module, in the first library root holding it under a kind directory or flat; a missing module's path in the first root."
         (name string "the module")
         (returns file))
   (define (module-source name)
-    (let loop ([directories (library-directories)])
-      (let ([path (format "~a/~a.sls" (caar directories) name)])
-        (if (or (file-exists? path) (null? (cdr directories))) path
-            (loop (cdr directories))))))
+    (let ([hit (module-location name)])
+      (if hit (car hit) (format "~a/~a.sls" (caar (library-directories)) name))))
+
+  (edoc "The library a module declares: (kind name) for a module under a library root's kind directory, (name) for one flat in a root."
+        (name string "the module")
+        (returns list))
+  (define (module-library name)
+    (let ([hit (module-location name)])
+      (if hit (cdr hit) (list (string->symbol name)))))
 
   ;; The bindings Chez itself provides, so that the editor's public API and
   ;; the modules' definitions can be told apart from builtins: M-x completion
@@ -625,7 +650,7 @@
     ;; Import the module's library into the editor's top level
     ;; (compiling it when stale) and run its init!, if any, owning its
     ;; registrations.
-    (let ([lib (list (string->symbol name))])
+    (let ([lib (module-library name)])
       ;; every module but one arrives prefixed in the editor's top level,
       ;; exactly as code imports it -- M-x says (store:edit! ...) and
       ;; (edit:save! ...) too. (literal) is bare because its names are how
@@ -674,12 +699,13 @@
     ;; others?
     (let ([t (string->symbol target)]
           [seen (make-hashtable equal-hash equal?)])
-      (let walk ([lib (list (string->symbol name))])
+      (define (leaf lib) (if (pair? (cdr lib)) (leaf (cdr lib)) (car lib)))
+      (let walk ([lib (module-library name)])
         (if (hashtable-ref seen lib #f)
             #f
             (begin
               (hashtable-set! seen lib #t)
-              (exists (lambda (req) (or (eq? (car req) t) (walk req)))
+              (exists (lambda (req) (or (eq? (leaf req) t) (walk req)))
                       (guard (ex [else '()])
                         ;; Import metadata exists even when lazy runtime
                         ;; code has never been invoked (e.g. the sandbox).

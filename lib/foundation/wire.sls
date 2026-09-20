@@ -1,10 +1,10 @@
 ;; wire.sls -- length-prefixed plain data. No store, actor or display state.
-(import (only (edoc) elibrary))
-(elibrary (wire)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation wire)
   (export version encode send! receive)
   (import (rnrs)
           (only (chezscheme) parameterize print-length print-level print-graph)
-          (prefix (datum) datum:))
+          (prefix (foundation datum) datum:))
 
   ;; S4 requires the source fingerprint in every normal hello. Maintenance
   ;; retains its version 1 contract so mismatched builds can still restart.

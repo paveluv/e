@@ -105,8 +105,8 @@ library is written with `elibrary`; its file starts with the import that
 brings the form in:
 
 ```scheme
-(import (only (edoc) elibrary))
-(elibrary (datum)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation datum)
   (export copy invalid?)
   (import (rnrs))
 
@@ -157,9 +157,9 @@ Types are data. When the library initializes, each name a clause uses
 resolves to a type record with prose, a predicate and, optionally, a
 completer, a reader and a writer; an unknown name is an error then, and
 `tools/edoc-coverage.sps` reports one statically. The language's types come
-predefined in `(edoc)`; the editor's notions are defined by the libraries
-that own them, `buffer`, `window`, `region`, `actor` and `head` in `(literal)`, `file` in `(file)`, `mode`
-in `(mode)`, `key` in `(keymap)`, `style` in `(style)`, with a form in the
+predefined in `(foundation edoc)`; the editor's notions are defined by the libraries
+that own them, `buffer`, `window`, `region`, `actor` and `head` in `(head literal)`, `file` in `(service file)`, `mode`
+in `(head mode)`, `key` in `(head keymap)`, `style` in `(head style)`, with a form in the
 body:
 
 ```scheme
@@ -189,7 +189,7 @@ cover, so a documented definition gets a describe page and the `M-x`
 parameter suggestion without a `doc:register!` batch. The types are meant
 for tooling: they describe what an argument is, and later choose how it is
 completed; they are never checked at run time. Every library is an
-`elibrary` except `(edoc)` itself, which documents its own exports with
+`elibrary` except `(foundation edoc)` itself, which documents its own exports with
 the same checks; `tools/edoc-coverage.sps` reports, library by library,
 which exports carry an edoc and what kind of definition the others are,
 `--list` names them, and `--effects` checks every documented name's bang

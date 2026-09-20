@@ -1,14 +1,14 @@
 ;; Client endpoint and directory. Attribution values stay process-local;
 ;; registration, delivery and open questions belong to the daemon.
-(import (only (edoc) elibrary))
-(elibrary (actor)
+(import (only (foundation edoc) elibrary))
+(elibrary (state actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
           current call-as identity? audience? in-audience? send! pending answer! checkpoint checkpoint!)
   (import (chezscheme)
-          (prefix (client) client:)
-          (prefix (identity) identity:)
-          (prefix (startup) startup:)
-          (prefix (datum) datum:))
+          (prefix (core client) client:)
+          (prefix (core identity) identity:)
+          (prefix (core startup) startup:)
+          (prefix (foundation datum) datum:))
   (define current identity:current)
   (define call-as identity:call-as)
   (define identity? identity:valid?)

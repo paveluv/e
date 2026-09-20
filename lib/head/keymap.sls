@@ -11,8 +11,8 @@
 ;; or a buffer mode's name for mode-local maps, or a synthetic scope
 ;; like 'isearch.
 
-(import (only (edoc) elibrary))
-(elibrary (keymap)
+(import (only (foundation edoc) elibrary))
+(elibrary (head keymap)
   (export (rename (key-spec spec)) sequence-text
           (rename (bind-key! bind!)) (rename (bind-default-key! bind-default!)) (rename (unbind-key! unbind!))
           (rename (key-binding binding)) (rename (key-event-binding event-binding)) binding-prefix?
@@ -27,8 +27,8 @@
           (only (chezscheme)
                 cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment
                 procedure-arity-mask logbit?)
-          (prefix (kernel) kernel:)
-          (prefix (string) string:))
+          (prefix (core kernel) kernel:)
+          (prefix (foundation string) string:))
 
   ;;; Key syntax --------------------------------------------------------------
 

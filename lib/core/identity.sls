@@ -1,10 +1,10 @@
 ;; identity.sls -- owned actor values and attribution, independent of endpoints.
-(import (only (edoc) elibrary))
-(elibrary (identity)
+(import (only (foundation edoc) elibrary))
+(elibrary (core identity)
   (export (rename (identity? valid?)) audience? in-audience? current call-as)
   (import (rnrs)
           (only (chezscheme) make-thread-parameter parameterize)
-          (prefix (datum) datum:))
+          (prefix (foundation datum) datum:))
 
   (edoc "Whether a value is an actor identity: a list of a kind symbol and a symbol or nonempty string, then more."
         (actor any "the value")

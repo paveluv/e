@@ -10,12 +10,12 @@
 ;; pattern); code in Scheme documents is Scheme, so fence interiors
 ;; delegate to the scheme mode, like indented blocks.
 
-(import (only (edoc) elibrary))
-(elibrary (md-mode)
+(import (only (foundation edoc) elibrary))
+(elibrary (modes md-mode)
   (export init!)
   (import (chezscheme)
-          (prefix (style) style:)
-          (prefix (mode) mode:))
+          (prefix (head style) style:)
+          (prefix (head mode) mode:))
 
   (define (md-styles s)
     (define n (string-length s))

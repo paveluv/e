@@ -13,9 +13,9 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (literal) (prefix (search) search:) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (keymap) keymap:) (prefix (head) head:)
-             (prefix (window) window:) (prefix (text) text:)
-             (prefix (string) string:) (prefix (test) test:))
+     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
+             (prefix (head window) window:) (prefix (foundation text) text:)
+             (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
      (define (settled text) (eval:settle-completion text (string-length text)))

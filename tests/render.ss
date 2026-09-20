@@ -6,12 +6,12 @@
 (test-roots! 'base)
 (eval
   '(begin
-     (import (prefix (render) render:) (prefix (surface) surface:)
-             (prefix (head) head:) (prefix (store) store:) (prefix (text) text:)
-             (prefix (paint) paint:) (prefix (vt) vt:)
-             (prefix (kernel) kernel:) (prefix (string) string:)
-             (prefix (style) style:) (prefix (glyph) glyph:)
-             (prefix (sys) sys:) (prefix (test) test:))
+     (import (prefix (head render) render:) (prefix (state surface) surface:)
+             (prefix (head head) head:) (prefix (state store) store:) (prefix (foundation text) text:)
+             (prefix (head paint) paint:) (prefix (service vt) vt:)
+             (prefix (core kernel) kernel:) (prefix (foundation string) string:)
+             (prefix (head style) style:) (prefix (sys glyph) glyph:)
+             (prefix (sys sys) sys:) (prefix (test) test:))
 
      (define author '(app render-test))
      ;; The labels in prompts and tables fit the same clusters as the painter.

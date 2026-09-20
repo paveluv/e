@@ -11,12 +11,12 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (except (edit) init!)
-             (literal)
-             (prefix (kernel) kernel:)
-             (prefix (head) head:)
-             (prefix (search) search:)
-             (prefix (window) window:))
+             (except (head edit) init!)
+             (head literal)
+             (prefix (core kernel) kernel:)
+             (prefix (head head) head:)
+             (prefix (apps search) search:)
+             (prefix (head window) window:))
 
      (define check test:check)
      (define (fresh name lines)

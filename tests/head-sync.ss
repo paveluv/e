@@ -10,11 +10,11 @@
 
 (eval
   '(begin
-     (import (prefix (head) head:)
-             (prefix (store) store:)
-             (prefix (text) text:)
-             (prefix (actor) actor:)
-             (prefix (kernel) kernel:)
+     (import (prefix (head head) head:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:)
+             (prefix (state actor) actor:)
+             (prefix (core kernel) kernel:)
              (prefix (test) test:))
 
      (define check test:check)

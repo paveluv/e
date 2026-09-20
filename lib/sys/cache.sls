@@ -1,8 +1,8 @@
 ;; cache.sls -- serialize access to one installation's compiled libraries.
 ;; Loaded from source before the loader's first cached import. Only Chez is
 ;; a dependency: consulting the cache to install its lock would itself race.
-(import (only (edoc) elibrary))
-(elibrary (cache)
+(import (only (foundation edoc) elibrary))
+(elibrary (sys cache)
   (export install!)
   (import (chezscheme))
 

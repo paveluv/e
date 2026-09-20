@@ -11,17 +11,17 @@
 
 (eval
   '(begin
-     (import (except (edit) init!)
-             (prefix (head) head:)
-             (prefix (store) store:)
-             (prefix (kernel) kernel:)
-             (prefix (log) log:)
+     (import (except (head edit) init!)
+             (prefix (head head) head:)
+             (prefix (state store) store:)
+             (prefix (core kernel) kernel:)
+             (prefix (service log) log:)
              (prefix (test) test:)
-             (prefix (actor) actor:) (prefix (surface) surface:) (prefix (render) render:)
-             (prefix (paint) paint:) (prefix (mode) mode:) (prefix (keymap) keymap:)
-             (prefix (dispatch) dispatch:)
-             (prefix (git-view) git-view:)
-             (prefix (log-view) log-view:))
+             (prefix (state actor) actor:) (prefix (state surface) surface:) (prefix (head render) render:)
+             (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
+             (prefix (head dispatch) dispatch:)
+             (prefix (apps git-view) git-view:)
+             (prefix (apps log-view) log-view:))
 
      (define check test:check)
      (define refused? test:raises?)

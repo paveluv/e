@@ -6,14 +6,14 @@
 ;; commands work on the current buffer through edit's editing API; the
 ;; keys M-n, M-m and M-d are bound in init!, owned by the module.
 
-(import (only (edoc) elibrary))
-(elibrary (merge)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps merge)
   (export init! next! keep-mine! keep-disk!)
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (head) head:)
-          (prefix (string) string:)
-          (prefix (keymap) keymap:))
+          (prefix (head edit) edit:)
+          (prefix (head head) head:)
+          (prefix (foundation string) string:)
+          (prefix (head keymap) keymap:))
 
   (define (conflict-marker? b row prefix)
     (and (>= row 0) (< row (head:buffer-line-count b))

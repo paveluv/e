@@ -8,7 +8,7 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (string) string:) (prefix (test) test:))
+     (import (prefix (sys sys) sys:) (prefix (foundation string) string:) (prefix (test) test:))
 
      (define here (current-directory))
      (define root (format "/tmp/e-format-~a-~a λ" (get-process-id) (random 1000000)))

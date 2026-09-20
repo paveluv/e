@@ -8,16 +8,16 @@
 ;; dispatcher records for them. The main loop and modal readers use
 ;; the same entrypoint.
 
-(import (only (edoc) elibrary))
-(elibrary (dispatch)
+(import (only (foundation edoc) elibrary))
+(elibrary (head dispatch)
   (export set-prompt-opener! (rename (handle-key! key!)) global-key!)
   (import (chezscheme)
-          (prefix (head) head:)
-          (prefix (paint) paint:)
-          (prefix (echo) echo:)
-          (prefix (keymap) keymap:)
-          (prefix (tty) tty:)
-          (prefix (mode) mode:))
+          (prefix (head head) head:)
+          (prefix (head paint) paint:)
+          (prefix (head echo) echo:)
+          (prefix (head keymap) keymap:)
+          (prefix (sys tty) tty:)
+          (prefix (head mode) mode:))
 
   ;;; Key dispatch ---------------------------------------------------------------------
 

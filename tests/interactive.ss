@@ -21,8 +21,8 @@
 
 (define interactive-scenario
   '(begin
-     (import (prefix (sys) sys:) (prefix (vt) vt:) (prefix (glyph) glyph:)
-             (prefix (wire) wire:) (prefix (kernel) kernel:) (prefix (string) string:))
+     (import (prefix (sys sys) sys:) (prefix (service vt) vt:) (prefix (sys glyph) glyph:)
+             (prefix (foundation wire) wire:) (prefix (core kernel) kernel:) (prefix (foundation string) string:))
 
      (define checks 0)
      (define mirror (vt:make-emulator 24 80))
@@ -251,7 +251,7 @@
      ;; the wire while the head waits on the PTY.
      (send! "\x8;fwindow:split-left!\r")
      (wait-for! 'edoc-documents-a-definition-without-a-registry-entry
-       (lambda () (and (find-cell "libraries: (window)")
+       (lambda () (and (find-cell "libraries: (head window)")
                        (find-cell "source: edoc, Documented definitions")
                        (find-cell "side-by-side pair")))
        5000)

@@ -11,17 +11,17 @@
 
 (eval
   '(begin
-     (import (except (edit) init!)
-             (prefix (head) head:)
-             (prefix (store) store:)
-             (prefix (text) text:)
-             (prefix (mode) mode:)
-             (prefix (md-mode) md-mode:)
-             (prefix (markdown) markdown:)
-             (prefix (kernel) kernel:)
-             (prefix (keymap) keymap:)
-             (prefix (file) file:)
-             (prefix (paint) paint:)
+     (import (except (head edit) init!)
+             (prefix (head head) head:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:)
+             (prefix (head mode) mode:)
+             (prefix (modes md-mode) md-mode:)
+             (prefix (apps markdown) markdown:)
+             (prefix (core kernel) kernel:)
+             (prefix (head keymap) keymap:)
+             (prefix (service file) file:)
+             (prefix (head paint) paint:)
              (prefix (test) test:))
 
      (define check test:check)

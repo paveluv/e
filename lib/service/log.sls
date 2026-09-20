@@ -1,16 +1,16 @@
 ;; log.sls -- the base's structured log. Records are owned plain snapshots:
 ;; (utc-nanoseconds actor component datum), indexed in append order. Views
 ;; and echo presentation subscribe; neither owns a second history.
-(import (only (edoc) elibrary))
-(elibrary (log)
+(import (only (foundation edoc) elibrary))
+(elibrary (service log)
   (export add! snapshot retention entries history
           time actor component datum
           register-formatter! styler format-entry subscribe! unsubscribe! progress)
   (import (rnrs)
           (only (chezscheme) format parameterize print-graph)
-          (prefix (kernel) kernel:)
-          (prefix (journal) journal:)
-          (prefix (datum) datum:))
+          (prefix (core kernel) kernel:)
+          (prefix (state journal) journal:)
+          (prefix (foundation datum) datum:))
 
   (define progress journal:progress)
   (define snapshot journal:snapshot)

@@ -12,10 +12,10 @@
 
 (eval
   '(begin
-     (import (prefix (store) store:)
-             (prefix (kernel) kernel:)
-             (prefix (log) log:) (prefix (string) string:)
-             (prefix (only (reference) lookup) reference:)
+     (import (prefix (state store) store:)
+             (prefix (core kernel) kernel:)
+             (prefix (service log) log:) (prefix (foundation string) string:)
+             (prefix (only (service reference) lookup) reference:)
              (prefix (test) test:)
              (only (chezscheme) environment eval format))
 
@@ -31,7 +31,7 @@
 
      ;; -- the full tier: computation works, power is unreachable ------
 
-     (define tier (environment '(sandbox)))
+     (define tier (environment '(service sandbox)))
 
      (check 'pure-computation (eval '(+ 1 2) tier) 3)
      (check 'strings-and-lists
@@ -44,9 +44,9 @@
      (check 'no-store-mutation
             (unbound? '(edit! 'x 1 1 'span '("gone")) tier) #t)
 
-     ;; -- a narrowed grant: (only (sandbox) ...) subsets it -----------
+     ;; -- a narrowed grant: (only (service sandbox) ...) subsets it -----------
 
-     (define narrow (environment '(only (sandbox) + car cons quote)))
+     (define narrow (environment '(only (service sandbox) + car cons quote)))
 
      (check 'granted-name-works (eval '(+ 1 2) narrow) 3)
      (check 'ungranted-name-fails

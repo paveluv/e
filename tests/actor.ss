@@ -11,8 +11,8 @@
 
 (eval
   '(begin
-     (import (prefix (actor) actor:)
-             (prefix (kernel) kernel:)
+     (import (prefix (state actor) actor:)
+             (prefix (core kernel) kernel:)
              (prefix (test) test:))
 
      ;; two mailbox-backed actors

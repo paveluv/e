@@ -32,15 +32,15 @@
 ;; same reason they exchange bytes through foreign buffers, never
 ;; through Scheme bytevectors that the collector could move mid-call.
 
-(import (only (edoc) elibrary))
-(elibrary (https)
+(import (only (foundation edoc) elibrary))
+(elibrary (sys https)
   (export (rename (https-get get)) (rename (https-download! download!)) (rename (https-request request))
           (rename (https-response-status response-status)) (rename (https-response-headers response-headers)) (rename (https-response-port response-port))
           (rename (https-response-text response-text)) (rename (https-close! close!))
           (rename (https-connector connector)) (rename (https-timeout timeout)) (rename (https-backend backend))
           make-channel channel-read! channel-write! channel-close!
           tcp-connect tls-connect)
-  (import (chezscheme) (prefix (string) string:) (prefix (sys) sys:))
+  (import (chezscheme) (prefix (foundation string) string:) (prefix (sys sys) sys:))
 
   ;;; Foreign library loading ---------------------------------------------
 

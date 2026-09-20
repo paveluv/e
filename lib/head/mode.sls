@@ -15,8 +15,8 @@
 ;; (mode:register! "scheme" '(".ss") '("scheme") styler),
 ;; (mode:of b), ((mode:styles m) line).
 
-(import (only (edoc) elibrary))
-(elibrary (mode)
+(import (only (foundation edoc) elibrary))
+(elibrary (head mode)
   (export (rename (mode-name name)
                   (mode-extensions extensions)
                   (mode-interpreters interpreters)
@@ -36,10 +36,10 @@
           (only (chezscheme)
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
                 vector-copy void)
-          (prefix (kernel) kernel:)
-          (prefix (head) head:)
-          (prefix (keymap) keymap:)
-          (prefix (string) string:))
+          (prefix (core kernel) kernel:)
+          (prefix (head head) head:)
+          (prefix (head keymap) keymap:)
+          (prefix (foundation string) string:))
 
   ;;; The registry ------------------------------------------------------------
 

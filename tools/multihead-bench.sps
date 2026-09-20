@@ -20,8 +20,8 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (string) string:) (prefix (vt) vt:)
-             (prefix (kernel) kernel:) (prefix (fixture) fixture:))
+     (import (prefix (sys sys) sys:) (prefix (foundation string) string:) (prefix (service vt) vt:)
+             (prefix (core kernel) kernel:) (prefix (fixture) fixture:))
 
      (kernel:installation-directory (current-directory))
 
@@ -45,8 +45,14 @@
        (let ([sources (list-sort string<?
                         (apply append
                           (map (lambda (root)
-                                 (filter (lambda (name) (string:suffix? ".sls" name))
-                                         (directory-list (car root))))
+                                 ;; the libraries under a root's kind directories
+                                 (apply append
+                                   (map (lambda (kind)
+                                          (let ([dir (string-append (car root) "/" kind)])
+                                            (if (and (file-directory? dir) (not (member kind '("base" "client"))))
+                                                (filter (lambda (name) (string:suffix? ".sls" name)) (directory-list dir))
+                                                '())))
+                                        (directory-list (car root)))))
                                (filter (lambda (root) (not (string:suffix? "/tests" (car root))))
                                  (library-directories)))))])
          (call-with-output-file big-file

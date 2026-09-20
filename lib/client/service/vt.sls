@@ -1,8 +1,8 @@
 ;; The terminal command facade talks to the base's PTY owner.
-(import (only (edoc) elibrary))
-(elibrary (vt)
+(import (only (foundation edoc) elibrary))
+(elibrary (service vt)
   (export open! send! close! scrollback shell color-scheme!)
-  (import (chezscheme) (prefix (client) client:))
+  (import (chezscheme) (prefix (core client) client:))
   (edoc "How many scrolled-off lines the base's terminals keep, or set it."
         (value integer "the line count")
         (returns integer))

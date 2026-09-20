@@ -2,15 +2,15 @@
 ;; module documentation accompanies a query instead of becoming global.
 ;; The head's page receipt is read once and kept until this head changes
 ;; the page or the store reports a change to its buffer.
-(import (only (edoc) elibrary))
-(elibrary (reference)
+(import (only (foundation edoc) elibrary))
+(elibrary (service reference)
   (export fetch! page page! lookup entries browser-url)
   (import (chezscheme)
-          (prefix (client) client:)
-          (prefix (doc) doc:)
-          (prefix (edoc) edoc:)
-          (prefix (kernel) kernel:)
-          (prefix (datum) datum:))
+          (prefix (core client) client:)
+          (prefix (service doc) doc:)
+          (prefix (foundation edoc) edoc:)
+          (prefix (core kernel) kernel:)
+          (prefix (foundation datum) datum:))
   (define (documents)
     ;; Registered module documentation, then entries read from the top-level
     ;; definitions that carry an edoc -- attached to their value, or recorded

@@ -20,20 +20,20 @@
 ;; by intersecting edits or resets. All bookkeeping runs before paint on the main
 ;; thread; a stalled head retains no independent raw-event backlog.
 
-(import (only (edoc) elibrary))
-(elibrary (blame)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps blame)
   (export init! (rename (blame-at-point! at-point!)) (rename (blame-tint-seconds tint-seconds)))
   (import (rnrs)
-          (prefix (edit) edit:)
+          (prefix (head edit) edit:)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
                 make-time current-time add-duration time<? make-weak-eq-hashtable)
-          (prefix (paint) paint:)
-          (prefix (head) head:)
-          (prefix (style) style:)
-          (prefix (store) store:)
-          (prefix (text) text:)
-          (prefix (doc) doc:))
+          (prefix (head paint) paint:)
+          (prefix (head head) head:)
+          (prefix (head style) style:)
+          (prefix (state store) store:)
+          (prefix (foundation text) text:)
+          (prefix (service doc) doc:))
 
   (edoc "How long another actor's edit stays tinted, in seconds; 0 turns tinting off."
         (value integer))
@@ -195,9 +195,9 @@
     (doc:register!
       '(((blame:at-point!)
          (("procedure" . "(blame:at-point!)")) "void"
-         ("(blame)") blame "Blame" #f
+         ("(apps blame)") blame "Blame" #f
          "Report in the echo area which actor most recently wrote the text at point, from the buffer's attributed edit log (store:blame). Reach is the delta log (256 edits); a buffer reset clears it -- deep history stays git's job.")
         ((blame:tint-seconds)
          (("parameter" . "(blame:tint-seconds [seconds])")) "number"
-         ("(blame)") blame "Blame" #f
+         ("(apps blame)") blame "Blame" #f
          "How long another actor's fresh edit stays tinted in that actor's color (default 8; 0 prevents new tints). An edit intersecting the tinted span removes it sooner. App output does not create tints.")))))

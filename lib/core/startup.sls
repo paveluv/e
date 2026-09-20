@@ -1,16 +1,16 @@
 ;; startup.sls -- options admitted before importing the head. No editor state.
 
-(import (only (edoc) elibrary))
-(elibrary (startup)
+(import (only (foundation edoc) elibrary))
+(elibrary (core startup)
   (export call-with-options mode name file base-working-directory default-base-working-directory
           default-name restart? force?)
   (import (rnrs)
           (only (chezscheme) make-thread-parameter parameterize getenv get-process-id
                 current-directory path-absolute? path-parent path-last)
-          (prefix (kernel) kernel:)
-          (prefix (path) path:)
-          (prefix (string) string:)
-          (prefix (sys) sys:))
+          (prefix (core kernel) kernel:)
+          (prefix (sys path) path:)
+          (prefix (foundation string) string:)
+          (prefix (sys sys) sys:))
 
   ;; Requested process role and arguments, scoped over library initialization.
   ;; Direct library clients get the same generated identity as the loader.

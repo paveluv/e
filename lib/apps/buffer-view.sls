@@ -7,23 +7,23 @@
 ;; receives the events the dispatcher sends, so the suite drives it
 ;; headless.
 
-(import (only (edoc) elibrary))
-(elibrary (buffer-view)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps buffer-view)
   (export init! open! previous! next!)
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (head) head:)
-          (prefix (store) store:)
-          (prefix (dispatch) dispatch:)
-          (prefix (table) table:)
-          (prefix (glyph) glyph:)
-          (prefix (string) string:)
-          (prefix (file) file:)
-          (prefix (mode) mode:)
-          (prefix (style) style:)
-          (prefix (paint) paint:)
-          (prefix (keymap) keymap:)
-          (prefix (tty) tty:))
+          (prefix (head edit) edit:)
+          (prefix (head head) head:)
+          (prefix (state store) store:)
+          (prefix (head dispatch) dispatch:)
+          (prefix (head table) table:)
+          (prefix (sys glyph) glyph:)
+          (prefix (foundation string) string:)
+          (prefix (service file) file:)
+          (prefix (head mode) mode:)
+          (prefix (head style) style:)
+          (prefix (head paint) paint:)
+          (prefix (head keymap) keymap:)
+          (prefix (sys tty) tty:))
 
   ;;; The model -------------------------------------------------------------------
 

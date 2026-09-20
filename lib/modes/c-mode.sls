@@ -8,13 +8,13 @@
 ;; block comments span lines correctly.  Braces and brackets styled
 ;; delimiter take part in bracket matching.
 
-(import (only (edoc) elibrary))
-(elibrary (c-mode)
+(import (only (foundation edoc) elibrary))
+(elibrary (modes c-mode)
   (export init!)
   (import (chezscheme)
-          (prefix (style) style:)
-          (prefix (mode) mode:)
-          (prefix (string) string:))
+          (prefix (head style) style:)
+          (prefix (head mode) mode:)
+          (prefix (foundation string) string:))
 
   (define c-keywords
     (let ([table (make-hashtable string-hash string=?)])

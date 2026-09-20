@@ -34,7 +34,7 @@
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (string) string:))
+     (import (prefix (sys sys) sys:) (prefix (foundation string) string:))
 
      (define arguments (command-line-arguments))
      (define jobs

@@ -4,10 +4,10 @@
 ;; symbolic links. Tilde expansion and canonicalization are separate:
 ;; compose them as (path:canonical (path:expand name)).
 
-(import (only (edoc) elibrary))
-(elibrary (path)
+(import (only (foundation edoc) elibrary))
+(elibrary (sys path)
   (export expand canonical)
-  (import (except (chezscheme) expand) (prefix (string) string:))
+  (import (except (chezscheme) expand) (prefix (foundation string) string:))
 
   (edoc "A path with a leading ~ expanded to the home directory."
         (path string "the path")

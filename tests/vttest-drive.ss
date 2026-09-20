@@ -34,7 +34,7 @@
 
 (eval
   `(begin
-     (import (prefix (sys) sys:) (prefix (vt) vt:))
+     (import (prefix (sys sys) sys:) (prefix (service vt) vt:))
 
      (define dump-file ,(if (>= (length (command-line)) 2)
                             (cadr (command-line))

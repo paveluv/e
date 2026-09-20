@@ -3,26 +3,26 @@
 ;; Corpus queries belong to reference:. This facade adds completion, local
 ;; key annotations, Markdown display, and the interactive fetch command.
 
-(import (only (edoc) elibrary))
-(elibrary (describe)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps describe)
   (export init! (rename (describe this) (describe! show!)
                         (describe-at-point! at-point!)
                         (describe-key! key!)
                         (reference:fetch! fetch-data!)))
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (kernel) kernel:)
-          (prefix (doc) doc:)
-          (prefix (reference) reference:)
-          (prefix (prompt) prompt:)
-          (prefix (mode) mode:)
-          (prefix (string) string:)
-          (prefix (paint) paint:)
-          (prefix (head) head:)
-          (prefix (window) window:)
-          (prefix (style) style:)
-          (prefix (keymap) keymap:)
-          (prefix (only (markdown) companion companion!) markdown:))
+          (prefix (head edit) edit:)
+          (prefix (core kernel) kernel:)
+          (prefix (service doc) doc:)
+          (prefix (service reference) reference:)
+          (prefix (head prompt) prompt:)
+          (prefix (head mode) mode:)
+          (prefix (foundation string) string:)
+          (prefix (head paint) paint:)
+          (prefix (head head) head:)
+          (prefix (head window) window:)
+          (prefix (head style) style:)
+          (prefix (head keymap) keymap:)
+          (prefix (only (apps markdown) companion companion!) markdown:))
 
   ;;; Display -------------------------------------------------------------------
 
@@ -239,79 +239,79 @@
     (keymap:bind-default! "C-h k" describe-key!)
     (doc:register!
       '(((describe:show!) (("procedure" . "(describe:show! name)")) "void"
-         ("(describe)") describe "Documentation commands" #f
+         ("(apps describe)") describe "Documentation commands" #f
          "Display every documentation entry for `name` in a read-only Markdown `<describe>` buffer.")
         ((describe:at-point!)
          (("procedure" . "(describe:at-point!)")) "void"
-         ("(describe)") describe "Documentation commands" #f
+         ("(apps describe)") describe "Documentation commands" #f
          "Display documentation for the symbol at point in the current Scheme buffer.")
         ((style:compile) (("procedure" . "(style:compile expression)")) "string"
-         ("(style)") style "Style customization" #f
+         ("(head style)") style "Style customization" #f
          "Compile a style expression to terminal SGR parameters. The expression is a list containing attributes (`reset`, `bold`, `dim`, `italic`, `underline`, `blink`, `reverse`, `hidden`, or `strike`) and color clauses `(foreground color)` or `(background color)`; `fg` and `bg` are aliases. A color is a basic name from `black` through `white`, a `bright-` variant, an integer from 0 through 255, or `(rgb red green blue)`.")
         ((style:set!) (("procedure" . "(style:set! face style)")) "void"
-         ("(style)") style "Style customization" #f
+         ("(head style)") style "Style customization" #f
          "Override an editor face using a style expression accepted by `style:compile`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
         ((markdown:view!) (("procedure" . "(markdown:view! [buffer])")) "void"
-         ("(markdown)") markdown "Markdown viewing" #f
+         ("(apps markdown)") markdown "Markdown viewing" #f
          "Show a local, read-only companion of a markdown source buffer. Markup strips into faces, paragraphs join, tables align, and fenced code frames. Source text and history stay intact; `C-c v` switches this window between source and view.")
         ((markdown:edit!) (("procedure" . "(markdown:edit! [buffer])")) "void"
-         ("(markdown)") markdown "Markdown viewing" #f
+         ("(apps markdown)") markdown "Markdown viewing" #f
          "Return from a markdown companion to its live source at the matching row, preserving the source's text, mode, read-only state, and undo history.")
         ((markdown:view-max-width)
          (("parameter" . "(markdown:view-max-width [columns])"))
-         "integer" ("(markdown)") markdown "Markdown viewing" #f
+         "integer" ("(apps markdown)") markdown "Markdown viewing" #f
          "Get or set the reading-width cap of markdown views: in a window wider than this many columns, prose and tables wrap at the cap instead of the full width. The default is 80 and the minimum is 20.")
         ((markdown:browser)
          (("parameter" . "(markdown:browser [command])")) "string"
-         ("(markdown)") markdown "Markdown viewing" #f
+         ("(apps markdown)") markdown "Markdown viewing" #f
          "Get or set the command that opens a markdown view's web links; it receives the quoted URL as its argument. The default is `xdg-open`.")
         ((mode:add-extension!)
          (("procedure" . "(mode:add-extension! mode extension)")) "void"
-         ("(mode)") mode "Mode customization" #f
+         ("(head mode)") mode "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
         ((head:register-app!)
          (("procedure" . "(head:register-app! key-or-buffer refresh! [handle-event!])"))
-         "buffer" ("(head)") head "App buffers" #f
+         "buffer" ("(head head)") head "App buffers" #f
          "Create or update a local, read-only head app by stable string key, or attach it to an existing local buffer. Labels are suffixed on collision; renaming keeps the tool identity. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
         ((head:set-app-cursor-visible!)
          (("procedure" . "(head:set-app-cursor-visible! buffer visibility)")) "buffer"
-         ("(head)") head "App buffers" #f
+         ("(head head)") head "App buffers" #f
          "Set app cursor visibility to a boolean or a procedure receiving the window token. This supports per-window cursor hiding while an app viewport is detached from its live cursor.")
         ((head:detach-app!)
          (("procedure" . "(head:detach-app! buffer)")) "buffer"
-         ("(head)") head "App buffers" #f
+         ("(head head)") head "App buffers" #f
          "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, its event handler, and app presentation.")
         ((head:set-app-presentation!)
          (("procedure" . "(head:set-app-presentation! buffer sticky-lines head:scrollbar [wrap cursor-style])"))
-         "buffer" ("(head)") head "App buffers" #f
+         "buffer" ("(head head)") head "App buffers" #f
          "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, a `blinking-` variant of those, or `default`.")
         ((head:buffer-window-size)
          (("procedure" . "(head:buffer-window-size buffer)")) "pair or #f"
-         ("(head)") head "App buffers" #f
+         ("(head head)") head "App buffers" #f
          "Return `(rows . columns)` for the preferred window displaying `buffer`, choosing the focused window when it displays the buffer, or #f when it is not visible.")
         ((head:add-buffer-kill-hook!)
          (("procedure" . "(head:add-buffer-kill-hook! procedure)")) "unspecified"
-         ("(head)") head "Buffer lifecycle" #f
+         ("(head head)") head "Buffer lifecycle" #f
          "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
         ((head:add-shutdown-hook!)
          (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
-         ("(head)") head "Editor lifecycle" #f
+         ("(head head)") head "Editor lifecycle" #f
          "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
         ((main:shutdown!)
          (("procedure" . "(main:shutdown!)")) "does not return after acceptance"
-         ("(main)") main "Editor lifecycle" #f
+         ("(run main)") main "Editor lifecycle" #f
          "Save shared text and named views through the same path as SIGTERM, then stop the base and every head. Requires an all-buffer head. Ask about local drafts, other heads, terminals, agent sessions and pending interactions; shared unsaved text is saved without a question. No, View, Esc and C-g cancel; View opens the buffers app. New transient work receives a fresh review. A failed pause or save resumes service. The next base restores the snapshot; processes, undo history and local drafts do not survive the stop.")
         ((main:shutdown-on-exit)
          (("thread parameter" . "main:shutdown-on-exit")) "boolean"
-         ("(main)") main "Editor lifecycle" #f
+         ("(run main)") main "Editor lifecycle" #f
          "Default #f: quitting detaches this screen. Set #t to review shutting down the base when this is the last participating head. The base decides atomically; cancelling keeps the last head open. Restricted heads always detach normally.")
         ((paint:add-buffer-status-hint!)
          (("procedure" . "(paint:add-buffer-status-hint! procedure)")) "unspecified"
-         ("(paint)") paint "Buffer lifecycle" #f
+         ("(head paint)") paint "Buffer lifecycle" #f
          "Register a module-owned status hint procedure called as `(procedure buffer active?)` for every window. It may return a string, a `(string . style)` pair, or #f.")
         ((describe:fetch-data!)
          (("procedure" . "(describe:fetch-data!)")) "void"
-         ("(describe)") describe "Documentation commands" #f
+         ("(apps describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the reference database, and load it. Fetch progress is recorded in the log.")))
     (prompt:inspector describe-input!)
     (keymap:bind-default! "C-h f" (keymap:prefill describe!))

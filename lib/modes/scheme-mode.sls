@@ -11,17 +11,17 @@
 ;; style:code, and brackets styled 'delimiter take part in bracket
 ;; matching (so brackets inside strings and comments don't count).
 
-(import (only (edoc) elibrary))
-(elibrary (scheme-mode)
+(import (only (foundation edoc) elibrary))
+(elibrary (modes scheme-mode)
   (export init! (rename (scheme-format-on-save format-on-save)))
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (head) head:)
-          (prefix (file) file:)
-          (prefix (style) style:)
-          (prefix (mode) mode:)
-          (prefix (scheme-format) scheme-format:)
-          (prefix (doc) doc:))
+          (prefix (head edit) edit:)
+          (prefix (head head) head:)
+          (prefix (service file) file:)
+          (prefix (head style) style:)
+          (prefix (head mode) mode:)
+          (prefix (foundation scheme-format) scheme-format:)
+          (prefix (service doc) doc:))
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
@@ -209,10 +209,10 @@
     (doc:register!
       '(((scheme-format:intrusive)
          (("parameter" . "(scheme-format:intrusive [enabled?])")) "boolean"
-         ("(scheme-format)") scheme-format "Scheme formatting" #f
+         ("(foundation scheme-format)") scheme-format "Scheme formatting" #f
          "Control intrusive Scheme formatting. It is off by default; when enabled, whole-buffer formatting collapses excess code spacing, joins fitting continuation lines, normalizes inline-comment gaps, and breaks code toward `scheme-format:width`.")
         ((scheme-format:width)
          (("parameter" . "(scheme-format:width [columns])")) "integer"
-         ("(scheme-format)") scheme-format "Scheme formatting" #f
+         ("(foundation scheme-format)") scheme-format "Scheme formatting" #f
          "Get or set the target width used when `scheme-format:intrusive` is enabled. The default is 100 columns and the minimum is 20.")))
     (file:add-pre-save-hook! format-on-save!)))

@@ -1,10 +1,10 @@
 ;; table.sls -- the shared column rules for local picker apps.
 ;; Pure formatting and ordered sort keys; rows, selection and input stay
 ;; with the app. A layout belongs to a window, never to its shared buffer.
-(import (only (edoc) elibrary))
-(elibrary (table)
+(import (only (foundation edoc) elibrary))
+(elibrary (head table)
   (export make heading cycle-sort less? layout)
-  (import (chezscheme) (prefix (glyph) glyph:) (prefix (string) string:))
+  (import (chezscheme) (prefix (sys glyph) glyph:) (prefix (foundation string) string:))
 
   (edoc "A table's columns: their headings, minimum widths, which column identifies a row, which may be dropped when narrow, and how cells align."
         (headings vector "the column headings")

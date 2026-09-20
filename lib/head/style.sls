@@ -10,14 +10,14 @@
 ;; cached by content, not by face definitions, so a redefinition must
 ;; repaint everything).
 
-(import (only (edoc) elibrary))
-(elibrary (style)
+(import (only (foundation edoc) elibrary))
+(elibrary (head style)
   (export (rename (compile-style compile)) (rename (style-escape escape)) (rename (set-style! set!)) (rename (style-code code))
           (rename (set-styles-changed-hook! set-changed-hook!)) color-scheme! fill-range!)
   (import (rnrs)
           (only (chezscheme) format void)
-          (prefix (kernel) kernel:)
-          (prefix (string) string:))
+          (prefix (core kernel) kernel:)
+          (prefix (foundation string) string:))
 
   ;;; The DSL -----------------------------------------------------------------
 

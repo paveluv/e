@@ -4,8 +4,8 @@
 ;; the diff3 merge built on it.  The file library imports it for the
 ;; stale-file guard; anything else may use it too.
 
-(import (only (edoc) elibrary))
-(elibrary (diff)
+(import (only (foundation edoc) elibrary))
+(elibrary (foundation diff)
   (export (rename (diff-matches matches)) merge3 merge-report-lines)
   (import (chezscheme))
 

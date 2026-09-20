@@ -44,16 +44,9 @@
     (if (path-absolute? dir) dir (string-append (current-directory) "/" dir))))
 
 (library-directories
-  ;; the common kinds, as the loader selects them: every leaf directory
-  ;; under lib beside the two implementation trees, which the engine and
-  ;; its dependencies (string, kernel, path) never reach
-  (let ([lib (string-append e-home "/lib")])
-    (map (lambda (name) (cons (string-append lib "/" name) (string-append e-home "/eo/base")))
-      (list-sort string<?
-        (filter (lambda (name)
-                  (and (not (member name '("base" "client")))
-                       (file-directory? (string-append lib "/" name))))
-                (directory-list lib))))))
+  ;; lib, the common kinds, as the loader selects them: the engine and its
+  ;; dependencies (string, kernel, path) never reach an implementation tree
+  (list (cons (string-append e-home "/lib") (string-append e-home "/eo/base"))))
 (compile-imported-libraries #t)
 (compile-file-message #f)
 
@@ -166,7 +159,7 @@
          files)])))
 
 (eval `(begin
-         (import (prefix (scheme-format) scheme-format:) (prefix (kernel) kernel:))
+         (import (prefix (foundation scheme-format) scheme-format:) (prefix (core kernel) kernel:))
          (kernel:installation-directory ,e-home))
   (interaction-environment))
 (run (eval 'scheme-format:lines (interaction-environment))

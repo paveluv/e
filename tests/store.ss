@@ -11,11 +11,11 @@
 
 (eval
   '(begin
-     (import (prefix (store) store:)
-             (prefix (property) property:)
-             (prefix (text) text:)
-             (prefix (kernel) kernel:)
-             (prefix (activity) activity:)
+     (import (prefix (state store) store:)
+             (prefix (core property) property:)
+             (prefix (foundation text) text:)
+             (prefix (core kernel) kernel:)
+             (prefix (sys activity) activity:)
              (prefix (test) test:)
              (only (chezscheme)
                    box unbox set-box! parameterize))

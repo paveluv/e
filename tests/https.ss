@@ -12,7 +12,7 @@
 
 (eval
   '(begin
-     (import (prefix (https) https:) (prefix (sys) sys:) (prefix (test) test:))
+     (import (prefix (sys https) https:) (prefix (sys sys) sys:) (prefix (test) test:))
 
      (define check test:check)
      (define native-tls-before (foreign-entry? "SSL_new"))

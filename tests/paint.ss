@@ -11,14 +11,14 @@
 
 (eval
   '(begin
-     (import (prefix (paint) paint:)
-             (prefix (style) style:)
-             (prefix (head) head:)
-             (prefix (echo) echo:)
-             (prefix (kernel) kernel:)
-             (prefix (glyph) glyph:)
+     (import (prefix (head paint) paint:)
+             (prefix (head style) style:)
+             (prefix (head head) head:)
+             (prefix (head echo) echo:)
+             (prefix (core kernel) kernel:)
+             (prefix (sys glyph) glyph:)
              (prefix (test) test:)
-             (prefix (only (sys) terminal-output-port) sys:)
+             (prefix (only (sys sys) terminal-output-port) sys:)
              (only (chezscheme)
                    format open-output-string get-output-string
                    parameterize))

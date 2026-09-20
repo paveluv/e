@@ -11,7 +11,7 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (prefix (tty) tty:)
+             (prefix (sys tty) tty:)
              (only (chezscheme) format open-string-input-port))
 
 

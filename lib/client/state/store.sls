@@ -3,20 +3,20 @@
 ;; A change notice marks an entry stale; the next read asks the base for the
 ;; chain since the cached revision and applies it, so ordinary edits cost a
 ;; delta on the wire, never the buffer's text.
-(import (only (edoc) elibrary))
-(elibrary (store)
+(import (only (foundation edoc) elibrary))
+(elibrary (state store)
   (export create! visit! delete! discard! reset! rename! buffer-list exists? visible? trash-retention buffer-name find-named find-file
           snapshot snapshot-state snapshot-since revision line-count line extract
           property properties set-property! set-properties!
           edit! edit-with-snapshot! history-step! undo-authors history blame marks set-marks!
           validate-properties validate-edit-context watch! unsubscribe!)
   (import (chezscheme)
-          (prefix (client) client:)
-          (prefix (kernel) kernel:)
-          (prefix (identity) identity:)
-          (prefix (property) property:)
-          (prefix (datum) datum:)
-          (prefix (text) text:))
+          (prefix (core client) client:)
+          (prefix (core kernel) kernel:)
+          (prefix (core identity) identity:)
+          (prefix (core property) property:)
+          (prefix (foundation datum) datum:)
+          (prefix (foundation text) text:))
 
   (define validate-properties property:validate)
   (define validate-edit-context property:edit-context)

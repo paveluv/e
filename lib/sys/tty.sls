@@ -18,15 +18,15 @@
 ;; escape sequences are swallowed whole so their payloads can never
 ;; leak into a buffer as typed text.
 
-(import (only (edoc) elibrary))
-(elibrary (tty)
+(import (only (foundation edoc) elibrary))
+(elibrary (sys tty)
   (export read-event character-event key-event-character
           mouse-reporting! query-color-scheme! paste-lines)
   (import (rnrs)
           (only (chezscheme) format char-ready?)
-          (prefix (only (sys) terminal-output-port) sys:)
-          (prefix (string) string:)
-          (prefix (color) color:))
+          (prefix (only (sys sys) terminal-output-port) sys:)
+          (prefix (foundation string) string:)
+          (prefix (foundation color) color:))
 
   ;;; Input-side negotiation ------------------------------------------------------
 

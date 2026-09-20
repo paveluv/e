@@ -8,9 +8,9 @@
 
 (eval
   '(begin
-     (import (prefix (surface) surface:) (prefix (store) store:)
-             (prefix (kernel) kernel:) (prefix (text) text:)
-             (prefix (datum) datum:) (prefix (test) test:))
+     (import (prefix (state surface) surface:) (prefix (state store) store:)
+             (prefix (core kernel) kernel:) (prefix (foundation text) text:)
+             (prefix (foundation datum) datum:) (prefix (test) test:))
 
      (define author '(app surface-test))
      (define (buffer) (store:create! author "surface" '("ab" "cd")))
@@ -244,7 +244,7 @@
      (define reload-token (surface:subscribe! reentrant reload-events))
      (load "lib/base/state/surface.sls")
      (define refreshed
-       (eval '(begin (import (prefix (surface) refreshed:))
+       (eval '(begin (import (prefix (state surface) refreshed:))
                      (list refreshed:snapshot refreshed:publish!))))
      (define reloaded-header ((car refreshed) reentrant))
      ((cadr refreshed) reentrant (car reloaded-header) 0 (list (row 0 'reloaded)) #f '(2 2))

@@ -1,19 +1,19 @@
 ;; git-view.sls -- interactive Git history and patch views.
 
-(import (only (edoc) elibrary))
-(elibrary (git-view)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps git-view)
   (export init! (rename (git-log! log!)) (rename (git-log-of! log-of!)) (rename (git-log-refresh! refresh!)))
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (style) style:)
-          (prefix (mode) mode:)
-          (prefix (string) string:)
-          (prefix (paint) paint:)
-          (prefix (head) head:)
-          (prefix (window) window:)
-          (prefix (keymap) keymap:)
-          (prefix (git) git:)
-          (prefix (doc) doc:))
+          (prefix (head edit) edit:)
+          (prefix (head style) style:)
+          (prefix (head mode) mode:)
+          (prefix (foundation string) string:)
+          (prefix (head paint) paint:)
+          (prefix (head head) head:)
+          (prefix (head window) window:)
+          (prefix (head keymap) keymap:)
+          (prefix (service git) git:)
+          (prefix (service doc) doc:))
 
   (define log-buffer #f)
   (define diff-buffer #f)
@@ -261,11 +261,11 @@
       (ensure-git-buffers!))
     (doc:register!
       '(((git-view:log!) (("procedure" . "(git-view:log!)")) "void"
-         ("(git-view)") git-view "Git" #f
+         ("(apps git-view)") git-view "Git" #f
          "Open the interactive `<git-log>` app for the repository containing the current file; `(git-view:log-of! path)` opens another repository's. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
         ((git-view:refresh!)
          (("procedure" . "(git-view:refresh!)")) "void"
-         ("(git-view)") git-view "Git" #f
+         ("(apps git-view)") git-view "Git" #f
          "Reload commits and changed files in the open `<git-log>` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
     (paint:add-highlighter!
       (lambda ()

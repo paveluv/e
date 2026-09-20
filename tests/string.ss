@@ -11,8 +11,8 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (prefix (string) string:)
-             (prefix (fuzzy) fuzzy:)
+             (prefix (foundation string) string:)
+             (prefix (foundation fuzzy) fuzzy:)
              (only (chezscheme) format))
 
 

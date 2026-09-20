@@ -1,14 +1,14 @@
 ;; directory.sls -- filesystem inventory and bounded recursive match groups.
 ;; No head state or threads: the caller owns cancellation and publication.
-(import (only (edoc) elibrary))
-(elibrary (directory)
+(import (only (foundation edoc) elibrary))
+(elibrary (service directory)
   (export scan refilter reconcile entry-path entry-kind entry-link? entry-mode entry-size
           entry-modified entry-created entry-count entry-complete? entry-matches
           relative-path matches? directory? (rename (parent-path parent)))
   (import (chezscheme)
-          (prefix (sys) sys:)
-          (prefix (file) file:)
-          (prefix (string) string:))
+          (prefix (sys sys) sys:)
+          (prefix (service file) file:)
+          (prefix (foundation string) string:))
 
   (edoc "A file system entry as the files view lists it."
         (path string "the absolute path")

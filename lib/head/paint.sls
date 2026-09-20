@@ -15,8 +15,8 @@
 ;; visible, the echo area's painting, the cursor, the title, the
 ;; visual bell, and redraw! -- one frame as one transaction.
 
-(import (only (edoc) elibrary))
-(elibrary (paint)
+(import (only (foundation edoc) elibrary))
+(elibrary (head paint)
   (export ansi! goto! fit
           display-editor-line! emit-runs!
           detect-hyperlinks valid-hyperlink? compute-breaks
@@ -50,16 +50,16 @@
                 eq-hashtable-ref eq-hashtable-set! remq getenv
                 make-mutex with-mutex unbox set-box!
                 current-time add-duration make-time time<?)
-          (prefix (only (sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:)
-          (prefix (style) style:)
-          (prefix (string) string:)
-          (prefix (head) head:)
-          (prefix (render) render:)
-          (prefix (glyph) glyph:)
-          (prefix (mode) mode:)
-          (prefix (keymap) keymap:)
-          (prefix (echo) echo:)
-          (prefix (kernel) kernel:))
+          (prefix (only (sys sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:)
+          (prefix (head style) style:)
+          (prefix (foundation string) string:)
+          (prefix (head head) head:)
+          (prefix (head render) render:)
+          (prefix (sys glyph) glyph:)
+          (prefix (head mode) mode:)
+          (prefix (head keymap) keymap:)
+          (prefix (head echo) echo:)
+          (prefix (core kernel) kernel:))
 
   ;;; Output primitives ---------------------------------------------------------
 

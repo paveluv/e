@@ -17,30 +17,30 @@
 ;; C-x C-e runs eval:run! over the whole current buffer, or an explicit
 ;; region/buffer target, in that same top level.
 
-(import (only (edoc) elibrary))
-(elibrary (eval)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps eval)
   (export init! settle-completion completion-candidates completion-extensions
           (rename (eval! run!)) (rename (eval-prompt! prompt!)) (rename (eval-prompt-with! prompt-with!))
           (rename (eval-copy-result copy-result)))
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (prefix (prompt) prompt:)
-          (prefix (head) head:)
-          (prefix (mode) mode:)
-          (prefix (kernel) kernel:)
-          (prefix (echo) echo:)
-          (prefix (string) string:)
-          (prefix (fuzzy) fuzzy:)
-          (prefix (edoc) edoc:)
-          (prefix (style) style:)
-          (prefix (paint) paint:)
-          (prefix (log) log:)
-          (prefix (keymap) keymap:)
-          (prefix (dispatch) dispatch:)
-          (prefix (only (reference) lookup) reference:)
-          (prefix (doc) doc:)
-          (prefix (only (scheme-format) indent-lines delimiter?) scheme-format:)
-          (prefix (only (sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
+          (prefix (head edit) edit:)
+          (prefix (head prompt) prompt:)
+          (prefix (head head) head:)
+          (prefix (head mode) mode:)
+          (prefix (core kernel) kernel:)
+          (prefix (head echo) echo:)
+          (prefix (foundation string) string:)
+          (prefix (foundation fuzzy) fuzzy:)
+          (prefix (foundation edoc) edoc:)
+          (prefix (head style) style:)
+          (prefix (head paint) paint:)
+          (prefix (service log) log:)
+          (prefix (head keymap) keymap:)
+          (prefix (head dispatch) dispatch:)
+          (prefix (only (service reference) lookup) reference:)
+          (prefix (service doc) doc:)
+          (prefix (only (foundation scheme-format) indent-lines delimiter?) scheme-format:)
+          (prefix (only (sys sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -106,15 +106,23 @@
     ;; spelled, else, for a module-prefixed name, under the library's own
     ;; spelling when the library is the module
     (define (some sigs) (and (pair? sigs) sigs))
+    (define (of-module? sig prefix)
+      ;; whether the signature's library, "(kind leaf)" or "(leaf)", has the
+      ;; prefix's module as its leaf: the prefix its names carry at M-x
+      (let* ([library (edoc:signature-library sig)] [n (string-length library)] [k (string-length prefix)])
+        (and (> n (+ k 1))
+             (memv (string-ref library (- n k 2)) '(#\( #\space))
+             (string=? (substring library (- n k 1) (- n 1)) prefix)
+             #t)))
     (or (some (edoc:edoc-named sym))
         (let* ([text (symbol->string sym)] [n (string-length text)])
           (let loop ([i 0])
             (cond
               [(= i n) #f]
               [(char=? (string-ref text i) #\:)
-               (let ([library (string-append "(" (substring text 0 i) ")")]
+               (let ([prefix (substring text 0 i)]
                      [sigs (edoc:edoc-named (string->symbol (substring text (+ i 1) n)))])
-                 (some (filter (lambda (sig) (string=? (edoc:signature-library sig) library)) (or sigs '()))))]
+                 (some (filter (lambda (sig) (of-module? sig prefix)) (or sigs '()))))]
               [else (loop (+ i 1))])))))
 
   (define (argument-type sym index)
@@ -182,12 +190,15 @@
         (and (pair? wanted) (eq? (car wanted) 'or) (exists (lambda (m) (type-fits? m produced)) (cdr wanted)))
         (and (pair? produced) (eq? (car produced) 'or) (exists (lambda (m) (type-fits? wanted m)) (cdr produced)))))
 
+  ;; the language's types, integer or boolean say, belong to the edoc library
+  (define language-owner (edoc:type-owner (edoc:type-named 'boolean)))
+
   (define (module-type? type)
     ;; a type with values worth scanning the top level for: one a library
     ;; defined, or a record; the language's types would list everything
     (cond [(symbol? type)
            (let ([record (edoc:type-named type)])
-             (and record (not (equal? (edoc:type-owner record) "(edoc)")) (edoc:type-owner record) #t))]
+             (and record (not (equal? (edoc:type-owner record) language-owner)) (edoc:type-owner record) #t))]
           [(and (pair? type) (eq? (car type) 'record)) #t]
           [(and (pair? type) (eq? (car type) 'or)) (exists module-type? (cdr type))]
           [else #f]))
@@ -1001,10 +1012,10 @@
   (define (init!)
     (doc:register!
       '(((eval:run!) (("procedure" . "(eval:run! [where])")) "void"
-         ("(eval)") eval "Evaluation commands" #f
+         ("(apps eval)") eval "Evaluation commands" #f
          "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
         ((eval:prompt!) (("procedure" . "(eval:prompt!)")) "void"
-         ("(eval)") eval "Evaluation commands" #f
+         ("(apps eval)") eval "Evaluation commands" #f
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (log:register-formatter! 'eval format-exchange style-exchange)
     (keymap:bind-default! "C-x C-e" eval!)

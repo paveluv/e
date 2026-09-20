@@ -14,17 +14,17 @@
 
 (when (and (pair? (command-line-arguments)) (string=? (car (command-line-arguments)) "--head"))
   (eval '(begin
-           (import (prefix (startup) startup:) (prefix (base) base:))
+           (import (prefix (core startup) startup:) (prefix (run base) base:))
            (startup:call-with-options (cdr (command-line-arguments))
              (lambda ()
                (base:call-with-runtime
-                 (lambda () (eval '(begin (import (edit) (prefix (main) main:)) (main:run!)))))))))
+                 (lambda () (eval '(begin (import (head edit) (prefix (run main) main:)) (main:run!)))))))))
   (exit 0))
 
 (eval
   '(begin
-     (import (prefix (sys) sys:) (prefix (vt) vt:)
-             (prefix (string) string:) (prefix (test) test:) (prefix (fixture) fixture:))
+     (import (prefix (sys sys) sys:) (prefix (service vt) vt:)
+             (prefix (foundation string) string:) (prefix (test) test:) (prefix (fixture) fixture:))
 
      (define (check label actual expected)
        (guard (ex [else (error 'wiring-test (format "~s" label) actual expected

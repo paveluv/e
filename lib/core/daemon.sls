@@ -1,15 +1,15 @@
 ;; daemon.sls -- installation-local process ownership and head bootstrap.
 ;; No store or head state: enter this lifetime before importing either runtime.
-(import (only (edoc) elibrary))
-(elibrary (daemon)
+(import (only (foundation edoc) elibrary))
+(elibrary (core daemon)
   (export call-with-base call-with-head socket rotate-logs! log-deadline control
           call-with-stop take-stop-signal! help! head-command status-summary report-start!)
   (import (chezscheme)
-          (prefix (startup) startup:)
-          (prefix (sys) sys:)
-          (prefix (kernel) kernel:)
-          (prefix (string) string:)
-          (prefix (wire) wire:))
+          (prefix (core startup) startup:)
+          (prefix (sys sys) sys:)
+          (prefix (core kernel) kernel:)
+          (prefix (foundation string) string:)
+          (prefix (foundation wire) wire:))
 
   (edoc "The base's socket path in its working directory."
         (returns file))

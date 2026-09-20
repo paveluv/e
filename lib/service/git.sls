@@ -4,8 +4,8 @@
 ;; callers work only with Scheme records. Using the executable keeps Git's
 ;; repository semantics and configuration without coupling e to libgit2's ABI.
 
-(import (only (edoc) elibrary))
-(elibrary (git)
+(import (only (foundation edoc) elibrary))
+(elibrary (service git)
   (export init!
           (rename (git-repository? repository?)) (rename (git-repository-path repository-path)) (rename (git-open open)) (rename (git-current-branch current-branch))
           (rename (git-status-entry? status-entry?)) (rename (git-status-path status-path)) (rename (git-status-original-path status-original-path))
@@ -22,8 +22,8 @@
           (rename (git-file-patch file-patch))
           (rename (git-error? error?)) (rename (git-error-code error-code)) (rename (git-error-command error-command)) (rename (git-error-stderr error-stderr)))
   (import (chezscheme)
-          (prefix (sys) sys:)
-          (prefix (doc) doc:))
+          (prefix (sys sys) sys:)
+          (prefix (service doc) doc:))
 
   (edoc "An opened git repository."
         (path directory "the worktree path"))
@@ -361,29 +361,29 @@
   (define (init!)
     (doc:register!
       '(((git:open) (("procedure" . "(git:open [path])")) "git-repository"
-         ("(git)") git "Git" #f
+         ("(service git)") git "Git" #f
          "Open the Git worktree containing `path`, which defaults to the current directory, and return a structured repository object.")
         ((git:current-branch)
          (("procedure" . "(git:current-branch repository)")) "string or #f"
-         ("(git)") git "Git" #f
+         ("(service git)") git "Git" #f
          "Return the current local branch name, or #f for a detached HEAD.")
         ((git:status) (("procedure" . "(git:status repository)"))
-         "list of git-status-entry" ("(git)") git "Git" #f
+         "list of git-status-entry" ("(service git)") git "Git" #f
          "Return staged, worktree, and untracked changes as structured status records. Paths containing whitespace or newlines are preserved.")
         ((git:branches) (("procedure" . "(git:branches repository)"))
-         "list of git-branch" ("(git)") git "Git" #f
+         "list of git-branch" ("(service git)") git "Git" #f
          "Return local branches with current, object, upstream, ahead, and behind fields.")
         ((git:log) (("procedure" . "(git:log repository [limit])"))
-         "list of git-commit" ("(git)") git "Git" #f
+         "list of git-commit" ("(service git)") git "Git" #f
          "Return recent commits as structured records; `limit` defaults to 50.")
         ((git:diff) (("procedure" . "(git:diff repository [staged?])"))
-         "list of git-diff-entry" ("(git)") git "Git" #f
+         "list of git-diff-entry" ("(service git)") git "Git" #f
          "Return changed paths and statuses from the unstaged diff, or the index diff when `staged?` is true.")
         ((git:commit-files)
          (("procedure" . "(git:commit-files repository commit)"))
-         "list of git-diff-entry" ("(git)") git "Git" #f
+         "list of git-diff-entry" ("(service git)") git "Git" #f
          "Return the files changed by a commit as structured path and status records.")
         ((git:file-patch)
          (("procedure" . "(git:file-patch repository commit path)"))
-         "git-patch" ("(git)") git "Git" #f
+         "git-patch" ("(service git)") git "Git" #f
          "Return one file's patch in a commit. Its lines are classified as headers, hunks, additions, deletions, metadata, or context.")))))

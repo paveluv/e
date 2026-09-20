@@ -13,8 +13,8 @@
 ;; pending-ask table has its own lifetime: known heads can receive questions
 ;; while detached. Session-owned questions end with their asking session.
 
-(import (only (edoc) elibrary))
-(elibrary (actor)
+(import (only (foundation edoc) elibrary))
+(elibrary (state actor)
   (export register! registered? detach! attached describe subscribe! unsubscribe!
           current call-as identity? audience? in-audience? send!
           ask! answer! cancel! cancel-owned! pending pending-tickets checkpoint checkpoint!
@@ -22,10 +22,10 @@
   (import (rnrs)
           (only (chezscheme) void make-mutex with-mutex
                 current-time time-second parameterize)
-          (prefix (kernel) kernel:)
-          (prefix (activity) activity:)
-          (prefix (datum) datum:)
-          (prefix (identity) identity:))
+          (prefix (core kernel) kernel:)
+          (prefix (sys activity) activity:)
+          (prefix (foundation datum) datum:)
+          (prefix (core identity) identity:))
 
   ;;; Registration ----------------------------------------------------------
 

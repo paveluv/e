@@ -15,7 +15,7 @@
 (when roots-runtime
   (eval
     `(begin
-       (import (prefix (store) store:) (prefix (kernel) kernel:))
+       (import (prefix (state store) store:) (prefix (core kernel) kernel:))
        (unless
          (and (string=? (kernel:installation-directory) (current-directory))
               (string=? (kernel:module-source "store")
@@ -23,16 +23,16 @@
               (for-all (lambda (root)
                          (string=? (cdr root) (format "~a/eo/~a" (current-directory) ',roots-runtime)))
                        (library-directories))
-              (equal? (and (memq 'publish! (library-exports '(store))) #t)
+              (equal? (and (memq 'publish! (library-exports '(state store))) #t)
                       ,(eq? roots-runtime 'base)))
          (error 'startup "test roots selected the wrong runtime" ',roots-runtime))))
   (exit 0))
 
 (eval
   '(begin
-     (import (prefix (startup) startup:) (prefix (daemon) daemon:) (prefix (actor) actor:)
-             (prefix (store) store:) (prefix (kernel) kernel:)
-             (prefix (string) string:) (prefix (sys) sys:)
+     (import (prefix (core startup) startup:) (prefix (core daemon) daemon:) (prefix (state actor) actor:)
+             (prefix (state store) store:) (prefix (core kernel) kernel:)
+             (prefix (foundation string) string:) (prefix (sys sys) sys:)
              (prefix (test) test:))
 
      (define (options) (list (startup:name) (startup:file)))
@@ -40,7 +40,7 @@
        (and (string:search text needle 0 (string-length text)) #t))
      (define (start-head)
        ;; Chez invokes libraries lazily; a reference must stay in the scope.
-       (eval '(begin (import (prefix (head) head:)) head:ui-actor)))
+       (eval '(begin (import (prefix (head head) head:)) head:ui-actor)))
 
      ;; One lifecycle driver for both streams, including a caller-owned port
      ;; that must remain usable until every callback and capture reader ends.

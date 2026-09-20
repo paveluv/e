@@ -13,8 +13,8 @@
 
 (eval
   '(begin
-     (import (prefix (file) file:) (prefix (directory) directory:) (prefix (sys) sys:) (prefix (test) test:)
-             (prefix (log) log:)
+     (import (prefix (service file) file:) (prefix (service directory) directory:) (prefix (sys sys) sys:) (prefix (test) test:)
+             (prefix (service log) log:)
              (only (chezscheme)
                    format getenv putenv current-directory
                    delete-file delete-directory mkdir chmod get-mode

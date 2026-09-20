@@ -14,16 +14,16 @@
 ;; is one character and one terminal cell, so editing, search, and the
 ;; file on disk are untouched.
 
-(import (only (edoc) elibrary))
-(elibrary (pretty-scheme)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps pretty-scheme)
   (export init! (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!)) (rename (pretty-scheme-rainbow! rainbow!)))
   (import (chezscheme)
-          (prefix (head) head:)
-          (prefix (edit) edit:)
-          (prefix (mode) mode:)
-          (prefix (paint) paint:)
-          (prefix (keymap) keymap:)
-          (prefix (doc) doc:))
+          (prefix (head head) head:)
+          (prefix (head edit) edit:)
+          (prefix (head mode) mode:)
+          (prefix (head paint) paint:)
+          (prefix (head keymap) keymap:)
+          (prefix (service doc) doc:))
 
   ;;; Clusters ------------------------------------------------------------------
 
@@ -325,15 +325,15 @@
     (doc:register!
       '(((pretty-scheme:clusters!)
          (("procedure" . "(pretty-scheme:clusters!)")) "void"
-         ("(pretty-scheme)") pretty-scheme "Display commands" #f
+         ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view that renders parentheses with glyph pairs chosen by syntactic construct.")
         ((pretty-scheme:depth!)
          (("procedure" . "(pretty-scheme:depth!)")) "void"
-         ("(pretty-scheme)") pretty-scheme "Display commands" #f
+         ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view whose parenthesis glyph pairs rotate with nesting depth.")
         ((pretty-scheme:rainbow!)
          (("procedure" . "(pretty-scheme:rainbow!)")) "void"
-         ("(pretty-scheme)") pretty-scheme "Display commands" #f
+         ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view that colors parentheses by nesting depth.")))
     (mode:register! "pretty-scheme-clusters" '() '() scheme-styles rendered)
     (mode:register! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)

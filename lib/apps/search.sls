@@ -10,23 +10,23 @@
 ;; dispatch with the search carrying on, so windows and buffers can be
 ;; switched mid-search.
 
-(import (only (edoc) elibrary))
-(elibrary (search)
+(import (only (foundation edoc) elibrary))
+(elibrary (apps search)
   (export init! (rename (search! incremental!)) (rename (search-fold-case fold-case))
           count replace-all! replace!)
   (import (chezscheme)
-          (prefix (edit) edit:)
-          (literal)
-          (prefix (dispatch) dispatch:)
-          (prefix (style) style:)
-          (prefix (prompt) prompt:)
-          (prefix (string) string:)
-          (prefix (paint) paint:)
-          (prefix (tty) tty:)
-          (prefix (keymap) keymap:)
-          (prefix (head) head:)
-          (prefix (window) window:)
-          (prefix (doc) doc:))
+          (prefix (head edit) edit:)
+          (head literal)
+          (prefix (head dispatch) dispatch:)
+          (prefix (head style) style:)
+          (prefix (head prompt) prompt:)
+          (prefix (foundation string) string:)
+          (prefix (head paint) paint:)
+          (prefix (sys tty) tty:)
+          (prefix (head keymap) keymap:)
+          (prefix (head head) head:)
+          (prefix (head window) window:)
+          (prefix (service doc) doc:))
 
   ;; Configuration: whether the incremental search folds case the
   ;; smart way, as Emacs does -- matching ignores case only while the
@@ -428,7 +428,7 @@
   (define (init!)
     (doc:register!
       '(((search:incremental!) (("procedure" . "(search:incremental!)")) "void"
-         ("(search)") search "Search commands" #f
+         ("(apps search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
     (paint:add-highlighter! search-highlights)
     (paint:add-highlighter! (lambda () (if query-match (list query-match) '())))

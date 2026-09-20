@@ -1,15 +1,15 @@
 ;; surface.sls -- versioned rendition for store text. A publication installs
 ;; row changes, cursor and size together. Readers pin a frame generation;
 ;; the head must pair it with text at that frame's store revision.
-(import (only (edoc) elibrary))
-(elibrary (surface)
+(import (only (foundation edoc) elibrary))
+(elibrary (state surface)
   (export init! publish! withdraw! snapshot rows subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void)
-          (prefix (kernel) kernel:)
-          (prefix (activity) activity:)
-          (prefix (store) store:)
-          (prefix (datum) datum:))
+          (prefix (core kernel) kernel:)
+          (prefix (sys activity) activity:)
+          (prefix (state store) store:)
+          (prefix (foundation datum) datum:))
 
   ;; Stable record identities let reloaded code use the persistent state.
   ;; Frames and their row tables are private immutable snapshots; only a

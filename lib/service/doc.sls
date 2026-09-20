@@ -9,15 +9,15 @@
 ;; described.  Exported names drop the module stem: (doc:register!
 ;; entries), (doc:entries), (doc:forms e).
 
-(import (only (edoc) elibrary))
-(elibrary (doc)
+(import (only (foundation edoc) elibrary))
+(elibrary (service doc)
   (export (rename (make-doc-entry make) (doc-entry? entry?))
           names forms returns libraries source chapter url description
           register! entries to-datum from-datum call-with-entries)
   (import (rnrs)
           (only (chezscheme) void make-thread-parameter parameterize)
-          (prefix (kernel) kernel:)
-          (prefix (datum) datum:))
+          (prefix (core kernel) kernel:)
+          (prefix (foundation datum) datum:))
 
   (edoc "A documentation entry in the describe corpus's eight-field format."
         (names (list-of symbol) "the names it defines")

@@ -8,8 +8,8 @@
 ;; and edit and the apps call it.  Its default keys are bound in init!,
 ;; owned by the module for reload.
 
-(import (only (edoc) elibrary))
-(elibrary (window)
+(import (only (foundation edoc) elibrary))
+(elibrary (head window)
   (export init!
           focus! focus-next! focus-up! focus-down! focus-left! focus-right!
           split-below! split-right! split-above! split-left!
@@ -18,11 +18,11 @@
           display! pop-up-or-reuse!)
   (import (rnrs)
           (only (chezscheme) format void quotient)
-          (prefix (kernel) kernel:)
-          (prefix (keymap) keymap:)
-          (prefix (head) head:)
-          (prefix (paint) paint:)
-          (prefix (prompt) prompt:))
+          (prefix (core kernel) kernel:)
+          (prefix (head keymap) keymap:)
+          (prefix (head head) head:)
+          (prefix (head paint) paint:)
+          (prefix (head prompt) prompt:))
 
   (define (message! text)
     ;; an indicator in the echo area: shown, never logged

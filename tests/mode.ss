@@ -13,9 +13,9 @@
 (eval
   '(begin
      (import (prefix (test) test:)
-             (prefix (mode) mode:)
-             (prefix (head) head:)
-             (prefix (store) store:)
+             (prefix (head mode) mode:)
+             (prefix (head head) head:)
+             (prefix (state store) store:)
              (only (chezscheme) format box unbox set-box!))
 
 
