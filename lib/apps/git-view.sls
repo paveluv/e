@@ -169,7 +169,7 @@
           [(member event '("r" "R")) (git-log-refresh!) #t]
           [(string=? event "RET") (show-row-diff!) #t]
           [(string=? event "MOUSE-CLICK")
-           (let ([hit (log-hit (app-event-buffer-position))])
+           (let ([hit (log-hit (head:app-event-buffer-position))])
              (cond [hit
                     (if (eq? (caddr hit) 'refresh) (git-log-refresh!) (show-row-diff!))
                     'keep-focus]

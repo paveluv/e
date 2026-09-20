@@ -70,7 +70,6 @@
 
 
 
-    app-event-position app-event-buffer-position app-event-button
   )
   (import (chezscheme)
           (literal)
@@ -1873,21 +1872,18 @@
         (set! mark-active? #t))))
 
   ;; Preserve the command-layer API; the head owns this delivery context.
-  (define app-event-position head:app-event-position)
-  (define app-event-button head:app-event-button)
-  (define app-event-buffer-position head:app-event-buffer-position)
   (define (call-with-app-mouse-event w start height x y button thunk)
     ;; One coordinate boundary for clicks, drags, releases, and wheel ticks.
     ;; Exclude chrome from viewport cells; retain raw character positions
     ;; beyond text so apps can distinguish blank space from the last glyph.
     (parameterize
-      ([app-event-position
+      ([head:app-event-position
         (cons (max 1 (- x (head:window-xoff w)
                         (if (eq? (head:window-scrollbar? w) 'left) 1 0)
                         (head:window-line-number-width w)))
               (max 1 (- y start)))]
-       [app-event-buffer-position (paint:window-position w start height x y)]
-       [app-event-button button])
+       [head:app-event-buffer-position (paint:window-position w start height x y)]
+       [head:app-event-button button])
       (thunk)))
 
   (define (mouse-press! x y button)

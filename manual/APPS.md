@@ -48,16 +48,15 @@ from the clicked cell even though the buffer is read-only.
 Drag and release belong to the window and buffer that accepted the press.
 An ignored click arms neither, and an action that opens another buffer cannot
 move that new buffer's point when the mouse button is released.
-During clicks, drags, releases, and wheel events, `(edit:app-event-buffer-position)`
+During clicks, drags, releases, and wheel events, `(head:app-event-buffer-position)`
 returns the unclamped zero-based `(row . character-column)` addressed by the
 pointer, using that window's presentation when it has one. It may lie beyond
 the buffer's last line, allowing an app to ignore
-empty viewport space. `(edit:app-event-position)` is a one-based `(x . y)` cell
+empty viewport space. `(head:app-event-position)` is a one-based `(x . y)` cell
 position within the text viewport, excluding the scrollbar and line-number
-gutter. `(edit:app-event-button)` is the raw xterm button code, including motion and
-modifier bits. These thread-local parameters are also exported by `head:`;
-the command-layer names reference the same context. They are `#f` outside
-pointer delivery. `(head:app-event-focus)` is the window that had keyboard
+gutter. `(head:app-event-button)` is the raw xterm button code, including motion and
+modifier bits. These thread-local parameters are `#f` outside pointer
+delivery. `(head:app-event-focus)` is the window that had keyboard
 focus when the pointer event began: the app's own window is selected while
 its handler runs, so an app acting as a control panel for another window
 addresses this one instead. It is `#f` for keyboard events.

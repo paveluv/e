@@ -473,7 +473,7 @@
              '(#t #t #t #t #t #t #t #t)))
          (let ([paste (string-copy "paste me")] [raw (cons 48 1)] [identity (actor:current)])
            (head:set-pending-paste! paste)
-           (parameterize ([app-event-buffer-position raw] [app-event-position '(3 . 2)] [app-event-button 0])
+           (parameterize ([head:app-event-buffer-position raw] [head:app-event-position '(3 . 2)] [head:app-event-button 0])
              (head:dispatch-app-event! "PASTE"))
            (string-set! paste 0 #\X)
            (set-car! raw 999)
@@ -485,7 +485,7 @@
                    (size 4 6) (color-scheme . #f) (revision . 0) (generation . ,(car (surface:snapshot id))))))
              (set-car! (cadr message) 'damaged)
              (check 'delivery-cannot-mutate-head-identity-or-context
-               (list (car head:ui-actor) (actor:current) (app-event-buffer-position)) (list 'head identity #f))))
+               (list (car head:ui-actor) (actor:current) (head:app-event-buffer-position)) (list 'head identity #f))))
          (let ([before (length (received 'input))] [ran? #f] [commands 0])
            (define (toggle!) (head:set-full-capture! (head:current-window) (not (head:full-capture? (head:current-window)))))
            (mode:register! "adapter-test" '() '() (lambda (line) #f))

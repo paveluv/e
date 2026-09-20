@@ -485,14 +485,14 @@
                                       (string->list (head:read-paste)))))) #t]
           [(tty:key-event-character event) => (lambda (c) (filter! (string-append query (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
-           (let* ([at (app-event-buffer-position)] [row (and at (at-row (car at)))]
+           (let* ([at (head:app-event-buffer-position)] [row (and at (at-row (car at)))]
                   [column (column-at (head:current-window) at)])
              (set! hover (cond [row (cons (head:current-window) (car row))]
                                [column (cons (head:current-window) (car column))] [else #f]))) #t]
           [(member event '("MOUSE-LEAVE" "BLUR")) (set! hover #f) #t]
           [(member event '("MOUSE-RELEASE" "MOUSE-DRAG")) (select! (keyboard-row (head:current-window))) #t]
           [(string=? event "MOUSE-CLICK")
-           (let* ([at (app-event-buffer-position)] [row (and at (at-row (car at)))]
+           (let* ([at (head:app-event-buffer-position)] [row (and at (at-row (car at)))]
                   [breadcrumb (and at (breadcrumb-hit (head:current-window) (car at) (cdr at)))]
                   [column (column-at (head:current-window) at)]
                   ;; Navigation from another pane ends path entry through the
