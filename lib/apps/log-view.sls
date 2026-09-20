@@ -17,6 +17,7 @@
           (prefix (mode) mode:)
           (prefix (string) string:)
           (prefix (head) head:)
+          (prefix (window) window:)
           (prefix (log) log:)
           (prefix (doc) doc:))
 
@@ -119,7 +120,7 @@
   (edoc "Pop up the log view.")
   (define (show-log!)
     ;; Pop up the *log* view.
-    (pop-up-or-reuse! (log-view!))
+    (window:pop-up-or-reuse! (log-view!))
     (void))
 
   (edoc "Install the log view: its describe entry, its mode and the saved filters of views that survived a reload.")

@@ -94,7 +94,7 @@
             (length (filter (lambda (a) (eq? (head:app-buffer a) app))
                             (head:registered-apps)))
             1)
-     (show-buffer! app)
+     (head:show-buffer! app)
      (head:refresh-visible-views!)
      (check 'new-refresh-runs-once calls 1)
      (head:detach-app! app)
@@ -106,13 +106,13 @@
      ;; An offscreen refresh must leave a valid selection and viewport
      ;; when the user reopens the app, even if its text became shorter.
      (head:view-replace! explicit '("first" "second" "third"))
-     (show-buffer! explicit)
+     (head:show-buffer! explicit)
      (goto-point! '(2 . 5))
      (set-mark-command!)
      (head:window-top-set! (head:current-window) 2)
-     (show-buffer! app)
+     (head:show-buffer! app)
      (head:view-replace! explicit '("x"))
-     (show-buffer! explicit)
+     (head:show-buffer! explicit)
      (check 'shorter-view-clamps-saved-point (point) '(0 . 1))
      (check 'shorter-view-clamps-selection (mark) '(0 . 1))
      (check 'shorter-view-clamps-saved-viewport (head:window-top (head:current-window)) 0)
@@ -127,7 +127,7 @@
      (goto-point! '(0 . 0))
      (copy-region!)
      (check 'shorter-view-selection-can-be-copied (mark) #f)
-     (show-buffer! app)
+     (head:show-buffer! app)
 
      ;; One model can publish different row layouts to its windows. Geometry
      ;; reads the same presentation, while resizing changes no source text.
@@ -138,7 +138,7 @@
             [wide '#("wide heading" "界e\x301;Z")]
             [narrow '#("heading" "e\x301;Z")]
             [observed #f])
-       (show-buffer! b)
+       (head:show-buffer! b)
        (head:set-layout-root! (head:make-layout-split 'right w other 2 1))
        (head:set-app-selectable! b #f)
        (head:set-repaint-hook!
@@ -176,7 +176,7 @@
          (list (make-list 2 (list->vector source)) '(#("replacement") #("replacement"))))
        (head:set-repaint-hook! paint:invalidate-screen-cache!)
        (head:set-layout-root! root)
-       (show-buffer! was)
+       (head:show-buffer! was)
        (head:forget-buffer! b))
 
      ;; A shared label wins even when it arrives after the local tool.
@@ -199,8 +199,8 @@
      ;; Names are claimed on list entry as well as construction.
      (define first (head:new-local-buffer! "pending"))
      (define second (head:new-local-buffer! "pending"))
-     (show-buffer! first)
-     (show-buffer! second)
+     (head:show-buffer! first)
+     (head:show-buffer! second)
      (check 'late-name-claim-keeps-first (head:buffer-name first) "<pending>")
      (check 'late-name-claim-suffixes-second (head:buffer-name second) "<pending 2>")
 
@@ -294,12 +294,12 @@
          (list '(#t #t) '(#t #t) (list old-all old-filtered))))
      (check 'rebuild-does-not-change-records (log:entries) log-records)
      (log:add! 'app-probe "after reload" #f)
-     (show-buffer! filtered-log)
+     (head:show-buffer! filtered-log)
      (head:refresh-visible-views!)
      (check 'filtered-refresh-after-reload
             (vector-length (head:buffer-lines filtered-log))
             (+ 1 (vector-length old-filtered)))
-     (show-buffer! all-log)
+     (head:show-buffer! all-log)
      (head:refresh-visible-views!)
      (check 'log-refresh-after-reload
             (vector-length (head:buffer-lines all-log))
@@ -319,7 +319,7 @@
      (define arrivals (log-view:buffer! 'during-refresh))
      (check 'refresh-has-a-fixed-record-bound
             (vector-length (head:buffer-lines arrivals)) 1)
-     (show-buffer! arrivals)
+     (head:show-buffer! arrivals)
      (head:refresh-visible-views!)
      (check 'next-refresh-picks-up-interleaved-record
             (vector-length (head:buffer-lines arrivals)) 2)
@@ -350,7 +350,7 @@
        (log:add! 'noise "between" #f)
        (log:add! 'retention "kept\nthree\nlines" #f)
        (let ([b (log-view:buffer! 'retention)])
-         (show-buffer! b)
+         (head:show-buffer! b)
          (head:window-prow-set! w 2)
          (head:window-pcol-set! w 5)
          (head:window-top-set! w 2)
@@ -363,13 +363,13 @@
                  (head:window-top w) (head:buffer-mark-row b) (head:buffer-mark-col b) formatted
                  (map log:datum (log:entries 'retention)))
            '(3 (0 . 5) 0 1 6 2 ("kept\nthree\nlines" "expired\ntwo")))
-         (show-buffer! all-log)
+         (head:show-buffer! all-log)
          (head:refresh-visible-views!)
          (check 'hidden-log-resyncs-to-the-retained-range-including-multiline-rows
            (vector-length (head:buffer-lines all-log)) 4098)
          (do ([i 0 (+ i 1)]) ((= i 4096)) (log:add! 'noise i #f))
          (head:refresh-visible-views!)
-         (show-buffer! b)
+         (head:show-buffer! b)
          (head:refresh-visible-views!)
          (check 'views-expire-all-old-rows-even-with-no-new-matching-record
            (list (head:buffer-lines b) (head:buffer-point b)
@@ -382,7 +382,7 @@
                  (let ([line (vector-ref (head:buffer-lines b) 0)])
                    (substring line (- (string-length line) 8) (string-length line))))
            '(1 "returned"))
-         (show-buffer! all-log)
+         (head:show-buffer! all-log)
          (head:refresh-visible-views!)
          (let ([before (let-values ([(records end first) (log:snapshot 0 0)]) end)])
            (log:retention 3)
@@ -398,12 +398,12 @@
      ;; Mouse routing needs the handler's focus decision, not only truth.
      (let* ([previous (head:current-buffer)] [result #f]
             [b (head:register-app! "dispatch-results" void (lambda (event) result))])
-       (show-buffer! b)
+       (head:show-buffer! b)
        (check 'local-dispatch-preserves-focus-results
          (map (lambda (value) (set! result value) (head:dispatch-app-event! "MOUSE-CLICK"))
            '(#f #t keep-focus ignore-click))
          '(#f #t keep-focus ignore-click))
-       (show-buffer! previous)
+       (head:show-buffer! previous)
        (head:forget-buffer! b))
 
      ;; One shared app exercises the complete head adapter. Its endpoint only

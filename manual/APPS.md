@@ -327,7 +327,7 @@ key; changing the displayed label keeps that identity. Local renames
 retain angle brackets, and duplicate labels become `<example 2>`.
 
 Apps act on the selected window -- their own, when it is selected.  Use
-`edit:show-buffer!` to show an app here, or `edit:display-buffer!` to show it without
+`head:show-buffer!` to show an app here, or `window:display!` to show it without
 leaving the current window.
 
 Table-like apps can request shared presentation chrome:
@@ -384,9 +384,9 @@ everything fits.
 
 There is no notion of an app's "target window": an app acts on the
 selected window, its own included.  A command that shows another buffer
-(`edit:show-buffer!`) replaces the app in the window the user is in; one that
+(`head:show-buffer!`) replaces the app in the window the user is in; one that
 wants the app to stay visible shows the buffer elsewhere
-(`edit:display-buffer!`).  The window tree is the only source of windows, and
+(`window:display!`).  The window tree is the only source of windows, and
 the user's window commands and mouse gestures move between them as usual
 while an app is focused.
 Each window keeps its own point and viewport, including multiple

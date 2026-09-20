@@ -24,7 +24,7 @@
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])
          (head:buffer-lines-set! b '#("base" "other"))
-         (show-buffer! b)
+         (head:show-buffer! b)
          (goto-point! '(0 . 0))
          b))
      (define (text-of b) (vector->list (head:buffer-lines b)))
@@ -211,7 +211,7 @@
      (check 'fact-conflict-keeps-entire-formatted-result (buffer-text foreign-fact) "BASE\nOTHER")
 
      ;; The same editing guard protects history actions and fresh edits.
-     (show-buffer! plain)
+     (head:show-buffer! plain)
      (head:buffer-read-only-set! plain #t)
      (define protected-text (text-of plain))
      (check 'read-only-history-commands-refuse

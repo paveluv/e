@@ -53,25 +53,25 @@ While the prompt is active:
 
 Symbol completion matches contiguous segments beginning at the start of a
 symbol or immediately after `-` or `:`. Segments may appear in a different
-order: `splitright` and `rightsplit` both find `edit:split-window-right!`. Each
+order: `splitright` and `rightsplit` both find `window:split-right!`. Each
 character occurrence can be used only once, so `xx` requires two `x` characters.
 Matching is case-sensitive; other punctuation, including `_`, does not create
 a boundary. Longer intact segments, fewer reorderings, and matches nearer the
 beginning rank first.
 
 Typed `-` and `:` stay inside literal segments, just like letters. Thus
-`split-w` matches `edit:split-window-below!`, but `s-w` and `w-s` do not abbreviate it.
+`split-b` matches `window:split-below!`, but `s-b` and `b-s` do not abbreviate it.
 You can omit separators when typing prefixes: `spwir` finds
-`edit:split-window-right!` as `sp` + `wi` + `r`. Reordering still works with
-punctuation when the literal pieces exist: `window-split` can match
-`edit:split-window-right!` as `window-` + `split`.
+`window:split-right!` as `sp` + `wi` + `r`. Reordering still works with
+punctuation when the literal pieces exist: `rightwindow:` can match
+`window:split-right!` as `right` + `window:`.
 
 Tab chooses a longest extension that the original query can match and that
 still matches every candidate. This preserves exactly the same match set,
 including its boundary constraints. For example, `splitwindow` and
-`windowsplit` normalize to `split-window-` while all four split commands
+`windowsplit` normalize to `window:split-` while all four split commands
 remain. Adding `r` would lose the other three, so it is not inserted yet.
-Typing `r` and pressing Tab then produces `edit:split-window-right!`, including
+Typing `r` and pressing Tab then produces `window:split-right!`, including
 the `!`.
 The same rule applies to separators: `ker:` cannot abbreviate the literal
 prefix `kernel:`. Tab cannot add a colon after `ker` merely because all
@@ -117,7 +117,7 @@ itself. The hint is display-only: clicking anywhere in a candidate's rows
 inserts just the symbol.
 
 At an argument position of a documented procedure, Tab completes by the
-argument's type instead of by symbol. `(edit:show-buffer! ` offers every live
+argument's type instead of by symbol. `(head:show-buffer! ` offers every live
 buffer as the expression that denotes it, `(buffer "edit.sls")`, with the
 buffer's file, mode and state as its hint; then the documented procedures
 and parameters that produce a buffer, `(head:current-buffer)` and
@@ -131,7 +131,7 @@ part. Tab extends the token to the longest text every current candidate
 still matches: `bu` becomes `(buffer` when everything offered is a form,
 and stays bare while a variable such as `myb` is among the matches. The
 operator position of a nested form takes the enclosing argument's type,
-so `(edit:show-buffer! (cu` completes to `(head:current-buffer)` rather than to every
+so `(head:show-buffer! (cu` completes to `(head:current-buffer)` rather than to every
 symbol; a form under a quote, or under an undocumented operator, completes
 symbols as before. A `one-of` type offers its literals, a boolean `#t` and
 `#f`, and inside a string literal the type's string values complete the

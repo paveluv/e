@@ -23,6 +23,7 @@
           (prefix (tty) tty:)
           (prefix (keymap) keymap:)
           (prefix (head) head:)
+          (prefix (window) window:)
           (prefix (doc) doc:))
 
   ;; Configuration: whether the incremental search folds case the
@@ -198,7 +199,7 @@
           [(eq? action 'cancel)
            (set! needle-now "")
            (set! current-match #f)
-           (when (select-window! origin-window) (goto-point! origin))
+           (when (window:focus! origin-window) (goto-point! origin))
            (indicate! "Quit")]
           [(eq? action 'repeat)
            (if (string=? needle "")

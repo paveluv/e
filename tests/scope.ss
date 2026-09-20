@@ -14,7 +14,8 @@
              (except (edit) init!)
              (literal)
              (prefix (kernel) kernel:)
-             (prefix (head) head:))
+             (prefix (head) head:)
+             (prefix (window) window:))
 
      (define check test:check)
      (define (fresh name lines)
@@ -25,7 +26,7 @@
 
      (define a (fresh "scope-a" '("x one x" "two x")))
      (define b (fresh "scope-b" '("x three" "x x")))
-     (show-buffer! a)
+     (head:show-buffer! a)
      (goto-point! '(0 . 0))
 
      ;; with-buffer: the buffer is current inside, the old one returns after,
@@ -57,44 +58,44 @@
      (check 'count-matches-under-with-region (with-region (region a '(0 . 0) '(0 . 3)) (count-matches "x")) 1)
 
      ;; with-window selects a window for the body only
-     (split-window-below!)
+     (window:split-below!)
      (define here (head:current-window))
      (define other (find (lambda (w) (and (not (eq? w here)) (not (head:popup? w)))) (head:windows)))
      (check 'with-window-selects-the-window
-       (list (head:with-window other (head:current-window)) (head:current-window))
+       (list (window:with-window other (head:current-window)) (head:current-window))
        (list other here))
-     (head:with-window other (show-buffer! b))
+     (window:with-window other (head:show-buffer! b))
      (check 'a-command-under-with-window-acts-there
        (list (head:window-buffer other) (head:window-buffer here) (head:current-window))
        (list b a here))
      (check 'with-window-wants-a-live-window
-       (guard (ex [else 'refused]) (head:with-window 'nowhere (head:current-window)))
+       (guard (ex [else 'refused]) (window:with-window 'nowhere (head:current-window)))
        'refused)
 
      ;; exact arities: no optional scope or setting
      (check 'undo-takes-no-scope (guard (ex [else 'refused]) (undo! 'all)) 'refused)
-     (set-wrap! #f)
+     (window:set-wrap! #f)
      (check 'set-wrap-sets-the-window (head:window-wrap here) #f)
-     (toggle-wrap!)
+     (window:toggle-wrap!)
      (check 'toggle-wrap-flips-it (head:window-wrap here) #t)
-     (set-wrap! 'default)
+     (window:set-wrap! 'default)
      (check 'set-wrap-takes-default (head:window-wrap here) 'default)
-     (check 'set-wrap-refuses-a-buffer-setting (guard (ex [else 'refused]) (set-wrap! 'clean)) 'refused)
+     (check 'set-wrap-refuses-a-buffer-setting (guard (ex [else 'refused]) (window:set-wrap! 'clean)) 'refused)
 
      ;; line numbers are the window's too, beside an edit buffer; an app's
      ;; buffer shows itself and refuses the window toggles
-     (set-line-numbers! #t)
+     (window:set-line-numbers! #t)
      (check 'set-line-numbers-sets-the-window
        (list (head:window-line-numbers here) (head:window-line-numbers? here) (head:window-line-numbers? other))
        '(#t #t #f))
-     (toggle-line-numbers!)
+     (window:toggle-line-numbers!)
      (check 'toggle-line-numbers-flips-it (head:window-line-numbers here) #f)
-     (set-line-numbers! 'default)
+     (window:set-line-numbers! 'default)
      (define app (head:register-app! "scope-app" void))
-     (show-buffer! app)
+     (head:show-buffer! app)
      (check 'an-app-buffer-refuses-the-window-toggles
-       (list (guard (ex [(kernel:refusal? ex) 'refused]) (toggle-wrap!))
-             (guard (ex [(kernel:refusal? ex) 'refused]) (set-line-numbers! #t))
+       (list (guard (ex [(kernel:refusal? ex) 'refused]) (window:toggle-wrap!))
+             (guard (ex [(kernel:refusal? ex) 'refused]) (window:set-line-numbers! #t))
              (head:window-line-numbers? here) (head:window-line-numbers here))
        '(refused refused #f default))
 

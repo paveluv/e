@@ -74,7 +74,7 @@
                   (when id
                     (vt:close! id)
                     (when (store:exists? id) (store:delete! head:ui-actor id)))
-                  (when (eq? (head:current-buffer) buffer) (show-buffer! prior))
+                  (when (eq? (head:current-buffer) buffer) (head:show-buffer! prior))
                   (raise ex)])
         (paint:window-layout)
         (let ([w (head:current-window)])
@@ -83,7 +83,7 @@
                      (max 1 (head:window-size w)) (head:window-content-width w)
                      (head:host-color-scheme))))
         (set! buffer (head:adopt-store-buffer! id))
-        (show-buffer! buffer)
+        (head:show-buffer! buffer)
         (head:set-full-capture! (head:current-window) #f)
         (void))))
 

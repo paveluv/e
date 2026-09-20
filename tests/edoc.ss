@@ -13,7 +13,8 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (edoc) (prefix (kernel) kernel:) (prefix (test) test:))
+     (import (except (edit) init!)
+             (prefix (window) window:) (edoc) (prefix (kernel) kernel:) (prefix (test) test:))
 
      (define check test:check)
 
@@ -230,10 +231,10 @@
      (check 'the-command-layer-reads-back
        (list (map argument-type (signature-arguments (car (edoc-of visit-file!))))
              (map argument-type (signature-arguments (car (edoc-of present-log-entries!))))
-             (signature-arguments (car (edoc-of split-window-below!)))
-             (argument-type (signature-returns (car (edoc-of select-window!))))
-             (signature-library (car (edoc-of delete-window!))))
-       '((file) ((list-of datum)) () boolean "(edit)"))
+             (signature-arguments (car (edoc-of window:split-below!)))
+             (argument-type (signature-returns (car (edoc-of window:focus!))))
+             (signature-library (car (edoc-of window:delete!))))
+       '((file) ((list-of datum)) () boolean "(window)"))
      (check 'documented-clauses-match-their-formals
        (filter (lambda (sym)
                  (not (for-all (lambda (sig)

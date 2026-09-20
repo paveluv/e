@@ -26,7 +26,7 @@
      (define raises? test:raises?)
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])
-         (show-buffer! b)
+         (head:show-buffer! b)
          (goto-point! '(0 . 0))
          b))
      (define (state b)

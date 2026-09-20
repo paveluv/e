@@ -44,7 +44,7 @@
           window-size window-size-set!
           window-xoff window-xoff-set!
           window-width window-width-set!
-          window-wrap window-wrap-set! window-line-numbers window-line-numbers-set!
+          window-wrap window-wrap-set! window-line-numbers window-line-numbers-set! window-goal window-goal-set!
           (rename (window-full-capture? full-capture?)) set-full-capture!
           window-status-actions-set!
           make-layout-split layout-split?
@@ -59,7 +59,7 @@
           layout-min-width layout-min-height weighted-first
           layout-node!
           min-window-lines
-          windows set-windows! root set-root! (rename (current current-window)) set-current! call-with-window with-window call-with-buffer with-buffer
+          windows set-windows! root set-root! (rename (current current-window)) set-current! call-with-window call-with-buffer with-buffer show-buffer!
           current-buffer buffer-line buffer-line-count
           dividers set-dividers!
           read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
@@ -196,6 +196,7 @@
         (width integer "the width in columns")
         (wrap (or boolean (one-of default)) "whether long lines wrap here")
         (line-numbers (or boolean (one-of default)) "whether an edit buffer shows line numbers here")
+        (goal (or pair #f) "the vertical-motion goal, (column . context) while the context holds")
         (following? boolean "whether it follows its shared app")
         (view any "a local app's presentation of its rows, or #f")
         (full-capture? boolean "whether every key goes to the app")
@@ -225,6 +226,9 @@
       ;; line numbers beside an edit buffer's text: #t, #f, or default for
       ;; the head's line-numbers parameter
       (mutable line-numbers)
+      ;; the goal column of vertical motion, with the navigation context
+      ;; that set it: the goal survives exactly as long as the context
+      (mutable goal)
       ;; Following a shared app is a window preference, never a store fact.
       (mutable following?)
       ;; Optional local-app presentation; rows retain their shared identity.
@@ -369,7 +373,7 @@
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size xoff width wrap 'default #t #f #f '()))
+                  size xoff width wrap 'default #f #t #f #f '()))
 
   (edoc "Say whether a window sends every key to its app, and repaint."
         (w window "the window")
@@ -2385,7 +2389,7 @@
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
                          (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                           0 topseg left 0 0 1 0 80 wrap numbers following? #f full? '()))
+                           0 topseg left 0 0 1 0 80 wrap numbers #f following? #f full? '()))
                        (cond [(= version 1) (append node '(#f default))]
                              [(= version 2) (append node '(default))]
                              [else node]))]
@@ -3160,6 +3164,16 @@
       ;; Identity, geometry, and rendition agree before a callback can switch.
       (unless (eq? old b) (request-repaint!))))
 
+  (edoc "Show a buffer in the current window and put it first in the recency list; a buffer whose recency fact is behind goes last instead."
+        (b buffer "the buffer to show"))
+  (define (show-buffer! b)
+    (add-buffer! b)
+    ;; A picker is inventory, not a document visit: it stays behind the
+    ;; documents in the recency list even when its own row is opened.
+    (let ([rest (remq b the-buffers)])
+      (set! the-buffers (if (eq? (buffer-fact b 'recency #f) 'behind) (append rest (list b)) (cons b rest))))
+    (set-window-buffer! the-current b))
+
   ;;; Scopes: another window or buffer current for the extent of a thunk
 
   (edoc "Run a thunk with a window temporarily selected, without telling the apps; the selection returns on exit and on escape."
@@ -3173,13 +3187,6 @@
         (lambda () (set! the-current w))
         thunk
         (lambda () (set! the-current prev)))))
-
-  (edoc "Run body with a window temporarily selected, as call-with-window does: (with-window (window 2) (edit:split-window-below!))."
-        (w window "the window to select")
-        (body (list-of any) "the forms to run"))
-  (define-syntax with-window
-    (syntax-rules ()
-      [(_ w body ...) (call-with-window w (lambda () body ...))]))
 
   (edoc "Run a thunk with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change."
         (b buffer "the buffer to make current")

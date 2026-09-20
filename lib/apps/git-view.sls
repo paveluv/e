@@ -10,6 +10,7 @@
           (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
+          (prefix (window) window:)
           (prefix (keymap) keymap:)
           (prefix (git) git:)
           (prefix (doc) doc:))
@@ -118,7 +119,7 @@
                           (git:diff-path (caddr row))))
         (set! diff-dirty? #t)
         (refresh-diff!)
-        (show-buffer! diff-buffer))))
+        (head:show-buffer! diff-buffer))))
 
   (define (reload-log!)
     (unless repository (error 'git-log-refresh! "Git log is not open"))
@@ -243,9 +244,9 @@
     (set! repository (git:open path))
     (load-log! repository)
     (refresh-log!)
-    (let ([w (display-buffer! log-buffer)])
+    (let ([w (window:display! log-buffer)])
       (when w
-        (select-window! w)
+        (window:focus! w)
         (goto-point! '(1 . 0))))
     (void))
 

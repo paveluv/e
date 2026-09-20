@@ -366,7 +366,7 @@
                    [else (cons 0 line-length)])))))
 
   ;; Whether windows soft-wrap by default -- for config.e; a window
-  ;; toggled by hand (toggle-wrap!, C-x t) keeps its own setting.
+  ;; toggled by hand (window:toggle-wrap!, C-x t) keeps its own setting.
   (edoc "Whether windows soft-wrap long lines by default; a window toggled by hand keeps its own setting."
         (value boolean))
   (define wrap-lines (make-parameter #t))

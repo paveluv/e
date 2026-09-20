@@ -29,9 +29,10 @@
      (define c (fresh "navigation-c"))
      (define (position) (head:buffer-point (head:current-buffer)))
      (define observations '())
-     ;; The first command invokes (edit) and, through it, the painter, whose
-     ;; initialization installs its own repaint hook; the test's goes after.
-     (show-buffer! a)
+     ;; The first edit command invokes (edit) and, through it, the painter,
+     ;; whose initialization installs its own repaint hook; the test's goes after.
+     (head:show-buffer! a)
+     (goto-point! '(0 . 0))
      (head:set-repaint-hook!
        (lambda ()
          (set! observations
@@ -42,7 +43,7 @@
      (head:window-topseg-set! w 2)
      (head:window-left-set! w 3)
      (set! observations '())
-     (show-buffer! a)
+     (head:show-buffer! a)
      (check 'redisplay-preserves-live-window
             (list (position) (head:window-top w) (head:window-topseg w) (head:window-left w))
             '((1 . 3) 1 2 3))
@@ -53,7 +54,7 @@
      (check 'hidden-point-read (head:buffer-point b) '(2 . 4))
      (check 'point-read-does-not-switch (eq? (head:current-buffer) a) #t)
      (check 'point-read-does-not-notify observations '())
-     (show-buffer! b)
+     (head:show-buffer! b)
      (check 'callback-observes-complete-window
             observations (list (list b '(2 . 4) 1 0 0)))
      (check 'old-point-is-saved (head:buffer-point a) '(1 . 3))
@@ -65,8 +66,8 @@
               (lambda ()
                 (head:call-with-display-update
                   (lambda ()
-                    (show-buffer! a)
-                    (head:call-with-display-update (lambda () (show-buffer! b)))
+                    (head:show-buffer! a)
+                    (head:call-with-display-update (lambda () (head:show-buffer! b)))
                     (goto-point! '(1 . 2))
                     (values 'one 'two)))) list)
             '(one two))
@@ -76,13 +77,13 @@
      (check 'empty-scope-does-not-notify observations '())
      (guard (ex [else (void)])
        (head:call-with-display-update
-         (lambda () (show-buffer! a) (goto-point! '(2 . 1)) (error 'probe "stop"))))
+         (lambda () (head:show-buffer! a) (goto-point! '(2 . 1)) (error 'probe "stop"))))
      (check 'exception-flushes-completed-state observations (list (list a '(2 . 1) 1 0 0)))
      (set! observations '())
      (call/cc
        (lambda (escape)
          (head:call-with-display-update
-           (lambda () (show-buffer! b) (goto-point! '(0 . 1)) (escape 'done)))))
+           (lambda () (head:show-buffer! b) (goto-point! '(0 . 1)) (escape 'done)))))
      (check 'escape-flushes-completed-state observations (list (list b '(0 . 1) 1 0 0)))
 
      ;; A callback starts a fresh scope, and no outer transition can
@@ -93,16 +94,16 @@
          (when once
            (set! once #f)
            (check 'callback-sees-requested-buffer (eq? (head:current-buffer) a) #t)
-           (head:call-with-display-update (lambda () (show-buffer! c) (goto-point! '(2 . 2)))))))
-     (show-buffer! a)
+           (head:call-with-display-update (lambda () (head:show-buffer! c) (goto-point! '(2 . 2)))))))
+     (head:show-buffer! a)
      (check 'reentrant-switch-survives (eq? (head:current-buffer) c) #t)
      (check 'reentrant-point-survives (position) '(2 . 2))
      (head:set-repaint-hook! (lambda () (error 'callback "failure")))
      (check 'callback-error-propagates
-            (guard (ex [else #t]) (head:call-with-display-update (lambda () (show-buffer! a))) #f) #t)
+            (guard (ex [else #t]) (head:call-with-display-update (lambda () (head:show-buffer! a))) #f) #t)
      (set! observations '())
      (head:set-repaint-hook! (lambda () (set! observations (cons (head:current-buffer) observations))))
-     (show-buffer! b)
+     (head:show-buffer! b)
      (check 'callback-failure-does-not-poison-next-update observations (list b))
 
      (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))
@@ -113,7 +114,7 @@
          (let ([source ((if local? head:new-local-buffer! head:new-buffer!) "navigation.md")])
            (head:buffer-lines-set! source '#("# Alpha" "" "# Middle" "" "# Omega"))
            (mode:choose! source "markdown")
-           (show-buffer! source)
+           (head:show-buffer! source)
            (goto-point! '(2 . 1))
            (let ([entered #f] [once #t])
              (head:set-repaint-hook!
@@ -145,7 +146,7 @@
            (let ([once #t])
              (head:set-repaint-hook!
                (lambda ()
-                 (when once (set! once #f) (show-buffer! c) (goto-point! '(1 . 2)))))
+                 (when once (set! once #f) (head:show-buffer! c) (goto-point! '(1 . 2)))))
              (markdown:view!)
              (check 'toggle-keeps-callback-navigation (eq? (head:current-buffer) c) #t)
              (check 'toggle-keeps-callback-position (point) '(1 . 2)))
@@ -155,7 +156,7 @@
      ;; cells, survives short rows and wide-glyph interiors, and is also the
      ;; column used by paging into rows outside the current rendition demand.
      (head:buffer-lines-set! a '#("界ab" "a\x301;bcde" "x" "界ab"))
-     (show-buffer! a)
+     (head:show-buffer! a)
      (head:window-wrap-set! w #f)
      (goto-point! '(0 . 1))
      (define (steps action arguments)

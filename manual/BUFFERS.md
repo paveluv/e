@@ -271,8 +271,8 @@ Zero prevents new tints, while existing ones keep their deadlines.
 
 ## Line numbers
 
-`C-x l` (`edit:toggle-line-numbers!`) toggles line numbers in the current
-window, and `(edit:set-line-numbers! setting)` sets them to `#t`, `#f` or
+`C-x l` (`window:toggle-line-numbers!`) toggles line numbers in the current
+window, and `(window:set-line-numbers! setting)` sets them to `#t`, `#f` or
 `default`. The setting belongs to the window and applies while it shows an
 edit buffer; an app's buffer shows itself as the app decides. Untoggled
 windows follow the configurable default:
@@ -464,8 +464,8 @@ wheel ticks move point sideways.
 
 Long lines soft-wrap by default. A continuation row ends in `\`. With wrapping
 off, truncated lines end in `$` and the window scrolls horizontally to follow
-point. `(paint:wrap-lines #f)` changes the default, `C-x t` (`edit:toggle-wrap!`)
-toggles wrapping for one window, and `(edit:set-wrap! setting)` sets it to
+point. `(paint:wrap-lines #f)` changes the default, `C-x t` (`window:toggle-wrap!`)
+toggles wrapping for one window, and `(window:set-wrap! setting)` sets it to
 `#t`, `#f` or `default`. Like line numbers, the window's setting applies
 while it shows an edit buffer; a buffer's own wrap fact, set with
 `edit:set-buffer-wrap!`, is what an app's buffer follows and what an edit
@@ -480,9 +480,9 @@ column still count characters.
 
 Each split has independent point, scrolling, wrapping, and status. Splits form
 a tree, so either half may be split again in either direction: `C-x 2`
-(`edit:split-window-below!`) divides only the current window into a stacked pair,
-and `C-x 3` (`edit:split-window-right!`) divides only it into a side-by-side pair;
-`edit:split-window-above!` and `edit:split-window-left!` make the same splits with the
+(`window:split-below!`) divides only the current window into a stacked pair,
+and `C-x 3` (`window:split-right!`) divides only it into a side-by-side pair;
+`window:split-above!` and `window:split-left!` make the same splits with the
 new window first, and have no default keys. Deleting a window with `C-x 0`
 promotes its complete sibling subtree; the `×` button at the right edge of
 every status line performs the
@@ -532,14 +532,14 @@ whether there are unsaved changes.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
-`head:new-buffer!`, `head:new-local-buffer!`, `edit:fresh-buffer!`, `edit:show-buffer!`,
-`edit:display-buffer!`,
-`edit:pop-up-or-reuse!`, `edit:kill-buffer!`,
+`head:new-buffer!`, `head:new-local-buffer!`, `edit:fresh-buffer!`, `head:show-buffer!`,
+`window:display!`,
+`window:pop-up-or-reuse!`, `edit:kill-buffer!`,
 `edit:buffer-append!`, `mode:choose!`, and `edit:set-buffer-read-only!` provide
 controlled mutation and display. `head:with-buffer` temporarily makes another
 buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
-entries. `edit:focus-window-up!`, `edit:focus-window-down!`, `edit:focus-window-left!`, and
-`edit:focus-window-right!` expose directional focus to Scheme. App authors should
+entries. `window:focus-up!`, `window:focus-down!`, `window:focus-left!`, and
+`window:focus-right!` expose directional focus to Scheme. App authors should
 use `head:view-replace!` and `head:view-append!` for generated content. Run
 `M-x (describe:show!)` for live signatures and registered command documentation.
 
@@ -552,7 +552,7 @@ are preserved. As with other text inputs, the line container is copied and
 its strings must be treated as immutable. Fact values are copied.
 `(head:new-local-buffer! name)` creates a buffer belonging only to this
 head, with one empty line and no store id; its caller decides when to add
-it to the list. Use `edit:show-buffer!` or `edit:display-buffer!`
+it to the list. Use `head:show-buffer!` or `window:display!`
 to display the result in a window. The same text, mode, and fact accessors
 work on either kind. A local buffer's facts and generated text stay in the head and
 produce no store notifications; local points and selections are not
@@ -610,7 +610,7 @@ retained hidden or superseded records cannot be added or displayed again.
 `(head:buffer-point b)` reads point in the selected window when it shows
 `b`, otherwise in another window showing it, otherwise from its saved
 position. It does not switch windows or run repaint callbacks.
-`edit:show-buffer!` on the already displayed buffer preserves the live cursor
+`head:show-buffer!` on the already displayed buffer preserves the live cursor
 and viewport. To compose window changes and cursor placement before repaint
 callbacks run, use `(head:call-with-display-update thunk)`; nested calls
 produce one notification after all changes. The thunk's return values are

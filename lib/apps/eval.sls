@@ -144,7 +144,7 @@
     ;; (type start end token string?) for the cursor at a documented
     ;; argument position: the argument's type, the range and text of the
     ;; token being completed, and whether it sits inside a string literal.
-    ;; At the operator position of a nested form, (show-buffer! (bu, the
+    ;; At the operator position of a nested form, (head:show-buffer! (bu, the
     ;; token is the form's opening and the type is the enclosing argument's:
     ;; whatever the form produces has to serve it. #f under a quote, or
     ;; without a type.

@@ -27,7 +27,7 @@
      (define id
        (let ([b (head:new-buffer! "blame-naming")])
          (head:add-buffer! b)
-         (show-buffer! b)
+         (head:show-buffer! b)
          (head:buffer-store-id b)))
      (define (target) (head:buffer-named "blame-naming"))
      (define faces '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))
@@ -90,7 +90,7 @@
                    (when (eq? ending 'retire)
                      (store:set-property! head:ui-actor id 'audience 'all)
                      (head:before-frame!)
-                     (show-buffer! (target)))
+                     (head:show-buffer! (target)))
                    (list ink bounded? cleared))))))
          '(reset reload retire))
        (make-list 3 '(((0 7 8) (0 6 7) (0 5 6) (0 4 5) (0 3 4) (0 2 3) (0 1 2) (0 0 1)) #t ())))

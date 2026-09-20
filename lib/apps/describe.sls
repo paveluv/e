@@ -18,6 +18,7 @@
           (prefix (string) string:)
           (prefix (paint) paint:)
           (prefix (head) head:)
+          (prefix (window) window:)
           (prefix (style) style:)
           (prefix (keymap) keymap:)
           (prefix (only (markdown) companion companion!) markdown:))
@@ -56,7 +57,7 @@
                 (when source
                   (let ([b (markdown:companion! source "*describe*")])
                     (head:call-with-buffer b (lambda () (goto-point! '(0 . 0))))
-                    (if (pop-up-or-reuse! b)
+                    (if (window:pop-up-or-reuse! b)
                         (set-message! "")
                         (set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))
     (void))

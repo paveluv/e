@@ -471,7 +471,7 @@
              (set! hover #f)
              (let ([target (if (memq origin (head:buffers)) origin
                                (find (lambda (b) (not (eq? b view))) (head:buffers)))])
-               (when target (show-buffer! target)))) #t]
+               (when target (head:show-buffer! target)))) #t]
           [(string=? event "C-u") (filter! "") #t]
           [(string=? event "C-r") (refresh!) #t]
           [(string=? event "M-c") (path!) #t]
@@ -549,7 +549,7 @@
       (ensure!)
       (unless (eq? was view)
         (hashtable-set! choices (head:current-window) (make-choice was selected '() (make-hashtable string-hash string=?))))
-      (show-buffer! view)
+      (head:show-buffer! view)
       (if (and (eq? was view) (not explicit?)) (refresh!)
           (navigate! dir #f selected))) (void))
 

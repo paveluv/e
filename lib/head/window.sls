@@ -1,0 +1,282 @@
+;; window.sls -- the window commands: the library (window).
+;;
+;; Focus, splits, resizing and deletion over the head's layout tree, the
+;; per-window settings, wrap and line numbers, and the placement
+;; commands that show a buffer without leaving the current window.  The
+;; tree, the window record and the current window are the head's, the
+;; geometry is the painter's; this library is the commands over them,
+;; and edit and the apps call it.  Its default keys are bound in init!,
+;; owned by the module for reload.
+
+(import (only (edoc) elibrary))
+(elibrary (window)
+  (export init!
+          focus! focus-next! focus-up! focus-down! focus-left! focus-right!
+          split-below! split-right! split-above! split-left!
+          resize! delete! delete-others!
+          toggle-wrap! set-wrap! toggle-line-numbers! set-line-numbers!
+          display! pop-up-or-reuse!
+          with-window)
+  (import (rnrs)
+          (only (chezscheme) format void quotient)
+          (prefix (kernel) kernel:)
+          (prefix (keymap) keymap:)
+          (prefix (head) head:)
+          (prefix (paint) paint:)
+          (prefix (prompt) prompt:))
+
+  (define (message! text)
+    ;; an indicator in the echo area: shown, never logged
+    (paint:show-message! text #f))
+
+  (define (refuse! message)
+    (raise (condition (kernel:make-refusal) (make-message-condition message))))
+
+  (define (edit-window!)
+    ;; the current window while it shows an edit buffer: the window
+    ;; settings, wrap and line numbers, are for text a user edits; an
+    ;; app's buffer shows itself as the app decides
+    (when (head:app-buffer? (head:current-buffer)) (refuse! "Not an edit buffer"))
+    (head:current-window))
+
+  ;;; Focus -----------------------------------------------------------------------
+
+  (define (ordinary-windows)
+    ;; the ring of ordinary windows: the pop-up is never in it
+    (remq (head:popup) (head:layout-leaves (head:root))))
+
+  (define (next-window w)
+    (let* ([ring (ordinary-windows)]
+           [tail (cdr (or (memq w ring) (cons #f ring)))])
+      (if (pair? tail) (car tail) (car ring))))
+
+  (edoc "Select a window while it is on screen, the apps left and entered hearing BLUR and FOCUS; the pop-up is never selected. Whether the window was selected."
+        (w window "the window to select")
+        (returns boolean))
+  (define (focus! w)
+    ;; All user-visible focus changes pass here; head:set-current! is
+    ;; the raw setter and tells no app.
+    (cond
+      [(not (and (memq w (head:windows)) (not (head:popup? w)))) #f]
+      [(eq? w (head:current-window)) #t]
+      [else
+       (head:dispatch-app-event! "BLUR")
+       (head:set-current! w)
+       (head:dispatch-app-event! "FOCUS")
+       #t]))
+
+  (edoc "Select the next window in layout order; the window now selected."
+        (returns window))
+  (define (focus-next!)
+    (focus! (next-window (head:current-window)))
+    (head:current-window))
+
+  (define (focus-direction! direction)
+    (let* ([layout (remp (lambda (entry) (head:popup? (car entry))) (paint:window-layout))]
+           [current (head:current-window)]
+           [cursor (paint:window-screen-position current (head:window-prow current) (head:window-pcol current))]
+           [cx (- (cdr cursor) 1)]
+           [cy (- (car cursor) 1)])
+      ;; Cast a ray from point. This matters in asymmetric trees: from a tall
+      ;; right-hand window, for example, the cursor row chooses which of two
+      ;; stacked windows on the left receives focus.
+      (define (distance entry)
+        (let* ([w (car entry)]
+               [x0 (head:window-xoff w)] [x1 (+ x0 (head:window-width w) -1)]
+               [y0 (cadr entry)] [y1 (+ y0 (caddr entry))])
+          (case direction
+            [(left) (and (< x1 cx) (<= y0 cy y1) (- cx x1))]
+            [(right) (and (> x0 cx) (<= y0 cy y1) (- x0 cx))]
+            [(up) (and (< y1 cy) (<= x0 cx x1) (- cy y1))]
+            [(down) (and (> y0 cy) (<= x0 cx x1) (- y0 cy))])))
+      (let loop ([entries layout] [best #f] [best-distance #f])
+        (if (null? entries)
+            (when best (focus! (car best)))
+            (let ([d (and (not (eq? (caar entries) current)) (distance (car entries)))])
+              (if (and d (or (not best-distance) (< d best-distance)))
+                  (loop (cdr entries) (car entries) d)
+                  (loop (cdr entries) best best-distance)))))))
+
+  (edoc "Select the window above the cursor, the cursor's column choosing among stacked candidates.")
+  (define (focus-up!)
+    (focus-direction! 'up))
+  (edoc "Select the window below the cursor, the cursor's column choosing among stacked candidates.")
+  (define (focus-down!)
+    (focus-direction! 'down))
+  (edoc "Select the window left of the cursor, the cursor's row choosing among side-by-side candidates.")
+  (define (focus-left!)
+    (focus-direction! 'left))
+  (edoc "Select the window right of the cursor, the cursor's row choosing among side-by-side candidates.")
+  (define (focus-right!)
+    (focus-direction! 'right))
+
+  ;;; Splits ----------------------------------------------------------------------
+
+  (define (split-current-window! orientation b first?)
+    ;; Divide the selected leaf along orientation, the new window second
+    ;; (below or right) unless first? asks for it above or to the left;
+    ;; the new window, or #f without the room.
+    (paint:window-layout)
+    (let* ([current (head:current-window)]
+           [vertical? (eq? orientation 'below)]
+           [extent (if vertical? (+ (head:window-size current) 1) (head:window-width current))]
+           [minimum (if vertical? (+ (head:min-window-lines) 1) 20)]
+           [usable (- extent (if vertical? 0 1))])
+      (and (not (head:popup? current)) (>= usable (* 2 minimum))
+           (let* ([second (quotient usable 2)]
+                  [first (- usable second)]
+                  [w (head:make-window b (head:window-top current) (head:window-topseg current)
+                                       (head:window-left current) (head:window-prow current) (head:window-pcol current)
+                                       (max 1 (- second 1)) 0 0
+                                       (head:window-wrap current))]
+                  [node (if first?
+                            (head:make-layout-split orientation w current first second)
+                            (head:make-layout-split orientation current w first second))])
+             (head:window-line-numbers-set! w (head:window-line-numbers current))
+             (head:set-full-capture! w (head:full-capture? current))
+             (head:replace-layout-window! current node)
+             w))))
+
+  (define (split! orientation first?)
+    ;; Split only the selected leaf, as in Emacs, showing the same buffer.
+    (or (split-current-window! orientation (head:current-buffer) first?)
+        (begin (message! "Not enough room to split") #f)))
+
+  (edoc "Split the selected window into a stacked pair; the new window is below and shows the same buffer. The new window, or #f with a message when there is no room."
+        (returns (or window #f)))
+  (define (split-below!)
+    (split! 'below #f))
+  (edoc "Split the selected window into a side-by-side pair; the new window is to the right and shows the same buffer. The new window, or #f with a message when there is no room."
+        (returns (or window #f)))
+  (define (split-right!)
+    (split! 'right #f))
+  (edoc "Split the selected window into a stacked pair; the new window is above and shows the same buffer. The new window, or #f with a message when there is no room."
+        (returns (or window #f)))
+  (define (split-above!)
+    (split! 'below #t))
+  (edoc "Split the selected window into a side-by-side pair; the new window is to the left and shows the same buffer. The new window, or #f with a message when there is no room."
+        (returns (or window #f)))
+  (define (split-left!)
+    (split! 'right #t))
+
+  (edoc "Move the boundary of the nearest enclosing stacked split."
+        (delta integer "rows to give the selected side; negative takes them"))
+  (define (resize! delta)
+    (let loop ([child (head:current-window)])
+      (let ([parent (head:layout-parent (head:root) child)])
+        (cond
+          [(or (not parent) (head:popup? (head:layout-split-second parent)))
+           (message! "No vertical split")]
+          [(eq? (head:layout-split-orientation parent) 'below)
+           (let ([signed (if (eq? child (head:layout-split-first parent)) delta (- delta))])
+             (head:layout-split-first-weight-set!
+               parent (max 1 (+ (head:layout-split-first-weight parent) signed)))
+             (head:layout-split-second-weight-set!
+               parent (max 1 (- (head:layout-split-second-weight parent) signed))))]
+          [else (loop parent)]))))
+
+  (edoc "Close the selected window; its sibling subtree takes the space. The last window and the pop-up stay.")
+  (define (delete!)
+    (let ([current (head:current-window)])
+      (cond
+        [(head:popup? current) (message! "The pop-up window stays")]
+        [(null? (cdr (ordinary-windows))) (message! "Only one window")]
+        [else
+         (let* ([next (next-window current)]
+                [parent (head:layout-parent (head:root) current)]
+                [sibling (if (eq? current (head:layout-split-first parent))
+                             (head:layout-split-second parent)
+                             (head:layout-split-first parent))])
+           (head:replace-layout-window! parent sibling)
+           (focus! next))])))
+
+  (edoc "Keep only the selected window.")
+  (define (delete-others!)
+    (head:set-layout-root! (head:current-window)))
+
+  ;;; The window's settings ---------------------------------------------------------
+
+  (edoc "Toggle soft wrapping of long lines in the current window, shown beside an edit buffer; an app's buffer shows itself.")
+  (define (toggle-wrap!)
+    (set-wrap! (not (paint:window-wrapped? (edit-window!)))))
+
+  (edoc "Set soft wrapping of long lines in the current window: #t wraps, #f truncates, default follows the buffer's wrap fact, else paint:wrap-lines; it applies beside an edit buffer, an app's buffer shows itself."
+        (setting (or boolean (one-of default)) "the window's setting"))
+  (define (set-wrap! setting)
+    (unless (memq setting '(default #t #f))
+      (error 'set-wrap! "expected default, #t or #f" setting))
+    (let ([w (edit-window!)])
+      (head:window-wrap-set! w setting)
+      (head:window-left-set! w 0)
+      (head:window-goal-set! w #f)     ; the goal column changes meaning
+      (message! (format "Wrap ~a" (if (paint:window-wrapped? w) "on" "off")))))
+
+  (edoc "Toggle the line-number gutter of the current window, shown beside an edit buffer; an app's buffer shows itself.")
+  (define (toggle-line-numbers!)
+    (set-line-numbers! (not (head:window-line-numbers? (edit-window!)))))
+
+  (edoc "Set the line-number gutter of the current window: #t, #f, or default for the head's line-numbers setting; it shows beside an edit buffer, an app's buffer shows itself."
+        (setting (or boolean (one-of default)) "the window's setting"))
+  (define (set-line-numbers! setting)
+    (unless (memq setting '(default #t #f))
+      (error 'set-line-numbers! "expected default, #t or #f" setting))
+    (let ([w (edit-window!)])
+      (head:window-line-numbers-set! w setting)
+      (paint:invalidate-screen-cache!)
+      (message! (format "Line numbers ~a" (if (head:window-line-numbers? w) "on" "off")))))
+
+  ;;; Placement -----------------------------------------------------------------------
+
+  (define (window-showing b)
+    (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows)))
+
+  (edoc "Show a buffer without leaving the current window: in the window already showing it, else the next window, else a fresh split below. The window, or #f when the screen has no room for one."
+        (b buffer "the buffer to show")
+        (returns (or window #f)))
+  (define (display! b)
+    (head:add-buffer! b)
+    (cond
+      [(window-showing b)]
+      [(pair? (cdr (ordinary-windows)))
+       (let ([w (next-window (head:current-window))])
+         (head:set-window-buffer! w b)
+         w)]
+      [(split-current-window! 'below b #f)]
+      [else #f]))
+
+  (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current one; focus stays where it was. The window, or #f when there was no room."
+        (b buffer "the buffer to show")
+        (returns (or window #f)))
+  (define (pop-up-or-reuse! b)
+    ;; Help-like buffers never appropriate another leaf: the buffer stays a
+    ;; reference beside the command that asked for it.
+    (head:add-buffer! b)
+    (or (window-showing b)
+        (split-current-window! 'below b #f)))
+
+  ;;; The scope form ----------------------------------------------------------------
+
+  (edoc "Run body with a window temporarily selected, as head:call-with-window does, without telling the apps: (with-window (window 2) (split-right!))."
+        (w window "the window to select")
+        (body (list-of any) "the forms to run"))
+  (define-syntax with-window
+    (syntax-rules ()
+      [(_ w body ...) (head:call-with-window w (lambda () body ...))]))
+
+  ;;; Registration -------------------------------------------------------------------
+
+  (edoc "Install the default window keys, and allow the window commands inside a prompt.")
+  (define (init!)
+    ;; the global commands a prompt may run without losing its input:
+    ;; pure window management
+    (for-each prompt:allow!
+              (list focus-up! focus-down! focus-left! focus-right! focus-next!
+                    split-below! split-right! split-above! split-left!
+                    delete! delete-others!))
+    (for-each
+      (lambda (entry) (keymap:bind-default! (car entry) (cadr entry)))
+      `(("C-x o" ,focus-next!) ("C-x 0" ,delete!) ("C-x 1" ,delete-others!)
+        ("C-x 2" ,split-below!) ("C-x 3" ,split-right!)
+        ("C-x l" ,toggle-line-numbers!) ("C-x t" ,toggle-wrap!)
+        ("M-UP" ,focus-up!) ("M-DOWN" ,focus-down!)
+        ("M-LEFT" ,focus-left!) ("M-RIGHT" ,focus-right!)))))

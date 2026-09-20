@@ -49,8 +49,8 @@
        '(("picker-alpha" 20 "/project/zebra/long/日本語 alpha.txt" "pick-z")
          ("picker-beta" 9 "/project/alpha/src/beta.ss" "pick-a")
          ("picker-gamma" 100 #f #f)))
-     (show-buffer! (buffer "<picker-alpha>")) (goto-point! '(3 . 2))
-     (show-buffer! (buffer "<picker-beta>")) (goto-point! '(4 . 1))
+     (head:show-buffer! (buffer "<picker-alpha>")) (goto-point! '(3 . 2))
+     (head:show-buffer! (buffer "<picker-beta>")) (goto-point! '(4 . 1))
 
      ;; Enter initially selects the previous document; the app itself never
      ;; becomes the default, even after repeated quick switches.
@@ -164,7 +164,7 @@
        (list (eq? (head:current-buffer) (head:find-tool-buffer "*buffers*")) (and (memq (head:current-buffer) (head:buffers)) #t))
        '(#f #t))
 
-     (show-buffer! origin)
+     (head:show-buffer! origin)
      (kill-buffer! (buffer "<picker-gamma>"))
      (kernel:retract-module! 'picker-fixture)
      (test:finish! 'buffers)))

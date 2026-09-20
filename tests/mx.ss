@@ -13,7 +13,8 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (keymap) keymap:) (prefix (head) head:) (prefix (text) text:)
+     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (keymap) keymap:) (prefix (head) head:)
+             (prefix (window) window:) (prefix (text) text:)
              (prefix (string) string:) (prefix (test) test:))
 
      (define check test:check)
@@ -23,7 +24,7 @@
        (lambda (case)
          (check (list 'settle (car case)) (settled (car case)) (cons (cadr case) (string-length (cadr case)))))
        '(;; a nullary operator closes its form; one taking arguments steps to the first
-         ("(split-window-right!" "(split-window-right!)")
+         ("(window:split-right!" "(window:split-right!)")
          ("(head:window-index" "(head:window-index ")
          ;; the last argument closes the form, an earlier one steps on
          ("(head:window-index (head:current-window" "(head:window-index (head:current-window))")
@@ -39,7 +40,7 @@
          ("(define foo" "(define foo")
          ("(no-such-procedure-here" "(no-such-procedure-here")
          ;; a quoted or quasiquoted form is data
-         ("'(split-window-right!" "'(split-window-right!")
+         ("'(window:split-right!" "'(window:split-right!")
          ("`(head:current-window" "`(head:current-window")
          ("(list '(head:current-window" "(list '(head:current-window")
          ;; too many arguments already: nothing to close
@@ -61,13 +62,13 @@
      (define (has-prefix? needle candidates) (and candidates (exists (lambda (l) (string:prefix? needle l)) candidates) #t))
      (eval '(define myb (buffer "*scratch*")) (interaction-environment))
      (check 'a-buffer-argument-offers-buffers-producers-and-variables
-       (let ([offered (labels "(show-buffer! ")])
+       (let ([offered (labels "(head:show-buffer! ")])
          (list (has? "(buffer \"*scratch*\")" offered) (has? "(head:current-buffer)" offered)
                (has? "(fresh-buffer! name)" offered) (has? "(head:new-local-buffer! name)" offered) (has? "myb" offered)
                ;; a typed token narrows, and the buffer's spelling leads
-               (car (labels "(show-buffer! scr")) (has? "myb" (labels "(show-buffer! my"))
+               (car (labels "(head:show-buffer! scr")) (has? "myb" (labels "(head:show-buffer! my"))
                ;; a token matches a candidate's own text, never the formals of its label
-               (has? "(head:new-local-buffer! name)" (labels "(show-buffer! name"))
+               (has? "(head:new-local-buffer! name)" (labels "(head:show-buffer! name"))
                ;; the alias of a symbol completing elsewhere: an operator position
                (labels "(show-buff")))
        '(#t #t #t #t #t "(buffer \"*scratch*\")" #t #f #f))
@@ -77,21 +78,21 @@
      ;; a sole candidate whole.
      (define (extensions text) (eval:completion-extensions text (string-length text)))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
-       (let ([nested (labels "(show-buffer! (bu")])
+       (let ([nested (labels "(head:show-buffer! (bu")])
          (list (has? "(buffer \"*scratch*\")" nested) (has? "(fresh-buffer! name)" nested) (has? "myb" nested)
-               (labels "(show-buffer! (curr") (extensions "(show-buffer! (curr")
-               (extensions "(show-buffer! bu") (extensions "(show-buffer! (bu")
+               (labels "(head:show-buffer! (curr") (extensions "(head:show-buffer! (curr")
+               (extensions "(head:show-buffer! bu") (extensions "(head:show-buffer! (bu")
                ;; a variable holding a buffer keeps the token bare
-               (extensions "(show-buffer! my") (extensions "(show-buffer! ")
+               (extensions "(head:show-buffer! my") (extensions "(head:show-buffer! ")
                (extensions "(set-buffer-wrap! b 'c") (extensions "(visit-file! \"man")
                ;; a quoted form, or one whose operator is undocumented, completes symbols
-               (labels "(show-buffer! '(bu") (labels "(list (bu")))
+               (labels "(head:show-buffer! '(bu") (labels "(list (bu")))
        '(#t #t #f ("(head:current-buffer)") ("(head:current-buffer)") ("(buffer") ("(buffer") ("myb") ("")
          ("'clean") ("manual/") #f #f))
      (check 'literals-and-strings-complete-in-place
        (list (has? "'clean" (labels "(set-buffer-wrap! b ")) (has? "#f" (labels "(set-buffer-wrap! b "))
              ;; the language's types offer their own values but no producers
-             (length (labels "(set-buffer-wrap! b ")) (labels "(set-wrap! ")
+             (length (labels "(set-buffer-wrap! b ")) (labels "(window:set-wrap! ")
              (has-prefix? "manual/" (labels "(visit-file! \"man"))
              (has? "*scratch*" (labels "(buffer \""))
              ;; an undocumented operator falls back to symbols
@@ -100,11 +101,11 @@
      ;; a scope form's argument completes by type, syntax or not
      (check 'a-scope-form-completes-its-argument-by-type
        (list (has-prefix? "(buffer \"" (labels "(head:with-buffer (bu")) (has? "(head:current-buffer)" (labels "(head:with-buffer (bu"))
-             (has? "(current-region)" (labels "(with-region (re")) (has-prefix? "(window " (labels "(head:with-window (wi")))
+             (has? "(current-region)" (labels "(with-region (re")) (has-prefix? "(window " (labels "(window:with-window (wi")))
        '(#t #t #t #t))
      (check 'a-completed-value-settles-its-form
-       (list (settled "(show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))
-       '(("(show-buffer! (buffer \"*scratch*\"))" . 35) ("(visit-file! \"manual/EVAL.md\")" . 30)))
+       (list (settled "(head:show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))
+       '(("(head:show-buffer! (buffer \"*scratch*\"))" . 40) ("(visit-file! \"manual/EVAL.md\")" . 30)))
 
      ;; Identities are literals too: (head "desk") and (agent "claude") read
      ;; back as they print, and an actor argument completes from the directory.
@@ -129,7 +130,7 @@
      ;; argument is typed, the named type meets the record type it denotes,
      ;; and an accessor returning a buffer is one of its producers.
      (check 'record-procedures-complete-by-their-signatures
-       (list (has? "(region b start end)" (labels "(region-buffer ")) (has? "(region-buffer region)" (labels "(show-buffer! ")))
+       (list (has? "(region b start end)" (labels "(region-buffer ")) (has? "(region-buffer region)" (labels "(head:show-buffer! ")))
        '(#t #t))
 
      ;; Keys bind structure, not spelled names: a call with its producers and

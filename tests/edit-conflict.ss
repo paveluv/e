@@ -23,7 +23,7 @@
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
-         (show-buffer! b)
+         (head:show-buffer! b)
          (goto-point! '(0 . 0))
          b))
      (define (text-of b) (vector->list (head:buffer-lines b)))
@@ -99,7 +99,7 @@
        (lambda (shared?)
          (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) "edit-after-group-undo")])
            (head:buffer-lines-set! b '#("base"))
-           (show-buffer! b)
+           (head:show-buffer! b)
            (call-as-one-edit! "group with undo"
              (lambda () (insert-text! "A") (undo!) (insert-text! "B")))
            (check 'post-undo-group-records-new-entry (length (vector-ref (head:buffer-history b) 0)) 1)

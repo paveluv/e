@@ -24,7 +24,7 @@ is entered, e waits for the rest of the chord and displays the partial sequence
 in the echo area.
 
 A command must be a procedure callable with no arguments. Existing commands
-such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `edit:other-window!` can be
+such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window:focus-next!` can be
 used directly. A lambda can adapt a command that needs arguments:
 
 ```scheme

@@ -46,7 +46,7 @@
      (set-buffer-wrap! source #t)
      (define history (vector '(saved-undo) '(saved-redo)))
      (head:buffer-history-set! source history)
-     (show-buffer! source)
+     (head:show-buffer! source)
      (goto-point! '(2 . 1))
      (define w1 (head:current-window))
      (head:window-width-set! w1 80)
@@ -112,7 +112,7 @@
        (make-source "table.md"
          '("|alpha beta gamma delta epsilon|x|" "|-|-|" "|long entry|y|"
            "" "After table")))
-     (show-buffer! table)
+     (head:show-buffer! table)
      (markdown:view!)
      (define table-view (head:current-buffer))
      (head:set-window-buffer! w2 table-view)
@@ -178,7 +178,7 @@
      (head:buffer-file-set! source (string-append directory "/notes.md"))
      (head:buffer-lines-set! source
        (vector "[child](docs/child.md)"))
-     (show-buffer! source)
+     (head:show-buffer! source)
      (markdown:view!)
      (goto-point! '(0 . 0))
      (head:tile! 80 12)
@@ -195,7 +195,7 @@
      (check 'relative-link-opens-local-view (head:buffer-store-id child-view) #f)
      (check 'relative-link-shows-child (head:buffer-lines child-view) '#("Child"))
      (head:buffer-lines-set! source (vector (format "[child](~a)" child-path)))
-     (show-buffer! source)
+     (head:show-buffer! source)
      (markdown:view!)
      (goto-point! '(0 . 0))
      ((keymap:binding 'markdown-view "RET"))
@@ -209,7 +209,7 @@
      ;; closes all its dependent local presentations without resurrection.
      (kill-buffer! view)
      (check 'killing-view-preserves-source (store:exists? id) #t)
-     (show-buffer! source)
+     (head:show-buffer! source)
      (markdown:view!)
      (define replacement-view (head:current-buffer))
      (check 'killed-view-is-recreated (eq? replacement-view view) #f)
@@ -223,7 +223,7 @@
        (lambda (entry)
          (let* ([source (car entry)] [action (cadr entry)] [id (head:buffer-store-id source)]
                 [hidden? (memq action '(hide-own hide-foreign))])
-           (show-buffer! source)
+           (head:show-buffer! source)
            (markdown:view!)
            (let ([view (head:current-buffer)] [observations '()])
              (set! retiring source)
@@ -261,7 +261,7 @@
      (define local-source (head:new-local-buffer! "local source"))
      (head:buffer-lines-set! local-source (vector "# Local"))
      (mode:choose! local-source "markdown")
-     (show-buffer! local-source)
+     (head:show-buffer! local-source)
      (markdown:view!)
      (check 'local-source-gets-local-view (head:buffer-store-id (head:current-buffer)) #f)
      (check 'local-source-stays-source (head:buffer-lines local-source) '#("# Local"))

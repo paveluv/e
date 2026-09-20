@@ -971,7 +971,7 @@
         (lambda ()
           (let ([row (car (head:buffer-point source))]
                 [b (source-view! source)])
-            (show-buffer! b)
+            (head:show-buffer! b)
             (refresh-render! b)
             (goto-point! (cons (view-row-showing (rendering-of b) row) 0)))))
       (void)))
@@ -991,7 +991,7 @@
           (lambda ()
             (refresh-render! b)
             (let ([row (source-row-at (rendering-of b) (car (head:buffer-point b)))])
-              (show-buffer! source)
+              (head:show-buffer! source)
               (goto-point! (cons row 0))))))
       (void)))
 

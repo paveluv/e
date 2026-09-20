@@ -34,7 +34,7 @@
        (let ([b ((if local? head:new-local-buffer! head:new-buffer!) name)])
          (head:buffer-lines-set! b '#("# Alpha" "" "# Middle" "" "# Omega"))
          (mode:choose! b "markdown")
-         (show-buffer! b)
+         (head:show-buffer! b)
          (markdown:view!)
          b))
      (define (place! b first second backward?)
