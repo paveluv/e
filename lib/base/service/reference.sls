@@ -497,8 +497,8 @@
   (define (fetch-book! ref book base pages progress)
     (for-each (lambda (page)
                 (progress (format "~a/~a.html" book page))
-                (https:download (format "~a~a.html" base page)
-                                (format "~a/~a/~a.html" ref book page)))
+                (https:download! (format "~a~a.html" base page)
+                                 (format "~a/~a/~a.html" ref book page)))
               pages))
 
   (define (parse-book ref book source pages)
@@ -570,7 +570,10 @@
         (reverse entries))
       (cons entries by-name)))
 
-  (define (load-data!)
+  (edoc "The corpus index, (entries . by-name), read from the data file on first use."
+        (returns pair)
+        (effects internal))
+  (define (corpus-data)
     (with-mutex corpus-lock
       (or corpus
           (let ([next (index-data (if (file-exists? (data-path))
@@ -583,7 +586,7 @@
         (returns (list-of (record doc-entry))))
   (define (doc-lookup name)
     ;; Corpus order (TSPL before CSUG), followed by current module entries.
-    (let* ([snapshot (load-data!)]
+    (let* ([snapshot (corpus-data)]
            [name (if (string? name) (string->symbol name) name)])
       (append (eq-hashtable-ref (cdr snapshot) name '())
               (filter (lambda (entry) (memq name (doc:names entry))) (doc:entries)))))
@@ -592,5 +595,5 @@
         (maybe-pred (list-of procedure) "a predicate on entries, at most one")
         (returns (list-of (record doc-entry))))
   (define (doc-entries . maybe-pred)
-    (let ([entries (append (car (load-data!)) (doc:entries))])
+    (let ([entries (append (car (corpus-data)) (doc:entries))])
       (if (pair? maybe-pred) (filter (car maybe-pred) entries) entries))))

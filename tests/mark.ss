@@ -177,7 +177,7 @@
                     (store:marks head:ui-actor hid)) #f)
 
      ;; Publication failure is isolated per buffer; other windows progress.
-     (define other-buffer (head:new-buffer "other-window-marks"))
+     (define other-buffer (head:new-buffer! "other-window-marks"))
      (head:add-buffer! other-buffer)
      (head:store-reset! other-buffer '("xyz"))
      (define other-id (head:buffer-store-id other-buffer))

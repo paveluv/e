@@ -919,7 +919,8 @@
 
   (edoc "Listen on a local socket path."
         (path file "the socket path")
-        (returns (record local-listener)))
+        (returns (record local-listener))
+        (effects internal))
   (define (listen-local path)
     (unless c-socket (error 'listen-local "local sockets are unavailable"))
     (call-with-local-address path
@@ -1262,7 +1263,8 @@
 
   (edoc "A process's exit status when it has ended, else #f, reaping it exactly once."
         (process (record command-process) "the process")
-        (returns (or integer #f)))
+        (returns (or integer #f))
+        (effects internal))
   (define (poll-process! process)
     ;; A returned status and its adoption are indivisible: never signal a PID
     ;; after reaping it, including on engine expiry. Other owners' PIDs stay out.
@@ -1313,7 +1315,8 @@
 
   (edoc "A finished process's status, as system reports it: an exit code, or a negated signal."
         (process (record command-process) "the process")
-        (returns integer))
+        (returns integer)
+        (effects internal))
   (define (process-result process)
     ;; Ask after output EOF or explicit close. Status matches Chez's system:
     ;; an exit code, or the negated terminating signal.

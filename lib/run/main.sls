@@ -11,7 +11,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (main)
-  (export run set-startup-page! load-config!
+  (export run! set-startup-page! load-config!
           modules-reload-on-save config-reload-on-save shutdown! shutdown-on-exit)
   (import (chezscheme)
           (prefix (sys) sys:)
@@ -36,7 +36,8 @@
                              (lambda (value)
                                (unless (boolean? value) (error 'shutdown-on-exit "expected a boolean")) value)))
 
-  (edoc "Stop the base and every head after reviewing modified buffers: yes, no, or view them.")
+  (edoc "Stop the base and every head after reviewing modified buffers: yes, no, or view them."
+        (prompts))
   (define (shutdown!)
     (let ([token #f])
       (dynamic-wind void
@@ -229,7 +230,7 @@
 
   (edoc "Run the head: the main loop against the base, as this head's actor."
         (returns integer "the exit status"))
-  (define (run)
+  (define (run!)
     (kernel:pin-modules! '("main"))
     (parameterize ([exit-handler (exit-handler)] [abort-handler (abort-handler)] [reset-handler (reset-handler)])
       (actor:call-as head:ui-actor run-head)))
@@ -281,7 +282,7 @@
       ;; Mode 2031 subscribes to theme changes. Query both the scheme and
       ;; the background color so older hosts can supply a fallback.
       (lambda () (sys:terminal-raw!)
-        (paint:ansi "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h")
+        (paint:ansi! "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h")
         (tty:query-color-scheme!)
         (tty:mouse-reporting! #t)
         (paint:set-screen-live! #t)
@@ -318,7 +319,7 @@
             (paint:set-screen-live! #f)
             (paint:reset-cursor-style!)
             (tty:mouse-reporting! #f)
-            (paint:ansi "\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
+            (paint:ansi! "\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
             (flush-output-port (sys:terminal-output-port))
             (sys:terminal-restore!)
             (report-unsaved-work!))))))

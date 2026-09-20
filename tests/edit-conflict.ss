@@ -21,7 +21,7 @@
      (define bot '(agent conflict-test))
      (define check test:check)
      (define (fresh name lines)
-       (let ([b (head:new-buffer name)])
+       (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
          (show-buffer! b)
          (goto-point! '(0 . 0))
@@ -97,7 +97,7 @@
      ;; including in local buffers where history is entirely head-owned.
      (for-each
        (lambda (shared?)
-         (let ([b ((if shared? head:new-buffer head:new-local-buffer) "edit-after-group-undo")])
+         (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) "edit-after-group-undo")])
            (head:buffer-lines-set! b '#("base"))
            (show-buffer! b)
            (call-as-one-edit! "group with undo"

@@ -25,7 +25,7 @@
      (define check test:check)
      (define raises? test:raises?)
      (define (fresh name shared?)
-       (let ([b ((if shared? head:new-buffer head:new-local-buffer) name)])
+       (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])
          (show-buffer! b)
          (goto-point! '(0 . 0))
          b))
@@ -96,7 +96,7 @@
      (head:buffer-read-only-set! local-work #t)
      (check 'local-read-only-work-is-protected (buffer-clean? local-work) #f)
      (check 'snapshot-tools-declare-disposal
-            (head:buffer-fact (fresh-buffer "state-generated") 'disposable #f) #t)
+            (head:buffer-fact (fresh-buffer! "state-generated") 'disposable #f) #t)
 
      ;; One sequence covers clock ownership and no-op/save preservation for
      ;; shared and local buffers. Actual changes must fall within UTC bounds.

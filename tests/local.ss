@@ -24,16 +24,16 @@
      (define subscription
        (store:subscribe! #f (lambda (event) (set! events (cons event events)))))
 
-     (define local (head:new-local-buffer "*local-test*"))
-     (define other (head:new-local-buffer "*other-local*"))
+     (define local (head:new-local-buffer! "*local-test*"))
+     (define other (head:new-local-buffer! "*other-local*"))
      (head:set-buffers! (append (head:buffers) (list local other)))
      (head:set-window-buffer! (head:current-window) local)
 
      (check 'local-label (head:buffer-name local) "<local-test>")
      (check 'plain-local-label
-            (head:buffer-name (head:new-local-buffer "plain name")) "<plain name>")
+            (head:buffer-name (head:new-local-buffer! "plain name")) "<plain name>")
      (check 'bracketed-local-label-is-idempotent
-            (head:buffer-name (head:new-local-buffer "<ready>")) "<ready>")
+            (head:buffer-name (head:new-local-buffer! "<ready>")) "<ready>")
      (check 'no-twin (head:buffer-store-id local) #f)
      (check 'no-false-id-lookup (head:buffer-of-store-id #f) #f)
      (check 'initial-text (head:buffer-lines local) '#(""))
@@ -137,7 +137,7 @@
      (store:unsubscribe! subscription)
 
      ;; Shared buffers continue to use the store as their only fact owner.
-     (define shared (head:new-buffer "shared-test"))
+     (define shared (head:new-buffer! "shared-test"))
      (check 'ordinary-buffer-has-twin (store:exists? (head:buffer-store-id shared)) #t)
      (head:buffer-fact-set! shared 'custom 'head)
      (check 'shared-write (store:property (head:buffer-store-id shared) 'custom) 'head)

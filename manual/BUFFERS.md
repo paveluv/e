@@ -526,7 +526,7 @@ whether there are unsaved changes.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
-`head:new-buffer`, `head:new-local-buffer`, `edit:fresh-buffer`, `edit:show-buffer!`,
+`head:new-buffer!`, `head:new-local-buffer!`, `edit:fresh-buffer!`, `edit:show-buffer!`,
 `edit:display-buffer!`,
 `edit:pop-up-or-reuse!`, `edit:kill-buffer!`,
 `edit:buffer-append!`, `mode:choose!`, and `edit:set-buffer-read-only!` provide
@@ -537,14 +537,14 @@ entries. `edit:focus-window-up!`, `edit:focus-window-down!`, `edit:focus-window-
 use `head:view-replace!` and `head:view-append!` for generated content. Run
 `M-x (describe:show!)` for live signatures and registered command documentation.
 
-`(head:new-buffer name)` creates a shared buffer with one empty line and
+`(head:new-buffer! name)` creates a shared buffer with one empty line and
 adopts its canonical record into this head's buffer list. Use
-`(head:new-buffer name lines facts)` to publish initial text and a fact alist
+`(head:new-buffer! name lines facts)` to publish initial text and a fact alist
 together, before create subscribers run. Missing `trailing`, `mode-auto`
 and `wrap` facts default to `#t`, `#t` and `default`; explicit `#f` values
 are preserved. As with other text inputs, the line container is copied and
 its strings must be treated as immutable. Fact values are copied.
-`(head:new-local-buffer name)` creates a buffer belonging only to this
+`(head:new-local-buffer! name)` creates a buffer belonging only to this
 head, with one empty line and no store id; its caller decides when to add
 it to the list. Use `edit:show-buffer!` or `edit:display-buffer!`
 to display the result in a window. The same text, mode, and fact accessors
@@ -565,7 +565,7 @@ a canonical `file` fact and returns two values: id and whether it was created.
 Lookup and creation happen together; a reused buffer keeps all its existing
 state. Prepare disk text and initial facts before calling it.
 `(head:visit-file! name lines facts)` uses the same head defaults as
-`head:new-buffer` and returns the adopted buffer plus that creation flag.
+`head:new-buffer!` and returns the adopted buffer plus that creation flag.
 The ordinary `edit:visit-file!` command also performs the usual disk-change review
 when it reuses a buffer. Local file buffers remain local to their head.
 
@@ -630,10 +630,10 @@ Local labels share the head's buffer namespace.  A collision receives
 the local buffer yields the conflicting label.  `head:add-buffer!`
 adds a buffer to the list without displaying it and claims its label.
 
-`(head:tool-buffer key)` returns or creates a local tool buffer under a
+`(head:tool-buffer! key)` returns or creates a local tool buffer under a
 stable string key; `(head:find-tool-buffer key)` only looks it up.
 Renaming the displayed buffer does not change its tool key.  App
-registration and `edit:fresh-buffer` use this same lookup, so a snapshot
+registration and `edit:fresh-buffer!` use this same lookup, so a snapshot
 tool rebuilds its own buffer and preserves ordinary buffers with a
 matching label.  Killing a tool buffer removes that instance.
 Names supplied as `name`, `<name>`, or `*name*` get the local label
@@ -726,7 +726,7 @@ a plain descriptor list (or `#f` when unavailable) and projected placements.
 rebuilt buffer (or `#f`) and its current placements. Placement keys are `spot`,
 `spot-top`, `mark`, a window number, or `(top . window-number)`; coordinates are
 `(row . column)`. Keep keys unchanged and serialize source/query intent only.
-`(head:resume-source id revision placements)` returns the current shared buffer
+`(head:resume-source! id revision placements)` returns the current shared buffer
 and rebased/clamped source placements. Markdown uses this path for its source
 rows while retaining rendered columns separately. The head restores the layout
 and applies placements; providers do not select windows or publish shared text.

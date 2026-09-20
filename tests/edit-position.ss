@@ -20,7 +20,7 @@
      (define bot '(agent position-test))
      (define check test:check)
      (define (fresh name lines . local?)
-       (let ([b ((if (and (pair? local?) (car local?)) head:new-local-buffer head:new-buffer) name)])
+       (let ([b ((if (and (pair? local?) (car local?)) head:new-local-buffer! head:new-buffer!) name)])
          (head:buffer-lines-set! b (list->vector lines))
          (show-buffer! b)
          (goto-point! '(0 . 0))

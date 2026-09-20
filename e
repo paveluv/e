@@ -19,7 +19,7 @@
 ;; demand into eo/base or eo/client and recompile when stale),
 ;; and start the editor.  Everything else, the loading of the extension
 ;; modules included, is the kernel's and main's business
-;; (kernel:load-modules!, main:run).
+;; (kernel:load-modules!, main:run!).
 ;;
 ;; scheme-script compiles this whole file before running any of it, and
 ;; a literal (import (main)) would be resolved during that compilation
@@ -101,13 +101,13 @@
                ;; from overwriting one another in a shared installation.
                (exit
                  (case (startup:mode)
-                   [(help) (daemon:help) 0]
+                   [(help) (daemon:help!) 0]
                    [(base)
                     (daemon:call-with-base
                       (lambda ()
                         (eval '(begin
                                  (import (prefix (base) base:))
-                                 (base:call-with-runtime base:run)))))]
+                                 (base:call-with-runtime base:run!)))))]
                    [else
                     (daemon:call-with-head
                       (lambda ()
@@ -118,4 +118,4 @@
                                    (lambda ()
                                      (eval '(begin
                                               (import (prefix (edit) edit:) (prefix (main) main:))
-                                              (main:run)))))))))])))))))
+                                              (main:run!)))))))))])))))))

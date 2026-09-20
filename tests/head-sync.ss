@@ -109,7 +109,7 @@
        (call-with-values (lambda () (head:snapshot-since source basis)) list))
      (for-each
        (lambda (local?)
-         (let ([source ((if local? head:new-local-buffer head:new-buffer) "source-history")])
+         (let ([source ((if local? head:new-local-buffer! head:new-buffer!) "source-history")])
            (head:add-buffer! source)
            (head:buffer-lines-set! source '#("alpha" "middle" "omega"))
            (let* ([initial (head:edit-basis source)] [basis (caddr initial)])
@@ -171,12 +171,12 @@
      ;; Rename commits before changing the head; local tools yield to the
      ;; accepted shared label, and failures leave the cached name intact.
      (define hidden-name (store:create! bot "claimed" '("") '((audience))))
-     (define named (head:new-buffer "claimed"))
-     (define rival (head:new-buffer "claimed"))
+     (define named (head:new-buffer! "claimed"))
+     (define rival (head:new-buffer! "claimed"))
      (head:buffer-name-set! rival "claimed")
      (check 'shared-construction-and-rename-adopt-store-claims
             (list (head:buffer-name named) (head:buffer-name rival)) '("claimed<2>" "claimed<3>"))
-     (define rename-tool (head:tool-buffer "shared-rename"))
+     (define rename-tool (head:tool-buffer! "shared-rename"))
      (head:buffer-name-set! named "<shared-rename>")
      (check 'accepted-shared-name-displaces-local-label
             (list (head:buffer-name named) (head:buffer-name rename-tool)
@@ -198,7 +198,7 @@
      ;; hiding and readmitting has retired the record passed to the setter.
      (for-each
        (lambda (kind)
-         (let* ([source (head:new-buffer (format "rename-~a" kind))]
+         (let* ([source (head:new-buffer! (format "rename-~a" kind))]
                 [id (head:buffer-store-id source)]
                 [pending (format "pending-~a" kind)]
                 [final (format "final-~a" kind)]
@@ -256,7 +256,7 @@
      (define initial-lines (vector "initial"))
      (define initial-facts
        (list (cons 'base (string-copy "initial")) '(trailing . #f) '(mode . #f) '(mode-auto . #f) '(wrap . #f)))
-     (define constructed (head:new-buffer "reentrant construction" initial-lines initial-facts))
+     (define constructed (head:new-buffer! "reentrant construction" initial-lines initial-facts))
      (store:unsubscribe! creation-token)
      (vector-set! initial-lines 0 "lost")
      (string-set! (cdar initial-facts) 0 #\X)
@@ -273,12 +273,12 @@
      (define private
        (store:create! head:ui-actor "<private>" '("seed")
                       (list (cons 'audience (list other)) '(wrap . #f))))
-     (define local-tool (head:tool-buffer "private"))
+     (define local-tool (head:tool-buffer! "private"))
      (head:before-frame!)
      (check 'private-creation-is-invisible
             (list (head:buffer-of-store-id private) (head:adopt-store-buffer! private)
                   (head:buffer-name local-tool)) '(#f #f "<private>"))
-     (define renaming-tool (head:tool-buffer "private-renamed"))
+     (define renaming-tool (head:tool-buffer! "private-renamed"))
      (store:rename! bot private "<private-renamed>")
      (head:before-frame!)
      (check 'hidden-rename-does-not-reserve-local-labels
@@ -353,8 +353,8 @@
      ;; A lifecycle burst can exceed the retained invalidation set. Rescan
      ;; both current inventory and old head records, so deleted/hidden ids
      ;; retire while newly visible sources and local tools keep their identity.
-     (let* ([deleted (head:new-buffer "overflow-deleted")]
-            [hidden (head:new-buffer "overflow-hidden")]
+     (let* ([deleted (head:new-buffer! "overflow-deleted")]
+            [hidden (head:new-buffer! "overflow-hidden")]
             [fresh (store:create! bot "overflow-fresh" '("latest"))])
        (head:before-frame!)
        (let ([adopted (head:buffer-of-store-id fresh)])
@@ -377,7 +377,7 @@
 
      ;; With no visible alternative, retirement creates a fresh scratch
      ;; without stealing the hidden scratch's still-reserved store label.
-     (define last-visible (head:new-buffer "*scratch*<last>"))
+     (define last-visible (head:new-buffer! "*scratch*<last>"))
      (head:set-buffers! (list last-visible))
      (head:set-window-buffer! w last-visible)
      (store:set-property! head:ui-actor (head:buffer-store-id last-visible) 'audience '())
@@ -391,7 +391,7 @@
 
      ;; Resume follows the saved basis, not the fresh process's initial
      ;; cache. The table covers rebasing, old versions and unavailable views.
-     (let ([b (head:new-buffer "resume positions")])
+     (let ([b (head:new-buffer! "resume positions")])
        (head:set-buffers! (list b))
        (head:set-layout-root! (head:current-window))
        (head:set-window-buffer! (head:current-window) b)

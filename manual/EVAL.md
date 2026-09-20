@@ -121,7 +121,7 @@ argument's type instead of by symbol. `(edit:show-buffer! ` offers every live
 buffer as the expression that denotes it, `(buffer "edit.sls")`, with the
 buffer's file, mode and state as its hint; then the documented procedures
 and parameters that produce a buffer, `(head:current-buffer)` and
-`(edit:fresh-buffer name)` say, which insert their opening and settle to their
+`(edit:fresh-buffer! name)` say, which insert their opening and settle to their
 first argument; then the top-level variables holding one, so a buffer you
 bound with `define` at M-x is offered by name. The token matches a
 candidate's own spelling the way it matches a symbol, by parts starting at
@@ -280,9 +280,9 @@ Open the live log view through the buffer list or with:
 
 ```scheme
 (log-view:show!)
-(log-view:buffer 'eval)
-(log-view:buffer 'stdout)
-(log-view:buffer 'stderr)
+(log-view:buffer! 'eval)
+(log-view:buffer! 'stdout)
+(log-view:buffer! 'stderr)
 ```
 
 The result is posted after both output streams close, so it remains the final

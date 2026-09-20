@@ -167,7 +167,8 @@
                          listing))))))]))
 
   (edoc "Where commands and apps keep built or fetched data, out of git: the installation's data directory, created on first use."
-        (returns directory))
+        (returns directory)
+        (effects internal))
   (define (data-directory)
     ;; Where commands and apps keep built or fetched data, out of git:
     ;; the installation's data directory, created on first use. Each

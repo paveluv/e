@@ -10,7 +10,7 @@ starts without libssl installed; the describe corpus download uses this client.
 ```scheme
 (https:get url)                    ; => body text; follows redirects,
                                    ;    errors on non-2xx
-(https:download url path)          ; fetch into a file
+(https:download! url path)          ; fetch into a file
 (https:request method url [headers [body]])
                                    ; => response; body streams
 (https:response-status r)          ; => 200 ...

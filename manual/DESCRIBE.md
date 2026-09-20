@@ -139,7 +139,11 @@ the predicate and the field procedures; a record with a protocol or a
 parent documents its constructor only through a `(constructor field ...)`
 clause naming the arguments among the fields. A condition type's edoc
 names its fields the same way. A keyword's clauses name the parts of its
-form. `returns` appears at most once, and every type is in the vocabulary:
+form. Three clauses are declarations rather than formals: `(prompts)` for
+a procedure that waits for a key, `(effects internal)` for a query whose
+only changes are its own caches, and `(effects remote)` for a transport
+whose effect is the message's; the effects check in
+[Modules](MODULES.md) reads them. `returns` appears at most once, and every type is in the vocabulary:
 the editor's notions `file`, `directory`, `buffer`, `window`, `region`,
 `position`, `command`, `symbol`, `key`, `mode`, `style`; the language's
 `string`, `char`, `integer`, `number`, `boolean`, `list`, `pair`,
@@ -187,4 +191,5 @@ completed; they are never checked at run time. Every library is an
 `elibrary` except `(edoc)` itself, which documents its own exports with
 the same checks; `tools/edoc-coverage.sps` reports, library by library,
 which exports carry an edoc and what kind of definition the others are,
-and `--list` names them.
+`--list` names them, and `--effects` checks every documented name's bang
+against what its body reaches.

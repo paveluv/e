@@ -28,7 +28,7 @@
        (if (eq? kind 'get) (https:get url)
            (dynamic-wind void
              (lambda ()
-               (https:download url destination)
+               (https:download! url destination)
                (call-with-input-file destination get-string-all))
              (lambda () (when (file-exists? destination) (delete-file destination))))))
 
@@ -84,7 +84,7 @@
                           (lambda ()
                             (let ([result (case kind
                                             [(get) (https:get base)]
-                                            [(download) (https:download base destination)]
+                                            [(download) (https:download! base destination)]
                                             [(response) (https:response-text (https:request 'GET base))])])
                               (if (eq? kind 'download) (string=? result destination) (string=? result payload)))))
                         1000000 (lambda (ticks result) result)
@@ -202,7 +202,7 @@
        (list #t '(("audit.invalid" 8443 0)) (list (wire "audit.invalid:8443" "/dir/start?old=1")) 1))
      (check 'failed-destination-closes-response
        (captured (list ok)
-         (lambda () (https:download base (string-append destination "/missing/file"))))
+         (lambda () (https:download! base (string-append destination "/missing/file"))))
        (list 'raised '(("audit.invalid" 8443 0)) (list (wire "audit.invalid:8443" "/dir/start?old=1")) 1))
      (for-each
        (lambda (url)

@@ -99,7 +99,8 @@
         (question string "the question")
         (allowed string "the acceptable characters")
         (rest (list-of thunk) "a repaint to run before waiting, at most one")
-        (returns (or char #f)))
+        (returns (or char #f))
+        (prompts))
   (define (query-key! question allowed . rest)
     ;; A focused single-key question. Decode complete terminal events so an
     ;; arrow's leading ESC cannot cancel the question and leave its remaining
@@ -459,7 +460,8 @@
   (edoc "Read a line of input in the echo area with editing, history and completion; #f when cancelled."
         (label string "the prompt text")
         (rest (list-of any) "in order, each optional: a completer or completion procedure, the initial input, a history box, an alternate completer and a normalizer")
-        (returns (or string #f)))
+        (returns (or string #f))
+        (prompts))
   (define (prompt! label . rest)
     ;; Each call owns its input, candidates and temporary view. A nested
     ;; call can borrow the echo area without changing its parent's state.
@@ -520,7 +522,7 @@
         (let ([gone? (not (memq view (head:buffers)))]
               [fallback (if (memq previous (head:buffers)) previous
                             (or (find (lambda (b) (not (eq? b view))) (head:buffers))
-                                (head:new-buffer "*scratch*")))])
+                                (head:new-buffer! "*scratch*")))])
           (head:call-with-display-update
             (lambda ()
               (for-each
@@ -593,7 +595,7 @@
           (lambda ()
             (set! view
               (head:register-app!
-                (head:new-local-buffer (if in-window? (label-stem label) "completions"))
+                (head:new-local-buffer! (if in-window? (label-stem label) "completions"))
                 render! mouse!))
             (mode:choose! view (if in-window? "prompt" "completions"))
             (head:set-app-presentation! view 0 #f #f (if in-window? 'text 'default))
@@ -916,7 +918,9 @@
 
   (edoc "Ask a yes-or-no question with a single key."
         (label string "the question")
-        (returns boolean))
+        (returns boolean)
+        (effects internal)
+        (prompts))
   (define (confirm? label)
     (let ([answer (query-key! (string-append label " y)es or n)o") "yn")])
       (and answer (memv (char->integer answer) '(121 89)))))

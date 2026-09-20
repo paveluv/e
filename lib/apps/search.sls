@@ -247,7 +247,8 @@
            (dispatch! event)
            (unless (head:quitting?) (loop needle match failed?))]))))
 
-  (edoc "Start an incremental search in the current buffer: typing extends it, C-s repeats, M-c toggles case folding, Return accepts and C-g cancels.")
+  (edoc "Start an incremental search in the current buffer: typing extends it, C-s repeats, M-c toggles case folding, Return accepts and C-g cancels."
+        (prompts))
   (define (search!)
     ;; The search owns C-g while it runs; the match highlighting goes
     ;; away however it exits.

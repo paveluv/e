@@ -22,7 +22,7 @@
      (define check test:check)
      (define bot '(agent undo-test))
      (define (fresh name shared?)
-       (let ([b ((if shared? head:new-buffer head:new-local-buffer) name)])
+       (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])
          (head:buffer-lines-set! b '#("base" "other"))
          (show-buffer! b)
          (goto-point! '(0 . 0))

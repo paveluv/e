@@ -1,7 +1,7 @@
 ;; base.sls -- process lifetime and the local daemon. Base runtime only.
 (import (only (edoc) elibrary))
 (elibrary (base)
-  (export call-with-runtime run connection-policy connection-owner closing-hook)
+  (export call-with-runtime run! connection-policy connection-owner closing-hook)
   (import (chezscheme)
           (prefix (kernel) kernel:)
           (prefix (daemon) daemon:)
@@ -229,8 +229,8 @@
        (call-with-values (lambda () (apply log:snapshot args)) list)]
       [(log-retention)
        (unless (<= (length args) 1) (error 'wire "expected an optional record count"))
-       (unless (null? args) (control!))
-       (apply log:retention args)]
+       (unless (null? args) (control!) (log:retention (car args)))
+       (log:retention)]
       [(log-add)
        (arity 3)
        (parameterize ([log:progress (eq? (caddr args) 'progress)])
@@ -666,7 +666,7 @@
 
   (edoc "Run the base: listen on its socket, admit heads and agents, and serve them until stopped."
         (returns any))
-  (define (run)
+  (define (run!)
     ;; Bind last, after module initialization and configuration have succeeded.
     ;; The loader still holds the directory's lifetime lock during all cleanup.
     (let* ([path (daemon:socket)] [control daemon:control]

@@ -182,11 +182,11 @@ The live top-level environment exposes the published editor API and loaded
 modules. You can call it via `M-x`:
 
 ```scheme
-M-x (head:buffer-name (current-buffer))
-M-x (replace-all! "old" "new" head:buffer-file)
-M-x (log-view:buffer 'eval)
-M-x (terminal:open!!)
-M-x (describe:this terminal:open!!)
+M-x (head:buffer-name (head:current-buffer))
+M-x (edit:replace-all! "old" "new")
+M-x (log-view:buffer! 'eval)
+M-x (terminal:open!)
+M-x (describe:this terminal:open!)
 ```
 
 (The double-bang suffix `!!` means that the command is interactive. Every

@@ -289,7 +289,8 @@
 
   (edoc "A registry of items owned by the modules that register them; with a key procedure, keys are unique across one publication."
         (key-of (or procedure #f) "(key-of item) giving the key, or #f")
-        (returns any))
+        (returns any)
+        (effects internal))
   (define make-registry
     (case-lambda
       [()
@@ -519,7 +520,8 @@
   (edoc "A box that survives module reloads: the first request under a key initializes it, other callers wait for that."
         (key any "the cell's key")
         (make-initial thunk "the constructor")
-        (returns any))
+        (returns any)
+        (effects internal))
   (define (persistent-cell key make-initial)
     ;; A box that survives module reloads: the first request under a
     ;; key initializes it, with other callers waiting for that result.

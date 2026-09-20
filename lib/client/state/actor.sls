@@ -85,7 +85,8 @@
     (client:request 'send to message))
   (edoc "The questions awaiting this head, oldest first."
         (actor actor "the actor identity")
-        (returns list))
+        (returns list)
+        (effects internal))
   (define (pending actor)
     (unless (equal? actor (client:identity)) (error 'pending "a head reads its own questions"))
     (unless pending-known?

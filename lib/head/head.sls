@@ -54,7 +54,7 @@
           layout-split-second layout-split-second-set!
           layout-split-first-weight layout-split-first-weight-set!
           layout-split-second-weight layout-split-second-weight-set!
-          layout-leaves layout-replace layout-parent
+          layout-leaves layout-replace! layout-parent
           set-layout-root! replace-layout-window! fit-layout!
           popup popup? popup-rows show-popup! hide-popup!
           layout-min-width layout-min-height weighted-first
@@ -84,15 +84,15 @@
           buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
           buffer-stale buffer-stale-set!
           adopt-store!
-          edit-basis snapshot-since store-reset! store-edit! store-history! new-buffer new-local-buffer visit-file!
-          add-buffer! tool-buffer find-tool-buffer
+          edit-basis snapshot-since store-reset! store-edit! store-history! new-buffer! new-local-buffer! visit-file!
+          add-buffer! tool-buffer! find-tool-buffer
           bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
           buffer-lines-set! clamp-buffer-positions!
           sync-foreign-edits! flush-ui-audit!
           set-repaint-hook! set-adopt-hook! call-with-display-update buffer-point
           add-buffer-kill-hook! add-pre-redraw-hook!
           before-frame! add-shutdown-hook! run-shutdown-hooks!
-          checkpoint! resume! register-resume! resume-source buffer-placements
+          checkpoint! resume! register-resume! resume-source! buffer-placements
           registered-apps app-of app-buffer? detach-app! register-app!
           set-app-cursor-visible! set-app-manages-viewport! set-app-selectable!
           set-app-status-position! app-cursor-visible-in?
@@ -238,6 +238,10 @@
 
   (define-record-type view (fields owner source lines frame))
 
+  (edoc "A window's app view while it is still the one its buffer would build, else #f, dropping the stale one."
+        (w window "the window")
+        (returns (or (record view) #f))
+        (effects internal))
   (define (window-view-current w)
     (let ([v (window-view w)] [b (window-buffer w)])
       (and v
@@ -449,14 +453,14 @@
         (old (or window (record layout-split)) "the node to replace")
         (replacement (or window (record layout-split)) "its replacement")
         (returns (or window (record layout-split))))
-  (define (layout-replace node old replacement)
+  (define (layout-replace! node old replacement)
     (cond
       [(eq? node old) replacement]
       [(layout-split? node)
        (layout-split-first-set!
-         node (layout-replace (layout-split-first node) old replacement))
+         node (layout-replace! (layout-split-first node) old replacement))
        (layout-split-second-set!
-         node (layout-replace (layout-split-second node) old replacement))
+         node (layout-replace! (layout-split-second node) old replacement))
        node]
       [else node]))
 
@@ -485,7 +489,7 @@
         (old (or window (record layout-split)) "the node to replace")
         (replacement (or window (record layout-split)) "its replacement"))
   (define (replace-layout-window! old replacement)
-    (set-layout-root! (layout-replace the-root old replacement)))
+    (set-layout-root! (layout-replace! the-root old replacement)))
 
   (edoc "Collapse the layout to the current window beside the pop-up when the screen is too small for its splits."
         (width integer "the screen width")
@@ -854,7 +858,9 @@
 
   (edoc "Read the next key from the pump, applying mouse reports unless handle-mouse? is #f, in which case they are consumed without being applied, for a context that must not change focus; frames and posted thunks run while waiting."
         (handle-mouse? boolean "whether to apply mouse reports")
-        (returns (or char string any) "a character, an event string, or eof"))
+        (returns (or char string any) "a character, an event string, or eof")
+        (effects internal)
+        (prompts))
   (define read-key-event
     ;; Consumers see the same names whether they are the main editor,
     ;; I-search, a prompt, or a key describer.  A context that must not
@@ -1071,7 +1077,8 @@
         (x integer "the column")
         (y integer "the row")
         (now number "the time in milliseconds")
-        (returns boolean))
+        (returns boolean)
+        (effects internal))
   (define (double-click? x y now)
     ;; Record a press at (x, y) at time now (ms); #t when it repeats
     ;; the previous press's cell within half a second.
@@ -1730,10 +1737,10 @@
         (lines list "the lines")
         (facts list "the (key . value) facts")
         (returns buffer))
-  (define new-buffer
+  (define new-buffer!
     (case-lambda
       [(name)
-       (new-buffer name '("") '())]
+       (new-buffer! name '("") '())]
       [(name lines facts)
        (require-store-buffer! (store:create! ui-actor name lines (complete-buffer-facts facts)))]))
 
@@ -1757,7 +1764,7 @@
   (edoc "A local buffer, this head's alone, with one empty line; the caller adds or shows it."
         (name string "the buffer name")
         (returns buffer))
-  (define (new-local-buffer name)
+  (define (new-local-buffer! name)
     ;; Local construction has no shared lifecycle. Its caller decides when
     ;; to add/show it; opaque local facts and generated content stay here.
     (let ([b (make-buffer (local-name name) (vector "") 0 (vector '() '())
@@ -1807,11 +1814,11 @@
   (edoc "The local tool buffer with a stable key, created disposable when there is none."
         (key string "the tool key")
         (returns buffer))
-  (define (tool-buffer key)
+  (define (tool-buffer! key)
     (unless (and (string? key) (> (string-length key) 0))
-      (error 'tool-buffer "expected a nonempty string key" key))
+      (error 'tool-buffer! "expected a nonempty string key" key))
     (or (find-tool-buffer key)
-        (let ([b (new-local-buffer key)])
+        (let ([b (new-local-buffer! key)])
           (buffer-fact-set! b 'tool-key key)
           (buffer-fact-set! b 'disposable #t)
           (add-buffer! b))))
@@ -2295,7 +2302,7 @@
         (id integer "the store id")
         (basis integer "the saved revision")
         (positions list "the saved positions"))
-  (define (resume-source id basis positions)
+  (define (resume-source! id basis positions)
     ;; Local projections and ordinary shared buffers use one source path.
     ;; Ask for the complete chain at the saved revision, adopt current truth,
     ;; then account for any reentrant adoption before returning coordinates.
@@ -2316,7 +2323,7 @@
                       (if (not reference) (values #f positions)
                           (guard (ex [else (values #f positions)])
                             (case (car reference)
-                              [(shared) (apply resume-source (append (cdr reference) (list positions)))]
+                              [(shared) (apply resume-source! (append (cdr reference) (list positions)))]
                               [(tool)
                                (let ([b (find-tool-buffer (cadr reference))])
                                  (when b
@@ -2693,7 +2700,7 @@
                     (when (buffer-store-id target)
                       (error 'register-app! "head apps require a local buffer" target))
                     target)
-                  (tool-buffer target))]
+                  (tool-buffer! target))]
            [a (make-app b refresh! (and (pair? handler) (car handler))
                         #f 'default #f)])
       (buffer-read-only-set! b #t)
@@ -3148,7 +3155,7 @@
           (buffer-rendition-set! b #f)
           (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
           (let ([fallback (or (find buffer-visible? the-buffers)
-                            (new-buffer "*scratch*"))])
+                            (new-buffer! "*scratch*"))])
             (for-each (lambda (w)
                         (when (eq? (window-buffer w) b)
                           (set-window-buffer! w fallback)))
@@ -3190,7 +3197,8 @@
 
   (edoc "Run an interaction during which C-g is an ordinary key rather than an interrupt."
         (thunk thunk "the interaction")
-        (returns any "what the thunk returns"))
+        (returns any "what the thunk returns")
+        (effects internal))
   (define (call-uninterrupted thunk)
     ;; run thunk as an interaction: C-g is a key while it lasts
     (let ([old isig-on?])
@@ -3283,10 +3291,10 @@
   (define seat-initialized
     (let ([b (or (let ([id (store:find-named "*scratch*")])
                    (and id (adopt-store-buffer! id)))
-                 (new-buffer "*scratch*"))])
+                 (new-buffer! "*scratch*"))])
       (set! the-buffers (cons b (remq b the-buffers)))
       ;; the pop-up is born first, so it is window 0; *scratch* is window 1
-      (set! popup-buffer (new-local-buffer "pop-up"))
+      (set! popup-buffer (new-local-buffer! "pop-up"))
       (set! the-popup (make-window popup-buffer 0 0 0 0 0 0 0 0 'default))
       (set! the-windows (list the-popup))
       (let ([w (make-window b 0 0 0 0 0 0 0 0 'default)])

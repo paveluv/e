@@ -18,7 +18,7 @@
 (import (only (edoc) elibrary))
 (elibrary (markdown)
   (export init! (rename (markdown-view! view!)) (rename (markdown-edit! edit!))
-          (rename (source-companion companion) (source-view companion!))
+          (rename (source-companion companion) (source-view! companion!))
           (rename (markdown-render render)) (rename (markdown-view-install! view-install!)) (rename (markdown-browser browser))
           (rename (markdown-view-max-width view-max-width)))
   (import (chezscheme)
@@ -916,7 +916,7 @@
         (source buffer "a buffer in markdown mode")
         (name (list-of string) "a preferred buffer name, at most one")
         (returns buffer))
-  (define (source-view source . name)
+  (define (source-view! source . name)
     ;; A source record is the identity, never its mutable label.  The
     ;; relationship belongs only to the local companion, not the store.
     ;; Apps can supply a preferred local label without selecting a window.
@@ -927,7 +927,7 @@
       (error 'companion! "expected an optional buffer name" name))
     (head:add-buffer! source)
     (let ([b (or (source-companion source)
-                 (head:new-local-buffer
+                 (head:new-local-buffer!
                    (if (pair? name) (car name) (format "*markdown ~a*" (head:buffer-name source)))))])
       (head:buffer-fact-set! b 'markdown-input source)
       (attach-source-view! b)
@@ -947,10 +947,10 @@
     (apply
       (lambda (id revision name)
         (let-values ([(source anchors)
-                      (head:resume-source id revision
+                      (head:resume-source! id revision
                         (map (lambda (entry) (cons (car entry) (cons (cadr entry) 0))) positions))])
           (if (and source (equal? (mode:name-of source) "markdown"))
-              (let* ([b (source-view source name)] [r (rendering-of b)])
+              (let* ([b (source-view! source name)] [r (rendering-of b)])
                 (values b
                   (map (lambda (anchor position)
                          (cons (car anchor) (cons (view-row-showing r (cadr anchor)) (cddr position))))
@@ -966,7 +966,7 @@
       (head:call-with-display-update
         (lambda ()
           (let ([row (car (head:buffer-point source))]
-                [b (source-view source)])
+                [b (source-view! source)])
             (show-buffer! b)
             (refresh-render! b)
             (goto-point! (cons (view-row-showing (rendering-of b) row) 0)))))

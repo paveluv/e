@@ -160,7 +160,8 @@
   (edoc "Send one request to the base and wait for its reply; an interrupted call closes the connection."
         (operation symbol "the request")
         (args (list-of any) "its arguments")
-        (returns any))
+        (returns any)
+        (effects remote))
   (define (request operation . args)
     ;; Exactly one call in flight. An interrupted call closes the socket:
     ;; an unknown commit is never replayed on this or a replacement session.

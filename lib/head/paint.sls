@@ -17,8 +17,8 @@
 
 (import (only (edoc) elibrary))
 (elibrary (paint)
-  (export ansi goto fit
-          display-editor-line emit-runs
+  (export ansi! goto! fit
+          display-editor-line! emit-runs!
           detect-hyperlinks valid-hyperlink? compute-breaks
           wrap-lines buffer-wrap-setting window-wrapped? clean-wrap? wrap-width
           line-breaks segment-of segment-start segment-close line-segments
@@ -38,7 +38,7 @@
           completion-styler echo-cursor-now show-message!
           show-prompt-message! echo-append! echo-queue!
           present-echo! echo-log-prefix echo-log-spans
-          echo-log-rows display-echo-log-row
+          echo-log-rows display-echo-log-row!
           echo-cap update-echo-geometry!
           update-terminal-title! window-screen-position window-position column-at-cell
           place-cursor! terminal-size!)
@@ -65,14 +65,14 @@
 
   (edoc "Write values to the terminal output port, displayed and unflushed."
         (xs (list-of any) "what to write"))
-  (define (ansi . xs)
+  (define (ansi! . xs)
     (for-each (lambda (x) (display x (sys:terminal-output-port))) xs))
 
   (edoc "Move the terminal cursor to a 1-based row and column."
         (r integer "the row")
         (c integer "the column"))
-  (define (goto r c)
-    (ansi "\x1b;[" (number->string r) ";" (number->string c) "H"))
+  (define (goto! r c)
+    (ansi! "\x1b;[" (number->string r) ";" (number->string c) "H"))
 
   (edoc "A string padded with spaces or cut to exactly width characters."
         (s string "the text")
@@ -97,8 +97,8 @@
         (edge (or (one-of wrap trunc) #f) "the continuation mark for the last column")
         (width integer "the row width in cells")
         (bound integer "the first column past this row's content"))
-  (define (display-editor-line s shown span marks links left styles edge
-                               width bound)
+  (define (display-editor-line! s shown span marks links left styles edge
+                                width bound)
     ;; edge: #f, or the continuation mark for the last column -- 'wrap
     ;; (the line goes on below) or 'trunc (past the right edge).
     ;; bound: the first column past this row's content (a word-wrapped
@@ -144,11 +144,11 @@
                 (string->list text))))
     (define (open-link link)
       (let ([id (and (pair? (cdddr link)) (cadddr link))])
-        (ansi "\x1b;]8;"
-              (if (and id (string? id))
-                  (string-append "id=" (safe-link-id id)) "")
-              ";" (safe-link-text (caddr link)) "\x1b;\\")))
-    (define (close-link) (ansi "\x1b;]8;;\x1b;\\"))
+        (ansi! "\x1b;]8;"
+               (if (and id (string? id))
+                 (string-append "id=" (safe-link-id id)) "")
+               ";" (safe-link-text (caddr link)) "\x1b;\\")))
+    (define (close-link) (ansi! "\x1b;]8;;\x1b;\\"))
     (define (segment from to)
       ;; The characters of columns [from, to), off the shown text (the
       ;; mode's display transform, usually the line itself); control
@@ -210,29 +210,29 @@
                                (equal? (link-at j) link))
                           (run (+ j 1))
                           j))])
-          (ansi "\x1b;[0m" (style:code style))
-          (when sel (ansi (style:code 'selection)))
+          (ansi! "\x1b;[0m" (style:code style))
+          (when sel (ansi! (style:code 'selection)))
           (case bg
-            [(match-point) (ansi (style:code 'match-point))]
-            [(active) (ansi (style:code 'active))]
-            [(match) (ansi (style:code 'match))]
+            [(match-point) (ansi! (style:code 'match-point))]
+            [(active) (ansi! (style:code 'active))]
+            [(match) (ansi! (style:code 'match))]
             [else (void)])
-          (when mk (ansi (style:code mk)))
+          (when mk (ansi! (style:code mk)))
           (when link (open-link link))
-          (ansi (segment col end))
+          (ansi! (segment col end))
           (when link (close-link))
           (loop end))))
     (when edge
-      (ansi "\x1b;[0m" (style:code 'chrome)
-            (if (eq? edge 'wrap) "\\" "$")))
-    (ansi "\x1b;[0m"))
+      (ansi! "\x1b;[0m" (style:code 'chrome)
+             (if (eq? edge 'wrap) "\\" "$")))
+    (ansi! "\x1b;[0m"))
 
   (edoc "Write content[start, end) as styled runs, each under its style's code; positions past the styles vector paint plain."
         (content string "the text")
         (styles vector "the per-column styles")
         (start integer "the first column")
         (end integer "the column after the last"))
-  (define (emit-runs content styles start end)
+  (define (emit-runs! content styles start end)
     ;; content[start,end) in styled runs, each under its style's code;
     ;; positions past the styles vector paint plain.
     (let emit ([i start])
@@ -246,7 +246,7 @@
                     (if (and (< j end) (equal? (at j) st))
                         (run (+ j 1))
                         j))])
-          (ansi "\x1b;[0m" (style:code st) (substring content i j))
+          (ansi! "\x1b;[0m" (style:code st) (substring content i j))
           (emit j)))))
 
   ;;; Soft wrap -------------------------------------------------------------------
@@ -614,7 +614,8 @@
   (edoc "The break table of a line in a window, a vector of its segment start columns, memoized per line string and width."
         (w window "the window")
         (line string "the line")
-        (returns vector))
+        (returns vector)
+        (effects internal))
   (define (line-breaks w line)
     ;; The break table for line in w: a vector of segment starts.
     (let* ([width (wrap-width w)]
@@ -727,7 +728,7 @@
     ;; Blank the terminal and schedule the full repaint -- an actual
     ;; erase, which also clears the terminal's own selection highlight
     ;; where an identical overwrite would not.
-    (ansi "\x1b;[2J")
+    (ansi! "\x1b;[2J")
     (invalidate-screen-cache!))
 
   (define (paint-dividers! layout)
@@ -756,9 +757,9 @@
                 (paint! r x (list 'divider junction?)
                         (lambda ()
                           (if junction?
-                              (ansi (style:code 'chrome)
+                              (ansi! (style:code 'chrome)
                                 "\x2534;\x1b;[0m")
-                              (ansi (style:code 'chrome)
+                              (ansi! (style:code 'chrome)
                                 "\x2502;\x1b;[0m")))))))))
       (head:dividers)))
 
@@ -774,7 +775,7 @@
     (let* ([entry (vector-ref screen-cache row)]
            [hit (and (pair? entry) (assv xoff entry))])
       (unless (and hit (equal? (cdr hit) key))
-        (ansi "\x1b;[?25l") (goto (+ row 1) (+ xoff 1))
+        (ansi! "\x1b;[?25l") (goto! (+ row 1) (+ xoff 1))
         (draw)
         (vector-set! screen-cache row
           (cons (cons xoff key)
@@ -808,7 +809,7 @@
                     (if (eq? side 'right) (- (head:window-width w) 1) 0))
                   (list 'scrollbar glyph)
                   (lambda ()
-                    (ansi (style:code 'chrome) glyph "\x1b;[0m")))))))
+                    (ansi! (style:code 'chrome) glyph "\x1b;[0m")))))))
 
   (define (paint-line-number! row x width line first-segment?)
     (when (> width 0)
@@ -821,7 +822,7 @@
                      label " ")])
         (paint! row x (list 'line-number text)
                 (lambda ()
-                  (ansi (style:code 'chrome) text "\x1b;[0m"))))))
+                  (ansi! (style:code 'chrome) text "\x1b;[0m"))))))
 
   (define (paint-window! w start height ranges)
     (let* ([b (head:window-buffer w)]
@@ -894,12 +895,12 @@
                             (list i line shown span marks links slice-left
                                   mode-tag row-styles edge)
                             (lambda ()
-                              (display-editor-line shown shown span marks links
-                                                   slice-left
-                                                   row-styles
-                                                   edge
-                                                   content-width
-                                                   bound))))
+                              (display-editor-line! shown shown span marks links
+                                                    slice-left
+                                                    row-styles
+                                                    edge
+                                                    content-width
+                                                    bound))))
                   (if (and (>= i sticky)
                            wrapped? (< (+ seg 1) (vector-length breaks)))
                       (loop (+ k 1) i (+ seg 1))
@@ -907,7 +908,7 @@
                             (if (= (+ k 1) sticky) top (+ i 1)) 0)))
                 (begin
                   (paint! row content-x '(empty)
-                          (lambda () (ansi (fit "" content-width))))
+                          (lambda () (ansi! (fit "" content-width))))
                   (loop (+ k 1) (+ i 1) 0))))))
       ;; the window's number, then a hairline flush against it (U+258F,
       ;; the left one-eighth block: single width, in every monospace
@@ -979,44 +980,44 @@
                            [number-end (min (string-length number) content-end)]
                            [normal-start
                             (if stale? (min (+ number-end 2) content-end) number-end)])
-                      (ansi bar)
+                      (ansi! bar)
                       ;; the window's number and its bar, then the state
                       ;; marker -- a stale buffer's !! in red
-                      (ansi (substring text 0 number-end))
+                      (ansi! (substring text 0 number-end))
                       (when stale?
-                        (ansi "\x1b;[31m" (substring text number-end normal-start)
+                        (ansi! "\x1b;[31m" (substring text number-end normal-start)
                           fg))
-                      (ansi (substring text normal-start ns)
+                      (ansi! (substring text normal-start ns)
                         "\x1b;[1m" (substring text ns ne)
                         "\x1b;[22m" (substring text ne cs))
-                      (ansi (substring text cs hs))
+                      (ansi! (substring text cs hs))
                       (let loop ([values hint-values] [at hs])
                         (when (and (pair? values) (< at he))
                           (let* ([value (car values)]
                                  [end (min (+ at (string-length (car value)))
                                            he)])
                             (case (cdr value)
-                              [(italic) (ansi "\x1b;[3m")]
-                              [(red) (ansi "\x1b;[31m")])
+                              [(italic) (ansi! "\x1b;[3m")]
+                              [(red) (ansi! "\x1b;[31m")])
                             (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
-                              (ansi (style:code 'hover)))
-                            (ansi (substring text at end))
+                              (ansi! (style:code 'hover)))
+                            (ansi! (substring text at end))
                             (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
-                              (ansi "\x1b;[0m" bar))
+                              (ansi! "\x1b;[0m" bar))
                             (case (cdr value)
-                              [(italic) (ansi "\x1b;[23m")]
-                              [(red) (ansi fg)])
+                              [(italic) (ansi! "\x1b;[23m")]
+                              [(red) (ansi! fg)])
                             (loop (cdr values) end))))
-                      (ansi (substring text he content-end) (if buttons? " │" " "))
+                      (ansi! (substring text he content-end) (if buttons? " │" " "))
                       (when buttons?
                         (for-each
                           (lambda (button)
-                            (when (eq? (car button) hovered) (ansi (style:code 'hover)))
-                            (ansi (cdr button))
-                            (when (eq? (car button) hovered) (ansi "\x1b;[0m" bar))
-                            (ansi "│"))
+                            (when (eq? (car button) hovered) (ansi! (style:code 'hover)))
+                            (ansi! (cdr button))
+                            (when (eq? (car button) hovered) (ansi! "\x1b;[0m" bar))
+                            (ansi! "│"))
                           head:window-buttons))
-                      (ansi "\x1b;[0m"))))))))
+                      (ansi! "\x1b;[0m"))))))))
 
 
   ;;; The frame driver ----------------------------------------------------------------
@@ -1063,7 +1064,7 @@
   (define (reset-cursor-style!)
     ;; on the way out: the terminal's default cursor, unless it already shows
     (unless (string=? cursor-style-shown "\x1b;[0 q")
-      (ansi "\x1b;[0 q")))
+      (ansi! "\x1b;[0 q")))
   (define visual-bell-deadline #f)
   (define (current-lines) (head:buffer-lines (head:window-buffer (head:current-window))))
 
@@ -1097,7 +1098,8 @@
           (set! rows (max 3 (car size)))
           (set! cols (max 20 (cdr size)))))))
   (edoc "Tile the split tree into the screen above the echo area: ((window start text-height) ...), start 0-based, remembered for mouse hit-testing."
-        (returns list))
+        (returns list)
+        (effects internal))
   (define (window-layout)
     ;; Tile the persistent split tree into the screen minus the echo
     ;; area; -> ((window start text-height) ...), start 0-based.  The
@@ -1552,9 +1554,9 @@
     ;; light dividers between windows.
     (let* ([offset (echo-box-offset)] [width (echo-width)]
            [border (string-append "\x1b;[38;5;245m" (echo-box-border) "\x1b;[0m")])
-      (ansi "\x1b;[0m" (make-string offset #\space) border)
+      (ansi! "\x1b;[0m" (make-string offset #\space) border)
       (draw)
-      (ansi "\x1b;[0m"
+      (ansi! "\x1b;[0m"
         (make-string (max 0 (- width used (if wrapped? 1 0))) #\space)
         (if wrapped? "\\" "")
         border
@@ -1568,7 +1570,7 @@
         (k integer "the row within the entry")
         (span pair "the content indices of the row")
         (wrapped? boolean "whether the row wraps on"))
-  (define (display-echo-log-row prefix text styler ghost k span wrapped?)
+  (define (display-echo-log-row! prefix text styler ghost k span wrapped?)
     ;; One visual row of a transient-log entry: the grey prefix on the
     ;; first, its indent on continuations, the slice under the
     ;; component's styler, a mark closing every wrapped row.
@@ -1585,13 +1587,13 @@
            [content (string-append text ghost)])
       (echo-frame!
         (lambda ()
-          (ansi (style:code 'chrome) lead)
+          (ansi! (style:code 'chrome) lead)
           (when (< start text-end)
             (if styles
-                (emit-runs text styles start text-end)
-                (ansi "\x1b;[0m" (substring text start text-end))))
+                (emit-runs! text styles start text-end)
+                (ansi! "\x1b;[0m" (substring text start text-end))))
           (when (< ghost-start end)
-            (ansi "\x1b;[0m" (style:code 'ghost)
+            (ansi! "\x1b;[0m" (style:code 'ghost)
               (substring content ghost-start end))))
         (+ (string-length lead) (- end start))
         wrapped?)))
@@ -1621,8 +1623,8 @@
                       [wrapped? (pair? (cdr spans))])
                   (paint! row 0 (list 'echo-log e k span wrapped? (echo-box-width) (echo-box-border) cols)
                     (lambda ()
-                      (display-echo-log-row prefix text (caddr e) ghost
-                                            k span wrapped?)))
+                      (display-echo-log-row! prefix text (caddr e) ghost
+                                             k span wrapped?)))
                   (rloop (cdr spans) (+ k 1) (+ row 1))))))))
     (when (> (echo:live-height) 0)
       (let* ([content (string-append (echo:text) (echo:ghost))]
@@ -1661,19 +1663,19 @@
                                      (car (echo:styles))))))])
                     (echo-frame!
                       (lambda ()
-                        (ansi (make-string lead #\space))
+                        (ansi! (make-string lead #\space))
                         (when (> lb 0)
-                          (ansi (style:code 'chrome)
-                                (substring content 0 lb) "\x1b;[0m"))
+                          (ansi! (style:code 'chrome)
+                                 (substring content 0 lb) "\x1b;[0m"))
                         (if styles
                             ;; styled runs for the typed part
-                            (emit-runs content styles (+ start lb)
-                                       (+ start cut))
-                            (ansi (substring content (+ start lb)
-                                             (+ start cut))))
-                        (ansi "\x1b;[0m" (style:code 'ghost)
-                              (substring content (+ start cut) end)
-                              "\x1b;[0m"))
+                            (emit-runs! content styles (+ start lb)
+                                        (+ start cut))
+                            (ansi! (substring content (+ start lb)
+                                              (+ start cut))))
+                        (ansi! "\x1b;[0m" (style:code 'ghost)
+                               (substring content (+ start cut) end)
+                               "\x1b;[0m"))
                       (+ lead (- end start))
                       wrapped?)))))
             (loop (+ line 1) (+ row 1)))))))
@@ -1733,8 +1735,8 @@
     (when visual-bell-deadline
       (let loop ([row (- rows (echo:height))])
         (when (< row rows)
-          (goto (+ row 1) 1)
-          (ansi "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
+          (goto! (+ row 1) 1)
+          (ansi! "\x1b;[7m" (make-string cols #\space) "\x1b;[0m")
           (loop (+ row 1))))))
 
 
@@ -1755,7 +1757,7 @@
     (let ([title (string-append "e: " (head:buffer-name (head:window-buffer (head:current-window))))])
       (unless (equal? title terminal-title-shown)
         (set! terminal-title-shown title)
-        (ansi "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
+        (ansi! "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
 
   (edoc "The 1-based screen (row . col) of a displayed position in a window, wrap-aware."
         (w window "the window")
@@ -1799,12 +1801,12 @@
            [visible? (or cursor (head:app-cursor-visible-in? (head:current-window)))])
       (if cursor
           (let ([p (echo-position cursor)])
-            (goto (+ (- rows (echo:live-height)) (- (car p) (echo:scroll)) 1)
+            (goto! (+ (- rows (echo:live-height)) (- (car p) (echo:scroll)) 1)
               (min (+ (echo-box-offset) 1 (cdr p) 1) cols)))
           (when visible?
             (let ([p (window-screen-position (head:current-window)
                                              (head:window-prow (head:current-window)) (head:window-pcol (head:current-window)))])
-              (goto (min (car p) rows) (min (cdr p) cols)))))
+              (goto! (min (car p) rows) (min (cdr p) cols)))))
       (let* ([app-style (head:app-cursor-style (head:window-buffer (head:current-window)))]
              [style (cond
                       [(cursor-in-echo) "\x1b;[3 q"]
@@ -1826,8 +1828,8 @@
                       [else "\x1b;[0 q"])])
         (unless (string=? style cursor-style-shown)
           (set! cursor-style-shown style)
-          (ansi style)))
-      (ansi (if visible? "\x1b;[?25h" "\x1b;[?25l"))
+          (ansi! style)))
+      (ansi! (if visible? "\x1b;[?25h" "\x1b;[?25l"))
       (flush-output-port (sys:terminal-output-port))))
 
   ;;; The frame -----------------------------------------------------------------------
@@ -1909,13 +1911,13 @@
       (dynamic-wind
         (lambda ()
           (set! complete? #f)
-          (ansi "\x1b;[?2026h"))
+          (ansi! "\x1b;[?2026h"))
         (lambda ()
           (paint-frame!)
           (set! complete? #t))
         (lambda ()
           (unless complete? (invalidate-screen-cache!))
-          (ansi "\x1b;[?2026l")
+          (ansi! "\x1b;[?2026l")
           (flush-output-port (sys:terminal-output-port))))))
 
   (edoc "Paint a frame: measure the terminal, tile, adopt foreign edits, then repaint what changed.")

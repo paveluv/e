@@ -3,7 +3,7 @@
 (import (only (edoc) elibrary))
 (elibrary (daemon)
   (export call-with-base call-with-head socket rotate-logs! log-deadline control
-          call-with-stop take-stop-signal! help head-command status-summary report-start!)
+          call-with-stop take-stop-signal! help! head-command status-summary report-start!)
   (import (chezscheme)
           (prefix (startup) startup:)
           (prefix (sys) sys:)
@@ -190,7 +190,7 @@
             (flush-output-port (current-error-port)))))))
 
   (edoc "Print the command line usage and the base status.")
-  (define (help)
+  (define (help!)
     (define (show-status line)
       (format #t "\n~a\nBase directory: ~s\n" line (startup:base-working-directory)))
     (display "Usage: e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]\n")

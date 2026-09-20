@@ -41,7 +41,7 @@
      (check 'false-key-is-not-a-tool (head:find-tool-buffer #f) #f)
 
      ;; Callers with an existing local identity can register it directly.
-     (define explicit (head:new-local-buffer "explicit app"))
+     (define explicit (head:new-local-buffer! "explicit app"))
      (check 'register-existing-local
             (eq? explicit (head:register-view! explicit void)) #t)
      (check 'registered-local-is-listed (and (memq explicit (head:buffers)) #t) #t)
@@ -53,7 +53,7 @@
             (head:buffer-read-only (head:window-buffer (head:current-window))) #f)
 
      ;; A view never captures an ordinary buffer's label as identity.
-     (define ordinary (head:new-buffer "<app-collision>"))
+     (define ordinary (head:new-buffer! "<app-collision>"))
      (head:buffer-lines-set! ordinary (vector "keep my work"))
      (head:add-buffer! ordinary)
      (define app (head:register-view! "*app-collision*" void))
@@ -197,21 +197,21 @@
             "<renamed app 2 2>")
 
      ;; Names are claimed on list entry as well as construction.
-     (define first (head:new-local-buffer "pending"))
-     (define second (head:new-local-buffer "pending"))
+     (define first (head:new-local-buffer! "pending"))
+     (define second (head:new-local-buffer! "pending"))
      (show-buffer! first)
      (show-buffer! second)
      (check 'late-name-claim-keeps-first (head:buffer-name first) "<pending>")
      (check 'late-name-claim-suffixes-second (head:buffer-name second) "<pending 2>")
 
      ;; Snapshot tools share the same identity rule, never user text.
-     (define user-help (head:new-buffer "*help*"))
+     (define user-help (head:new-buffer! "*help*"))
      (head:buffer-lines-set! user-help (vector "my notes"))
      (head:buffer-read-only-set! user-help #t)
      (define user-history (vector '(saved) '()))
      (head:buffer-history-set! user-help user-history)
      (head:add-buffer! user-help)
-     (define tool (fresh-buffer "*help*"))
+     (define tool (fresh-buffer! "*help*"))
      (check 'snapshot-is-local (head:buffer-store-id tool) #f)
      (check 'snapshot-label-is-local (head:buffer-name tool) "<help>")
      (check 'shared-tool-like-name-is-unchanged (head:buffer-name user-help) "*help*")
@@ -221,7 +221,7 @@
      (check 'snapshot-preserves-user-history
             (eq? (head:buffer-history user-help) user-history) #t)
      (set-buffer-name! tool "help renamed")
-     (check 'snapshot-reuses-renamed-tool (eq? (fresh-buffer "*help*") tool) #t)
+     (check 'snapshot-reuses-renamed-tool (eq? (fresh-buffer! "*help*") tool) #t)
 
      ;; Refresh and kill use local lifecycle only.
      (define events '())
@@ -269,8 +269,8 @@
      (define filtered-log #f)
      (parameterize ([kernel:registering-module 'log-view-test])
        (log-view:init!)
-       (set! all-log (log-view:buffer))
-       (set! filtered-log (log-view:buffer 'app-probe)))
+       (set! all-log (log-view:buffer!))
+       (set! filtered-log (log-view:buffer! 'app-probe)))
      (set-buffer-name! all-log "renamed log")
      (set-buffer-name! filtered-log "renamed filtered log")
      (define old-all (head:buffer-lines all-log))
@@ -289,7 +289,7 @@
        (check 'log-view-registrations-retracted (map head:app-buffer? views) '(#f #f))
        (parameterize ([kernel:registering-module 'log-view-test]) (log-view:init!))
        (check 'log-views-rebind-with-the-same-identities-and-renderings
-         (list (map eq? views (list (log-view:buffer) (log-view:buffer 'app-probe)))
+         (list (map eq? views (list (log-view:buffer!) (log-view:buffer! 'app-probe)))
                (map head:app-buffer? views) (map head:buffer-lines views))
          (list '(#t #t) '(#t #t) (list old-all old-filtered))))
      (check 'rebuild-does-not-change-records (log:entries) log-records)
@@ -316,7 +316,7 @@
            (head:refresh-visible-views!))
          datum))
      (log:add! 'during-refresh "first" #f)
-     (define arrivals (log-view:buffer 'during-refresh))
+     (define arrivals (log-view:buffer! 'during-refresh))
      (check 'refresh-has-a-fixed-record-bound
             (vector-length (head:buffer-lines arrivals)) 1)
      (show-buffer! arrivals)
@@ -336,7 +336,7 @@
      (define runtime-refresh (head:app-refresh! (head:app-of arrivals)))
      (parameterize ([kernel:registering-module 'log-view-test]) (log-view:init!))
      (check 'runtime-log-identity-survives-reload
-            (eq? arrivals (log-view:buffer 'during-refresh)) #t)
+            (eq? arrivals (log-view:buffer! 'during-refresh)) #t)
      (check 'runtime-log-callback-is-rebound
             (eq? runtime-refresh (head:app-refresh! (head:app-of arrivals))) #f)
 
@@ -349,7 +349,7 @@
        (log:add! 'retention "expired\ntwo" #f)
        (log:add! 'noise "between" #f)
        (log:add! 'retention "kept\nthree\nlines" #f)
-       (let ([b (log-view:buffer 'retention)])
+       (let ([b (log-view:buffer! 'retention)])
          (show-buffer! b)
          (head:window-prow-set! w 2)
          (head:window-pcol-set! w 5)
@@ -552,7 +552,7 @@
          (actor:detach! owner)))
 
      ;; The ordinary buffer path validates generated hyperlink ranges too.
-     (let ([b (head:new-buffer "*hyperlink-test*")])
+     (let ([b (head:new-buffer! "*hyperlink-test*")])
        (call-with-buffer b (lambda () (insert-text! "https://example.com/path")))
        (check 'buffer-link-ranges (paint:buffer-line-hyperlinks b 0)
          '((0 24 "https://example.com/path")))

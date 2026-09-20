@@ -4,7 +4,7 @@
   (export add! snapshot retention subscribe! unsubscribe! progress)
   (import (rnrs)
           (only (chezscheme) current-time time-second time-nanosecond
-                make-mutex with-mutex void make-thread-parameter parameterize)
+                make-mutex with-mutex void make-parameter make-thread-parameter parameterize)
           (prefix (kernel) kernel:)
           (prefix (actor) actor:)
           (prefix (datum) datum:))
@@ -23,24 +23,22 @@
   (define first 0)
   (define serial 0)
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
-  (edoc "How many records the log keeps, or set it, dropping the oldest."
-        (size integer "the record count")
-        (returns integer))
+  (edoc "How many records the log keeps; setting it drops the oldest."
+        (value integer "the record count"))
   (define retention
-    (case-lambda
-      [()
-       (with-mutex lock (vector-length records))]
-      [(size)
-       (unless (and (fixnum? size) (> size 0))
-         (error 'retention "expected a positive exact record count" size))
-       (with-mutex lock
-         (unless (= size (vector-length records))
-           (let ([next (make-vector size #f)] [from (max first (- count size))])
-             (do ([i from (+ i 1)]) ((= i count))
-               (vector-set! next (mod i size) (vector-ref records (mod i (vector-length records)))))
-             (set! records next)
-             (set! first from)))
-         (vector-length records))]))
+    (make-parameter
+      (vector-length records)
+      (lambda (size)
+        (unless (and (fixnum? size) (> size 0))
+          (error 'retention "expected a positive exact record count" size))
+        (with-mutex lock
+          (unless (= size (vector-length records))
+            (let ([next (make-vector size #f)] [from (max first (- count size))])
+              (do ([i from (+ i 1)]) ((= i count))
+                (vector-set! next (mod i size) (vector-ref records (mod i (vector-length records)))))
+              (set! records next)
+              (set! first from)))
+          (vector-length records)))))
   (edoc "Log records from an index on: (values records end first), at most limit of them, of one component and one actor when given."
         (start integer "the first index")
         (limit (or integer #f) "how many at most")

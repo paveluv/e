@@ -211,7 +211,8 @@
 
   (edoc "The memoized line styles function of a buffer's mode; every line plain without one, and a raising mode styles plain."
         (b buffer "the buffer")
-        (returns procedure))
+        (returns procedure)
+        (effects internal))
   (define (buffer-line-styles b)
     ;; The line-styles function of b's mode; unstyled without one.
     (let ([m (mode-of b)])

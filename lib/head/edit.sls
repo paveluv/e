@@ -39,7 +39,7 @@
     ;; buffers, windows, files
     visit-file! save-file! save! prompt-file! default-directory
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
-    fresh-buffer
+    fresh-buffer!
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
     call-with-buffer
     new-buffer! trash restore! empty-trash!
@@ -685,7 +685,7 @@
     ;; payload is base64, so buffer contents cannot terminate the sequence.
     (when (and (forward-kill-ring-to-system-clipboard) (paint:screen-live?))
       (with-mutex paint:redraw-lock
-        (paint:ansi "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
+        (paint:ansi! "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (sys:terminal-output-port)))))
 
   (define (killing?)
@@ -868,7 +868,8 @@
                          (set-message! (format "Cannot reread ~a" path)))]))))))))))
 
   (edoc "Visit a file in the current window, creating or reusing its buffer; nothing is written to disk."
-        (path file "the file to visit"))
+        (path file "the file to visit")
+        (prompts))
   (define (visit-file! path)
     ;; Direct visits and the interactive picker share acquisition and the
     ;; buffer-only merge/reread/cancel flow. Visiting never writes to disk.
@@ -905,7 +906,8 @@
 
   (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, ask whether to overwrite, merge three-way or cancel."
         (target file "where to write: the buffer's own file, or a new destination it visits from then on")
-        (returns boolean "whether the file was written"))
+        (returns boolean "whether the file was written")
+        (prompts))
   (define (save-file! target)
     ;; Saving is guarded by content, not clocks: the disk is read and
     ;; compared with the buffer's base (what it loaded or last saved).
@@ -996,7 +998,7 @@
     ;; diff's unified-diff-style rendering -- built quietly, never
     ;; displayed; the echo names it.  -> the report buffer's name.
     (let* ([name (format "*merge-~a*" (head:buffer-name b))]
-           [rb (fresh-buffer name)])
+           [rb (fresh-buffer! name)])
       (when (pair? report-lines) (apply buffer-append! rb report-lines))
       (head:buffer-read-only-set! rb #t)
       (head:buffer-name rb)))
@@ -1212,11 +1214,11 @@
   (edoc "A named tool buffer, emptied for rebuilding; the same name reuses its own local buffer."
         (name string "the tool's name")
         (returns buffer))
-  (define (fresh-buffer name)
+  (define (fresh-buffer! name)
     ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
     ;; use head:register-view! instead.  The stable tool key reuses its
     ;; own local buffer, never an ordinary buffer with the same label.
-    (let ([b (head:tool-buffer name)])
+    (let ([b (head:tool-buffer! name)])
       (head:buffer-read-only-set! b #f)
       (head:buffer-lines-set! b (vector ""))
       (head:buffer-history-set! b (vector '() '()))
@@ -1301,7 +1303,7 @@
         (name string "the buffer's name")
         (returns buffer))
   (define (new-buffer! name)
-    (let ([b (head:new-buffer name)])
+    (let ([b (head:new-buffer! name)])
       (show-buffer! b)
       b))
 
@@ -2017,7 +2019,8 @@
         (file:base-name path)))
 
   (edoc "Save the current buffer to its file; a buffer without one refuses and names save-file!, which takes a path."
-        (returns boolean "whether the file was written"))
+        (returns boolean "whether the file was written")
+        (prompts))
   (define (save!)
     (if file-name
         (save-file! file-name)
@@ -2027,7 +2030,8 @@
 
   (edoc "Read a file path with completion, history and validation, then visit it; with a directory procedure, read a path to create instead: missing parents and an empty file are made on disk, or just directories for a trailing slash, existing targets are refused, and a created directory goes to the procedure. An initial path seeds the prompt."
         (directory-action (or procedure #f) "what to do with a created directory; #f to visit instead")
-        (initial (or string #f) "the path to start from; #f for the default directory"))
+        (initial (or string #f) "the path to start from; #f for the default directory")
+        (prompts))
   (define (prompt-file! directory-action initial)
     ;; Validate/acquire while the path is still editable; show it only
     ;; after the temporary view has returned the window. Focus loss keeps
@@ -2531,7 +2535,8 @@
             (loop (append sequence (list (head:read-key-event #f)))))
           sequence)))
 
-  (edoc "Read a key sequence and show in the help buffer what it runs, who bound it and what it shadows.")
+  (edoc "Read a key sequence and show in the help buffer what it runs, who bound it and what it shadows."
+        (prompts))
   (define (describe-key!)
     (parameterize ([message-source #f])
       (set-message! "Describe key: "))
@@ -2543,7 +2548,7 @@
                         (eq? (keymap:binding-context (cdr owned)) 'global))
                       all)]
            [resolved (keymap:choose-binding entries)]
-           [b (fresh-buffer "*help*")])
+           [b (fresh-buffer! "*help*")])
       (buffer-append! b
         (keymap:sequence-text sequence)
         ""
@@ -2753,7 +2758,8 @@
 
   (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered, y or SPC replaces, n or DEL skips, q stops; one undo step, point following."
         (from string "the text to find, within one line")
-        (to string "its replacement"))
+        (to string "its replacement")
+        (prompts))
   (define (replace! from to)
     ;; Query-replace in the current buffer, from point to the end: each
     ;; occurrence of from is highlighted and offered -- y (or SPC)

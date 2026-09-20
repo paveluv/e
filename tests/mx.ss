@@ -63,11 +63,11 @@
      (check 'a-buffer-argument-offers-buffers-producers-and-variables
        (let ([offered (labels "(show-buffer! ")])
          (list (has? "(buffer \"*scratch*\")" offered) (has? "(head:current-buffer)" offered)
-               (has? "(fresh-buffer name)" offered) (has? "(head:new-local-buffer name)" offered) (has? "myb" offered)
+               (has? "(fresh-buffer! name)" offered) (has? "(head:new-local-buffer! name)" offered) (has? "myb" offered)
                ;; a typed token narrows, and the buffer's spelling leads
                (car (labels "(show-buffer! scr")) (has? "myb" (labels "(show-buffer! my"))
                ;; a token matches a candidate's own text, never the formals of its label
-               (has? "(head:new-local-buffer name)" (labels "(show-buffer! name"))
+               (has? "(head:new-local-buffer! name)" (labels "(show-buffer! name"))
                ;; the alias of a symbol completing elsewhere: an operator position
                (labels "(show-buff")))
        '(#t #t #t #t #t "(buffer \"*scratch*\")" #t #f #f))
@@ -78,7 +78,7 @@
      (define (extensions text) (eval:completion-extensions text (string-length text)))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
        (let ([nested (labels "(show-buffer! (bu")])
-         (list (has? "(buffer \"*scratch*\")" nested) (has? "(fresh-buffer name)" nested) (has? "myb" nested)
+         (list (has? "(buffer \"*scratch*\")" nested) (has? "(fresh-buffer! name)" nested) (has? "myb" nested)
                (labels "(show-buffer! (curr") (extensions "(show-buffer! (curr")
                (extensions "(show-buffer! bu") (extensions "(show-buffer! (bu")
                ;; a variable holding a buffer keeps the token bare

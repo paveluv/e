@@ -70,11 +70,11 @@
 
      ;; -- goto -----------------------------------------------------------------
 
-     (check 'goto (painted (lambda () (paint:goto 3 7))) "\x1b;[3;7H")
+     (check 'goto (painted (lambda () (paint:goto! 3 7))) "\x1b;[3;7H")
 
      ;; -- the row painter ---------------------------------------------------------
 
-     (define (paint-line . args) (painted (lambda () (apply paint:display-editor-line args))))
+     (define (paint-line . args) (painted (lambda () (apply paint:display-editor-line! args))))
 
      ;; plain text pads to the width
      (check 'plain-row
@@ -147,7 +147,7 @@
 
      (let ([out (painted
                   (lambda ()
-                    (paint:emit-runs "abcd"
+                    (paint:emit-runs! "abcd"
                                      (vector 'keyword 'keyword 'plain
                                              'plain)
                                      0 4)))])
@@ -201,7 +201,7 @@
                   (scan (+ at 8) (cons 'end events))]
                  [else (scan (+ at 1) events)]))))
 
-     (define document (head:new-local-buffer "paint frames"))
+     (define document (head:new-local-buffer! "paint frames"))
      (head:buffer-lines-set! document
        (list->vector
          (map (lambda (row) (format "paint row ~a" row)) (iota 200))))
@@ -214,7 +214,7 @@
      ;; Apps may project source coordinates or replace generated details
      ;; with operation text. A stale fact must not leave a partial marker
      ;; or invalid substring bounds when that standard header is replaced.
-     (let ([view (head:register-view! (head:new-local-buffer "status projection") void)])
+     (let ([view (head:register-view! (head:new-local-buffer! "status projection") void)])
        (head:view-replace! view '("generated"))
        (head:buffer-stale-set! view #t)
        (head:set-window-buffer! (head:current-window) view)

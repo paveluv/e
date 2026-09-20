@@ -31,7 +31,7 @@
                [(string=? (head:buffer-line b row) line) row]
                [else (find (+ row 1))])))
      (define (fresh name local?)
-       (let ([b ((if local? head:new-local-buffer head:new-buffer) name)])
+       (let ([b ((if local? head:new-local-buffer! head:new-buffer!) name)])
          (head:buffer-lines-set! b '#("# Alpha" "" "# Middle" "" "# Omega"))
          (mode:choose! b "markdown")
          (show-buffer! b)

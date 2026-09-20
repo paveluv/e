@@ -1,6 +1,6 @@
-;; log-view.sls -- buffer views over the editor's log, for the e editor.
+;; log-view!.sls -- buffer views over the editor's log, for the e editor.
 ;;
-;; An e extension module: the library (log-view), loaded at startup by
+;; An e extension module: the library (log-view!), loaded at startup by
 ;; the kernel, which calls init!.  The log library owns the records
 ;; (log:add!) and the command layer its echo-area presentation; this
 ;; module renders the records as buffers: <log> (every record, created
@@ -10,7 +10,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (log-view)
-  (export init! (rename (log-view buffer)) (rename (show-log! show!)))
+  (export init! (rename (log-view! buffer!)) (rename (show-log! show!)))
   (import (chezscheme)
           (except (edit) init!)
           (prefix (style) style:)
@@ -103,9 +103,9 @@
   (edoc "The log view buffer, or a view filtered to one component, created on demand."
         (component (list-of symbol) "the component to show alone, at most one")
         (returns buffer))
-  (define (log-view . component)
+  (define (log-view! . component)
     ;; The *log* view -- or a dynamic filtered one, *log eval* for
-    ;; (log-view:buffer 'eval) -- created (or recreated after a kill) on
+    ;; (log-view!:buffer 'eval) -- created (or recreated after a kill) on
     ;; demand.
     (let* ([name (if (null? component) "*log*"
                    (format "*log ~a*" (car component)))]
@@ -117,14 +117,14 @@
   (edoc "Pop up the log view.")
   (define (show-log!)
     ;; Pop up the *log* view.
-    (pop-up-or-reuse! (log-view))
+    (pop-up-or-reuse! (log-view!))
     (void))
 
   (edoc "Install the log view: its describe entry, its mode and the saved filters of views that survived a reload.")
   (define (init!)
     (doc:register!
-      '(((log-view:show!) (("procedure" . "(log-view:show!)")) "void"
-         ("(log-view:buffer)") log-view "Log commands" #f
+      '(((log-view!:show!) (("procedure" . "(log-view!:show!)")) "void"
+         ("(log-view!:buffer)") log-view! "Log commands" #f
          "Display the live `<log>` view, containing timestamped editor messages and command results.")))
     (mode:register! "log" '() '() style-log-line)
     ;; Registry retraction on reload leaves the local buffers alive.
@@ -140,4 +140,4 @@
                                (format "*log ~a*" (car components)))
                            components))))
       (head:buffers))
-    (log-view)))                ; the *log* view, listed from startup
+    (log-view!)))                ; the *log* view, listed from startup

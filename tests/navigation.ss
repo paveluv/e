@@ -17,7 +17,7 @@
 
      (define check test:check)
      (define (fresh name)
-       (let ([b (head:new-local-buffer name)])
+       (let ([b (head:new-local-buffer! name)])
          (head:buffer-lines-set! b '#("alpha" "middle" "omega"))
          (head:add-buffer! b)
          b))
@@ -110,7 +110,7 @@
      (markdown:init!)
      (for-each
        (lambda (local?)
-         (let ([source ((if local? head:new-local-buffer head:new-buffer) "navigation.md")])
+         (let ([source ((if local? head:new-local-buffer! head:new-buffer!) "navigation.md")])
            (head:buffer-lines-set! source '#("# Alpha" "" "# Middle" "" "# Omega"))
            (mode:choose! source "markdown")
            (show-buffer! source)

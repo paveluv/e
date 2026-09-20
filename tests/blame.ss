@@ -25,7 +25,7 @@
      (define (at-point!) ((top-level-value 'blame:at-point!)))
 
      (define id
-       (let ([b (head:new-buffer "blame-naming")])
+       (let ([b (head:new-buffer! "blame-naming")])
          (head:add-buffer! b)
          (show-buffer! b)
          (head:buffer-store-id b)))

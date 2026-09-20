@@ -44,7 +44,8 @@
     (unless (equal? head (client:identity)) (error 'reference "a head addresses its own page")))
   (edoc "This head's describe page receipt, (id revision selected-name), or #f."
         (head head "the head's identity")
-        (returns (or list #f)))
+        (returns (or list #f))
+        (effects internal))
   (define (page head)
     (check-head head)
     (when (eq? current 'unknown) (set! current (client:request 'reference-page)))

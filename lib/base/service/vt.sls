@@ -3019,6 +3019,11 @@
     (make-rendition cells (effective-style-row state styles)
                     (vector-map cell-style-link styles) (cell-row->string cells)))
 
+  (edoc "One frame of the emulator: the scrollback rendition from the state's cache, filled as needed, and the live rows copied; the main screen's scrollback is left out unless transcript? says otherwise."
+        (state (record terminal-state) "the emulator")
+        (transcript? (list-of boolean) "whether the main screen's scrollback counts, at most one")
+        (returns (record frame))
+        (effects internal))
   (define (capture-frame state . transcript?)
     ;; Caller holds the emulator lock. Unchanged scrollback rendition is
     ;; shared privately; live vectors are copied before the writer resumes.

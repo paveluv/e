@@ -64,7 +64,7 @@
                   [port (open-output-string)] [mirror (vt:make-emulator 2 16)])
              (let-values ([(shown styles) (render:present frame 0 text #f '#(red blue ignored green))])
                (parameterize ([sys:terminal-output-port port])
-                 (paint:display-editor-line shown shown
+                 (paint:display-editor-line! shown shown
                    (cons (render:column frame 0 2) (render:column frame 0 3 #t))
                    '() '() (car case) styles #f (cadr case) 4)
                  (display "|right" port)))
@@ -246,7 +246,7 @@
          (list (string:search output uri 0 (string-length output)) (caddr (header))))
        '(#f (0 1 #t)))
 
-     (let ([other (head:tool-buffer "projection-resize")])
+     (let ([other (head:tool-buffer! "projection-resize")])
        (head:set-layout-root!
          (head:make-layout-split 'below w
            (head:make-window other 0 0 0 0 2 12 80 80 'default) 1 1))
@@ -317,8 +317,8 @@
                    (parameterize ([sys:terminal-output-port port])
                      (do ([i 0 (+ i 1)]) ((= i height))
                        (let ([row (render:row rendered i)])
-                         (paint:goto (+ i 1) 1)
-                         (paint:display-editor-line (car row) (car row) #f '() (caddr row)
+                         (paint:goto! (+ i 1) 1)
+                         (paint:display-editor-line! (car row) (car row) #f '() (caddr row)
                            0 (cadr row) #f 8 8))))))
                (vt:emulator-feed! mirror (get-output-string port))
                (store:delete! author id)

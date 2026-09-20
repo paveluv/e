@@ -61,6 +61,10 @@
   (define by-symbol (make-eq-hashtable))
   (define by-string (make-hashtable string-hash string=?))
   (define (text-of name) (if (symbol? name) (symbol->string name) name))
+  (edoc "The source built for a name, from a cache that is cleared when it is full."
+        (name (or symbol string) "the name")
+        (returns (record source))
+        (effects internal))
   (define (source-of name)
     (let ([table (if (symbol? name) by-symbol by-string)])
       (or (hashtable-ref table name #f)

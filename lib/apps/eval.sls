@@ -361,6 +361,10 @@
 
   (define hint-cache (make-weak-eq-hashtable))
 
+  (edoc "The grey text beside a candidate: what it takes, then its edoc summary; \"\" when nothing local is known."
+        (sym symbol "the candidate")
+        (returns string)
+        (effects internal))
   (define (completion-hint sym)
     ;; The grey text beside a candidate: what it takes, then its edoc summary;
     ;; "" when nothing local is known. A procedure shows its arguments, a
@@ -938,7 +942,8 @@
 
   (edoc "Open the M-x prompt with a call begun, the command's name and any arguments already given typed, so completion asks for the next: (eval:prompt-with! 'edit:answer!) reads (edit:answer! and a choice."
         (name symbol "the command's name at the top level")
-        (arguments (list-of datum) "the arguments already given, spelled first"))
+        (arguments (list-of datum) "the arguments already given, spelled first")
+        (prompts))
   (define (eval-prompt-with! name . arguments)
     (read-and-run! (string-append "(" (symbol->string name)
                                   (apply string-append (map (lambda (v) (string-append " " (spell v))) arguments))
@@ -974,7 +979,8 @@
             ;; while the view and echo show the formatted pair.
             (report-evaluation! s outcome output-records spoken))))))
 
-  (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area.")
+  (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area."
+        (prompts))
   (define (eval-prompt!)
     ;; the prompt pretypes "(", deletable, so a bare symbol evaluates too
     (read-and-run! "("))

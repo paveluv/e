@@ -32,7 +32,7 @@
 
 (library (edoc)
   (export elibrary edoc edoc-type
-          edoc-of edoc-named signature? signature-kind signature-formals signature-summary
+          edoc-of edoc-named signature? signature-kind signature-formals signature-summary signature-flags
           signature-arguments signature-returns signature-library
           argument? argument-name argument-type argument-notes
           edoc-types edoc-type? type-text edoc-entry edoc-template first-sentence
@@ -140,7 +140,10 @@
     (when (pair? spec)
       (for-each
         (lambda (clause)
-          (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause)) (not (known? (cadr clause))))
+          ;; a flag, (prompts) or (effects kind), names no type
+          (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause))
+                     (not (memq (car clause) '(prompts effects)))
+                     (not (known? (cadr clause))))
             (error 'edoc (format "unknown edoc type ~s in the edoc of ~a" (cadr clause) name))))
         (cddr spec))))
 
@@ -210,7 +213,7 @@
     (attach-name! 'edoc
       '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents."
          (summary string "the description, its first sentence the short one")
-         (clause list "(name type note ...) for a formal or field, or (returns type note ...)")
+         (clause list "(name type note ...) for a formal or field, (returns type note ...), or a flag the effects check reads: (prompts) for a command that waits for input, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's")
          ("kind" syntax) ("library" "(edoc)"))))
 
   (meta define (kept-datum doc extra library)
@@ -240,6 +243,15 @@
 
   (meta define (clause-head clause) (syntax-case clause () [(head . _) (syntax->datum #'head)]))
 
+  (meta define (flag-clause? clause)
+    ;; (prompts), (effects internal) or (effects remote): what a procedure
+    ;; does beyond its bang, named for the effects check; none names a formal
+    (syntax-case clause ()
+      [(head) (and (identifier? #'head) (eq? (syntax->datum #'head) 'prompts))]
+      [(head kind) (and (identifier? #'head) (identifier? #'kind)
+                        (eq? (syntax->datum #'head) 'effects) (memq (syntax->datum #'kind) '(internal remote)) #t)]
+      [_ #f]))
+
   (meta define (check-free-clauses! who x doc)
     ;; clauses not bound to formals: well shaped, distinct heads, returns at
     ;; most once; the heads other than returns, in order
@@ -250,16 +262,18 @@
          (syntax-case clauses ()
            [() (reverse seen)]
            [(clause . rest)
-            (begin
-              (check-clause-shape! who x #'clause)
-              (let ([head (clause-head #'clause)])
-                (cond
-                  [(eq? head 'returns)
-                   (when returns? (syntax-violation who "one returns clause at most" x #'clause))
-                   (loop #'rest seen #t)]
-                  [else
-                   (when (memq head seen) (syntax-violation who "one edoc clause per name" x #'clause))
-                   (loop #'rest (cons head seen) returns?)])))]))]))
+            (if (flag-clause? #'clause)
+                (loop #'rest seen returns?)
+                (begin
+                  (check-clause-shape! who x #'clause)
+                  (let ([head (clause-head #'clause)])
+                    (cond
+                      [(eq? head 'returns)
+                       (when returns? (syntax-violation who "one returns clause at most" x #'clause))
+                       (loop #'rest seen #t)]
+                      [else
+                       (when (memq head seen) (syntax-violation who "one edoc clause per name" x #'clause))
+                       (loop #'rest (cons head seen) returns?)]))))]))]))
 
   (meta define (check-value-doc! who x doc)
     ;; a value's edoc: one (value type note ...) clause, or the argument
@@ -298,6 +312,9 @@
                     (unless (memq (syntax->datum (car entry)) seen)
                       (syntax-violation who "every formal needs an edoc clause" x (car entry))))
                   entries)]
+               [(clause . rest)
+                (flag-clause? #'clause)
+                (loop #'rest seen returns?)]
                [((head type . notes) . rest)
                 (identifier? #'head)
                 (let ([t (syntax->datum #'type)] [notes (syntax->datum #'notes)] [name (syntax->datum #'head)])
@@ -770,8 +787,9 @@
           (summary string "the description")
           (arguments (list-of (record argument)) "the typed arguments")
           (returns (or (record argument) #f) "the return, as an argument named returns")
-          (library (or string #f) "the defining library, (edit) say"))
-    (fields kind formals summary arguments returns library))
+          (library (or string #f) "the defining library, (edit) say")
+          (flags (list-of list) "the declarations beyond the bang: (prompts), (effects internal), (effects remote)"))
+    (fields kind formals summary arguments returns library flags))
   (edefine-record-type argument
     (edoc "One typed clause of an edoc."
           (name symbol "the formal or field")
@@ -791,28 +809,30 @@
     ;; lambda list of its "formals" clause, each keeping the arguments its
     ;; formals name, else one with the formals given.
     (and (pair? spec) (eq? (car spec) 'edoc) (pair? (cdr spec)) (string? (cadr spec))
-         (let loop ([clauses (cddr spec)] [arguments '()] [returns #f] [library library] [kind kind] [lambda-lists #f])
+         (let loop ([clauses (cddr spec)] [arguments '()] [returns #f] [library library] [kind kind] [lambda-lists #f] [flags '()])
            (cond
              [(null? clauses)
-              (let ([arguments (reverse arguments)] [summary (cadr spec)])
+              (let ([arguments (reverse arguments)] [summary (cadr spec)] [flags (reverse flags)])
                 (if lambda-lists
                     (map (lambda (f)
                            (let ([names (formal-symbols f)])
                              (make-signature kind f summary
-                               (filter (lambda (a) (memq (argument-name a) names)) arguments) returns library)))
+                               (filter (lambda (a) (memq (argument-name a) names)) arguments) returns library flags)))
                          lambda-lists)
-                    (list (make-signature kind formals summary arguments returns library))))]
+                    (list (make-signature kind formals summary arguments returns library flags))))]
+             [(and (pair? (car clauses)) (memq (caar clauses) '(prompts effects)))
+              (loop (cdr clauses) arguments returns library kind lambda-lists (cons (car clauses) flags))]
              [(and (pair? (car clauses)) (pair? (cdar clauses)))
               (let ([c (car clauses)])
                 (cond
-                  [(equal? (car c) "library") (loop (cdr clauses) arguments returns (cadr c) kind lambda-lists)]
-                  [(equal? (car c) "kind") (loop (cdr clauses) arguments returns library (cadr c) lambda-lists)]
-                  [(equal? (car c) "formals") (loop (cdr clauses) arguments returns library kind (cdr c))]
+                  [(equal? (car c) "library") (loop (cdr clauses) arguments returns (cadr c) kind lambda-lists flags)]
+                  [(equal? (car c) "kind") (loop (cdr clauses) arguments returns library (cadr c) lambda-lists flags)]
+                  [(equal? (car c) "formals") (loop (cdr clauses) arguments returns library kind (cdr c) flags)]
                   [(eq? (car c) 'returns)
-                   (loop (cdr clauses) arguments (make-argument 'returns (cadr c) (cddr c)) library kind lambda-lists)]
+                   (loop (cdr clauses) arguments (make-argument 'returns (cadr c) (cddr c)) library kind lambda-lists flags)]
                   [else
                    (loop (cdr clauses) (cons (make-argument (car c) (cadr c) (cddr c)) arguments)
-                         returns library kind lambda-lists)]))]
+                         returns library kind lambda-lists flags)]))]
              [else #f]))))
 
   (define (attached-signatures spec procedure?)
@@ -824,7 +844,7 @@
                   (if (and procedure? (eq? (signature-kind sig) 'value))
                       (make-signature 'procedure (map argument-name (signature-arguments sig))
                         (signature-summary sig) (signature-arguments sig) (signature-returns sig)
-                        (signature-library sig))
+                        (signature-library sig) (signature-flags sig))
                       sig))
                 sigs))))
 

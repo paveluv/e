@@ -13,7 +13,7 @@ Plain `e` starts or connects to the base, checks source and wire compatibility,
 and claims the connection before importing the modules, each under its
 prefix, the literals (`literal`, bare: `(buffer "name")`, `(window n)`,
 `(region ...)` and `(head "desk")` read back as they print) and `main`, and
-runs `(main:run)`.
+runs `(main:run!)`.
 `--base` acquires the directory's lifetime lock and runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
@@ -258,9 +258,28 @@ Naming distinguishes effects:
 - a procedure without it is a query;
 - predicates end in `?` and parameters are ordinary callable Scheme values.
 
+The bang is checked, not trusted. `tools/edoc-coverage.sps --effects` walks
+every documented definition's body, following calls through the tree's
+own libraries, and reports a `!` name that reaches no change, a name
+without one that reaches a change, and a name that reaches a key read
+without declaring it. A change is a mutating primitive on something the
+body did not make itself (a module variable, a table it was handed, an
+argument), a parameter called with a value, a port written, or a call
+that resolves to such a definition; something the body made, a fresh
+vector or a record it constructed, is scratch. The walk stops at three
+seams and takes them as opaque, satisfying a bang without indicting a
+query: a foreign procedure, a hook installed at run time, and an argument
+the body calls. Three edoc clauses declare the exceptions: `(prompts)` for
+a procedure that waits for a key, `(effects internal)` for a query whose
+only changes are its own caches, and `(effects remote)` for a transport
+such as `client:request`, whose effect is the message's and whose caller
+keeps the bang. The check runs in the suite as `tests/effects.ss`; its
+verdict is on the name importers see, so an export renamed with `rename`
+is judged by its exported spelling.
+
 Prompting is the exception, not a naming matter: a command that must wait
 for input, `edit:describe-key!` reading a key or `edit:replace!` asking per
-occurrence, says so in its documentation. Otherwise the M-x API with typed
+occurrence, declares `(prompts)` in its edoc. Otherwise the M-x API with typed
 completion does the asking, and a key that used to prompt opens M-x with the
 call typed up to its argument: `C-c a` gives `M-x (edit:answer! `. Such keys
 are bound structurally, from the procedures themselves rather than spelled

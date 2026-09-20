@@ -37,18 +37,18 @@
 
      ;; -- detection -----------------------------------------------------------
 
-     (define by-file (head:new-buffer "x.probe"))
+     (define by-file (head:new-buffer! "x.probe"))
      (head:buffer-file-set! by-file "/nowhere/x.probe")
      (mode:assign! by-file)
      (check 'detect-by-extension (mode:name-of by-file) "probe")
      (check 'detected-is-auto (head:buffer-mode-auto by-file) #t)
 
-     (define by-interpreter (head:new-buffer "script"))
+     (define by-interpreter (head:new-buffer! "script"))
      (head:buffer-lines-set! by-interpreter (vector "#!/usr/bin/env probesh" "x"))
      (mode:assign! by-interpreter)
      (check 'detect-by-interpreter (mode:name-of by-interpreter) "probe")
 
-     (define plain (head:new-buffer "notes.txt"))
+     (define plain (head:new-buffer! "notes.txt"))
      (head:buffer-file-set! plain "/nowhere/notes.txt")
      (mode:assign! plain)
      (check 'detect-nothing (mode:name-of plain) #f)
@@ -76,7 +76,7 @@
        '(("probe" #t 2) (#f #f 0) ("probe" #f 0)))
 
      ;; Observers see the mode and whether it was detected as one choice.
-     (define atomic-mode (head:new-buffer "atomic.probe"))
+     (define atomic-mode (head:new-buffer! "atomic.probe"))
      (head:buffer-file-set! atomic-mode "/nowhere/atomic.probe")
      (define mode-observations '())
      (define mode-token
@@ -94,7 +94,7 @@
      (store:unsubscribe! mode-token)
 
      ;; A local buffer uses the same mode API, without a store twin.
-     (define local (head:new-local-buffer "*local-mode*"))
+     (define local (head:new-local-buffer! "*local-mode*"))
      (head:buffer-lines-set! local (vector "#!/usr/bin/env probesh" "local"))
      (mode:assign! local)
      (check 'local-detection (mode:name-of local) "probe")
@@ -112,7 +112,7 @@
      ;; -- extensions added later ----------------------------------------------
 
      (mode:add-extension! "probe" ".pr2")
-     (define by-addition (head:new-buffer "y.pr2"))
+     (define by-addition (head:new-buffer! "y.pr2"))
      (head:buffer-file-set! by-addition "/nowhere/y.pr2")
      (mode:assign! by-addition)
      (check 'detect-by-added-extension (mode:name-of by-addition) "probe")

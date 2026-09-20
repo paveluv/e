@@ -530,7 +530,7 @@
                    (let ([ui (start-head "shutdown UI")])
                      (head-wait 'shutdown-ui-ready ui (lambda () (head-sees? ui "*scratch*")))
                      (head-read ui
-                       '(let ([b (head:new-local-buffer "local shutdown work")])
+                       '(let ([b (head:new-local-buffer! "local shutdown work")])
                           (head:add-buffer! b) (head:store-reset! b '("local draft"))
                           (head:buffer-modified-set! b #t) #t))
                      (for-each
@@ -1037,7 +1037,7 @@
                  '(begin
                     (edit:insert-text! "kept after restart")
                     (head:window-pcol-set! (head:current-window) 4)
-                    (let ([b (head:new-local-buffer "local draft omitted")])
+                    (let ([b (head:new-local-buffer! "local draft omitted")])
                       (head:add-buffer! b) (head:store-reset! b '("draft")) (head:buffer-modified-set! b #t))
                     #t))
                (body head control base original original-fingerprint

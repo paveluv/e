@@ -18,7 +18,7 @@
            (startup:call-with-options (cdr (command-line-arguments))
              (lambda ()
                (base:call-with-runtime
-                 (lambda () (eval '(begin (import (edit) (prefix (main) main:)) (main:run)))))))))
+                 (lambda () (eval '(begin (import (edit) (prefix (main) main:)) (main:run!)))))))))
   (exit 0))
 
 (eval
@@ -317,7 +317,7 @@
      ;; a quitting head runs its hooks and publishes its final checkpoint.
      (read-editor
        `(begin
-          (let ([local (head:new-local-buffer "quit review")])
+          (let ([local (head:new-local-buffer! "quit review")])
             (head:add-buffer! local) (head:store-reset! local '("local work"))
             (head:buffer-modified-set! local #t))
           (head:add-shutdown-hook!

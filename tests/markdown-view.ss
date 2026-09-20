@@ -32,7 +32,7 @@
                [(string=? (head:buffer-line b r) text) r]
                [else (loop (+ r 1))])))
      (define (make-source name lines)
-       (let ([b (head:new-buffer name)])
+       (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
          (mode:choose! b "markdown")
          (head:add-buffer! b)
@@ -155,7 +155,7 @@
             (head:buffer-line table-view (head:window-prow w2)) "After table")
 
      ;; Literal markdown belongs to local app input, never a shared target.
-     (define literal (head:new-local-buffer "literal markdown"))
+     (define literal (head:new-local-buffer! "literal markdown"))
      (head:add-buffer! literal)
      (markdown:view-install! literal '("**literal**"))
      (check 'literal-render (head:buffer-lines literal) '#("literal"))
@@ -258,7 +258,7 @@
              (list (make-source "private-foreign.md" '("# Foreign")) 'hide-foreign)))
 
      ;; The same companion relation works for a local markdown source.
-     (define local-source (head:new-local-buffer "local source"))
+     (define local-source (head:new-local-buffer! "local source"))
      (head:buffer-lines-set! local-source (vector "# Local"))
      (mode:choose! local-source "markdown")
      (show-buffer! local-source)

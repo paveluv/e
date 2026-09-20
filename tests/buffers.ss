@@ -41,7 +41,7 @@
        (for-each (lambda (name) (mode:register! name '() '() (lambda (line) #f))) '("pick-a" "pick-z")))
      (for-each
        (lambda (entry)
-         (let ([b (head:new-local-buffer (car entry))])
+         (let ([b (head:new-local-buffer! (car entry))])
            (head:buffer-lines-set! b (make-vector (cadr entry) (car entry)))
            (head:buffer-file-set! b (caddr entry))
            (mode:choose! b (cadddr entry))

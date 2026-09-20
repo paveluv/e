@@ -88,10 +88,12 @@
                      text))
                text changes))
 
+  (edoc "Refresh the cache from the authority: (label text revision facts changes), or #f for a buffer that is gone; the changes are the decoded chain since the caller's basis, #f when it is not continuous."
+        (id integer "the buffer id")
+        (basis (or integer #f) "the caller's revision")
+        (returns (or list #f))
+        (effects internal))
   (define (read-state id basis)
-    ;; Refresh the cache from the authority and return
-    ;; (label text revision facts changes) or #f. Changes are the decoded
-    ;; chain since the caller's basis, #f when it is not continuous.
     ;; With cached text the request starts at the cached revision (or the
     ;; caller's earlier basis) and asks for a delta reply; with cached facts
     ;; too, only modification facts come back and merge into them.
@@ -148,7 +150,8 @@
     (find (lambda (id) (equal? (buffer-name id) name)) (buffer-list)))
   (edoc "The id of the buffer visiting a file, or #f."
         (path file "the file")
-        (returns (or integer #f)))
+        (returns (or integer #f))
+        (effects internal))
   (define (find-file path)
     (let ([id (client:request 'find-file path)])
       (when id (forget! id))

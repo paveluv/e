@@ -68,7 +68,7 @@ change it through M-x; put it in `base-config.e` to keep it across restarts.
 Filtered log views are created dynamically:
 
 ```scheme
-(log-view:buffer 'eval)
+(log-view:buffer! 'eval)
 ```
 
 This creates a buffer such as `<log eval>` containing only that component.
