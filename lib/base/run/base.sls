@@ -1,27 +1,27 @@
 ;; base.sls -- process lifetime and the local daemon. Base runtime only.
 (import (only (foundation edoc) elibrary))
 (elibrary (run base)
-  (export call-with-runtime run! connection-policy connection-owner closing-hook)
+  (export call-with-runtime closing-hook connection-owner connection-policy run!)
   (import (chezscheme)
-          (prefix (core kernel) kernel:)
           (prefix (core daemon) daemon:)
-          (prefix (sys activity) activity:)
-          (prefix (core startup) startup:)
-          (prefix (sys sys) sys:)
-          (prefix (foundation wire) wire:)
-          (prefix (state store) store:)
-          (prefix (state actor) actor:)
-          (prefix (service policy) policy:)
-          (prefix (foundation text) text:)
-          (prefix (foundation datum) datum:)
+          (prefix (core kernel) kernel:)
           (prefix (core property) property:)
-          (prefix (service log) log:)
-          (prefix (service file) file:)
-          (prefix (service vt) vt:)
-          (prefix (state surface) surface:)
-          (prefix (service reference) reference:)
+          (prefix (core startup) startup:)
+          (prefix (foundation datum) datum:)
+          (prefix (foundation text) text:)
+          (prefix (foundation wire) wire:)
           (prefix (service doc) doc:)
-          (prefix (service session) session:))
+          (prefix (service file) file:)
+          (prefix (service log) log:)
+          (prefix (service policy) policy:)
+          (prefix (service reference) reference:)
+          (prefix (service session) session:)
+          (prefix (service vt) vt:)
+          (prefix (state actor) actor:)
+          (prefix (state store) store:)
+          (prefix (state surface) surface:)
+          (prefix (sys activity) activity:)
+          (prefix (sys sys) sys:))
 
   (define modules
     '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
@@ -281,10 +281,12 @@
   (define lifecycle-state (make-lifecycle #f #f #f 0))
   (define-record-type review
     (fields token heads terminals agents tickets))
+
   (edoc "The base is busy in a lifecycle phase."
         (phase symbol "the phase"))
   (define-condition-type &busy &error make-busy busy?
     (phase busy-phase))
+
   (edoc "The base runs sources older than the connecting head's.")
   (define-condition-type &stale-base &error make-stale-base stale-base?)
 

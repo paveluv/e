@@ -1,23 +1,23 @@
 ;; file-view.sls -- the local, filterable <files> app.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps file-view)
-  (export init! open! open-directory! refresh! expansion-limit show-hidden)
+  (export expansion-limit init! open! open-directory! refresh! show-hidden)
   (import (chezscheme)
+          (prefix (core kernel) kernel:)
+          (prefix (foundation string) string:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
-          (prefix (service file) file:)
-          (prefix (service directory) directory:)
-          (prefix (head table) table:)
-          (prefix (sys glyph) glyph:)
-          (prefix (foundation string) string:)
-          (prefix (head mode) mode:)
-          (prefix (head style) style:)
-          (prefix (head paint) paint:)
           (prefix (head keymap) keymap:)
-          (prefix (sys tty) tty:)
-          (prefix (core kernel) kernel:)
+          (prefix (head mode) mode:)
+          (prefix (head paint) paint:)
+          (prefix (head prompt) prompt:)
+          (prefix (head style) style:)
+          (prefix (head table) table:)
+          (prefix (service directory) directory:)
           (prefix (service doc) doc:)
-          (prefix (head prompt) prompt:))
+          (prefix (service file) file:)
+          (prefix (sys glyph) glyph:)
+          (prefix (sys tty) tty:))
 
   (edoc "How many matching entries the files view expands a directory into while filtering."
         (value integer))
@@ -25,6 +25,7 @@
                             (lambda (n)
                               (unless (and (integer? n) (exact? n) (>= n 0))
                                 (error 'expansion-limit "expected a nonnegative integer" n)) n)))
+
   (edoc "Whether the files view lists hidden entries, the dot files."
         (value boolean))
   (define show-hidden (make-parameter #f
@@ -449,6 +450,7 @@
         (lambda ()
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
           (when (and view (memq view (head:buffers)) (head:app-buffer? view)) (start-scan!))))))
+
   (edoc "Rescan the directory the files view shows.")
   (define (refresh!)
     (when view (start-scan!)) (void))
@@ -534,6 +536,7 @@
       (head:buffer-fact-set! view 'resume-kind 'file-view)
       (mode:choose! view "files"))
     view)
+
   (edoc "Show the files view for the current file's directory, an app's working directory or the head's launch directory, with the current file selected.")
   (define (open!)
     (open-at! (head:default-directory) #f))

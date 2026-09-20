@@ -9,20 +9,20 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffer-view)
-  (export init! open! previous! next!)
+  (export init! next! open! previous!)
   (import (chezscheme)
+          (prefix (foundation string) string:)
+          (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
-          (prefix (state store) store:)
-          (prefix (head dispatch) dispatch:)
-          (prefix (head table) table:)
-          (prefix (sys glyph) glyph:)
-          (prefix (foundation string) string:)
-          (prefix (service file) file:)
-          (prefix (head mode) mode:)
-          (prefix (head style) style:)
-          (prefix (head paint) paint:)
           (prefix (head keymap) keymap:)
+          (prefix (head mode) mode:)
+          (prefix (head paint) paint:)
+          (prefix (head style) style:)
+          (prefix (head table) table:)
+          (prefix (service file) file:)
+          (prefix (state store) store:)
+          (prefix (sys glyph) glyph:)
           (prefix (sys tty) tty:))
 
   ;;; The model -------------------------------------------------------------------
@@ -375,6 +375,7 @@
 
   (edoc "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning; the buffers app's own turn opens the app.")
   (define (previous!) (switch-by-row! -1))
+
   (edoc "Switch the current window to the next buffer in alphabetical order, wrapping at the end; the buffers app's own turn opens the app.")
   (define (next!) (switch-by-row! 1))
 

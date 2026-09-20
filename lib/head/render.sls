@@ -3,10 +3,10 @@
 ;; and both coordinate directions. Public metadata reads own their data.
 (import (only (foundation edoc) elibrary))
 (elibrary (head render)
-  (export prepare header row column character width present breaks)
+  (export breaks character column header prepare present row width)
   (import (rnrs)
-          (prefix (state surface) surface:)
           (prefix (foundation datum) datum:)
+          (prefix (state surface) surface:)
           (prefix (sys glyph) glyph:))
 
   (define-record-type frame (fields id text header rows))
@@ -156,6 +156,7 @@
                          ;; Derive it without retaining a scrollback cache.
                          (project (vector-ref (frame-text frame) row) #f))])
            (and (line? line) line))))
+
   (edoc "A copy of a frame row's (cell-strings styles cell-link-ranges), or #f for plain text."
         (frame (record frame) "the frame")
         (index integer "the row")
@@ -165,6 +166,7 @@
     (let ([line (line-at frame index)])
       (and line (line-styles line)
            (datum:copy (list (line-shown line) (line-styles line) (line-links line))))))
+
   (edoc "A frame row's width in cells, or the fallback for plain text."
         (frame (record frame) "the frame")
         (row integer "the row")
@@ -176,6 +178,7 @@
     ;; Preserve addressed columns past the text for unclamped pointer input.
     (let ([last (- (vector-length table) 1)])
       (+ (vector-ref table (min at last)) (max 0 (- at last)))))
+
   (edoc "The cell of a character position in a frame row; interior positions snap to the glyph's start, an interval end expands over a partly selected glyph."
         (frame (record frame) "the frame")
         (row integer "the row")
@@ -193,6 +196,7 @@
                 (let end ([i (+ at 1)])
                   (if (= (vector-ref columns i) cell) (end (+ i 1)) (vector-ref columns i)))
                 cell)))))
+
   (edoc "The character position at a cell of a frame row."
         (frame (record frame) "the frame")
         (row integer "the row")

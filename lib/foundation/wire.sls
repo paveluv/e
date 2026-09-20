@@ -1,7 +1,7 @@
 ;; wire.sls -- length-prefixed plain data. No store, actor or display state.
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation wire)
-  (export version encode send! receive)
+  (export encode receive send! version)
   (import (rnrs)
           (only (chezscheme) parameterize print-length print-level print-graph)
           (prefix (foundation datum) datum:))

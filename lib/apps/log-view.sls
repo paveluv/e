@@ -10,15 +10,15 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps log-view)
-  (export init! (rename (log-view! buffer!)) (rename (show-log! show!)))
+  (export (rename (log-view! buffer!)) init! (rename (show-log! show!)))
   (import (chezscheme)
-          (prefix (head style) style:)
-          (prefix (head mode) mode:)
           (prefix (foundation string) string:)
           (prefix (head head) head:)
+          (prefix (head mode) mode:)
+          (prefix (head style) style:)
           (prefix (head window) window:)
-          (prefix (service log) log:)
-          (prefix (service doc) doc:))
+          (prefix (service doc) doc:)
+          (prefix (service log) log:))
 
   (define (log-line-prefix e)
     ;; The view's row prefix; the stored time keeps nanoseconds, the

@@ -6,7 +6,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (sys path)
-  (export expand canonical)
+  (export canonical expand)
   (import (except (chezscheme) expand) (prefix (foundation string) string:))
 
   (edoc "A path with a leading ~ expanded to the home directory."

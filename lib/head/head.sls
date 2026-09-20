@@ -16,97 +16,63 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
-  (export buffer make-buffer buffer?
-          buffer-name buffer-name-set!
-          buffer-lines buffer-lines-raw-set!
-          buffer-revision buffer-revision-set!
-          buffer-history buffer-history-set!
-          buffer-mark-row buffer-mark-row-set!
-          buffer-mark-col buffer-mark-col-set!
-          buffer-marked buffer-marked-set! buffer-selectable?
-          buffer-spot-row buffer-spot-row-set!
-          buffer-spot-col buffer-spot-col-set!
-          buffer-spot-top buffer-spot-top-set!
-          buffer-store-id
-          buffer-store-rev buffer-store-rev-set!
-          buffer-rendition read-rendition refresh-renditions!
-          buffers set-buffers!
-          kill-ring set-kill-ring! read-paste set-pending-paste!
-          call-uninterrupted call-with-interrupt interrupted? make-interrupted
-          window make-window window? window-index window-numbered
-          window-buffer window-buffer-set!
-          window-lines window-rendition
-          window-top window-top-set!
-          window-topseg window-topseg-set!
-          window-left window-left-set!
-          window-prow window-prow-set!
-          window-pcol window-pcol-set!
-          window-size window-size-set!
-          window-xoff window-xoff-set!
-          window-width window-width-set!
-          window-wrap window-wrap-set! window-line-numbers window-line-numbers-set! window-goal window-goal-set!
-          (rename (window-full-capture? full-capture?)) set-full-capture!
-          window-status-actions-set!
-          make-layout-split layout-split?
-          layout-split-orientation
-          layout-split-first layout-split-first-set!
-          layout-split-second layout-split-second-set!
-          layout-split-first-weight layout-split-first-weight-set!
-          layout-split-second-weight layout-split-second-weight-set!
-          layout-leaves layout-replace! layout-parent
-          set-layout-root! replace-layout-window! fit-layout!
-          popup popup? popup-rows show-popup! hide-popup!
-          layout-min-width layout-min-height weighted-first
-          layout-node!
-          min-window-lines
-          windows set-windows! root set-root! (rename (current current-window)) set-current! with-window with-buffer show-buffer!
-          point mark goto! default-directory fresh-buffer! buffer-append! buffer-wrap-set!
-          current-buffer buffer-line buffer-line-count
-          dividers set-dividers!
-          read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
-          run-deferred! start-input-reader! set-frame-hook! set-mouse-handler!
-          set-file-opener! set-quit-command! set-after-key! set-departure! set-review-viewer!
-          open-file! quit-command! after-key! depart! view-review! prepare-quit
-          quit! quitting? last-command set-last-command!
-          current-keys set-current-keys!
-          dispatch-app-event! app-event-position app-event-buffer-position app-event-button
-          app-event-focus
-          app-facts app-status follow-app! app-following? request-app-size!
-          host-color-scheme add-color-scheme-hook!
-          tile! layout window-at window-buttons window-buttons-width window-button-at divider-at
-          mouse-position set-mouse-position!
-          transfer-split! drag set-drag! double-click?
-          ui-actor buffer-fact buffer-fact-set! buffer-facts-set! buffer-state
-          buffer-file buffer-file-set! buffer-trailing buffer-trailing-set!
-          buffer-modified buffer-modified-set! buffer-modified-at
-          buffer-mode-auto buffer-mode-auto-set!
-          buffer-read-only buffer-read-only-set!
-          buffer-stamp buffer-stamp-set! buffer-base buffer-base-set!
-          buffer-stale buffer-stale-set!
-          adopt-store!
-          edit-basis snapshot-since store-reset! store-edit! store-history! new-buffer! new-local-buffer! visit-file!
-          add-buffer! tool-buffer! find-tool-buffer
-          bump-buffer-revision! buffer-of-store-id adopt-store-buffer!
-          buffer-lines-set! clamp-buffer-positions!
-          sync-foreign-edits! flush-ui-audit!
-          set-repaint-hook! set-adopt-hook! call-with-display-update buffer-point
-          add-buffer-kill-hook! add-pre-redraw-hook!
-          before-frame! add-shutdown-hook! run-shutdown-hooks!
-          checkpoint! resume! register-resume! resume-source! buffer-placements
-          registered-apps app-of app-buffer? detach-app! register-app!
-          set-app-cursor-visible! set-app-manages-viewport! set-app-selectable!
-          set-app-status-position! app-cursor-visible-in?
-          app-manages-window-viewport? app-cursor-style set-app-presentation!
-          buffer-sticky-lines scrollbar scrollbar-position line-numbers
-          window-line-numbers? window-line-number-width
-          window-scrollbar? window-auto-scrollbar-set! window-content-width buffer-narrowest-width
-          buffer-window-size window-scrollbar-column register-view!
-          view-buffer? refresh-visible-views! view-append!
-          view-replace! forget-buffer! set-window-buffer! buffer-named
-          app-buffer app-refresh! app-handle-event! app-refresh-error
-          app-refresh-error-set! app-cursor-visible?
-          app-cursor-visible?-set! app-status-position
-          app-status-position-set! make-app app?)
+  (export add-buffer! add-buffer-kill-hook! add-color-scheme-hook! add-pre-redraw-hook!
+          add-shutdown-hook! adopt-store! adopt-store-buffer! after-key! app-buffer app-buffer?
+          app-cursor-style app-cursor-visible-in? app-cursor-visible? app-cursor-visible?-set!
+          app-event-buffer-position app-event-button app-event-focus app-event-position
+          app-facts app-following? app-handle-event! app-manages-window-viewport? app-of
+          app-refresh! app-refresh-error app-refresh-error-set! app-status app-status-position
+          app-status-position-set! app? before-frame! buffer buffer-append! buffer-base
+          buffer-base-set! buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
+          buffer-file-set! buffer-history buffer-history-set! buffer-line buffer-line-count
+          buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col
+          buffer-mark-col-set! buffer-mark-row buffer-mark-row-set! buffer-marked
+          buffer-marked-set! buffer-mode-auto buffer-mode-auto-set! buffer-modified
+          buffer-modified-at buffer-modified-set! buffer-name buffer-name-set! buffer-named
+          buffer-narrowest-width buffer-of-store-id buffer-placements buffer-point
+          buffer-read-only buffer-read-only-set! buffer-rendition buffer-revision
+          buffer-revision-set! buffer-selectable? buffer-spot-col buffer-spot-col-set!
+          buffer-spot-row buffer-spot-row-set! buffer-spot-top buffer-spot-top-set! buffer-stale
+          buffer-stale-set! buffer-stamp buffer-stamp-set! buffer-state buffer-sticky-lines
+          buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
+          buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
+          bump-buffer-revision! call-uninterrupted call-with-display-update call-with-interrupt
+          checkpoint! clamp-buffer-positions! current-buffer current-keys
+          (rename (current current-window)) default-directory depart! detach-app!
+          dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer
+          fit-layout! flush-ui-audit! follow-app! forget-buffer! fresh-buffer!
+          (rename (window-full-capture? full-capture?)) goto! hide-popup! host-color-scheme
+          in-main-pump interrupted? kill-ring last-command layout layout-leaves
+          layout-min-height layout-min-width layout-node! layout-parent layout-replace!
+          layout-split-first layout-split-first-set! layout-split-first-weight
+          layout-split-first-weight-set! layout-split-orientation layout-split-second
+          layout-split-second-set! layout-split-second-weight layout-split-second-weight-set!
+          layout-split? line-numbers make-app make-buffer make-interrupted make-layout-split
+          make-window mark min-window-lines mouse-position new-buffer! new-local-buffer!
+          open-file! point popup popup-rows popup? prepare-quit quit! quit-command! quitting?
+          read-key-event read-paste read-rendition refresh-renditions! refresh-visible-views!
+          register-app! register-resume! register-view! registered-apps replace-layout-window!
+          request-app-size! request-frame-at! resume! resume-source! root run-deferred!
+          run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
+          set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
+          set-app-selectable! set-app-status-position! set-buffers! set-current!
+          set-current-keys! set-departure! set-dividers! set-drag! set-file-opener!
+          set-frame-hook! set-full-capture! set-kill-ring! set-last-command! set-layout-root!
+          set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
+          set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
+          show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
+          store-reset! sync-foreign-edits! tile! tool-buffer! transfer-split! ui-actor
+          view-append! view-buffer? view-replace! view-review! visit-file! wake-main!
+          weighted-first window window-at window-auto-scrollbar-set! window-buffer
+          window-buffer-set! window-button-at window-buttons window-buttons-width
+          window-content-width window-goal window-goal-set! window-index window-left
+          window-left-set! window-line-number-width window-line-numbers window-line-numbers-set!
+          window-line-numbers? window-lines window-numbered window-pcol window-pcol-set!
+          window-prow window-prow-set! window-rendition window-scrollbar-column
+          window-scrollbar? window-size window-size-set! window-status-actions-set! window-top
+          window-top-set! window-topseg window-topseg-set! window-width window-width-set!
+          window-wrap window-wrap-set! window-xoff window-xoff-set! window? windows with-buffer
+          with-window)
   (import (rnrs)
           (rnrs r5rs)
           (only (chezscheme) current-directory keyboard-interrupt-handler getenv eval interaction-environment open-input-string
@@ -115,19 +81,19 @@
                 make-time add-duration
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
-          (prefix (only (sys sys) terminal-isig! duplicate-standard-input-port) sys:)
           (prefix (core kernel) kernel:)
-          (prefix (core startup) startup:)
-          (prefix (sys tty) tty:)
-          (prefix (state store) store:)
           (prefix (core property) property:)
-          (prefix (service file) file:)
-          (prefix (state surface) surface:)
-          (prefix (head render) render:)
-          (prefix (foundation text) text:)
+          (prefix (core startup) startup:)
           (prefix (foundation datum) datum:)
+          (prefix (foundation text) text:)
+          (prefix (head render) render:)
+          (prefix (service file) file:)
+          (prefix (service log) log:)
           (prefix (state actor) actor:)
-          (prefix (service log) log:))
+          (prefix (state store) store:)
+          (prefix (state surface) surface:)
+          (prefix (only (sys sys) terminal-isig! duplicate-standard-input-port) sys:)
+          (prefix (sys tty) tty:))
 
   ;;; The records ----------------------------------------------------------------
 
@@ -297,19 +263,23 @@
   (define the-popup #f)
   (define popup-buffer #f)      ; its placeholder while hidden, outside the buffer list
   (define the-popup-rows 0)
+
   (edoc "The pop-up window, window 0: hidden until something is shown in it."
         (returns window))
   (define (popup)
     the-popup)
+
   (edoc "Whether a window is the pop-up."
         (w window "the window")
         (returns boolean))
   (define (popup? w)
     (eq? w the-popup))
+
   (edoc "How many text rows the pop-up has now; 0 while it is hidden."
         (returns integer))
   (define (popup-rows)
     the-popup-rows)
+
   (edoc "Give the pop-up a number of text rows, the windows above keeping their minimum, and repaint."
         (rows integer "the text rows"))
   (define (show-popup! rows)
@@ -319,6 +289,7 @@
       (error 'show-popup! "expected a positive row count" rows))
     (set! the-popup-rows rows)
     (request-repaint!))
+
   (edoc "Hide the pop-up, restoring its own buffer, and repaint.")
   (define (hide-popup!)
     (set! the-popup-rows 0)
@@ -332,22 +303,27 @@
     ;; collections the head hands out are snapshots: callers keep them
     ;; without seeing later changes, and cannot disturb the seat's own
     (append the-buffers '()))
+
   (edoc "Replace the seat's buffer list."
         (bs (list-of buffer) "the buffers, most recent first"))
   (define (set-buffers! bs)
     (set! the-buffers bs))
+
   (edoc "Every live window, in layout order, as a fresh list."
         (returns (list-of window)))
   (define (windows)
     (append the-windows '()))
+
   (edoc "Replace the seat's window list."
         (ws (list-of window) "the windows"))
   (define (set-windows! ws)
     (set! the-windows ws))
+
   (edoc "The root of the layout tree."
         (returns (or window (record layout-split))))
   (define (root)
     the-root)
+
   (edoc "Replace the root of the layout tree without rederiving the windows."
         (node (or window (record layout-split)) "the tree"))
   (define (set-root! node)
@@ -394,10 +370,12 @@
   ;; The seat's kill ring: one string, the last kill; commands and
   ;; prompts read and replace it.
   (define the-kill-ring "")
+
   (edoc "The seat's kill ring: the last kill, one string."
         (returns string))
   (define (kill-ring)
     the-kill-ring)
+
   (edoc "Replace the seat's kill ring."
         (s string "the text"))
   (define (set-kill-ring! s)
@@ -406,31 +384,38 @@
   ;; The text of the bracketed paste just consumed: the pump's paste
   ;; handler stashes it, the PASTE key's command reads it.
   (define pending-paste "")
+
   (edoc "The text of the bracketed paste just consumed."
         (returns string))
   (define (read-paste)
     pending-paste)
+
   (edoc "Stash the text of a bracketed paste for the PASTE key's command."
         (text string "the pasted text"))
   (define (set-pending-paste! text)
     (set! pending-paste text))
+
   (edoc "The selected window."
         (returns window))
   (define (current)
     the-current)
+
   (edoc "The buffer shown in the selected window."
         (returns buffer))
   (define (current-buffer)
     (window-buffer the-current))
+
   (edoc "Point in the selected window, as (row . col)."
         (returns position))
   (define (point)
     (cons (window-prow the-current) (window-pcol the-current)))
+
   (edoc "The mark of the buffer in the selected window as (row . col) while it is active, else #f."
         (returns (or position #f)))
   (define (mark)
     (let ([b (window-buffer the-current)])
       (and (buffer-marked b) (cons (buffer-mark-row b) (buffer-mark-col b)))))
+
   (edoc "Move point in the selected window straight to a (row . col) position, clamped into the buffer's rows and the displayed line; the window stops following its app."
         (p position "where point goes"))
   (define (goto! p)
@@ -439,6 +424,7 @@
       (follow-app! w #f)
       (window-prow-set! w (max 0 (min (car p) (- (vector-length (buffer-lines (window-buffer w))) 1))))
       (window-pcol-set! w (max 0 (min (cdr p) (string-length (vector-ref (window-lines w) (window-prow w))))))))
+
   (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
         (returns directory))
   (define (default-directory)
@@ -454,14 +440,17 @@
         (if (and (> (string-length dir) 0) (char=? (string-ref dir (- (string-length dir) 1)) #\/))
             dir
             (string-append dir "/")))))
+
   (edoc "Select a window, without telling the apps."
         (w window "the window"))
   (define (set-current! w)
     (set! the-current w))
+
   (edoc "The divider rectangles of the last tiling, for painting and drag hit-testing."
         (returns list))
   (define (dividers)
     the-dividers)
+
   (edoc "Replace the divider rectangles."
         (ds list "the dividers"))
   (define (set-dividers! ds)
@@ -720,10 +709,12 @@
   ;; Last reported pointer cell (1-based x . y). Keyboard input retires
   ;; mouse emphasis; the next report restores it without moving point.
   (define the-mouse-position #f)
+
   (edoc "The pointer's last reported (column . row), or #f."
         (returns (or pair #f)))
   (define (mouse-position)
     the-mouse-position)
+
   (edoc "Record the pointer's position, or #f when unknown."
         (position (or pair #f) "(column . row)"))
   (define (set-mouse-position! position)
@@ -733,6 +724,7 @@
         (proc thunk "the hook"))
   (define (set-frame-hook! proc)
     (set! frame-hook proc))
+
   (edoc "Install the mouse handler: (handler handle? c b x y) applies a decoded mouse report."
         (proc procedure "the handler"))
   (define (set-mouse-handler! proc)
@@ -752,18 +744,22 @@
         (proc procedure "(open path)"))
   (define (set-file-opener! proc)
     (set! file-opener proc))
+
   (edoc "Install the quit command, the modified-buffers check."
         (proc thunk "the command"))
   (define (set-quit-command! proc)
     (set! quit-command proc))
+
   (edoc "Install what runs after every key."
         (proc thunk "the hook"))
   (define (set-after-key! proc)
     (set! after-key-hook proc))
+
   (edoc "Install how the editor leaves once quitting is confirmed."
         (proc thunk "the departure"))
   (define (set-departure! proc)
     (set! departure proc))
+
   (edoc "Install how modified buffers are shown for review before quitting."
         (proc thunk "the viewer"))
   (define (set-review-viewer! proc)
@@ -773,15 +769,19 @@
         (path file "the file"))
   (define (open-file! path)
     (file-opener path))
+
   (edoc "Run the installed quit command.")
   (define (quit-command!)
     (quit-command))
+
   (edoc "Run the installed after-key hook.")
   (define (after-key!)
     (after-key-hook))
+
   (edoc "Leave the editor through the installed departure.")
   (define (depart!)
     (departure))
+
   (edoc "Show the modified buffers through the installed viewer.")
   (define (view-review!)
     (review-viewer))
@@ -823,9 +823,11 @@
   ;; The seat's lifetime, and the command the dispatcher ran last (kill
   ;; chaining and typed runs ask).
   (define quit-requested #f)
+
   (edoc "Request that the main loop end.")
   (define (quit!)
     (set! quit-requested #t))
+
   (edoc "Whether quitting was requested."
         (returns boolean))
   (define (quitting?)
@@ -859,10 +861,12 @@
             (local-quit-state))))))
 
   (define the-last-command #f)
+
   (edoc "The command the last key ran, for commands that chain, such as consecutive kills."
         (returns any))
   (define (last-command)
     the-last-command)
+
   (edoc "Record the command the last key ran."
         (c any "the command"))
   (define (set-last-command! c)
@@ -871,10 +875,12 @@
   ;; the key sequence being dispatched -- the self-inserting command
   ;; reads its character here
   (define the-current-keys '())
+
   (edoc "The key sequence being dispatched; the self-inserting command reads its character here."
         (returns list))
   (define (current-keys)
     the-current-keys)
+
   (edoc "Record the key sequence being dispatched."
         (keys list "the events"))
   (define (set-current-keys! keys)
@@ -1002,6 +1008,7 @@
   (edoc "The status-line buttons: (action . label) for splitting below, splitting right and closing."
         (value list))
   (define window-buttons '((below . "↕") (right . "↔") (close . "×")))
+
   (edoc "The columns the status-line buttons take."
         (value integer))
   (define window-buttons-width (+ 1 (apply + (map (lambda (b) (+ 1 (string-length (cdr b)))) window-buttons))))
@@ -1103,6 +1110,7 @@
         (returns any))
   (define (drag)
     the-drag)
+
   (edoc "Record the mouse gesture in progress."
         (d any "the gesture, or #f"))
   (define (set-drag! d)
@@ -1169,6 +1177,7 @@
         (proc thunk "the hook"))
   (define (set-repaint-hook! proc)
     (set! repaint-hook proc))
+
   (edoc "Install the hook run after text is adopted from the store."
         (proc procedure "the hook"))
   (define (set-adopt-hook! proc)
@@ -1282,31 +1291,37 @@
         (returns (or file #f)))
   (define (buffer-file b)
     (buffer-fact b 'file #f))
+
   (edoc "Set a buffer's file fact."
         (b buffer "the buffer")
         (v (or file #f) "the new value"))
   (define (buffer-file-set! b v)
     (buffer-fact-set! b 'file v))
+
   (edoc "A buffer's trailing fact: whether its text ends in a newline."
         (b buffer "the buffer")
         (returns boolean))
   (define (buffer-trailing b)
     (buffer-fact b 'trailing #t))
+
   (edoc "Set a buffer's trailing fact."
         (b buffer "the buffer")
         (v boolean "the new value"))
   (define (buffer-trailing-set! b v)
     (buffer-fact-set! b 'trailing v))
+
   (edoc "A buffer's modified fact: whether a local buffer has unsaved changes."
         (b buffer "the buffer")
         (returns boolean))
   (define (buffer-modified b)
     (buffer-fact b 'modified #f))
+
   (edoc "Set a buffer's modified fact."
         (b buffer "the buffer")
         (v boolean "the new value"))
   (define (buffer-modified-set! b v)
     (buffer-fact-set! b 'modified v))
+
   (edoc "A buffer's modified-at fact: when it was last edited, or #f."
         (b buffer "the buffer")
         (returns (or integer #f)))
@@ -1317,51 +1332,61 @@
     (let ([now (current-time 'time-utc)])
       (hashtable-set! (buffer-local-facts b) 'modified-at
         (+ (* (time-second now) 1000000000) (time-nanosecond now)))))
+
   (edoc "A buffer's mode-auto fact: whether its mode follows detection."
         (b buffer "the buffer")
         (returns boolean))
   (define (buffer-mode-auto b)
     (buffer-fact b 'mode-auto #t))
+
   (edoc "Set a buffer's mode-auto fact."
         (b buffer "the buffer")
         (v boolean "the new value"))
   (define (buffer-mode-auto-set! b v)
     (buffer-fact-set! b 'mode-auto v))
+
   (edoc "A buffer's read-only fact: #t, #f, or a procedure deciding per edit."
         (b buffer "the buffer")
         (returns (or boolean procedure)))
   (define (buffer-read-only b)
     (buffer-fact b 'read-only #f))
+
   (edoc "Set a buffer's read-only fact."
         (b buffer "the buffer")
         (v (or boolean procedure) "the new value"))
   (define (buffer-read-only-set! b v)
     (buffer-fact-set! b 'read-only v))
+
   (edoc "A buffer's stamp fact: the disk stamp of its file when read, or #f."
         (b buffer "the buffer")
         (returns any))
   (define (buffer-stamp b)
     (buffer-fact b 'stamp #f))
+
   (edoc "Set a buffer's stamp fact."
         (b buffer "the buffer")
         (v any "the new value"))
   (define (buffer-stamp-set! b v)
     (buffer-fact-set! b 'stamp v))
+
   (edoc "A buffer's base fact: the text its file held when loaded or last saved, or #f."
         (b buffer "the buffer")
         (returns (or string #f)))
   (define (buffer-base b)
     (buffer-fact b 'base #f))
+
   (edoc "Set a buffer's base fact."
         (b buffer "the buffer")
         (v (or string #f) "the new value"))
   (define (buffer-base-set! b v)
     (buffer-fact-set! b 'base v))
+
   (edoc "A buffer's stale fact: whether its file changed on disk since."
         (b buffer "the buffer")
         (returns boolean))
   (define (buffer-stale b)
     (buffer-fact b 'stale #f))
+
   (edoc "Set a buffer's stale fact."
         (b buffer "the buffer")
         (v boolean "the new value"))
@@ -1966,12 +1991,14 @@
         (returns integer))
   (define (buffer-line-count b)
     (vector-length (buffer-lines b)))
+
   (edoc "One line of a buffer, by zero-based row."
         (b buffer "the buffer to read")
         (row integer "the row")
         (returns string))
   (define (buffer-line b row)
     (vector-ref (buffer-lines b) row))
+
   (edoc "Replace a buffer's text as a new baseline, through store-reset!."
         (b buffer "the buffer")
         (new-lines vector "the lines"))
@@ -2673,12 +2700,15 @@
   (edoc "The viewport cell a pointer event hit, one-based (column . row), while an app handler runs."
         (value (or pair #f)))
   (define app-event-position (make-thread-parameter #f))
+
   (edoc "The unclamped character position, (row . col), a pointer event hit, while an app handler runs."
         (value (or pair #f)))
   (define app-event-buffer-position (make-thread-parameter #f))
+
   (edoc "The raw xterm button code of the pointer event an app handler is running for."
         (value (or integer #f)))
   (define app-event-button (make-thread-parameter #f))
+
   ;; The window with keyboard focus when a pointer event began.  The app's
   ;; own window is selected while its handler runs; a control panel that
   ;; acts on the focused window addresses this one instead.
@@ -2975,6 +3005,7 @@
                         (unless (boolean? visible?)
                           (error 'scrollbar "must be #t or #f" visible?))
                         visible?)))
+
   (edoc "Which side a scrollbar shows on, left or right."
         (value (one-of left right)))
   (define scrollbar-position (make-parameter 'right

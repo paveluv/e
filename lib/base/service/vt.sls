@@ -2,27 +2,34 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service vt)
-  (export init! open! send! close! close-all! running transcript
-          (rename (terminal-scrollback scrollback) (terminal-shell shell)
-                  (make-terminal-emulator make-emulator) (terminal-emulator? emulator?)
-                  (terminal-emulator-feed! emulator-feed!) (terminal-emulator-resize! emulator-resize!)
-                  (terminal-emulator-screen emulator-screen) (terminal-emulator-frame emulator-frame)
-                  (terminal-emulator-styles emulator-styles) (terminal-emulator-hyperlinks emulator-hyperlinks)
-                  (terminal-emulator-state emulator-state) (terminal-emulator-input emulator-input)
-                  (terminal-emulator-mouse-input emulator-mouse-input) (terminal-emulator-replies emulator-replies)
-                  (terminal-emulator-unsupported emulator-unsupported) (terminal-color-scheme! color-scheme!)))
+  (export close! close-all! (rename (terminal-color-scheme! color-scheme!))
+          (rename (terminal-emulator-feed! emulator-feed!))
+          (rename (terminal-emulator-frame emulator-frame))
+          (rename (terminal-emulator-hyperlinks emulator-hyperlinks))
+          (rename (terminal-emulator-input emulator-input))
+          (rename (terminal-emulator-mouse-input emulator-mouse-input))
+          (rename (terminal-emulator-replies emulator-replies))
+          (rename (terminal-emulator-resize! emulator-resize!))
+          (rename (terminal-emulator-screen emulator-screen))
+          (rename (terminal-emulator-state emulator-state))
+          (rename (terminal-emulator-styles emulator-styles))
+          (rename (terminal-emulator-unsupported emulator-unsupported))
+          (rename (terminal-emulator? emulator?)) init!
+          (rename (make-terminal-emulator make-emulator)) open! running
+          (rename (terminal-scrollback scrollback)) send! (rename (terminal-shell shell))
+          transcript)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
-          (prefix (foundation string) string:)
-          (prefix (sys activity) activity:)
+          (prefix (foundation color) color:)
           (prefix (foundation datum) datum:)
-          (prefix (sys sys) sys:)
+          (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
           (prefix (state actor) actor:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
-          (prefix (foundation text) text:)
+          (prefix (sys activity) activity:)
           (prefix (sys glyph) glyph:)
-          (prefix (foundation color) color:))
+          (prefix (sys sys) sys:))
 
   (define-record-type terminal-state
     (nongenerative e-vt-terminal-state-v1)
@@ -189,6 +196,7 @@
            [shown (if (> (string-length body) 80)
                       (string-append (substring body 0 77) "...") body)])
       (format "~a ~s" family shown)))
+
   (edoc "How many scrolled-off lines a terminal keeps."
         (value integer))
   (define terminal-scrollback (make-parameter 10000
@@ -196,6 +204,7 @@
                                   (unless (and (integer? lines) (exact? lines) (>= lines 0))
                                     (error 'terminal-scrollback "must be a nonnegative integer" lines))
                                   lines)))
+
   (edoc "The shell a terminal runs without a command: SHELL, or /bin/sh."
         (value string))
   (define terminal-shell (make-parameter

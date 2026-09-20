@@ -15,13 +15,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head echo)
-  (export text text-owner set-text! ghost set-ghost! styles set-styles!
-          pending set-pending! cursor set-cursor!
-          indent set-indent! input-end set-input-end!
-          height set-height! scroll set-scroll!
-          spans set-spans! live-height set-live-height!
-          indent-now queue! settle!
-          compute-spans log-prefix log-spans log-rows)
+  (export compute-spans cursor ghost height indent indent-now input-end live-height log-prefix
+          log-rows log-spans pending queue! scroll set-cursor! set-ghost! set-height!
+          set-indent! set-input-end! set-live-height! set-pending! set-scroll! set-spans!
+          set-styles! set-text! settle! spans styles text text-owner)
   (import (rnrs)
           (rnrs r5rs)
           (only (chezscheme) format))
@@ -48,10 +45,12 @@
         (returns string))
   (define (text)
     the-text)
+
   (edoc "Who owns the live text: an indicator's component, or #f."
         (returns any))
   (define (text-owner)
     the-text-owner)
+
   (edoc "Set the live text and who owns it, an indicator's component."
         (s string "the text")
         (owner any "the owner, or #f"))
@@ -63,82 +62,102 @@
        (set-text! s #f)]
       [(s owner)
        (set! the-text s) (set! the-text-owner owner)]))
+
   (edoc "The grey suggestion after the live text."
         (returns string))
   (define (ghost)
     the-ghost)
+
   (edoc "Set the grey suggestion after the live text."
         (s string "the suggestion"))
   (define (set-ghost! s)
     (set! the-ghost s))
+
   (edoc "The live text's styles, (content . styler) applied while the text still matches, or #f."
         (returns (or pair #f)))
   (define (styles)
     the-styles)
+
   (edoc "Set the live text's styles."
         (s (or pair #f) "(content . styler), or #f"))
   (define (set-styles! s)
     (set! the-styles s))
+
   (edoc "The queued transient-log entries, oldest first."
         (returns list))
   (define (pending)
     the-pending)
+
   (edoc "Replace the queued transient-log entries."
         (entries list "the entries"))
   (define (set-pending! entries)
     (set! the-pending entries))
+
   (edoc "The prompt cursor's content index, or #f without a prompt."
         (returns (or integer #f)))
   (define (cursor)
     the-cursor)
+
   (edoc "Set the prompt cursor's content index, or #f without a prompt."
         (at (or integer #f) "the index"))
   (define (set-cursor! at)
     (set! the-cursor at))
+
   (edoc "The continuation indent of wrapped content, or #f for none."
         (returns (or integer #f)))
   (define (indent)
     the-indent)
+
   (edoc "Set the continuation indent of wrapped content."
         (i (or integer #f) "the indent, or #f"))
   (define (set-indent! i)
     (set! the-indent i))
+
   (edoc "Where the prompt's input ends in the content, or #f."
         (returns (or integer #f)))
   (define (input-end)
     the-input-end)
+
   (edoc "Set where the prompt's input ends in the content."
         (at (or integer #f) "the index, or #f"))
   (define (set-input-end! at)
     (set! the-input-end at))
+
   (edoc "The echo area's height in rows."
         (returns integer))
   (define (height)
     the-height)
+
   (edoc "Set the echo area's height in rows."
         (h integer "the rows"))
   (define (set-height! h)
     (set! the-height h))
+
   (edoc "How many visual lines of the live content are scrolled off above."
         (returns integer))
   (define (scroll)
     the-scroll)
+
   (edoc "Set how many visual lines of the live content are scrolled off above."
         (s integer "the lines"))
   (define (set-scroll! s)
     (set! the-scroll s))
+
   (edoc "The content index ranges of the live content's visual lines."
         (returns list))
   (define (spans)
     the-spans)
+
   (edoc "Set the content index ranges of the live content's visual lines."
         (s list "the spans"))
   (define (set-spans! s)
     (set! the-spans s))
+
   (edoc "The rows the live line takes."
         (returns integer))
   (define (live-height)
     the-live-height)
+
   (edoc "Set the rows the live line takes."
         (h integer "the rows"))
   (define (set-live-height! h)

@@ -2,8 +2,8 @@
 ;; registration, delivery and open questions belong to the daemon.
 (import (only (foundation edoc) elibrary))
 (elibrary (state actor)
-  (export register! registered? detach! attached describe subscribe! unsubscribe!
-          current call-as identity? audience? in-audience? send! pending answer! checkpoint checkpoint!)
+  (export answer! attached audience? call-as checkpoint checkpoint! current describe detach!
+          identity? in-audience? pending register! registered? send! subscribe! unsubscribe!)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core identity) identity:)
@@ -20,6 +20,7 @@
   (define pending-known? #f)
   (define pending-questions '())
   (define (forget-pending!) (set! pending-known? #f))
+
   (edoc "Bind this head's delivery procedure, and its capabilities when given, to its claimed identity."
         (actor actor "the actor identity")
         (deliver! procedure "(deliver! message)")
@@ -40,25 +41,30 @@
              (call-as identity (lambda () (deliver! message)))))
          (set! bound? #t)
          identity)]))
+
   (edoc "The registered actors, from the base."
         (returns list))
   (define (attached)
     (client:request 'actors))
+
   (edoc "An actor's directory entry, or #f."
         (actor actor "the actor identity")
         (returns (or list #f)))
   (define (describe actor)
     (find (lambda (entry) (equal? (car entry) actor)) (attached)))
+
   (edoc "Whether an actor is registered."
         (actor actor "the actor identity")
         (returns boolean))
   (define (registered? actor)
     (and (describe actor) #t))
+
   (edoc "Detach this head by closing its connection; a head detaches only itself."
         (actor actor "the actor identity"))
   (define (detach! actor)
     (unless (equal? actor (client:identity)) (error 'detach! "a head detaches itself"))
     (client:close!))
+
   (edoc "Watch the directory: (procedure batch) with (detached actor) and (attached actor) entries; the token unsubscribes."
         (procedure procedure "the observer")
         (returns any))
@@ -77,12 +83,14 @@
             ;; must still invalidate the head's cached app-size offer.
             (procedure batch))))))
   (define unsubscribe! client:unsubscribe!)
+
   (edoc "Deliver a plain message to an actor through the base."
         (to actor "the recipient identity")
         (message datum "the message")
         (returns any))
   (define (send! to message)
     (client:request 'send to message))
+
   (edoc "The questions awaiting this head, oldest first."
         (actor actor "the actor identity")
         (returns list)
@@ -93,6 +101,7 @@
       (set! pending-questions (client:request 'pending))
       (set! pending-known? #t))
     (datum:copy pending-questions))
+
   (edoc "Answer a question by its ticket."
         (ticket any "the ticket")
         (answer any "the answer")
@@ -103,11 +112,13 @@
   (define (own-checkpoint actor . state)
     (unless (equal? actor (client:identity)) (error 'checkpoint "a head owns its own checkpoint"))
     (apply client:request 'checkpoint state))
+
   (edoc "This head's last screen checkpoint, or #f."
         (actor actor "the actor identity")
         (returns any))
   (define (checkpoint actor)
     (own-checkpoint actor))
+
   (edoc "Record this head's screen checkpoint in the base."
         (actor actor "the actor identity")
         (state datum "the checkpoint"))

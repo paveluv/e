@@ -10,19 +10,20 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head dispatch)
-  (export set-prompt-opener! (rename (handle-key! key!)) global-key!)
+  (export global-key! (rename (handle-key! key!)) set-prompt-opener!)
   (import (chezscheme)
-          (prefix (head head) head:)
-          (prefix (head paint) paint:)
           (prefix (head echo) echo:)
+          (prefix (head head) head:)
           (prefix (head keymap) keymap:)
-          (prefix (sys tty) tty:)
-          (prefix (head mode) mode:))
+          (prefix (head mode) mode:)
+          (prefix (head paint) paint:)
+          (prefix (sys tty) tty:))
 
   ;;; Key dispatch ---------------------------------------------------------------------
 
   (define prompt-opener
     (lambda (name arguments) (error 'dispatch "no M-x prompt is installed to pre-fill" name)))
+
   (edoc "Install the procedure that opens M-x with a call begun: (open name arguments), the command's top-level name and the arguments already given; a key bound with keymap:prefill calls it."
         (open procedure "(open name arguments)"))
   (define (set-prompt-opener! open)

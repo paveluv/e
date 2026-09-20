@@ -17,29 +17,24 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mode)
-  (export (rename (mode-name name)
-                  (mode-extensions extensions)
-                  (mode-interpreters interpreters)
-                  (mode-styles styles) (mode-render render)
-                  (mode-row-styles row-styles)
-                  (register-mode! register!)
-                  (add-mode-extension! add-extension!)
-                  (find-mode find) (detect-mode detect) (assign-mode! assign!)
-                  (set-buffer-mode! choose!) (mode-of of)
-                  (buffer-mode-name name-of)
-                  (buffer-line-styles line-styles)
-                  (memoize-buffer-analysis memoize-analysis)
-                  (refresh-buffer-modes! refresh!))
-          mode? key-context
-          register-indenter! register-formatter! indent-on-tab! indenter indent-on-tab? formatter)
+  (export (rename (add-mode-extension! add-extension!)) (rename (assign-mode! assign!))
+          (rename (set-buffer-mode! choose!)) (rename (detect-mode detect))
+          (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
+          indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
+          key-context (rename (buffer-line-styles line-styles))
+          (rename (memoize-buffer-analysis memoize-analysis)) mode? (rename (mode-name name))
+          (rename (buffer-mode-name name-of)) (rename (mode-of of))
+          (rename (refresh-buffer-modes! refresh!)) (rename (register-mode! register!))
+          register-formatter! register-indenter! (rename (mode-render render))
+          (rename (mode-row-styles row-styles)) (rename (mode-styles styles)))
   (import (rnrs)
           (only (chezscheme)
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
                 vector-copy void)
           (prefix (core kernel) kernel:)
+          (prefix (foundation string) string:)
           (prefix (head head) head:)
-          (prefix (head keymap) keymap:)
-          (prefix (foundation string) string:))
+          (prefix (head keymap) keymap:))
 
   ;;; The registry ------------------------------------------------------------
 

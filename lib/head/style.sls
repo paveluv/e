@@ -12,8 +12,9 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head style)
-  (export (rename (compile-style compile)) (rename (style-escape escape)) (rename (set-style! set!)) (rename (style-code code))
-          (rename (set-styles-changed-hook! set-changed-hook!)) color-scheme! fill-range!)
+  (export (rename (style-code code)) color-scheme! (rename (compile-style compile))
+          (rename (style-escape escape)) fill-range! (rename (set-style! set!))
+          (rename (set-styles-changed-hook! set-changed-hook!)))
   (import (rnrs)
           (only (chezscheme) format void)
           (prefix (core kernel) kernel:)

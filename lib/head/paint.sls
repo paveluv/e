@@ -17,31 +17,22 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head paint)
-  (export ansi! goto! fit
-          display-editor-line! emit-runs!
-          detect-hyperlinks valid-hyperlink? compute-breaks
-          wrap-lines buffer-wrap-setting window-wrapped? clean-wrap? wrap-width
-          line-breaks segment-of segment-start segment-close line-segments
-          add-status-hint! add-buffer-status-hint! add-highlighter!
-          highlight-ranges hover-ranges add-hyperlinker! buffer-line-hyperlinks
-          ranges-on-row region-span
-          begin-frame! invalidate-screen-cache! erase-screen! paint!
-
-          screen-rows set-screen-rows! screen-cols set-screen-cols!
-          mark-size-dirty! screen-live? set-screen-live! reset-cursor-style!
-          redraw! redraw-lock visual-bell!
-          window-layout page-size set-buffer-viewports!
-          reset-buffer-viewports! view-invalidate! point-visible?
-          rows-before scroll-margin view-overflows? scroll-window!
-          echo-indent-now compute-echo-spans echo-position echo-index-at
-          echo-box-width echo-box-border echo-width cursor-in-echo echo-highlight prompt-styler
-          completion-styler echo-cursor-now show-message!
-          show-prompt-message! echo-append! echo-queue!
-          present-echo! echo-log-prefix echo-log-spans
-          echo-log-rows display-echo-log-row!
-          echo-cap update-echo-geometry!
-          update-terminal-title! window-screen-position window-position column-at-cell
-          place-cursor! terminal-size!)
+  (export add-buffer-status-hint! add-highlighter! add-hyperlinker! add-status-hint! ansi!
+          begin-frame! buffer-line-hyperlinks buffer-wrap-setting clean-wrap? column-at-cell
+          completion-styler compute-breaks compute-echo-spans cursor-in-echo detect-hyperlinks
+          display-echo-log-row! display-editor-line! echo-append! echo-box-border echo-box-width
+          echo-cap echo-cursor-now echo-highlight echo-indent-now echo-index-at echo-log-prefix
+          echo-log-rows echo-log-spans echo-position echo-queue! echo-width emit-runs!
+          erase-screen! fit goto! highlight-ranges hover-ranges invalidate-screen-cache!
+          line-breaks line-segments mark-size-dirty! page-size paint! place-cursor!
+          point-visible? present-echo! prompt-styler ranges-on-row redraw! redraw-lock
+          region-span reset-buffer-viewports! reset-cursor-style! rows-before screen-cols
+          screen-live? screen-rows scroll-margin scroll-window! segment-close segment-of
+          segment-start set-buffer-viewports! set-screen-cols! set-screen-live! set-screen-rows!
+          show-message! show-prompt-message! terminal-size! update-echo-geometry!
+          update-terminal-title! valid-hyperlink? view-invalidate! view-overflows? visual-bell!
+          window-layout window-position window-screen-position window-wrapped? wrap-lines
+          wrap-width)
   (import (rnrs)
           (rnrs mutable-strings)
           (rnrs r5rs)
@@ -50,16 +41,16 @@
                 eq-hashtable-ref eq-hashtable-set! remq getenv
                 make-mutex with-mutex unbox set-box!
                 current-time add-duration make-time time<?)
-          (prefix (only (sys sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:)
-          (prefix (head style) style:)
+          (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
-          (prefix (head head) head:)
-          (prefix (head render) render:)
-          (prefix (sys glyph) glyph:)
-          (prefix (head mode) mode:)
-          (prefix (head keymap) keymap:)
           (prefix (head echo) echo:)
-          (prefix (core kernel) kernel:))
+          (prefix (head head) head:)
+          (prefix (head keymap) keymap:)
+          (prefix (head mode) mode:)
+          (prefix (head render) render:)
+          (prefix (head style) style:)
+          (prefix (sys glyph) glyph:)
+          (prefix (only (sys sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:))
 
   ;;; Output primitives ---------------------------------------------------------
 
@@ -1038,25 +1029,31 @@
 
   (define rows 24)
   (define cols 80)
+
   (edoc "The screen height in rows."
         (returns integer))
   (define (screen-rows)
     rows)
+
   (edoc "Set the screen height in rows."
         (n integer "the rows"))
   (define (set-screen-rows! n)
     (set! rows n))
+
   (edoc "The screen width in columns."
         (returns integer))
   (define (screen-cols)
     cols)
+
   (edoc "Set the screen width in columns."
         (n integer "the columns"))
   (define (set-screen-cols! n)
     (set! cols n))
+
   (edoc "Note that the terminal size may have changed, so the next frame measures it again.")
   (define (mark-size-dirty!)
     (set! size-dirty? #t))
+
   (edoc "Say whether the screen is the editor's to paint; leaving it forgets the row cache and the bell."
         (on? boolean "whether painting may proceed"))
   (define (set-screen-live! on?)
@@ -1064,10 +1061,12 @@
     (unless on?
       (set! visual-bell-deadline #f)
       (invalidate-screen-cache!)))
+
   (edoc "Whether the screen is the editor's to paint."
         (returns boolean))
   (define (screen-live?)
     the-screen-live?)
+
   (edoc "Restore the terminal's default cursor shape, on the way out.")
   (define (reset-cursor-style!)
     ;; on the way out: the terminal's default cursor, unless it already shows
@@ -1105,6 +1104,7 @@
         (when size
           (set! rows (max 3 (car size)))
           (set! cols (max 20 (cdr size)))))))
+
   (edoc "Tile the split tree into the screen above the echo area: ((window start text-height) ...), start 0-based, remembered for mouse hit-testing."
         (returns list)
         (effects internal))
@@ -1346,6 +1346,7 @@
                              (unless (and (integer? n) (exact? n) (>= n 4))
                                (error 'echo-box-width "expected an exact integer of at least 4" n))
                              n)))
+
   (edoc "The glyph on both sides of the echo box: any single terminal cell."
         (value (or string char)))
   (define echo-box-border ;; The glyph on both sides of the box: any single terminal cell.
@@ -1357,6 +1358,7 @@
           glyph))))
   (define (echo-box-columns) (min cols (echo-box-width)))
   (define (echo-box-offset) (quotient (- cols (echo-box-columns)) 2))
+
   (edoc "The columns inside the echo box's borders."
         (returns integer))
   (define (echo-width)
@@ -1542,12 +1544,14 @@
         (returns string))
   (define (echo-log-prefix e)
     (echo:log-prefix e (echo-width)))
+
   (edoc "The content index ranges of a transient-log entry's visual rows."
         (prefix-len integer "the prefix length")
         (content string "the entry text")
         (returns list))
   (define (echo-log-spans prefix-len content)
     (echo:log-spans prefix-len content (echo-width)))
+
   (edoc "How many visual rows a transient-log entry takes."
         (e datum "the log entry")
         (returns integer))

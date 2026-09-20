@@ -24,9 +24,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation scheme-format)
-  (export (rename (scheme-indent-lines indent-lines)) (rename (scheme-format-lines lines)) (rename (scheme-delimiter? delimiter?))
-          (rename (scheme-format-brackets brackets)) (rename (scheme-tab-width tab-width))
-          (rename (scheme-format-intrusive intrusive)) (rename (scheme-format-width width)))
+  (export (rename (scheme-format-brackets brackets)) (rename (scheme-delimiter? delimiter?))
+          (rename (scheme-indent-lines indent-lines))
+          (rename (scheme-format-intrusive intrusive)) (rename (scheme-format-lines lines))
+          (rename (scheme-tab-width tab-width)) (rename (scheme-format-width width)))
   (import (chezscheme) (prefix (foundation string) string:))
 
   ;; Configuration: bracket convention, tab expansion, and the opt-in
@@ -35,14 +36,17 @@
         (value boolean))
   (define scheme-format-brackets
     (make-parameter #t))
+
   (edoc "The columns a tab counts for when formatting."
         (value integer))
   (define scheme-tab-width
     (make-parameter 2))
+
   (edoc "Whether whole-buffer formatting may change line counts to lay code out within the width."
         (value boolean))
   (define scheme-format-intrusive
     (make-parameter #f))
+
   (edoc "The line width the intrusive layout aims for."
         (value integer))
   (define scheme-format-width

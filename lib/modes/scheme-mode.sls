@@ -13,15 +13,15 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (modes scheme-mode)
-  (export init! (rename (scheme-format-on-save format-on-save)))
+  (export (rename (scheme-format-on-save format-on-save)) init!)
   (import (chezscheme)
+          (prefix (foundation scheme-format) scheme-format:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
-          (prefix (service file) file:)
-          (prefix (head style) style:)
           (prefix (head mode) mode:)
-          (prefix (foundation scheme-format) scheme-format:)
-          (prefix (service doc) doc:))
+          (prefix (head style) style:)
+          (prefix (service doc) doc:)
+          (prefix (service file) file:))
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.

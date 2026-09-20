@@ -3,15 +3,15 @@
 ;; mail and log presentation have the same finite budget as the base outbox.
 (import (only (foundation edoc) elibrary))
 (elibrary (core client)
-  (export call-with-runtime identity request subscribe! unsubscribe!
-          set-wake! pump! close! watch! ended? leave! inbox-limits)
+  (export call-with-runtime close! ended? identity inbox-limits leave! pump! request set-wake!
+          subscribe! unsubscribe! watch!)
   (import (chezscheme)
+          (prefix (core daemon) daemon:)
           (prefix (core kernel) kernel:)
           (prefix (core startup) startup:)
-          (prefix (core daemon) daemon:)
+          (prefix (foundation datum) datum:)
           (prefix (foundation wire) wire:)
-          (prefix (sys sys) sys:)
-          (prefix (foundation datum) datum:))
+          (prefix (sys sys) sys:))
 
   (edoc "The connection to the base ended.")
   (define-condition-type &ended &condition make-ended ended?)
@@ -44,6 +44,7 @@
         (returns any))
   (define (identity)
     (datum:copy who))
+
   (edoc "Install the procedure that wakes the head when base events arrive."
         (procedure thunk "the wake"))
   (define (set-wake! procedure)
@@ -195,6 +196,7 @@
   (define (subscribe! kind procedure)
     (let ([token (list kind procedure)])
       (kernel:registry-add! subscriptions (list token kind procedure)) token))
+
   (edoc "Cancel a subscription by its token."
         (token any "the token"))
   (define (unsubscribe! token)

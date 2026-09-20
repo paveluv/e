@@ -2,13 +2,13 @@
 ;; No head state or threads: the caller owns cancellation and publication.
 (import (only (foundation edoc) elibrary))
 (elibrary (service directory)
-  (export scan refilter reconcile entry-path entry-kind entry-link? entry-mode entry-size
-          entry-modified entry-created entry-count entry-complete? entry-matches
-          relative-path matches? directory? (rename (parent-path parent)))
+  (export directory? entry-complete? entry-count entry-created entry-kind entry-link?
+          entry-matches entry-mode entry-modified entry-path entry-size matches?
+          (rename (parent-path parent)) reconcile refilter relative-path scan)
   (import (chezscheme)
-          (prefix (sys sys) sys:)
+          (prefix (foundation string) string:)
           (prefix (service file) file:)
-          (prefix (foundation string) string:))
+          (prefix (sys sys) sys:))
 
   (edoc "A file system entry as the files view lists it."
         (path string "the absolute path")

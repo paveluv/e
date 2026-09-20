@@ -29,49 +29,26 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service sandbox)
-  (export
-    ;; syntax
-    quote quasiquote unquote unquote-splicing lambda define if cond
-    case when unless and or begin do let let* letrec letrec*
-    let-values let*-values set! else => _ ...
-    ;; equality and types
-    eq? eqv? equal? not boolean? symbol? procedure?
-    ;; numbers
-    number? integer? rational? real? exact? inexact? exact inexact
-    zero? positive? negative? odd? even? nan? finite?
-    + - * / = < > <= >= abs min max div mod expt exact->inexact
-    floor ceiling round truncate sqrt gcd lcm
-    number->string string->number
-    ;; pairs and lists
-    pair? null? list? cons car cdr caar cadr cdar cddr caddr cdddr
-    cadddr list length append reverse list-tail list-ref map for-each
-    assq assv assoc memq memv member filter partition remove
-    fold-left fold-right exists for-all cons* last-pair list-copy
-    list-sort iota
-    ;; symbols, chars, strings
-    symbol->string string->symbol
-    char? char->integer integer->char char=? char<? char>?
-    char-alphabetic? char-numeric? char-whitespace?
-    char-upcase char-downcase
-    string? make-string string string-length string-ref substring
-    string-append string=? string<? string>? string-ci=?
-    string->list list->string string-copy string-upcase
-    string-downcase string-titlecase
-    ;; vectors and hashtables (locally created ones)
-    vector? make-vector vector vector-length vector-ref vector-set!
-    vector->list list->vector vector-map vector-for-each vector-fill!
-    vector-sort
-    make-eq-hashtable make-eqv-hashtable make-hashtable
-    hashtable? hashtable-ref hashtable-set! hashtable-delete!
-    hashtable-contains? hashtable-size hashtable-keys
-    hashtable-entries equal-hash string-hash symbol-hash
-    ;; control
-    apply values call-with-values dynamic-wind call/cc
-    ;; captured output
-    display write newline format
-    ;; the editor, read-only, by name
-    buffer-names buffer-lines-count buffer-text-line buffer-revision
-    read-buffer list-buffers log-tail describe-text)
+  (export * + - ... / < <= = => > >= _ abs and append apply assoc assq assv begin boolean?
+          buffer-lines-count buffer-names buffer-revision buffer-text-line caar cadddr caddr
+          cadr call-with-values call/cc car case cdar cdddr cddr cdr ceiling char->integer
+          char-alphabetic? char-downcase char-numeric? char-upcase char-whitespace? char<?
+          char=? char>? char? cond cons cons* define describe-text display div do dynamic-wind
+          else eq? equal-hash equal? eqv? even? exact exact->inexact exact? exists expt filter
+          finite? floor fold-left fold-right for-all for-each format gcd hashtable-contains?
+          hashtable-delete! hashtable-entries hashtable-keys hashtable-ref hashtable-set!
+          hashtable-size hashtable? if inexact inexact? integer->char integer? iota lambda
+          last-pair lcm length let let* let*-values let-values letrec letrec* list list->string
+          list->vector list-buffers list-copy list-ref list-sort list-tail list? log-tail
+          make-eq-hashtable make-eqv-hashtable make-hashtable make-string make-vector map max
+          member memq memv min mod nan? negative? newline not null? number->string number? odd?
+          or pair? partition positive? procedure? quasiquote quote rational? read-buffer real?
+          remove reverse round set! sqrt string string->list string->number string->symbol
+          string-append string-ci=? string-copy string-downcase string-hash string-length
+          string-ref string-titlecase string-upcase string<? string=? string>? string? substring
+          symbol->string symbol-hash symbol? truncate unless unquote unquote-splicing values
+          vector vector->list vector-fill! vector-for-each vector-length vector-map vector-ref
+          vector-set! vector-sort vector? when write zero?)
   (import (rnrs)
           (rnrs mutable-strings)
           (only (chezscheme)
@@ -79,10 +56,10 @@
                 string-titlecase last-pair cons* vector-sort nan?
                 exact->inexact open-output-string get-output-string
                 put-string disable-interrupts enable-interrupts)
-          (prefix (state store) store:)
+          (prefix (only (service doc) forms returns libraries description) doc:)
           (prefix (only (service log) entries format-entry) log:)
           (prefix (only (service reference) lookup) reference:)
-          (prefix (only (service doc) forms returns libraries description) doc:))
+          (prefix (state store) store:))
 
   ;; Rule 2 above: nothing between disable and enable may raise
   ;; without the wind exit running, and nothing here evaluates actor

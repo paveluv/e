@@ -3,8 +3,8 @@
 ;; with the app. A layout belongs to a window, never to its shared buffer.
 (import (only (foundation edoc) elibrary))
 (elibrary (head table)
-  (export make heading cycle-sort less? layout)
-  (import (chezscheme) (prefix (sys glyph) glyph:) (prefix (foundation string) string:))
+  (export cycle-sort heading layout less? make)
+  (import (chezscheme) (prefix (foundation string) string:) (prefix (sys glyph) glyph:))
 
   (edoc "A table's columns: their headings, minimum widths, which column identifies a row, which may be dropped when narrow, and how cells align."
         (headings vector "the column headings")

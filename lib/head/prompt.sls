@@ -21,13 +21,13 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head prompt)
-  (export (rename (prompt! read!) (query-key! key!) (prompt-active? active?)
-                  (prompt-ghost ghost) (prompt-inspector inspector)
-                  (prompt-multiline multiline) (prompt-edge-motion edge-motion)
-                  (prompt-reindent reindent) (prompt-in-window in-window)
-                  (validate-input validate) (draft-input draft)
-                  (make-content-view make-content))
-          confirm? make-completer make-candidate completion-label completion-highlight content line allow! interaction transient)
+  (export (rename (prompt-active? active?)) allow! completion-highlight completion-label confirm?
+          content (rename (draft-input draft)) (rename (prompt-edge-motion edge-motion))
+          (rename (prompt-ghost ghost)) (rename (prompt-in-window in-window))
+          (rename (prompt-inspector inspector)) interaction (rename (query-key! key!)) line
+          make-candidate make-completer (rename (make-content-view make-content))
+          (rename (prompt-multiline multiline)) (rename (prompt! read!))
+          (rename (prompt-reindent reindent)) transient (rename (validate-input validate)))
   (import (rnrs)
           (rnrs r5rs)
           (only (chezscheme)
@@ -35,15 +35,15 @@
                 make-weak-eq-hashtable make-list list-head iota
                 current-time add-duration make-time time<?)
           (prefix (core kernel) kernel:)
-          (prefix (head head) head:)
-          (prefix (head echo) echo:)
-          (prefix (head paint) paint:)
-          (prefix (head keymap) keymap:)
-          (prefix (sys tty) tty:)
-          (prefix (head mode) mode:)
-          (prefix (sys glyph) glyph:)
           (prefix (foundation string) string:)
-          (prefix (head style) style:))
+          (prefix (head echo) echo:)
+          (prefix (head head) head:)
+          (prefix (head keymap) keymap:)
+          (prefix (head mode) mode:)
+          (prefix (head paint) paint:)
+          (prefix (head style) style:)
+          (prefix (sys glyph) glyph:)
+          (prefix (sys tty) tty:))
 
   ;;; The echo area, as the prompt writes it --------------------------------------
 
@@ -183,6 +183,7 @@
 
   (define active-refresh (make-parameter #f))
   (define window-owner (make-parameter #f))
+
   (edoc "Whether a prompt is reading input now."
         (returns boolean))
   (define (prompt-active?)
@@ -191,9 +192,11 @@
   (edoc "Whether a prompt shows its completions and content in the pop-up window rather than the echo area."
         (value boolean))
   (define prompt-in-window (make-parameter #f))
+
   (edoc "How a completion value is labelled in the list: (label value) gives the shown text."
         (value procedure))
   (define completion-label (make-parameter (lambda (value) value)))
+
   (edoc "Which completion labels take the editor face: (highlight? label)."
         (value procedure))
   (define completion-highlight (make-parameter (lambda (label) #f)))
@@ -207,6 +210,7 @@
   ;; after a sole match has been inserted and returns the (text . position)
   ;; to continue with: M-x closes forms and steps to the next argument.
   (define-record-type (completer %make-completer completer?) (fields lookup settle))
+
   (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted."
         (lookup procedure "the completion source")
         (settle procedure "the settle step"))
@@ -216,6 +220,7 @@
        (%make-completer lookup #f)]
       [(lookup settle)
        (%make-completer lookup settle)]))
+
   ;; A display label and its character styles are independent of the string
   ;; inserted on selection. The lookup result owns both, including during cycling.
   (edoc "A completion candidate."
@@ -224,6 +229,7 @@
         (styles (or vector #f) "the label's styles"))
   (define-record-type candidate
     (fields value label styles))
+
   ;; A live completion view supplies its minimum height, renderer and key
   ;; handler. (render input window available-height page) returns styled lines
   ;; and a page count. Choices replace input or run an action returning new
@@ -234,6 +240,7 @@
         (handle (or procedure #f) "(handle event) giving new input, or #f to leave it"))
   (define-record-type content-view
     (fields minimum-height render handle))
+
   (edoc "The content view a prompt in a window shows below its input, or #f."
         (value (or (record content-view) #f)))
   (define content (make-parameter #f))
@@ -243,31 +250,39 @@
   ;; cannot restart its lifetime. Editing discards it like any other note.
   (define-record-type (notice make-notice notice?)
     (fields text deadline))
+
   (edoc "A validation notice shown inline for two seconds, bracketed."
         (text string "the notice")
         (returns (record notice)))
   (define (transient text)
     (make-notice (string-append " [" text "]")
       (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2))))
+
   ;; A draft box carries (input . cursor) across invocations.
   (edoc "The prompt's validator: (validate input) gives #f to accept, a note to keep editing, or a transient notice."
         (value (or procedure #f)))
   (define validate-input (make-parameter #f))
+
   (edoc "A box carrying (input . cursor) across invocations of a prompt, or #f."
         (value (or any #f)))
   (define draft-input (make-parameter #f))
+
   (edoc "The prompt's suggestion: (ghost input) gives the grey text after the input, or #f."
         (value procedure))
   (define prompt-ghost (make-parameter (lambda (s) #f)))
+
   (edoc "What M-. does in a prompt: (inspect input position), or #f for nothing."
         (value (or procedure #f)))
   (define prompt-inspector (make-parameter #f))
+
   (edoc "How M-RET and a paste insert a line break: (insert input position text) gives the new (input . position), or #f to insert none."
         (value (or procedure #f)))
   (define prompt-multiline (make-parameter #f))
+
   (edoc "What C-a and C-e do: (move action input position repeated?) gives the new position, or #f for the input's ends."
         (value (or procedure #f)))
   (define prompt-edge-motion (make-parameter #f))
+
   (edoc "How the input is reindented after an edit: (reindent input position) gives the new (input . position), or #f for none."
         (value (or procedure #f)))
   (define prompt-reindent (make-parameter #f))
@@ -276,6 +291,7 @@
   ;; cursor and handles mouse input after wrapping, paging or clipping.
   ;; input is a source interval; choices are (start end value [hover-face]) intervals.
   (define-record-type row (fields text styles input choices))
+
   (edoc "A row of a content view: its text, styles and (start end value) choices, hovered with a face."
         (text string "the row text")
         (styles (or vector #f) "its styles")

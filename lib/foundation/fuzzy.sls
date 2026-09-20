@@ -3,8 +3,8 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation fuzzy)
-  (export matches expansions rank
-          (rename (match-name name) (match-score score) (match-fragments fragments)))
+  (export expansions (rename (match-fragments fragments)) matches (rename (match-name name)) rank
+          (rename (match-score score)))
   (import (rnrs) (only (chezscheme) make-mutex with-mutex vector-copy iota void))
 
   (edoc "A name a query matched, with its rank and where the query's characters landed."
@@ -61,6 +61,7 @@
   (define by-symbol (make-eq-hashtable))
   (define by-string (make-hashtable string-hash string=?))
   (define (text-of name) (if (symbol? name) (symbol->string name) name))
+
   (edoc "The source built for a name, from a cache that is cleared when it is full."
         (name (or symbol string) "the name")
         (returns (record source))

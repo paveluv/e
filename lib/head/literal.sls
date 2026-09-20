@@ -11,15 +11,14 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head literal)
-  (export buffer window region region? region-buffer region-start region-end
-          head agent base)
+  (export agent base buffer head region region-buffer region-end region-start region? window)
   (import (chezscheme)
-          (prefix (head head) head:)
-          (prefix (service file) file:)
-          (prefix (head mode) mode:)
+          (prefix (core identity) identity:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
-          (prefix (core identity) identity:)
+          (prefix (head head) head:)
+          (prefix (head mode) mode:)
+          (prefix (service file) file:)
           (prefix (state actor) actor:))
 
   ;;; Buffers and windows -------------------------------------------------------

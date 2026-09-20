@@ -16,13 +16,14 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps pretty-scheme)
-  (export init! (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!)) (rename (pretty-scheme-rainbow! rainbow!)))
+  (export (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!))
+          init! (rename (pretty-scheme-rainbow! rainbow!)))
   (import (chezscheme)
-          (prefix (head head) head:)
           (prefix (head edit) edit:)
+          (prefix (head head) head:)
+          (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
-          (prefix (head keymap) keymap:)
           (prefix (service doc) doc:))
 
   ;;; Clusters ------------------------------------------------------------------

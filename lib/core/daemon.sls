@@ -2,14 +2,14 @@
 ;; No store or head state: enter this lifetime before importing either runtime.
 (import (only (foundation edoc) elibrary))
 (elibrary (core daemon)
-  (export call-with-base call-with-head socket rotate-logs! log-deadline control
-          call-with-stop take-stop-signal! help! head-command status-summary report-start!)
+  (export call-with-base call-with-head call-with-stop control head-command help! log-deadline
+          report-start! rotate-logs! socket status-summary take-stop-signal!)
   (import (chezscheme)
-          (prefix (core startup) startup:)
-          (prefix (sys sys) sys:)
           (prefix (core kernel) kernel:)
+          (prefix (core startup) startup:)
           (prefix (foundation string) string:)
-          (prefix (foundation wire) wire:))
+          (prefix (foundation wire) wire:)
+          (prefix (sys sys) sys:))
 
   (edoc "The base's socket path in its working directory."
         (returns file))
@@ -18,6 +18,7 @@
   (define starting-process (make-thread-parameter #f))
   (define log-day #f)
   (define next-rotation #f)
+
   (edoc "The base's control mailbox: stop signals and administrative messages."
         (value any))
   (define control (kernel:make-mailbox))
@@ -53,6 +54,7 @@
           (set! signal-generation (+ signal-generation 1))))
       thunk
       (lambda () (with-mutex signal-lock (set! stop-accepted? #f)))))
+
   (edoc "When the base log next rotates, a UTC time."
         (returns any))
   (define (log-deadline)

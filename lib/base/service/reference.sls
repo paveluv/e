@@ -7,17 +7,17 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service reference)
-  (export fetch! page page! (rename (doc-lookup lookup) (doc-entries entries)
-                              (doc-browser-url browser-url)))
+  (export (rename (doc-browser-url browser-url)) (rename (doc-entries entries)) fetch!
+          (rename (doc-lookup lookup)) page page!)
   (import (chezscheme)
+          (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
-          (prefix (sys https) https:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
           (prefix (state store) store:)
-          (prefix (foundation string) string:)
-          (prefix (foundation text) text:))
+          (prefix (sys https) https:))
 
   (define (data-dir)
     (string-append (file:data-directory) "/describe"))

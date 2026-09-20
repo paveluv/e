@@ -15,17 +15,16 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (state actor)
-  (export register! registered? detach! attached describe subscribe! unsubscribe!
-          current call-as identity? audience? in-audience? send!
-          ask! answer! cancel! cancel-owned! pending pending-tickets checkpoint checkpoint!
-          head-names export import! valid-import?)
+  (export answer! ask! attached audience? call-as cancel! cancel-owned! checkpoint checkpoint!
+          current describe detach! export head-names identity? import! in-audience? pending
+          pending-tickets register! registered? send! subscribe! unsubscribe! valid-import?)
   (import (rnrs)
           (only (chezscheme) void make-mutex with-mutex
                 current-time time-second parameterize)
+          (prefix (core identity) identity:)
           (prefix (core kernel) kernel:)
-          (prefix (sys activity) activity:)
           (prefix (foundation datum) datum:)
-          (prefix (core identity) identity:))
+          (prefix (sys activity) activity:))
 
   ;;; Registration ----------------------------------------------------------
 

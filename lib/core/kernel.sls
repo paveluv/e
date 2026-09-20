@@ -6,20 +6,15 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (core kernel)
-  (export persistent-cell
-          registering-module make-registry registry-add!
-          registry-items registry-entries registry-find
-          registry-remove! registry-observe! registry-unobserve!
-          registration-conflict?
-          retract-module! call-with-registration-update call-with-runtime-registrations
-          module-source module-library loaded-modules
-          init-module! editor-symbol? load-module! load-modules! module-requires? pin-modules!
-          reload-module! add-after-reload-hook!
-          installation-directory fingerprint config-file load-config!
-          make-read-only-error read-only-error? make-refusal refusal?
-          make-mailbox mailbox-post! mailbox-receive!
-          make-delivery-queue enqueue-delivery! drain-deliveries!
-          condition-text)
+  (export add-after-reload-hook! call-with-registration-update call-with-runtime-registrations
+          condition-text config-file drain-deliveries! editor-symbol? enqueue-delivery!
+          fingerprint init-module! installation-directory load-config! load-module!
+          load-modules! loaded-modules mailbox-post! mailbox-receive! make-delivery-queue
+          make-mailbox make-read-only-error make-refusal make-registry module-library
+          module-requires? module-source persistent-cell pin-modules! read-only-error? refusal?
+          registering-module registration-conflict? registry-add! registry-entries registry-find
+          registry-items registry-observe! registry-remove! registry-unobserve! reload-module!
+          retract-module!)
   (import (rnrs)
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
@@ -54,6 +49,7 @@
   ;; buffer whose file changed on disk, say).
   (edoc "An edit was refused because the buffer is read-only.")
   (define-condition-type &read-only &error make-read-only-error read-only-error?)
+
   (edoc "A command the user declined mid-flight, or the store refused.")
   (define-condition-type &refused &error make-refusal refusal?)
 
@@ -221,6 +217,7 @@
     (fields key-of (mutable contents)))
   (define-record-type registration
     (fields owner key item))
+
   (edoc "Two registrations claimed the same key in one registry.")
   (define-condition-type &registration-conflict &error make-registration-conflict registration-conflict?)
   (define registries '())

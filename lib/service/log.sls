@@ -3,14 +3,13 @@
 ;; and echo presentation subscribe; neither owns a second history.
 (import (only (foundation edoc) elibrary))
 (elibrary (service log)
-  (export add! snapshot retention entries history
-          time actor component datum
-          register-formatter! styler format-entry subscribe! unsubscribe! progress)
+  (export actor add! component datum entries format-entry history progress register-formatter!
+          retention snapshot styler subscribe! time unsubscribe!)
   (import (rnrs)
           (only (chezscheme) format parameterize print-graph)
           (prefix (core kernel) kernel:)
-          (prefix (state journal) journal:)
-          (prefix (foundation datum) datum:))
+          (prefix (foundation datum) datum:)
+          (prefix (state journal) journal:))
 
   (define progress journal:progress)
   (define snapshot journal:snapshot)
@@ -58,6 +57,7 @@
   ;;; Component presentation ------------------------------------------------
 
   (define formatters (kernel:make-registry))
+
   (edoc "Register how a component's records are shown: a formatter from datum to text, and optionally a styler."
         (component symbol "the component")
         (fmt procedure "(fmt datum) giving the text")
@@ -66,11 +66,13 @@
     (kernel:registry-add! formatters (list component fmt (and (pair? style) (car style)))))
   (define (formatter component)
     (kernel:registry-find formatters (lambda (x) (eq? (car x) component))))
+
   (edoc "A component's registered styler, or #f."
         (component symbol "the component")
         (returns (or procedure #f)))
   (define (styler component)
     (let ([f (formatter component)]) (and f (caddr f))))
+
   (edoc "A record's text through its component's formatter, or written as data."
         (entry list "the record")
         (returns string))

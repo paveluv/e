@@ -1,9 +1,9 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
 (import (only (foundation edoc) elibrary))
 (elibrary (core property)
-  (export select validate-expected matches? edit-keys
-          (rename (validate-properties validate)
-                  (writable-properties writable) (validate-edit-context edit-context)))
+  (export (rename (validate-edit-context edit-context)) edit-keys matches? select
+          (rename (validate-properties validate)) validate-expected
+          (rename (writable-properties writable)))
   (import (rnrs) (prefix (core identity) identity:))
 
   ;; Maintained by the text owner and carried with incremental edit replies.

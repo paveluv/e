@@ -21,15 +21,12 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation text)
-  (export line? normalize from-string to-string content=? splice
-          make-span span? span-start span-end
-          span->datum datum->span delta->datum datum->delta
-          normalize-span span-empty? contains? overlap?
-          position? position<? position<=? position=?
-          apply-edit extract invert invert-delta difference
-          delta? delta-span delta-new-end delta-removed delta-inserted
-          delta-line-shift
-          rebase-position rebase-span rebase-delta rebase-result-position)
+  (export apply-edit contains? content=? datum->delta datum->span delta->datum delta-inserted
+          delta-line-shift delta-new-end delta-removed delta-span delta? difference extract
+          from-string invert invert-delta line? make-span normalize normalize-span overlap?
+          position<=? position<? position=? position? rebase-delta rebase-position
+          rebase-result-position rebase-span span->datum span-empty? span-end span-start span?
+          splice to-string)
   (import (rnrs) (only (chezscheme) format) (prefix (foundation datum) datum:))
 
   ;;; Text boundaries ------------------------------------------------------

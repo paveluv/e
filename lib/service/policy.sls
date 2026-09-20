@@ -22,13 +22,12 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service policy)
-  (export (rename (make-policy make)) policy?
-          (rename (policy-grants grants)) (rename (policy-fuel fuel)) (rename (policy-buffers buffers))
-          (rename (policy-cap cap)) (rename (reader-policy reader))
-          mint! session? session-actor session-owner sessions live
-          revoke! revoke-actor! revoked?
-          session-eval! session-edit! session-undo! session-redo! session-history-step!
-          session-send! session-ask! session-answer! session-cancel!)
+  (export (rename (policy-buffers buffers)) (rename (policy-cap cap)) (rename (policy-fuel fuel))
+          (rename (policy-grants grants)) live (rename (make-policy make)) mint! policy?
+          (rename (reader-policy reader)) revoke! revoke-actor! revoked? session-actor
+          session-answer! session-ask! session-cancel! session-edit! session-eval!
+          session-history-step! session-owner session-redo! session-send! session-undo! session?
+          sessions)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
                 current-output-port
@@ -36,13 +35,13 @@
                 make-engine parameterize print-graph remq make-mutex with-mutex void
                 open-string-input-port open-output-string
                 get-output-string)
-          (prefix (state store) store:)
-          (prefix (sys activity) activity:)
-          (prefix (foundation text) text:)
-          (prefix (state actor) actor:)
+          (prefix (only (core kernel) condition-text) kernel:)
           (prefix (foundation datum) datum:)
+          (prefix (foundation text) text:)
           (prefix (only (service log) add!) log:)
-          (prefix (only (core kernel) condition-text) kernel:))
+          (prefix (state actor) actor:)
+          (prefix (state store) store:)
+          (prefix (sys activity) activity:))
 
   ;;; Policies ----------------------------------------------------------------
 
@@ -79,6 +78,7 @@
         (returns (or (one-of all) (list-of symbol))))
   (define (policy-grants p)
     (datum:copy (policy-grants-raw p)))
+
   (edoc "A copy of the buffers a policy lets an actor edit."
         (p (record policy) "the policy")
         (returns (or (one-of any) (list-of string))))
@@ -110,11 +110,13 @@
 
   (define session-lock (make-mutex))
   (define live-sessions '())
+
   (edoc "A copy of a session's actor identity."
         (s (record session) "the session")
         (returns any))
   (define (session-actor s)
     (datum:copy (session-actor-raw s)))
+
   (edoc "A copy of the identity a session asks when it needs more than its grant, or #f."
         (s (record session) "the session")
         (returns any))

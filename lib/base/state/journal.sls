@@ -1,19 +1,20 @@
 ;; journal.sls -- the base's log writer, history, and ordered delivery.
 (import (only (foundation edoc) elibrary))
 (elibrary (state journal)
-  (export add! snapshot retention subscribe! unsubscribe! progress)
+  (export add! progress retention snapshot subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme) current-time time-second time-nanosecond
                 make-mutex with-mutex void make-parameter make-thread-parameter parameterize)
           (prefix (core kernel) kernel:)
-          (prefix (state actor) actor:)
-          (prefix (foundation datum) datum:))
+          (prefix (foundation datum) datum:)
+          (prefix (state actor) actor:))
 
   ;; This owner is pinned for the base's lifetime. Absolute append indexes
   ;; survive eviction; the ring bounds retained records, not payload bytes.
   (define lock (make-mutex))
   (define subscriptions (kernel:make-registry))
   (define deliveries (kernel:make-delivery-queue))
+
   (edoc "Whether a logged message supersedes its component's newest echo line rather than stacking."
         (value boolean))
   (define progress (make-thread-parameter #f))
@@ -23,6 +24,7 @@
   (define first 0)
   (define serial 0)
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
+
   (edoc "How many records the log keeps; setting it drops the oldest."
         (value integer "the record count"))
   (define retention
@@ -39,6 +41,7 @@
               (set! records next)
               (set! first from)))
           (vector-length records)))))
+
   (edoc "Log records from an index on: (values records end first), at most limit of them, of one component and one actor when given."
         (start integer "the first index")
         (limit (or integer #f) "how many at most")

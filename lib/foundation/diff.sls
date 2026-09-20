@@ -6,7 +6,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation diff)
-  (export (rename (diff-matches matches)) merge3 merge-report-lines)
+  (export (rename (diff-matches matches)) merge-report-lines merge3)
   (import (chezscheme))
 
   ;;; Patience diff --------------------------------------------------------------

@@ -12,21 +12,21 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps search)
-  (export init! (rename (search! incremental!)) (rename (search-fold-case fold-case))
-          count replace-all! replace!)
+  (export count (rename (search-fold-case fold-case)) (rename (search! incremental!)) init!
+          replace! replace-all!)
   (import (chezscheme)
-          (prefix (head edit) edit:)
-          (head literal)
-          (prefix (head dispatch) dispatch:)
-          (prefix (head style) style:)
-          (prefix (head prompt) prompt:)
           (prefix (foundation string) string:)
-          (prefix (head paint) paint:)
-          (prefix (sys tty) tty:)
-          (prefix (head keymap) keymap:)
+          (prefix (head dispatch) dispatch:)
+          (prefix (head edit) edit:)
           (prefix (head head) head:)
+          (prefix (head keymap) keymap:)
+          (head literal)
+          (prefix (head paint) paint:)
+          (prefix (head prompt) prompt:)
+          (prefix (head style) style:)
           (prefix (head window) window:)
-          (prefix (service doc) doc:))
+          (prefix (service doc) doc:)
+          (prefix (sys tty) tty:))
 
   ;; Configuration: whether the incremental search folds case the
   ;; smart way, as Emacs does -- matching ignores case only while the

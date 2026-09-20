@@ -27,74 +27,44 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head edit)
-  (export init!
-          current-region region-text with-region
-    ;; state, read-only
-    buffer-text buffer-clean?
-
-    ;; buffers, windows, files
-    visit-file! save-file! save! prompt-file!
-    kill-buffer!
-    new-buffer! trash restore! empty-trash!
-    ;; editing and movement
-    insert-text! replace-region-text! rewrite-region! newline! delete-forward! backspace!
-    kill-line! kill-region! copy-region! yank! undo! redo! undo-scope undo-actor!
-    copy-to-kill-buffer! current-kill-ring
-    forward-kill-ring-to-system-clipboard
-    set-mark-command! beginning-of-line! end-of-line! keyboard-quit!
-    redraw-command! open-line! page-up! page-down!
-    page-window-fraction! set-point-without-scroll!
-
-    previous-line! next-line! beginning-of-buffer! end-of-buffer!
-    move-left! move-right! indent-tab!
-    call-as-one-edit!
-    indent-line! indent-region! indent-buffer! format-region! format-buffer!
-    move-horizontal! move-vertical!
-    quit!
-    ;; extending the editor
-
-
-
-
-
-
-    set-message!
-    page-window!
-    answer!
-    present-log-entry! present-log-entries!
-
-
-    message-source message-progress
-
-
-
-  )
+  (export answer! backspace! beginning-of-buffer! beginning-of-line! buffer-clean? buffer-text
+          call-as-one-edit! copy-region! copy-to-kill-buffer! current-kill-ring current-region
+          delete-forward! empty-trash! end-of-buffer! end-of-line! format-buffer! format-region!
+          forward-kill-ring-to-system-clipboard indent-buffer! indent-line! indent-region!
+          indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-line! kill-region!
+          message-progress message-source move-horizontal! move-left! move-right! move-vertical!
+          new-buffer! newline! next-line! open-line! page-down! page-up! page-window!
+          page-window-fraction! present-log-entries! present-log-entry! previous-line!
+          prompt-file! quit! redo! redraw-command! region-text replace-region-text! restore!
+          rewrite-region! save! save-file! set-mark-command! set-message!
+          set-point-without-scroll! trash undo! undo-actor! undo-scope visit-file! with-region
+          yank!)
   (import (chezscheme)
-          (head literal)
-          (prefix (sys sys) sys:)
-          (prefix (state store) store:)
-          (prefix (foundation text) text:)
-          (prefix (foundation datum) datum:)
-          (prefix (core property) property:)
           (prefix (core kernel) kernel:)
-          (prefix (state actor) actor:)
-          (prefix (service log) log:)
-          (prefix (head style) style:)
-          (prefix (head keymap) keymap:)
-          (prefix (sys tty) tty:)
+          (prefix (core property) property:)
+          (prefix (foundation datum) datum:)
+          (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
+          (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
-          (prefix (head window) window:)
-          (prefix (head dispatch) dispatch:)
-          (prefix (head paint) paint:)
-          (prefix (foundation string) string:)
-          (prefix (head render) render:)
-          (prefix (sys glyph) glyph:)
-          (prefix (head table) table:)
+          (prefix (head keymap) keymap:)
+          (head literal)
           (prefix (head mode) mode:)
-          (prefix (service file) file:)
+          (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
-          (prefix (service doc) doc:))
+          (prefix (head render) render:)
+          (prefix (head style) style:)
+          (prefix (head table) table:)
+          (prefix (head window) window:)
+          (prefix (service doc) doc:)
+          (prefix (service file) file:)
+          (prefix (service log) log:)
+          (prefix (state actor) actor:)
+          (prefix (state store) store:)
+          (prefix (sys glyph) glyph:)
+          (prefix (sys sys) sys:)
+          (prefix (sys tty) tty:))
 
   ;;; Buffers and windows ----------------------------------------------------
 
@@ -1136,6 +1106,7 @@
       (if (and src (> (string-length s) 0))
           (log:add! src s)
           (paint:show-message! s #f))))
+
   (edoc "The selected region while the mark is active, else the whole current buffer as a region."
         (returns region))
   (define (current-region)
@@ -1803,37 +1774,48 @@
       (set! mark-row point-row) (set! mark-col point-col)
       (set! mark-active? #t))
     (set! message (if mark-active? "Mark set" "")))
+
   (edoc "Move point to the start of its line.")
   (define (beginning-of-line!)
     (set! point-col 0))
+
   (edoc "Move point to the end of its line.")
   (define (end-of-line!)
     (set! point-col (string-length (current-display-line))))
+
   (edoc "Deactivate the mark and abandon what was pending.")
   (define (keyboard-quit!)
     (set! mark-active? #f) (set! message "Quit"))
+
   (edoc "Erase and repaint the screen, asking the terminal for its color scheme again.")
   (define (redraw-command!)
     (tty:query-color-scheme!)
     (paint:mark-size-dirty!) (paint:erase-screen!) (set! message "Screen redrawn"))
+
   (edoc "Insert a line break after point, leaving point where it is.")
   (define (open-line!)
     (parameterize ([edit-point 'start]) (newline!)))
+
   (edoc "Scroll the selected window up by a page and put point in the middle; at the top, move point to the first line.")
   (define (page-up!)
     (page-window! -1 1))
+
   (edoc "Scroll the selected window down by a page and put point in the middle; at the bottom, move point to the last line.")
   (define (page-down!)
     (page-window! 1 1))
+
   (edoc "Move point up one line, or one visual row in a wrapping window, keeping the goal column.")
   (define (previous-line!)
     (move-vertical! -1))
+
   (edoc "Move point down one line, or one visual row in a wrapping window, keeping the goal column.")
   (define (next-line!)
     (move-vertical! 1))
+
   (edoc "Move point to the start of the buffer.")
   (define (beginning-of-buffer!)
     (set! point-row 0) (set! point-col 0))
+
   (edoc "Move point to the end of the buffer.")
   (define (end-of-buffer!)
     (set! point-row (- (vlen) 1))

@@ -22,18 +22,18 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps blame)
-  (export init! (rename (blame-at-point! at-point!)) (rename (blame-tint-seconds tint-seconds)))
+  (export (rename (blame-at-point! at-point!)) init! (rename (blame-tint-seconds tint-seconds)))
   (import (rnrs)
-          (prefix (head edit) edit:)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
                 make-time current-time add-duration time<? make-weak-eq-hashtable)
-          (prefix (head paint) paint:)
-          (prefix (head head) head:)
-          (prefix (head style) style:)
-          (prefix (state store) store:)
           (prefix (foundation text) text:)
-          (prefix (service doc) doc:))
+          (prefix (head edit) edit:)
+          (prefix (head head) head:)
+          (prefix (head paint) paint:)
+          (prefix (head style) style:)
+          (prefix (service doc) doc:)
+          (prefix (state store) store:))
 
   (edoc "How long another actor's edit stays tinted, in seconds; 0 turns tinting off."
         (value integer))

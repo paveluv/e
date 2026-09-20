@@ -3,7 +3,7 @@
 ;; text commit that outruns its surface renders plainly until the notice.
 (import (only (foundation edoc) elibrary))
 (elibrary (state surface)
-  (export snapshot rows subscribe! unsubscribe!)
+  (export rows snapshot subscribe! unsubscribe!)
   (import (chezscheme) (prefix (core client) client:) (prefix (core kernel) kernel:) (prefix (foundation datum) datum:))
   (define headers (make-eqv-hashtable))
   (define (invalidate! batch)
@@ -12,6 +12,7 @@
   (define invalidations
     (kernel:call-with-runtime-registrations
       (lambda () (client:subscribe! 'surface invalidate!))))
+
   (edoc "A buffer's live frame header from the base, cached: (generation text-revision cursor size), or #f."
         (id integer "the buffer id")
         (returns (or list #f))
@@ -20,6 +21,7 @@
     (unless (hashtable-contains? headers id)
       (hashtable-set! headers id (client:request 'surface id)))
     (datum:copy (hashtable-ref headers id #f)))
+
   (edoc "Row data of a frame for [from, to) from the base, or #f when withdrawn or superseded."
         (id integer "the buffer id")
         (generation integer "the frame generation")
@@ -31,6 +33,7 @@
     (let ([result (client:request 'rows id generation from to)])
       (unless result (hashtable-delete! headers id))
       result))
+
   (edoc "Subscribe to frame changes of a buffer, or all with #f, as wakeups; the token unsubscribes."
         (id (or integer #f) "the buffer, or #f for all")
         (procedure procedure "the subscriber")

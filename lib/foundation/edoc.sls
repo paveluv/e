@@ -31,12 +31,12 @@
 ;; itself with the same helpers, through forms of its own.
 
 (library (foundation edoc)
-  (export elibrary edoc edoc-type
-          edoc-of edoc-named signature? signature-kind signature-formals signature-summary signature-flags
-          signature-arguments signature-returns signature-library
-          argument? argument-name argument-type argument-notes
-          edoc-types edoc-type? type-text edoc-entry edoc-template first-sentence
-          type-named type-owner type-within type-denotes-record? type-read type-prose type-accepts? type-completions type-spelling)
+  (export argument-name argument-notes argument-type argument? edoc edoc-entry edoc-named edoc-of
+          edoc-template edoc-type edoc-type? edoc-types elibrary first-sentence
+          signature-arguments signature-flags signature-formals signature-kind signature-library
+          signature-returns signature-summary signature? type-accepts? type-completions
+          type-denotes-record? type-named type-owner type-prose type-read type-spelling
+          type-text type-within)
   (import (rnrs)
           (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! eq-hashtable-contains? format syntax->list

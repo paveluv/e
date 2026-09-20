@@ -8,11 +8,11 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps merge)
-  (export init! next! keep-mine! keep-disk!)
+  (export init! keep-disk! keep-mine! next!)
   (import (chezscheme)
+          (prefix (foundation string) string:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
-          (prefix (foundation string) string:)
           (prefix (head keymap) keymap:))
 
   (define (conflict-marker? b row prefix)

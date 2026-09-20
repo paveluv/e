@@ -10,17 +10,14 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head window)
-  (export init!
-          focus! focus-next! focus-up! focus-down! focus-left! focus-right!
-          split-below! split-right! split-above! split-left!
-          resize! delete! delete-others!
-          toggle-wrap! set-wrap! toggle-line-numbers! set-line-numbers!
-          display! pop-up-or-reuse!)
+  (export delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right!
+          focus-up! init! pop-up-or-reuse! resize! set-line-numbers! set-wrap! split-above!
+          split-below! split-left! split-right! toggle-line-numbers! toggle-wrap!)
   (import (rnrs)
           (only (chezscheme) format void quotient)
           (prefix (core kernel) kernel:)
-          (prefix (head keymap) keymap:)
           (prefix (head head) head:)
+          (prefix (head keymap) keymap:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:))
 
@@ -99,12 +96,15 @@
   (edoc "Select the window above the cursor, the cursor's column choosing among stacked candidates.")
   (define (focus-up!)
     (focus-direction! 'up))
+
   (edoc "Select the window below the cursor, the cursor's column choosing among stacked candidates.")
   (define (focus-down!)
     (focus-direction! 'down))
+
   (edoc "Select the window left of the cursor, the cursor's row choosing among side-by-side candidates.")
   (define (focus-left!)
     (focus-direction! 'left))
+
   (edoc "Select the window right of the cursor, the cursor's row choosing among side-by-side candidates.")
   (define (focus-right!)
     (focus-direction! 'right))
@@ -145,14 +145,17 @@
         (returns (or window #f)))
   (define (split-below!)
     (split! 'below #f))
+
   (edoc "Split the selected window into a side-by-side pair; the new window is to the right and shows the same buffer. The new window, or #f with a message when there is no room."
         (returns (or window #f)))
   (define (split-right!)
     (split! 'right #f))
+
   (edoc "Split the selected window into a stacked pair; the new window is above and shows the same buffer. The new window, or #f with a message when there is no room."
         (returns (or window #f)))
   (define (split-above!)
     (split! 'below #t))
+
   (edoc "Split the selected window into a side-by-side pair; the new window is to the left and shows the same buffer. The new window, or #f with a message when there is no room."
         (returns (or window #f)))
   (define (split-left!)

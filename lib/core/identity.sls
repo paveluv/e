@@ -1,7 +1,7 @@
 ;; identity.sls -- owned actor values and attribution, independent of endpoints.
 (import (only (foundation edoc) elibrary))
 (elibrary (core identity)
-  (export (rename (identity? valid?)) audience? in-audience? current call-as)
+  (export audience? call-as current in-audience? (rename (identity? valid?)))
   (import (rnrs)
           (only (chezscheme) make-thread-parameter parameterize)
           (prefix (foundation datum) datum:))

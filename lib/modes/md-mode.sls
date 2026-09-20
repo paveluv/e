@@ -14,8 +14,8 @@
 (elibrary (modes md-mode)
   (export init!)
   (import (chezscheme)
-          (prefix (head style) style:)
-          (prefix (head mode) mode:))
+          (prefix (head mode) mode:)
+          (prefix (head style) style:))
 
   (define (md-styles s)
     (define n (string-length s))

@@ -12,9 +12,9 @@
 (elibrary (modes c-mode)
   (export init!)
   (import (chezscheme)
-          (prefix (head style) style:)
+          (prefix (foundation string) string:)
           (prefix (head mode) mode:)
-          (prefix (foundation string) string:))
+          (prefix (head style) style:))
 
   (define c-keywords
     (let ([table (make-hashtable string-hash string=?)])

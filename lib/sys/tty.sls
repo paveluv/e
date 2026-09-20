@@ -20,13 +20,13 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (sys tty)
-  (export read-event character-event key-event-character
-          mouse-reporting! query-color-scheme! paste-lines)
+  (export character-event key-event-character mouse-reporting! paste-lines query-color-scheme!
+          read-event)
   (import (rnrs)
           (only (chezscheme) format char-ready?)
-          (prefix (only (sys sys) terminal-output-port) sys:)
+          (prefix (foundation color) color:)
           (prefix (foundation string) string:)
-          (prefix (foundation color) color:))
+          (prefix (only (sys sys) terminal-output-port) sys:))
 
   ;;; Input-side negotiation ------------------------------------------------------
 

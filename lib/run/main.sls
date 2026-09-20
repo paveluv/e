@@ -11,24 +11,24 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (run main)
-  (export run! set-startup-page! load-config!
-          modules-reload-on-save config-reload-on-save shutdown! shutdown-on-exit)
+  (export config-reload-on-save load-config! modules-reload-on-save run! set-startup-page!
+          shutdown! shutdown-on-exit)
   (import (chezscheme)
-          (prefix (sys sys) sys:)
           (prefix (core client) client:)
-          (prefix (service file) file:)
           (prefix (core kernel) kernel:)
           (prefix (core startup) startup:)
-          (prefix (head head) head:)
+          (prefix (foundation string) string:)
           (prefix (head dispatch) dispatch:)
-          (prefix (head paint) paint:)
           (prefix (head echo) echo:)
-          (prefix (head prompt) prompt:)
-          (prefix (sys tty) tty:)
+          (prefix (head head) head:)
           (prefix (head mode) mode:)
-          (prefix (state actor) actor:)
+          (prefix (head paint) paint:)
+          (prefix (head prompt) prompt:)
+          (prefix (service file) file:)
           (prefix (service log) log:)
-          (prefix (foundation string) string:))
+          (prefix (state actor) actor:)
+          (prefix (sys sys) sys:)
+          (prefix (sys tty) tty:))
 
   (edoc "Whether the base stops when the last head leaves."
         (value boolean))
@@ -152,6 +152,7 @@
   (edoc "Whether saving a module's source reloads it on the spot."
         (value boolean))
   (define modules-reload-on-save (make-parameter #t))
+
   (edoc "Whether saving config.e applies it on the spot."
         (value boolean))
   (define config-reload-on-save (make-parameter #t))

@@ -34,12 +34,14 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (sys https)
-  (export (rename (https-get get)) (rename (https-download! download!)) (rename (https-request request))
-          (rename (https-response-status response-status)) (rename (https-response-headers response-headers)) (rename (https-response-port response-port))
-          (rename (https-response-text response-text)) (rename (https-close! close!))
-          (rename (https-connector connector)) (rename (https-timeout timeout)) (rename (https-backend backend))
-          make-channel channel-read! channel-write! channel-close!
-          tcp-connect tls-connect)
+  (export (rename (https-backend backend)) channel-close! channel-read! channel-write!
+          (rename (https-close! close!)) (rename (https-connector connector))
+          (rename (https-download! download!)) (rename (https-get get)) make-channel
+          (rename (https-request request)) (rename (https-response-headers response-headers))
+          (rename (https-response-port response-port))
+          (rename (https-response-status response-status))
+          (rename (https-response-text response-text)) tcp-connect
+          (rename (https-timeout timeout)) tls-connect)
   (import (chezscheme) (prefix (foundation string) string:) (prefix (sys sys) sys:))
 
   ;;; Foreign library loading ---------------------------------------------

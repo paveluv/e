@@ -3,13 +3,13 @@
 ;; the head must pair it with text at that frame's store revision.
 (import (only (foundation edoc) elibrary))
 (elibrary (state surface)
-  (export init! publish! withdraw! snapshot rows subscribe! unsubscribe!)
+  (export init! publish! rows snapshot subscribe! unsubscribe! withdraw!)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void)
           (prefix (core kernel) kernel:)
-          (prefix (sys activity) activity:)
+          (prefix (foundation datum) datum:)
           (prefix (state store) store:)
-          (prefix (foundation datum) datum:))
+          (prefix (sys activity) activity:))
 
   ;; Stable record identities let reloaded code use the persistent state.
   ;; Frames and their row tables are private immutable snapshots; only a

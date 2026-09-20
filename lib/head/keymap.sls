@@ -13,16 +13,14 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head keymap)
-  (export (rename (key-spec spec)) sequence-text
-          (rename (bind-key! bind!)) (rename (bind-default-key! bind-default!)) (rename (unbind-key! unbind!))
-          (rename (key-binding binding)) (rename (key-event-binding event-binding)) binding-prefix?
-          command-keys command-key command-hint
-          sequence-bindings resolved-binding choose-binding
-          binding-context binding-sequence binding-action
-          binding-kind binding-spec same-sequence?
-          call call-action? call-action-procedure call-action-arguments
-          prefill prefill-action? prefill-action-procedure prefill-action-arguments prefill-name prefill-text action-text
-          set-context-capture! context-capture)
+  (export action-text (rename (bind-key! bind!)) (rename (bind-default-key! bind-default!))
+          (rename (key-binding binding)) binding-action binding-context binding-kind
+          binding-prefix? binding-sequence binding-spec call call-action-arguments
+          call-action-procedure call-action? choose-binding command-hint command-key
+          command-keys context-capture (rename (key-event-binding event-binding)) prefill
+          prefill-action-arguments prefill-action-procedure prefill-action? prefill-name
+          prefill-text resolved-binding same-sequence? sequence-bindings sequence-text
+          set-context-capture! (rename (key-spec spec)) (rename (unbind-key! unbind!)))
   (import (rnrs)
           (only (chezscheme)
                 cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment
@@ -116,6 +114,7 @@
 
   (define (binding-item context sequence action kind spec)
     (list context sequence action kind spec))
+
   (edoc "The keymap context of a binding."
         (b list "the binding")
         (returns symbol))

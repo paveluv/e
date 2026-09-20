@@ -7,8 +7,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation string)
-  (export tail prefix? suffix? join search lines common-prefix
-          insert delete elide)
+  (export common-prefix delete elide insert join lines prefix? search suffix? tail)
   (import (rnrs))
 
   (edoc "A string from an index on."

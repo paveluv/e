@@ -2,14 +2,14 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (core startup)
-  (export call-with-options mode name file base-working-directory default-base-working-directory
-          default-name restart? force?)
+  (export base-working-directory call-with-options default-base-working-directory default-name
+          file force? mode name restart?)
   (import (rnrs)
           (only (chezscheme) make-thread-parameter parameterize getenv get-process-id
                 current-directory path-absolute? path-parent path-last)
           (prefix (core kernel) kernel:)
-          (prefix (sys path) path:)
           (prefix (foundation string) string:)
+          (prefix (sys path) path:)
           (prefix (sys sys) sys:))
 
   ;; Requested process role and arguments, scoped over library initialization.
@@ -20,18 +20,22 @@
         (returns symbol))
   (define (mode)
     (car (options)))
+
   (edoc "The head name from the command line, or #f."
         (returns (or string #f)))
   (define (name)
     (and (cadr (options)) (string-copy (cadr (options)))))
+
   (edoc "The file argument, canonical, or #f."
         (returns (or file #f)))
   (define (file)
     (and (caddr (options)) (string-copy (caddr (options)))))
+
   (edoc "Whether a base restart was asked for."
         (returns boolean))
   (define (restart?)
     (list-ref (options) 4))
+
   (edoc "Whether the restart may proceed despite modified buffers."
         (returns boolean))
   (define (force?)

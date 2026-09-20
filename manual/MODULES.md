@@ -276,9 +276,18 @@ the body calls. Three edoc clauses declare the exceptions: `(prompts)` for
 a procedure that waits for a key, `(effects internal)` for a query whose
 only changes are its own caches, and `(effects remote)` for a transport
 such as `client:request`, whose effect is the message's and whose caller
-keeps the bang. The check runs in the suite as `tests/effects.ss`; its
-verdict is on the name importers see, so an export renamed with `rename`
-is judged by its exported spelling.
+keeps the bang. Its verdict is on the name importers see, so an export
+renamed with `rename` is judged by its exported spelling.
+
+The check is one of the linter's, `tools/elinter.sps`, beside two layout
+conventions: a blank line precedes every `edoc` form, comments allowed
+between, and the definition an `edoc` annotates starts on the very next
+line; export lists are sorted by exported name, and import specs by
+library name with `(rnrs)` and `(chezscheme)` first. The linter prints
+each finding as `path:line: message` and exits with their count. The
+suite runs it as `tests/lint.ss`, and the versioned hook
+`tools/hooks/pre-commit` runs it over the tree being committed, once a
+clone has set `git config core.hooksPath tools/hooks`.
 
 Prompting is the exception, not a naming matter: a command that must wait
 for input, `describe:key!` reading a key or `search:replace!` asking per

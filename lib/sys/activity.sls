@@ -6,7 +6,7 @@
 ;; admitted. Forked workers inherit parameters, but not their parent's id.
 (import (only (foundation edoc) elibrary))
 (elibrary (sys activity)
-  (export lock phase call-with call-with-retirement wrap pause! resume! stop! stopped?)
+  (export call-with call-with-retirement lock pause! phase resume! stop! stopped? wrap)
   (import (chezscheme))
 
   (edoc "The mutex serializing lifecycle coordination, head admission and departure."
@@ -17,6 +17,7 @@
   (define state 'running)
   (define active 0)
   (define entered (make-thread-parameter #f))
+
   (edoc "An operation was refused because the activity is stopping.")
   (define-condition-type &stopped &error make-stopped stopped?)
 
@@ -73,11 +74,13 @@
        (scope thunk #f void)]
       [(thunk admit!)
        (scope thunk #f admit!)]))
+
   (edoc "Run a thunk as an operation that may still be admitted while paused, for retiring work."
         (thunk thunk "the operation")
         (returns any))
   (define (call-with-retirement thunk)
     (scope thunk #t void))
+
   (edoc "A procedure whose every call is an admitted operation."
         (procedure procedure "the procedure")
         (returns procedure))

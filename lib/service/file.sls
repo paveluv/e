@@ -19,22 +19,19 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service file)
-  (export read read-state stamp create! write! call-with-port
-          lines ends-in-newline? text state-clean?
-          merge conflict-count
-          directory-part base-name abbreviate absolute
-          (rename (path:expand expand) (path:canonical canonical))
-          visit-path complete make-directories! data-directory
-          add-pre-save-hook! add-post-save-hook!
-          run-pre-save-hooks! run-post-save-hooks!)
+  (export abbreviate absolute add-post-save-hook! add-pre-save-hook! base-name call-with-port
+          (rename (path:canonical canonical)) complete conflict-count create! data-directory
+          directory-part ends-in-newline? (rename (path:expand expand)) lines make-directories!
+          merge read read-state run-post-save-hooks! run-pre-save-hooks! stamp state-clean? text
+          visit-path write!)
   (import (except (chezscheme) read expand merge call-with-port)
-          (prefix (only (sys sys) canonical-file-path) sys:)
+          (prefix (core kernel) kernel:)
           (prefix (only (foundation diff) merge3 merge-report-lines) diff:)
-          (prefix (sys path) path:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (service log) log:)
-          (prefix (core kernel) kernel:))
+          (prefix (sys path) path:)
+          (prefix (only (sys sys) canonical-file-path) sys:))
 
   ;; Discard consent is the same for local and shared buffers. Compare the
   ;; captured text outside its writer lock; an unreadable disk is not clean.
@@ -370,6 +367,7 @@
         (proc procedure "(hook path)"))
   (define (add-pre-save-hook! proc)
     (kernel:registry-add! pre-save-hooks proc))
+
   (edoc "Register a hook run with the path after a file was saved."
         (proc procedure "(hook path)"))
   (define (add-post-save-hook! proc)
@@ -387,6 +385,7 @@
         (path file "the file"))
   (define (run-pre-save-hooks! path)
     (run-hooks! pre-save-hooks path))
+
   (edoc "Run the post-save hooks for a path."
         (path file "the file"))
   (define (run-post-save-hooks! path)

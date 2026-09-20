@@ -11,9 +11,9 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service doc)
-  (export (rename (make-doc-entry make) (doc-entry? entry?))
-          names forms returns libraries source chapter url description
-          register! entries to-datum from-datum call-with-entries)
+  (export call-with-entries chapter description entries (rename (doc-entry? entry?)) forms
+          from-datum libraries (rename (make-doc-entry make)) names register! returns source
+          to-datum url)
   (import (rnrs)
           (only (chezscheme) void make-thread-parameter parameterize)
           (prefix (core kernel) kernel:)
@@ -48,36 +48,43 @@
         (returns (list-of symbol)))
   (define (names entry)
     (datum:copy (doc-names entry)))
+
   (edoc "A copy of an entry's forms, ((kind . template) ...)."
         (entry (record doc-entry) "the entry")
         (returns list))
   (define (forms entry)
     (datum:copy (doc-forms entry)))
+
   (edoc "A copy of what an entry's procedure returns, or #f."
         (entry (record doc-entry) "the entry")
         (returns (or string #f)))
   (define (returns entry)
     (datum:copy (doc-returns entry)))
+
   (edoc "A copy of the libraries an entry's names come from."
         (entry (record doc-entry) "the entry")
         (returns (list-of string)))
   (define (libraries entry)
     (datum:copy (doc-libraries entry)))
+
   (edoc "An entry's source: tspl, csug, a module, or edoc."
         (entry (record doc-entry) "the entry")
         (returns any))
   (define (source entry)
     (datum:copy (doc-source entry)))
+
   (edoc "An entry's chapter title."
         (entry (record doc-entry) "the entry")
         (returns string))
   (define (chapter entry)
     (datum:copy (doc-chapter entry)))
+
   (edoc "An entry's reference URL, or #f."
         (entry (record doc-entry) "the entry")
         (returns (or string #f)))
   (define (url entry)
     (datum:copy (doc-url entry)))
+
   (edoc "An entry's Markdown description."
         (entry (record doc-entry) "the entry")
         (returns string))
@@ -105,6 +112,7 @@
   ;; A connected head contributes its own module documentation to a query.
   ;; It is scoped to that call, never registered globally under another head.
   (define query-entries (make-thread-parameter '()))
+
   (edoc "Run a thunk with extra entries, a connected head's module documentation, visible to queries in that call only."
         (entries list "the entry data")
         (thunk thunk "the query")

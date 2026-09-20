@@ -20,24 +20,23 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (state store)
-  (export create! visit! delete! discard! close! reset! rename! publication publish!
-          buffer-list exists? visible? trash-retention expire-trash! buffer-name find-named find-file
-          snapshot snapshot-since snapshot-state state revision line-count line extract
-          edit! edit-with-snapshot! undo! redo! history-step! undo-authors history blame
-          set-mark! set-marks! mark drop-mark! marks
-          set-property! set-properties! drop-property! property properties
-          validate-properties validate-edit-context
-          subscribe! unsubscribe! watch! export import! valid-import?)
+  (export blame buffer-list buffer-name close! create! delete! discard! drop-mark! drop-property!
+          edit! edit-with-snapshot! exists? expire-trash! export extract find-file find-named
+          history history-step! import! line line-count mark marks properties property
+          publication publish! redo! rename! reset! revision set-mark! set-marks!
+          set-properties! set-property! snapshot snapshot-since snapshot-state state subscribe!
+          trash-retention undo! undo-authors unsubscribe! valid-import? validate-edit-context
+          validate-properties visible? visit! watch!)
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq
                 current-time time-second time-nanosecond list-head make-parameter)
-          (prefix (foundation text) text:)
+          (prefix (core kernel) kernel:)
           (prefix (core property) property:)
-          (prefix (state actor) actor:)
-          (prefix (sys activity) activity:)
           (prefix (foundation datum) datum:)
-          (prefix (core kernel) kernel:))
+          (prefix (foundation text) text:)
+          (prefix (state actor) actor:)
+          (prefix (sys activity) activity:))
 
   ;;; The store -------------------------------------------------------------
 

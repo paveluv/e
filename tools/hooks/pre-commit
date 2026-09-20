@@ -1,0 +1,33 @@
+#!/bin/sh
+# pre-commit -- the tree's conventions, checked over what is being committed.
+#
+# Install once per clone:  git config core.hooksPath tools/hooks
+#
+# tools/elinter.sps checks the libraries under lib/ statically -- sorted
+# exports and imports, the blank lines around edocs, and every name's bang
+# against the effects its body reaches (tools/edoc-coverage.sps --effects)
+# -- and exits with the number of findings. The commit's content is what
+# gets checked, not the working tree: the index's lib/ and the tools are
+# exported to a temporary directory first, so an unstaged edit neither
+# hides a finding nor causes one. A commit touching neither lib/ nor the
+# tools skips the check. Skip it once with git commit --no-verify.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+if git diff --cached --quiet -- lib tools/elinter.sps tools/edoc-coverage.sps; then
+  exit 0
+fi
+
+if ! command -v scheme >/dev/null 2>&1; then
+  echo "pre-commit: scheme (Chez Scheme) is not on PATH, so the linter cannot run; git commit --no-verify skips it" >&2
+  exit 1
+fi
+
+tree=$(mktemp -d "${TMPDIR:-/tmp}/e-pre-commit.XXXXXX")
+trap 'rm -rf "$tree"' EXIT
+git ls-files -z -- lib tools/elinter.sps tools/edoc-coverage.sps | git checkout-index -z --stdin --prefix="$tree/"
+
+if ! (cd "$tree" && { ulimit -v 2000000 2>/dev/null || true; } && scheme --script tools/elinter.sps); then
+  echo "pre-commit: the linter found problems in the commit; fix them, or skip the check once with git commit --no-verify" >&2
+  exit 1
+fi

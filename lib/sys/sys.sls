@@ -10,28 +10,22 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (sys sys)
-  (export terminal-raw! terminal-restore! terminal-isig!
-          terminal-size watch-terminal-resize! call-with-streamed-output
-          duplicate-standard-output-port duplicate-output-port
-          duplicate-standard-input-port
-          terminal-output-port
-          terminal-character-width
-          canonical-file-path file-info host-name terminal-name
-          listen-local accept-local connect-local try-connect-local close-local-listener!
-          call-with-connection-deadline unresponsive?
-          connection-input connection-output connection-alive? close-connection! watch-daemon-signals!
-          open-process write-process! process-input process-result close-process!
-          (rename (poll-process! process-status) (command-process-pid process-pid))
-          release-process! signal-process!
-          ensure-private-directory! acquire-file-lock release-file-lock!
-          remove-stale-socket! call-with-private-output-file redirect-daemon-ports!
-          process-identity process-exited? write-session! archive-session!
-          call-with-private-input-file durability-uncertain? call-with-verified-base
-          spawn-terminal-process terminal-process?
-          terminal-process-input terminal-process-output
-          terminal-process-pid resize-terminal-process!
-          close-terminal-process! reap-terminal-process!
-          time-scale duration after durable-sync-hook)
+  (export accept-local acquire-file-lock after archive-session! call-with-connection-deadline
+          call-with-private-input-file call-with-private-output-file call-with-streamed-output
+          call-with-verified-base canonical-file-path close-connection! close-local-listener!
+          close-process! close-terminal-process! connect-local connection-alive?
+          connection-input connection-output duplicate-output-port duplicate-standard-input-port
+          duplicate-standard-output-port durability-uncertain? durable-sync-hook duration
+          ensure-private-directory! file-info host-name listen-local open-process
+          process-exited? process-identity process-input
+          (rename (command-process-pid process-pid)) process-result
+          (rename (poll-process! process-status)) reap-terminal-process! redirect-daemon-ports!
+          release-file-lock! release-process! remove-stale-socket! resize-terminal-process!
+          signal-process! spawn-terminal-process terminal-character-width terminal-isig!
+          terminal-name terminal-output-port terminal-process-input terminal-process-output
+          terminal-process-pid terminal-process? terminal-raw! terminal-restore! terminal-size
+          time-scale try-connect-local unresponsive? watch-daemon-signals!
+          watch-terminal-resize! write-process! write-session!)
   (import (chezscheme) (prefix (sys activity) activity:))
 
   ;; Waits the editor imposes on itself -- connection deadlines, quiescence
@@ -45,12 +39,14 @@
       (or (and text (let ([n (string->number text)])
                       (and (real? n) (positive? n) (exact->inexact n))))
           1.0)))
+
   (edoc "A time duration of some seconds, scaled by E_TIME_SCALE."
         (seconds number "the seconds")
         (returns any))
   (define (duration seconds)
     (let* ([total (* seconds time-scale)] [whole (exact (floor total))])
       (make-time 'time-duration (exact (round (* (- total whole) 1000000000))) whole)))
+
   (edoc "A monotonic time some scaled seconds from now."
         (seconds number "the seconds")
         (returns any))
@@ -600,6 +596,7 @@
                   (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))
             (if (string=? mode "hold") (sync)
                 (begin (when (string=? mode "hold-fail-log") (close-port (current-error-port))) -1))))))
+
   (edoc "How durable writes sync: a procedure given the sync thunk, so tests can control it."
         (value procedure))
   (define durable-sync-hook
@@ -856,6 +853,7 @@
 
   (define-record-type local-listener
     (fields fd path lock (mutable closed)))
+
   (edoc "A local socket connection."
         (fd integer "the socket descriptor")
         (input port "the port reading from the peer")
