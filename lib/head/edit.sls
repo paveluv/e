@@ -6,8 +6,8 @@
 ;; saving, merging with the disk,
 ;; editing with undo, the kill ring and the clipboard, indentation and
 ;; formatting through the modes' registered indenters, mouse actions,
-;; the default key bindings, and the generic editing helpers (regions,
-;; conflict resolution; search and replace are (search)'s).  It
+;; the default key bindings, and the generic editing helpers (regions;
+;; search and replace are (search)'s, merge conflicts (merge)'s).  It
 ;; composes the seams below --
 ;; store, head, paint, prompt, file, mode, keymap -- and is what M-x
 ;; sees bare: the loader imports (edit) into the top level.
@@ -29,7 +29,6 @@
 (elibrary (edit)
   (export init!
           current-region region-text with-region
-          next-conflict! keep-mine! keep-disk!
     ;; state, read-only
     buffer-text buffer-clean?
 
@@ -1047,7 +1046,7 @@
                      (format "Merged with ~a conflict~a -- resolve (~a)"
                              conflicts (if (= conflicts 1) "" "s")
                              (keymap:command-hint
-                               '(next-conflict! keep-mine! keep-disk!))))))
+                               '(merge:next! merge:keep-mine! merge:keep-disk!))))))
                #t)]
             [(memv n '(114 82)) (reread-from-disk! b path disk review)] ; r
             [(or (not n) (memv n '(99 67 7 27)))                ; c, C-g, ESC
@@ -1100,7 +1099,7 @@
                        (format "Merged with ~a conflict~a -- resolve (~a), then save"
                                conflicts (if (= conflicts 1) "" "s")
                                (keymap:command-hint
-                                 '(next-conflict! keep-mine! keep-disk!)))))
+                                 '(merge:next! merge:keep-mine! merge:keep-disk!)))))
                    #f)))]
           [(memv n '(99 67 7 27)) (set! message "Save cancelled") #f]
           [(not n) #f]
@@ -2304,95 +2303,6 @@
                 (loop (+ row 1) (cons (substring s from (max from to)) acc)))))
         "\n")))
 
-  ;;; Conflict resolution ---------------------------------------------------------
-
-  ;; A merge left <<<<<<< buffer / ======= / >>>>>>> disk markers:
-  ;; next-conflict! hops to one, keep-mine! and keep-disk! resolve the
-  ;; conflict at point, each as one undo step.
-
-  (define (conflict-marker? b row prefix)
-    (and (>= row 0) (< row (head:buffer-line-count b))
-         (string:prefix? prefix (head:buffer-line b row))))
-
-  (define (conflict-at row)
-    ;; The (start mid end) marker rows of the conflict containing row,
-    ;; or #f.
-    (let ([b (head:current-buffer)])
-      (let up ([r row])
-        (cond
-          [(< r 0) #f]
-          [(and (< r row) (conflict-marker? b r ">>>>>>>")) #f]
-          [(conflict-marker? b r "<<<<<<<")
-           (let mid ([m (+ r 1)])
-             (cond
-               [(>= m (head:buffer-line-count b)) #f]
-               [(conflict-marker? b m "=======")
-                (let end ([e (+ m 1)])
-                  (cond
-                    [(>= e (head:buffer-line-count b)) #f]
-                    [(conflict-marker? b e ">>>>>>>")
-                     (and (>= e row) (list r m e))]
-                    [else (end (+ e 1))]))]
-               [else (mid (+ m 1))]))]
-          [else (up (- r 1))]))))
-
-  (define (delete-rows! r1 r2)
-    ;; Remove rows r1..r2 inclusive, joining across their newlines.
-    (head:goto! (cons r1 0))
-    (let ([n (let loop ([r r1] [n 0])
-               (if (> r r2)
-                   n
-                   (loop (+ r 1)
-                         (+ n 1 (string-length
-                                  (head:buffer-line (head:current-buffer) r))))))])
-      (do ([i 0 (+ i 1)]) ((= i n)) (delete-forward!))))
-
-  (edoc "Move point to the next merge conflict marker, wrapping around at the end of the buffer.")
-  (define (next-conflict!)
-    ;; Point to the next conflict's <<<<<<< line, wrapping around.
-    (let* ([b (head:current-buffer)]
-           [n (head:buffer-line-count b)]
-           [from (car (head:point))]
-           [hit (let scan ([r (+ from 1)] [left n])
-                  (cond [(zero? left) #f]
-                        [(>= r n) (scan 0 left)]
-                        [(conflict-marker? b r "<<<<<<<") r]
-                        [else (scan (+ r 1) (- left 1))]))])
-      (if hit
-          (head:goto! (cons hit 0))
-          (set-message! "No conflicts"))
-      (void)))
-
-  (edoc "Resolve the merge conflict at point in the buffer's favor, as one undo step.")
-  (define (keep-mine!)
-    ;; Resolve the conflict at point in the buffer's favor.
-    (let ([c (conflict-at (car (head:point)))])
-      (if c
-          (begin
-            (call-as-one-edit! "keep mine"
-              (lambda ()
-                (delete-rows! (cadr c) (caddr c))
-                (delete-rows! (car c) (car c))
-                (head:goto! (cons (car c) 0))))
-            (set-message! "Kept the buffer side"))
-          (set-message! "Not in a conflict"))
-      (void)))
-
-  (edoc "Resolve the merge conflict at point in the disk's favor, as one undo step.")
-  (define (keep-disk!)
-    ;; Resolve the conflict at point in the disk's favor.
-    (let ([c (conflict-at (car (head:point)))])
-      (if c
-          (begin
-            (call-as-one-edit! "keep disk"
-              (lambda ()
-                (delete-rows! (caddr c) (caddr c))
-                (delete-rows! (car c) (cadr c))
-                (head:goto! (cons (car c) 0))))
-            (set-message! "Kept the disk side"))
-          (set-message! "Not in a conflict"))
-      (void)))
-
   ;;; Registration ----------------------------------------------------------------
 
   ;; Everything the layer registers -- owned by edit, so a reload
@@ -2497,19 +2407,7 @@
          "Reverse this head's latest undo, including an undo of another actor's action. Redo uses the same overlap checks and is independent of `undo-scope`. A fresh edit by this head invalidates its redo.")
         ((undo-actor!) (("procedure" . "(undo-actor! actor)")) "string"
          ("(edit)") edit "Editing commands" #f
-         "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")
-        ((next-conflict!) (("procedure" . "(next-conflict!)")) "void"
-         ("(edit)") edit "Editing commands" #f
-         "Move point to the next merge conflict marker in the current buffer, wrapping at the end. Report a message if the buffer has no conflicts.")
-        ((keep-mine!) (("procedure" . "(keep-mine!)")) "void"
-         ("(edit)") edit "Editing commands" #f
-         "Resolve the merge conflict at point by keeping the buffer side. The complete resolution is one undo step.")
-        ((keep-disk!) (("procedure" . "(keep-disk!)")) "void"
-         ("(edit)") edit "Editing commands" #f
-         "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")))
-    (keymap:bind-default! "M-n" next-conflict!)
-    (keymap:bind-default! "M-m" keep-mine!)
-    (keymap:bind-default! "M-d" keep-disk!)
+         "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")))
   )
 
 ) ;; library (edit)
