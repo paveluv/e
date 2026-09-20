@@ -245,7 +245,7 @@
 ;;; The report -----------------------------------------------------------------------
 
 (define arguments (command-line-arguments))
-(define list? (and (member "--list" arguments) #t))
+(define listing? (and (member "--list" arguments) #t))
 (define selected (filter (lambda (a) (not (string=? a "--list"))) arguments))
 
 (define totals (make-eq-hashtable))
@@ -266,7 +266,7 @@
             (printf "  ~a\n"
               (apply string-append
                 (map (lambda (k) (format " ~a ~a" (length (filter (lambda (r) (eq? (cdr r) k)) rows)) k)) present))))
-          (when list?
+          (when listing?
             (for-each (lambda (k)
                         (let ([names (map car (filter (lambda (r) (eq? (cdr r) k)) rows))])
                           (when (pair? names) (printf "    ~a: ~a\n" k names))))
