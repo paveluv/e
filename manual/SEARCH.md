@@ -33,7 +33,7 @@ including query replacement, remain exact.
 
 ## Query replacement
 
-`M-%` opens M-x with `(edit:replace! ` typed; give the text to find and its
+`M-%` opens M-x with `(search:replace! ` typed; give the text to find and its
 replacement as strings. From point to the end of the current buffer it
 highlights each occurrence before asking:
 
@@ -46,18 +46,19 @@ highlights each occurrence before asking:
 The complete run is one undo step. Point follows the operation and finishes at
 the last replaced, skipped, or pending occurrence.
 
-For noninteractive replacement, `edit:replace-all!` works on the selected
+For noninteractive replacement, `search:replace-all!` works on the selected
 region, else on the whole current buffer; the scope forms retarget it:
 
 ```scheme
-(edit:replace-all! "old" "new")
-(head:with-buffer (buffer "notes.md") (edit:replace-all! "old" "new"))
+(search:replace-all! "old" "new")
+(head:with-buffer (buffer "notes.md") (search:replace-all! "old" "new"))
 (edit:with-region (region (buffer "notes.md") '(0 . 0) '(4 . 0))
-  (edit:replace-all! "old" "new"))
-(for-each (lambda (b) (when (head:buffer-file b) (head:with-buffer b (edit:replace-all! "old" "new"))))
+  (search:replace-all! "old" "new"))
+(for-each (lambda (b) (when (head:buffer-file b) (head:with-buffer b (search:replace-all! "old" "new"))))
           (head:buffers))
 ```
 
-Each call is one undo step in its buffer and retains its point.
-`edit:count-matches` counts the same way.
+Each call is one undo step in its buffer and retains its point, through
+`edit:rewrite-region!`, the editing operation that takes the basis the
+replacement was computed against. `search:count` counts the same way.
 

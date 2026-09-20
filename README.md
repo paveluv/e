@@ -183,7 +183,7 @@ modules. You can call it via `M-x`:
 
 ```scheme
 M-x (head:buffer-name (head:current-buffer))
-M-x (edit:replace-all! "old" "new")
+M-x (search:replace-all! "old" "new")
 M-x (log-view:buffer! 'eval)
 M-x (terminal:open!)
 M-x (describe:this terminal:open!)

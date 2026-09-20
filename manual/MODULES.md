@@ -278,7 +278,7 @@ verdict is on the name importers see, so an export renamed with `rename`
 is judged by its exported spelling.
 
 Prompting is the exception, not a naming matter: a command that must wait
-for input, `edit:describe-key!` reading a key or `edit:replace!` asking per
+for input, `edit:describe-key!` reading a key or `search:replace!` asking per
 occurrence, declares `(prompts)` in its edoc. Otherwise the M-x API with typed
 completion does the asking, and a key that used to prompt opens M-x with the
 call typed up to its argument: `C-c a` gives `M-x (edit:answer! `. Such keys

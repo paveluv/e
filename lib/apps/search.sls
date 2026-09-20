@@ -12,9 +12,11 @@
 
 (import (only (edoc) elibrary))
 (elibrary (search)
-  (export init! (rename (search! incremental!)) (rename (search-fold-case fold-case)))
+  (export init! (rename (search! incremental!)) (rename (search-fold-case fold-case))
+          count replace-all! replace!)
   (import (chezscheme)
           (except (edit) init!)
+          (literal)
           (prefix (dispatch) dispatch:)
           (prefix (style) style:)
           (prefix (prompt) prompt:)
@@ -262,14 +264,183 @@
             (set! needle-now "")
             (set! current-match #f))))))
 
-  (edoc "Install incremental search: its describe entry, the match highlighter and the C-s binding with the search keymap.")
+  ;;; Matching -----------------------------------------------------------------------
+
+  (define (for-matches! r needle handle!)
+    ;; Walk the matches of needle inside r in order, calling
+    ;; (handle! row col) on each; it returns the width the match occupies
+    ;; afterwards (an edit may have changed it).  The match count.
+    ;; Needles are single-line: lines are searched one at a time.
+    (when (= (string-length needle) 0)
+      (error 'search "empty search string"))
+    (let* ([b (region-buffer r)]
+           [m (string-length needle)]
+           [start (region-start r)]
+           [end (region-end r)]
+           [count 0])
+      (let row-loop ([row (max 0 (car start))])
+        (when (<= row (min (car end) (- (head:buffer-line-count b) 1)))
+          (let col-loop ([at (if (= row (car start)) (cdr start) 0)]
+                         [shift 0])
+            (let* ([s (head:buffer-line b row)]
+                   [limit (if (= row (car end))
+                              (min (+ (cdr end) shift) (string-length s))
+                              (string-length s))]
+                   [hit (string:search s needle at limit)])
+              (if hit
+                  (let ([w (handle! row hit)])
+                    (set! count (+ count 1))
+                    (col-loop (+ hit w) (+ shift (- w m))))
+                  (row-loop (+ row 1)))))))
+      count))
+
+  (edoc "How many times needle occurs in the selected region, else in the whole current buffer."
+        (needle string "the text to count, within one line")
+        (returns integer))
+  (define (count needle)
+    (for-matches! (current-region) needle (lambda (row col) (string-length needle))))
+
+  (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one undo step, point left where it was."
+        (from string "the text to find, within one line")
+        (to string "its replacement")
+        (returns integer "how many occurrences were replaced"))
+  (define (replace-all! from to)
+    (define m (string-length from))
+    (define (replace-line s)
+      ;; Accumulate pieces and join once instead of copying the growing line
+      ;; for every non-overlapping match.
+      (let loop ([at 0] [pieces '()] [count 0])
+        (let ([hit (string:search s from at (string-length s))])
+          (if hit
+              (loop (+ hit m)
+                    (cons to (cons (substring s at hit) pieces))
+                    (+ count 1))
+              (values (apply string-append
+                             (reverse (cons (string:tail s at) pieces)))
+                      count)))))
+    (define (rewritten-region r)
+      ;; Preserve the single-line-needle contract by rewriting each selected
+      ;; row independently, including only the selected edge fragments.
+      (let* ([b (region-buffer r)]
+             [start (region-start r)]
+             [end (region-end r)]
+             [last (min (car end) (- (head:buffer-line-count b) 1))])
+        (let loop ([row (max 0 (car start))] [lines '()] [count 0])
+          (if (> row last)
+              (values (string:join (reverse lines) "\n") count)
+              (let* ([s (head:buffer-line b row)]
+                     [n (string-length s)]
+                     [from-col (if (= row (car start)) (min (cdr start) n) 0)]
+                     [to-col (if (= row (car end)) (min (cdr end) n) n)])
+                (let-values ([(line found)
+                              (replace-line
+                                (substring s from-col (max from-col to-col)))])
+                  (loop (+ row 1) (cons line lines) (+ count found))))))))
+    (when (= m 0) (error 'replace-all! "empty search string"))
+    (let ([r (current-region)] [basis (head:edit-basis (head:current-buffer))])
+      (call-as-one-edit!
+        (format "(search:replace-all! ~s ~s)" from to)
+        (lambda ()
+          (let-values ([(text count) (rewritten-region r)])
+            (when (> count 0)
+              (rewrite-region! basis (region-start r) (region-end r) text))
+            count)))))
+
+  ;;; Query replace --------------------------------------------------------------------
+
+  ;; The candidate being offered, drawn highlighted by the highlighter
+  ;; init! registers; #f outside replace!.
+  (define query-match #f)
+
+  (define (find-from b needle row col)
+    ;; The first match of needle at or after (row . col): (row . start),
+    ;; or #f.  Needles are single-line.
+    (let loop ([row row] [col col])
+      (and (< row (head:buffer-line-count b))
+           (let* ([s (head:buffer-line b row)]
+                  [hit (string:search s needle col (string-length s))])
+             (if hit
+                 (cons row hit)
+                 (loop (+ row 1) 0))))))
+
+  (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered, y or SPC replaces, n or DEL skips, q stops; one undo step, point following."
+        (from string "the text to find, within one line")
+        (to string "its replacement")
+        (prompts))
+  (define (replace! from to)
+    ;; Each occurrence is highlighted and offered -- y (or SPC) replaces,
+    ;; n (or DEL) skips, q / RET / C-g / ESC stops.  The whole run is one
+    ;; undo step; point follows, ending after the last replacement (or at
+    ;; the start of the last skipped or stopped-at match).  The report --
+    ;; how many replaced and skipped -- is echoed.
+    (if (string=? from "")
+        (void)
+        (let ([b (head:current-buffer)]
+              [m (string-length from)]
+              [question (format "Replace ~s with ~s? (y, n, q)" from to)]
+              [replaced 0]
+              [skipped 0])
+          (dynamic-wind
+            void
+            (lambda ()
+              (call-as-one-edit! (format "(search:replace! ~s ~s)" from to)
+                (lambda ()
+                  (let loop ([row (car (point))] [col (cdr (point))])
+                    (let ([hit (find-from b from row col)])
+                      (when hit
+                        (set! query-match
+                          (list (car hit) (cdr hit) (+ (cdr hit) m)))
+                        (goto-point! (cons (car hit) (+ (cdr hit) m)))
+                        (parameterize ([message-source #f]) ; an indicator
+                          (set-message! question))
+                        (paint:redraw!)     ; the match highlight, not the message
+                        (let* ([event (head:read-key-event #f)]
+                               [action (and (not (eof-object? event))
+                                            (keymap:event-binding
+                                              'query-replace event))])
+                          (case action
+                            [(replace)
+                             (replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
+                             (set! replaced (+ replaced 1))
+                             (loop (car (point)) (cdr (point)))]
+                            [(skip)
+                             (set! skipped (+ skipped 1))
+                             (goto-point! hit)
+                             (loop (car hit) (+ (cdr hit) m))]
+                            [(stop) (goto-point! hit)]
+                            [(quit-prefix)
+                             (let ([next (head:read-key-event #f)])
+                               (when (and (not (eof-object? next))
+                                          (eq? (keymap:event-binding
+                                                 'query-replace "C-x" next)
+                                               'quit-editor))
+                                 (quit!))
+                               (goto-point! hit))]
+                            [else
+                             (if (eof-object? event)
+                                 (goto-point! hit)
+                                 (loop (car hit) (cdr hit)))]))))))))
+            (lambda () (set! query-match #f)))
+          (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
+          (void))))
+
+  (edoc "Install search: its describe entry, the match highlighters, C-s with the search keymap, and M-% with the query-replace keymap.")
   (define (init!)
     (doc:register!
       '(((search:incremental!) (("procedure" . "(search:incremental!)")) "void"
          ("(search)") search "Search commands" #f
          "Start incremental search in the current buffer. Typing extends the search, `C-s` repeats it, `M-c` toggles case sensitivity, Return accepts, and `C-g` cancels.")))
     (paint:add-highlighter! search-highlights)
+    (paint:add-highlighter! (lambda () (if query-match (list query-match) '())))
     (keymap:bind-default! "C-s" search!)
+    (keymap:bind-default! "M-%" (keymap:prefill replace!))
+    (for-each
+      (lambda (entry)
+        (keymap:bind-default! 'query-replace (car entry) (cadr entry)))
+      '(("y" replace) ("Y" replace) ("SPC" replace)
+        ("n" skip) ("N" skip) ("BACKSPACE" skip)
+        ("q" stop) ("RET" stop) ("C-g" stop) ("ESC" stop)
+        ("C-x" quit-prefix) ("C-x C-c" quit-editor)))
     (for-each
       (lambda (entry)
         (keymap:bind-default! 'isearch (car entry) (cadr entry)))

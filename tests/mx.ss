@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (keymap) keymap:) (prefix (head) head:)
+     (import (except (edit) init!) (literal) (prefix (search) search:) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (keymap) keymap:) (prefix (head) head:)
              (prefix (window) window:) (prefix (text) text:)
              (prefix (string) string:) (prefix (test) test:))
 
@@ -138,7 +138,7 @@
      (check 'structured-key-actions-describe-themselves
        (list (keymap:action-text (keymap:call kill-buffer! head:current-buffer))
              (keymap:action-text (keymap:prefill answer!))
-             (keymap:prefill-text (keymap:prefill replace! "old")))
-       '("(kill-buffer! (head:current-buffer))" "M-x (answer! " "(replace! \"old\" "))
+             (keymap:prefill-text (keymap:prefill search:replace! "old")))
+       '("(kill-buffer! (head:current-buffer))" "M-x (answer! " "(search:replace! \"old\" "))
 
      (test:finish! 'mx)))

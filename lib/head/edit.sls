@@ -7,7 +7,8 @@
 ;; editing with undo, the kill ring and the clipboard, indentation and
 ;; formatting through the modes' registered indenters, mouse actions,
 ;; the default key bindings, and the generic editing helpers (regions,
-;; replace, conflict resolution).  It composes the seams below --
+;; conflict resolution; search and replace are (search)'s).  It
+;; composes the seams below --
 ;; store, head, paint, prompt, file, mode, keymap -- and is what M-x
 ;; sees bare: the loader imports (edit) into the top level.
 ;;
@@ -28,7 +29,6 @@
 (elibrary (edit)
   (export init!
           current-region region-text with-region
-          replace-all! count-matches replace!
           next-conflict! keep-mine! keep-disk!
     ;; state, read-only
     point mark
@@ -41,7 +41,7 @@
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
     new-buffer! trash restore! empty-trash!
     ;; editing and movement
-    insert-text! replace-region-text! newline! delete-forward! backspace!
+    insert-text! replace-region-text! rewrite-region! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo! undo-scope undo-actor!
     copy-to-kill-buffer! current-kill-ring
     forward-kill-ring-to-system-clipboard
@@ -272,7 +272,7 @@
     (paint:invalidate-screen-cache!))
 
   ;; Undo entries are labeled with the user-level action that made them
-  ;; -- "insert \"hello\"", "(replace-all! \"xx\" \"yy\")" -- and undo
+  ;; -- "insert \"hello\"", "(search:replace-all! \"xx\" \"yy\")" -- and undo
   ;; and redo report the label.  Inside a call-as-one-edit! group, the
   ;; box holds (label . buffer-entries): one entry per buffer the
   ;; group touches, labeled with the group's label (or, lacking one,
@@ -756,6 +756,18 @@
         (parameterize ([edit-source source])
           (submit-edit! b (text:make-span (car start) (cdr start) (car end) (cdr end)) parts))
         (changed!))))
+
+  (edoc "Replace the text between two ordered points with text computed against a basis, in one structural edit that leaves point where it was: the basis, head:edit-basis taken before the computation, lets the store project point and mark into the revision it accepts."
+        (basis list "the edit basis the text was computed against")
+        (start position "where the replaced text starts")
+        (end position "where it ends")
+        (text string "the replacement"))
+  (define (rewrite-region! basis start end text)
+    ;; the editing operation behind the bulk replacers: an explicit basis
+    ;; and a kept point, with the undo grouping and mark handling of every
+    ;; recorded edit
+    (parameterize ([edit-source basis] [edit-point (point)])
+      (replace-region-text! start end text)))
 
   (edoc "Copy the text between mark and point to the kill ring without deleting it; the mark deactivates.")
   (define (copy-region!)
@@ -2387,92 +2399,6 @@
       (region b '(0 . 0)
               (cons last (string-length (head:buffer-line b last))))))
 
-  ;;; Matching ----------------------------------------------------------------
-
-  (define (for-matches! r needle handle!)
-    ;; Walk the matches of needle inside r in order, calling
-    ;; (handle! row col) on each; it returns the width the match occupies
-    ;; afterwards (an edit may have changed it).  The match count.
-    ;; Needles are single-line: lines are searched one at a time.
-    (when (= (string-length needle) 0)
-      (error 'edit "empty search string"))
-    (let* ([b (region-buffer r)]
-           [m (string-length needle)]
-           [start (region-start r)]
-           [end (region-end r)]
-           [count 0])
-      (let row-loop ([row (max 0 (car start))])
-        (when (<= row (min (car end) (- (head:buffer-line-count b) 1)))
-          (let col-loop ([at (if (= row (car start)) (cdr start) 0)]
-                         [shift 0])
-            (let* ([s (head:buffer-line b row)]
-                   [limit (if (= row (car end))
-                              (min (+ (cdr end) shift) (string-length s))
-                              (string-length s))]
-                   [hit (string:search s needle at limit)])
-              (if hit
-                  (let ([w (handle! row hit)])
-                    (set! count (+ count 1))
-                    (col-loop (+ hit w) (+ shift (- w m))))
-                  (row-loop (+ row 1)))))))
-      count))
-
-
-  ;;; Commands ----------------------------------------------------------------
-
-  (edoc "How many times needle occurs in the selected region, else in the whole current buffer."
-        (needle string "the text to count, within one line")
-        (returns integer))
-  (define (count-matches needle)
-    (for-matches! (current-region) needle (lambda (row col) (string-length needle))))
-
-  (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one undo step, point left where it was."
-        (from string "the text to find, within one line")
-        (to string "its replacement")
-        (returns integer "how many occurrences were replaced"))
-  (define (replace-all! from to)
-    (define m (string-length from))
-    (define (replace-line s)
-      ;; Accumulate pieces and join once instead of copying the growing line
-      ;; for every non-overlapping match.
-      (let loop ([at 0] [pieces '()] [count 0])
-        (let ([hit (string:search s from at (string-length s))])
-          (if hit
-              (loop (+ hit m)
-                    (cons to (cons (substring s at hit) pieces))
-                    (+ count 1))
-              (values (apply string-append
-                             (reverse (cons (string:tail s at) pieces)))
-                      count)))))
-    (define (rewritten-region r)
-      ;; Preserve the single-line-needle contract by rewriting each selected
-      ;; row independently, including only the selected edge fragments.
-      (let* ([b (region-buffer r)]
-             [start (region-start r)]
-             [end (region-end r)]
-             [last (min (car end) (- (head:buffer-line-count b) 1))])
-        (let loop ([row (max 0 (car start))] [lines '()] [count 0])
-          (if (> row last)
-              (values (string:join (reverse lines) "\n") count)
-              (let* ([s (head:buffer-line b row)]
-                     [n (string-length s)]
-                     [from-col (if (= row (car start)) (min (cdr start) n) 0)]
-                     [to-col (if (= row (car end)) (min (cdr end) n) n)])
-                (let-values ([(line found)
-                              (replace-line
-                                (substring s from-col (max from-col to-col)))])
-                  (loop (+ row 1) (cons line lines) (+ count found))))))))
-    (when (= m 0) (error 'edit "empty search string"))
-    (let ([r (current-region)] [saved (point)] [source (head:edit-basis (head:current-buffer))])
-      (call-as-one-edit!
-        (format "(replace-all! ~s ~s)" from to)
-        (lambda ()
-          (let-values ([(text count) (rewritten-region r)])
-            (when (> count 0)
-              (parameterize ([edit-source source] [edit-point saved])
-                (replace-region-text! (region-start r) (region-end r) text)))
-            count)))))
-
   (edoc "The text inside a region, rows joined with newlines."
         (r region "the region to read")
         (returns string))
@@ -2492,85 +2418,6 @@
                      [to (if (= row (car end)) (min (cdr end) n) n)])
                 (loop (+ row 1) (cons (substring s from (max from to)) acc)))))
         "\n")))
-
-  ;;; Query replace -------------------------------------------------------------
-
-  ;; The candidate being offered, drawn highlighted by the highlighter
-  ;; init! registers; #f outside replace!!.
-  (define query-match #f)
-
-  (define (find-from b needle row col)
-    ;; The first match of needle at or after (row . col): (row . start),
-    ;; or #f.  Needles are single-line.
-    (let loop ([row row] [col col])
-      (and (< row (head:buffer-line-count b))
-           (let* ([s (head:buffer-line b row)]
-                  [hit (string:search s needle col (string-length s))])
-             (if hit
-                 (cons row hit)
-                 (loop (+ row 1) 0))))))
-
-  (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered, y or SPC replaces, n or DEL skips, q stops; one undo step, point following."
-        (from string "the text to find, within one line")
-        (to string "its replacement")
-        (prompts))
-  (define (replace! from to)
-    ;; Query-replace in the current buffer, from point to the end: each
-    ;; occurrence of from is highlighted and offered -- y (or SPC)
-    ;; replaces, n (or DEL) skips, q / RET / C-g / ESC stops.  The whole
-    ;; run is one undo step; point follows, ending after the last
-    ;; replacement (or at the start of the last skipped or stopped-at
-    ;; match).  The report -- how many replaced and skipped -- is echoed.
-    (if (string=? from "")
-        (void)
-        (let ([b (head:current-buffer)]
-              [m (string-length from)]
-              [question (format "Replace ~s with ~s? (y, n, q)" from to)]
-              [replaced 0]
-              [skipped 0])
-          (dynamic-wind
-            void
-            (lambda ()
-              (call-as-one-edit! (format "(replace! ~s ~s)" from to)
-                (lambda ()
-                  (let loop ([row (car (point))] [col (cdr (point))])
-                    (let ([hit (find-from b from row col)])
-                      (when hit
-                        (set! query-match
-                          (list (car hit) (cdr hit) (+ (cdr hit) m)))
-                        (goto-point! (cons (car hit) (+ (cdr hit) m)))
-                        (parameterize ([message-source #f]) ; an indicator
-                          (set-message! question))
-                        (paint:redraw!)     ; the match highlight, not the message
-                        (let* ([event (head:read-key-event #f)]
-                               [action (and (not (eof-object? event))
-                                            (keymap:event-binding
-                                              'query-replace event))])
-                          (case action
-                            [(replace)
-                             (replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
-                             (set! replaced (+ replaced 1))
-                             (loop (car (point)) (cdr (point)))]
-                            [(skip)
-                             (set! skipped (+ skipped 1))
-                             (goto-point! hit)
-                             (loop (car hit) (+ (cdr hit) m))]
-                            [(stop) (goto-point! hit)]
-                            [(quit-prefix)
-                             (let ([next (head:read-key-event #f)])
-                               (when (and (not (eof-object? next))
-                                          (eq? (keymap:event-binding
-                                                 'query-replace "C-x" next)
-                                               'quit-editor))
-                                 (quit!))
-                               (goto-point! hit))]
-                            [else
-                             (if (eof-object? event)
-                                 (goto-point! hit)
-                                 (loop (car hit) (cdr hit)))]))))))))
-            (lambda () (set! query-match #f)))
-          (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
-          (void))))
 
   ;;; Conflict resolution ---------------------------------------------------------
 
@@ -2766,10 +2613,6 @@
         ((undo-actor!) (("procedure" . "(undo-actor! actor)")) "string"
          ("(edit)") edit "Editing commands" #f
          "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")
-        ((replace-all!)
-         (("procedure" . "(replace-all! from to)"))
-         "integer" ("(edit)") edit "Editing commands" #f
-         "Replace every occurrence of `from` with `to` in the selected region, else in the whole current buffer, as one undo step with point preserved; `edit:with-region` and `head:with-buffer` retarget it.")
         ((next-conflict!) (("procedure" . "(next-conflict!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Move point to the next merge conflict marker in the current buffer, wrapping at the end. Report a message if the buffer has no conflicts.")
@@ -2782,19 +2625,9 @@
         ((default-directory) (("procedure" . "(default-directory)")) "string"
          ("(edit)") edit "Files" #f
          "The current file's parent, an app's working directory, or the head's launch directory, absolute with home abbreviated and a trailing slash. This is the common starting directory for path prompts and browsers.")))
-    (keymap:bind-default! "M-%" (keymap:prefill replace!))
     (keymap:bind-default! "M-n" next-conflict!)
     (keymap:bind-default! "M-m" keep-mine!)
     (keymap:bind-default! "M-d" keep-disk!)
-    (for-each
-      (lambda (entry)
-        (keymap:bind-default! 'query-replace (car entry) (cadr entry)))
-      '(("y" replace) ("Y" replace) ("SPC" replace)
-        ("n" skip) ("N" skip) ("BACKSPACE" skip)
-        ("q" stop) ("RET" stop) ("C-g" stop) ("ESC" stop)
-        ("C-x" quit-prefix) ("C-x C-c" quit-editor)))
-    (paint:add-highlighter!
-      (lambda () (if query-match (list query-match) '())))
   )
 
 ) ;; library (edit)

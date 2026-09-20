@@ -15,6 +15,7 @@
              (literal)
              (prefix (kernel) kernel:)
              (prefix (head) head:)
+             (prefix (search) search:)
              (prefix (window) window:))
 
      (define check test:check)
@@ -43,8 +44,8 @@
      (check 'current-region-is-the-whole-buffer-without-a-mark
        (let ([r (current-region)]) (list (region-buffer r) (region-start r) (region-end r)))
        (list a '(0 . 0) '(1 . 5)))
-     (check 'count-matches-counts-the-current-buffer (count-matches "x") 3)
-     (check 'with-buffer-retargets-a-current-context-query (head:with-buffer b (count-matches "x")) 3)
+     (check 'count-matches-counts-the-current-buffer (search:count "x") 3)
+     (check 'with-buffer-retargets-a-current-context-query (head:with-buffer b (search:count "x")) 3)
 
      ;; with-region selects the region, the commands stay inside it, and the
      ;; previous selection and point return
@@ -52,10 +53,10 @@
      (check 'with-region-selects-the-region
        (with-region r (list (head:current-buffer) (mark) (point)))
        (list b '(1 . 0) '(1 . 3)))
-     (check 'replace-all-stays-inside-the-region (with-region r (replace-all! "x" "y")) 2)
+     (check 'replace-all-stays-inside-the-region (with-region r (search:replace-all! "x" "y")) 2)
      (check 'the-rest-of-the-buffer-is-untouched (text-of b) '("x three" "y y"))
      (check 'the-selection-and-point-return (list (head:current-buffer) (mark) (point)) (list a #f '(0 . 0)))
-     (check 'count-matches-under-with-region (with-region (region a '(0 . 0) '(0 . 3)) (count-matches "x")) 1)
+     (check 'count-matches-under-with-region (with-region (region a '(0 . 0) '(0 . 3)) (search:count "x")) 1)
 
      ;; with-window selects a window for the body only
      (window:split-below!)

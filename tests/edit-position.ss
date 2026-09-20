@@ -12,6 +12,7 @@
      (import (prefix (test) test:)
              (except (edit) init!)
              (prefix (head) head:)
+             (prefix (search) search:)
              (prefix (store) store:)
              (prefix (text) text:)
              (prefix (mode) mode:)
@@ -223,7 +224,7 @@
      (define replaced (fresh "position-replace-all" '("aba" "tail")))
      (goto-point! '(0 . 1))
      (foreign! replaced (text:make-span 0 0 0 0) '("Q"))
-     (replace-all! "a" "ZZ")
+     (search:replace-all! "a" "ZZ")
      (check 'replace-all-preserves-unseen-prefix (text-of replaced) '("QZZbZZ" "tZZil"))
      (check 'replace-all-projects-preserved-point (point) '(0 . 2))
 
