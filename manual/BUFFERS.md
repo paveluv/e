@@ -297,7 +297,13 @@ by Enter switches back immediately. Repeated quick switches alternate between
 the documents; the switcher itself never becomes the default. The table
 includes `<buffers>` so every buffer reachable through global switching
 also has a row when the filter is clear. Its own row can be filtered,
-sorted and opened like the others.
+sorted and opened like the others. `M-x (buffer-view:open!)` is the same
+command.
+
+Below the live rows, while the trash holds anything, a `Trash` section
+lists the killed shared buffers, dimmed, with how long ago each was killed
+and how long it stays before the base deletes it; the filter applies to
+their names. Enter on one restores it, as `(edit:restore! name)` does.
 
 Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted
@@ -396,7 +402,7 @@ changes appear on redraw.
 - Home / `C-a` / `M-<`, End / `C-e` / `M->`: select the first or last match.
 - Page Up / `M-v`, Page Down / `C-v`: move by a page of rows.
 - Enter: show the candidate row's buffer in this window, completing the
-  switch in place.
+  switch in place; on a trash row, restore that buffer.
 - Esc / C-g: return to the invoking document; C-u: clear the filter.
 - F1–F6: cycle sorting for Modified, RO, Buffer, Lines, Mode and File.
 - Move the pointer over a row: emphasize that candidate without taking focus.

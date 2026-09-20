@@ -10,7 +10,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (dispatch)
-  (export set-prompt-opener! (rename (handle-key! key!)))
+  (export set-prompt-opener! (rename (handle-key! key!)) global-key!)
   (import (chezscheme)
           (prefix (head) head:)
           (prefix (paint) paint:)
@@ -61,6 +61,17 @@
           [else
            (head:set-last-command! #f)
            (error 'dispatch-key! "context action used globally" action)]))
+
+  (edoc "Run the global map's command for one key as a command, the app handler bypassed: for a control standing in for a key, a wheel over an unfocused pane say. Whether the key was bound."
+        (key string "the key event")
+        (returns boolean))
+  (define (global-key! key)
+    (let ([hit (keymap:resolved-binding 'global (list key))])
+      (and hit
+           (begin
+             (head:set-current-keys! (list key))
+             (run-key-action! (keymap:binding-action (cdr hit)) #f)
+             #t))))
 
   (define (dispatch-sequence! first)
     ;; Resolve a key sequence: the buffer's mode context first, then the

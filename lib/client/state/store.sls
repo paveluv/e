@@ -5,7 +5,7 @@
 ;; delta on the wire, never the buffer's text.
 (import (only (edoc) elibrary))
 (elibrary (store)
-  (export create! visit! delete! discard! reset! rename! buffer-list exists? visible? buffer-name find-named find-file
+  (export create! visit! delete! discard! reset! rename! buffer-list exists? visible? trash-retention buffer-name find-named find-file
           snapshot snapshot-state snapshot-since revision line-count line extract
           property properties set-property! set-properties!
           edit! edit-with-snapshot! history-step! undo-authors history blame marks set-marks!
@@ -133,6 +133,10 @@
         (returns (list-of integer)))
   (define (buffer-list)
     (client:request 'buffers))
+  (edoc "How many days the base keeps a trashed buffer before deleting it."
+        (returns integer))
+  (define (trash-retention)
+    (client:request 'trash-retention))
   (edoc "Whether a buffer id is live."
         (id integer "the buffer id")
         (returns boolean))

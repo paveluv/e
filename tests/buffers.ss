@@ -14,6 +14,7 @@
 (eval
   '(begin
      (import (except (edit) init!) (literal) (prefix (head) head:) (prefix (mode) mode:) (prefix (kernel) kernel:)
+             (prefix (buffer-view) buffer-view:)
              (prefix (string) string:) (prefix (test) test:))
 
      (define check test:check)
@@ -55,10 +56,10 @@
      ;; Enter initially selects the previous document; the app itself never
      ;; becomes the default, even after repeated quick switches.
      (check 'switching-defaults-to-the-previous-document
-       (sequence (lambda (i) (list-buffers!) (press! "RET") (state)) (iota 4))
+       (sequence (lambda (i) (buffer-view:open!) (press! "RET") (state)) (iota 4))
        '(("<picker-alpha>" (3 . 2)) ("<picker-beta>" (4 . 1)) ("<picker-alpha>" (3 . 2)) ("<picker-beta>" (4 . 1))))
 
-     (list-buffers!)
+     (buffer-view:open!)
      (check 'filter-matches-names-and-full-paths-without-case-or-prefix-restrictions
        (sequence (lambda (needle) (press! "C-u") (type! needle) (list (length (rows)) (name-in (car (rows)))))
          '("kEr-BeTa" "project/alpha/src" "日本語"))
@@ -76,7 +77,7 @@
      (head:buffer-fact-set! (buffer "<picker-alpha>") 'modified-at 1704164645000000900)
      (head:buffer-fact-set! (buffer "<picker-gamma>") 'modified-at 1704078245000000900)
      (for-each (lambda (name) (head:buffer-read-only-set! (buffer name) #t)) '("<picker-beta>" "<picker-gamma>"))
-     (list-buffers!) (type! "picker-")
+     (buffer-view:open!) (type! "picker-")
      (define (sort! key labels)
        ;; One snapshot covers the heading marks, row order and selection.
        (press! (format "F~a" key))
@@ -149,7 +150,7 @@
      ;; A recreated switcher lists itself with current metadata; visiting a
      ;; row and retiring that buffer does not return to the switcher.
      (kill-buffer! (head:find-tool-buffer "*buffers*"))
-     (list-buffers!)
+     (buffer-view:open!)
      (check 'recreated-switcher-lists-itself-with-current-metadata
        (let* ([b (head:current-buffer)] [lines (head:buffer-lines b)]
               [needle (format "<buffers>  ~a" (vector-length lines))])
@@ -158,6 +159,27 @@
                (exists (lambda (line) (and (string:search line needle 0 (string-length line)) #t))
                  (vector->list lines))))
        '(#t #f #f #t #t))
+
+     ;; The trash: a killed shared buffer sits below the live rows under its
+     ;; own heading, dimmed, and Enter on it restores.
+     (define doomed (head:new-buffer! "picker-doomed"))
+     (kill-buffer! doomed)
+     (buffer-view:open!)
+     (check 'the-trash-lists-killed-shared-buffers-below-the-live-rows
+       (let ([lines (rows)])
+         (list (and (member "Trash: Enter restores" lines) #t)
+               (and (row-of "picker-doomed") (string:search (row-of "picker-doomed") "trash" 0 (string-length (row-of "picker-doomed"))) #t)
+               (< (length (memp (lambda (line) (string=? line "Trash: Enter restores")) lines)) (length lines))
+               (head:buffer-named "picker-doomed")))
+       '(#t #t #t #f))
+     (press! "END" "RET")
+     (check 'enter-on-a-trash-row-restores-the-buffer
+       (list (head:buffer-name (head:current-buffer)) (and (head:buffer-named "picker-doomed") #t))
+       '("picker-doomed" #t))
+     (buffer-view:open!)
+     (check 'a-restored-buffer-leaves-the-trash-section
+       (and (member "Trash: Enter restores" (rows)) #t) #f)
+     (press! "C-g")
      (type! "picker-beta") (press! "RET")
      (kill-buffer! (head:current-buffer))
      (check 'retiring-a-visited-buffer-does-not-return-to-the-switcher

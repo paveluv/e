@@ -113,6 +113,7 @@
        (arity 1)
        (store:buffer-name (car args))]
       [(find-file) (arity 1) (store:find-file (car args))]
+      [(trash-retention) (arity 0) (store:trash-retention)]
       [(snapshot)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional basis"))
        (when (pair? (cdr args))
