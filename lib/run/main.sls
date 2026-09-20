@@ -249,7 +249,7 @@
         (reverse
           (kernel:load-modules!
             '("blame" "buffer-view" "c-mode" "describe" "dispatch" "echo" "edit" "eval" "file-view" "git-view"
-              "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "merge" "mode"
+              "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "merge" "mode" "mouse"
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
               "scheme-mode" "search" "style" "terminal" "tty" "window"))))
       (load-config!)
@@ -278,7 +278,7 @@
       ;; The alternate screen, plus bracketed paste: terminals that
       ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
       ;; making a paste one identifiable edit; others ignore the mode.
-      ;; Mouse tracking likewise (see mouse!).
+      ;; Mouse tracking likewise (see mouse:track!).
       ;; Mode 2031 subscribes to theme changes. Query both the scheme and
       ;; the background color so older hosts can supply a fallback.
       (lambda () (sys:terminal-raw!)

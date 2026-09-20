@@ -5,7 +5,7 @@
 ;; buffer commands (the window commands are (window)'s), visiting,
 ;; saving, merging with the disk,
 ;; editing with undo, the kill ring and the clipboard, indentation and
-;; formatting through the modes' registered indenters, mouse actions,
+;; formatting through the modes' registered indenters,
 ;; the default key bindings, and the generic editing helpers (regions;
 ;; search and replace are (search)'s, merge conflicts (merge)'s).  It
 ;; composes the seams below --
@@ -59,7 +59,7 @@
 
 
     set-message!
-    mouse!
+    page-window!
     answer!
     present-log-entry! present-log-entries!
 
@@ -1542,6 +1542,9 @@
   ;; commands over its viewport logic -- paging and point placement --
   ;; and the head's side of the interaction protocol.
 
+  (edoc "Scroll the selected window by a fraction of its page, direction -1 for up and 1 for down, and put point in the middle; at an edge already reached, point moves to that edge."
+        (direction integer "-1 for up, 1 for down")
+        (fraction integer "the divisor of the page: 1 for a whole page, 8 for a wheel tick"))
   (define (page-window! direction fraction)
     ;; Pagination is a viewport operation. Shift its top by the requested
     ;; fraction of the body height in visual rows, clamp at either end, then
@@ -1792,327 +1795,6 @@
             (insert-text! s)
             (set! insert-chain (list b point-row point-col 1 s))))))
 
-  ;;; Mouse -------------------------------------------------------------------
-
-  ;; SGR mouse tracking: clicks focus the window under the pointer and
-  ;; place point at the clicked cell, dragging selects as though the
-  ;; mark were set at the press (C-Space) and point moved, and the
-  ;; wheel scrolls the window under the pointer, wherever the focus is.
-  ;; The cost is the terminal's native mouse selection -- hold Shift
-  ;; for that -- so mouse! turns the whole thing on or off at run time.
-  (edoc "Turn mouse tracking on or off; off restores the terminal's native selection."
-        (on boolean "whether to track the mouse"))
-  (define (mouse! on)
-    ;; Turn mouse tracking on or off (off restores native selection).
-    (tty:mouse-reporting! on)
-    (head:set-mouse-position! #f)
-    (set! message (format "Mouse ~a" (if on "on" "off")))
-    (void))
-
-  ;; Hit-testing over the remembered tiling, and the gesture state,
-  ;; live in (head); the actions they trigger stay here.
-  (define-syntax mouse-gesture
-    (identifier-syntax [id (head:drag)] [(set! id v) (head:set-drag! v)]))
-
-  (define (text-gesture? w)
-    (and (pair? mouse-gesture) (eq? (car mouse-gesture) w)
-         (eq? (cdr mouse-gesture) (head:window-buffer w))))
-
-  (define (word-char? c)
-    (not (or (char-whitespace? c)
-             (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\, #\.)))))
-
-  (define (select-word!)
-    ;; Select the word point is on (or just after): mark at its start,
-    ;; point at its end.
-    (let* ([s (current-line)]
-           [n (string-length s)]
-           [on? (lambda (i)
-                  (and (>= i 0) (< i n) (word-char? (string-ref s i))))]
-           [col (cond [(on? point-col) point-col]
-                      [(on? (- point-col 1)) (- point-col 1)]
-                      [else #f])])
-      (when col
-        (set! mark-row point-row)
-        (set! mark-col (let back ([i col])
-                         (if (on? (- i 1)) (back (- i 1)) i)))
-        (set! point-col (let fwd ([i col])
-                          (if (on? i) (fwd (+ i 1)) i)))
-        (set! mark-active? #t))))
-
-  ;; Preserve the command-layer API; the head owns this delivery context.
-  (define (call-with-app-mouse-event w start height x y button thunk)
-    ;; One coordinate boundary for clicks, drags, releases, and wheel ticks.
-    ;; Exclude chrome from viewport cells; retain raw character positions
-    ;; beyond text so apps can distinguish blank space from the last glyph.
-    (parameterize
-      ([head:app-event-position
-        (cons (max 1 (- x (head:window-xoff w)
-                        (if (eq? (head:window-scrollbar? w) 'left) 1 0)
-                        (head:window-line-number-width w)))
-              (max 1 (- y start)))]
-       [head:app-event-buffer-position (paint:window-position w start height x y)]
-       [head:app-event-button button])
-      (thunk)))
-
-  (define (mouse-press! x y button)
-    ;; A normal-buffer press focuses its window and places point. An app text
-    ;; press instead updates and invokes the app without stealing focus; only
-    ;; an app status-bar press focuses that window. A text press also arms the
-    ;; mark there -- dragging activates it, a motionless click does not;
-    ;; a second press on the same cell within half a second is a double
-    ;; click, selecting the word there.  A press on a status bar (other
-    ;; than the lowest) arms a resize drag instead.
-    ;; The terminal's own Shift-selection highlight is not touched here
-    ;; (erasing on every press flickers); C-l clears it.
-    (set! mouse-gesture #f)
-    (let ([double? (head:double-click? x y (real-time))])
-      (define (arm-text-selection!)
-        (set! mark-row point-row)
-        (set! mark-col point-col)
-        (set! mark-active? #f)
-        (when double? (select-word!)))
-      (cond
-        [(head:window-button-at (- x 1) (- y 1)) =>
-         (lambda (button)
-           (let ([action (car button)] [w (cdr button)])
-             (window:focus! w)
-             (if (procedure? action) (action)
-               (case action
-                 [(below) (window:split-below!)]
-                 [(right) (window:split-right!)]
-                 [(close) (window:delete!)])))
-           "MOUSE-HANDLED")]
-        [(head:divider-at (- x 1) (- y 1)) =>
-         (lambda (divider)
-           ;; a below divider doubles as the upper window's status bar:
-           ;; pressing it focuses that window, as any status bar does,
-           ;; and still arms the drag
-           (when (eq? (car divider) 'below)
-             (head:window-at (- x 1) (- y 1)
-               (lambda (entry) (window:focus! (car entry)))))
-           (set! mouse-gesture divider)
-           "MOUSE-HANDLED")]
-        [else
-         (head:window-at (- x 1) (- y 1)
-           (lambda (entry)
-             (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-               (cond
-                 [(= (- y 1) (+ start height))        ; the status bar
-                  (window:focus! w)
-                  "MOUSE-HANDLED"]
-                 [(and (head:window-scrollbar-column w)
-                       (= (- x 1) (head:window-scrollbar-column w)))
-                  ;; App bars navigate like their wheel controls: they do not
-                  ;; take focus and do not invoke the row's click action.
-                  (let ([old current-window])
-                    (unless (head:app-buffer? (head:window-buffer w))
-                      (window:focus! w))
-                    (set! current-window w)
-                    (when (and (head:app-buffer? (head:window-buffer w))
-                               (memq old windows))
-                      (set! current-window old)))
-                  "MOUSE-HANDLED"]
-                 [(head:app-buffer? (head:window-buffer w))
-                  (let ([old current-window])
-                    (set! current-window w)
-                    (let ([old-point (head:point)]
-                          [clicked (paint:window-position w start height x y)])
-                      (head:goto! clicked)
-                      (set! mark-active? #f)
-                      (set! mouse-gesture (cons w (head:window-buffer w)))
-                      ;; Focusing the clicked window is the default. An app may
-                      ;; act on the click and explicitly preserve the old
-                      ;; focus by returning keep-focus for MOUSE-CLICK.
-                      (let ([result
-                             (parameterize ([head:app-event-focus old])
-                               (call-with-app-mouse-event w start height x y button
-                                 (lambda () (head:dispatch-app-event! "MOUSE-CLICK"))))])
-                        (cond [(eq? result 'ignore-click)
-                               (set! mouse-gesture #f)
-                               (head:goto! old-point)
-                               (when (memq old windows)
-                                 (set! current-window old))]
-                              [(and (eq? result 'keep-focus) (memq old windows))
-                               (set! current-window old)]
-                              [(not result)
-                               ;; Views and unhandled app text select like
-                               ;; ordinary read-only buffer text. Arm the mark at
-                               ;; this press instead of reusing stale state.
-                               (arm-text-selection!)])))
-                    "MOUSE-HANDLED")]
-                 [else                                ; a text row
-                  (window:focus! w)
-                  (head:goto! (paint:window-position w start height x y))
-                  (arm-text-selection!)
-                  (set! mouse-gesture (cons w (head:window-buffer w)))
-                  ;; A mode may act on the click -- following a link,
-                  ;; say -- through a MOUSE-CLICK binding in its keymap.
-                  (let ([context (mode:key-context (head:current-buffer))])
-                    (when context
-                      (let ([action (keymap:event-binding context
-                                                          "MOUSE-CLICK")])
-                        (when (procedure? action)
-                          (guard (ex [else
-                                      (set! message (kernel:condition-text ex))])
-                            (action))))))
-                  "MOUSE-HANDLED"]))))])))
-
-  (define (mouse-drag! x y button)
-    ;; A split-divider drag resizes its two subtrees; otherwise extend
-    ;; the selection armed by the press --
-    ;; the mark activates and point follows the pointer within the
-    ;; focused window's text area.
-    (cond
-      [(and (pair? mouse-gesture) (memq (car mouse-gesture) '(right below)))
-       (let* ([orientation (car mouse-gesture)]
-              [split (cadr mouse-gesture)]
-              [old (if (eq? orientation 'right)
-                       (caddr mouse-gesture)
-                       (cadddr mouse-gesture))]
-              [now (if (eq? orientation 'right) (- x 1) (- y 1))]
-              [delta (- now old)])
-         (unless (= delta 0)
-           (head:transfer-split! split delta)
-           (if (eq? orientation 'right)
-               (set-car! (cddr mouse-gesture) now)
-               (set-car! (cdddr mouse-gesture) now))))]
-      [else
-       (head:window-at (- x 1) (- y 1)
-         (lambda (entry)
-           (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-             (when (and (eq? w current-window) (text-gesture? w)
-                        (< (- y 1) (+ start height)))
-               (head:goto! (paint:window-position w start height x y))
-               (if (head:app-buffer? (head:window-buffer w))
-                   (unless (call-with-app-mouse-event w start height x y button
-                             (lambda () (head:dispatch-app-event! "MOUSE-DRAG")))
-                     (set! mark-active? #t))
-                   (set! mark-active? #t))))))]))
-
-  (define (mouse-release! x y button)
-    (head:window-at (- x 1) (- y 1)
-      (lambda (entry)
-        (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-          (when (and (eq? w current-window) (text-gesture? w)
-                     (< (- y 1) (+ start height))
-                     (head:app-buffer? (head:window-buffer w)))
-            (head:goto! (paint:window-position w start height x y))
-            (call-with-app-mouse-event w start height x y button
-              (lambda () (head:dispatch-app-event! "MOUSE-RELEASE"))))))))
-
-  (define (mouse-wheel! x y button dir meta? shift?)
-    ;; Scroll the window under the pointer; the focused window stays focused.
-    ;; Meta-wheel
-    ;; applies the corresponding global buffer-switch binding to the hovered
-    ;; window instead. Apps get an ordinary directional tick first so list
-    ;; controls can choose their wheel step.
-    (head:window-at (- x 1) (- y 1)
-      (lambda (entry)
-        (let ([old current-window]
-              [w (car entry)])
-          (set! current-window w)
-          (head:follow-app! w #f)
-          (if (and meta? (memv dir '(0 1)))
-              (dispatch:global-key! (if (= dir 0) "M-S-UP" "M-S-DOWN"))
-              (begin
-                (unless (parameterize ([head:app-event-focus old])
-                          (call-with-app-mouse-event w (cadr entry) (caddr entry) x y button
-                            (lambda ()
-                              (head:dispatch-app-event!
-                                (string-append
-                                  (if shift? "S-" "")
-                                  (case dir
-                                    [(0) "WHEEL-UP"]
-                                    [(1) "WHEEL-DOWN"]
-                                    [(2) "WHEEL-LEFT"]
-                                    [(3) "WHEEL-RIGHT"]
-                                    [else "WHEEL"]))))))
-                  ((wheel-mover dir)))))
-          (when (memq old windows) (set! current-window old))
-          "MOUSE-HANDLED"))))
-
-  (define (wheel-mover dir)
-    ;; Wheel direction (the low bits of a 64-flagged button): up, down,
-    ;; left, right. Vertical ticks move the hovered viewport by one eighth
-    ;; of its height; horizontal ones move point sideways within its line.
-    (case dir
-      [(0) (lambda () (page-window! -1 8))]
-      [(1) (lambda () (page-window! 1 8))]
-      [(2) (lambda () (head:goto! (cons point-row (- point-col 3))))]
-      [(3) (lambda () (head:goto! (cons point-row (+ point-col 3))))]
-      [else (lambda () (void))]))
-
-  ;; Input decoding lives in (tty): the head's reader thread calls
-  ;; (tty:read-event stdin); the main thread applies the parsed mouse
-  ;; data below, through the handler init! installs on the pump.
-
-  (define hover-window #f)   ; the window whose local app last heard MOUSE-MOVE
-
-  (define (tell-app! w event entry x y)
-    ;; Deliver a pointer event to w's local app as the selected window,
-    ;; then restore the selection: pointing focuses nothing.  Shared apps
-    ;; are not told; their capture is for the keys and clicks the wire
-    ;; carries.
-    (when (and (memq w windows) (head:app-of (head:window-buffer w)))
-      (let ([old current-window])
-        (set! current-window w)
-        (parameterize ([head:app-event-focus old])
-          (if entry
-              (call-with-app-mouse-event w (cadr entry) (caddr entry) x y 35
-                (lambda () (head:dispatch-app-event! event)))
-              (head:dispatch-app-event! event)))
-        (when (memq old windows) (set! current-window old)))))
-
-  (define (mouse-move! x y)
-    ;; Pointer motion without a button (any-event tracking).  The local
-    ;; app whose text is under the pointer hears MOUSE-MOVE with the
-    ;; usual event coordinates; the one the pointer left hears
-    ;; MOUSE-LEAVE.  Chrome -- status bars, dividers, scrollbars, the
-    ;; echo area -- counts as leaving.
-    (let ([target
-           (head:window-at (- x 1) (- y 1)
-             (lambda (entry)
-               (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
-                 (and (< (- y 1) (+ start height))
-                      (head:app-of (head:window-buffer w))
-                      (not (and (head:window-scrollbar-column w)
-                                (= (- x 1) (head:window-scrollbar-column w))))
-                      entry))))])
-      (when (and hover-window (not (eq? hover-window (and target (car target)))))
-        (tell-app! hover-window "MOUSE-LEAVE" #f x y)
-        (set! hover-window #f))
-      (when target
-        (tell-app! (car target) "MOUSE-MOVE" target x y)
-        (set! hover-window (car target)))))
-
-  (define (apply-mouse-event! handle? c b x y)
-    ;; Wheel is button 64/65; releases are ignored.  Pointer motion
-    ;; without a button only moves hover state and is never an event
-    ;; for the loop, so it settles nothing.  A context that must not
-    ;; change editor focus passes handle? #f: the report is consumed
-    ;; without being applied.
-    (cond [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
-                (= (bitwise-and b 32) 32) (zero? (bitwise-and b 64)))
-           (when handle? (mouse-move! x y))
-           'ignore]
-          [(not handle?) #f]
-          [(char=? c #\m)                         ; release
-           (mouse-release! x y b)
-           (set! mouse-gesture #f)
-           "MOUSE-HANDLED"]
-          [(= (bitwise-and b 64) 64)               ; wheel
-           (mouse-wheel! x y b (bitwise-and b 3)
-                         (= (bitwise-and b 8) 8)
-                         (= (bitwise-and b 4) 4))]
-          [(= (bitwise-and b 32) 32)               ; drag
-           (when (< (bitwise-and b 3) 3)
-             (mouse-drag! x y b))
-           "MOUSE-HANDLED"]
-          [(< (bitwise-and b 3) 3)                 ; a press
-           (mouse-press! x y b)]
-          [else "MOUSE-HANDLED"]))
-
   ;;; Small commands and key description -------------------------------------
 
   (edoc "Set the mark at point and activate it.")
@@ -2190,7 +1872,7 @@
   ;; Everything the layer registers -- owned by edit, so a reload
   ;; retracts and remakes it; what the loop and the seams ask of the
   ;; commands is installed here too.
-  (edoc "Install the command layer: log presentation, the file formatters, status hints, the mouse handler, the default key bindings, the loop's hooks and the buffers app.")
+  (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffers app.")
   (define (init!)
     ;; One module-owned subscriber per head. All records wake its shared
     ;; history view; echo presentation belongs to the originating head.
@@ -2226,9 +1908,6 @@
     (style:color-scheme! (head:host-color-scheme))
     (head:add-color-scheme-hook! style:color-scheme!)
     (head:add-shutdown-hook! (lambda () (head:flush-ui-audit! 'all)))
-    ;; The pump lives in (head); its mouse report handler is the
-    ;; commands' and is installed here.
-    (head:set-mouse-handler! apply-mouse-event!)
     ;; The layer's default bindings are data, like every module's.
     (begin
       (for-each
