@@ -32,6 +32,20 @@ used directly. A lambda can adapt a command that needs arguments:
 (keymap:bind! "C-c n" (lambda () (edit:move-vertical! 10)))
 ```
 
+Two structural actions describe themselves where a lambda shows as an
+anonymous command. `keymap:call` applies a command to what other procedures
+return when the key is pressed, and `keymap:prefill` opens M-x with the
+command's call typed up to its next argument, so completion asks for it:
+
+```scheme
+(keymap:bind! "C-x k" (keymap:call edit:kill-buffer! head:current-buffer))
+(keymap:bind! "C-c a" (keymap:prefill edit:answer!))
+```
+
+`C-h k` shows the first as `(edit:kill-buffer! (head:current-buffer))` and
+the second as `M-x (edit:answer! `, by the names the top level gives the
+procedures, so a rename follows.
+
 Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:
 

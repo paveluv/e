@@ -36,6 +36,7 @@
           (prefix (paint) paint:)
           (prefix (log) log:)
           (prefix (keymap) keymap:)
+          (prefix (dispatch) dispatch:)
           (prefix (only (reference) lookup) reference:)
           (prefix (doc) doc:)
           (only (edit) regions-of region-text)
@@ -931,9 +932,19 @@
         (report-evaluation! query outcome output-records))
       (void)))
 
-  (edoc "Open the M-x prompt with text already typed, the call up to its argument say, so completion does the asking; evaluate what is read in the editor top level and log the exchange."
-        (initial string "the text typed already"))
-  (define (eval-prompt-with! initial)
+  (define (spell value)
+    ;; a pre-filled argument as the expression denoting it
+    (if (symbol? value) (format "'~s" value) (format "~s" value)))
+
+  (edoc "Open the M-x prompt with a call begun, the command's name and any arguments already given typed, so completion asks for the next: (eval:prompt-with! 'edit:answer!) reads (edit:answer! and a choice."
+        (name symbol "the command's name at the top level")
+        (arguments (list-of datum) "the arguments already given, spelled first"))
+  (define (eval-prompt-with! name . arguments)
+    (read-and-run! (string-append "(" (symbol->string name)
+                                  (apply string-append (map (lambda (v) (string-append " " (spell v))) arguments))
+                                  " ")))
+
+  (define (read-and-run! initial)
     ;; Read an expression -- the prompt pretypes "(", deletable, so a
     ;; bare symbol evaluates too -- and evaluate it in the editor's
     ;; own top level.  The expression is logged (component eval, which
@@ -966,7 +977,7 @@
   (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area.")
   (define (eval-prompt!)
     ;; the prompt pretypes "(", deletable, so a bare symbol evaluates too
-    (eval-prompt-with! "("))
+    (read-and-run! "("))
 
   (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e and M-x bindings.")
   (define (init!)
@@ -979,4 +990,6 @@
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (log:register-formatter! 'eval format-exchange style-exchange)
     (keymap:bind-default! "C-x C-e" eval!)
-    (keymap:bind-default! "M-x" eval-prompt!)))
+    (keymap:bind-default! "M-x" eval-prompt!)
+    ;; keys bound with keymap:prefill open this prompt with their text
+    (dispatch:set-prompt-opener! eval-prompt-with!)))

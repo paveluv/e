@@ -1295,7 +1295,7 @@
 
   (edoc-type command "a command: a procedure callable with no arguments, by its name"
     (predicate (lambda (v) (and (procedure? v) (logbit? 0 (procedure-arity-mask v)))))
-    (write action-name))
+    (write keymap:action-text))
 
   (edoc "Create an empty shared buffer with a name, suffixed when the name is taken, and show it here."
         (name string "the buffer's name")
@@ -2515,21 +2515,6 @@
     (set! point-row (- (vlen) 1))
     (set! point-col (string-length (current-display-line))))
 
-  (define (action-name action)
-    (cond
-      [(not action) "unbound"]
-      [(symbol? action) (symbol->string action)]
-      [(string? action) action]
-      [else
-       (let ([sym
-              (find
-                (lambda (s)
-                  (and (top-level-bound? s)
-                       (guard (ex [else #f])
-                         (eq? (top-level-value s) action))))
-                (environment-symbols (interaction-environment)))])
-         (if sym (symbol->string sym) "anonymous command"))]))
-
   (define (binding-origin owned)
     (let ([owner (car owned)] [kind (keymap:binding-kind (cdr owned))])
       (cond [(eq? owner 'config) "config.e (user override)"]
@@ -2563,7 +2548,7 @@
         (keymap:sequence-text sequence)
         ""
         (if resolved
-            (format "Resolved to: ~a" (action-name (keymap:binding-action (cdr resolved))))
+            (format "Resolved to: ~a" (keymap:action-text (keymap:binding-action (cdr resolved))))
             "Resolved to: self-insert or undefined")
         "Keymap: global"
         (if resolved
@@ -2576,7 +2561,7 @@
             (unless (eq? owned resolved)
               (buffer-append! b
                 (format "  ~a — ~a"
-                        (action-name (keymap:binding-action (cdr owned)))
+                        (keymap:action-text (keymap:binding-action (cdr owned)))
                         (binding-origin owned)))))
           entries))
       (let ([contexts
@@ -2596,7 +2581,7 @@
                   (buffer-append! b
                     (format "  ~a: ~a — ~a"
                             context
-                            (action-name (keymap:binding-action (cdr hit)))
+                            (keymap:action-text (keymap:binding-action (cdr hit)))
                             (binding-origin hit))))))
             contexts)))
       (head:buffer-read-only-set! b #t)
@@ -3312,14 +3297,14 @@
           ("PAGEUP" ,page-up!) ("PAGEDOWN" ,page-down!)
           ("PASTE" ,paste-into-buffer!) ("SELF-INSERT" ,self-insert-command!)
           ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!)
-          ("C-x C-w" "(eval:prompt-with! \"(edit:save-file! \\\"\")") ("C-x C-c" ,quit!)
+          ("C-x C-w" ,(keymap:prefill save-file!)) ("C-x C-c" ,quit!)
           ("C-x b" ,list-buffers!)
-          ("C-x k" "(edit:kill-buffer! (head:current-buffer))") ("C-x o" ,other-window!)
+          ("C-x k" ,(keymap:call kill-buffer! head:current-buffer)) ("C-x o" ,other-window!)
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
           ("C-x 2" ,split-window-below!) ("C-x 3" ,split-window-right!)
           ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
           ("C-h k" ,describe-key!)
-          ("C-c a" "(eval:prompt-with! \"(edit:answer! \")")))
+          ("C-c a" ,(keymap:prefill answer!))))
       (for-each
         (lambda (entry)
           (keymap:bind-default! 'prompt (car entry) (cadr entry)))
@@ -3430,7 +3415,7 @@
     (keymap:bind-default! "C-x C-b" list-buffers!)
     (keymap:bind-default! "M-S-UP" previous-buffer!)
     (keymap:bind-default! "M-S-DOWN" next-buffer!)
-    (keymap:bind-default! "M-%" "(eval:prompt-with! \"(edit:replace! \")")
+    (keymap:bind-default! "M-%" (keymap:prefill replace!))
     (keymap:bind-default! "M-n" next-conflict!)
     (keymap:bind-default! "M-m" keep-mine!)
     (keymap:bind-default! "M-d" keep-disk!)

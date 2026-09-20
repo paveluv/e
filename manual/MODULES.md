@@ -262,10 +262,13 @@ Prompting is the exception, not a naming matter: a command that must wait
 for input, `edit:describe-key!` reading a key or `edit:replace!` asking per
 occurrence, says so in its documentation. Otherwise the M-x API with typed
 completion does the asking, and a key that used to prompt opens M-x with the
-call typed up to its argument: `C-c a` gives `M-x (edit:answer! `. A key may
-be bound to an expression as well as to a procedure,
-`(keymap:bind! "C-x k" "(edit:kill-buffer! (head:current-buffer))")`, which
-`C-h k` shows as written.
+call typed up to its argument: `C-c a` gives `M-x (edit:answer! `. Such keys
+are bound structurally, from the procedures themselves rather than spelled
+names: `(keymap:bind! "C-c a" (keymap:prefill edit:answer!))` opens M-x
+pre-filled, and `(keymap:bind! "C-x k" (keymap:call edit:kill-buffer!
+head:current-buffer))` calls the command on what the producers return when
+the key is pressed. `C-h k` shows both as the call they make, by the names
+the top level gives the procedures, so a rename follows.
 
 `edit:call-with-buffer` temporarily evaluates against another buffer.
 `edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors should be

@@ -10,7 +10,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (dispatch)
-  (export (rename (handle-key! key!)))
+  (export set-prompt-opener! (rename (handle-key! key!)))
   (import (chezscheme)
           (prefix (head) head:)
           (prefix (paint) paint:)
@@ -21,12 +21,12 @@
 
   ;;; Key dispatch ---------------------------------------------------------------------
 
-  (define expression-actions (make-hashtable string-hash string=?))
-  (define (expression-action text)
-    (or (hashtable-ref expression-actions text #f)
-        (let ([thunk (eval `(lambda () ,(read (open-string-input-port text))) (interaction-environment))])
-          (hashtable-set! expression-actions text thunk)
-          thunk)))
+  (define prompt-opener
+    (lambda (name arguments) (error 'dispatch "no M-x prompt is installed to pre-fill" name)))
+  (edoc "Install the procedure that opens M-x with a call begun: (open name arguments), the command's top-level name and the arguments already given; a key bound with keymap:prefill calls it."
+        (open procedure "(open name arguments)"))
+  (define (set-prompt-opener! open)
+    (set! prompt-opener open))
 
   (define (run-key-action! action capture)
     ;; Run a resolved binding's action and remember it as the last
@@ -38,11 +38,22 @@
              (head:follow-app! (head:current-window) #f))
            (dynamic-wind void action
              (lambda () (head:set-last-command! action)))]
-          [(string? action)
-           ;; an expression bound to a key runs in the top level M-x uses,
-           ;; compiled once; describe-key shows it as written
+          [(keymap:call-action? action)
+           ;; a call built with keymap:call: the producers run at the press
            (head:follow-app! (head:current-window) #f)
-           (dynamic-wind void (expression-action action)
+           (dynamic-wind void
+             (lambda ()
+               (apply (keymap:call-action-procedure action)
+                      (map (lambda (produce) (produce)) (keymap:call-action-arguments action))))
+             (lambda () (head:set-last-command! action)))]
+          [(keymap:prefill-action? action)
+           ;; a pre-filled M-x built with keymap:prefill
+           (head:follow-app! (head:current-window) #f)
+           (dynamic-wind void
+             (lambda ()
+               (let ([name (keymap:prefill-name action)])
+                 (unless name (error 'dispatch "the pre-filled command has no top-level name" action))
+                 (apply prompt-opener name (keymap:prefill-action-arguments action))))
              (lambda () (head:set-last-command! action)))]
           [(not action)
            (head:set-last-command! #f)

@@ -20,10 +20,12 @@
           sequence-bindings resolved-binding choose-binding
           binding-context binding-sequence binding-action
           binding-kind binding-spec same-sequence?
+          call call-action? call-action-procedure call-action-arguments
+          prefill prefill-action? prefill-action-procedure prefill-action-arguments prefill-name prefill-text action-text
           set-context-capture! context-capture)
   (import (rnrs)
           (only (chezscheme)
-                cons* format iota top-level-bound? top-level-value)
+                cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment)
           (prefix (kernel) kernel:)
           (prefix (string) string:))
 
@@ -259,11 +261,86 @@
                      (eq? (binding-kind candidate) 'user)))))
         (effective-bindings context))))
 
+  ;;; Structured actions ------------------------------------------------------
+
+  ;; Besides a procedure, a key may be bound to a call whose arguments are
+  ;; produced when it is pressed, or to a pre-filled M-x. Both are built from
+  ;; the procedures themselves, never from spelled names, and describe
+  ;; themselves by the names the top level gives those procedures, so a
+  ;; rename follows and C-h k shows the call as it runs.
+  (edoc "A key action calling a procedure with what other procedures produce when the key is pressed."
+        (procedure procedure "the command to call")
+        (arguments (list-of procedure) "the producers of its arguments, called in order"))
+  (define-record-type (call-action make-call-action call-action?)
+    (fields (immutable procedure call-action-procedure) (immutable arguments call-action-arguments)))
+
+  (edoc "A key action that opens M-x with a call typed up to its next argument, so completion does the asking."
+        (procedure procedure "the command the call names")
+        (arguments (list-of datum) "the arguments already given, spelled into the text"))
+  (define-record-type (prefill-action make-prefill-action prefill-action?)
+    (fields (immutable procedure prefill-action-procedure) (immutable arguments prefill-action-arguments)))
+
+  (edoc "Bind a key to a call: the command applied to what the producers return when the key is pressed, (keymap:call edit:kill-buffer! head:current-buffer) say."
+        (procedure procedure "the command to call")
+        (producers (list-of procedure) "the procedures producing its arguments, in order")
+        (returns (record call-action)))
+  (define (call procedure . producers)
+    (unless (and (procedure? procedure) (for-all procedure? producers))
+      (error 'call "expected a procedure and producers" procedure producers))
+    (make-call-action procedure producers))
+
+  (edoc "Bind a key to a pre-filled M-x: the command's call typed up to its next argument, (keymap:prefill edit:answer!) say, the given arguments spelled first."
+        (procedure procedure "the command the call names")
+        (arguments (list-of datum) "the arguments already given")
+        (returns (record prefill-action)))
+  (define (prefill procedure . arguments)
+    (unless (procedure? procedure) (error 'prefill "expected a procedure" procedure))
+    (make-prefill-action procedure arguments))
+
+  (define (top-level-name procedure)
+    ;; the symbol the editor's top level binds to a procedure, or #f
+    (let ([sym (find (lambda (s) (and (top-level-bound? s) (eq? (top-level-value s) procedure)))
+                     (environment-symbols (interaction-environment)))])
+      (and sym (symbol->string sym))))
+
+  (define (spell value)
+    (if (symbol? value) (format "'~s" value) (format "~s" value)))
+
+  (edoc "The top-level name of the command a pre-filled M-x calls, or #f while it has none."
+        (action (record prefill-action) "the pre-fill")
+        (returns (or symbol #f)))
+  (define (prefill-name action)
+    (let ([name (top-level-name (prefill-action-procedure action))])
+      (and name (string->symbol name))))
+
+  (edoc "The text a pre-filled M-x starts with: the call up to its next argument, (edit:answer!  with the trailing space."
+        (action (record prefill-action) "the pre-fill")
+        (returns string))
+  (define (prefill-text action)
+    (string-append "(" (action-text (prefill-action-procedure action))
+                   (apply string-append (map (lambda (v) (string-append " " (spell v))) (prefill-action-arguments action)))
+                   " "))
+
+  (edoc "How a key action reads: a procedure by its top-level name, a call as the expression it runs, a pre-filled M-x as M-x and its text, a keymap action by name; unbound and anonymous say so."
+        (action any "the action")
+        (returns string))
+  (define (action-text action)
+    (cond [(not action) "unbound"]
+          [(symbol? action) (symbol->string action)]
+          [(call-action? action)
+           (string-append "(" (action-text (call-action-procedure action))
+                          (apply string-append
+                            (map (lambda (p) (string-append " (" (action-text p) ")")) (call-action-arguments action)))
+                          ")")]
+          [(prefill-action? action) (string-append "M-x " (prefill-text action))]
+          [(procedure? action) (or (top-level-name action) "anonymous command")]
+          [else (format "~s" action)]))
+
   (define (add-key-binding! context spec action kind)
     (unless (symbol? context)
       (error 'bind-key! "context must be a symbol" context))
-    (unless (or (procedure? action) (symbol? action) (string? action) (not action))
-      (error 'bind-key! "action must be a procedure, symbol, or #f" action))
+    (unless (or (procedure? action) (symbol? action) (call-action? action) (prefill-action? action) (not action))
+      (error 'bind-key! "action must be a procedure, a keymap:call, a keymap:prefill, a symbol, or #f" action))
     (kernel:registry-add! key-bindings
                           (binding-item context (key-spec spec) action
                                         kind spec)))
@@ -271,7 +348,7 @@
   (edoc "Bind a key spelling as a user binding, which wins over defaults: in a context, or in the global map when none is given."
         (context symbol "the keymap context")
         (spec key "the spelling")
-        (action (or procedure symbol string) "the command, a keymap action, or an expression to evaluate at the top level, (edit:kill-buffer! (head:current-buffer)) say"))
+        (action (or procedure symbol (record call-action) (record prefill-action)) "the command; a call built with keymap:call; a pre-filled M-x built with keymap:prefill; or a keymap action"))
   (define bind-key!
     (case-lambda
       [(spec action)
@@ -282,7 +359,7 @@
   (edoc "Bind a key spelling as a module's default, which user bindings override: in a context, or in the global map when none is given."
         (context symbol "the keymap context")
         (spec key "the spelling")
-        (action (or procedure symbol string) "the command, a keymap action, or an expression to evaluate at the top level, (edit:kill-buffer! (head:current-buffer)) say"))
+        (action (or procedure symbol (record call-action) (record prefill-action)) "the command; a call built with keymap:call; a pre-filled M-x built with keymap:prefill; or a keymap action"))
   (define bind-default-key!
     (case-lambda
       [(spec action)

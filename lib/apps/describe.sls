@@ -235,5 +235,5 @@
          ("(describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the reference database, and load it. Fetch progress is recorded in the log.")))
     (prompt:inspector describe-input!)
-    (keymap:bind-default! "C-h f" "(eval:prompt-with! \"(describe:show! \")")
+    (keymap:bind-default! "C-h f" (keymap:prefill describe!))
     (keymap:bind-default! "M-." describe-at-point!)))

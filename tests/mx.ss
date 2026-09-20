@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (head) head:) (prefix (text) text:)
+     (import (except (edit) init!) (literal) (prefix (eval) eval:) (prefix (actor) actor:) (prefix (keymap) keymap:) (prefix (head) head:) (prefix (text) text:)
              (prefix (string) string:) (prefix (test) test:))
 
      (define check test:check)
@@ -126,5 +126,13 @@
      (check 'record-procedures-complete-by-their-signatures
        (list (has? "(region b start end)" (labels "(region-buffer ")) (has? "(region-buffer region)" (labels "(show-buffer! ")))
        '(#t #t))
+
+     ;; Keys bind structure, not spelled names: a call with its producers and
+     ;; a pre-filled M-x describe themselves by their procedures' names.
+     (check 'structured-key-actions-describe-themselves
+       (list (keymap:action-text (keymap:call kill-buffer! head:current-buffer))
+             (keymap:action-text (keymap:prefill answer!))
+             (keymap:prefill-text (keymap:prefill replace! "old")))
+       '("(kill-buffer! (head:current-buffer))" "M-x (answer! " "(replace! \"old\" "))
 
      (test:finish! 'mx)))
