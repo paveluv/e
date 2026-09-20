@@ -19,7 +19,7 @@
   (export init! (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!)) (rename (pretty-scheme-rainbow! rainbow!)))
   (import (chezscheme)
           (prefix (head) head:)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
           (prefix (keymap) keymap:)
@@ -292,8 +292,8 @@
     ;; character the source opened it with, as the Scheme REPL does;
     ;; outside the mode they insert themselves.
     (if (pretty-buffer?)
-        (insert-text! (string (if (eqv? (innermost-opener) #\[) #\] #\))))
-        (insert-text! (string typed))))
+        (edit:insert-text! (string (if (eqv? (innermost-opener) #\[) #\] #\))))
+        (edit:insert-text! (string typed))))
 
   (define (toggle-mode! name)
     (mode:choose! (head:current-buffer)

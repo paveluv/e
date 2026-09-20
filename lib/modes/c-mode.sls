@@ -12,7 +12,6 @@
 (elibrary (c-mode)
   (export init!)
   (import (chezscheme)
-          (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:))

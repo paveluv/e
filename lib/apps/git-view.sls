@@ -4,7 +4,7 @@
 (elibrary (git-view)
   (export init! (rename (git-log! log!)) (rename (git-log-of! log-of!)) (rename (git-log-refresh! refresh!)))
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:)
@@ -127,7 +127,7 @@
     (refresh-log!)
     (when (eq? (head:current-buffer) log-buffer)
       (head:goto! (cons (if (null? log-rows) 0 1) 0)))
-    (set-message! "Git log refreshed"))
+    (edit:set-message! "Git log refreshed"))
 
   (edoc "Reload the git log app's commits and redraw, showing the refresh as a pressed button.")
   (define (git-log-refresh!)

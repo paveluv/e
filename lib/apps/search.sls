@@ -15,7 +15,7 @@
   (export init! (rename (search! incremental!)) (rename (search-fold-case fold-case))
           count replace-all! replace!)
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (literal)
           (prefix (dispatch) dispatch:)
           (prefix (style) style:)
@@ -130,7 +130,7 @@
     ;; label grey comes through the message's own styler rather than
     ;; the prompt machinery.
     (if (string=? s "")
-        (parameterize ([message-source #f]) (set-message! s))
+        (parameterize ([edit:message-source #f]) (edit:set-message! s))
         (paint:show-message! s
           (cons s (lambda (text)
                     (let* ([n (string-length text)]
@@ -298,7 +298,7 @@
         (needle string "the text to count, within one line")
         (returns integer))
   (define (count needle)
-    (for-matches! (current-region) needle (lambda (row col) (string-length needle))))
+    (for-matches! (edit:current-region) needle (lambda (row col) (string-length needle))))
 
   (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one undo step, point left where it was."
         (from string "the text to find, within one line")
@@ -337,13 +337,13 @@
                                 (substring s from-col (max from-col to-col)))])
                   (loop (+ row 1) (cons line lines) (+ count found))))))))
     (when (= m 0) (error 'replace-all! "empty search string"))
-    (let ([r (current-region)] [basis (head:edit-basis (head:current-buffer))])
-      (call-as-one-edit!
+    (let ([r (edit:current-region)] [basis (head:edit-basis (head:current-buffer))])
+      (edit:call-as-one-edit!
         (format "(search:replace-all! ~s ~s)" from to)
         (lambda ()
           (let-values ([(text count) (rewritten-region r)])
             (when (> count 0)
-              (rewrite-region! basis (region-start r) (region-end r) text))
+              (edit:rewrite-region! basis (region-start r) (region-end r) text))
             count)))))
 
   ;;; Query replace --------------------------------------------------------------------
@@ -383,7 +383,7 @@
           (dynamic-wind
             void
             (lambda ()
-              (call-as-one-edit! (format "(search:replace! ~s ~s)" from to)
+              (edit:call-as-one-edit! (format "(search:replace! ~s ~s)" from to)
                 (lambda ()
                   (let loop ([row (car (head:point))] [col (cdr (head:point))])
                     (let ([hit (find-from b from row col)])
@@ -391,8 +391,8 @@
                         (set! query-match
                           (list (car hit) (cdr hit) (+ (cdr hit) m)))
                         (head:goto! (cons (car hit) (+ (cdr hit) m)))
-                        (parameterize ([message-source #f]) ; an indicator
-                          (set-message! question))
+                        (parameterize ([edit:message-source #f]) ; an indicator
+                          (edit:set-message! question))
                         (paint:redraw!)     ; the match highlight, not the message
                         (let* ([event (head:read-key-event #f)]
                                [action (and (not (eof-object? event))
@@ -400,7 +400,7 @@
                                               'query-replace event))])
                           (case action
                             [(replace)
-                             (replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
+                             (edit:replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
                              (set! replaced (+ replaced 1))
                              (loop (car (head:point)) (cdr (head:point)))]
                             [(skip)
@@ -414,14 +414,14 @@
                                           (eq? (keymap:event-binding
                                                  'query-replace "C-x" next)
                                                'quit-editor))
-                                 (quit!))
+                                 (edit:quit!))
                                (head:goto! hit))]
                             [else
                              (if (eof-object? event)
                                  (head:goto! hit)
                                  (loop (car hit) (cdr hit)))]))))))))
             (lambda () (set! query-match #f)))
-          (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
+          (edit:set-message! (format "Replaced ~a, skipped ~a" replaced skipped))
           (void))))
 
   (edoc "Install search: its describe entry, the match highlighters, C-s with the search keymap, and M-% with the query-replace keymap.")

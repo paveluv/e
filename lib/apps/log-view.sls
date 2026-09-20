@@ -12,7 +12,6 @@
 (elibrary (log-view)
   (export init! (rename (log-view! buffer!)) (rename (show-log! show!)))
   (import (chezscheme)
-          (except (edit) init!)
           (prefix (style) style:)
           (prefix (mode) mode:)
           (prefix (string) string:)

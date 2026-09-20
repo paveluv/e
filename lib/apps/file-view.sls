@@ -3,7 +3,7 @@
 (elibrary (file-view)
   (export init! open! open-directory! refresh! expansion-limit show-hidden)
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (head) head:)
           (prefix (file) file:)
           (prefix (directory) directory:)
@@ -102,7 +102,7 @@
             (apply (lambda (entries skipped done? failure)
                      (set! inventory (directory:reconcile entries inventory (scan-limit job) done?))
                      (set! failures skipped) (set! complete? done?)
-                     (when failure (set-message! (string-append "File scan failed: " failure)))) update)))
+                     (when failure (edit:set-message! (string-append "File scan failed: " failure)))) update)))
         ;; Config/reload can render before publishing registration. Launch
         ;; only after the worker will see this same identity, never staged state.
         (when (and (kernel:call-with-runtime-registrations
@@ -364,10 +364,10 @@
         (cond [(or returning (directory:directory? entry)) (navigate! path #t #f)]
               [(not directories-only?)
                (if (not (eq? (directory:entry-kind entry) 'file))
-                   (set-message! "Not a readable regular file; refresh to check for changes")
+                   (edit:set-message! "Not a readable regular file; refresh to check for changes")
                    (let ([target (head:app-event-focus)])
                      (when (and target (memq target (head:windows))) (head:set-current! target))
-                     (head:call-with-interrupt (lambda () (visit-file! path)))))]))))
+                     (head:call-with-interrupt (lambda () (edit:visit-file! path)))))]))))
   (define (filter! text)
     ;; A container visible only because descendants match must not keep
     ;; stealing Enter from the filename being typed. Preserve an existing
@@ -445,7 +445,7 @@
         (lambda ()
           (parameterize ([prompt:content (prompt:make-content (+ first-row 1)
                                            (lambda (input w height page) (path-lines input w height page base)) path-event!)])
-            (prompt-file! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
+            (edit:prompt-file! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
         (lambda ()
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
           (when (and view (memq view (head:buffers)) (head:app-buffer? view)) (start-scan!))))))

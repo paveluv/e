@@ -14,7 +14,7 @@
 (elibrary (mouse)
   (export init! track!)
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (kernel) kernel:)
           (prefix (keymap) keymap:)
           (prefix (mode) mode:)
@@ -233,8 +233,8 @@
     ;; left, right. Vertical ticks move the hovered viewport by one eighth
     ;; of its height; horizontal ones move point sideways within its line.
     (case dir
-      [(0) (lambda () (page-window! -1 8))]
-      [(1) (lambda () (page-window! 1 8))]
+      [(0) (lambda () (edit:page-window! -1 8))]
+      [(1) (lambda () (edit:page-window! 1 8))]
       [(2) (lambda () (let ([p (head:point)]) (head:goto! (cons (car p) (- (cdr p) 3)))))]
       [(3) (lambda () (let ([p (head:point)]) (head:goto! (cons (car p) (+ (cdr p) 3)))))]
       [else (lambda () (void))]))

@@ -22,7 +22,7 @@
           (rename (markdown-render render)) (rename (markdown-view-install! view-install!)) (rename (markdown-browser browser))
           (rename (markdown-view-max-width view-max-width)))
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (prompt) prompt:)
           (prefix (echo) echo:)
           (prefix (mode) mode:)
@@ -1027,15 +1027,15 @@
   (define (open-link! url)
     ;; Followed links log under the markdown source; web links go to
     ;; the configured browser command.
-    (parameterize ([message-source 'markdown])
+    (parameterize ([edit:message-source 'markdown])
       (cond
         [(or (string:prefix? "http://" url)
              (string:prefix? "https://" url))
          (system (format "~a ~a >/dev/null 2>&1 &"
                          (markdown-browser) (shell-quoted url)))
-         (set-message! (format "Opened ~a" url))]
+         (edit:set-message! (format "Opened ~a" url))]
         [(string:prefix? "#" url)
-         (set-message! "Anchor links are not followed yet")]
+         (edit:set-message! "Anchor links are not followed yet")]
         [else
          (let* ([b (head:current-buffer)]
                 [input (render-input b)]
@@ -1044,19 +1044,19 @@
                 [path (file:expand url)]
                 [target (if (string:prefix? "/" path) path
                             (string-append dir path))])
-           (visit-file! target)
+           (edit:visit-file! target)
            ;; a linked markdown document arrives already formatted
            (when (and (markdown-file? url)
                       (equal? (mode:name-of (head:current-buffer))
                               "markdown"))
              (guard (ex [else (void)]) (markdown-view!)))
-           (set-message! (format "Followed ~a" url)))])))
+           (edit:set-message! (format "Followed ~a" url)))])))
 
   (define (follow-md-link!)
     (let ([link (link-at-point)])
       (if link
           (open-link! (caddr link))
-          (set-message! "No link at point"))))
+          (edit:set-message! "No link at point"))))
 
   (define (click-md-link!)
     ;; The click already placed point; only an actual link acts.

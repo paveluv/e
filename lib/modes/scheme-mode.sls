@@ -15,8 +15,8 @@
 (elibrary (scheme-mode)
   (export init! (rename (scheme-format-on-save format-on-save)))
   (import (chezscheme)
+          (prefix (edit) edit:)
           (prefix (head) head:)
-          (except (edit) init!)
           (prefix (file) file:)
           (prefix (style) style:)
           (prefix (mode) mode:)
@@ -196,7 +196,7 @@
   (define (format-on-save! path)
     (when (and (scheme-format-on-save)
                (equal? (mode:name-of (head:current-buffer)) "scheme"))
-      (format-buffer!)))
+      (edit:format-buffer!)))
 
   (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries.")
   (define (init!)

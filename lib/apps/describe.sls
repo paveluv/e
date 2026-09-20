@@ -10,7 +10,7 @@
                         (describe-key! key!)
                         (reference:fetch! fetch-data!)))
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (kernel) kernel:)
           (prefix (doc) doc:)
           (prefix (reference) reference:)
@@ -50,7 +50,7 @@
                        [else (or (top-level-name name) name)])]
            [id (reference:page! head:ui-actor name (keymap:command-keys name))])
       (if (not id)
-          (set-message! (format "No documentation for ~a" name))
+          (edit:set-message! (format "No documentation for ~a" name))
           (head:call-with-display-update
             (lambda ()
               (head:sync-foreign-edits! id)
@@ -59,8 +59,8 @@
                   (let ([b (markdown:companion! source "*describe*")])
                     (head:with-buffer b (head:goto! '(0 . 0)))
                     (if (window:pop-up-or-reuse! b)
-                        (set-message! "")
-                        (set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))
+                        (edit:set-message! "")
+                        (edit:set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))
     (void))
 
   (edoc "Show the describe page of a name written literally: (describe edit:visit-file!)."
@@ -123,9 +123,9 @@
   (define (describe-at-point!)
     ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
     (cond [(not (scheme-buffer?))
-           (set-message! "Not a Scheme buffer")]
+           (edit:set-message! "Not a Scheme buffer")]
           [(symbol-at-point) => describe!]
-          [else (set-message! "No symbol at point")])
+          [else (edit:set-message! "No symbol at point")])
     (void))
 
   (define (describe-input! text pos)
@@ -230,7 +230,7 @@
       (head:buffer-read-only-set! b #t)
       (paint:show-message! "" #f)
       (unless (window:pop-up-or-reuse! b)
-        (set-message! "The <help> buffer could not be displayed"))))
+        (edit:set-message! "The <help> buffer could not be displayed"))))
 
   (edoc "Install the describe commands: the page refresh hook, the describe entries of the extension API and the C-h f and C-h k bindings.")
   (define (init!)

@@ -121,7 +121,8 @@ An extension exports `init!`, which performs its registrations:
 ```scheme
 (library (my-mode)
   (export init!)
-  (import (chezscheme) (except (edit) init!)   ; the command layer
+  (import (chezscheme)
+          (prefix (edit) edit:)              ; the command layer, a seam like any
           (prefix (mode) mode:))             ; seams, prefixed
 
   (define (my-styles line) ...)

@@ -24,10 +24,10 @@
 (elibrary (blame)
   (export init! (rename (blame-at-point! at-point!)) (rename (blame-tint-seconds tint-seconds)))
   (import (rnrs)
+          (prefix (edit) edit:)
           (only (chezscheme)
                 box unbox set-box! format make-parameter void
                 make-time current-time add-duration time<? make-weak-eq-hashtable)
-          (except (edit) init!)
           (prefix (paint) paint:)
           (prefix (head) head:)
           (prefix (style) style:)
@@ -165,7 +165,7 @@
     (let* ([b (head:current-buffer)]
            [id (head:buffer-store-id b)]
            [p (head:point)])
-      (set-message!
+      (edit:set-message!
         (cond
           [(not id) "This buffer has no store twin"]
           [(find (lambda (entry)

@@ -13,7 +13,6 @@
   (export init! (rename (matching-paren-style matching-style)))
   (import (chezscheme)
           (prefix (head) head:)
-          (except (edit) init!)
           (prefix (mode) mode:)
           (prefix (paint) paint:)
           (prefix (style) style:)

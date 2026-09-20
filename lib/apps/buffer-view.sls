@@ -11,7 +11,7 @@
 (elibrary (buffer-view)
   (export init! open! previous! next!)
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (head) head:)
           (prefix (store) store:)
           (prefix (dispatch) dispatch:)
@@ -132,7 +132,7 @@
                            [e (if (and old (= (trashed-killed-at old) (cadr t))) old (make-trashed name (cadr t)))])
                       (hashtable-set! fresh name e)
                       e))
-                  (trash))])
+                  (edit:trash))])
         (set! trash-entries fresh)
         entries)))
 
@@ -276,7 +276,7 @@
       (when e
         (set! hover #f)
         (when (and target (memq target (head:windows))) (head:set-current! target))
-        (if (trashed? e) (restore! (trashed-name e)) (head:show-buffer! e)))))
+        (if (trashed? e) (edit:restore! (trashed-name e)) (head:show-buffer! e)))))
 
   (define (filter! text)
     (set! hover #f)
@@ -411,7 +411,7 @@
               (or (other-buffer was) was) '()))
           (head:show-buffer! b)
           (refresh!)))
-      (set-message! "")))
+      (edit:set-message! "")))
 
   ;;; Registration -------------------------------------------------------------------
 

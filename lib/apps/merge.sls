@@ -10,7 +10,7 @@
 (elibrary (merge)
   (export init! next! keep-mine! keep-disk!)
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (head) head:)
           (prefix (string) string:)
           (prefix (keymap) keymap:))
@@ -50,7 +50,7 @@
                    (loop (+ r 1)
                          (+ n 1 (string-length
                                   (head:buffer-line (head:current-buffer) r))))))])
-      (do ([i 0 (+ i 1)]) ((= i n)) (delete-forward!))))
+      (do ([i 0 (+ i 1)]) ((= i n)) (edit:delete-forward!))))
 
   (edoc "Move point to the next merge conflict marker, wrapping around at the end of the buffer.")
   (define (next!)
@@ -65,7 +65,7 @@
                         [else (scan (+ r 1) (- left 1))]))])
       (if hit
           (head:goto! (cons hit 0))
-          (set-message! "No conflicts"))
+          (edit:set-message! "No conflicts"))
       (void)))
 
   (define (resolve! label keep! kept)
@@ -74,9 +74,9 @@
     (let ([c (conflict-at (car (head:point)))])
       (if c
           (begin
-            (call-as-one-edit! label (lambda () (keep! c) (head:goto! (cons (car c) 0))))
-            (set-message! kept))
-          (set-message! "Not in a conflict"))
+            (edit:call-as-one-edit! label (lambda () (keep! c) (head:goto! (cons (car c) 0))))
+            (edit:set-message! kept))
+          (edit:set-message! "Not in a conflict"))
       (void)))
 
   (edoc "Resolve the merge conflict at point in the buffer's favor, as one undo step.")

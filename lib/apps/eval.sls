@@ -23,7 +23,7 @@
           (rename (eval! run!)) (rename (eval-prompt! prompt!)) (rename (eval-prompt-with! prompt-with!))
           (rename (eval-copy-result copy-result)))
   (import (chezscheme)
-          (except (edit) init!)
+          (prefix (edit) edit:)
           (prefix (prompt) prompt:)
           (prefix (head) head:)
           (prefix (mode) mode:)
@@ -39,7 +39,6 @@
           (prefix (dispatch) dispatch:)
           (prefix (only (reference) lookup) reference:)
           (prefix (doc) doc:)
-          (only (edit) current-region region-text)
           (prefix (only (scheme-format) indent-lines delimiter?) scheme-format:)
           (prefix (only (sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
 
@@ -897,7 +896,7 @@
                  [else (format "error: ~a" (kernel:condition-text ex))])
         (head:call-with-interrupt
           (lambda ()
-            (call-as-one-edit! label
+            (edit:call-as-one-edit! label
               (lambda ()
                 (let-values ([vals (evaluate-text text)]) vals)))))))
     (let ([lock (make-mutex)]
@@ -936,16 +935,16 @@
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
               (log:add! 'eval (cons query (if void? "#<void>" result)) #f)])
-        (when copied? (copy-to-kill-buffer! result))
+        (when copied? (edit:copy-to-kill-buffer! result))
         (unless spoke?
-          (present-log-entries!
+          (edit:present-log-entries!
             (append output-records (list result-record))
             (if copied? " [stored in kill ring]" ""))))))
 
   (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area.")
   (define (eval!)
     (let-values ([(outcome output-records)
-                  (evaluation-outcome "(eval!)" (region-text (current-region)))])
+                  (evaluation-outcome "(eval!)" (edit:region-text (edit:current-region)))])
       (report-evaluation! "(eval!)" outcome output-records))
     (void))
 
