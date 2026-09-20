@@ -260,8 +260,8 @@
                     (list (eq? request-window (head:current-window)) (eq? request-buffer (head:current-buffer))
                           (not (head:buffer-store-id view)) (head:buffer-name view)
                           (mode:name-of source) (head:buffer-read-only source))])
-              (edit:set-buffer-name! source "reference source")
-              (edit:set-buffer-name! view "reference view")
+              (head:buffer-name-set! source "reference source")
+              (head:buffer-name-set! view "reference view")
               (show! 'markdown:view!)
               (let* ([reloads
                       (fold-left

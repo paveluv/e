@@ -973,7 +973,7 @@
                 [b (source-view! source)])
             (head:show-buffer! b)
             (refresh-render! b)
-            (goto-point! (cons (view-row-showing (rendering-of b) row) 0)))))
+            (head:goto! (cons (view-row-showing (rendering-of b) row) 0)))))
       (void)))
 
   (edoc "Return from a Markdown view to its live source buffer."
@@ -992,7 +992,7 @@
             (refresh-render! b)
             (let ([row (source-row-at (rendering-of b) (car (head:buffer-point b)))])
               (head:show-buffer! source)
-              (goto-point! (cons row 0))))))
+              (head:goto! (cons row 0))))))
       (void)))
 
   (define (forget-render! b)
@@ -1016,7 +1016,7 @@
 
   (define (link-at-point)
     (let* ([b (head:current-buffer)]
-           [pt (point)]
+           [pt (head:point)]
            [links (view-row-links b (car pt) #f)])
       (find (lambda (l) (and (<= (car l) (cdr pt)) (< (cdr pt) (cadr l))))
             links)))
@@ -1070,8 +1070,8 @@
   (define hint-shown #f)
 
   (define (link-hint)
-    (unless (or (prompt:active?) (equal? hint-point (point)))
-      (set! hint-point (point))
+    (unless (or (prompt:active?) (equal? hint-point (head:point)))
+      (set! hint-point (head:point))
       (let ([link (and (equal? (mode:name-of (head:current-buffer))
                                "markdown-view")
                        (link-at-point))])

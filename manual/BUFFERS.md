@@ -474,7 +474,7 @@ point. `(paint:wrap-lines #f)` changes the default, `C-x t` (`window:toggle-wrap
 toggles wrapping for one window, and `(window:set-wrap! setting)` sets it to
 `#t`, `#f` or `default`. Like line numbers, the window's setting applies
 while it shows an edit buffer; a buffer's own wrap fact, set with
-`edit:set-buffer-wrap!`, is what an app's buffer follows and what an edit
+`head:buffer-wrap-set!`, is what an app's buffer follows and what an edit
 buffer follows while its window's setting is `default`.
 
 Wrapping, Up/Down, and paging measure screen cells, keeping the visual column
@@ -538,10 +538,10 @@ whether there are unsaved changes.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
-`head:new-buffer!`, `head:new-local-buffer!`, `edit:fresh-buffer!`, `head:show-buffer!`,
+`head:new-buffer!`, `head:new-local-buffer!`, `head:fresh-buffer!`, `head:show-buffer!`,
 `window:display!`,
 `window:pop-up-or-reuse!`, `edit:kill-buffer!`,
-`edit:buffer-append!`, `mode:choose!`, and `edit:set-buffer-read-only!` provide
+`head:buffer-append!`, `mode:choose!`, and `head:buffer-read-only-set!` provide
 controlled mutation and display. `head:with-buffer` temporarily makes another
 buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
 entries. `window:focus-up!`, `window:focus-down!`, `window:focus-left!`, and
@@ -599,7 +599,7 @@ deletion releases it. `store:buffer-name` returns the current name and
 `store:find-named` returns its id or `#f`. Returned strings are copies.
 `rename!` returns the name accepted at that commit; a subscriber can rename
 or delete the buffer before the call returns. For a head record, use
-`(edit:set-buffer-name! b name)` or `(head:buffer-name-set! b name)` to commit and
+`(head:buffer-name-set! b name)` to commit and
 adopt its current name. A failed rename preserves the cached label and
 reports the error.
 
@@ -645,7 +645,7 @@ adds a buffer to the list without displaying it and claims its label.
 `(head:tool-buffer! key)` returns or creates a local tool buffer under a
 stable string key; `(head:find-tool-buffer key)` only looks it up.
 Renaming the displayed buffer does not change its tool key.  App
-registration and `edit:fresh-buffer!` use this same lookup, so a snapshot
+registration and `head:fresh-buffer!` use this same lookup, so a snapshot
 tool rebuilds its own buffer and preserves ordinary buffers with a
 matching label.  Killing a tool buffer removes that instance.
 Names supplied as `name`, `<name>`, or `*name*` get the local label

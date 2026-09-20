@@ -315,7 +315,7 @@
   (define (select! row)
     (when row
       (choice-selected-set! (choice-for (head:current-window)) (car row))
-      (goto-point! (cons (row-index (car row)) 0))))
+      (head:goto! (cons (row-index (car row)) 0))))
   (define (move! delta)
     (let* ([row (candidate (head:current-window))]
            [index (if row (row-index (car row)) (- first-row 1))])
@@ -523,7 +523,7 @@
   (define (ensure!)
     (unless (and view (memq view (head:buffers)) (head:app-buffer? view))
       (set! view (head:register-app! "*files*" render! handle!))
-      (set! location (head:buffer-fact view 'directory (file:canonical (file:expand (default-directory)))))
+      (set! location (head:buffer-fact view 'directory (file:canonical (file:expand (head:default-directory)))))
       (set! query (head:buffer-fact view 'file-filter ""))
       (set! sorts (head:buffer-fact view 'file-sorts '()))
       (show-hidden (head:buffer-fact view 'file-hidden (show-hidden)))
@@ -536,7 +536,7 @@
     view)
   (edoc "Show the files view for the current file's directory, an app's working directory or the head's launch directory, with the current file selected.")
   (define (open!)
-    (open-at! (default-directory) #f))
+    (open-at! (head:default-directory) #f))
 
   (edoc "Show the files view for a directory, with the current file selected when it is inside."
         (directory directory "the directory to browse"))
@@ -601,7 +601,7 @@
                                                      (and (pair? p) (integer? (car p)) (string? (cdr p)))) selected))
               (error 'restore "invalid files view descriptor" reference))
             (ensure!)
-            (set-buffer-name! view name)
+            (head:buffer-name-set! view name)
             (set! query filter) (set! sorts keys) (show-hidden hidden?)
             (set! resumed-choices selected)
             (navigate! path #t #f)

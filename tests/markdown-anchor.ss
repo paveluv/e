@@ -40,7 +40,7 @@
      (define (place! b first second backward?)
        (head:set-window-buffer! w2 b)
        (let ([a (find-row b first)] [z (find-row b second)])
-         (goto-point! (if backward? (cons z 2) (cons a 3)))
+         (head:goto! (if backward? (cons z 2) (cons a 3)))
          (head:window-top-set! w1 a)
          (head:window-topseg-set! w1 0)
          (head:window-prow-set! w2 z)
@@ -79,7 +79,7 @@
      (define view (head:current-buffer))
      (define w2 (head:make-window view 4 0 0 4 2 12 80 80 'default))
      (head:set-layout-root! (head:make-layout-split 'right w1 w2 1 1))
-     (goto-point! '(2 . 3))
+     (head:goto! '(2 . 3))
      (head:window-top-set! w1 2)
      (head:buffer-spot-row-set! view 4)
      (head:buffer-spot-col-set! view 2)
@@ -114,10 +114,10 @@
      (check 'refresh-uses-adopted-source (head:buffer-lines view) before-unadopted)
      (markdown:edit!)
      (check 'toggle-before-adoption-finds-current-source-row
-            (head:buffer-line source (car (point))) "# Omega!")
+            (head:buffer-line source (car (head:point))) "# Omega!")
      (head:before-frame!)
      (check 'source-point-follows-later-adoption
-            (head:buffer-line source (car (point))) "# Omega!")
+            (head:buffer-line source (car (head:point))) "# Omega!")
 
      (for-each
        (lambda (local?)
@@ -125,7 +125,7 @@
                 [source-window (head:make-window source 0 0 0 0 0 12 80 80 'default)])
            (head:set-windows! (list w1 w2 source-window))
            (place! view "Middle" "Omega" #f)
-           (head:with-buffer source (goto-point! '(0 . 0)) (insert-text! "# Before\n\n"))
+           (head:with-buffer source (head:goto! '(0 . 0)) (insert-text! "# Before\n\n"))
            (head:before-frame!)
            (check 'own-edit-follows-source (anchors view) (expected "Middle" "Omega" #f))
            (head:with-buffer source (undo!))

@@ -164,7 +164,7 @@
     ;; who recently wrote the text at point, from the store's log
     (let* ([b (head:current-buffer)]
            [id (head:buffer-store-id b)]
-           [p (point)])
+           [p (head:point)])
       (set-message!
         (cond
           [(not id) "This buffer has no store twin"]

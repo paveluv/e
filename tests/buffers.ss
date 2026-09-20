@@ -30,8 +30,8 @@
        (let ([start (string:search line "<" 0 (string-length line))])
          (and start (substring line start (+ 1 (string:search line ">" start (string-length line)))))))
      (define (names) (map name-in (rows)))
-     (define (selected) (name-in (head:buffer-line (head:current-buffer) (car (point)))))
-     (define (state) (list (head:buffer-name (head:current-buffer)) (point)))
+     (define (selected) (name-in (head:buffer-line (head:current-buffer) (car (head:point)))))
+     (define (state) (list (head:buffer-name (head:current-buffer)) (head:point)))
      (define (order tags) (map (lambda (tag) (format "<picker-~a>" tag)) tags))
      (define picker-all (order '(alpha beta gamma)))
      (define (row-of name)
@@ -50,8 +50,8 @@
        '(("picker-alpha" 20 "/project/zebra/long/日本語 alpha.txt" "pick-z")
          ("picker-beta" 9 "/project/alpha/src/beta.ss" "pick-a")
          ("picker-gamma" 100 #f #f)))
-     (head:show-buffer! (buffer "<picker-alpha>")) (goto-point! '(3 . 2))
-     (head:show-buffer! (buffer "<picker-beta>")) (goto-point! '(4 . 1))
+     (head:show-buffer! (buffer "<picker-alpha>")) (head:goto! '(3 . 2))
+     (head:show-buffer! (buffer "<picker-beta>")) (head:goto! '(4 . 1))
 
      ;; Enter initially selects the previous document; the app itself never
      ;; becomes the default, even after repeated quick switches.
@@ -141,7 +141,7 @@
        (list '(#t #f #t) (order '(alpha gamma beta)) (order '(gamma alpha beta)) (list picker-all #t) picker-all))
 
      ;; Identity: a rename keeps the selection, a kill leaves a live candidate.
-     (set-buffer-name! (buffer "<picker-alpha>") "picker-delta") (head:refresh-visible-views!)
+     (head:buffer-name-set! (buffer "<picker-alpha>") "picker-delta") (head:refresh-visible-views!)
      (check 'renaming-the-selected-buffer-does-not-move-selection (selected) "<picker-delta>")
      (kill-buffer! (buffer "<picker-delta>")) (head:refresh-visible-views!)
      (check 'deleting-a-selected-buffer-leaves-a-live-candidate (and (member (selected) (names)) #t) #t)

@@ -82,7 +82,7 @@
      (check 'invalid-view-state-keeps-text-and-revision (head:edit-basis app) app-basis)
      (check 'invalid-view-state-keeps-facts (head:buffer-fact app 'custom 'absent) 'absent)
      (head:set-app-presentation! app 1 #t #f 'bar)
-     (set-buffer-name! app "renamed app")
+     (head:buffer-name-set! app "renamed app")
      (define calls 0)
      (define again
        (head:register-view! "*app-collision*"
@@ -107,26 +107,26 @@
      ;; when the user reopens the app, even if its text became shorter.
      (head:view-replace! explicit '("first" "second" "third"))
      (head:show-buffer! explicit)
-     (goto-point! '(2 . 5))
+     (head:goto! '(2 . 5))
      (set-mark-command!)
      (head:window-top-set! (head:current-window) 2)
      (head:show-buffer! app)
      (head:view-replace! explicit '("x"))
      (head:show-buffer! explicit)
-     (check 'shorter-view-clamps-saved-point (point) '(0 . 1))
-     (check 'shorter-view-clamps-selection (mark) '(0 . 1))
+     (check 'shorter-view-clamps-saved-point (head:point) '(0 . 1))
+     (check 'shorter-view-clamps-selection (head:mark) '(0 . 1))
      (check 'shorter-view-clamps-saved-viewport (head:window-top (head:current-window)) 0)
      (head:set-app-selectable! explicit #f)
-     (define disabled-mark (mark))
+     (define disabled-mark (head:mark))
      (set-mark-command!)
      (head:buffer-marked-set! explicit #t)
      (check 'app-selection-opt-out-clears-and-refuses-marks
-       (list disabled-mark (mark) (head:buffer-selectable? explicit)) '(#f #f #f))
+       (list disabled-mark (head:mark) (head:buffer-selectable? explicit)) '(#f #f #f))
      (head:set-app-selectable! explicit #t)
      (set-mark-command!)
-     (goto-point! '(0 . 0))
+     (head:goto! '(0 . 0))
      (copy-region!)
-     (check 'shorter-view-selection-can-be-copied (mark) #f)
+     (check 'shorter-view-selection-can-be-copied (head:mark) #f)
      (head:show-buffer! app)
 
      ;; One model can publish different row layouts to its windows. Geometry
@@ -148,8 +148,8 @@
          (list observed (buffer-text b)
                (render:column (head:window-rendition w) 1 3)
                (paint:column-at-cell other 1 #f 0 1)
-               (begin (goto-point! '(1 . 99)) (point))
-               (begin (beginning-of-line!) (end-of-line!) (point)))
+               (begin (head:goto! '(1 . 99)) (head:point))
+               (begin (beginning-of-line!) (end-of-line!) (head:point)))
          (list (list wide narrow) "heading\ncomplete source row\n" 3 2 '(1 . 4) '(1 . 4)))
        (let ([basis (head:edit-basis b)] [retained (head:window-lines other)]
              [changed '#("wider heading" "界界e\x301;Z")])
@@ -193,7 +193,7 @@
      (check 'foreign-rename-displaces-local
             (head:buffer-name app) "<renamed app 2 2>")
      (check 'ordinary-user-rename-avoids-store
-            (head:buffer-name (set-buffer-name! app "<renamed app 2>"))
+            (begin (head:buffer-name-set! app "<renamed app 2>") (head:buffer-name app))
             "<renamed app 2 2>")
 
      ;; Names are claimed on list entry as well as construction.
@@ -211,7 +211,7 @@
      (define user-history (vector '(saved) '()))
      (head:buffer-history-set! user-help user-history)
      (head:add-buffer! user-help)
-     (define tool (fresh-buffer! "*help*"))
+     (define tool (head:fresh-buffer! "*help*"))
      (check 'snapshot-is-local (head:buffer-store-id tool) #f)
      (check 'snapshot-label-is-local (head:buffer-name tool) "<help>")
      (check 'shared-tool-like-name-is-unchanged (head:buffer-name user-help) "*help*")
@@ -220,8 +220,8 @@
      (check 'snapshot-preserves-user-read-only (head:buffer-read-only user-help) #t)
      (check 'snapshot-preserves-user-history
             (eq? (head:buffer-history user-help) user-history) #t)
-     (set-buffer-name! tool "help renamed")
-     (check 'snapshot-reuses-renamed-tool (eq? (fresh-buffer! "*help*") tool) #t)
+     (head:buffer-name-set! tool "help renamed")
+     (check 'snapshot-reuses-renamed-tool (eq? (head:fresh-buffer! "*help*") tool) #t)
 
      ;; Refresh and kill use local lifecycle only.
      (define events '())
@@ -231,7 +231,7 @@
      (define transient (head:register-view! "*transient*" void))
      (head:view-replace! transient '("one"))
      (head:view-append! transient '("two"))
-     (set-buffer-name! transient "transient renamed")
+     (head:buffer-name-set! transient "transient renamed")
      (kill-buffer! transient)
      (check 'killed-tool-not-found (head:find-tool-buffer "*transient*") #f)
      (check 'killed-app-not-registered (head:app-of transient) #f)
@@ -245,8 +245,8 @@
      ;; Seed their keys without opening a repository or spawning Git.
      (define git-log (head:register-view! "*git-log*" void))
      (define git-diff (head:register-view! "*git-diff*" void))
-     (set-buffer-name! git-log "renamed git log")
-     (set-buffer-name! git-diff "renamed git diff")
+     (head:buffer-name-set! git-log "renamed git log")
+     (head:buffer-name-set! git-diff "renamed git diff")
      (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
      (check 'git-rebinds-renamed-log (head:buffer-fact git-log 'mode #f) "git:log")
      (check 'git-rebinds-renamed-diff (head:buffer-fact git-diff 'mode #f) "git:diff")
@@ -271,8 +271,8 @@
        (log-view:init!)
        (set! all-log (log-view:buffer!))
        (set! filtered-log (log-view:buffer! 'app-probe)))
-     (set-buffer-name! all-log "renamed log")
-     (set-buffer-name! filtered-log "renamed filtered log")
+     (head:buffer-name-set! all-log "renamed log")
+     (head:buffer-name-set! filtered-log "renamed filtered log")
      (define old-all (head:buffer-lines all-log))
      (define old-filtered (head:buffer-lines filtered-log))
      (check 'log-actor-prefix-is-separate-from-component-styling

@@ -115,14 +115,14 @@
                   (loop (modulo (+ row 1) rows) 0 (- remaining 1))))))))
 
   (define (goto-match! match)
-    (goto-point! (cons (car match) (cdr match))))
+    (head:goto! (cons (car match) (cdr match))))
 
   (define (goto-match-end! match needle)
     ;; Point lands right after the match, so accepting the search
     ;; leaves it there -- a region set before searching then covers
     ;; the found text.
-    (goto-point! (cons (car match)
-                       (+ (cdr match) (string-length needle)))))
+    (head:goto! (cons (car match)
+                      (+ (cdr match) (string-length needle)))))
 
   (define (indicate! s)
     ;; The search's status line, its label greyed like any prompt's.
@@ -142,7 +142,7 @@
 
   (define (run-search!)
     (define origin-window (head:current-window))
-    (define origin (point))
+    (define origin (head:point))
     (define (match-here? match)
       (and match (eq? (car match) (head:current-buffer))))
     (define (anchor match)
@@ -150,7 +150,7 @@
       ;; this buffer, else point.
       (if (match-here? match)
           (cons (cadr match) (caddr match))
-          (point)))
+          (head:point)))
     (define (found hit needle)
       (list (head:current-buffer) (car hit) (cdr hit) (string-length needle)))
     (define (dispatch! event)
@@ -191,7 +191,7 @@
            (set! fold-override (if (fold-for needle) 'exact 'fold))
            (let ([home (if (eq? (head:current-window) origin-window)
                            origin
-                           (point))])
+                           (head:point))])
              (if (string=? needle "")
                  (loop needle match failed?)
                  (let ([next (search-forward-from needle
@@ -201,13 +201,13 @@
           [(eq? action 'cancel)
            (set! needle-now "")
            (set! current-match #f)
-           (when (window:focus! origin-window) (goto-point! origin))
+           (when (window:focus! origin-window) (head:goto! origin))
            (indicate! "Quit")]
           [(eq? action 'repeat)
            (if (string=? needle "")
                (if (string=? last-needle "")
                    (loop needle match failed?)
-                   (let* ([home (point)]
+                   (let* ([home (head:point)]
                           [next (search-forward-from last-needle
                                                      (car home) (cdr home))])
                      (when next (goto-match-end! next last-needle))
@@ -229,7 +229,7 @@
                                 (- (string-length needle) 1))]
                      [home (if (eq? (head:current-window) origin-window)
                                origin
-                               (point))])
+                               (head:point))])
                  (if (string=? shorter "")
                      (begin (goto-match! home) (loop shorter #f #f))
                      (let ([next (search-forward-from shorter (car home)
@@ -385,12 +385,12 @@
             (lambda ()
               (call-as-one-edit! (format "(search:replace! ~s ~s)" from to)
                 (lambda ()
-                  (let loop ([row (car (point))] [col (cdr (point))])
+                  (let loop ([row (car (head:point))] [col (cdr (head:point))])
                     (let ([hit (find-from b from row col)])
                       (when hit
                         (set! query-match
                           (list (car hit) (cdr hit) (+ (cdr hit) m)))
-                        (goto-point! (cons (car hit) (+ (cdr hit) m)))
+                        (head:goto! (cons (car hit) (+ (cdr hit) m)))
                         (parameterize ([message-source #f]) ; an indicator
                           (set-message! question))
                         (paint:redraw!)     ; the match highlight, not the message
@@ -402,12 +402,12 @@
                             [(replace)
                              (replace-region-text! hit (cons (car hit) (+ (cdr hit) m)) to)
                              (set! replaced (+ replaced 1))
-                             (loop (car (point)) (cdr (point)))]
+                             (loop (car (head:point)) (cdr (head:point)))]
                             [(skip)
                              (set! skipped (+ skipped 1))
-                             (goto-point! hit)
+                             (head:goto! hit)
                              (loop (car hit) (+ (cdr hit) m))]
-                            [(stop) (goto-point! hit)]
+                            [(stop) (head:goto! hit)]
                             [(quit-prefix)
                              (let ([next (head:read-key-event #f)])
                                (when (and (not (eof-object? next))
@@ -415,10 +415,10 @@
                                                  'query-replace "C-x" next)
                                                'quit-editor))
                                  (quit!))
-                               (goto-point! hit))]
+                               (head:goto! hit))]
                             [else
                              (if (eof-object? event)
-                                 (goto-point! hit)
+                                 (head:goto! hit)
                                  (loop (car hit) (cdr hit)))]))))))))
             (lambda () (set! query-match #f)))
           (set-message! (format "Replaced ~a, skipped ~a" replaced skipped))

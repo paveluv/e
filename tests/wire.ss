@@ -932,7 +932,7 @@
                  (file-exists? missing)) '(0 1 #f)))
        (fresh-session!)
        (base-config! '())
-       (let* ([default-directory (string-append root "/.base")]
+       (let* ([head:default-directory (string-append root "/.base")]
               [path (string-append sources "/head/head.sls")]
               [source (call-with-input-file path get-string-all)]
               [base (fixture:start! root base-directory)]
@@ -955,7 +955,7 @@
                      ;; The default may itself be a symlink. Both implicit
                      ;; selection and an explicit alias need short commands.
                      (when (eq? (cadr row) 'default)
-                       (unless (zero? ((foreign-procedure "symlink" (string string) int) base-directory default-directory))
+                       (unless (zero? ((foreign-procedure "symlink" (string string) int) base-directory head:default-directory))
                          (error 'fixture "cannot link the default base directory")))
                      (let* ([phase (car row)]
                             [review (and (eq? phase 'reviewing) (rpc head 'prepare-close))]
@@ -984,7 +984,7 @@
                    '((running custom) (reviewing default) (running alias)))
                  (make-list 3 '(0 1 1 1 1 1 0 0 0 #t #("keep this text"))))))
            (lambda ()
-             (when (file-exists? default-directory #f) (delete-file default-directory))
+             (when (file-exists? head:default-directory #f) (delete-file head:default-directory))
              (write-text path source)
              (sys:close-connection! head)
              (sys:close-connection! detached)
@@ -1142,7 +1142,7 @@
              (write-text wire-path
                (string-append (substring wire-source 0 at) (format "(define version ~a)" (+ wire:version 1))
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
-           (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (edit:point)))]
+           (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (head:point)))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
              (head-wait 'accepted-restart-question launcher
                (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
@@ -1175,7 +1175,7 @@
                                            [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
                                       (and notice screen (< notice screen)))) heads)))
                    (not (equal? original replacement))
-                   (head-read launcher '(list (head:buffer-line (head:current-buffer) 0) (edit:point)))
+                   (head-read launcher '(list (head:buffer-line (head:current-buffer) 0) (head:point)))
                    (head-read launcher '(and (head:buffer-named "<local draft omitted>") #t))
                    (map (lambda (head)
                           (head-read head '(let ([status (client:request 'status)])
@@ -1789,14 +1789,14 @@
                      (after-retraction second) (5000 5001) ((after-retraction) 5000)))
                  (head-send! a "A")
                  (head-wait 'foreign-paint-without-a-key b (lambda () (head-sees? b "Ashared text")))
-                 (head-read b '(begin (edit:goto-point! '(0 . 12)) #t))
+                 (head-read b '(begin (head:goto! '(0 . 12)) #t))
                  (head-send! b "\x1b;[200~ B\x1b;[201~")
                  (head-wait 'second-writer a (lambda () (head-sees? a "Ashared text B")))
                  (head-read a '(edit:undo!))
                  (head-wait 'undo-mine b (lambda () (head-sees? b "shared text B")))
                  (test:check 'attached-history-keeps-other-actors-and-rich-receipts
                    (list (car (rpc head 'snapshot id))
-                         (head-read a '(edit:point))
+                         (head-read a '(head:point))
                          (map cadr (rpc head 'history id 3))
                          (let ([stamp (cdr (assq 'modified-at (caddr (rpc head 'snapshot id))))])
                            (map (lambda (screen)
@@ -1815,7 +1815,7 @@
                    (head-send! b "\x1b;[200~FOREIGN\x1b;[201~")
                    (head-wait 'foreign-ink a (lambda () (head-sees? a "FOREIGNbase")))
                    (let ([before (map head-blame (list a b))])
-                     (head-read a '(begin (edit:goto-point! '(0 . 3)) #t))
+                     (head-read a '(begin (head:goto! '(0 . 3)) #t))
                      (head-send! a "X")
                      (head-wait 'own-ink-inside-foreign-range b (lambda () (head-sees? b "FORXEIGNbase")))
                      (test:check 'attached-tints-follow-the-author-after-overlap
@@ -2203,7 +2203,7 @@
                    (let* ([frames (vector-ref a 3)] [opened (occurrences frames "\x1b;[?2026h")]
                           [closed (occurrences frames "\x1b;[?2026l")])
                      (test:check 'attached-split-scrolling-uses-balanced-2026
-                       (list (> opened 0) (= opened closed) (head-read a '(edit:point))) '(#t #t (30 . 0))))
+                       (list (> opened 0) (= opened closed) (head-read a '(head:point))) '(#t #t (30 . 0))))
                    ;; The attached head also services resize while idle.
                    ;; Observe geometry and the pending question's new width
                    ;; before any more input; the other head keeps its size.
@@ -2424,7 +2424,7 @@
                             (let ([source (head:adopt-store-buffer! ,source)])
                               (mode:choose! source "markdown")
                               (head:show-buffer! (markdown:companion! source "<resume view>")))
-                            (edit:goto-point! (cons (let find ([row 0])
+                            (head:goto! (cons (let find ([row 0])
                                                  (if (string=? (head:buffer-line (head:current-buffer) row) "After table")
                                                      row (find (+ row 1)))) 2))
                             (window:focus-next!) (window:set-wrap! #f) (window:split-below!)
@@ -2435,7 +2435,7 @@
                               (head:layout-split-second-weight-set! rest 3)
                               (head:layout-split-first-weight-set! (head:layout-split-first rest) 2)
                               (head:layout-split-second-weight-set! (head:layout-split-first rest) 1))
-                            (edit:goto-point! '(25 . 3)) (head:window-top-set! (head:current-window) 20)
+                            (head:goto! '(25 . 3)) (head:window-top-set! (head:current-window) 20)
                             (head:buffer-mark-row-set! (head:current-buffer) 26)
                             (head:buffer-mark-col-set! (head:current-buffer) 4)
                             (head:buffer-marked-set! (head:current-buffer) #t)
@@ -2704,7 +2704,7 @@
                        (file-exists? (string-append base-directory "/log/keep.txt")))
                  (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t))
                (head-read a '(begin (edit:insert-text! "retained")
-                                    (head:add-shutdown-hook! (lambda () (edit:goto-point! '(0 . 3)))) #t))
+                                    (head:add-shutdown-hook! (lambda () (head:goto! '(0 . 3)))) #t))
                (for-each (lambda (head) (head-send! head "\x18;\x03;")) (list a b))
                (for-each (lambda (head)
                            (head-wait 'automatic-detach head (lambda () (head-sees? head "e: detached")))
@@ -2738,7 +2738,7 @@
                     [record (call-with-input-file pid-path read)]
                     [boot-pid '(store:property (store:find-named "bootstrap") 'process-id)])
                (head-read a '(begin (edit:insert-text! "retained")
-                                    (head:add-shutdown-hook! (lambda () (edit:goto-point! '(0 . 3)))) #t))
+                                    (head:add-shutdown-hook! (lambda () (head:goto! '(0 . 3)))) #t))
                (for-each (lambda (head) (head-send! head "\x18;\x03;")) (list a b))
                (for-each (lambda (head)
                            (head-wait 'automatic-detach head (lambda () (head-sees? head "e: detached")))
@@ -2747,7 +2747,7 @@
                       [leavers (list (connect) (connect))])
                  (head-wait 'automatic-resume again (lambda () (head-sees? again "retained")))
                  (test:check 'quit-keeps-shared-edits-and-print-only-one-farewell-line
-                   (list (head-read again '(list (head:buffer-line (head:current-buffer) 0) (edit:point)))
+                   (list (head-read again '(list (head:buffer-line (head:current-buffer) 0) (head:point)))
                          (equal? record (call-with-input-file pid-path read))
                          (occurrences (vector-ref again 3) "e: started base")
                          (map (lambda (head)

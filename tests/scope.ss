@@ -28,7 +28,7 @@
      (define a (fresh "scope-a" '("x one x" "two x")))
      (define b (fresh "scope-b" '("x three" "x x")))
      (head:show-buffer! a)
-     (goto-point! '(0 . 0))
+     (head:goto! '(0 . 0))
 
      ;; with-buffer: the buffer is current inside, the old one returns after,
      ;; the recency order is untouched, and an escape restores too
@@ -51,11 +51,11 @@
      ;; previous selection and point return
      (define r (region b '(1 . 0) '(1 . 3)))
      (check 'with-region-selects-the-region
-       (with-region r (list (head:current-buffer) (mark) (point)))
+       (with-region r (list (head:current-buffer) (head:mark) (head:point)))
        (list b '(1 . 0) '(1 . 3)))
      (check 'replace-all-stays-inside-the-region (with-region r (search:replace-all! "x" "y")) 2)
      (check 'the-rest-of-the-buffer-is-untouched (text-of b) '("x three" "y y"))
-     (check 'the-selection-and-point-return (list (head:current-buffer) (mark) (point)) (list a #f '(0 . 0)))
+     (check 'the-selection-and-point-return (list (head:current-buffer) (head:mark) (head:point)) (list a #f '(0 . 0)))
      (check 'count-matches-under-with-region (with-region (region a '(0 . 0) '(0 . 3)) (search:count "x")) 1)
 
      ;; with-window selects a window for the body only

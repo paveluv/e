@@ -251,7 +251,7 @@
     (let ([row (row-of e)])
       (when row
         (choice-selected-set! (choice-for (head:current-window)) e)
-        (goto-point! (cons row 0)))))
+        (head:goto! (cons row 0)))))
 
   (define (move-row! delta)
     (let* ([last (+ first-row (length rows) -1)]

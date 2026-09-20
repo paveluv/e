@@ -77,7 +77,7 @@
     ;; empty when neither applies.
     (let* ([b (head:current-buffer)]
            [styles-of (mode:line-styles b)]
-           [pt (point)]
+           [pt (head:point)]
            [row (car pt)]
            [line (head:buffer-line b row)]
            [styles (styles-of line)])

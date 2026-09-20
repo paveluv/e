@@ -31,14 +31,11 @@
           current-region region-text with-region
           next-conflict! keep-mine! keep-disk!
     ;; state, read-only
-    point mark
     buffer-text buffer-clean?
 
     ;; buffers, windows, files
-    visit-file! save-file! save! prompt-file! default-directory
-    kill-buffer! buffer-append!
-    fresh-buffer!
-    set-buffer-read-only! set-buffer-wrap! set-buffer-name!
+    visit-file! save-file! save! prompt-file!
+    kill-buffer!
     new-buffer! trash restore! empty-trash!
     ;; editing and movement
     insert-text! replace-region-text! rewrite-region! newline! delete-forward! backspace!
@@ -53,7 +50,7 @@
     move-left! move-right! indent-tab!
     call-as-one-edit!
     indent-line! indent-region! indent-buffer! format-region! format-buffer!
-    move-horizontal! move-vertical! goto-point!
+    move-horizontal! move-vertical!
     quit!
     ;; extending the editor
 
@@ -489,15 +486,6 @@
         (do ([i 0 (- i 1)]) ((= i delta)) (move-left!))
         (do ([i 0 (+ i 1)]) ((= i delta)) (move-right!))))
 
-  (edoc "Move point straight to a (row . col) position, clamped into the buffer."
-        (p position "where point goes"))
-  (define (goto-point! p)
-    ;; Point belongs to the selected window, for apps and text alike.
-    ;; Move it straight to (row . col), clamped into its displayed rows.
-    (head:follow-app! current-window #f)
-    (set! point-row (max 0 (min (car p) (- (vlen) 1))))
-    (set! point-col (max 0 (min (cdr p) (string-length (current-display-line))))))
-
   ;; Vertical moves aim for a goal column, so point comes back to it after
   ;; passing through shorter lines (as in Emacs).  The goal is the
   ;; window's, kept with the navigation context that set it, and survives
@@ -766,7 +754,7 @@
     ;; the editing operation behind the bulk replacers: an explicit basis
     ;; and a kept point, with the undo grouping and mark handling of every
     ;; recorded edit
-    (parameterize ([edit-source basis] [edit-point (point)])
+    (parameterize ([edit-source basis] [edit-point (head:point)])
       (replace-region-text! start end text)))
 
   (edoc "Copy the text between mark and point to the kill ring without deleting it; the mark deactivates.")
@@ -798,26 +786,6 @@
                   (changed!)))))))
 
   ;;; Files -----------------------------------------------------------------
-
-  (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
-        (returns directory))
-  (define (default-directory)
-    ;; A file's parent, an app's working directory, or the head's launch
-    ;; directory. All callers get an absolute, abbreviated directory with
-    ;; a trailing slash, ready for appending another path component.
-    (let ([dir (file:absolute
-                 (or (and file-name (file:directory-part file-name))
-                     (head:buffer-fact (head:current-buffer) 'directory #f)
-                     (current-directory)))])
-      (file:abbreviate (if (string:suffix? "/" dir) dir (string-append dir "/")))))
-
-  (edoc "Rename a buffer, adding the usual numeric suffix when another buffer already uses the requested name."
-        (b buffer "the buffer to rename")
-        (name string "its new name")
-        (returns buffer))
-  (define (set-buffer-name! b name)
-    (head:buffer-name-set! b name)
-    b)
 
   (define (file-buffer path)
     ;; -> (values buffer created?). Consult shared identity before reading
@@ -1003,8 +971,8 @@
     ;; diff's unified-diff-style rendering -- built quietly, never
     ;; displayed; the echo names it.  -> the report buffer's name.
     (let* ([name (format "*merge-~a*" (head:buffer-name b))]
-           [rb (fresh-buffer! name)])
-      (when (pair? report-lines) (apply buffer-append! rb report-lines))
+           [rb (head:fresh-buffer! name)])
+      (when (pair? report-lines) (apply head:buffer-append! rb report-lines))
       (head:buffer-read-only-set! rb #t)
       (head:buffer-name rb)))
 
@@ -1020,7 +988,7 @@
       (unless (cond [(assq 'base facts) => cdr] [else #f])
         (refuse-file! "Cannot merge: this buffer has no saved disk baseline."))
       (let ([disk (review-disk! path disk)]
-            [source (head:edit-basis b)] [wanted (point)])
+            [source (head:edit-basis b)] [wanted (head:point)])
         (let-values ([(merged merged-trailing conflicts report-lines)
                       (file:merge path (cdr (assq 'base facts))
                         (file:text (car source) (cond [(assq 'trailing facts) => cdr] [else #t])) (car disk))])
@@ -1173,20 +1141,12 @@
       (if (and src (> (string-length s) 0))
           (log:add! src s)
           (paint:show-message! s #f))))
-  (edoc "Point in the selected window, as (row . col)."
-        (returns position))
-  (define (point)
-    (cons point-row point-col))
-  (edoc "The mark of the current buffer as (row . col) while it is active, else #f."
-        (returns (or position #f)))
-  (define (mark)
-    (and mark-active? (cons mark-row mark-col)))
   (edoc "The selected region while the mark is active, else the whole current buffer as a region."
         (returns region))
   (define (current-region)
-    (let ([m (mark)])
+    (let ([m (head:mark)])
       (if m
-          (region (head:current-buffer) m (point))
+          (region (head:current-buffer) m (head:point))
           (whole-buffer (head:current-buffer)))))
 
   (define (call-with-region r thunk)
@@ -1194,7 +1154,7 @@
     ;; its end; the previous selection and point return on exit and on
     ;; escape. The body of with-region, the one form M-x offers.
     (head:with-buffer (region-buffer r)
-      (let ([saved-point (point)] [saved-mark (cons mark-row mark-col)] [saved-active mark-active?])
+      (let ([saved-point (head:point)] [saved-mark (cons mark-row mark-col)] [saved-active mark-active?])
         (define (select! start end active?)
           (set! mark-row (car start)) (set! mark-col (cdr start)) (set! mark-active? active?)
           (set! point-row (car end)) (set! point-col (cdr end)))
@@ -1209,27 +1169,6 @@
   (define-syntax with-region
     (syntax-rules ()
       [(_ r body ...) (call-with-region r (lambda () body ...))]))
-
-  (edoc "A named tool buffer, emptied for rebuilding; the same name reuses its own local buffer."
-        (name string "the tool's name")
-        (returns buffer))
-  (define (fresh-buffer! name)
-    ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
-    ;; use head:register-view! instead.  The stable tool key reuses its
-    ;; own local buffer, never an ordinary buffer with the same label.
-    (let ([b (head:tool-buffer! name)])
-      (head:buffer-read-only-set! b #f)
-      (head:buffer-lines-set! b (vector ""))
-      (head:buffer-history-set! b (vector '() '()))
-      (head:buffer-modified-set! b #f)
-      (for-each (lambda (w)
-                  (when (eq? (head:window-buffer w) b)
-                    (head:window-top-set! w 0)
-                    (head:window-topseg-set! w 0)
-                    (head:window-prow-set! w 0)
-                    (head:window-pcol-set! w 0)))
-                windows)
-      b))
 
   ;;; Apps and views ------------------------------------------------------------
 
@@ -1371,60 +1310,6 @@
         (set-message! (format "Emptied the trash: ~a buffer~a" (length ids) (if (= (length ids) 1) "" "s"))))
       (length ids)))
 
-  (edoc "Append lines to a buffer, transcript style: a fresh buffer's single empty line is replaced, and point follows to the last line in every window showing it."
-        (b buffer "the buffer to extend")
-        (new-lines (list-of string) "the lines to add"))
-  (define (buffer-append! b . new-lines)
-    ;; Append lines to b, transcript style: a fresh buffer's single empty
-    ;; line is replaced, and the display follows -- point moves to the
-    ;; last line in every window showing b, and in ones that show it later.
-    ;; A transcript belongs in the buffer list even before it is shown.
-    (unless (for-all string? new-lines) (error 'buffer-append! "expected line strings" new-lines))
-    (head:add-buffer! b)
-    (when (pair? new-lines)
-      (let* ([v (head:buffer-lines b)]
-             [last (- (vector-length v) 1)]
-             [col (string-length (vector-ref v last))]
-             [empty? (and (zero? last) (zero? col))])
-        (head:store-edit! b (text:make-span last col last col)
-                          (if empty? new-lines (cons "" new-lines))))
-      (let ([last (- (vector-length (head:buffer-lines b)) 1)])
-        (head:buffer-spot-row-set! b last)
-        (head:buffer-spot-col-set! b 0)
-        (for-each (lambda (w)
-                    (when (eq? (head:window-buffer w) b)
-                      (head:window-prow-set! w last)
-                      (head:window-pcol-set! w 0)))
-                  windows))))
-
-  ;;; Buffer settings ---------------------------------------------------------
-
-  ;; The mode registry -- records, detection, the memoized stylers --
-  ;; lives in (mode); these two settings are commands' business.
-
-  (edoc "Protect a buffer from editing: #t forbids every edit, a procedure decides per edit, #f allows them."
-        (b buffer "the buffer to protect")
-        (flag (or boolean procedure) "the guard"))
-  (define (set-buffer-read-only! b flag)
-    (head:buffer-read-only-set! b flag))
-
-  (edoc "Set how a buffer's long lines wrap: default, #t, #f, clean for wrapping at full width without continuation marks, or (clean . columns) capping the width."
-        (b buffer "the buffer to set")
-        (setting (or (one-of default #t #f clean) pair) "the wrap setting")
-        (returns buffer))
-  (define (set-buffer-wrap! b setting)
-    ;; clean wraps like #t but draws no continuation marks and lets the
-    ;; text use the full width -- for formatted read-only presentations;
-    ;; (clean . n) additionally caps the wrapping width at n columns.
-    (unless (or (memq setting '(default #t #f clean))
-                (and (pair? setting) (eq? (car setting) 'clean)
-                     (fixnum? (cdr setting)) (>= (cdr setting) 20)))
-      (error 'set-buffer-wrap!
-             "expected default, #t, #f, clean, or (clean . columns)"
-             setting))
-    (head:buffer-fact-set! b 'wrap setting)
-    b)
-
   ;;; Indentation and formatting ------------------------------------------------
 
   ;; Both are provided per mode by modules.  An indenter maps rows to
@@ -1547,7 +1432,7 @@
           (let* ([b (head:window-buffer current-window)]
                  [source (head:edit-basis b)]
                  [v (car source)]
-                 [wanted (point)] [selected (mark)]
+                 [wanted (head:point)] [selected (head:mark)]
                  [last (min to (- (vector-length v) 1))]
                  [cols (let settle ([r from]
                                     [cs ((cadr entry) b from last)]
@@ -1575,7 +1460,7 @@
           (set! message "No indenter for this mode")
           (let* ([b (head:window-buffer current-window)]
                  [source (head:edit-basis b)]
-                 [wanted (point)] [selected (mark)]
+                 [wanted (head:point)] [selected (head:mark)]
                  [row (car wanted)]
                  [lead (leading-blanks (vector-ref (car source) row))]
                  [cols ((cadr entry) b row row)]
@@ -1655,7 +1540,7 @@
          (let* ([b (head:window-buffer current-window)]
                 [source (head:edit-basis b)]
                 [v (car source)]
-                [wanted (point)]
+                [wanted (head:point)]
                 [last (min to (- (vector-length v) 1))]
                 [lines ((cadr entry) b from last)])
            (cond
@@ -1731,7 +1616,7 @@
       (define (land! top-offset point-offset)
         (let ([top (position-at top-offset)]
               [point (position-at point-offset)])
-          (goto-point! (cons (car point) (column-at point)))
+          (head:goto! (cons (car point) (column-at point)))
           (head:window-top-set! w (car top))
           (head:window-topseg-set! w (cdr top))))
       (let* ([total (max 1 (offset-at n 0))]
@@ -1848,7 +1733,7 @@
       (error 'prompt-file! "expected a directory action and an initial path" directory-action initial))
     (let* ([owner current-window] [before (head:current-buffer)]
            [saved (and (not initial) (hashtable-ref find-file-drafts owner #f))]
-           [directory (if saved (car saved) (default-directory))]
+           [directory (if saved (car saved) (head:default-directory))]
            [draft (if saved (cdr saved) (box #f))]
            [label (if directory-action "Create file: " "Find file: ")]
            [ready #f])
@@ -2076,9 +1961,9 @@
                  [(head:app-buffer? (head:window-buffer w))
                   (let ([old current-window])
                     (set! current-window w)
-                    (let ([old-point (point)]
+                    (let ([old-point (head:point)]
                           [clicked (paint:window-position w start height x y)])
-                      (goto-point! clicked)
+                      (head:goto! clicked)
                       (set! mark-active? #f)
                       (set! mouse-gesture (cons w (head:window-buffer w)))
                       ;; Focusing the clicked window is the default. An app may
@@ -2090,7 +1975,7 @@
                                  (lambda () (head:dispatch-app-event! "MOUSE-CLICK"))))])
                         (cond [(eq? result 'ignore-click)
                                (set! mouse-gesture #f)
-                               (goto-point! old-point)
+                               (head:goto! old-point)
                                (when (memq old windows)
                                  (set! current-window old))]
                               [(and (eq? result 'keep-focus) (memq old windows))
@@ -2103,7 +1988,7 @@
                     "MOUSE-HANDLED")]
                  [else                                ; a text row
                   (window:focus! w)
-                  (goto-point! (paint:window-position w start height x y))
+                  (head:goto! (paint:window-position w start height x y))
                   (arm-text-selection!)
                   (set! mouse-gesture (cons w (head:window-buffer w)))
                   ;; A mode may act on the click -- following a link,
@@ -2143,7 +2028,7 @@
            (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
              (when (and (eq? w current-window) (text-gesture? w)
                         (< (- y 1) (+ start height)))
-               (goto-point! (paint:window-position w start height x y))
+               (head:goto! (paint:window-position w start height x y))
                (if (head:app-buffer? (head:window-buffer w))
                    (unless (call-with-app-mouse-event w start height x y button
                              (lambda () (head:dispatch-app-event! "MOUSE-DRAG")))
@@ -2157,7 +2042,7 @@
           (when (and (eq? w current-window) (text-gesture? w)
                      (< (- y 1) (+ start height))
                      (head:app-buffer? (head:window-buffer w)))
-            (goto-point! (paint:window-position w start height x y))
+            (head:goto! (paint:window-position w start height x y))
             (call-with-app-mouse-event w start height x y button
               (lambda () (head:dispatch-app-event! "MOUSE-RELEASE"))))))))
 
@@ -2199,8 +2084,8 @@
     (case dir
       [(0) (lambda () (page-window! -1 8))]
       [(1) (lambda () (page-window! 1 8))]
-      [(2) (lambda () (goto-point! (cons point-row (- point-col 3))))]
-      [(3) (lambda () (goto-point! (cons point-row (+ point-col 3))))]
+      [(2) (lambda () (head:goto! (cons point-row (- point-col 3))))]
+      [(3) (lambda () (head:goto! (cons point-row (+ point-col 3))))]
       [else (lambda () (void))]))
 
   ;; Input decoding lives in (tty): the head's reader thread calls
@@ -2346,8 +2231,8 @@
                         (eq? (keymap:binding-context (cdr owned)) 'global))
                       all)]
            [resolved (keymap:choose-binding entries)]
-           [b (fresh-buffer! "*help*")])
-      (buffer-append! b
+           [b (head:fresh-buffer! "*help*")])
+      (head:buffer-append! b
         (keymap:sequence-text sequence)
         ""
         (if resolved
@@ -2358,11 +2243,11 @@
             (format "Defined by: ~a" (binding-origin resolved))
             "Defined by: fallback"))
       (when (> (length entries) 1)
-        (buffer-append! b "" "Shadowed bindings:")
+        (head:buffer-append! b "" "Shadowed bindings:")
         (for-each
           (lambda (owned)
             (unless (eq? owned resolved)
-              (buffer-append! b
+              (head:buffer-append! b
                 (format "  ~a — ~a"
                         (keymap:action-text (keymap:binding-action (cdr owned)))
                         (binding-origin owned)))))
@@ -2376,12 +2261,12 @@
                        (append acc (list context)))))
                '() all)])
         (when (pair? contexts)
-          (buffer-append! b "" "Contextual bindings:")
+          (head:buffer-append! b "" "Contextual bindings:")
           (for-each
             (lambda (context)
               (let ([hit (keymap:resolved-binding context sequence)])
                 (when hit
-                  (buffer-append! b
+                  (head:buffer-append! b
                     (format "  ~a: ~a — ~a"
                             context
                             (keymap:action-text (keymap:binding-action (cdr hit)))
@@ -2453,7 +2338,7 @@
 
   (define (delete-rows! r1 r2)
     ;; Remove rows r1..r2 inclusive, joining across their newlines.
-    (goto-point! (cons r1 0))
+    (head:goto! (cons r1 0))
     (let ([n (let loop ([r r1] [n 0])
                (if (> r r2)
                    n
@@ -2467,28 +2352,28 @@
     ;; Point to the next conflict's <<<<<<< line, wrapping around.
     (let* ([b (head:current-buffer)]
            [n (head:buffer-line-count b)]
-           [from (car (point))]
+           [from (car (head:point))]
            [hit (let scan ([r (+ from 1)] [left n])
                   (cond [(zero? left) #f]
                         [(>= r n) (scan 0 left)]
                         [(conflict-marker? b r "<<<<<<<") r]
                         [else (scan (+ r 1) (- left 1))]))])
       (if hit
-          (goto-point! (cons hit 0))
+          (head:goto! (cons hit 0))
           (set-message! "No conflicts"))
       (void)))
 
   (edoc "Resolve the merge conflict at point in the buffer's favor, as one undo step.")
   (define (keep-mine!)
     ;; Resolve the conflict at point in the buffer's favor.
-    (let ([c (conflict-at (car (point)))])
+    (let ([c (conflict-at (car (head:point)))])
       (if c
           (begin
             (call-as-one-edit! "keep mine"
               (lambda ()
                 (delete-rows! (cadr c) (caddr c))
                 (delete-rows! (car c) (car c))
-                (goto-point! (cons (car c) 0))))
+                (head:goto! (cons (car c) 0))))
             (set-message! "Kept the buffer side"))
           (set-message! "Not in a conflict"))
       (void)))
@@ -2496,14 +2381,14 @@
   (edoc "Resolve the merge conflict at point in the disk's favor, as one undo step.")
   (define (keep-disk!)
     ;; Resolve the conflict at point in the disk's favor.
-    (let ([c (conflict-at (car (point)))])
+    (let ([c (conflict-at (car (head:point)))])
       (if c
           (begin
             (call-as-one-edit! "keep disk"
               (lambda ()
                 (delete-rows! (caddr c) (caddr c))
                 (delete-rows! (car c) (cadr c))
-                (goto-point! (cons (car c) 0))))
+                (head:goto! (cons (car c) 0))))
             (set-message! "Kept the disk side"))
           (set-message! "Not in a conflict"))
       (void)))
@@ -2621,10 +2506,7 @@
          "Resolve the merge conflict at point by keeping the buffer side. The complete resolution is one undo step.")
         ((keep-disk!) (("procedure" . "(keep-disk!)")) "void"
          ("(edit)") edit "Editing commands" #f
-         "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")
-        ((default-directory) (("procedure" . "(default-directory)")) "string"
-         ("(edit)") edit "Files" #f
-         "The current file's parent, an app's working directory, or the head's launch directory, absolute with home abbreviated and a trailing slash. This is the common starting directory for path prompts and browsers.")))
+         "Resolve the merge conflict at point by keeping the disk side. The complete resolution is one undo step.")))
     (keymap:bind-default! "M-n" next-conflict!)
     (keymap:bind-default! "M-m" keep-mine!)
     (keymap:bind-default! "M-d" keep-disk!)

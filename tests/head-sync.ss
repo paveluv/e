@@ -23,7 +23,7 @@
      (define id (head:buffer-store-id b))
      (define w (head:current-window))
      (define bot '(agent sync-test))
-     (define (point) (cons (head:window-prow w) (head:window-pcol w)))
+     (define (head:point) (cons (head:window-prow w) (head:window-pcol w)))
      (define (edit! span replacement)
        (store:edit! bot id (store:revision id) span replacement))
 
@@ -38,12 +38,12 @@
 
      (edit! (text:make-span 0 0 0 0) '("new" ""))
      (head:before-frame!)
-     (check 'cursor-follows-content (point) '(2 . 2))
+     (check 'cursor-follows-content (head:point) '(2 . 2))
      (check 'viewport-follows-content (head:window-top w) 2)
      (check 'saved-position-follows-content
             (cons (head:buffer-spot-row b) (head:buffer-spot-col b)) '(3 . 2))
      (check 'saved-viewport-follows-content (head:buffer-spot-top b) 3)
-     (check 'published-point-agrees (store:mark head:ui-actor id 'point) (point))
+     (check 'published-point-agrees (store:mark head:ui-actor id 'point) (head:point))
      (check 'text-and-revision-agree
             (let-values ([(text revision) (store:snapshot id)])
               (and (eq? text (head:buffer-lines b))
@@ -62,7 +62,7 @@
      (edit! (text:make-span 0 0 0 0) '("YZ"))
      (head:before-frame!)
      (check 'reset-gap-adopts-current-text (head:buffer-lines b) '#("YZtext"))
-     (check 'reset-gap-does-not-replay-partial-history (point) '(0 . 2))
+     (check 'reset-gap-does-not-replay-partial-history (head:point) '(0 . 2))
      (check 'reset-gap-publishes-clamped-point
             (store:mark head:ui-actor id 'point) '(0 . 2))
 
@@ -71,7 +71,7 @@
      (do ([i 0 (+ i 1)]) ((= i 257))
        (edit! (text:make-span 0 0 0 0) '("x")))
      (head:before-frame!)
-     (check 'truncated-history-does-not-replay-partial-history (point) '(0 . 2))
+     (check 'truncated-history-does-not-replay-partial-history (head:point) '(0 . 2))
      (check 'truncated-history-adopts-current-revision
             (head:buffer-store-rev b) (store:revision id))
      (check 'truncated-history-adopts-all-text
@@ -79,7 +79,7 @@
 
      (store:reset! bot id '(""))
      (head:before-frame!)
-     (check 'resync-clamps-into-shorter-text (point) '(0 . 0))
+     (check 'resync-clamps-into-shorter-text (head:point) '(0 . 0))
      (check 'resync-clamps-saved-viewport (head:buffer-spot-top b) 0)
 
      ;; An explicit baseline reset also invalidates publication.  A
@@ -98,9 +98,9 @@
      (store:unsubscribe! reset-token)
      (head:before-frame!)
      (check 'explicit-reset-adopts-the-subscribers-text (head:buffer-lines b) '#("Qabcdef"))
-     (check 'explicit-reset-keeps-clamped-coordinates (point) '(0 . 2))
+     (check 'explicit-reset-keeps-clamped-coordinates (head:point) '(0 . 2))
      (check 'explicit-reset-republishes-unchanged-coordinates
-            (store:mark head:ui-actor id 'point) (point))
+            (store:mark head:ui-actor id 'point) (head:point))
 
      ;; Derived readers follow this head's adopted source, for either
      ;; owner. Repaint/fact changes are not content revisions, and a

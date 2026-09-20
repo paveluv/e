@@ -100,15 +100,15 @@
       (set! diff-dirty? #f)))
 
   (define (row-at-point)
-    (let ([row (car (point))])
+    (let ([row (car (head:point))])
       (and (<= 1 row (length log-rows))
            (list-ref log-rows (- row 1)))))
 
   (define (move-row! delta)
     (when (pair? log-rows)
-      (goto-point!
+      (head:goto!
         (cons (min (length log-rows)
-                   (max 1 (+ (max 1 (car (point))) delta)))
+                   (max 1 (+ (max 1 (car (head:point))) delta)))
               0))))
 
   (define (show-row-diff!)
@@ -126,7 +126,7 @@
     (load-log! repository)
     (refresh-log!)
     (when (eq? (head:current-buffer) log-buffer)
-      (goto-point! (cons (if (null? log-rows) 0 1) 0)))
+      (head:goto! (cons (if (null? log-rows) 0 1) 0)))
     (set-message! "Git log refreshed"))
 
   (edoc "Reload the git log app's commits and redraw, showing the refresh as a pressed button.")
@@ -247,7 +247,7 @@
     (let ([w (window:display! log-buffer)])
       (when w
         (window:focus! w)
-        (goto-point! '(1 . 0))))
+        (head:goto! '(1 . 0))))
     (void))
 
   (edoc "Register the git log and diff modes, reconnect surviving app buffers, and install the describe entries and bindings.")
@@ -276,7 +276,7 @@
           ;; Keyboard navigation is bold; only actionable mouse targets
           ;; get the shared hover face, scoped to the pointed window.
           (if (and log-buffer (memq log-buffer (head:buffers)))
-              (let ([row (head:with-buffer log-buffer (car (point)))])
+              (let ([row (head:with-buffer log-buffer (car (head:point)))])
                 (if (<= 1 row (- (head:buffer-line-count log-buffer) 1))
                     (list (list log-buffer row 0
                                 (string-length (head:buffer-line log-buffer row))

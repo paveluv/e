@@ -28,7 +28,7 @@ such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window:foc
 used directly. A lambda can adapt a command that needs arguments:
 
 ```scheme
-(keymap:bind! "M-g" (lambda () (edit:goto-point! '(0 . 0))))
+(keymap:bind! "M-g" (lambda () (head:goto! '(0 . 0))))
 (keymap:bind! "C-c n" (lambda () (edit:move-vertical! 10)))
 ```
 

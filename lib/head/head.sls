@@ -60,6 +60,7 @@
           layout-node!
           min-window-lines
           windows set-windows! root set-root! (rename (current current-window)) set-current! with-window with-buffer show-buffer!
+          point mark goto! default-directory fresh-buffer! buffer-append! buffer-wrap-set!
           current-buffer buffer-line buffer-line-count
           dividers set-dividers!
           read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
@@ -108,7 +109,7 @@
           app-status-position-set! make-app app?)
   (import (rnrs)
           (rnrs r5rs)
-          (only (chezscheme) keyboard-interrupt-handler getenv eval interaction-environment open-input-string
+          (only (chezscheme) current-directory keyboard-interrupt-handler getenv eval interaction-environment open-input-string
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
                 make-time add-duration
@@ -421,6 +422,38 @@
         (returns buffer))
   (define (current-buffer)
     (window-buffer the-current))
+  (edoc "Point in the selected window, as (row . col)."
+        (returns position))
+  (define (point)
+    (cons (window-prow the-current) (window-pcol the-current)))
+  (edoc "The mark of the buffer in the selected window as (row . col) while it is active, else #f."
+        (returns (or position #f)))
+  (define (mark)
+    (let ([b (window-buffer the-current)])
+      (and (buffer-marked b) (cons (buffer-mark-row b) (buffer-mark-col b)))))
+  (edoc "Move point in the selected window straight to a (row . col) position, clamped into the buffer's rows and the displayed line; the window stops following its app."
+        (p position "where point goes"))
+  (define (goto! p)
+    ;; Point belongs to the selected window, for apps and text alike.
+    (let ([w the-current])
+      (follow-app! w #f)
+      (window-prow-set! w (max 0 (min (car p) (- (vector-length (buffer-lines (window-buffer w))) 1))))
+      (window-pcol-set! w (max 0 (min (cdr p) (string-length (vector-ref (window-lines w) (window-prow w))))))))
+  (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
+        (returns directory))
+  (define (default-directory)
+    ;; All callers get an absolute, abbreviated directory with a trailing
+    ;; slash, ready for appending another path component.
+    (let* ([b (window-buffer the-current)]
+           [file (buffer-file b)]
+           [dir (file:absolute
+                  (or (and file (file:directory-part file))
+                      (buffer-fact b 'directory #f)
+                      (current-directory)))])
+      (file:abbreviate
+        (if (and (> (string-length dir) 0) (char=? (string-ref dir (- (string-length dir) 1)) #\/))
+            dir
+            (string-append dir "/")))))
   (edoc "Select a window, without telling the apps."
         (w window "the window"))
   (define (set-current! w)
@@ -1181,6 +1214,19 @@
   (define (buffer-fact-set! b key value)
     (buffer-facts-set! b (list (cons key value))))
 
+  (edoc "Set how a buffer's long lines wrap, a fact every head shares: default, #t, #f, clean for wrapping at full width without continuation marks, or (clean . columns) capping the width."
+        (b buffer "the buffer to set")
+        (setting (or (one-of default #t #f clean) pair) "the wrap setting"))
+  (define (buffer-wrap-set! b setting)
+    ;; clean wraps like #t but draws no continuation marks and lets the
+    ;; text use the full width -- for formatted read-only presentations;
+    ;; (clean . n) additionally caps the wrapping width at n columns.
+    (unless (or (memq setting '(default #t #f clean))
+                (and (pair? setting) (eq? (car setting) 'clean)
+                     (fixnum? (cdr setting)) (>= (cdr setting) 20)))
+      (error 'buffer-wrap-set! "expected default, #t, #f, clean, or (clean . columns)" setting))
+    (buffer-fact-set! b 'wrap setting))
+
   (define (local-facts-match? b expected)
     (or (not expected)
         (and (memq b the-buffers)
@@ -1814,6 +1860,52 @@
                  (and (not (buffer-store-id b))
                       (equal? (buffer-fact b 'tool-key #f) key)))
                the-buffers)))
+
+  (edoc "A named tool buffer, emptied for rebuilding; the same name reuses its own local buffer."
+        (name string "the tool's name")
+        (returns buffer))
+  (define (fresh-buffer! name)
+    ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
+    ;; use register-view! instead.  The stable tool key reuses its own local
+    ;; buffer, never an ordinary buffer with the same label.
+    (let ([b (tool-buffer! name)])
+      (buffer-read-only-set! b #f)
+      (buffer-lines-set! b (vector ""))
+      (buffer-history-set! b (vector '() '()))
+      (buffer-modified-set! b #f)
+      (for-each (lambda (w)
+                  (when (eq? (window-buffer w) b)
+                    (window-top-set! w 0)
+                    (window-topseg-set! w 0)
+                    (window-prow-set! w 0)
+                    (window-pcol-set! w 0)))
+                the-windows)
+      b))
+
+  (edoc "Append lines to a buffer, transcript style: a fresh buffer's single empty line is replaced, and point follows to the last line in every window showing it."
+        (b buffer "the buffer to extend")
+        (new-lines (list-of string) "the lines to add"))
+  (define (buffer-append! b . new-lines)
+    ;; A transcript belongs in the buffer list even before it is shown; the
+    ;; display follows -- point moves to the last line in every window
+    ;; showing b, and in ones that show it later.
+    (unless (for-all string? new-lines) (error 'buffer-append! "expected line strings" new-lines))
+    (add-buffer! b)
+    (when (pair? new-lines)
+      (let* ([v (buffer-lines b)]
+             [last (- (vector-length v) 1)]
+             [col (string-length (vector-ref v last))]
+             [empty? (and (zero? last) (zero? col))])
+        (store-edit! b (text:make-span last col last col)
+                     (if empty? new-lines (cons "" new-lines))))
+      (let ([last (- (vector-length (buffer-lines b)) 1)])
+        (buffer-spot-row-set! b last)
+        (buffer-spot-col-set! b 0)
+        (for-each (lambda (w)
+                    (when (eq? (window-buffer w) b)
+                      (window-prow-set! w last)
+                      (window-pcol-set! w 0)))
+                  the-windows))))
 
   (edoc "The local tool buffer with a stable key, created disposable when there is none."
         (key string "the tool key")

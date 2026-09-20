@@ -276,7 +276,7 @@
   (define (innermost-opener)
     ;; The source character of the innermost construct still open at
     ;; point: #\( or #\[, or #f outside any.
-    (let ([target (point)] [stack '()])
+    (let ([target (head:point)] [stack '()])
       (walk (buffer-vector (head:current-buffer))
         (lambda (r c ch)
           (when (or (< r (car target))
@@ -344,7 +344,7 @@
     (paint:add-status-hint!
       (lambda ()
         (and (pretty-buffer?)
-             (let* ([p (point)]
+             (let* ([p (head:point)]
                     [s (head:buffer-line (head:current-buffer) (car p))]
                     [c (and (< (cdr p) (string-length s))
                             (string-ref s (cdr p)))])

@@ -27,7 +27,7 @@
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])
          (head:show-buffer! b)
-         (goto-point! '(0 . 0))
+         (head:goto! '(0 . 0))
          b))
      (define (state b)
        (let-values ([(text revision facts) (head:buffer-state b)])
@@ -96,7 +96,7 @@
      (head:buffer-read-only-set! local-work #t)
      (check 'local-read-only-work-is-protected (buffer-clean? local-work) #f)
      (check 'snapshot-tools-declare-disposal
-            (head:buffer-fact (fresh-buffer! "state-generated") 'disposable #f) #t)
+            (head:buffer-fact (head:fresh-buffer! "state-generated") 'disposable #f) #t)
 
      ;; One sequence covers clock ownership and no-op/save preservation for
      ;; shared and local buffers. Actual changes must fall within UTC bounds.
@@ -187,7 +187,7 @@
          (let* ([b (fresh (if shared? "reset-shared" "reset-local") shared?)]
                 [id (head:buffer-store-id b)])
            (define (head-state)
-             (list (head:edit-basis b) (head:buffer-history b) (point)
+             (list (head:edit-basis b) (head:buffer-history b) (head:point)
                    (head:buffer-marked b) (head:buffer-mark-row b) (head:buffer-mark-col b)))
            (insert-text! "keep")
            (head:buffer-marked-set! b #t)
@@ -209,7 +209,7 @@
              (let ([accepted (head:store-reset! b '("disk") '((base . "disk\n") (trailing . #t))
                                (cons revision facts))])
                (check 'fresh-review-adopts-a-new-baseline-in-either-owner
-                 (list accepted (head:buffer-lines b) (point))
+                 (list accepted (head:buffer-lines b) (head:point))
                  (list (+ revision 1) '#("disk") '(0 . 4)))))
            ;; A fact predicate distinguishes absence from false or an empty
            ;; value. Local runtime metadata need not become shared plain data.
@@ -270,7 +270,7 @@
                                 '(key "bad" () () ((trailing . 7)))))
                    (lambda () (head:store-reset! b '("embedded\nnewline")))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("embedded\nnewline")))
-                   (lambda () (buffer-append! b "embedded\nnewline"))
+                   (lambda () (head:buffer-append! b "embedded\nnewline"))
                    (lambda () (store:create! bot "invalid-line-input" '("embedded\nnewline")))
                    (lambda () (format-buffer!)))) (make-list 14 '(#t #t #t))))))
        '(#t #f))
@@ -379,7 +379,7 @@
            (lambda (scenario)
              (let ([effect (car scenario)] [adopt? (cadr scenario)] [armed? #t] [seen #f] [observed #f])
                (define (current)
-                 (list (state saved) (store:history saved-id) (head:buffer-history saved) (point) (mark)))
+                 (list (state saved) (store:history saved-id) (head:buffer-history saved) (head:point) (head:mark)))
                (when (file-exists? path) (delete-file path))
                (unless adopt? (file:write! path '#("before") #t))
                (head:store-reset! saved '#("")

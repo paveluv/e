@@ -66,7 +66,7 @@
          (list-tail (lines) 3)))
      (define (location)
        (list (head:buffer-fact (view) 'directory #f) (head:buffer-fact (view) 'file-filter #f)))
-     (define (chosen-is? prefix) (string:prefix? prefix (head:buffer-line (head:current-buffer) (car (point)))))
+     (define (chosen-is? prefix) (string:prefix? prefix (head:buffer-line (head:current-buffer) (car (head:point)))))
      (define (group-count name)
        (let ([line (find (lambda (s) (string:prefix? name s)) (lines))])
          (and line (substring line (- (string-length line) 3) (string-length line)))))
@@ -88,11 +88,11 @@
        (list (visible? "small/nested/needle-") (chosen-is? "small/nested/needle-only.txt")) '(#t #t))
      (press! "RET")
      (define visited
-       (begin (goto-point! '(1 . 1)) (insert-text! "!")
-              (list (head:buffer-store-id (head:current-buffer)) (point) (buffer-text (head:current-buffer)))))
+       (begin (head:goto! '(1 . 1)) (insert-text! "!")
+              (list (head:buffer-store-id (head:current-buffer)) (head:point) (buffer-text (head:current-buffer)))))
      (files-open! root) (filter! "only") (press! "RET")
      (check 'files-reopening-reuses-unsaved-buffer-and-window-point
-       (list (head:buffer-store-id (head:current-buffer)) (point) (buffer-text (head:current-buffer))) visited)
+       (list (head:buffer-store-id (head:current-buffer)) (head:point) (buffer-text (head:current-buffer))) visited)
 
      ;; A filter names entries unless it contains a slash: a directory whose
      ;; name matches does not claim its contents, while its path does.

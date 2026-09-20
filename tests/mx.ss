@@ -64,7 +64,7 @@
      (check 'a-buffer-argument-offers-buffers-producers-and-variables
        (let ([offered (labels "(head:show-buffer! ")])
          (list (has? "(buffer \"*scratch*\")" offered) (has? "(head:current-buffer)" offered)
-               (has? "(fresh-buffer! name)" offered) (has? "(head:new-local-buffer! name)" offered) (has? "myb" offered)
+               (has? "(head:fresh-buffer! name)" offered) (has? "(head:new-local-buffer! name)" offered) (has? "myb" offered)
                ;; a typed token narrows, and the buffer's spelling leads
                (car (labels "(head:show-buffer! scr")) (has? "myb" (labels "(head:show-buffer! my"))
                ;; a token matches a candidate's own text, never the formals of its label
@@ -79,20 +79,20 @@
      (define (extensions text) (eval:completion-extensions text (string-length text)))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
        (let ([nested (labels "(head:show-buffer! (bu")])
-         (list (has? "(buffer \"*scratch*\")" nested) (has? "(fresh-buffer! name)" nested) (has? "myb" nested)
+         (list (has? "(buffer \"*scratch*\")" nested) (has? "(head:fresh-buffer! name)" nested) (has? "myb" nested)
                (labels "(head:show-buffer! (curr") (extensions "(head:show-buffer! (curr")
                (extensions "(head:show-buffer! bu") (extensions "(head:show-buffer! (bu")
                ;; a variable holding a buffer keeps the token bare
                (extensions "(head:show-buffer! my") (extensions "(head:show-buffer! ")
-               (extensions "(set-buffer-wrap! b 'c") (extensions "(visit-file! \"man")
+               (extensions "(head:buffer-wrap-set! b 'c") (extensions "(visit-file! \"man")
                ;; a quoted form, or one whose operator is undocumented, completes symbols
                (labels "(head:show-buffer! '(bu") (labels "(list (bu")))
        '(#t #t #f ("(head:current-buffer)") ("(head:current-buffer)") ("(buffer") ("(buffer") ("myb") ("")
          ("'clean") ("manual/") #f #f))
      (check 'literals-and-strings-complete-in-place
-       (list (has? "'clean" (labels "(set-buffer-wrap! b ")) (has? "#f" (labels "(set-buffer-wrap! b "))
+       (list (has? "'clean" (labels "(head:buffer-wrap-set! b ")) (has? "#f" (labels "(head:buffer-wrap-set! b "))
              ;; the language's types offer their own values but no producers
-             (length (labels "(set-buffer-wrap! b ")) (labels "(window:set-wrap! ")
+             (length (labels "(head:buffer-wrap-set! b ")) (labels "(window:set-wrap! ")
              (has-prefix? "manual/" (labels "(visit-file! \"man"))
              (has? "*scratch*" (labels "(buffer \""))
              ;; an undocumented operator falls back to symbols

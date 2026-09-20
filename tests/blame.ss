@@ -111,7 +111,7 @@
      (tint-seconds! 8)
      (store:edit! '(agent rival) id (store:revision id) (text:make-span 0 0 0 2) '("BL"))
      (head:before-frame!)
-     (goto-point! '(0 . 0))
+     (head:goto! '(0 . 0))
      (at-point!)
      (check 'blame-names-the-rival-at-point
        (exists (lambda (entry)
