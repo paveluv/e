@@ -53,7 +53,6 @@
     quit!
     ;; extending the editor
 
-    describe-key!
 
     register-indenter! register-formatter!
 
@@ -1221,15 +1220,7 @@
     (when (pair? entries) (paint:present-echo!)))
 
 
-  ;;; Types ---------------------------------------------------------------------
-
-  ;; The command type: what a key or a binding names. The literal types,
-  ;; buffer, window, region and position, live in (literal) with their
-  ;; spellings.
-
-  (edoc-type command "a command: a procedure callable with no arguments, by its name"
-    (predicate (lambda (v) (and (procedure? v) (logbit? 0 (procedure-arity-mask v)))))
-    (write keymap:action-text))
+  ;;; Buffers: creation and the trash ---------------------------------------------
 
   (edoc "Create an empty shared buffer with a name, suffixed when the name is taken, and show it here."
         (name string "the buffer's name")
@@ -2201,80 +2192,6 @@
     (set! point-row (- (vlen) 1))
     (set! point-col (string-length (current-display-line))))
 
-  (define (binding-origin owned)
-    (let ([owner (car owned)] [kind (keymap:binding-kind (cdr owned))])
-      (cond [(eq? owner 'config) "config.e (user override)"]
-            [owner (format "module ~a (~a)" owner kind)]
-            [(eq? kind 'default) "built-in default"]
-            [else "current session (user override)"])))
-
-  (define (read-described-sequence)
-    (let loop ([sequence (list (head:read-key-event #f))])
-      (if (keymap:binding-prefix? 'global sequence)
-          (begin
-            (set! message (format "Describe key: ~a-" (keymap:sequence-text sequence)))
-            (paint:redraw!)
-            (loop (append sequence (list (head:read-key-event #f)))))
-          sequence)))
-
-  (edoc "Read a key sequence and show in the help buffer what it runs, who bound it and what it shadows."
-        (prompts))
-  (define (describe-key!)
-    (parameterize ([message-source #f])
-      (set-message! "Describe key: "))
-    (paint:redraw!)
-    (let* ([sequence (read-described-sequence)]
-           [all (keymap:sequence-bindings sequence)]
-           [entries (filter
-                      (lambda (owned)
-                        (eq? (keymap:binding-context (cdr owned)) 'global))
-                      all)]
-           [resolved (keymap:choose-binding entries)]
-           [b (head:fresh-buffer! "*help*")])
-      (head:buffer-append! b
-        (keymap:sequence-text sequence)
-        ""
-        (if resolved
-            (format "Resolved to: ~a" (keymap:action-text (keymap:binding-action (cdr resolved))))
-            "Resolved to: self-insert or undefined")
-        "Keymap: global"
-        (if resolved
-            (format "Defined by: ~a" (binding-origin resolved))
-            "Defined by: fallback"))
-      (when (> (length entries) 1)
-        (head:buffer-append! b "" "Shadowed bindings:")
-        (for-each
-          (lambda (owned)
-            (unless (eq? owned resolved)
-              (head:buffer-append! b
-                (format "  ~a — ~a"
-                        (keymap:action-text (keymap:binding-action (cdr owned)))
-                        (binding-origin owned)))))
-          entries))
-      (let ([contexts
-             (fold-left
-               (lambda (acc owned)
-                 (let ([context (keymap:binding-context (cdr owned))])
-                   (if (or (eq? context 'global) (memq context acc))
-                       acc
-                       (append acc (list context)))))
-               '() all)])
-        (when (pair? contexts)
-          (head:buffer-append! b "" "Contextual bindings:")
-          (for-each
-            (lambda (context)
-              (let ([hit (keymap:resolved-binding context sequence)])
-                (when hit
-                  (head:buffer-append! b
-                    (format "  ~a: ~a — ~a"
-                            context
-                            (keymap:action-text (keymap:binding-action (cdr hit)))
-                            (binding-origin hit))))))
-            contexts)))
-      (head:buffer-read-only-set! b #t)
-      (set! message "")
-      (unless (window:pop-up-or-reuse! b)
-        (set-message! "The <help> buffer could not be displayed"))))
 
   ;;; Regions and the generic helpers ------------------------------------------
 
@@ -2371,7 +2288,6 @@
           ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!)
           ("C-x C-w" ,(keymap:prefill save-file!)) ("C-x C-c" ,quit!)
           ("C-x k" ,(keymap:call kill-buffer! head:current-buffer))
-          ("C-h k" ,describe-key!)
           ("C-c a" ,(keymap:prefill answer!))))
       (for-each
         (lambda (entry)

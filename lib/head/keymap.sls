@@ -25,7 +25,8 @@
           set-context-capture! context-capture)
   (import (rnrs)
           (only (chezscheme)
-                cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment)
+                cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment
+                procedure-arity-mask logbit?)
           (prefix (kernel) kernel:)
           (prefix (string) string:))
 
@@ -335,6 +336,12 @@
           [(prefill-action? action) (string-append "M-x " (prefill-text action))]
           [(procedure? action) (or (top-level-name action) "anonymous command")]
           [else (format "~s" action)]))
+
+  ;; The command type: what a key or a binding names, spelled as the
+  ;; call it makes.
+  (edoc-type command "a command: a procedure callable with no arguments, by its name"
+    (predicate (lambda (v) (and (procedure? v) (logbit? 0 (procedure-arity-mask v)))))
+    (write (lambda (v) (action-text v))))
 
   (define (add-key-binding! context spec action kind)
     (unless (symbol? context)
