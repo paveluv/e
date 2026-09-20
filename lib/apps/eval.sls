@@ -39,7 +39,7 @@
           (prefix (dispatch) dispatch:)
           (prefix (only (reference) lookup) reference:)
           (prefix (doc) doc:)
-          (only (edit) regions-of region-text)
+          (only (edit) current-region region-text)
           (prefix (only (scheme-format) indent-lines delimiter?) scheme-format:)
           (prefix (only (sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
 
@@ -95,17 +95,34 @@
 
   (define (callable-formals sig)
     ;; the lambda list of a documented callable: a procedure's own, a record
-    ;; procedure's from its argument names, in order; #f for the rest
+    ;; procedure's or a keyword's from its argument names, in order; #f for
+    ;; the rest
     (case (edoc:signature-kind sig)
       [(procedure) (edoc:signature-formals sig)]
-      [(constructor accessor mutator predicate) (map edoc:argument-name (edoc:signature-arguments sig))]
+      [(constructor accessor mutator predicate syntax) (map edoc:argument-name (edoc:signature-arguments sig))]
       [else #f]))
+
+  (define (named-signatures sym)
+    ;; the signatures recorded under a name, a keyword's or a type's: as
+    ;; spelled, else, for a module-prefixed name, under the library's own
+    ;; spelling when the library is the module
+    (define (some sigs) (and (pair? sigs) sigs))
+    (or (some (edoc:edoc-named sym))
+        (let* ([text (symbol->string sym)] [n (string-length text)])
+          (let loop ([i 0])
+            (cond
+              [(= i n) #f]
+              [(char=? (string-ref text i) #\:)
+               (let ([library (string-append "(" (substring text 0 i) ")")]
+                     [sigs (edoc:edoc-named (string->symbol (substring text (+ i 1) n)))])
+                 (some (filter (lambda (sig) (string=? (edoc:signature-library sig) library)) (or sigs '()))))]
+              [else (loop (+ i 1))])))))
 
   (define (argument-type sym index)
     ;; the type documented for argument index of the callable bound to sym,
     ;; the union of its lambda lists' answers, or #f
     (let* ([value (and (top-level-bound? sym) (top-level-value sym))]
-           [signatures (and (procedure? value) (edoc:edoc-of value))])
+           [signatures (if (procedure? value) (edoc:edoc-of value) (named-signatures sym))])
       (and signatures
            (let ([types
                   (fold-left
@@ -376,7 +393,7 @@
            [value (and bound? (top-level-value sym))]
            [key (if (procedure? value) value sym)])
       (or (eq-hashtable-ref hint-cache key #f)
-          (let* ([signatures (or (and bound? (edoc:edoc-of value)) (edoc:edoc-named sym))]
+          (let* ([signatures (or (and bound? (edoc:edoc-of value)) (named-signatures sym))]
                  [sig (and signatures (car signatures))]
                  [arguments
                   (cond
@@ -925,16 +942,12 @@
             (append output-records (list result-record))
             (if copied? " [stored in kill ring]" ""))))))
 
-  (edoc "Evaluate the Scheme text in where, the whole current buffer by default, in the M-x interaction environment and show the last result in the echo area."
-        (where* (list-of (or buffer string region procedure list)) "what to evaluate, at most one: a buffer, its name, a region, a predicate on buffers or a list of these"))
-  (define (eval! . where*)
-    (let* ([where (if (pair? where*) (car where*) (head:current-buffer))]
-           [query (if (pair? where*) (format "(eval! ~s)" where) "(eval!)")]
-           [text (string:join (map region-text (regions-of where)) "\n")])
-      (let-values ([(outcome output-records)
-                    (evaluation-outcome query text)])
-        (report-evaluation! query outcome output-records))
-      (void)))
+  (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area.")
+  (define (eval!)
+    (let-values ([(outcome output-records)
+                  (evaluation-outcome "(eval!)" (region-text (current-region)))])
+      (report-evaluation! "(eval!)" outcome output-records))
+    (void))
 
   (define (spell value)
     ;; a pre-filled argument as the expression denoting it

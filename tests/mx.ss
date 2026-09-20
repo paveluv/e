@@ -91,12 +91,17 @@
      (check 'literals-and-strings-complete-in-place
        (list (has? "'clean" (labels "(set-buffer-wrap! b ")) (has? "#f" (labels "(set-buffer-wrap! b "))
              ;; the language's types offer their own values but no producers
-             (length (labels "(set-buffer-wrap! b ")) (labels "(wrap! ")
+             (length (labels "(set-buffer-wrap! b ")) (labels "(set-wrap! ")
              (has-prefix? "manual/" (labels "(visit-file! \"man"))
              (has? "*scratch*" (labels "(buffer \""))
              ;; an undocumented operator falls back to symbols
              (labels "(car "))
-       '(#t #t 4 ("#t" "#f") #t #t #f))
+       '(#t #t 4 ("#t" "#f" "'default") #t #t #f))
+     ;; a scope form's argument completes by type, syntax or not
+     (check 'a-scope-form-completes-its-argument-by-type
+       (list (has-prefix? "(buffer \"" (labels "(head:with-buffer (bu")) (has? "(head:current-buffer)" (labels "(head:with-buffer (bu"))
+             (has? "(current-region)" (labels "(with-region (re")) (has-prefix? "(window " (labels "(head:with-window (wi")))
+       '(#t #t #t #t))
      (check 'a-completed-value-settles-its-form
        (list (settled "(show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))
        '(("(show-buffer! (buffer \"*scratch*\"))" . 35) ("(visit-file! \"manual/EVAL.md\")" . 30)))

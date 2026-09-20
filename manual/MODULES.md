@@ -289,7 +289,11 @@ head:current-buffer))` calls the command on what the producers return when
 the key is pressed. `C-h k` shows both as the call they make, by the names
 the top level gives the procedures, so a rename follows.
 
-`edit:call-with-buffer` temporarily evaluates against another buffer.
+A command acts on the current window, buffer or region, or takes its
+target as a required argument, never both; the scope forms retarget it for
+the extent of a body: `head:with-buffer`, `head:with-window` and
+`edit:with-region`, syntax over `call-with-buffer`, `call-with-window` and
+`call-with-region`, dynamic and invisible to the apps.
 `edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors should be
 raised normally; the command loop reports unexpected conditions in the echo
 area and log.

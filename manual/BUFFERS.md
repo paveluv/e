@@ -218,7 +218,7 @@ put this in `config.e` or evaluate it with `M-x`:
 (edit:undo-scope 'all)              ; default: 'mine
 ```
 
-`(edit:undo! 'mine)` and `(edit:undo! 'all)` override the setting for one call.
+`(parameterize ([edit:undo-scope 'all]) (edit:undo!))` overrides the setting for one call.
 `M-x edit:undo-actor!` opens an actor picker; `(edit:undo-actor! actor)` selects an
 actor directly. Each selects that actor's latest live action without
 changing the preference. `C-M-_` or `(edit:redo!)` reverses this head's latest
@@ -271,9 +271,11 @@ Zero prevents new tints, while existing ones keep their deadlines.
 
 ## Line numbers
 
-`C-x l` toggles line numbers for the current buffer. The setting belongs to the
-buffer, so every window displaying it agrees. New and otherwise untoggled
-buffers follow the configurable default:
+`C-x l` (`edit:toggle-line-numbers!`) toggles line numbers in the current
+window, and `(edit:set-line-numbers! setting)` sets them to `#t`, `#f` or
+`default`. The setting belongs to the window and applies while it shows an
+edit buffer; an app's buffer shows itself as the app decides. Untoggled
+windows follow the configurable default:
 
 ```scheme
 (head:line-numbers #t) ; default is #f
@@ -462,8 +464,12 @@ wheel ticks move point sideways.
 
 Long lines soft-wrap by default. A continuation row ends in `\`. With wrapping
 off, truncated lines end in `$` and the window scrolls horizontally to follow
-point. `(paint:wrap-lines #f)` changes the default, and `C-x t` toggles wrapping for
-one window.
+point. `(paint:wrap-lines #f)` changes the default, `C-x t` (`edit:toggle-wrap!`)
+toggles wrapping for one window, and `(edit:set-wrap! setting)` sets it to
+`#t`, `#f` or `default`. Like line numbers, the window's setting applies
+while it shows an edit buffer; a buffer's own wrap fact, set with
+`edit:set-buffer-wrap!`, is what an app's buffer follows and what an edit
+buffer follows while its window's setting is `default`.
 
 Wrapping, Up/Down, and paging measure screen cells, keeping the visual column
 across wide characters and combining sequences. Selections highlight whole
@@ -530,7 +536,7 @@ whether there are unsaved changes.
 `edit:display-buffer!`,
 `edit:pop-up-or-reuse!`, `edit:kill-buffer!`,
 `edit:buffer-append!`, `mode:choose!`, and `edit:set-buffer-read-only!` provide
-controlled mutation and display. `edit:call-with-buffer` temporarily makes another
+controlled mutation and display. `head:with-buffer` temporarily makes another
 buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
 entries. `edit:focus-window-up!`, `edit:focus-window-down!`, `edit:focus-window-left!`, and
 `edit:focus-window-right!` expose directional focus to Scheme. App authors should

@@ -366,7 +366,7 @@
                    [else (cons 0 line-length)])))))
 
   ;; Whether windows soft-wrap by default -- for config.e; a window
-  ;; toggled by hand (wrap!, C-x t) keeps its own setting.
+  ;; toggled by hand (toggle-wrap!, C-x t) keeps its own setting.
   (edoc "Whether windows soft-wrap long lines by default; a window toggled by hand keeps its own setting."
         (value boolean))
   (define wrap-lines (make-parameter #t))
@@ -379,14 +379,18 @@
     ;; -- a store property, shared by every window and head showing it
     (head:buffer-fact b 'wrap 'default))
 
-  (edoc "Whether a window soft-wraps its lines now: its buffer's setting, else its own, else wrap-lines; never for a surfaced app grid."
+  (edoc "Whether a window soft-wraps its lines now: beside an edit buffer its own setting, else the buffer's wrap fact, else wrap-lines; an app's buffer follows its fact, else wrap-lines; never a surfaced row grid."
         (w window "the window")
         (returns boolean))
   (define (window-wrapped? w)
     ;; A surfaced row is an app's cell grid. Reflow belongs to its publisher;
     ;; withdrawal restores the head's ordinary buffer/window wrap setting.
-    (let* ([b (head:window-buffer w)] [choice (buffer-wrap-setting b)]
-           [x (if (eq? choice 'default) (head:window-wrap w) choice)])
+    ;; The window's setting is for text a user edits; an app's buffer shows
+    ;; itself as the app decides, through the buffer's fact.
+    (let* ([b (head:window-buffer w)] [fact (buffer-wrap-setting b)] [own (head:window-wrap w)]
+           [x (cond [(head:app-buffer? b) fact]
+                    [(not (eq? own 'default)) own]
+                    [else fact])])
       (and (not (render:header (head:window-rendition w))) (if (eq? x 'default) (wrap-lines) x))))
 
   (edoc "Whether a window's buffer wraps cleanly: no continuation marks, the full width."
@@ -512,11 +516,15 @@
             (line-hyperlinks (head:window-buffer w) row (head:window-lines w) (head:window-rendition w)))))
       (kernel:registry-items highlighters)))
 
-  (edoc "The highlight range under the mouse pointer: a hit query (hit window row column) gives (start end ...) or #f, painted with a face or hover."
+  (edoc "The highlight range under the mouse pointer: a hit query (hit window row column) gives (start end ...) or #f, painted with the face a chooser gives the hit, else hover."
         (hit procedure "the hit query")
-        (face (list-of procedure) "a face chooser for the hit, at most one")
+        (face procedure "(face range) choosing the face")
         (returns list))
-  (define (hover-ranges hit . face)
+  (define hover-ranges
+    (case-lambda
+      [(hit) (hover-ranges-with hit #f)]
+      [(hit face) (hover-ranges-with hit face)]))
+  (define (hover-ranges-with hit face)
     ;; Reuse click geometry and the existing highlighter protocol. A hit
     ;; query takes (window row character-column) and returns (start end ...)
     ;; or #f. An optional face procedure maps that hit to a style.
@@ -538,7 +546,7 @@
                             (and (< (car at) (vector-length lines))
                                  (let ([range (hit w (car at) (cdr at))])
                                    (and range (list (list w (car at) (car range) (cadr range)
-                                                      (if (null? face) 'hover ((car face) range)))))))))))))
+                                                      (if face (face range) 'hover))))))))))))
           '())))
 
   ;; Hyperlinkers produce (start end URI [id]) ranges for one buffer line.
@@ -1501,18 +1509,19 @@
     (echo-queue! component text styler replace?)
     (present-echo!))
 
-  (edoc "Queue a transient-log line without painting it, for batch publishers that present once at the end."
+  (edoc "Queue a transient-log line without painting it, for batch publishers that present once at the end, with a ghost text after the line when one is given."
         (component symbol "the log component")
         (text string "the line")
         (styler (or procedure #f) "the component's styler")
         (replace? boolean "whether to redraw in place")
-        (rest (list-of string) "a ghost text after the line, at most one"))
-  (define (echo-queue! component text styler replace? . rest)
+        (ghost string "a ghost text after the line"))
+  (define echo-queue!
     ;; Update transient echo state without painting it; batch publishers use
     ;; this before one final present-echo!.
-    (echo:queue! component text styler replace?
-                 (if (pair? rest) (car rest) "")
-                 (and (echo-cursor-now) #t)))
+    (case-lambda
+      [(component text styler replace?) (echo-queue! component text styler replace? "")]
+      [(component text styler replace? ghost)
+       (echo:queue! component text styler replace? ghost (and (echo-cursor-now) #t))]))
 
   (edoc "Present the echo area now, mid-command included: a full redraw when its height changed, else just the area.")
   (define (present-echo!)

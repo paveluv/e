@@ -21,7 +21,10 @@
      ;; Load through the kernel so the reload below replaces the real module.
      ;; Fresh procedures resolve through the top level after that reload.
      (kernel:load-module! "file-view")
-     (define (open! . directory) (apply (top-level-value 'file-view:open!) directory))
+     (define (open! . directory)
+       (if (null? directory)
+           ((top-level-value 'file-view:open!))
+           ((top-level-value 'file-view:open-directory!) (car directory))))
      (define (show-hidden) ((top-level-value 'file-view:show-hidden)))
 
      (define root (format "/tmp/e-files-~a-~a" (get-process-id) (random 1000000)))

@@ -1802,7 +1802,7 @@
                            (map (lambda (screen)
                                   (= stamp (head-read screen '(head:buffer-modified-at (head:current-buffer))))) (list a b))))
                    '(#("shared text B") (0 . 0) ((head "screen A") (head "screen B") (head "screen A")) (#t #t)))
-                 (head-read a '(edit:undo! 'all))
+                 (head-read a '(parameterize ([edit:undo-scope 'all]) (edit:undo!)))
                  (test:check 'attached-explicit-other-actor-undo-and-requester-redo
                    (list (car (rpc head 'snapshot id))
                          (begin (head-read a '(edit:redo!)) (car (rpc head 'snapshot id))))
@@ -2427,7 +2427,7 @@
                             (edit:goto-point! (cons (let find ([row 0])
                                                  (if (string=? (head:buffer-line (head:current-buffer) row) "After table")
                                                      row (find (+ row 1)))) 2))
-                            (edit:other-window!) (edit:wrap! #f) (edit:split-window-below!)
+                            (edit:other-window!) (edit:set-wrap! #f) (edit:split-window-below!)
                             ;; the user's tree is the root split's first subtree;
                             ;; the root itself holds the pop-up
                             (let ([rest (head:layout-split-first (head:root))])

@@ -2,7 +2,7 @@
 
 `C-x C-f` opens the `<files>` app in the current window. It starts in the
 current file's directory, an app's working directory, or the head's launch
-directory. `M-x (file-view:open! "/some/directory")` starts elsewhere.
+directory. `M-x (file-view:open-directory! "/some/directory")` starts elsewhere.
 The original path-entry prompt remains available as `M-x (edit:visit-file!)`.
 `C-x f` has no default binding.
 

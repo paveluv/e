@@ -2,7 +2,7 @@
 
 (import (only (edoc) elibrary))
 (elibrary (git-view)
-  (export init! (rename (git-log! log!)) (rename (git-log-refresh! refresh!)))
+  (export init! (rename (git-log! log!)) (rename (git-log-of! log-of!)) (rename (git-log-refresh! refresh!)))
   (import (chezscheme)
           (except (edit) init!)
           (prefix (style) style:)
@@ -232,20 +232,22 @@
       (head:set-app-presentation! diff-buffer 1 #t)
       (mode:choose! diff-buffer "git:diff")))
 
-  (edoc "Open the interactive git log app for the repository containing a path, the current file by default; Up and Down navigate, Enter shows a file's patch."
-        (path (list-of file) "a path inside the repository, at most one"))
-  (define (git-log! . path)
-    (let ([source (if (pair? path) (car path)
-                      (or (head:buffer-file (head:current-buffer)) "."))])
-      (ensure-git-buffers!)
-      (set! repository (git:open source))
-      (load-log! repository)
-      (refresh-log!)
-      (let ([w (display-buffer! log-buffer)])
-        (when w
-          (select-window! w)
-          (goto-point! '(1 . 0))))
-      (void)))
+  (edoc "Open the interactive git log app for the repository containing the current file, or the working directory when the buffer has none; Up and Down navigate, Enter shows a file's patch.")
+  (define (git-log!)
+    (git-log-of! (or (head:buffer-file (head:current-buffer)) ".")))
+
+  (edoc "Open the interactive git log app for the repository containing a path; Up and Down navigate, Enter shows a file's patch."
+        (path file "a path inside the repository"))
+  (define (git-log-of! path)
+    (ensure-git-buffers!)
+    (set! repository (git:open path))
+    (load-log! repository)
+    (refresh-log!)
+    (let ([w (display-buffer! log-buffer)])
+      (when w
+        (select-window! w)
+        (goto-point! '(1 . 0))))
+    (void))
 
   (edoc "Register the git log and diff modes, reconnect surviving app buffers, and install the describe entries and bindings.")
   (define (init!)
@@ -257,9 +259,9 @@
               (head:find-tool-buffer "*git-diff*"))
       (ensure-git-buffers!))
     (doc:register!
-      '(((git-view:log!) (("procedure" . "(git-view:log! [path])")) "void"
+      '(((git-view:log!) (("procedure" . "(git-view:log!)")) "void"
          ("(git-view)") git-view "Git" #f
-         "Open the interactive `<git-log>` app for the repository containing `path` or the current file. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
+         "Open the interactive `<git-log>` app for the repository containing the current file; `(git-view:log-of! path)` opens another repository's. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
         ((git-view:refresh!)
          (("procedure" . "(git-view:refresh!)")) "void"
          ("(git-view)") git-view "Git" #f
@@ -273,7 +275,7 @@
           ;; Keyboard navigation is bold; only actionable mouse targets
           ;; get the shared hover face, scoped to the pointed window.
           (if (and log-buffer (memq log-buffer (head:buffers)))
-              (let ([row (call-with-buffer log-buffer
+              (let ([row (head:call-with-buffer log-buffer
                            (lambda () (car (point))))])
                 (if (<= 1 row (- (head:buffer-line-count log-buffer) 1))
                     (list (list log-buffer row 0

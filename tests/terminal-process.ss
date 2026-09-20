@@ -311,7 +311,7 @@
                         '("head" "edit" "paint" "mode" "log")))
              '(#t "*" (#f #f #f #f #f)))
            (set! buffer (head:adopt-store-buffer! id))
-           (head:buffer-line-numbers-setting-set! buffer #f)
+           (head:window-line-numbers-set! (head:current-window) #f)
            (head:window-size-set! (head:current-window) 3)
            (head:window-width-set! (head:current-window) 24)
            (head:set-repaint-hook!

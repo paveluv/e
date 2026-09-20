@@ -229,11 +229,11 @@
      (define documented (filter (lambda (sym) (edoc-of (top-level-value sym))) editor-procedures))
      (check 'the-command-layer-reads-back
        (list (map argument-type (signature-arguments (car (edoc-of visit-file!))))
-             (map argument-type (signature-arguments (car (edoc-of wrap!))))
+             (map argument-type (signature-arguments (car (edoc-of present-log-entries!))))
              (signature-arguments (car (edoc-of split-window-below!)))
              (argument-type (signature-returns (car (edoc-of select-window!))))
              (signature-library (car (edoc-of delete-window!))))
-       '((file) ((list-of boolean)) () boolean "(edit)"))
+       '((file) ((list-of datum)) () boolean "(edit)"))
      (check 'documented-clauses-match-their-formals
        (filter (lambda (sym)
                  (not (for-all (lambda (sig)

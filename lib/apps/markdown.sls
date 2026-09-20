@@ -912,23 +912,27 @@
     (and (head:buffer? source)
          (find (lambda (b) (eq? (render-input b) source)) (head:buffers))))
 
-  (edoc "The local companion view of a Markdown buffer, created under an optional name when there is none."
+  (edoc "The local companion view of a Markdown buffer, created when there is none, under the given name or *markdown NAME*."
         (source buffer "a buffer in markdown mode")
-        (name (list-of string) "a preferred buffer name, at most one")
+        (name string "a preferred buffer name for a new view")
         (returns buffer))
-  (define (source-view! source . name)
+  (define source-view!
     ;; A source record is the identity, never its mutable label.  The
     ;; relationship belongs only to the local companion, not the store.
     ;; Apps can supply a preferred local label without selecting a window.
+    (case-lambda
+      [(source) (source-view-named! source #f)]
+      [(source name)
+       (unless (and (string? name) (> (string-length name) 0))
+         (error 'companion! "expected a buffer name" name))
+       (source-view-named! source name)]))
+  (define (source-view-named! source name)
     (unless (equal? (mode:name-of source) "markdown")
       (error 'companion! "not a markdown buffer" source))
-    (unless (and (<= (length name) 1)
-                 (or (null? name) (and (string? (car name)) (> (string-length (car name)) 0))))
-      (error 'companion! "expected an optional buffer name" name))
     (head:add-buffer! source)
     (let ([b (or (source-companion source)
                  (head:new-local-buffer!
-                   (if (pair? name) (car name) (format "*markdown ~a*" (head:buffer-name source)))))])
+                   (or name (format "*markdown ~a*" (head:buffer-name source)))))])
       (head:buffer-fact-set! b 'markdown-input source)
       (attach-source-view! b)
       (refresh-render! b)

@@ -210,7 +210,7 @@
                  #(("https://surface.example" "wide") ("https://surface.example" "wide") #f #f)
                  ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4))
             (edit:show-buffer! (head:adopt-store-buffer! id))
-            (head:buffer-line-numbers-setting-set! (head:current-buffer) #f)
+            (head:window-line-numbers-set! (head:current-window) #f)
             id)))
      (check 'surface-paints-real-shared-text-and-cell-links
        (list (screen-has? 0 "界éZ") (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1))

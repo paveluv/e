@@ -17,18 +17,16 @@
 ;; mutable state included -- are invisible outside the library; the
 ;; exports are the editor's public command API.
 ;;
-;; Every generic helper here takes an optional `where` argument saying
-;; what to operate on, normalized by regions-of: omitted -- the
-;; selected region, or the whole current buffer; a buffer, or its name
-;; -- all of it; a region; a predicate -- the buffers it accepts; or a
-;; list of any of these.  A region is a slice of one buffer between two
-;; (row . col) points, and prints as the expression that rebuilds it,
-;; like buffers do:  (region (buffer "e") '(0 . 0) '(12 . 5)).
+;; The generic helpers act on the selected region, else on the whole
+;; current buffer -- current-region; with-region and head:with-buffer
+;; retarget them for the extent of a body.  A region is a slice of one
+;; buffer between two (row . col) points, and prints as the expression
+;; that rebuilds it, like buffers do:  (region (buffer "e") '(0 . 0) '(12 . 5)).
 
 (import (only (edoc) elibrary))
 (elibrary (edit)
   (export init!
-          regions-of region-text
+          current-region region-text call-with-region with-region
           replace-all! count-matches replace!
           next-conflict! keep-mine! keep-disk!
           list-buffers!
@@ -41,13 +39,12 @@
     show-buffer! kill-buffer! display-buffer! pop-up-or-reuse! buffer-append!
     fresh-buffer!
     set-buffer-read-only! set-buffer-wrap! set-buffer-name!
-    call-with-buffer
     new-buffer! trash restore! empty-trash!
     split-window-below! split-window-right! split-window-above! split-window-left!
     delete-window! delete-other-windows! other-window!
     focus-window-up! focus-window-down! focus-window-left! focus-window-right!
-    resize-window! wrap!
-    line-numbers!
+    resize-window! toggle-wrap! set-wrap!
+    toggle-line-numbers! set-line-numbers!
     ;; editing and movement
     insert-text! replace-region-text! newline! delete-forward! backspace!
     kill-line! kill-region! copy-region! yank! undo! redo! undo-scope undo-actor!
@@ -117,8 +114,6 @@
   ;; of a store buffer plus per-seat presentation; the commands reach
   ;; the seat's lists and selection through the identifier-syntax
   ;; facades below (a facade sweep is on the tech-debt ledger).
-  (define buffer-line-numbers-setting-set!
-    head:buffer-line-numbers-setting-set!)
   (define-syntax buffers
     (identifier-syntax [id (head:buffers)]
       [(set! id v) (head:set-buffers! v)]))
@@ -441,13 +436,10 @@
           (local-history-shift! from to verb scope)))
     message)
 
-  (edoc "Undo one action in the current buffer: this head's latest with scope mine, any actor's with all; omitted, the undo-scope preference decides."
-        (scope (list-of (one-of mine all)) "at most one scope")
+  (edoc "Undo one action in the current buffer within the undo-scope: this head's latest under mine, any actor's under all."
         (returns string "the report shown in the echo area"))
-  (define (undo! . scope)
-    (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
-    (history-shift! 0 1 "Undo"
-                    (if (pair? scope) (check-undo-scope (car scope)) (undo-scope))))
+  (define (undo!)
+    (history-shift! 0 1 "Undo" (undo-scope)))
 
   (edoc "Reverse this head's latest undo."
         (returns string "the report shown in the echo area"))
@@ -878,8 +870,16 @@
                   (set-message! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))))])
       ((prepare-file-visit path))))
 
-  (define (refuse-file! message)
+  (define (refuse! message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
+  (define (refuse-file! message) (refuse! message))
+
+  (define (edit-window!)
+    ;; the current window while it shows an edit buffer: the window
+    ;; settings, wrap and line numbers, are for text a user edits; an
+    ;; app's buffer shows itself as the app decides
+    (when (head:app-buffer? (head:current-buffer)) (refuse! "Not an edit buffer"))
+    current-window)
 
   (define (read-disk path)
     ;; #f means genuinely absent.  An existing file that cannot be read
@@ -1186,30 +1186,36 @@
         (returns (or position #f)))
   (define (mark)
     (and mark-active? (cons mark-row mark-col)))
-  (edoc "Run a thunk with a buffer temporarily current: in the window already showing it, else invisibly in the current window."
-        (b buffer "the buffer to make current")
+  (edoc "The selected region while the mark is active, else the whole current buffer as a region."
+        (returns region))
+  (define (current-region)
+    (let ([m (mark)])
+      (if m
+          (region (head:current-buffer) m (point))
+          (whole-buffer (head:current-buffer)))))
+
+  (edoc "Run a thunk with a region selected: its buffer current, the mark at its start and point at its end; the previous selection and point return on exit and on escape."
+        (r region "the region to select")
         (thunk thunk "what to run")
         (returns any "what the thunk returns"))
-  (define (call-with-buffer b thunk)
-    ;; Run thunk with b temporarily the current buffer: in the window
-    ;; already showing it when there is one -- point moves where the
-    ;; user sees them -- else invisibly in the current window with the
-    ;; usual spot saving; the MRU order is untouched either way.
-    (cond
-      [(eq? b (head:window-buffer current-window)) (thunk)]
-      [(find (lambda (w) (eq? (head:window-buffer w) b)) windows)
-       => (lambda (w)
-            (let ([prev current-window])
-              (dynamic-wind
-                (lambda () (set! current-window w))
-                thunk
-                (lambda () (set! current-window prev)))))]
-      [else
-       (let ([old (head:window-buffer current-window)])
-         (dynamic-wind
-           (lambda () (head:set-window-buffer! current-window b))
-           thunk
-           (lambda () (head:set-window-buffer! current-window old))))]))
+  (define (call-with-region r thunk)
+    (head:call-with-buffer (region-buffer r)
+      (lambda ()
+        (let ([saved-point (point)] [saved-mark (cons mark-row mark-col)] [saved-active mark-active?])
+          (define (select! start end active?)
+            (set! mark-row (car start)) (set! mark-col (cdr start)) (set! mark-active? active?)
+            (set! point-row (car end)) (set! point-col (cdr end)))
+          (dynamic-wind
+            (lambda () (select! (region-start r) (region-end r) #t))
+            thunk
+            (lambda () (select! saved-mark saved-point saved-active)))))))
+
+  (edoc "Run body with a region selected, as call-with-region does: (with-region (region (buffer \"a\") '(0 . 0) '(4 . 0)) (replace-all! \"x\" \"y\"))."
+        (r region "the region to select")
+        (body (list-of any) "the forms to run"))
+  (define-syntax with-region
+    (syntax-rules ()
+      [(_ r body ...) (call-with-region r (lambda () body ...))]))
 
   (edoc "A named tool buffer, emptied for rebuilding; the same name reuses its own local buffer."
         (name string "the tool's name")
@@ -1238,13 +1244,19 @@
   ;; window geometry helpers live in (head); the commands over them are
   ;; here.
 
-  (edoc "Toggle the line-number gutter of the current buffer: every window showing the buffer shares the setting, whose initial state follows the head:line-numbers parameter.")
-  (define (line-numbers!)
-    (let ([b (head:current-buffer)])
-      (head:buffer-line-numbers-setting-set! b (not (head:buffer-line-numbers b)))
-      (paint:invalidate-screen-cache!)
-      (set-message!
-        (format "Line numbers ~a" (if (head:buffer-line-numbers b) "on" "off")))))
+  (edoc "Toggle the line-number gutter of the current window, shown beside an edit buffer; an app's buffer shows itself.")
+  (define (toggle-line-numbers!)
+    (set-line-numbers! (not (head:window-line-numbers? (edit-window!)))))
+
+  (edoc "Set the line-number gutter of the current window: #t, #f, or default for the head's line-numbers setting; it shows beside an edit buffer, an app's buffer shows itself."
+        (setting (or boolean (one-of default)) "the window's setting"))
+  (define (set-line-numbers! setting)
+    (unless (memq setting '(default #t #f))
+      (error 'set-line-numbers! "expected default, #t or #f" setting))
+    (head:window-line-numbers-set! (edit-window!) setting)
+    (paint:invalidate-screen-cache!)
+    (set-message!
+      (format "Line numbers ~a" (if (head:window-line-numbers? current-window) "on" "off"))))
 
   ;;; The log -----------------------------------------------------------------
 
@@ -1270,10 +1282,14 @@
     ;; Present an existing record in the echo area without logging it again.
     (present-log-entries! (list e)))
 
-  (edoc "Queue several existing log records for the echo area and repaint once."
+  (edoc "Queue several existing log records for the echo area and repaint once, with a ghost text after the last one when given."
         (entries (list-of datum) "the log records")
-        (tail (list-of string) "a ghost text after the last one, at most one"))
-  (define (present-log-entries! entries . tail)
+        (tail string "a ghost text after the last one"))
+  (define present-log-entries!
+    (case-lambda
+      [(entries) (present-log-entries-with! entries "")]
+      [(entries tail) (present-log-entries-with! entries tail)]))
+  (define (present-log-entries-with! entries tail)
     ;; Queue several existing records and repaint once, avoiding a full echo
     ;; geometry change and terminal redraw for every streamed line.
     (let loop ([left entries])
@@ -1281,9 +1297,7 @@
         (let* ([e (car left)]
                [text (log:format-entry e)]
                [styler (log:styler (log:component e))]
-               [ghost (if (and (null? (cdr left)) (pair? tail))
-                          (car tail)
-                          "")])
+               [ghost (if (null? (cdr left)) tail "")])
           (paint:echo-queue! (log:component e) text styler #f ghost)
           (loop (cdr left)))))
     (when (pair? entries) (paint:present-echo!)))
@@ -1491,12 +1505,16 @@
       (set! message "Not enough room to split"))
     (void))
 
-  (edoc "Toggle soft wrapping of long lines in the current window, or set it."
-        (on (list-of boolean) "an explicit setting instead of a toggle"))
-  (define (wrap! . on)
-    (head:window-wrap-set! current-window
-                           (if (pair? on) (car on)
-                             (not (paint:window-wrapped? current-window))))
+  (edoc "Toggle soft wrapping of long lines in the current window, shown beside an edit buffer; an app's buffer shows itself.")
+  (define (toggle-wrap!)
+    (set-wrap! (not (paint:window-wrapped? (edit-window!)))))
+
+  (edoc "Set soft wrapping of long lines in the current window: #t wraps, #f truncates, default follows the buffer's wrap fact, else paint:wrap-lines; it applies beside an edit buffer, an app's buffer shows itself."
+        (setting (or boolean (one-of default)) "the window's setting"))
+  (define (set-wrap! setting)
+    (unless (memq setting '(default #t #f))
+      (error 'set-wrap! "expected default, #t or #f" setting))
+    (head:window-wrap-set! (edit-window!) setting)
     (head:window-left-set! current-window 0)
     (set! goal-pos #f)              ; the goal column changes meaning
     (set! message (format "Wrap ~a"
@@ -1639,12 +1657,14 @@
   (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
   (define formatters (kernel:make-registry))  ; entries (mode proc)
 
-  (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on by default."
+  (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
         (name mode "the mode")
         (proc procedure "the indenter")
-        (tab (list-of boolean) "whether TAB indents, at most one"))
-  (define (register-indenter! name proc . tab)
-    (kernel:registry-add! indenters (list name proc (or (null? tab) (car tab)))))
+        (tab boolean "whether TAB indents"))
+  (define register-indenter!
+    (case-lambda
+      [(name proc) (register-indenter! name proc #t)]
+      [(name proc tab) (kernel:registry-add! indenters (list name proc tab))]))
 
   (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
         (name mode "the mode")
@@ -2601,25 +2621,6 @@
       (region b '(0 . 0)
               (cons last (string-length (head:buffer-line b last))))))
 
-  (edoc "The regions a where argument denotes: #f for the selected region or the whole current buffer, a buffer or its name for all of it, a region itself, a predicate for the buffers it accepts, or a list of any of these."
-        (where (or buffer string region procedure list #f) "what to operate on")
-        (returns (list-of region)))
-  (define (regions-of where)
-    ;; The regions a `where` argument denotes (see the header).
-    (cond [(not where)
-           (list (let ([m (mark)])
-                   (if m
-                       (region (head:current-buffer) m (point))
-                       (whole-buffer (head:current-buffer)))))]
-          [(region? where) (list where)]
-          [(head:buffer? where) (list (whole-buffer where))]
-          [(string? where) (list (whole-buffer (buffer where)))]
-          [(procedure? where) (regions-of (filter where (head:buffers)))]
-          [(list? where) (apply append (map regions-of where))]
-          [else (error 'regions-of
-                       "not a buffer, name, region, predicate, or list"
-                       where)]))
-
   ;;; Matching ----------------------------------------------------------------
 
   (define (for-matches! r needle handle!)
@@ -2650,27 +2651,20 @@
                   (row-loop (+ row 1)))))))
       count))
 
-  (define (where-of rest)
-    (and (pair? rest) (car rest)))
 
   ;;; Commands ----------------------------------------------------------------
 
-  (edoc "How many times needle occurs inside where."
+  (edoc "How many times needle occurs in the selected region, else in the whole current buffer."
         (needle string "the text to count, within one line")
-        (where (list-of (or buffer string region procedure list)) "what to operate on: omitted, the selected region or the whole current buffer; a buffer or its name; a region; a predicate on buffers; or a list of these")
         (returns integer))
-  (define (count-matches needle . where)
-    (fold-left (lambda (n r)
-                 (+ n (for-matches! r needle
-                        (lambda (row col) (string-length needle)))))
-               0 (regions-of (where-of where))))
+  (define (count-matches needle)
+    (for-matches! (current-region) needle (lambda (row col) (string-length needle))))
 
-  (edoc "Replace every occurrence of from with to inside where: one undo step per buffer touched, point left where it was."
+  (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one undo step, point left where it was."
         (from string "the text to find, within one line")
         (to string "its replacement")
-        (where (list-of (or buffer string region procedure list)) "what to operate on: omitted, the selected region or the whole current buffer; a buffer or its name; a region; a predicate on buffers; or a list of these")
         (returns integer "how many occurrences were replaced"))
-  (define (replace-all! from to . where)
+  (define (replace-all! from to)
     (define m (string-length from))
     (define (replace-line s)
       ;; Accumulate pieces and join once instead of copying the growing line
@@ -2703,21 +2697,15 @@
                                 (substring s from-col (max from-col to-col)))])
                   (loop (+ row 1) (cons line lines) (+ count found))))))))
     (when (= m 0) (error 'edit "empty search string"))
-    (fold-left
-      (lambda (n r)
-        (+ n (call-with-buffer (region-buffer r)
-               (lambda ()
-                 (let ([saved (point)] [source (head:edit-basis (region-buffer r))])
-                   (call-as-one-edit!
-                     (format "(replace-all! ~s ~s)" from to)
-                     (lambda ()
-                       (let-values ([(text count) (rewritten-region r)])
-                         (when (> count 0)
-                           (parameterize ([edit-source source] [edit-point saved])
-                             (replace-region-text! (region-start r)
-                                                   (region-end r) text)))
-                         count))))))))
-      0 (regions-of (where-of where))))
+    (let ([r (current-region)] [saved (point)] [source (head:edit-basis (head:current-buffer))])
+      (call-as-one-edit!
+        (format "(replace-all! ~s ~s)" from to)
+        (lambda ()
+          (let-values ([(text count) (rewritten-region r)])
+            (when (> count 0)
+              (parameterize ([edit-source source] [edit-point saved])
+                (replace-region-text! (region-start r) (region-end r) text)))
+            count)))))
 
   (edoc "The text inside a region, rows joined with newlines."
         (r region "the region to read")
@@ -3201,7 +3189,6 @@
           (head:set-app-cursor-visible! buffers-view #f)
           (head:set-app-selectable! buffers-view #f)
           (head:set-app-status-position! buffers-view head:buffer-name)
-          (head:buffer-line-numbers-setting-set! buffers-view #f)
           (mode:choose! buffers-view "buffers")
           (refresh-buffers-view!)
           buffers-view)))
@@ -3308,7 +3295,7 @@
           ("C-x k" ,(keymap:call kill-buffer! head:current-buffer)) ("C-x o" ,other-window!)
           ("C-x 0" ,delete-window!) ("C-x 1" ,delete-other-windows!)
           ("C-x 2" ,split-window-below!) ("C-x 3" ,split-window-right!)
-          ("C-x l" ,line-numbers!) ("C-x t" ,wrap!)
+          ("C-x l" ,toggle-line-numbers!) ("C-x t" ,toggle-wrap!)
           ("C-h k" ,describe-key!)
           ("C-c a" ,(keymap:prefill answer!))))
       (for-each
@@ -3338,9 +3325,9 @@
       '(((undo-scope) (("parameter" . "(undo-scope [scope])")) "symbol"
          ("(edit)") edit "Editing commands" #f
          "Choose the default scope of `undo!` and C-_. `mine` (the default) selects this head's latest live action; `all` selects the latest live action of any actor. The preference belongs to the head. Local buffers use their own history in either mode.")
-        ((undo!) (("procedure" . "(undo! [scope])")) "string"
+        ((undo!) (("procedure" . "(undo!)")) "string"
          ("(edit)") edit "Editing commands" #f
-         "Undo one action in the current buffer. Scope is `mine` or `all`; omission uses `undo-scope`. A supplied scope overrides the preference for this call only. Shared changes use attributed inverse edits; an overlap, changed text property, or unavailable history refuses without changing any part of the action.")
+         "Undo one action in the current buffer within `undo-scope`, `mine` or `all`. Shared changes use attributed inverse edits; an overlap, changed text property, or unavailable history refuses without changing any part of the action.")
         ((redo!) (("procedure" . "(redo!)")) "string"
          ("(edit)") edit "Editing commands" #f
          "Reverse this head's latest undo, including an undo of another actor's action. Redo uses the same overlap checks and is independent of `undo-scope`. A fresh edit by this head invalidates its redo.")
@@ -3348,9 +3335,9 @@
          ("(edit)") edit "Editing commands" #f
          "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")
         ((replace-all!)
-         (("procedure" . "(replace-all! from to [where])"))
+         (("procedure" . "(replace-all! from to)"))
          "integer" ("(edit)") edit "Editing commands" #f
-         "Replace every occurrence of `from` with `to` in `where`. Each buffer is changed as one undo step and point is preserved. If `where` is omitted, use the selected region or the whole current buffer; it may also be a buffer, buffer name, region, buffer predicate, or list of these.")
+         "Replace every occurrence of `from` with `to` in the selected region, else in the whole current buffer, as one undo step with point preserved; `edit:with-region` and `head:with-buffer` retarget it.")
         ((next-conflict!) (("procedure" . "(next-conflict!)")) "void"
          ("(edit)") edit "Editing commands" #f
          "Move point to the next merge conflict marker in the current buffer, wrapping at the end. Report a message if the buffer has no conflicts.")

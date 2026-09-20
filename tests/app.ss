@@ -553,7 +553,7 @@
 
      ;; The ordinary buffer path validates generated hyperlink ranges too.
      (let ([b (head:new-buffer! "*hyperlink-test*")])
-       (call-with-buffer b (lambda () (insert-text! "https://example.com/path")))
+       (head:call-with-buffer b (lambda () (insert-text! "https://example.com/path")))
        (check 'buffer-link-ranges (paint:buffer-line-hyperlinks b 0)
          '((0 24 "https://example.com/path")))
        (kill-buffer! b))

@@ -1,7 +1,7 @@
 ;; file-view.sls -- the local, filterable <files> app.
 (import (only (edoc) elibrary))
 (elibrary (file-view)
-  (export init! open! refresh! expansion-limit show-hidden)
+  (export init! open! open-directory! refresh! expansion-limit show-hidden)
   (import (chezscheme)
           (except (edit) init!)
           (prefix (head) head:)
@@ -532,21 +532,25 @@
       (head:set-app-selectable! view #f)
       (head:set-app-status-position! view head:buffer-name)
       (head:buffer-fact-set! view 'resume-kind 'file-view)
-      (head:buffer-line-numbers-setting-set! view #f)
       (mode:choose! view "files"))
     view)
-  (edoc "Show the files view for a directory, the current file's by default, with the current file selected."
-        (path (list-of directory) "the directory to browse, at most one"))
-  (define (open! . path)
-    (unless (or (null? path) (and (null? (cdr path)) (string? (car path))))
-      (error 'open! "expected an optional directory path" path))
-    (let* ([was (head:current-buffer)] [dir (if (pair? path) (car path) (default-directory))]
-           [selected (head:buffer-file was)])
+  (edoc "Show the files view for the current file's directory, an app's working directory or the head's launch directory, with the current file selected.")
+  (define (open!)
+    (open-at! (default-directory) #f))
+
+  (edoc "Show the files view for a directory, with the current file selected when it is inside."
+        (directory directory "the directory to browse"))
+  (define (open-directory! directory)
+    (unless (string? directory) (error 'open-directory! "expected a directory path" directory))
+    (open-at! directory #t))
+
+  (define (open-at! dir explicit?)
+    (let* ([was (head:current-buffer)] [selected (head:buffer-file was)])
       (ensure!)
       (unless (eq? was view)
         (hashtable-set! choices (head:current-window) (make-choice was selected '() (make-hashtable string-hash string=?))))
       (show-buffer! view)
-      (if (and (eq? was view) (null? path)) (refresh!)
+      (if (and (eq? was view) (not explicit?)) (refresh!)
           (navigate! dir #f selected))) (void))
 
   (edoc "Install the files app: its mode, the C-x C-f binding, its status hints and buffer-kill hook.")
@@ -603,9 +607,9 @@
             (navigate! path #t #f)
             (values view positions)) reference)))
     (doc:register!
-      '(((file-view:open!) (("procedure" . "(file-view:open! [directory])")) "void"
+      '(((file-view:open!) (("procedure" . "(file-view:open!)")) "void"
          ("(file-view)") file-view "Files" #f
-         "Open `<files>` in this window. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. M-c sets the filter aside and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory with the previous filter. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
+         "Open `<files>` in this window at the current file's directory; `(file-view:open-directory! path)` starts elsewhere. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. M-c sets the filter aside and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory with the previous filter. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
         ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
          ("(file-view)") file-view "Files" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")

@@ -46,15 +46,18 @@ highlights each occurrence before asking:
 The complete run is one undo step. Point follows the operation and finishes at
 the last replaced, skipped, or pending occurrence.
 
-For noninteractive replacement, `edit:replace-all!` accepts an optional target:
+For noninteractive replacement, `edit:replace-all!` works on the selected
+region, else on the whole current buffer; the scope forms retarget it:
 
 ```scheme
 (edit:replace-all! "old" "new")
-(edit:replace-all! "old" "new" (buffer "notes.md"))
-(edit:replace-all! "old" "new" head:buffer-file)
+(head:with-buffer (buffer "notes.md") (edit:replace-all! "old" "new"))
+(edit:with-region (region (buffer "notes.md") '(0 . 0) '(4 . 0))
+  (edit:replace-all! "old" "new"))
+(for-each (lambda (b) (when (head:buffer-file b) (head:with-buffer b (edit:replace-all! "old" "new"))))
+          (head:buffers))
 ```
 
-Targets may be buffers, buffer names, regions, predicates over buffers, or
-lists of those values. Each affected buffer receives one undo step and retains
-its point.
+Each call is one undo step in its buffer and retains its point.
+`edit:count-matches` counts the same way.
 

@@ -27,7 +27,6 @@
           buffer-spot-row buffer-spot-row-set!
           buffer-spot-col buffer-spot-col-set!
           buffer-spot-top buffer-spot-top-set!
-          buffer-line-numbers-setting buffer-line-numbers-setting-set!
           buffer-store-id
           buffer-store-rev buffer-store-rev-set!
           buffer-rendition read-rendition refresh-renditions!
@@ -45,7 +44,7 @@
           window-size window-size-set!
           window-xoff window-xoff-set!
           window-width window-width-set!
-          window-wrap window-wrap-set!
+          window-wrap window-wrap-set! window-line-numbers window-line-numbers-set!
           (rename (window-full-capture? full-capture?)) set-full-capture!
           window-status-actions-set!
           make-layout-split layout-split?
@@ -60,7 +59,7 @@
           layout-min-width layout-min-height weighted-first
           layout-node!
           min-window-lines
-          windows set-windows! root set-root! (rename (current current-window)) set-current!
+          windows set-windows! root set-root! (rename (current current-window)) set-current! call-with-window with-window call-with-buffer with-buffer
           current-buffer buffer-line buffer-line-count
           dividers set-dividers!
           read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
@@ -98,7 +97,7 @@
           set-app-status-position! app-cursor-visible-in?
           app-manages-window-viewport? app-cursor-style set-app-presentation!
           buffer-sticky-lines scrollbar scrollbar-position line-numbers
-          buffer-line-numbers window-line-number-width
+          window-line-numbers? window-line-number-width
           window-scrollbar? window-auto-scrollbar-set! window-content-width buffer-narrowest-width
           buffer-window-size window-scrollbar-column register-view!
           view-buffer? refresh-visible-views! view-append!
@@ -148,14 +147,13 @@
         (spot-row integer "point's row when last displayed")
         (spot-col integer "point's column when last displayed")
         (spot-top integer "the top row when last displayed")
-        (line-numbers (or boolean (one-of default)) "line numbers here: #t, #f, or default for the global setting")
         (store-id (or integer #f) "the twin in the store, or #f for a local buffer")
         (store-rev (or integer #f) "the store revision the lines last agreed with")
         (local-rev integer "the local content revision")
         (changes any "the bounded ring of adopted deltas")
         (local-facts hashtable "a local buffer's facts")
         (rendition (or (record frame) #f) "the cached cell projection")
-        (constructor name lines revision history mark-row mark-col marked spot-row spot-col spot-top line-numbers store-id store-rev))
+        (constructor name lines revision history mark-row mark-col marked spot-row spot-col spot-top store-id store-rev))
   (define-record-type buffer
     (fields (mutable name buffer-name buffer-name-raw-set!)
                                    ; shared label cache or local <name>
@@ -166,10 +164,6 @@
             (mutable marked buffer-marked buffer-marked-raw-set!)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
-            ;; #t/#f after a local toggle, or default to follow the global
-            ;; line-numbers parameter
-            (mutable line-numbers buffer-line-numbers-setting
-                     buffer-line-numbers-setting-set!)
             ;; the buffer's twin in the (store), and the store
             ;; revision this buffer's lines last agreed with
             store-id (mutable store-rev)
@@ -184,9 +178,9 @@
     (protocol
       (lambda (new)
         (lambda (name lines revision history mark-row mark-col marked
-                  spot-row spot-col spot-top line-numbers store-id store-rev)
+                  spot-row spot-col spot-top store-id store-rev)
           (new name lines revision history mark-row mark-col marked
-               spot-row spot-col spot-top line-numbers store-id store-rev
+               spot-row spot-col spot-top store-id store-rev
                0 #f (make-eq-hashtable) #f)))))
 
   (edoc "A window: a view of a buffer at a place in the layout."
@@ -201,6 +195,7 @@
         (xoff integer "the first screen column")
         (width integer "the width in columns")
         (wrap (or boolean (one-of default)) "whether long lines wrap here")
+        (line-numbers (or boolean (one-of default)) "whether an edit buffer shows line numbers here")
         (following? boolean "whether it follows its shared app")
         (view any "a local app's presentation of its rows, or #f")
         (full-capture? boolean "whether every key goes to the app")
@@ -227,6 +222,9 @@
       ;; soft-wrap long lines onto continuation rows instead of
       ;; scrolling horizontally
       (mutable wrap)
+      ;; line numbers beside an edit buffer's text: #t, #f, or default for
+      ;; the head's line-numbers parameter
+      (mutable line-numbers)
       ;; Following a shared app is a window preference, never a store fact.
       (mutable following?)
       ;; Optional local-app presentation; rows retain their shared identity.
@@ -371,7 +369,7 @@
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size xoff width wrap #t #f #f '()))
+                  size xoff width wrap 'default #t #f #f '()))
 
   (edoc "Say whether a window sends every key to its app, and repaint."
         (w window "the window")
@@ -1445,14 +1443,16 @@
                ;; before the next surface demand. Adopted text is sufficient.
                (render:prepare #f #f (buffer-lines b) (content-revision b) '())))))
 
-  (edoc "A projection of a buffer's current text for the demanded row ranges, following a surface with a height."
+  (edoc "A projection of a buffer's current text for the demanded row ranges, following a surface with a height when one is given."
         (b buffer "the buffer")
         (ranges list "the (from . to) row ranges")
-        (follow-height (list-of integer) "the rows to follow a surface with, at most one")
+        (follow-height integer "the rows to follow a surface with")
         (returns (record frame)))
-  (define (read-rendition b ranges . follow-height)
-    (read-source-rendition b (buffer-lines b) (content-revision b) ranges
-                           (if (null? follow-height) 0 (car follow-height))))
+  (define read-rendition
+    (case-lambda
+      [(b ranges) (read-rendition b ranges 0)]
+      [(b ranges follow-height)
+       (read-source-rendition b (buffer-lines b) (content-revision b) ranges follow-height)]))
 
   (define (read-source-rendition b text revision ranges follow-height)
     ;; Explicit demand reads obey head visibility even through a retained
@@ -1768,7 +1768,7 @@
     ;; Local construction has no shared lifecycle. Its caller decides when
     ;; to add/show it; opaque local facts and generated content stay here.
     (let ([b (make-buffer (local-name name) (vector "") 0 (vector '() '())
-                          0 0 #f 0 0 0 'default #f 0)])
+                          0 0 #f 0 0 0 #f 0)])
       (buffer-facts-set! b initial-buffer-facts)
       (buffer-name-set! b (buffer-name b))
       b))
@@ -1851,7 +1851,7 @@
                         (lambda ()
                           (let ([b (make-buffer (store:buffer-name id) text 0
                                                 (vector '() '()) 0 0 #f 0 0 0
-                                                'default id revision)])
+                                                id revision)])
                             (add-buffer! b)
                             (refresh-buffer-rendition! b)
                             (unless (assq 'wrap facts) (buffer-fact-set! b 'wrap 'default))
@@ -2207,11 +2207,13 @@
 
   ;;; Named screen resume ------------------------------------------------------
 
-  ;; A checkpoint is (screen 2 kill-text selected-number layout buffers).
-  ;; Version 1 had no capture preference; restore those windows with partial capture.
-  ;; Splits retain their ordinary orientation/weights; leaves retain a buffer
-  ;; slot and window preferences. A buffer entry is (reference numbers marked
-  ;; placements), where placements use window numbers instead of records.
+  ;; A checkpoint is (screen 3 kill-text selected-number layout buffers).
+  ;; Version 1 had no capture preference; restore those windows with partial
+  ;; capture. Version 2 kept line numbers per buffer; a window restored from
+  ;; it follows the default. Splits retain their ordinary orientation/weights;
+  ;; leaves retain a buffer slot and window preferences. A buffer entry is
+  ;; (reference marked placements), where placements use window numbers
+  ;; instead of records.
   ;; Shared references are (shared id revision); local views register a plain
   ;; descriptor and project their coordinates without exporting their cache.
   (define resume-registry (kernel:make-registry car))
@@ -2249,7 +2251,7 @@
                       [(buffer-fact b 'tool-key #f)
                        => (lambda (key) (values (list 'tool key (buffer-name b)) positions))]
                       [else (values #f positions)])])
-        (list reference (buffer-line-numbers-setting b) (buffer-marked b) positions))))
+        (list reference (buffer-marked b) positions))))
 
   ;; An idle checkpoint (a wake frame: foreign edits moved this head's
   ;; positions) goes at most once a second: resume projects the saved
@@ -2260,9 +2262,15 @@
   (define checkpoint-sent-at #f)
   (define checkpoint-interval (make-time 'time-duration 0 1))
 
-  (edoc "Publish this head's screen state to the store for a later resume, buffers, layout and positions as painted; unchanged, nothing is sent."
-        (mode (list-of symbol) "idle for an idle-time publication, at most one"))
-  (define (checkpoint! . mode)
+  (edoc "Publish this head's screen state to the store for a later resume, buffers, layout and positions as painted; unchanged, nothing is sent, and an idle publication also waits out the interval since the last one."
+        (mode (one-of idle) "idle for an idle-time publication"))
+  (define checkpoint!
+    (case-lambda
+      [() (publish-checkpoint! #f)]
+      [(mode)
+       (unless (eq? mode 'idle) (error 'checkpoint! "expected idle" mode))
+       (publish-checkpoint! #t)]))
+  (define (publish-checkpoint! idle?)
     ;; No store reads here: every coordinate describes exactly the adopted
     ;; text/view the head just painted. Unchanged wake frames send nothing.
     (let* ([slots (map cons the-buffers (iota (length the-buffers)))]
@@ -2272,21 +2280,21 @@
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
                     (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
-                    (window-full-capture? node))
+                    (window-full-capture? node) (window-line-numbers node))
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 2 the-kill-ring (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 3 the-kill-ring (window-index the-current) layout (map capture-buffer the-buffers))])
       (unless (equal? state last-checkpoint)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-sent-at (add-duration checkpoint-sent-at checkpoint-interval))])
-          (if (or (not (memq 'idle mode)) (not due) (time<=? due now))
+          (if (or (not idle?) (not due) (time<=? due now))
               (let ([state (datum:copy state)])
                 ;; Kill text travels only when it changed; the base keeps the
                 ;; last one it received under the kept marker.
                 (actor:checkpoint! ui-actor
                   (if (and last-checkpoint (equal? (caddr state) (caddr last-checkpoint)))
-                      (cons* 'screen 2 'kept (cdddr state))
+                      (cons* 'screen 3 'kept (cdddr state))
                       state))
                 (set! last-checkpoint state)
                 (set! checkpoint-sent-at now))
@@ -2316,8 +2324,8 @@
 
   (define (restore-buffer entry)
     (apply
-      (lambda (reference numbers marked positions)
-        (unless (and (memq numbers '(default #t #f)) (boolean? marked))
+      (lambda (reference marked positions)
+        (unless (boolean? marked)
           (error 'resume! "invalid buffer preferences"))
         (let-values ([(b positions)
                       (if (not reference) (values #f positions)
@@ -2333,16 +2341,22 @@
                               [else
                                (let ([entry (resumer (car reference))])
                                  (if entry ((caddr entry) (cdr reference) positions) (values #f positions)))])))])
-          (vector b (and b (content-revision b)) numbers marked positions)))
+          (vector b (and b (content-revision b)) #f marked positions)))   ; slot 2 was the buffer's line numbers
       entry))
 
   (define (restore-screen! state)
     (apply
       (lambda (tag version kill selected layout entries)
-        (unless (and (eq? tag 'screen) (memv version '(1 2)) (string? kill))
+        (unless (and (eq? tag 'screen) (memv version '(1 2 3)) (string? kill))
           (error 'resume! "unsupported screen checkpoint"))
         (let* ([fallback (window-buffer the-current)]
-               [buffers (list->vector (map restore-buffer entries))]
+               ;; before version 3 a buffer entry carried its line numbers second
+               [buffers (list->vector
+                          (map (lambda (entry)
+                                 (restore-buffer (if (and (< version 3) (list? entry) (>= (length entry) 4))
+                                                     (cons (car entry) (cddr entry))
+                                                     entry)))
+                               entries))]
                [indices '()]
                [natural? (lambda (n) (and (integer? n) (exact? n) (>= n 0)))]
                ;; Window 0 is the pop-up now. A screen saved before it
@@ -2364,15 +2378,17 @@
                   (case (car node)
                     [(window)
                      (apply
-                       (lambda (tag index slot topseg left wrap following? full?)
+                       (lambda (tag index slot topseg left wrap following? full? numbers)
                          (unless (and (for-all natural? (list index slot topseg left))
                                       (< slot (vector-length buffers)) (not (memv index indices))
-                                      (boolean? following?) (boolean? full?))
+                                      (boolean? following?) (boolean? full?) (memq numbers '(default #t #f)))
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
                          (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                           0 topseg left 0 0 1 0 80 wrap following? #f full? '()))
-                       (if (= version 1) (append node '(#f)) node))]
+                           0 topseg left 0 0 1 0 80 wrap numbers following? #f full? '()))
+                       (cond [(= version 1) (append node '(#f default))]
+                             [(= version 2) (append node '(default))]
+                             [else node]))]
                     [(split)
                      (apply
                        (lambda (tag orientation first-weight second-weight first second)
@@ -2409,7 +2425,6 @@
             (lambda (entry)
               (let ([b (vector-ref entry 0)])
                 (when b
-                  (buffer-line-numbers-setting-set! b (vector-ref entry 2))
                   (buffer-marked-set! b (vector-ref entry 3))
                   ;; apply-placements resets topseg for refits. Resume keeps
                   ;; the saved segment; the painter clamps it for this width.
@@ -2683,25 +2698,29 @@
       (buffer-read-only-set! b #t)
       b))
 
-  (edoc "Register a local app on a buffer, or on a new tool buffer with a name: refresh! rebuilds it, the optional handler takes its events."
+  (edoc "Register a local app on a buffer, or on a new tool buffer with a name: refresh! rebuilds it, and a handler, when given, takes its events."
         (target (or buffer string) "the buffer, or a tool name")
         (refresh! thunk "the rebuild")
-        (handler (list-of procedure) "(handle event), at most one")
+        (handler procedure "(handle event)")
         (returns buffer))
-  (define (register-app! target refresh! . handler)
+  (define register-app!
+    (case-lambda
+      [(target refresh!) (register-app-on! target refresh! #f)]
+      [(target refresh! handler)
+       (unless (procedure? handler)
+         (error 'register-app! "event handler must be a procedure" handler))
+       (register-app-on! target refresh! handler)]))
+  (define (register-app-on! target refresh! handler)
     ;; Validate before allocating a buffer or changing registrations.
     (unless (procedure? refresh!)
       (error 'register-app! "refresh must be a procedure" refresh!))
-    (when (and (pair? handler) (not (procedure? (car handler))))
-      (error 'register-app! "event handler must be a procedure"
-             (car handler)))
     (let* ([b (if (buffer? target)
                   (begin
                     (when (buffer-store-id target)
                       (error 'register-app! "head apps require a local buffer" target))
                     target)
                   (tool-buffer! target))]
-           [a (make-app b refresh! (and (pair? handler) (car handler))
+           [a (make-app b refresh! handler
                         #f 'default #f)])
       (buffer-read-only-set! b #t)
       ;; the buffer is an app's for good: a re-registration (a module
@@ -2868,7 +2887,7 @@
                                    (error 'scrollbar-position "must be left or right" side))
                                  side)))
 
-  (edoc "Whether buffers show line numbers by default."
+  (edoc "Whether windows show line numbers beside an edit buffer by default."
         (value boolean))
   (define line-numbers (make-parameter #f
                          (lambda (visible?)
@@ -2876,18 +2895,19 @@
                              (error 'line-numbers "must be #t or #f" visible?))
                            visible?)))
 
-  (edoc "Whether a buffer shows line numbers: its own setting, else the default."
-        (b buffer "the buffer")
+  (edoc "Whether a window shows line numbers now: never beside an app's buffer, else its own setting, else the default."
+        (w window "the window")
         (returns boolean))
-  (define (buffer-line-numbers b)
-    (let ([setting (buffer-line-numbers-setting b)])
-      (if (eq? setting 'default) (line-numbers) setting)))
+  (define (window-line-numbers? w)
+    (and (not (app-buffer? (window-buffer w)))
+         (let ([setting (window-line-numbers w)])
+           (if (eq? setting 'default) (line-numbers) setting))))
 
   (edoc "The columns a window's line numbers take, 0 without them."
         (w window "the window")
         (returns integer))
   (define (window-line-number-width w)
-    (if (buffer-line-numbers (window-buffer w))
+    (if (window-line-numbers? w)
         (+ 1 (string-length
                (number->string (line-count (window-buffer w)))))
         0))
@@ -3139,6 +3159,53 @@
       (refresh-buffer-rendition! b)
       ;; Identity, geometry, and rendition agree before a callback can switch.
       (unless (eq? old b) (request-repaint!))))
+
+  ;;; Scopes: another window or buffer current for the extent of a thunk
+
+  (edoc "Run a thunk with a window temporarily selected, without telling the apps; the selection returns on exit and on escape."
+        (w window "the window to select")
+        (thunk thunk "what to run")
+        (returns any "what the thunk returns"))
+  (define (call-with-window w thunk)
+    (unless (memq w the-windows) (error 'call-with-window "not a live window" w))
+    (let ([prev the-current])
+      (dynamic-wind
+        (lambda () (set! the-current w))
+        thunk
+        (lambda () (set! the-current prev)))))
+
+  (edoc "Run body with a window temporarily selected, as call-with-window does: (with-window (window 2) (edit:split-window-below!))."
+        (w window "the window to select")
+        (body (list-of any) "the forms to run"))
+  (define-syntax with-window
+    (syntax-rules ()
+      [(_ w body ...) (call-with-window w (lambda () body ...))]))
+
+  (edoc "Run a thunk with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change."
+        (b buffer "the buffer to make current")
+        (thunk thunk "what to run")
+        (returns any "what the thunk returns"))
+  (define (call-with-buffer b thunk)
+    ;; In the window already showing b when there is one -- point moves
+    ;; where the user sees it -- else invisibly in the current window
+    ;; with the usual spot saving.
+    (cond
+      [(eq? b (window-buffer the-current)) (thunk)]
+      [(find (lambda (w) (eq? (window-buffer w) b)) the-windows)
+       => (lambda (w) (call-with-window w thunk))]
+      [else
+       (let ([old (window-buffer the-current)])
+         (dynamic-wind
+           (lambda () (set-window-buffer! the-current b))
+           thunk
+           (lambda () (set-window-buffer! the-current old))))]))
+
+  (edoc "Run body with a buffer temporarily current, as call-with-buffer does: (with-buffer (buffer \"notes.md\") (edit:replace-all! \"x\" \"y\"))."
+        (b buffer "the buffer to make current")
+        (body (list-of any) "the forms to run"))
+  (define-syntax with-buffer
+    (syntax-rules ()
+      [(_ b body ...) (call-with-buffer b (lambda () body ...))]))
 
   (edoc "Retire this head's record of a buffer, moving windows off it and running the kill hooks; the store content stays."
         (b buffer "the buffer"))

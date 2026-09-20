@@ -31,7 +31,7 @@
 ;; (paint:echo-box-width 100)     ; the echo area's bordered box: at most this
 ;;                                ; wide, centered; a narrower screen is the box
 ;; (paint:echo-box-border "┊")    ; the one-cell glyph on both sides of that box
-;; (head:line-numbers #f)              ; #t: show line numbers in every untoggled buffer
+;; (head:line-numbers #f)              ; #t: show line numbers in every untoggled window
 ;; (paint:wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
 ;; (paren:matching-style 'bold)   ; matched brackets: bold, underline,
 ;;                                ; box, or colored -- or design your

@@ -83,7 +83,6 @@
                      (max 1 (head:window-size w)) (head:window-content-width w)
                      (head:host-color-scheme))))
         (set! buffer (head:adopt-store-buffer! id))
-        (head:buffer-line-numbers-setting-set! buffer #f)
         (show-buffer! buffer)
         (head:set-full-capture! (head:current-window) #f)
         (void))))

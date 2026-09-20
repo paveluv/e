@@ -101,18 +101,20 @@
     b)
 
   (edoc "The log view buffer, or a view filtered to one component, created on demand."
-        (component (list-of symbol) "the component to show alone, at most one")
+        (component symbol "the component to show alone")
         (returns buffer))
-  (define (log-view! . component)
+  (define log-view!
     ;; The *log* view -- or a dynamic filtered one, *log eval* for
-    ;; (log-view!:buffer 'eval) -- created (or recreated after a kill) on
+    ;; (log-view:buffer! 'eval) -- created (or recreated after a kill) on
     ;; demand.
-    (let* ([name (if (null? component) "*log*"
-                   (format "*log ~a*" (car component)))]
-           [b (head:find-tool-buffer name)])
+    (case-lambda
+      [() (log-view-named! "*log*" '())]
+      [(component) (log-view-named! (format "*log ~a*" component) (list component))]))
+  (define (log-view-named! name components)
+    (let ([b (head:find-tool-buffer name)])
       (if (and b (head:app-buffer? b))
           b
-          (make-log-view name component))))
+          (make-log-view name components))))
 
   (edoc "Pop up the log view.")
   (define (show-log!)

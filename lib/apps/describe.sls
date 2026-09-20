@@ -55,7 +55,7 @@
               (let ([source (head:adopt-store-buffer! id)])
                 (when source
                   (let ([b (markdown:companion! source "*describe*")])
-                    (call-with-buffer b (lambda () (goto-point! '(0 . 0))))
+                    (head:call-with-buffer b (lambda () (goto-point! '(0 . 0))))
                     (if (pop-up-or-reuse! b)
                         (set-message! "")
                         (set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))

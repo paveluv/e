@@ -146,11 +146,11 @@
        (redo!)
        (redo!)
        (check 'all-redo-restores-both-authors (text-of scoped) '("Abase" "Gother"))
-       (undo! 'mine)
+       (parameterize ([undo-scope 'mine]) (undo!))
        (check 'one-off-mine-preserves-other-author (text-of scoped) '("base" "Gother"))
        (check 'one-off-scope-keeps-preference (undo-scope) 'all))
      (check 'scope-is-head-local-configuration (store:property scoped-id 'undo-scope) #f)
-     (undo! 'all)
+     (parameterize ([undo-scope 'all]) (undo!))
      (check 'one-off-all-undo-with-no-own-history (text-of scoped) '("base" "other"))
      (redo!)
      (check 'redo-a-foreign-action-while-default-is-mine (text-of scoped) '("base" "Gother"))
@@ -217,7 +217,7 @@
      (check 'read-only-history-commands-refuse
        (map (lambda (command)
               (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)]) (command) #f))
-            (list undo! (lambda () (undo! 'all)) (lambda () (undo-actor! bot)) redo!))
+            (list undo! (lambda () (parameterize ([undo-scope 'all]) (undo!))) (lambda () (undo-actor! bot)) redo!))
        '(#t #t #t #t))
      ;; The store transaction still protects the buffer if its flag changed
      ;; after the command preflight, or a caller enters the head seam directly.

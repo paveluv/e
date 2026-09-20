@@ -165,33 +165,20 @@ line breaks, matching its multiline representation in `<log>`.
 
 ```scheme
 (eval:run!)
-(eval:run! where)
 ```
 
-With no argument, `eval:run!` evaluates the whole current buffer. It does not use
-the active selection implicitly. An explicit `where` accepts the same target
-forms as the editing helpers:
-
-- a buffer;
-- a buffer name;
-- a `region`;
-- a predicate selecting buffers;
-- a list containing any of these.
-
-For multiple targets, their region texts are joined with newlines and
-evaluated in order. Every datum in the resulting text is evaluated. The
-values of the last datum become the command result; definitions and effects
-from earlier datums remain in place.
-
-Examples:
+`eval:run!` evaluates the selected region while the mark is active, else the
+whole current buffer. Another buffer or region is evaluated under a scope
+form:
 
 ```scheme
-(eval:run!)
-(eval:run! (buffer "scratch.scm"))
-(eval:run! "helpers.scm")
-(eval:run! (region (head:current-buffer) '(10 . 0) '(18 . 0)))
-(eval:run! (lambda (b) (string=? (mode:name-of b) "scheme")))
+(head:with-buffer (buffer "scratch.scm") (eval:run!))
+(edit:with-region (region (head:current-buffer) '(10 . 0) '(18 . 0)) (eval:run!))
 ```
+
+Every datum in the text is evaluated. The values of the last datum become
+the command result; definitions and effects from earlier datums remain in
+place.
 
 ## Results and the kill buffer
 
