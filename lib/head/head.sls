@@ -59,7 +59,7 @@
           layout-min-width layout-min-height weighted-first
           layout-node!
           min-window-lines
-          windows set-windows! root set-root! (rename (current current-window)) set-current! call-with-window call-with-buffer with-buffer show-buffer!
+          windows set-windows! root set-root! (rename (current current-window)) set-current! with-window with-buffer show-buffer!
           current-buffer buffer-line buffer-line-count
           dividers set-dividers!
           read-key-event run-on-main! wake-main! request-frame-at! in-main-pump
@@ -3174,28 +3174,33 @@
       (set! the-buffers (if (eq? (buffer-fact b 'recency #f) 'behind) (append rest (list b)) (cons b rest))))
     (set-window-buffer! the-current b))
 
-  ;;; Scopes: another window or buffer current for the extent of a thunk
+  ;;; Scopes: another window or buffer current for the extent of a body
 
-  (edoc "Run a thunk with a window temporarily selected, without telling the apps; the selection returns on exit and on escape."
-        (w window "the window to select")
-        (thunk thunk "what to run")
-        (returns any "what the thunk returns"))
+  ;; One form each, no procedure beside it: M-x offers one spelling. The
+  ;; procedures below are the forms' bodies.
+
   (define (call-with-window w thunk)
-    (unless (memq w the-windows) (error 'call-with-window "not a live window" w))
+    ;; w temporarily selected, without telling the apps; the selection
+    ;; returns on exit and on escape
+    (unless (memq w the-windows) (error 'with-window "not a live window" w))
     (let ([prev the-current])
       (dynamic-wind
         (lambda () (set! the-current w))
         thunk
         (lambda () (set! the-current prev)))))
 
-  (edoc "Run a thunk with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change."
-        (b buffer "the buffer to make current")
-        (thunk thunk "what to run")
-        (returns any "what the thunk returns"))
+  (edoc "Run body with a window temporarily selected, without telling the apps; the selection returns on exit and on escape: (with-window (window 2) (window:split-right!))."
+        (w window "the window to select")
+        (body (list-of any) "the forms to run"))
+  (define-syntax with-window
+    (syntax-rules ()
+      [(_ w body ...) (call-with-window w (lambda () body ...))]))
+
   (define (call-with-buffer b thunk)
-    ;; In the window already showing b when there is one -- point moves
-    ;; where the user sees it -- else invisibly in the current window
-    ;; with the usual spot saving.
+    ;; b temporarily current: in the window already showing it when there
+    ;; is one -- point moves where the user sees it -- else invisibly in
+    ;; the current window with the usual spot saving; the recency order is
+    ;; untouched and no app hears a focus change
     (cond
       [(eq? b (window-buffer the-current)) (thunk)]
       [(find (lambda (w) (eq? (window-buffer w) b)) the-windows)
@@ -3207,7 +3212,7 @@
            thunk
            (lambda () (set-window-buffer! the-current old))))]))
 
-  (edoc "Run body with a buffer temporarily current, as call-with-buffer does: (with-buffer (buffer \"notes.md\") (edit:replace-all! \"x\" \"y\"))."
+  (edoc "Run body with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change: (with-buffer (buffer \"notes.md\") (edit:replace-all! \"x\" \"y\"))."
         (b buffer "the buffer to make current")
         (body (list-of any) "the forms to run"))
   (define-syntax with-buffer

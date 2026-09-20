@@ -276,8 +276,7 @@
           ;; Keyboard navigation is bold; only actionable mouse targets
           ;; get the shared hover face, scoped to the pointed window.
           (if (and log-buffer (memq log-buffer (head:buffers)))
-              (let ([row (head:call-with-buffer log-buffer
-                           (lambda () (car (point))))])
+              (let ([row (head:with-buffer log-buffer (car (point)))])
                 (if (<= 1 row (- (head:buffer-line-count log-buffer) 1))
                     (list (list log-buffer row 0
                                 (string-length (head:buffer-line log-buffer row))

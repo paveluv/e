@@ -291,9 +291,9 @@ the top level gives the procedures, so a rename follows.
 
 A command acts on the current window, buffer or region, or takes its
 target as a required argument, never both; the scope forms retarget it for
-the extent of a body: `head:with-buffer`, `window:with-window` and
-`edit:with-region`, syntax over `head:call-with-buffer`, `head:call-with-window` and
-`edit:call-with-region`, dynamic and invisible to the apps.
+the extent of a body: `head:with-buffer`, `head:with-window` and
+`edit:with-region`, dynamic and invisible to the apps. Each is one form
+with no procedure beside it, so M-x offers one spelling.
 `edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors should be
 raised normally; the command loop reports unexpected conditions in the echo
 area and log.

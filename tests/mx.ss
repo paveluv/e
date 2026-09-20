@@ -101,7 +101,7 @@
      ;; a scope form's argument completes by type, syntax or not
      (check 'a-scope-form-completes-its-argument-by-type
        (list (has-prefix? "(buffer \"" (labels "(head:with-buffer (bu")) (has? "(head:current-buffer)" (labels "(head:with-buffer (bu"))
-             (has? "(current-region)" (labels "(with-region (re")) (has-prefix? "(window " (labels "(window:with-window (wi")))
+             (has? "(current-region)" (labels "(with-region (re")) (has-prefix? "(window " (labels "(head:with-window (wi")))
        '(#t #t #t #t))
      (check 'a-completed-value-settles-its-form
        (list (settled "(head:show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))

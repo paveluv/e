@@ -62,14 +62,14 @@
      (define here (head:current-window))
      (define other (find (lambda (w) (and (not (eq? w here)) (not (head:popup? w)))) (head:windows)))
      (check 'with-window-selects-the-window
-       (list (window:with-window other (head:current-window)) (head:current-window))
+       (list (head:with-window other (head:current-window)) (head:current-window))
        (list other here))
-     (window:with-window other (head:show-buffer! b))
+     (head:with-window other (head:show-buffer! b))
      (check 'a-command-under-with-window-acts-there
        (list (head:window-buffer other) (head:window-buffer here) (head:current-window))
        (list b a here))
      (check 'with-window-wants-a-live-window
-       (guard (ex [else 'refused]) (window:with-window 'nowhere (head:current-window)))
+       (guard (ex [else 'refused]) (head:with-window 'nowhere (head:current-window)))
        'refused)
 
      ;; exact arities: no optional scope or setting

@@ -27,7 +27,7 @@
 (import (only (edoc) elibrary))
 (elibrary (edit)
   (export init!
-          current-region region-text call-with-region with-region
+          current-region region-text with-region
           replace-all! count-matches replace!
           next-conflict! keep-mine! keep-disk!
           list-buffers!
@@ -1177,23 +1177,21 @@
           (region (head:current-buffer) m (point))
           (whole-buffer (head:current-buffer)))))
 
-  (edoc "Run a thunk with a region selected: its buffer current, the mark at its start and point at its end; the previous selection and point return on exit and on escape."
-        (r region "the region to select")
-        (thunk thunk "what to run")
-        (returns any "what the thunk returns"))
   (define (call-with-region r thunk)
-    (head:call-with-buffer (region-buffer r)
-      (lambda ()
-        (let ([saved-point (point)] [saved-mark (cons mark-row mark-col)] [saved-active mark-active?])
-          (define (select! start end active?)
-            (set! mark-row (car start)) (set! mark-col (cdr start)) (set! mark-active? active?)
-            (set! point-row (car end)) (set! point-col (cdr end)))
-          (dynamic-wind
-            (lambda () (select! (region-start r) (region-end r) #t))
-            thunk
-            (lambda () (select! saved-mark saved-point saved-active)))))))
+    ;; r selected: its buffer current, the mark at its start and point at
+    ;; its end; the previous selection and point return on exit and on
+    ;; escape. The body of with-region, the one form M-x offers.
+    (head:with-buffer (region-buffer r)
+      (let ([saved-point (point)] [saved-mark (cons mark-row mark-col)] [saved-active mark-active?])
+        (define (select! start end active?)
+          (set! mark-row (car start)) (set! mark-col (cdr start)) (set! mark-active? active?)
+          (set! point-row (car end)) (set! point-col (cdr end)))
+        (dynamic-wind
+          (lambda () (select! (region-start r) (region-end r) #t))
+          thunk
+          (lambda () (select! saved-mark saved-point saved-active))))))
 
-  (edoc "Run body with a region selected, as call-with-region does: (with-region (region (buffer \"a\") '(0 . 0) '(4 . 0)) (replace-all! \"x\" \"y\"))."
+  (edoc "Run body with a region selected: its buffer current, the mark at its start and point at its end; the previous selection and point return on exit and on escape: (with-region (region (buffer \"a\") '(0 . 0) '(4 . 0)) (replace-all! \"x\" \"y\"))."
         (r region "the region to select")
         (body (list-of any) "the forms to run"))
   (define-syntax with-region

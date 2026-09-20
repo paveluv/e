@@ -15,8 +15,7 @@
           split-below! split-right! split-above! split-left!
           resize! delete! delete-others!
           toggle-wrap! set-wrap! toggle-line-numbers! set-line-numbers!
-          display! pop-up-or-reuse!
-          with-window)
+          display! pop-up-or-reuse!)
   (import (rnrs)
           (only (chezscheme) format void quotient)
           (prefix (kernel) kernel:)
@@ -253,15 +252,6 @@
     (head:add-buffer! b)
     (or (window-showing b)
         (split-current-window! 'below b #f)))
-
-  ;;; The scope form ----------------------------------------------------------------
-
-  (edoc "Run body with a window temporarily selected, as head:call-with-window does, without telling the apps: (with-window (window 2) (split-right!))."
-        (w window "the window to select")
-        (body (list-of any) "the forms to run"))
-  (define-syntax with-window
-    (syntax-rules ()
-      [(_ w body ...) (head:call-with-window w (lambda () body ...))]))
 
   ;;; Registration -------------------------------------------------------------------
 
