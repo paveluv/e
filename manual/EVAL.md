@@ -152,12 +152,12 @@ end, where completing from the value would offer nothing but the value itself. S
 "man` Tab gives `"manual/` with the manual's entries listed at once, and
 `"manual/EVAL.m` Tab gives `"manual/EVAL.md")`, closed and settled; a
 directory argument closes at a directory without subdirectories. How paths
-are offered is the `file:completion` parameter: `prefix`, the default, lists
-the entries of the partial path's directory that extend its last component,
-as a shell does; `fuzzy` lists every entry of that directory for the matcher's
-segments, so `"lib/apps/evl` finds `eval.sls`; `deep` lists the entries below
-it as well, a few thousand at most, so `"lib/evl` finds `lib/apps/eval.sls`.
-Switch at M-x with `(file:completion 'fuzzy)`. An actor argument lists the registered actors as
+are offered is the `file:completion` parameter: `fuzzy`, the default, lists
+every entry of the partial path's directory for the matcher's segments, so
+`"lib/apps/evsl` finds `eval.sls`; `prefix` lists only the entries that
+extend its last component, as a shell does; `deep` lists the entries below
+the directory as well, a few thousand at most, so `"lib/evsl` finds
+`lib/apps/eval.sls`. Switch at M-x with `(file:completion 'prefix)`. An actor argument lists the registered actors as
 `(head "desk")` or `(agent "claude")`, the identities' own spelling. The language's own types, `string` or `integer`, offer
 no producers, and an argument whose type offers nothing the token matches
 falls back to symbol completion. `S-Tab` always completes symbols.

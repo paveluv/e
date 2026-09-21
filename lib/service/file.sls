@@ -85,10 +85,10 @@
                      (filter (lambda (path) (string:suffix? "/" path)) (offered partial)))))
     (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
 
-  (edoc "How M-x completes a path inside a string: prefix offers the entries of the partial path's directory that extend its last component, fuzzy every entry of that directory for the matcher's segments, deep every entry below it as well."
+  (edoc "How M-x completes a path inside a string: fuzzy, the default, offers every entry of the partial path's directory for the matcher's segments, prefix only the entries that extend its last component, deep every entry below the directory as well."
         (value (one-of prefix fuzzy deep)))
   (define completion
-    (make-parameter 'prefix
+    (make-parameter 'fuzzy
       (lambda (v)
         (unless (memq v '(prefix fuzzy deep)) (error 'file:completion "prefix, fuzzy or deep" v))
         v)))
