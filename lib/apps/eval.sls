@@ -20,8 +20,8 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps eval)
   (export completion-candidates completion-extensions (rename (eval-copy-result copy-result))
-          init! (rename (eval-prompt! prompt!)) (rename (eval-prompt-with! prompt-with!))
-          (rename (eval! run!)) settle-completion)
+          init! input-closers input-diagnostic (rename (eval-prompt! prompt!))
+          (rename (eval-prompt-with! prompt-with!)) (rename (eval! run!)) settle-completion)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
@@ -222,10 +222,9 @@
         (let ([value (car pair)] [hint (or (cdr pair) "")])
           (cond
             [in-string?
-             (if (string? value)
-                 ;; the literal stays open for a directory, to descend into
-                 (cons (make-option value (if (string:suffix? "/" value) value (string-append value "\"")) value hint 'plain) out)
-                 out)]
+             ;; the literal stays open: the settle step closes it at the
+             ;; session's dead end, once nothing more completes from the value
+             (if (string? value) (cons (make-option value value value hint 'plain) out) out)]
             [else (let ([text (edoc:type-spelling type value)])
                     (cons (make-option (opening text) text text hint 'plain) out))])))
       '() (edoc:type-completions type token)))
@@ -332,6 +331,15 @@
              (and (pair? matched)
                   (map (lambda (entry) (cons (car entry) (fuzzy:fragments (cdr entry))))
                        (list-sort (lambda (a b) (quality<? (fuzzy:score (cdr a)) (fuzzy:score (cdr b)))) matched)))))])))
+
+  (define (dead-end? type value)
+    ;; whether completing from a string value offers nothing but the value
+    ;; itself: the completion session's end, where its literal closes. A
+    ;; directory offers its entries; a file, or a directory without
+    ;; subdirectories to a directory argument, offers itself alone.
+    (let ([options (typed-options (list type 0 0 value #t))])
+      (or (not options)
+          (for-all (lambda (entry) (string=? (option-text (car entry)) value)) options))))
 
   (define (typed-inserts s context options)
     ;; what Tab puts in place of the token: a sole candidate whole, else the
@@ -686,16 +694,19 @@
                     (make-frame (frame-opener f) (frame-operator f) (+ (frame-arguments f) 1) (frame-quoted? f)))
                 (cdr frames)))))
 
-  (edoc "The input to continue with after a sole completion ends at pos: a form whose operator has a known arity closes when complete and settles again in its parent, or steps to its next argument; an unknown arity, a quoted form or text after pos leaves the cursor at the symbol."
+  (edoc "The input to continue with after a sole completion ends at pos: inside a string, a typed value at its dead end closes the literal and settles on, one that completes further stays open; a form whose operator has a known arity closes when complete and settles again in its parent, or steps to its next argument; an unknown arity, a quoted form, text after pos or an input that does not read leaves the cursor where it is."
         (text string "the prompt input")
         (pos integer "where the completed symbol ends")
         (returns pair "the new input and cursor position, (text . pos)"))
   (define (settle-completion text pos)
-    ;; The input to continue with after a sole completion ends at pos: while
-    ;; the enclosing operator has a fixed arity, a complete form closes with
-    ;; its matching bracket and settles again as an argument of its parent,
-    ;; and an incomplete one steps to its next argument. An unknown arity, a
-    ;; quoted form, or text after pos leaves the cursor at the symbol.
+    ;; The input to continue with after a sole completion ends at pos. Inside
+    ;; a string the typed session is judged: a value that still completes on
+    ;; stays open, one at its dead end closes the literal and settles on.
+    ;; Then, while the enclosing operator has a fixed arity, a complete form
+    ;; closes with its matching bracket and settles again as an argument of
+    ;; its parent, and an incomplete one steps to its next argument. An
+    ;; unknown arity, a quoted form, text after pos or an input that does
+    ;; not read leaves the cursor where it is; a settled input always reads.
     (define (blank? from)
       (let loop ([i from])
         (or (>= i (string-length text))
@@ -714,11 +725,109 @@
                  (string-append out (string (cdr (assv (frame-opener frame) closers))))
                  (+ at 1))]
               [else (cons out at)]))))
-    (if (not (blank? pos))
-        (cons text pos)
-        (let* ([head (substring text 0 pos)] [tail (substring text pos (string-length text))]
-               [settled (settle (call-frames head) head pos)])
-          (cons (string-append (car settled) tail) (cdr settled)))))
+    (define (settled head tail at)
+      (let* ([result (settle (call-frames head) head at)]
+             [out (cons (string-append (car result) tail) (cdr result))])
+        (if (input-closers (car out)) out (cons text pos))))
+    (cond
+      [(not (blank? pos)) (cons text pos)]
+      [(open-string-start text pos)
+       (let ([context (argument-context text pos)])
+         (if (and context (car (cddddr context)) (dead-end? (car context) (cadddr context)))
+             (settled (string-append (substring text 0 pos) "\"") (substring text pos (string-length text)) (+ pos 1))
+             (cons text pos)))]
+      [(not (input-closers text)) (cons text pos)]
+      [else (settled (substring text 0 pos) (substring text pos (string-length text)) pos)]))
+
+  ;;; Reading the input -----------------------------------------------------------
+
+  (define (scan-openers text)
+    ;; (values #t closers) for an input whose open string and forms can be
+    ;; closed, the closers innermost first; (values #f complaint) at a closer
+    ;; matching nothing: an extra one, or one of the wrong kind. Strings,
+    ;; character literals and comments are skipped as the reader would.
+    (define n (string-length text))
+    (define (closers-of stack) (apply string-append (map (lambda (opener) (string (cdr (assv opener closers)))) stack)))
+    (let loop ([i 0] [stack '()])
+      (if (>= i n)
+          (values #t (closers-of stack))
+          (let ([c (string-ref text i)])
+            (cond
+              [(char=? c #\")
+               (let string ([j (+ i 1)])
+                 (cond [(>= j n) (values #t (string-append "\"" (closers-of stack)))]
+                       [(char=? (string-ref text j) #\\) (string (+ j 2))]
+                       [(char=? (string-ref text j) #\") (loop (+ j 1) stack)]
+                       [else (string (+ j 1))]))]
+              [(char=? c #\;)
+               ;; a comment reaching the end hides what follows it: the
+               ;; closers go on a line of their own
+               (let comment ([j i])
+                 (cond [(>= j n) (values #t (string-append "\n" (closers-of stack)))]
+                       [(char=? (string-ref text j) #\newline) (loop j stack)]
+                       [else (comment (+ j 1))]))]
+              [(and (char=? c #\#) (< (+ i 1) n) (char=? (string-ref text (+ i 1)) #\\))
+               ;; a character literal: #\x, #\(, or a named one like #\space
+               (let name ([j (+ i 3)])
+                 (if (and (< j n) (< (+ i 2) n) (char-alphabetic? (string-ref text (+ i 2))) (char-alphabetic? (string-ref text j)))
+                     (name (+ j 1))
+                     (loop (min j n) stack)))]
+              [(and (char=? c #\#) (< (+ i 1) n) (char=? (string-ref text (+ i 1)) #\|))
+               (let block ([j (+ i 2)] [depth 1])
+                 (cond [(>= (+ j 1) n) (loop n stack)]
+                       [(and (char=? (string-ref text j) #\|) (char=? (string-ref text (+ j 1)) #\#))
+                        (if (= depth 1) (loop (+ j 2) stack) (block (+ j 2) (- depth 1)))]
+                       [(and (char=? (string-ref text j) #\#) (char=? (string-ref text (+ j 1)) #\|))
+                        (block (+ j 2) (+ depth 1))]
+                       [else (block (+ j 1) depth)]))]
+              [(assv c closers) (loop (+ i 1) (cons c stack))]
+              [(memv c '(#\) #\] #\}))
+               (cond [(null? stack) (values #f (format "unexpected ~a" c))]
+                     [(char=? c (cdr (assv (car stack) closers))) (loop (+ i 1) (cdr stack))]
+                     [else (values #f (format "~a closes ~a" c (car stack)))])]
+              [else (loop (+ i 1) stack)])))))
+
+  (define (read-all text)
+    ;; every datum of text read, or the reader's complaint raised
+    (let ([port (open-string-input-port text)])
+      (let loop () (unless (eof-object? (read port)) (loop)))))
+
+  (define (reader-complaint ex)
+    ;; the reader's message alone, without the position in its port
+    (let ([text (if (and (message-condition? ex) (irritants-condition? ex))
+                    (let ([message (condition-message ex)] [irritants (condition-irritants ex)])
+                      (if (and (string:prefix? "~?" message) (pair? irritants) (pair? (cdr irritants)) (string? (car irritants)))
+                          (guard (ex [else message]) (apply format (car irritants) (cadr irritants)))
+                          (guard (ex [else message]) (format "~?" message irritants))))
+                    (kernel:condition-text ex))])
+      (let cut ([i 0])
+        (cond [(> (+ i 9) (string-length text)) text]
+              [(string=? (substring text i (+ i 9)) " at char ") (substring text 0 i)]
+              [else (cut (+ i 1))]))))
+
+  (edoc "The closers that complete the M-x input as data: a quote for a string left open, then the bracket of every unclosed form, innermost first; \"\" when it reads as it is, #f when no closing makes it read."
+        (text string "the prompt input")
+        (returns (or string #f)))
+  (define (input-closers text)
+    (let-values ([(ok? tail) (scan-openers text)])
+      (and ok? (guard (ex [else #f]) (read-all (string-append text tail)) tail))))
+
+  (edoc "Why the M-x input does not read as data even with its open string and forms closed, in a few words for the ghost; #f when it reads."
+        (text string "the prompt input")
+        (returns (or string #f)))
+  (define (input-diagnostic text)
+    (let-values ([(ok? tail) (scan-openers text)])
+      (if (not ok?)
+          tail
+          (guard (ex [else (reader-complaint ex)])
+            (read-all (string-append text tail))
+            #f))))
+
+  (define (input-ghost s)
+    ;; the M-x ghost: what keeps an input from reading, bracketed, else the
+    ;; parameters the innermost open call still expects
+    (let ([complaint (input-diagnostic s)])
+      (if complaint (string-append " [" complaint "]") (signature-ghost s))))
 
   ;;; Evaluation ----------------------------------------------------------------
 
@@ -727,16 +836,11 @@
   (define eval-copy-result (make-parameter #t))
 
   (define (close-expression text)
-    ;; text completed with the parentheses it is missing (up to a few), so
-    ;; it reads as one datum; #f when that is not enough to make it read.
-    (let loop ([extra 0])
-      (and (<= extra 8)
-           (let ([t (string-append text (make-string extra #\)))])
-             (if (guard (ex [else #f])
-                   (with-input-from-string t read)
-                   #t)
-                 t
-                 (loop (+ extra 1)))))))
+    ;; text completed with the closers it is missing -- a quote for an open
+    ;; string, then its open brackets -- so it reads as data; #f when that
+    ;; is not enough to make it read
+    (let ([tail (input-closers text)])
+      (and tail (string-append text tail))))
 
   (define (format-exchange d)
     ;; The eval entry: (query . result) formatted "query => result";
@@ -978,7 +1082,7 @@
     ;; own top level.  The expression is logged (component eval, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let ([s (parameterize ([prompt:ghost signature-ghost]
+    (let ([s (parameterize ([prompt:ghost input-ghost]
                             [prompt:multiline indent-scheme-insertion]
                             [prompt:edge-motion mx-edge-motion]
                             [prompt:reindent reindent-scheme-input]

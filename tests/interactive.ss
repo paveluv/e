@@ -214,6 +214,17 @@
      (send! "\x7;")                     ; C-g
      (wait-for! 'typed-completions-give-the-window-back
                 (lambda () (not (find-cell "<completions>"))) 5000)
+     ;; A string argument completes as a session: a sole directory stays open
+     ;; without settling, and the pop-up lists its entries at once.
+     (send! "\x1b;xedit:visit-file! \"man\t")
+     (wait-for! 'a-directory-completion-stays-open-and-lists-its-entries
+                (lambda () (and (find-cell "M-x (edit:visit-file! \"manual/")
+                                (find-cell "<completions>")
+                                (find-cell "manual/EVAL.md")))
+                5000)
+     (send! "\x7;")                     ; C-g
+     (wait-for! 'the-session-gives-the-window-back
+                (lambda () (not (find-cell "<completions>"))) 5000)
      ;; Completing a sole candidate includes punctuation and remains executable.
      (send! "\x1b;xspwir\t\r")
      (wait-for! 'normalized-full-match-can-run

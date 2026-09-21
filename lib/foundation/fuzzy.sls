@@ -1,5 +1,8 @@
 ;; Symbol completion by disjoint, boundary-starting segments. One matching
 ;; relation governs admission, ranking alignments and safe normalization.
+;; A segment starts where a part of the name starts, or at a separator it
+;; leads with: ":sp" finds head:split-window and not head:window-split,
+;; while "sp" finds both; a separator alone is no segment.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation fuzzy)
@@ -15,10 +18,11 @@
     (fields name score fragments))
   ;; A source is a name prepared once for alignment: the indices where its
   ;; parts start (the beginning and the position after every separator),
-  ;; its characters as sorted code points, and a presence mask over the
-  ;; slots below. Every part starts at a boundary, and every character stays
-  ;; in a segment.
-  (define-record-type source (fields name starts codes mask))
+  ;; the positions of the separators a segment may lead with, its
+  ;; characters as sorted code points, and a presence mask over the slots
+  ;; below. Every part starts at a boundary, and every character stays in
+  ;; a segment.
+  (define-record-type source (fields name starts leads codes mask))
   (define (separator? c)
     ;; The character before a word start: anything but a letter or a digit,
     ;; so that a query aligns with the parts of set-buffer-name!, of
@@ -38,16 +42,21 @@
 
   (define (build-source text)
     (let* ([n (string-length text)] [codes (make-vector n 0)])
-      (let scan ([i 0] [mask 0] [starts (if (fx>? n 0) '(0) '())])
+      (let scan ([i 0] [mask 0] [starts (if (fx>? n 0) '(0) '())] [leads '()])
         (if (fx=? i n)
             (begin
               (vector-sort! fx<? codes)
-              (make-source text (list->vector (reverse starts)) codes mask))
+              (make-source text (list->vector (reverse starts)) (list->vector (reverse leads)) codes mask))
             (let ([c (string-ref text i)])
               (vector-set! codes i (char->integer c))
               (scan (fx+ i 1)
                     (fxior mask (fxarithmetic-shift-left 1 (slot c)))
-                    (if (and (separator? c) (fx<? (fx+ i 1) n)) (cons (fx+ i 1) starts) starts)))))))
+                    (if (and (separator? c) (fx<? (fx+ i 1) n)) (cons (fx+ i 1) starts) starts)
+                    ;; a separator past the first character leads a segment
+                    ;; anchored to it, unless a part starts there already
+                    (if (and (separator? c) (fx>? i 0) (not (and (pair? starts) (fx=? (car starts) i))))
+                        (cons i leads)
+                        leads)))))))
 
   (define (part-end source p)
     (let ([starts (source-starts source)])
@@ -95,43 +104,58 @@
   (define (search query source)
     ;; Match longest leading segments first, then earliest candidate position.
     ;; All characters, including ':' and '-', stay inside these literal runs.
-    ;; Backtracking keeps eligibility independent of a greedy choice; the bit
-    ;; mask prevents reuse of any character occurrence. The failure memo
-    ;; exists only once a choice has to be undone.
+    ;; A run may start where a part starts, or at a separator the run leads
+    ;; with; a led run must reach a letter or digit, so a separator alone
+    ;; is no segment. Backtracking keeps eligibility independent of a
+    ;; greedy choice; the bit mask prevents reuse of any character
+    ;; occurrence. The failure memo exists only once a choice has to be
+    ;; undone.
     (let* ([text (source-name query)] [m (string-length text)]
            [name (source-name source)] [n (string-length name)]
-           [starts (source-starts source)] [parts (vector-length starts)]
+           [starts (source-starts source)] [leads (source-leads source)]
+           [boundaries (vector-length starts)] [parts (fx+ boundaries (vector-length leads))]
            [failed #f] [stride (bitwise-arithmetic-shift-left 1 n)])
+      (define (least start size)
+        ;; the shortest run from a led start that holds a letter or digit:
+        ;; its size, or #f when none of the run does
+        (let scan ([k 0])
+          (cond [(fx=? k size) #f]
+                [(separator? (string-ref name (fx+ start k))) (scan (fx+ k 1))]
+                [else (fx+ k 1)])))
       (let solve ([at 0] [used 0])
         (cond
           [(fx=? at m) '()]
           [(and failed (hashtable-ref failed (+ used (* at stride)) #f)) #f]
           [else
-           (let ([count 0] [option-start (make-vector parts 0)] [option-size (make-vector parts 0)])
+           (let ([count 0] [option-start (make-vector parts 0)] [option-size (make-vector parts 0)]
+                 [option-least (make-vector parts 1)])
              ;; Every part whose run from its start matches, longest run
              ;; first and earliest start among equals, as the parts come.
              (do ([p 0 (fx+ p 1)]) ((fx=? p parts))
-                 (let* ([start (vector-ref starts p)]
+                 (let* ([start (if (fx<? p boundaries) (vector-ref starts p) (vector-ref leads (fx- p boundaries)))]
                         [size (let prefix ([size 0])
                                 (if (and (fx<? (fx+ at size) m) (fx<? (fx+ start size) n)
                                          (not (bitwise-bit-set? used (fx+ start size)))
                                          (char=? (string-ref text (fx+ at size))
                                                  (string-ref name (fx+ start size))))
-                                    (prefix (fx+ size 1)) size))])
-                   (when (fx>? size 0)
+                                    (prefix (fx+ size 1)) size))]
+                        [least (if (fx<? p boundaries) 1 (least start size))])
+                   (when (and (fx>? size 0) least)
                      (let insert ([i count])
                        (if (and (fx>? i 0) (fx<? (vector-ref option-size (fx- i 1)) size))
                            (begin
                              (vector-set! option-size i (vector-ref option-size (fx- i 1)))
                              (vector-set! option-start i (vector-ref option-start (fx- i 1)))
+                             (vector-set! option-least i (vector-ref option-least (fx- i 1)))
                              (insert (fx- i 1)))
-                           (begin (vector-set! option-size i size) (vector-set! option-start i start))))
+                           (begin (vector-set! option-size i size) (vector-set! option-start i start)
+                                  (vector-set! option-least i least))))
                      (set! count (fx+ count 1)))))
              (or (let candidates ([i 0])
                    (and (fx<? i count)
-                        (let ([start (vector-ref option-start i)])
+                        (let ([start (vector-ref option-start i)] [least (vector-ref option-least i)])
                           (or (let lengths ([size (vector-ref option-size i)])
-                                (and (fx>? size 0)
+                                (and (fx>=? size least)
                                      (let* ([mask (bitwise-arithmetic-shift-left
                                                     (- (bitwise-arithmetic-shift-left 1 size) 1) start)]
                                             [tail (solve (fx+ at size) (bitwise-ior used mask))])

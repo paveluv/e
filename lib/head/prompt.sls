@@ -651,6 +651,21 @@
                          (when candidates (set-candidates! values)))
                   (dismiss-completions!)))
             (unless (string=? new-s input) (dismiss-completions!)))))
+    (define (continue-or-end! completer s pos)
+      ;; after a sole completion: the session goes on when the completer
+      ;; still offers more than the token now at pos -- a directory's
+      ;; entries, say -- and the list shows it; else the session ends
+      (let-values ([(start end options values) ((completer-lookup completer) s pos)])
+        (if (and start completion-range (= start (car completion-range)) (pair? values)
+                 (not (and (null? (cdr values))
+                           (string=? (if (candidate? (car values)) (candidate-value (car values)) (car values))
+                                     (substring s start end)))))
+            (begin
+              (set! completion-range (cons start end))
+              (set! completion-matches values)
+              (set-candidates! values)
+              (take-view!))
+            (dismiss-completions!))))
     (define (show-completions! values)
       (if (equal? values candidates)
           (set! page (mod (+ page 1) (max 1 pages)))
@@ -806,10 +821,11 @@
                                              (if (candidate? value) (candidate-value value) value))]
                                    [next (replace-completion s text)]
                                    [settled ((completer-settle completer) (car next) (cdr next))])
-                              (dismiss-completions!)
                               (if (and (string=? (car settled) s) (= (cdr settled) pos))
-                                  (loop s pos "")
-                                  (edited (car settled) (cdr settled))))]
+                                  (begin (dismiss-completions!) (loop s pos ""))
+                                  (begin
+                                    (continue-or-end! completer (car settled) (cdr settled))
+                                    (edited (car settled) (cdr settled)))))]
                            [(prepared? completer s pos)
                             (if (null? (cdr completion-options))
                                 (begin (show-completions! completion-matches) (loop s pos ""))

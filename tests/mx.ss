@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
+     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
              (prefix (head window) window:) (prefix (foundation text) text:)
              (prefix (foundation string) string:) (prefix (test) test:))
 
@@ -47,6 +47,32 @@
          ("(head:current-window x" "(head:current-window x")
          ;; a bare symbol has no form
          ("head:current-window" "head:current-window")))
+
+     ;; Inside a string the settle step judges the typed session: a value
+     ;; that still completes on, a directory with entries, stays open and
+     ;; unsettled; one at its dead end closes the literal and settles on; an
+     ;; untyped string is left alone
+     (for-each
+       (lambda (case)
+         (check (list 'settle-in-string (car case)) (settled (car case)) (cons (cadr case) (string-length (cadr case)))))
+       '(("(visit-file! \"manual/" "(visit-file! \"manual/")
+         ("(visit-file! \"manual/EVAL.md" "(visit-file! \"manual/EVAL.md\")")
+         ("(display \"manual/EVAL.md" "(display \"manual/EVAL.md")))
+     ;; an input that does not read is never settled
+     (check 'an-unreadable-input-is-left-alone (settled "(head:current-window]") '("(head:current-window]" . 21))
+
+     ;; The input reads as data once its open string and forms are closed,
+     ;; or the ghost says why not
+     (check 'inputs-that-close-have-no-complaint
+       (map eval:input-diagnostic '("(head:current-window" "(visit-file! \"manual/" "(let ([x 1" "" "(" "'(a b" "(f #\\( " "(f \"a)\" ; c"))
+       '(#f #f #f #f #f #f #f #f))
+     (check 'inputs-that-cannot-close-say-why
+       (map eval:input-diagnostic '("(f x))" "(f x]" "(f #\\foo)" "(f . )"))
+       '("unexpected )" "] closes (" "invalid character name #\\foo" "expected one item after dot (.)"))
+     (check 'closers-complete-the-input
+       (map eval:input-closers '("(f (g \"x" "(let ([x 1" "(f x))" "done" "(f \"a\\\"b"))
+       '("\"))" "]))" #f "" "\")"))
+     (check 'a-trailing-comment-puts-the-closers-on-their-own-line (eval:input-closers "(f x ; c") "\n)")
 
      ;; Text after the cursor is left alone; blank text after it is kept.
      (check 'text-after-the-symbol-stops-the-settling
@@ -89,6 +115,17 @@
                (labels "(head:show-buffer! '(bu") (labels "(list (bu")))
        '(#t #t #f ("(head:current-buffer)") ("(head:current-buffer)") ("(buffer") ("(buffer") ("myb") ("")
          ("'clean") ("manual/") #f #f))
+     ;; The file completion parameter: prefix offers the directory's entries
+     ;; extending the component, fuzzy all of them for the matcher's
+     ;; segments, deep the entries below it too
+     (check 'file-completion-modes
+       (list (parameterize ([file:completion 'prefix]) (labels "(visit-file! \"lib/apps/evsl"))
+             (parameterize ([file:completion 'fuzzy]) (has? "lib/apps/eval.sls" (labels "(visit-file! \"lib/apps/evsl")))
+             (parameterize ([file:completion 'fuzzy]) (labels "(visit-file! \"lib/evsl"))
+             (parameterize ([file:completion 'deep]) (has? "lib/apps/eval.sls" (labels "(visit-file! \"lib/evsl")))
+             ;; a directory inserts bare, to descend into; a file's own name is its dead end
+             (extensions "(visit-file! \"man") (extensions "(visit-file! \"manual/EVAL.m"))
+       '(#f #t #f #t ("manual/") ("manual/EVAL.md")))
      (check 'literals-and-strings-complete-in-place
        (list (has? "'clean" (labels "(head:buffer-wrap-set! b ")) (has? "#f" (labels "(head:buffer-wrap-set! b "))
              ;; the language's types offer their own values but no producers
@@ -124,7 +161,12 @@
              ;; inside the constructor the name completes from the directory
              (labels "(actor:send! (agent \"h") (extensions "(actor:send! (agent \"h")
              (labels "(actor:send! (agent \"helper\") "))
-       '(#t #t #t #t ("(agent") #f ("helper") ("helper\"") #f))
+       '(#t #t #t #t ("(agent") #f ("helper") ("helper") #f))
+     ;; the sole name inserts bare; the settle step closes its literal at the
+     ;; dead end and stops there, since the constructor takes a rest argument
+     (check 'a-completed-name-closes-its-literal-and-stops-at-a-rest-parameter
+       (settled "(actor:send! (agent \"helper")
+       (let ([out "(actor:send! (agent \"helper\""]) (cons out (string-length out))))
 
      ;; Record procedures complete like any documented callable: an accessor's
      ;; argument is typed, the named type meets the record type it denotes,

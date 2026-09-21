@@ -20,10 +20,10 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service file)
   (export abbreviate absolute add-post-save-hook! add-pre-save-hook! base-name call-with-port
-          (rename (path:canonical canonical)) complete conflict-count create! data-directory
-          directory-part ends-in-newline? (rename (path:expand expand)) lines make-directories!
-          merge read read-state run-post-save-hooks! run-pre-save-hooks! stamp state-clean? text
-          visit-path write!)
+          (rename (path:canonical canonical)) complete completion conflict-count create!
+          data-directory directory-part ends-in-newline? (rename (path:expand expand)) lines
+          make-directories! merge read read-state run-post-save-hooks! run-pre-save-hooks! stamp
+          state-clean? text visit-path write!)
   (import (except (chezscheme) read expand merge call-with-port)
           (prefix (core kernel) kernel:)
           (prefix (only (foundation diff) merge3 merge-report-lines) diff:)
@@ -69,19 +69,58 @@
     (let ([dir (directory-part path)])
       (if dir (string:tail path (string-length dir)) path)))
 
-  ;; Paths as edoc types: completion lists the entries extending the partial
-  ;; path, relative to the working directory, as the file prompt does.
+  ;; Paths as edoc types: completion offers the entries of the partial
+  ;; path's directory, relative to the working directory, as the completion
+  ;; parameter says; M-x matches the token against them and descends into
+  ;; a directory it completes.
   (edoc-type file "a file, by its path"
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
-    (complete (lambda (partial) (map (lambda (path) (cons path #f)) (complete partial))))
+    (complete (lambda (partial) (map (lambda (path) (cons path #f)) (offered partial))))
     (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
 
   (edoc-type directory "a directory, by its path"
     (predicate (lambda (v) (and (string? v) (guard (ex [else #f]) (file-directory? (path:canonical (path:expand v)))))))
     (complete (lambda (partial)
                 (map (lambda (path) (cons path #f))
-                     (filter (lambda (path) (string:suffix? "/" path)) (complete partial)))))
+                     (filter (lambda (path) (string:suffix? "/" path)) (offered partial)))))
     (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+
+  (edoc "How M-x completes a path inside a string: prefix offers the entries of the partial path's directory that extend its last component, fuzzy every entry of that directory for the matcher's segments, deep every entry below it as well."
+        (value (one-of prefix fuzzy deep)))
+  (define completion
+    (make-parameter 'prefix
+      (lambda (v)
+        (unless (memq v '(prefix fuzzy deep)) (error 'file:completion "prefix, fuzzy or deep" v))
+        v)))
+
+  (define (offered partial)
+    ;; the paths a partial path offers at M-x, per the completion parameter
+    (case (completion)
+      [(prefix) (complete partial)]
+      [else (guard (ex [else '()]) (entries partial (eq? (completion) 'deep)))]))
+
+  (define (entries partial deep?)
+    ;; every entry of the partial path's directory as a full path, a
+    ;; directory with a trailing slash, and with deep? the entries below its
+    ;; subdirectories too, breadth first, a few thousand at most; hidden
+    ;; entries only once the component starts with a dot
+    (let* ([dir (or (directory-part partial) "")]
+           [part (string:tail partial (string-length dir))]
+           [hidden? (string:prefix? "." part)])
+      (define (listing prefix)
+        (map (lambda (name)
+               (let ([full (string-append prefix name)])
+                 (if (file-directory? (path:canonical (path:expand full))) (string-append full "/") full)))
+             (sort string<?
+               (filter (lambda (name) (or hidden? (not (string:prefix? "." name))))
+                       (guard (ex [else '()]) (directory-list (path:canonical (path:expand prefix))))))))
+      (let walk ([queue (list dir)] [out '()] [count 0])
+        (if (or (null? queue) (>= count 2000))
+            (reverse out)
+            (let ([here (listing (car queue))])
+              (walk (append (cdr queue) (if deep? (filter (lambda (path) (string:suffix? "/" path)) here) '()))
+                    (append (reverse here) out)
+                    (+ count (length here))))))))
 
   (edoc "A path for display, the home directory as ~: the inverse of expand."
         (path string "the path")

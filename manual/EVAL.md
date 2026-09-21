@@ -22,9 +22,11 @@ M-x answer
 ```
 
 The prompt begins with an editable `(`. It may be deleted when evaluating a
-bare symbol. Missing closing parentheses are added when the input can be
-completed unambiguously; the normalized, closed expression is what enters
-the history and log.
+bare symbol. An input is valid when it reads as Scheme data once its open
+string and its open forms are closed; Enter closes them, a quote for the
+string and then each form's own bracket, and the closed expression is what
+runs and enters the history and log. Completion never produces an invalid
+input: settling closes only what the structure allows.
 
 While the prompt is active:
 
@@ -38,7 +40,9 @@ While the prompt is active:
 - A grey, italic ghost shows the documented parameters still expected by the
   innermost open call. Signatures come live from structured describe entries,
   including entries registered by modules; source parameters and procedure
-  arity are fallbacks.
+  arity are fallbacks. While the input cannot read even with its string and
+  forms closed, an extra `)` or a bracket of the wrong kind say, the ghost
+  shows the complaint instead, bracketed: ` [unexpected )]`.
 - Up and Down browse evaluation history, newest first.
 - `M-Enter` inserts a real newline and indents the new line according to
   Scheme structure. Ordinary Enter accepts and runs the input.
@@ -59,8 +63,12 @@ Matching is case-sensitive; other punctuation, including `_`, does not create
 a boundary. Longer intact segments, fewer reorderings, and matches nearer the
 beginning rank first.
 
-Typed `-` and `:` stay inside literal segments, just like letters. Thus
-`split-b` matches `window:split-below!`, but `s-b` and `b-s` do not abbreviate it.
+Typed `-` and `:` stay inside literal segments, just like letters, and a
+segment may lead with one, anchored to the same separator in the name: `:sp`
+finds `head:split-window` but not `head:window-split`, `.sls` finds the
+`.sls` files and not `sls-mode`, and `s-b` abbreviates `window:split-below!`
+as `s` + `-b`, while `b-s` does not, since no `-s` follows a `b` there. A
+separator alone is no segment, so `ker:` still cannot abbreviate `kernel:`.
 You can omit separators when typing prefixes: `spwir` finds
 `window:split-right!` as `sp` + `wi` + `r`. Reordering still works with
 punctuation when the literal pieces exist: `rightwindow:` can match
@@ -136,7 +144,18 @@ symbol; a form under a quote, or under an undocumented operator, completes
 symbols as before. A `one-of` type offers its literals, a boolean `#t` and
 `#f`, and inside a string literal the type's string values complete the
 literal: `(edit:visit-file! "man` lists paths under `manual/`, `(buffer "`
-lists buffer names. An actor argument lists the registered actors as
+lists buffer names. A string value completes as a session: a sole match is
+inserted bare, and the literal closes only at a dead end, where completing
+from the value would offer nothing but the value itself. So `(edit:visit-file!
+"man` Tab gives `"manual/` with the manual's entries listed at once, and
+`"manual/EVAL.m` Tab gives `"manual/EVAL.md")`, closed and settled; a
+directory argument closes at a directory without subdirectories. How paths
+are offered is the `file:completion` parameter: `prefix`, the default, lists
+the entries of the partial path's directory that extend its last component,
+as a shell does; `fuzzy` lists every entry of that directory for the matcher's
+segments, so `"lib/apps/evl` finds `eval.sls`; `deep` lists the entries below
+it as well, a few thousand at most, so `"lib/evl` finds `lib/apps/eval.sls`.
+Switch at M-x with `(file:completion 'fuzzy)`. An actor argument lists the registered actors as
 `(head "desk")` or `(agent "claude")`, the identities' own spelling. The language's own types, `string` or `integer`, offer
 no producers, and an argument whose type offers nothing the token matches
 falls back to symbol completion. `S-Tab` always completes symbols.

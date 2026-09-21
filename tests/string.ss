@@ -76,9 +76,18 @@
          ("aa" ("aba" "ab-a") ("ab-a"))
          ("λλ" ("λ" "λ-λ" "λλ") ("λλ" "λ-λ"))
          ("!" ("plain" "first!" "!first") ("!first"))
-         ("s-w" ("split-some-window" "window-split" "split-window" "s-window") ("s-window"))
+         ;; a segment may lead with a separator, anchored to the name's: s-w
+         ;; abbreviates split-window as s then -w, and never window-split
+         ("s-w" ("split-some-window" "window-split" "split-window" "s-window")
+          ("s-window" "split-window" "split-some-window"))
          ("w-s" ("split-window" "split-some-window" "ws-" "w-s" "window-split" "w-something")
-          ("w-s" "w-something"))
+          ("w-s" "w-something" "window-split" "split-some-window"))
+         (":sp" ("head:split-window" "head:window-split") ("head:split-window"))
+         ("sp" ("head:split-window" "head:window-split") ("head:split-window" "head:window-split"))
+         (".sls" ("pretty-scheme.sls" "sls-mode") ("pretty-scheme.sls"))
+         ;; a separator alone is no segment, except as a name's own first character
+         (":" ("a:b" "ab") ())
+         ("*" ("*scratch*" "s*") ("*scratch*"))
          ("ker:" ("kernel:load" "keymap:resolved-binding" "ker:load" "ker-load") ("ker:load"))
          ("--" ("--x" "x---y" "x--y" "x-y") ("--x" "x---y"))
          ("" ("z" "aaa" "bb") ("aaa" "bb" "z"))
