@@ -21,7 +21,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head prompt)
-  (export (rename (prompt-active? active?)) allow! completion-highlight completion-label confirm?
+  (export (rename (prompt-active? active?)) allow! completion-highlight completion-kind completion-label confirm?
           content (rename (draft-input draft)) (rename (prompt-edge-motion edge-motion))
           (rename (prompt-ghost ghost)) (rename (prompt-in-window in-window))
           (rename (prompt-inspector inspector)) interaction (rename (query-key! key!)) line
@@ -197,6 +197,10 @@
         (value procedure))
   (define completion-label (make-parameter (lambda (value) value)))
 
+  (edoc "What a list procedure's completions are, for the status line of the list, \"12 completions of file\"; a completer's own kind takes precedence, and the prompt's label stem stands in."
+        (value (or string #f)))
+  (define completion-kind (make-parameter #f))
+
   (edoc "Which completion labels take the editor face: (highlight? label)."
         (value procedure))
   (define completion-highlight (make-parameter (lambda (label) #f)))
@@ -208,18 +212,23 @@
   ;; candidate list live after the second. Existing list procedures stay simple.
   ;; An optional settle procedure, (settle text position), receives the input
   ;; after a sole match has been inserted and returns the (text . position)
-  ;; to continue with: M-x closes forms and steps to the next argument.
-  (define-record-type (completer %make-completer completer?) (fields lookup settle))
+  ;; to continue with: M-x closes forms and steps to the next argument. An
+  ;; optional kind, (kind text position) or a constant string, names what
+  ;; the completions are for the list's status line.
+  (define-record-type (completer %make-completer completer?) (fields lookup settle kind))
 
-  (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted."
+  (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted; an optional kind, (kind text position) or a string, names what the completions are for the list's status line."
         (lookup procedure "the completion source")
-        (settle procedure "the settle step"))
+        (settle (or procedure #f) "the settle step")
+        (kind (or procedure string #f) "what the completions are"))
   (define make-completer
     (case-lambda
       [(lookup)
-       (%make-completer lookup #f)]
+       (%make-completer lookup #f #f)]
       [(lookup settle)
-       (%make-completer lookup settle)]))
+       (%make-completer lookup settle #f)]
+      [(lookup settle kind)
+       (%make-completer lookup settle kind)]))
 
   ;; A display label and its character styles are independent of the string
   ;; inserted on selection. The lookup result owns both, including during cycling.
@@ -491,6 +500,7 @@
     (define validator (validate-input))
     (define draft (draft-input))
     (define labeler (completion-label))
+    (define kind (completion-kind))
     (define highlight? (completion-highlight))
     (define styler (paint:echo-highlight))
     (define ghost (prompt-ghost))
@@ -562,22 +572,25 @@
                (not (eq? owner (head:current-window)))
                (not (eq? (head:window-buffer owner) view))
                (not (memq view (head:buffers))))))
+    (define (kind-text)
+      ;; what the completions are: the completer's own kind, else the
+      ;; completion-kind parameter, else the prompt's label stem
+      (let ([own (and (completer? completion-source) (completer-kind completion-source))])
+        (cond [(procedure? own) (or (guard (ex [else #f]) (own input position)) (label-stem label))]
+              [(string? own) own]
+              [kind kind]
+              [else (label-stem label)])))
     (define (status-text b)
-      (let* ([room (max 1 (- (head:window-width target) 12))]
-             [short (cond [(and (or body candidates) in-window? (< (head:window-size target) 2)) "Enlarge pane"]
-                          [(and (or body candidates) (> pages 1))
-                           (format "~a/~a ~a" (+ page 1) pages
-                             (if (and completion-source (pair? completion-options)
-                                      (pair? (cdr completion-options)))
-                                 "PgUp/PgDn page" "Tab next"))]
-                          [candidates (format "~a matches" (length candidates))]
-                          [else "Tab complete"])]
-             [help (if (> room 60)
-                       (string-append short "  ↑↓ history  Enter accept  Esc cancel")
-                       (if (> room 35) (string-append short "  ↑↓ history  Esc cancel") short))]
-             [name (head:buffer-name b)])
-        (if (<= (+ (glyph:cells name) (glyph:cells help) 2) room)
-            (string-append name "  " help) help)))
+      ;; the list's status line: how many completions, of what, and the page
+      ;; when they take several -- never key hints; a content body without a
+      ;; list names itself
+      (cond
+        [candidates
+         (let* ([count (length candidates)]
+                [head (format "~a completion~a of ~a" count (if (= count 1) "" "s") (kind-text))])
+           (if (> pages 1) (format "~a; page ~a of ~a" head (+ page 1) pages) head))]
+        [(> pages 1) (format "~a; page ~a of ~a" (head:buffer-name b) (+ page 1) pages)]
+        [else (head:buffer-name b)]))
     (define (mouse! event)
       (cond
         [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN")))

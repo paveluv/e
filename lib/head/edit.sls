@@ -1697,7 +1697,7 @@
                              (if (file-directory? path) "Directory; Tab to list files" "Not an existing directory")
                              (begin (set! ready (lambda () (directory-action path))) #f))]
                           [else (set! ready (prepare-file-visit path)) #f])))))))
-      (let ([s (parameterize ([prompt:completion-label file-completion-label]
+      (let ([s (parameterize ([prompt:completion-kind "file"] [prompt:completion-label file-completion-label]
                               [paint:echo-highlight (file-prompt-styler label directory)]
                               [prompt:in-window #t] [prompt:validate validate] [prompt:draft draft])
                  (prompt:read! label complete (or initial directory)

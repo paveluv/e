@@ -483,7 +483,21 @@
                 (map typed-candidate options)))))
       ;; a closure: the completers are built while the module loads, before
       ;; the settling procedures below are defined
-      (lambda (text pos) (settle-completion text pos))))
+      (lambda (text pos) (settle-completion text pos))
+      ;; what the list holds, for its status line: the argument's type at a
+      ;; typed position, else the symbols offered
+      (lambda (s pos)
+        (let ([context (and typed? (argument-context s pos))])
+          (if (and context (typed-options context))
+              (type-text (car context))
+              (if typed? "symbol" "editor symbol"))))))
+
+  (define (type-text type)
+    ;; a type as the status line names it: a name as itself, a record type
+    ;; by its record, a compound as written
+    (cond [(symbol? type) (symbol->string type)]
+          [(and (pair? type) (eq? (car type) 'record) (pair? (cdr type))) (symbol->string (cadr type))]
+          [else (format "~s" type)]))
 
   (define complete-symbol (symbol-completer (lambda (sym) #t) #t))
   (define complete-editor-symbol (symbol-completer kernel:editor-symbol? #f))

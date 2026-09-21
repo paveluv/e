@@ -123,7 +123,9 @@ parameter `[value]`, a value its type in angle brackets, a keyword the parts
 of its form. A procedure without an `edoc` shows the parameters of its
 source, or its arity. A long hint wraps onto further rows, indented under
 itself. The hint is display-only: clicking anywhere in a candidate's rows
-inserts just the symbol.
+inserts just the symbol. The list's status line counts the candidates and
+names what they are, `12 completions of file` or `4 completions of symbol`,
+adding `; page 2 of 3` when they take several pages.
 
 At an argument position of a documented procedure, Tab completes by the
 argument's type instead of by symbol. `(head:show-buffer! ` offers every live
