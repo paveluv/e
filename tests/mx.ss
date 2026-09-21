@@ -126,6 +126,19 @@
              ;; a directory inserts bare, to descend into; a file's own name is its dead end
              (extensions "(visit-file! \"man") (extensions "(visit-file! \"manual/EVAL.m"))
        '(#f #t #f #t ("manual/") ("manual/EVAL.md")))
+     ;; Inside a string, Tab extends the literal to the candidates' longest
+     ;; common prefix, as a shell does: a listing sharing nothing stays put,
+     ;; a deep path stays quick, and shared characters extend
+     (define scratch-dir (format "/tmp/e-mx-~a" (get-process-id)))
+     (mkdir scratch-dir)
+     (for-each (lambda (name) (call-with-output-file (string-append scratch-dir "/" name) (lambda (p) (put-string p "x"))))
+               '("alpha-one.txt" "alpha-two.txt"))
+     (check 'string-extensions-are-common-prefixes
+       (list (extensions "(visit-file! \"manual/") (extensions "(visit-file! \"lib/apps/")
+             (extensions (string-append "(visit-file! \"" scratch-dir "/al")))
+       (list '("manual/") '("lib/apps/") (list (string-append scratch-dir "/alpha-"))))
+     (for-each (lambda (name) (delete-file (string-append scratch-dir "/" name))) '("alpha-one.txt" "alpha-two.txt"))
+     (delete-directory scratch-dir)
      (check 'literals-and-strings-complete-in-place
        (list (has? "'clean" (labels "(head:buffer-wrap-set! b ")) (has? "#f" (labels "(head:buffer-wrap-set! b "))
              ;; the language's types offer their own values but no producers

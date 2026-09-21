@@ -144,9 +144,10 @@ symbol; a form under a quote, or under an undocumented operator, completes
 symbols as before. A `one-of` type offers its literals, a boolean `#t` and
 `#f`, and inside a string literal the type's string values complete the
 literal: `(edit:visit-file! "man` lists paths under `manual/`, `(buffer "`
-lists buffer names. A string value completes as a session: a sole match is
-inserted bare, and the literal closes only at a dead end, where completing
-from the value would offer nothing but the value itself. So `(edit:visit-file!
+lists buffer names. A string value completes as a session: with several
+matches Tab extends the literal to their longest common prefix, as a shell
+does; a sole match is inserted bare, and the literal closes only at a dead
+end, where completing from the value would offer nothing but the value itself. So `(edit:visit-file!
 "man` Tab gives `"manual/` with the manual's entries listed at once, and
 `"manual/EVAL.m` Tab gives `"manual/EVAL.md")`, closed and settled; a
 directory argument closes at a directory without subdirectories. How paths

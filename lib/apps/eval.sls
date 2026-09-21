@@ -342,26 +342,34 @@
           (for-all (lambda (entry) (string=? (option-text (car entry)) value)) options))))
 
   (define (typed-inserts s context options)
-    ;; what Tab puts in place of the token: a sole candidate whole, else the
-    ;; safe extensions of the token over the candidates' texts, the longest
-    ;; that every current match still matches, as for symbols, and that
-    ;; leaves the cursor at a typed argument: an extension opening a string
-    ;; after an operator nobody documents, (hea" say, would strand it
-    (let ([start (cadr context)] [end (caddr context)] [token (cadddr context)])
+    ;; what Tab puts in place of the token: a sole candidate whole; inside a
+    ;; string the candidates' longest common prefix when it extends the
+    ;; token, as a shell does, since the values are literal (a projection of
+    ;; what they share, manual/md, would be no path, and the projection walk
+    ;; grows with a path's parts); else the safe extensions of the token over
+    ;; the candidates' texts, the longest that every current match still
+    ;; matches, as for symbols, and that leaves the cursor at a typed
+    ;; argument: an extension opening a string after an operator nobody
+    ;; documents, (hea" say, would strand it
+    (let ([start (cadr context)] [end (caddr context)] [token (cadddr context)] [in-string? (car (cddddr context))])
       (define (typed-still? text)
         (and (argument-context (string-append (substring s 0 start) text (substring s end (string-length s)))
                                (+ start (string-length text)))
              #t))
-      (if (null? (cdr options))
-          (list (option-insert (car (car options))))
-          (let ([seen (make-hashtable string-hash string=?)])
-            (fuzzy:expansions token
-              (fold-right (lambda (entry out)
-                            (let ([text (option-text (car entry))])
-                              (if (hashtable-ref seen text #f) out
-                                  (begin (hashtable-set! seen text #t) (cons text out)))))
-                          '() options)
-              typed-still?)))))
+      (cond
+        [(null? (cdr options)) (list (option-insert (car (car options))))]
+        [in-string?
+         (let ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))])
+           (list (if (and (> (string-length common) (string-length token)) (string:prefix? token common)) common token)))]
+        [else
+         (let ([seen (make-hashtable string-hash string=?)])
+           (fuzzy:expansions token
+             (fold-right (lambda (entry out)
+                           (let ([text (option-text (car entry))])
+                             (if (hashtable-ref seen text #f) out
+                                 (begin (hashtable-set! seen text #t) (cons text out)))))
+                         '() options)
+             typed-still?))])))
 
   (define (typed-candidate entry)
     ;; a prompt candidate from (option . fragments): the label with its
