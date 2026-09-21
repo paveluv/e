@@ -277,9 +277,9 @@
 (define bangless-mutators
   ;; standard names whose call is a change whatever their arguments
   '(printf delete-file rename-file mkdir chmod putenv copy-file truncate-file
-    call-with-output-file with-output-to-file open-output-file open-file-output-port
-    fork-thread condition-signal condition-broadcast mutex-acquire mutex-release
-    register-signal-handler putprop remprop define-top-level-value system exit abort))
+     call-with-output-file with-output-to-file open-output-file open-file-output-port
+     fork-thread condition-signal condition-broadcast mutex-acquire mutex-release
+     register-signal-handler putprop remprop define-top-level-value system exit abort))
 (define opaque-standard
   ;; standard names whose effect is whatever they are handed
   '(eval load compile-library compile-file))
@@ -302,16 +302,16 @@
 (define part-accessors
   ;; a subject reached through these is judged by what they take apart
   '(car cdr caar cadr cdar cddr caddr cdddr cadddr list-ref list-tail vector-ref string-ref
-    hashtable-ref eq-hashtable-ref eqv-hashtable-ref symbol-hashtable-ref unbox))
+     hashtable-ref eq-hashtable-ref eqv-hashtable-ref symbol-hashtable-ref unbox))
 (define fresh-makers
   ;; a subject made on the spot is the body's own
   '(make-vector make-string make-bytevector make-list list vector string bytevector cons box
-    make-eq-hashtable make-eqv-hashtable make-hashtable make-weak-eq-hashtable make-weak-eqv-hashtable
-    vector-copy string-copy bytevector-copy list-copy list->vector vector->list list->string string->list
-    string-append substring format number->string symbol->string reverse append map filter vector-map iota
-    open-output-string open-string-output-port open-bytevector-output-port foreign-alloc
-    open-input-file open-file-input-port open-string-input-port open-bytevector-input-port
-    open-fd-input-port open-fd-output-port open-fd-input/output-port))
+     make-eq-hashtable make-eqv-hashtable make-hashtable make-weak-eq-hashtable make-weak-eqv-hashtable
+     vector-copy string-copy bytevector-copy list-copy list->vector vector->list list->string string->list
+     string-append substring format number->string symbol->string reverse append map filter vector-map iota
+     open-output-string open-string-output-port open-bytevector-output-port foreign-alloc
+     open-input-file open-file-input-port open-string-input-port open-bytevector-input-port
+     open-fd-input-port open-fd-output-port open-fd-input/output-port))
 (define prompting-procedures
   ;; (library-name . names) whose call waits for a key
   '(((head head) read-key-event)))
@@ -556,16 +556,16 @@
          [fields (if clause (cdr clause) '())])
     (cons
       (cons (if (and (list? spec) (>= (length spec) 2)) (cadr spec) (string->symbol (format "make-~a" type))) 'constructor)
-     (apply append
-      (map (lambda (f)
-             (let* ([f (if (symbol? f) (list 'immutable f) f)]
-                    [field (and (pair? f) (pair? (cdr f)) (cadr f))])
-               (if (not field) '()
+      (apply append
+        (map (lambda (f)
+               (let* ([f (if (symbol? f) (list 'immutable f) f)]
+                      [field (and (pair? f) (pair? (cdr f)) (cadr f))])
+                 (if (not field) '()
                    (cons (cons (if (and (list? f) (>= (length f) 3)) (caddr f) (string->symbol (format "~a-~a" type field))) 'accessor)
                          (if (eq? (car f) 'mutable)
                              (list (cons (if (and (list? f) (>= (length f) 4)) (cadddr f) (string->symbol (format "~a-~a-set!" type field))) 'mutator))
                              '())))))
-           fields)))))
+          fields)))))
 
 (define (flag-clauses clauses)
   (filter (lambda (c) (and (pair? c) (memq (car c) '(prompts effects edits)))) clauses))
@@ -921,32 +921,32 @@
 (define kinds '(procedure parameter syntax record value standard elsewhere))
 
 (define (coverage-report!)
-(for-each
-  (lambda (entry)
-    (let* ([name (car entry)] [library (cadr entry)] [path (caddr entry)]
-           [stem (let ([file (path-last path)]) (substring file 0 (- (string-length file) 4)))])
-      (when (or (null? selected) (member stem selected))
-        (let* ([rows (map (lambda (export) (cons (car export) (classify name (car export) 0))) (exports-of library))]
-               [documented (filter (lambda (r) (eq? (cdr r) 'documented)) rows)])
-          (for-each (lambda (r) (count! (cdr r))) rows)
-          (for-each (lambda (form) (note-types! name form)) (cdddr library))
-          (printf "~24a ~3a of ~3a documented" (format "~s" name) (length documented) (length rows))
-          (let ([present (filter (lambda (k) (exists (lambda (r) (eq? (cdr r) k)) rows)) kinds)])
-            (printf "  ~a\n"
-              (apply string-append
-                (map (lambda (k) (format " ~a ~a" (length (filter (lambda (r) (eq? (cdr r) k)) rows)) k)) present))))
-          (when listing?
-            (for-each (lambda (k)
-                        (let ([names (map car (filter (lambda (r) (eq? (cdr r) k)) rows))])
-                          (when (pair? names) (printf "    ~a: ~a\n" k names))))
-              kinds))))))
-  libraries)
+  (for-each
+    (lambda (entry)
+      (let* ([name (car entry)] [library (cadr entry)] [path (caddr entry)]
+             [stem (let ([file (path-last path)]) (substring file 0 (- (string-length file) 4)))])
+        (when (or (null? selected) (member stem selected))
+          (let* ([rows (map (lambda (export) (cons (car export) (classify name (car export) 0))) (exports-of library))]
+                 [documented (filter (lambda (r) (eq? (cdr r) 'documented)) rows)])
+            (for-each (lambda (r) (count! (cdr r))) rows)
+            (for-each (lambda (form) (note-types! name form)) (cdddr library))
+            (printf "~24a ~3a of ~3a documented" (format "~s" name) (length documented) (length rows))
+            (let ([present (filter (lambda (k) (exists (lambda (r) (eq? (cdr r) k)) rows)) kinds)])
+              (printf "  ~a\n"
+                (apply string-append
+                  (map (lambda (k) (format " ~a ~a" (length (filter (lambda (r) (eq? (cdr r) k)) rows)) k)) present))))
+            (when listing?
+              (for-each (lambda (k)
+                          (let ([names (map car (filter (lambda (r) (eq? (cdr r) k)) rows))])
+                            (when (pair? names) (printf "    ~a: ~a\n" k names))))
+                kinds))))))
+    libraries)
 
-(printf "\ntotal:")
-(for-each (lambda (k) (printf " ~a ~a" (hashtable-ref totals k 0) k)) (cons 'documented kinds))
-(newline)
-(let ([unknown (filter (lambda (use) (unknown-type? (car use))) used-types)])
-  (printf "types: ~a defined by libraries, ~a unknown\n" (hashtable-size defined-types) (length unknown))
-  (for-each (lambda (use) (printf "    ~s in ~s, ~a\n" (car use) (cadr use) (caddr use))) (reverse unknown))))
+  (printf "\ntotal:")
+  (for-each (lambda (k) (printf " ~a ~a" (hashtable-ref totals k 0) k)) (cons 'documented kinds))
+  (newline)
+  (let ([unknown (filter (lambda (use) (unknown-type? (car use))) used-types)])
+    (printf "types: ~a defined by libraries, ~a unknown\n" (hashtable-size defined-types) (length unknown))
+    (for-each (lambda (use) (printf "    ~s in ~s, ~a\n" (car use) (cadr use) (caddr use))) (reverse unknown))))
 
 (if effects? (effects-report!) (coverage-report!))

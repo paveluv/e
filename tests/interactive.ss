@@ -225,6 +225,23 @@
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-session-gives-the-window-back
                 (lambda () (not (find-cell "<completions>"))) 5000)
+     ;; A needle argument searches as it is typed: the note counts the
+     ;; matches, Tab visits the next without inserting, and C-g restores point.
+     (evaluate '(let ([b (head:fresh-buffer! "needles")])
+                  (head:buffer-lines-set! b (vector "alpha beta alpha" "gamma alpha"))
+                  (head:show-buffer! b)
+                  (head:goto! '(0 . 0))
+                  (head:buffer-name b)))
+     (send! "\x1b;xsearch:replace! \"alp")
+     (wait-for! 'a-needle-argument-counts-its-matches
+                (lambda () (find-cell "λ (search:replace! \"alp [1 of 3]")) 5000)
+     (send! "\t")
+     (wait-for! 'tab-visits-the-next-match
+                (lambda () (find-cell "λ (search:replace! \"alp [2 of 3]")) 5000)
+     (send! "\x7;")                     ; C-g
+     (wait-for! 'the-search-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
+     (check 'cancelling-the-search-restores-point (equal? (evaluate '(head:point)) '(0 . 0)))
+     (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
      ;; A closed string is final: Tab settles the forms around it, the file
      ;; literal closing at its one argument and the command at its one,
      ;; whether or not the path exists.

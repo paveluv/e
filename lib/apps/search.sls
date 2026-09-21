@@ -117,6 +117,67 @@
   (define (goto-match! match)
     (head:goto! (cons (car match) (cdr match))))
 
+  (define (matches-of b needle)
+    ;; every match of needle in b as (row . col), in order and without
+    ;; overlaps, exactly as the replace commands find them
+    (let ([m (string-length needle)])
+      (let rows ([row 0] [acc '()])
+        (if (= row (head:buffer-line-count b))
+            (reverse acc)
+            (let ([s (head:buffer-line b row)])
+              (let cols ([from 0] [acc acc])
+                (let ([hit (string:search s needle from (string-length s))])
+                  (if hit
+                      (cols (+ hit m) (cons (cons row hit) acc))
+                      (rows (+ row 1) acc)))))))))
+
+  (define (make-searcher)
+    ;; The needle type's live search for the prompt: the needle's matches
+    ;; highlight through the search highlighter, the current one on top,
+    ;; and point moves to the current match's start, so a command reading
+    ;; from point -- replace! -- begins there; done restores point unless
+    ;; the prompt was accepted. Matching is exact, as the replace commands'.
+    (let ([window (head:current-window)] [origin (head:point)] [needle ""] [hits '()] [at #f])
+      (define (show!)
+        (set! needle-now (if (null? hits) "" needle))
+        (set! current-match
+          (and at (let ([hit (list-ref hits at)])
+                    (list (head:current-buffer) (car hit) (cdr hit) (+ (cdr hit) (string-length needle))))))
+        (when at (goto-match! (list-ref hits at)))
+        (cons (and at (+ at 1)) (length hits)))
+      (define (move step)
+        (when (pair? hits) (set! at (mod (+ at step) (length hits))))
+        (show!))
+      (prompt:make-searcher
+        (lambda (s)
+          (set! needle s)
+          (set! hits (if (string=? s "") '() (matches-of (head:current-buffer) s)))
+          (set! at (and (pair? hits)
+                        ;; the first match at or after where the search began, else the first
+                        (let from ([i 0] [rest hits])
+                          (cond [(null? rest) 0]
+                                [(or (< (car origin) (caar rest))
+                                     (and (= (car origin) (caar rest)) (<= (cdr origin) (cdar rest))))
+                                 i]
+                                [else (from (+ i 1) (cdr rest))]))))
+          (show!))
+        (lambda () (move 1))
+        (lambda () (move -1))
+        (lambda (accepted?)
+          (set! needle-now "")
+          (set! current-match #f)
+          (unless accepted?
+            (when (window:focus! window) (head:goto! origin)))))))
+
+  ;; The needle type: a string argument that searches while it is typed.
+  ;; At M-x the prompt highlights the needle's matches in the current
+  ;; buffer as a search would and Tab visits them in turn, completing
+  ;; nothing: (search:replace! "old" begins where Tab left point.
+  (edoc-type needle "text to find in the current buffer, within one line; typed at M-x, its matches highlight and Tab visits them in turn"
+    (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
+    (search make-searcher)
+    (within string))
+
   (define (goto-match-end! match needle)
     ;; Point lands right after the match, so accepting the search
     ;; leaves it there -- a region set before searching then covers
@@ -295,13 +356,13 @@
       count))
 
   (edoc "How many times needle occurs in the selected region, else in the whole current buffer."
-        (needle string "the text to count, within one line")
+        (needle needle "the text to count, within one line")
         (returns integer))
   (define (count needle)
     (for-matches! (edit:current-region) needle (lambda (row col) (string-length needle))))
 
   (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one undo step, point left where it was."
-        (from string "the text to find, within one line")
+        (from needle "the text to find, within one line")
         (to string "its replacement")
         (returns integer "how many occurrences were replaced")
         (edits))
@@ -365,7 +426,7 @@
                  (loop (+ row 1) 0))))))
 
   (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered, y or SPC replaces, n or DEL skips, q stops; one undo step, point following."
-        (from string "the text to find, within one line")
+        (from needle "the text to find, within one line")
         (to string "its replacement")
         (prompts)
         (edits))

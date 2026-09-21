@@ -148,9 +148,9 @@
      (let ([out (painted
                   (lambda ()
                     (paint:emit-runs! "abcd"
-                                     (vector 'keyword 'keyword 'plain
-                                             'plain)
-                                     0 4)))])
+                                      (vector 'keyword 'keyword 'plain
+                                              'plain)
+                                      0 4)))])
        (check 'runs-coalesce (stripped out) "abcd")
        (check 'runs-styled (contains? out (style:code 'keyword))
               #t))

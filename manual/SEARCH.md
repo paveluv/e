@@ -46,6 +46,13 @@ highlights each occurrence before asking:
 The complete run is one undo step. Point follows the operation and finishes at
 the last replaced, skipped, or pending occurrence.
 
+The text to find is a `needle`: while you type it at M-x, its matches
+highlight in the current buffer as a search would, the prompt notes `[1 of
+3]`, and Tab visits the next occurrence, Shift-Tab the previous, inserting
+nothing. Point follows to the occurrence's start, so `replace!` begins there;
+cancelling the prompt restores point. `search:count` and `search:replace-all!`
+take a needle too. Matching is exact, as the replace commands match.
+
 For noninteractive replacement, `search:replace-all!` works on the selected
 region, else on the whole current buffer; the scope forms retarget it:
 

@@ -187,7 +187,12 @@ the directory as well, a few thousand at most, so `"lib/evsl` finds
 `lib/apps/eval.sls`. Switch at M-x with `(file:completion 'prefix)`. An actor argument lists the registered actors as
 `(head "desk")` or `(agent "claude")`, the identities' own spelling. The language's own types, `string` or `integer`, offer
 no producers, and an argument whose type offers nothing the token matches
-falls back to symbol completion. `S-Tab` always completes symbols.
+falls back to symbol completion. `S-Tab` always completes symbols. An
+argument may search instead of completing: a `needle`, the text
+`search:replace!` finds, highlights its matches in the current buffer as it
+is typed, the prompt notes `[1 of 3]`, and Tab visits the matches in turn,
+Shift-Tab backwards, inserting nothing; a type asks for this with an
+`edoc-type` `(search s)` clause.
 
 Bracketed multiline paste keeps its line breaks and runs the same Scheme
 indenter over the resulting expression. This makes copied definitions and

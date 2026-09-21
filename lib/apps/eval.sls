@@ -636,7 +636,14 @@
         (let ([context (and typed? (argument-context s pos))])
           (if (and context (typed-options context))
               (type-text (car context))
-              (if typed? "symbol" "editor symbol"))))))
+              (if typed? "symbol" "editor symbol"))))
+      ;; a live search in place of a list, where the argument's type asks
+      ;; for one: a needle's matches highlight in the buffer as it is typed
+      (lambda (s pos)
+        (let ([context (and typed? (argument-context s pos))])
+          (and context (car (cddddr context))
+               (let ([make (edoc:type-searcher (car context))])
+                 (and make (cons make (cadddr context)))))))))
 
   (define (type-text type)
     ;; a type as the status line names it: a name as itself, a record type
@@ -920,7 +927,8 @@
       [(not (blank? pos)) (cons text pos)]
       [(open-string-start text pos)
        (let ([context (argument-context text pos)])
-         (if (and context (car (cddddr context)) (dead-end? (car context) (cadddr context)))
+         (if (and context (car (cddddr context)) (not (edoc:type-searcher (car context)))
+                  (dead-end? (car context) (cadddr context)))
              (settled (string-append (substring text 0 pos) "\"") (substring text pos (string-length text)) (+ pos 1))
              (cons text pos)))]
       [(not (input-closers text)) (cons text pos)]

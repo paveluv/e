@@ -30,8 +30,9 @@
           (rename (prompt-end! end!)) (rename (prompt-forward! forward!)) (rename (prompt-ghost ghost))
           (rename (prompt-in-window in-window)) (rename (prompt-inspect! inspect!)) (rename (prompt-inspector inspector))
           interaction (rename (query-key! key!)) (rename (prompt-kill! kill!)) line make-candidate make-completer
-          (rename (make-content-view make-content)) (rename (prompt-multiline multiline)) (rename (prompt-newline! newline!))
-          (rename (prompt-paste! paste!)) (rename (prompt! read!)) (rename (prompt-reindent reindent)) transient
+          (rename (make-content-view make-content)) make-searcher (rename (prompt-multiline multiline))
+          (rename (prompt-newline! newline!)) (rename (prompt-paste! paste!)) (rename (prompt! read!))
+          (rename (prompt-reindent reindent)) searcher-done searcher-find searcher-next searcher-previous searcher? transient
           (rename (prompt-type! type!)) (rename (prompt-up! up!)) (rename (validate-input validate)) (rename (prompt-yank! yank!)))
   (import (rnrs)
           (rnrs r5rs)
@@ -327,21 +328,38 @@
   ;; after a sole match has been inserted and returns the (text . position)
   ;; to continue with: M-x closes forms and steps to the next argument. An
   ;; optional kind, (kind text position) or a constant string, names what
-  ;; the completions are for the list's status line.
-  (define-record-type (completer %make-completer completer?) (fields lookup settle kind))
+  ;; the completions are for the list's status line. An optional track,
+  ;; (track text position), gives (maker . needle) where a live search
+  ;; stands in for the list at the cursor: the prompt makes the searcher
+  ;; once, feeds it the needle as it changes, and ends it as the cursor
+  ;; leaves.
+  (define-record-type (completer %make-completer completer?) (fields lookup settle kind track))
 
-  (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted; an optional kind, (kind text position) or a string, names what the completions are for the list's status line."
+  (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted; an optional kind, (kind text position) or a string, names what the completions are for the list's status line; an optional track, (track text position), gives (maker . needle) where a live search stands in for the list."
         (lookup procedure "the completion source")
         (settle (or procedure #f) "the settle step")
-        (kind (or procedure string #f) "what the completions are"))
+        (kind (or procedure string #f) "what the completions are")
+        (track (or procedure #f) "where a live search stands in"))
   (define make-completer
     (case-lambda
       [(lookup)
-       (%make-completer lookup #f #f)]
+       (%make-completer lookup #f #f #f)]
       [(lookup settle)
-       (%make-completer lookup settle #f)]
+       (%make-completer lookup settle #f #f)]
       [(lookup settle kind)
-       (%make-completer lookup settle kind)]))
+       (%make-completer lookup settle kind #f)]
+      [(lookup settle kind track)
+       (%make-completer lookup settle kind track)]))
+
+  ;; A searcher stands in for the list at a typed argument: it finds the
+  ;; needle's matches in the current buffer and highlights them as a search
+  ;; would, Tab visits them in turn, and nothing is ever inserted.
+  (edoc "A live search standing in for a completion list: (find needle) highlights the needle's matches in the current buffer and moves to the first from point, giving (index . count) with index #f when none; (next) and (previous) move to the neighbouring match, giving the same; (done accepted?) drops the highlights, restoring point unless accepted."
+        (find procedure "(find needle) giving (index . count)")
+        (next procedure "(next) giving (index . count)")
+        (previous procedure "(previous) giving (index . count)")
+        (done procedure "(done accepted?)"))
+  (define-record-type searcher (fields find next previous done))
 
   ;; A display label and its character styles are independent of the string
   ;; inserted on selection. The lookup result owns both, including during cycling.
@@ -626,6 +644,10 @@
     (define draft (draft-input))
     (define labeler (completion-label))
     (define kind (completion-kind))
+    (define searcher-maker #f)
+    (define searcher #f)
+    (define searcher-needle #f)
+    (define search-hit #f)
     (define highlight? (completion-highlight))
     (define styler (paint:echo-highlight))
     (define ghost (prompt-ghost))
@@ -700,6 +722,34 @@
                (not (eq? owner (head:current-window)))
                (not (eq? (head:window-buffer owner) view))
                (not (memq view (head:buffers))))))
+    (define (search-note)
+      ;; the live search's note: which match of how many, or that none matches
+      (cond [(not search-hit) ""]
+            [(car search-hit) (format " [~a of ~a]" (car search-hit) (cdr search-hit))]
+            [(> (string-length (or searcher-needle "")) 0) " [no match]"]
+            [else ""]))
+    (define (end-search! accepted?)
+      (when searcher
+        (guard (ex [else (void)]) ((searcher-done searcher) accepted?))
+        (set! searcher #f) (set! searcher-maker #f) (set! searcher-needle #f) (set! search-hit #f)))
+    (define (sync-searcher! s pos)
+      ;; the live search the completer wants at the cursor: started when the
+      ;; cursor enters a searching argument, fed the needle as it changes,
+      ;; ended as the cursor leaves
+      (let ([wanted (and (completer? complete) (completer-track complete)
+                         (guard (ex [else #f]) ((completer-track complete) s pos)))])
+        (cond
+          [(not wanted) (end-search! #f)]
+          [(and searcher (eq? (car wanted) searcher-maker))
+           (unless (string=? (cdr wanted) searcher-needle)
+             (set! searcher-needle (cdr wanted))
+             (set! search-hit ((searcher-find searcher) searcher-needle)))]
+          [else
+           (end-search! #f)
+           (set! searcher-maker (car wanted))
+           (set! searcher ((car wanted)))
+           (set! searcher-needle (cdr wanted))
+           (set! search-hit ((searcher-find searcher) searcher-needle))])))
     (define (kind-text)
       ;; what the completions are: the completer's own kind, else the
       ;; completion-kind parameter, else the prompt's label stem
@@ -915,7 +965,9 @@
                        (not (eq? (head:window-buffer target) view))))
           (dismiss-completions!))
         (invalidate-input! s pos)
-        (set! input s) (set! position pos) (set! note next-note)
+        (sync-searcher! s pos)
+        (set! input s) (set! position pos)
+        (set! note (if (and searcher (string=? next-note "")) (search-note) next-note))
         (when draft (set-box! draft (cons s pos)))
         (if (window-lost?) #f
             (let ()
@@ -1036,7 +1088,7 @@
                   [(and body (content-action! body event)) (set! page 0) (loop s pos "")]
                   [(and body (content-view-handle body) ((content-view-handle body) event))
                    (set! page 0) (loop s pos "")]
-                  [(eq? action 'cancel) (set! message "Quit") #f]
+                  [(eq? action 'cancel) (end-search! #f) (set! message "Quit") #f]
                   [(eq? action 'accept)
                    (let* ([out (if normalize (normalize s) s)]
                           [problem (and validator (validator out))])
@@ -1048,7 +1100,7 @@
                              (echo:set-text! problem validation-message))
                            (loop out (if (string=? out s) pos (string-length out))
                              (if (notice? problem) problem (string-append " [" problem "]"))))
-                         (begin (record-history! out) (set! message "") out)))]
+                         (begin (end-search! #t) (record-history! out) (set! message "") out)))]
                   [(memq action '(beginning end))
                    (set! last-edge action)
                    (let ([move (prompt-edge-motion)])
@@ -1070,8 +1122,15 @@
                   [(eq? action 'yank)
                    (let ([text (head:copy-text)])
                      (edited (string:insert s pos text) (+ pos (string-length text))))]
-                  [(eq? action 'complete) (if complete (complete-input complete) (loop s pos ""))]
-                  [(eq? action 'alternate-complete) (if alt-complete (complete-input alt-complete) (loop s pos ""))]
+                  ;; a live search visits its matches instead of completing
+                  [(eq? action 'complete)
+                   (cond [searcher (set! search-hit ((searcher-next searcher))) (loop s pos "")]
+                         [complete (complete-input complete)]
+                         [else (loop s pos "")])]
+                  [(eq? action 'alternate-complete)
+                   (cond [searcher (set! search-hit ((searcher-previous searcher))) (loop s pos "")]
+                         [alt-complete (complete-input alt-complete)]
+                         [else (loop s pos "")])]
                   [(eq? action 'inspect)
                    (let ([inspect (prompt-inspector)])
                      (when inspect (guard (ex [else (void)]) (inspect s pos))))
@@ -1107,6 +1166,7 @@
               (lambda () (when in-window? (take-view!)))
               run-prompt
               (lambda ()
+                (end-search! #f)
                 (release-view!)
                 (clear-validation!)
                 (set! echo-cursor #f) (set! echo-indent #f) (set! echo-input-end #f)

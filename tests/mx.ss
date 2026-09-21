@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
+     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:)
              (prefix (head window) window:) (prefix (foundation text) text:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
@@ -307,4 +307,32 @@
      ;; when the documentation changes, a fetch or a registration later
      (doc:register! '(((mx-bare-proc) (("procedure" . "(mx-bare-proc gamma)")) "void" ("(mx)") mx "Fixture" #f "Documented later.")))
      (check 'a-cached-hint-follows-newly-arrived-documentation (eval:completion-hint 'mx-bare-proc) "(gamma)")
+
+     ;; A needle argument searches instead of completing: its type makes a
+     ;; searcher that highlights the matches from point on, visits them in
+     ;; turn without inserting, and restores point unless accepted
+     (define needles (head:new-buffer! "needles"))
+     (head:buffer-lines-set! needles (list->vector '("alpha beta" "gamma alpha" "alpha")))
+     (head:show-buffer! needles)
+     (head:goto! '(0 . 3))
+     (define make (edoc:type-searcher 'needle))
+     (define s (make))
+     (check 'a-needle-searches-from-point
+       (list (procedure? make) (edoc:type-searcher 'string)
+             ((prompt:searcher-find s) "alpha") (head:point)
+             ((prompt:searcher-next s)) (head:point)
+             ((prompt:searcher-previous s))
+             ((prompt:searcher-find s) "zeta") (head:point))
+       '(#t #f (2 . 3) (1 . 6) (3 . 3) (2 . 0) (2 . 3) (#f . 0) (1 . 6)))
+     ((prompt:searcher-done s) #f)
+     (check 'ending-a-search-unaccepted-restores-point (head:point) '(0 . 3))
+     (let ([s (make)])
+       ((prompt:searcher-find s) "gamma")
+       ((prompt:searcher-done s) #t))
+     (check 'ending-a-search-accepted-keeps-the-match (head:point) '(1 . 0))
+     ;; a searching string is never settled shut
+     (check 'a-needle-string-is-not-settled
+       (settled "(search:replace! \"alpha")
+       (let ([out "(search:replace! \"alpha"]) (cons out (string-length out))))
+
      (test:finish! 'mx)))

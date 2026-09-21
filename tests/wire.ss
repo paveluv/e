@@ -2431,8 +2431,8 @@
                               (head:with-buffer source (mode:choose! "markdown"))
                               (head:show-buffer! (markdown:companion! source "<resume view>")))
                             (head:goto! (cons (let find ([row 0])
-                                                 (if (string=? (head:buffer-line (head:current-buffer) row) "After table")
-                                                     row (find (+ row 1)))) 2))
+                                                (if (string=? (head:buffer-line (head:current-buffer) row) "After table")
+                                                    row (find (+ row 1)))) 2))
                             (window:focus-next!) (window:set-wrap! #f) (window:split-below!)
                             ;; the user's tree is the root split's first subtree;
                             ;; the root itself holds the pop-up
