@@ -190,10 +190,10 @@
      (send! "\x1b;xwindowsplit\t")
      (wait-for! 'first-tab-normalizes-without-choosing
        (lambda () (and (find-cell "λ (window:split-")
-                       (not (find-cell "completions of")))) 5000)
+                       (not (find-cell "<completions>")))) 5000)
      (send! "\t")
      (wait-for! 'completions-take-the-window
-                (lambda () (and (find-cell "4 completions of symbol")
+                (lambda () (and (find-cell "<completions>  4 matches of symbol")
                                 ;; each candidate carries its edoc hint, one per
                                 ;; row, a long hint wrapping under itself
                                 (find-cell "window:split-below!  ()  Split the selected")
@@ -202,29 +202,29 @@
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back
-                (lambda () (not (find-cell "completions of"))) 5000)
+                (lambda () (not (find-cell "<completions>"))) 5000)
      ;; An argument whose type is documented completes to its values: the
      ;; buffers, spelled as the expressions that denote them.
      (send! "\x1b;xhead:show-buffer! \t\t")
      (wait-for! 'a-typed-argument-lists-its-values
-                (lambda () (and (find-cell "completions of buffer")
+                (lambda () (and (find-cell "matches of buffer")
                                 (find-cell "(buffer \"*scratch*\")")
                                 (find-cell "(buffer \"*terminal*\")  terminal")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'typed-completions-give-the-window-back
-                (lambda () (not (find-cell "completions of"))) 5000)
+                (lambda () (not (find-cell "<completions>"))) 5000)
      ;; A string argument completes as a session: a sole directory stays open
      ;; without settling, and the pop-up lists its entries at once.
      (send! "\x1b;xedit:visit-file! \"man\t")
      (wait-for! 'a-directory-completion-stays-open-and-lists-its-entries
                 (lambda () (and (find-cell "λ (edit:visit-file! \"manual/")
-                                (find-cell "completions of file")
+                                (find-cell "matches of file")
                                 (find-cell "manual/EVAL.md")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-session-gives-the-window-back
-                (lambda () (not (find-cell "completions of"))) 5000)
+                (lambda () (not (find-cell "<completions>"))) 5000)
      ;; Completing a sole candidate includes punctuation and remains executable.
      (send! "\x1b;xspwir\t\r")
      (wait-for! 'normalized-full-match-can-run

@@ -197,7 +197,7 @@
         (value procedure))
   (define completion-label (make-parameter (lambda (value) value)))
 
-  (edoc "What a list procedure's completions are, for the status line of the list, \"12 completions of file\"; a completer's own kind takes precedence, and the prompt's label stem stands in."
+  (edoc "What a list procedure's completions are, for the status line of the list, \"12 matches of file\"; a completer's own kind takes precedence, and the prompt's label stem stands in."
         (value (or string #f)))
   (define completion-kind (make-parameter #f))
 
@@ -581,16 +581,21 @@
               [kind kind]
               [else (label-stem label)])))
     (define (status-text b)
-      ;; the list's status line: how many completions, of what, and the page
-      ;; when they take several -- never key hints; a content body without a
-      ;; list names itself
-      (cond
-        [candidates
-         (let* ([count (length candidates)]
-                [head (format "~a completion~a of ~a" count (if (= count 1) "" "s") (kind-text))])
-           (if (> pages 1) (format "~a; page ~a of ~a" head (+ page 1) pages) head))]
-        [(> pages 1) (format "~a; page ~a of ~a" (head:buffer-name b) (+ page 1) pages)]
-        [else (head:buffer-name b)]))
+      ;; the list's status line: the buffer's name, then how many matches, of
+      ;; what, and the page when they take several -- never key hints; the
+      ;; name yields to the count in a narrow window
+      (let* ([name (head:buffer-name b)]
+             [text (cond
+                     [candidates
+                      (let* ([count (length candidates)]
+                             [head (format "~a match~a of ~a" count (if (= count 1) "" "es") (kind-text))])
+                        (if (> pages 1) (format "~a; page ~a of ~a" head (+ page 1) pages) head))]
+                     [(> pages 1) (format "page ~a of ~a" (+ page 1) pages)]
+                     [else #f])]
+             [room (max 1 (- (head:window-width target) 12))])
+        (cond [(not text) name]
+              [(<= (+ (glyph:cells name) (glyph:cells text) 2) room) (string-append name "  " text)]
+              [else text])))
     (define (mouse! event)
       (cond
         [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN")))
