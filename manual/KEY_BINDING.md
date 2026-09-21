@@ -43,7 +43,7 @@ command's call typed up to its next argument, so completion asks for it:
 ```
 
 `C-h k` shows the first as `(edit:kill-buffer! (head:current-buffer))` and
-the second as `M-x (edit:answer! `, by the names the top level gives the
+the second as `λ (edit:answer! `, by the names the top level gives the
 procedures, so a rename follows.
 
 Printable characters can also be bound. An explicit binding takes precedence

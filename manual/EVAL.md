@@ -12,13 +12,13 @@ evaluations.
 
 ### `eval:prompt!` — interactive M-x evaluation
 
-`M-x` is bound to `eval:prompt!`. It prompts for a Scheme expression and evaluates
-it:
+`M-x` is bound to `eval:prompt!`. It prompts for a Scheme expression, under
+the label `λ`, and evaluates it:
 
 ```scheme
-M-x (head:buffer-name (head:current-buffer))
-M-x (define answer 42)
-M-x answer
+λ (head:buffer-name (head:current-buffer))
+λ (define answer 42)
+λ answer
 ```
 
 The prompt begins with an editable `(`. It may be deleted when evaluating a

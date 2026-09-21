@@ -332,7 +332,8 @@
                           (apply string-append
                             (map (lambda (p) (string-append " (" (action-text p) ")")) (call-action-arguments action)))
                           ")")]
-          [(prefill-action? action) (string-append "M-x " (prefill-text action))]
+          ;; the M-x prompt's label, as eval draws it, then the text it opens with
+          [(prefill-action? action) (string-append "λ " (prefill-text action))]
           [(procedure? action) (or (top-level-name action) "anonymous command")]
           [else (format "~s" action)]))
 

@@ -252,7 +252,7 @@ must synchronize subsequent mutations of the box's contents themselves.
 ## Public API conventions
 
 The published API contains commands, read-only state, editing primitives, and
-extension registries. At the initial `M-x (` prompt, press Shift-Tab twice to
+extension registries. At the initial `λ (` prompt, press Shift-Tab twice to
 list the current editor-defined symbols; `C-h f` describes documented values.
 
 Naming distinguishes effects:
@@ -293,7 +293,7 @@ Prompting is the exception, not a naming matter: a command that must wait
 for input, `describe:key!` reading a key or `search:replace!` asking per
 occurrence, declares `(prompts)` in its edoc. Otherwise the M-x API with typed
 completion does the asking, and a key that used to prompt opens M-x with the
-call typed up to its argument: `C-c a` gives `M-x (edit:answer! `. Such keys
+call typed up to its argument: `C-c a` gives `λ (edit:answer! `. Such keys
 are bound structurally, from the procedures themselves rather than spelled
 names: `(keymap:bind! "C-c a" (keymap:prefill edit:answer!))` opens M-x
 pre-filled, and `(keymap:bind! "C-x k" (keymap:call edit:kill-buffer!

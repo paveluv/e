@@ -110,7 +110,7 @@
          (let ([prompt? (car case)] [rows (cadr case)] [cols (caddr case)])
            (when prompt?
              (send! "\x1b;xresize-input")
-             (wait-for! 'prompt-holds-input (lambda () (find-cell "M-x (resize-input")) 3000))
+             (wait-for! 'prompt-holds-input (lambda () (find-cell "λ (resize-input")) 3000))
            (set! transcript '())
            (vt:emulator-resize! mirror rows cols)
            (sys:resize-terminal-process! process rows cols)
@@ -120,7 +120,7 @@
            (wait-for! (list 'idle-resize-refreshes-the-screen prompt?)
              (lambda ()
                (let ([buffer (find-cell "*scratch*")] [close (find-cell "│×│")]
-                     [edge (find-cell (if prompt? "┊M-x (resize-input" "┊(head"))]
+                     [edge (find-cell (if prompt? "┊λ (resize-input" "┊(head"))]
                      [echo-rows (if prompt? 1 2)])
                  (and (contains? (transcript-text) "\x1b;[?2026h")
                       buffer close (= (car buffer) (- rows 1 echo-rows)) (= (cdr close) (- cols 3))
@@ -138,7 +138,7 @@
                 (lambda () (and (find-cell "▶ ◐") (find-cell "C-] toggle capture"))) 10000)
      (send! "\x1b;x")                     ; M-x
      (wait-for! 'partial-capture-opens-the-global-prompt
-                (lambda () (and (find-cell "M-x (") (find-cell "▶ ◐")))
+                (lambda () (and (find-cell "λ (") (find-cell "▶ ◐")))
                 5000)
      (send! "\x7;\x18;2")                 ; cancel, C-x 2
      (wait-for! 'partial-capture-prefix-splits-the-terminal
@@ -189,7 +189,7 @@
      ;; the prompt's end hides the pop-up again -------------------------------
      (send! "\x1b;xwindowsplit\t")
      (wait-for! 'first-tab-normalizes-without-choosing
-       (lambda () (and (find-cell "M-x (window:split-")
+       (lambda () (and (find-cell "λ (window:split-")
                        (not (find-cell "<completions>")))) 5000)
      (send! "\t")
      (wait-for! 'completions-take-the-window
@@ -218,7 +218,7 @@
      ;; without settling, and the pop-up lists its entries at once.
      (send! "\x1b;xedit:visit-file! \"man\t")
      (wait-for! 'a-directory-completion-stays-open-and-lists-its-entries
-                (lambda () (and (find-cell "M-x (edit:visit-file! \"manual/")
+                (lambda () (and (find-cell "λ (edit:visit-file! \"manual/")
                                 (find-cell "<completions>")
                                 (find-cell "manual/EVAL.md")))
                 5000)
@@ -236,7 +236,7 @@
      ;; its token, retaining arguments; Enter runs the completed expression.
      (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))
      (wait-for! 'completion-replaces-only-the-token-at-point
-       (lambda () (find-cell "M-x (list (string-append \"a\" \"b\"))")) 5000)
+       (lambda () (find-cell "λ (list (string-append \"a\" \"b\"))")) 5000)
      (send! "\r")
      (wait-for! 'completed-expression-keeps-its-arguments
        (lambda () (find-cell "=> (\"ab\")")) 5000)

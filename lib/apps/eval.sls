@@ -891,11 +891,15 @@
     (let ([scheme (mode:find "scheme")])
       (and scheme (editorize! text ((mode:styles scheme) text)))))
 
+  ;; the M-x prompt's label: a lambda, the mark of an expression to evaluate
+  ;; (keymap's action-text spells it too, describing a pre-filled key)
+  (define mx-label "λ ")
+
   (define mx-echo-styles
     ;; Scheme highlighting for the M-x prompt: the label stays grey,
     ;; the expression styles as Scheme with the editor's own names in
     ;; the editor style.
-    (paint:prompt-styler "M-x "
+    (paint:prompt-styler mx-label
       (lambda (input)
         (guard (ex [else #f])
           (let ([scheme (mode:find "scheme")])
@@ -1095,7 +1099,7 @@
                             [prompt:edge-motion mx-edge-motion]
                             [prompt:reindent reindent-scheme-input]
                             [paint:echo-highlight mx-echo-styles])
-               (prompt:read! "M-x " complete-symbol initial
+               (prompt:read! mx-label complete-symbol initial
                              (box (log:history 'eval car))
                              complete-editor-symbol normalize-input))])
       (when (and s (> (string-length s) 0) (not (string=? s "(")) (not (string=? s initial)))
@@ -1104,7 +1108,7 @@
         ;; its end, drawn as the evaluation-in-progress underline.
         ;; An indicator, not a record: the expression is already
         ;; logged under eval.
-        (paint:show-prompt-message! "M-x " s mx-echo-styles)
+        (paint:show-prompt-message! mx-label s mx-echo-styles)
         (let ([spoken (echo:text)])
           (let-values ([(outcome output-records)
                         (parameterize ([paint:cursor-in-echo #t])

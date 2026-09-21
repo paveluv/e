@@ -73,7 +73,7 @@
          (await! 'evaluation-presented
            (lambda ()
              ;; The prompt row is centered, so the label sits mid-line.
-             (not (exists (lambda (line) (string:search line "M-x " 0 (string-length line)))
+             (not (exists (lambda (line) (string:search line "λ " 0 (string-length line)))
                     (vector->list (vt:emulator-screen mirror))))))
          result))
 

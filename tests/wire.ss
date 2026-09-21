@@ -1833,7 +1833,7 @@
                  (let ([ticket (reply-value (exchange agent
                                               '(request 71 ask (head "screen A") "Ready to continue?" ("yes" "no"))) 71)])
                    (head-send! a "\x03;a")
-                   (head-wait 'base-question a (lambda () (head-sees? a "M-x (edit:answer! ")))
+                   (head-wait 'base-question a (lambda () (head-sees? a "λ (edit:answer! ")))
                    (head-send! a "\"yes\"\r")
                    (test:check 'attached-questions-route-to-the-requesting-client-once
                      (list (receive-reply agent) (rpc agent 'cancel ticket)

@@ -194,6 +194,6 @@
        (list (keymap:action-text (keymap:call kill-buffer! head:current-buffer))
              (keymap:action-text (keymap:prefill answer!))
              (keymap:prefill-text (keymap:prefill search:replace! "old")))
-       '("(kill-buffer! (head:current-buffer))" "M-x (answer! " "(search:replace! \"old\" "))
+       '("(kill-buffer! (head:current-buffer))" "λ (answer! " "(search:replace! \"old\" "))
 
      (test:finish! 'mx)))
