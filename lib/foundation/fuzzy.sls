@@ -2,7 +2,9 @@
 ;; relation governs admission, ranking alignments and safe normalization.
 ;; A segment starts where a part of the name starts, or at a separator it
 ;; leads with: ":sp" finds head:split-window and not head:window-split,
-;; while "sp" finds both; a separator alone is no segment.
+;; while "sp" finds both. A segment holds a letter or digit, so a
+;; separator alone is no segment, except at a name's first character:
+;; "*" finds *scratch*, "(" the forms.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation fuzzy)
@@ -93,31 +95,33 @@
               [(fx=? (vector-ref whole j) (vector-ref part i)) (walk (fx+ i 1) (fx+ j 1))]
               [else #f]))))
 
-  (define (align query source)
+  (define (align query source . lenient)
     ;; The query arrives prepared like a source: its mask and sorted codes
     ;; reject most names here, before anything is allocated for a search.
+    ;; A lenient alignment lets a separator alone make a segment anywhere,
+    ;; for the extension walk's pruning check over parts joined artificially.
     (and (fx<=? (string-length (source-name query)) (string-length (source-name source)))
          (fxzero? (fxand (source-mask query) (fxnot (source-mask source))))
          (codes-within? (source-codes query) (source-codes source))
-         (search query source)))
+         (search query source (and (pair? lenient) (car lenient)))))
 
-  (define (search query source)
+  (define (search query source lenient?)
     ;; Match longest leading segments first, then earliest candidate position.
     ;; All characters, including ':' and '-', stay inside these literal runs.
     ;; A run may start where a part starts, or at a separator the run leads
-    ;; with; a led run must reach a letter or digit, so a separator alone
-    ;; is no segment. Backtracking keeps eligibility independent of a
-    ;; greedy choice; the bit mask prevents reuse of any character
-    ;; occurrence. The failure memo exists only once a choice has to be
-    ;; undone.
+    ;; with; past the name's first character a run must reach a letter or
+    ;; digit, so a separator alone is no segment there. Backtracking keeps
+    ;; eligibility independent of a greedy choice; the bit mask prevents
+    ;; reuse of any character occurrence. The failure memo exists only
+    ;; once a choice has to be undone.
     (let* ([text (source-name query)] [m (string-length text)]
            [name (source-name source)] [n (string-length name)]
            [starts (source-starts source)] [leads (source-leads source)]
            [boundaries (vector-length starts)] [parts (fx+ boundaries (vector-length leads))]
            [failed #f] [stride (bitwise-arithmetic-shift-left 1 n)])
       (define (least start size)
-        ;; the shortest run from a led start that holds a letter or digit:
-        ;; its size, or #f when none of the run does
+        ;; the shortest run from start that holds a letter or digit: its
+        ;; size, or #f when none of the run does
         (let scan ([k 0])
           (cond [(fx=? k size) #f]
                 [(separator? (string-ref name (fx+ start k))) (scan (fx+ k 1))]
@@ -139,8 +143,8 @@
                                          (char=? (string-ref text (fx+ at size))
                                                  (string-ref name (fx+ start size))))
                                     (prefix (fx+ size 1)) size))]
-                        [least (if (fx<? p boundaries) 1 (least start size))])
-                   (when (and (fx>? size 0) least)
+                        [minimum (if (or lenient? (fx=? start 0)) 1 (least start size))])
+                   (when (and (fx>? size 0) minimum)
                      (let insert ([i count])
                        (if (and (fx>? i 0) (fx<? (vector-ref option-size (fx- i 1)) size))
                            (begin
@@ -149,7 +153,7 @@
                              (vector-set! option-least i (vector-ref option-least (fx- i 1)))
                              (insert (fx- i 1)))
                            (begin (vector-set! option-size i size) (vector-set! option-start i start)
-                                  (vector-set! option-least i least))))
+                                  (vector-set! option-least i minimum))))
                      (set! count (fx+ count 1)))))
              (or (let candidates ([i 0])
                    (and (fx<? i count)
@@ -284,11 +288,14 @@
       ;; Extra boundaries make the unused parts a superset of every possible
       ;; continuation. Reject prefixes that cannot retain the original query
       ;; even there, instead of proving this again for every permutation.
+      ;; Lenient, since the joining splits a run like (bu into a lone ( that
+      ;; the strict rule would refuse away from a name's start.
       (align query
         (build-source
           (fold-right
             (lambda (p tail) (string-append tail "-" (substring name (start-of p) (end-of p))))
-            text parts))))
+            text parts))
+        #t))
     (call-with-current-continuation
       (lambda (done)
         (let walk ([parts (iota (vector-length (source-starts source)))] [text ""] [left counts])

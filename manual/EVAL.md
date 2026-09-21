@@ -68,7 +68,8 @@ segment may lead with one, anchored to the same separator in the name: `:sp`
 finds `head:split-window` but not `head:window-split`, `.sls` finds the
 `.sls` files and not `sls-mode`, and `s-b` abbreviates `window:split-below!`
 as `s` + `-b`, while `b-s` does not, since no `-s` follows a `b` there. A
-separator alone is no segment, so `ker:` still cannot abbreviate `kernel:`.
+separator alone is no segment, so `ker:` still cannot abbreviate `kernel:`;
+the one exception is a name's first character, so `*` finds `*scratch*`.
 You can omit separators when typing prefixes: `spwir` finds
 `window:split-right!` as `sp` + `wi` + `r`. Reordering still works with
 punctuation when the literal pieces exist: `rightwindow:` can match

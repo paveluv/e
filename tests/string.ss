@@ -85,11 +85,12 @@
          (":sp" ("head:split-window" "head:window-split") ("head:split-window"))
          ("sp" ("head:split-window" "head:window-split") ("head:split-window" "head:window-split"))
          (".sls" ("pretty-scheme.sls" "sls-mode") ("pretty-scheme.sls"))
-         ;; a separator alone is no segment, except as a name's own first character
-         (":" ("a:b" "ab") ())
+         ;; a separator alone is no segment, except as a name's first character
+         (":" ("a:b" "ab" ":a") (":a"))
          ("*" ("*scratch*" "s*") ("*scratch*"))
          ("ker:" ("kernel:load" "keymap:resolved-binding" "ker:load" "ker-load") ("ker:load"))
-         ("--" ("--x" "x---y" "x--y" "x-y") ("--x" "x---y"))
+         ;; separators alone make a segment only at a name's first character
+         ("--" ("--x" "x---y" "x--y" "x-y") ("--x"))
          ("" ("z" "aaa" "bb") ("aaa" "bb" "z"))
          ("missing" ("abc" "def") ())))
 
@@ -109,6 +110,11 @@
          ("" "abc" (0 0 0 0 3) ())))
 
      ;; A caller's predicate confines the extensions to texts it can insert.
+     ;; a sigil-led query extends across the sigil: the walk's pruning check
+     ;; over joined parts must not refuse the lone (
+     (check 'fuzzy-expand-across-a-sigil
+       (fuzzy:expansions "(bu" '("(buffer \"a\")" "(head:fresh-buffer! name)" "(head:current-buffer)"))
+       '("(buffer"))
      (check 'fuzzy-expand-within-limits
        (list (fuzzy:expansions "ab" '("ab-x" "ab-y"))
              (fuzzy:expansions "ab" '("ab-x" "ab-y") (lambda (text) (not (memv #\- (string->list text))))))
