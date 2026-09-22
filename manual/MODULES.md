@@ -11,7 +11,7 @@ The loader locates the adjacent libraries and object caches and configures
 Chez. It admits options through `startup`, then selects the base or client runtime.
 Plain `e` starts or connects to the base, checks source and wire compatibility,
 and claims the connection before importing the modules, each under its
-prefix, the literals (`literal`, bare: `(buffer "name")`, `(window n)`,
+prefix, the literals (bare: `(buffer "name")`, `(window n)`, `(mode "scheme")` and one per completing type,
 `(region ...)` and `(head "desk")` read back as they print) and `main`, and
 runs `(main:run!)`.
 `--base` acquires the directory's lifetime lock and runs the base without
@@ -461,6 +461,19 @@ takes the mode when the extension registers it. A buffer that already has a
 mode, detected or chosen, keeps it and picks up only a reloaded record of the
 same name; `(mode:assign!)` re-detects the current buffer on request, and either
 command takes another buffer as a last argument or under `head:with-buffer`.
+
+Every type a library defines with a completer also spells its values as a
+literal at the top level, named after the type and derived from it: `(mode
+"scheme")`, `(file "notes.txt")`, `(directory "lib")`, `(style 'ghost)`,
+`(key "C-x C-f")`. The literal reads the spelling with the type's reader when
+it has one, `(buffer "name")` giving the live buffer, and otherwise returns
+the spelling itself once the type accepts it, so `(mode "scheme")` is the
+name `"scheme"` checked against the registered modes. Commands take the bare
+value and the literal alike; a command's author gets that with one call,
+`(edoc:type-value 'mode name)`, which returns a value the type accepts or
+reads it from its spelling. Completion spells an argument's options as
+literals, a reminder of the type at that position, and writes the whole
+literal on Tab.
 
 Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives a
 snapshot vector of lines and returns per-row results, recomputed once per

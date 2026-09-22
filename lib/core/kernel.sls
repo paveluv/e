@@ -19,7 +19,7 @@
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
                 make-parameter make-thread-parameter current-directory format interaction-environment eval
-                scheme-environment environment-symbols top-level-bound?
+                scheme-environment environment-symbols top-level-bound? define-top-level-value
                 library-exports library-requirements library-requirements-options
                 library-directories load directory-list file-directory? file-regular? path-extension
                 parameterize make-mutex with-mutex make-condition
@@ -27,6 +27,7 @@
                 with-interrupts-disabled make-time
                 current-time time? time-type time<? time-difference
                 get-thread-id box? display-condition void)
+          (prefix (foundation edoc) edoc:)
           (prefix (sys path) path:))
 
   ;;; Conditions --------------------------------------------------------------
@@ -675,6 +676,16 @@
     (and (top-level-bound? sym)
          (not (hashtable-ref baseline-bindings sym #f))))
 
+  (define (publish-literals!)
+    ;; Every type a module defines with a completer spells its values as a
+    ;; literal, (mode "scheme") say, and reads them back at the top level
+    ;; under its own name: the constructor edoc derives from the type. A
+    ;; name already bound there, (literal)'s own constructors say, is left.
+    (for-each (lambda (name)
+                (unless (top-level-bound? name (interaction-environment))
+                  (define-top-level-value name (edoc:type-literal name) (interaction-environment))))
+              (edoc:type-literals)))
+
   (edoc "Import a module's library into the editor's top level, compiling it when stale, and run its init! owning its registrations."
         (name string "the module"))
   (define (init-module! name)
@@ -695,7 +706,8 @@
       (when (memq 'init! (library-exports lib))
         (parameterize ([registering-module (string->symbol name)])
           (eval `(let () (import (only ,lib init!)) (init!))
-                (interaction-environment))))))
+                (interaction-environment))))
+      (publish-literals!)))
 
   (edoc "Load a module once: import it, run its init!, and record it; a failed first initialization discards its staged registrations."
         (name string "the module"))

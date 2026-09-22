@@ -39,6 +39,13 @@
                  (call-with-output-file (path name)
                    (lambda (p) (display (if (string=? name "zeta.txt") "z\n" "one\ntwo\n") p)))) names)
 
+     ;; loading a module through the kernel publishes the literals of the
+     ;; completing types it brings: file and directory read paths back
+     (check 'loading-a-module-publishes-the-literals-of-its-types
+       (list (and (top-level-bound? 'file) (top-level-bound? 'directory))
+             ((top-level-value 'file) "notes.txt") ((top-level-value 'directory) root)
+             (test:raises? (lambda () ((top-level-value 'directory) "/no/such/directory/here"))))
+       (list #t "notes.txt" root #t))
      (define (view) (head:find-tool-buffer "*files*"))
      (define (lines) (vector->list (head:buffer-lines (view))))
      (define (visible? needle)

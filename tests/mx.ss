@@ -16,7 +16,8 @@
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
              (prefix (head window) window:) (prefix (foundation text) text:)
              (prefix (foundation string) string:) (prefix (test) test:)
-             (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:))
+             (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
+             (prefix (foundation edoc) edoc:))
 
      (define check test:check)
      (define (settled text) (eval:settle-completion text (string-length text)))
@@ -94,6 +95,20 @@
              (format "~a" (mode:find "scheme")))
        '(#t () "#<mode scheme>"))
 
+
+     ;; every completing type spells its values as a literal derived from the
+     ;; type, and a command takes the bare value and the literal alike
+     (check 'literals-derive-from-completing-types
+       (list (and (memq 'mode (edoc:type-literals)) (memq 'file (edoc:type-literals)) (memq 'buffer (edoc:type-literals)) #t)
+             (memq 'boolean (edoc:type-literals)) (memq 'region (edoc:type-literals))
+             ((edoc:type-literal 'mode) "scheme")
+             (test:raises? (lambda () ((edoc:type-literal 'mode) 42)))
+             (eq? ((edoc:type-literal 'buffer) "*scratch*") (buffer "*scratch*"))
+             (edoc:type-value 'mode "scheme")
+             (eq? (edoc:type-value 'buffer "*scratch*") (buffer "*scratch*"))
+             (eq? (edoc:type-value 'buffer (buffer "*scratch*")) (buffer "*scratch*"))
+             (test:raises? (lambda () (edoc:type-value 'mode 42))))
+       '(#t #f #f "scheme" #t #t "scheme" #t #t #t))
 
      ;; a producer that may return #f serves nothing by that #f: (echo:cursor),
      ;; returning (or integer #f), is no completion for a (or mode #f) argument

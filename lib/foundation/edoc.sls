@@ -35,8 +35,8 @@
           edoc-template edoc-type edoc-type? edoc-types elibrary first-sentence
           signature-arguments signature-flags signature-formals signature-kind signature-library
           signature-returns signature-summary signature? type-accepts? type-completions
-          type-denotes-record? type-named type-owner type-prose type-read type-spelling
-          type-text type-within)
+          type-denotes-record? type-literal type-literals type-named type-owner type-prose type-read type-spelling
+          type-text type-value type-within)
   (import (rnrs)
           (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! eq-hashtable-contains? format syntax->list
@@ -879,6 +879,32 @@
           (t symbol "the type's name") (name symbol "the record type's name") (returns boolean))
     (let ([type (type-named t)] [predicate (eq-hashtable-ref record-predicates name #f)])
       (and type predicate (eq? (type-predicate-of type) predicate))))
+
+  (edefine (type-literals)
+    (edoc "The names of the types that spell their values as literals, (mode \"scheme\") say: the types a library defines with a completer, in name order."
+          (returns list))
+    (list-sort (lambda (a b) (string<? (symbol->string a) (symbol->string b)))
+      (filter (lambda (name)
+                (let ([type (eq-hashtable-ref types name #f)])
+                  (and (type-complete-of type) (type-owner-of type)
+                       (not (equal? (type-owner-of type) "(foundation edoc)")))))
+        (vector->list (hashtable-keys types)))))
+
+  (edefine (type-literal name)
+    (edoc "A type's literal constructor: a procedure from a spelling to the type's value, the type's reader applied when it has one, that must then satisfy the type; how (mode \"scheme\") and (buffer \"name\") read. The type is looked up at each use, so a reload is followed."
+          (name symbol "the type's name") (returns procedure))
+    (lambda (spelling)
+      (let ([type (type-named name)])
+        (unless type (error name "no such type"))
+        (let ([value (if (type-read-of type) ((type-read-of type) spelling) spelling)])
+          (unless (type-accepts? name value)
+            (error name (string-append "expected " (type-prose-of type)) spelling))
+          value))))
+
+  (edefine (type-value name v)
+    (edoc "A value as a type's own: v itself when it satisfies the type, else the type's literal read from v as a spelling; how a command takes a bare name and a literal alike, (mode:choose! \"scheme\") and (mode:choose! (mode \"scheme\"))."
+          (name symbol "the type's name") (v any "the value, or its spelling") (returns any))
+    (if (type-accepts? name v) v ((type-literal name) v)))
 
   (edefine (type-read type)
     (edoc "A type's reader, text to value, or #f." (type (record type) "the type record") (returns (or procedure #f)))

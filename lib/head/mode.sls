@@ -33,6 +33,7 @@
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
                 vector-copy void)
           (prefix (core kernel) kernel:)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:))
@@ -85,8 +86,8 @@
   (define (mode-details m)
     (string:join (mode-extensions m) " "))
 
-  (edoc-type mode "a mode, by name"
-    (predicate (lambda (v) (and (string? v) (find-mode v) #t)))
+  (edoc-type mode "a mode, by name, registered or not"
+    (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
     (complete (lambda (partial) (map (lambda (m) (cons (mode-name m) (mode-details m))) (kernel:registry-items modes))))
     (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p)))))
     (within string))
@@ -216,7 +217,8 @@
   (define (set-buffer-mode! name . b)
     ;; how transcript buffers get their highlighting, and how a user picks
     ;; a mode by hand
-    (set-mode-of! (if (pair? b) (car b) (head:current-buffer)) (and name (find-mode name)) #f))
+    (let ([name (and name (edoc:type-value 'mode name))])
+      (set-mode-of! (if (pair? b) (car b) (head:current-buffer)) (and name (find-mode name)) #f)))
 
   (edoc "Give a buffer, the current one without an argument, the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
         (b (list-of buffer) "the buffer, at most one"))
