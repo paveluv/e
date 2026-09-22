@@ -13,6 +13,7 @@
 (eval
   '(begin
      (import (prefix (test) test:)
+             (prefix (core kernel) kernel:)
              (prefix (head mode) mode:)
              (prefix (head head) head:)
              (prefix (state store) store:)
@@ -165,5 +166,52 @@
      (mode:refresh!)
      (check 'refresh-resolves-to-new (eq? (mode:of by-file) (mode:find "probe")) #t)
      (check 'refresh-keeps-name (mode:name-of by-file) "probe")
+
+     ;; A derived mode follows live behavior, while detection and keys stay
+     ;; its own. Reusing the same line exercises parent-reload cache freshness.
+     (define (parent! styler indenter)
+       (parameterize ([kernel:registering-module 'derived-parent])
+         (kernel:retract-module! 'derived-parent)
+         (mode:register! "parent" '(".parent") '("parentsh") styler indenter indenter)
+         (mode:register-indenter! "parent" indenter)
+         (mode:register-formatter! "parent" indenter)))
+     (define (old-indent b from to) '(1))
+     (define (new-indent b from to) '(2))
+     (parent! probe-styler old-indent)
+     (mode:derive! "child" "parent" '(".child"))
+     (mode:derive! "grandchild" "child" '(".grandchild"))
+     (mode:choose! plain "grandchild")
+     (define derived-line (string-copy "abc"))
+     ((mode:line-styles plain) derived-line)
+     (mode:indent-on-tab! "parent" #f)
+     (check 'derivation-retains-own-detection-and-key-context
+       (list (mode:name (mode:detect "x.parent" ""))
+             (mode:name (mode:detect "x.child" ""))
+             (mode:interpreters (mode:find "child")) (mode:key-context plain)
+             (eq? (mode:formatter "child") old-indent) (mode:indent-on-tab? "child"))
+       '("parent" "child" () grandchild #t #f))
+     (parent! (lambda (s) (make-vector (string-length s) 'string)) new-indent)
+     (check 'parent-replacement-updates-presentation-operations-and-cached-styles
+       (list (vector->list ((mode:line-styles plain) derived-line))
+             (map (lambda (get) (eq? (get (mode:find "child")) new-indent))
+               (list mode:render mode:row-styles))
+             (eq? (mode:indenter "grandchild") new-indent)
+             (eq? (mode:formatter "grandchild") new-indent) (mode:indent-on-tab? "child"))
+       '((string string string) (#t #t) #t #t #f))
+     (mode:register-indenter! "child" old-indent #t)
+     (mode:register-formatter! "child" old-indent)
+     (check 'local-operations-override-inheritance
+       (list (eq? (mode:indenter "grandchild") old-indent)
+             (eq? (mode:formatter "grandchild") old-indent) (mode:indent-on-tab? "grandchild"))
+       '(#t #t #t))
+     (check 'invalid-derivation-preserves-the-existing-parent
+       (list (test:raises? (lambda () (mode:derive! "parent" "grandchild" '())))
+             (test:raises? (lambda () (mode:derive! "child" "absent" '())))
+             (mode:extensions (mode:find "parent"))) '(#t #t (".parent")))
+     (kernel:retract-module! 'derived-parent)
+     (check 'missing-parent-loses-presentation-but-keeps-child-and-local-overrides
+       (list (mode:name-of plain) ((mode:line-styles plain) derived-line)
+             (mode:render (mode:find "child")) (eq? (mode:formatter "child") old-indent))
+       '("grandchild" #f #f #t))
 
      (test:finish! 'mode)))

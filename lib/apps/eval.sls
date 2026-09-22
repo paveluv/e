@@ -19,9 +19,11 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps eval)
-  (export completion-candidates completion-extensions (rename (eval-copy-result copy-result))
+  (export call-with-evaluation! completion-candidates completion-extensions
+          (rename (evaluation-condition condition)) (rename (eval-copy-result copy-result))
           init! input-closers input-diagnostic (rename (eval-prompt! prompt!))
-          (rename (eval-prompt-with! prompt-with!)) (rename (eval! run!)) settle-completion)
+          (rename (eval-prompt-with! prompt-with!)) report! (rename (eval! run!)) settle-completion
+          (rename (evaluation-status status)) (rename (evaluation-values values)))
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
@@ -1029,64 +1031,80 @@
                       (lambda () (eval form (interaction-environment)))
                       list)))))))
 
-  (define (evaluation-outcome label text)
-    ;; Evaluation is one undo step in every buffer it edits, and C-g can
-    ;; interrupt it whether it came from M-x or eval:run!.
+  (edoc "An evaluation's outcome, before reporting or copying it."
+        (status symbol "ok, error or interrupted")
+        (values list "the returned values, empty on failure")
+        (condition (or condition #f) "the original condition, or #f on success")
+        (spoken any "private echo observation before execution"))
+  (define-record-type evaluation (fields status values condition spoken))
+
+  (define evaluating? (make-thread-parameter #f))
+
+  (edoc "Run a thunk with C-g interruption, streamed stdout/stderr logging and one undo group. Return its values or original condition in an evaluation result, without reporting it. Nested calls share the outer capture and interruption scope. Runs on the head's main thread."
+        (label string "the undo label")
+        (thunk thunk "the computation, returning ordinary Scheme values")
+        (returns (record evaluation)))
+  (define (call-with-evaluation! label thunk)
+    (define spoken (echo:text))
     (define (run)
-      (guard (ex [(head:interrupted? ex) "interrupted"]
-                 [else (format "error: ~a" (kernel:condition-text ex))])
-        (head:call-with-interrupt
+      (guard (ex [else (make-evaluation (if (head:interrupted? ex) 'interrupted 'error) '() ex spoken)])
+        (call-with-values
+          (lambda () (edit:call-as-one-edit! label thunk))
+          (lambda vals (make-evaluation 'ok vals #f spoken)))))
+    (if (evaluating?) (run)
+      (let ([lock (make-mutex)]
+            [terminal (sys:duplicate-standard-output-port)])
+        (define (record! component line)
+          (parameterize ([sys:terminal-output-port terminal])
+            (with-mutex lock (log:add! component line))))
+        (dynamic-wind
+          void
           (lambda ()
-            (edit:call-as-one-edit! label
-              (lambda ()
-                (let-values ([vals (evaluate-text text)]) vals)))))))
-    (let ([lock (make-mutex)]
-          [terminal (sys:duplicate-standard-output-port)])
-      (define (record! component line)
-        (parameterize ([sys:terminal-output-port terminal])
-          (with-mutex lock (log:add! component line))))
-      (dynamic-wind
-        void
-        (lambda ()
-          (values
-            (parameterize ([sys:terminal-output-port terminal])
+            (parameterize ([sys:terminal-output-port terminal] [evaluating? #t])
               (sys:call-with-streamed-output
                 (lambda (line) (record! 'stdout line))
                 (lambda (line) (record! 'stderr line))
-                run))
-            '()))
-        (lambda () (close-port terminal)))))
+                (lambda () (head:call-with-interrupt run)))))
+          (lambda () (close-port terminal))))))
 
-  (define (report-evaluation! query outcome output-records . spoken)
-    ;; A command run at M-x that spoke in the echo area, (edit:answer! ...)
-    ;; say, keeps its message: a void result is logged but not shown over
-    ;; it. Spoken is the echo text before the evaluation, when known.
-    (let* ([failed? (string? outcome)]
-           [void? (and (not failed?)
-                       (or (null? outcome)
-                           (and (null? (cdr outcome))
-                                (eq? (car outcome) (void)))))]
-           [result (if failed?
-                       outcome
-                       (string:join (map (lambda (v) (format "~s" v)) outcome)
-                                    ", "))]
-           [spoke? (and void? (pair? spoken) (null? output-records)
+  (edoc "Report an evaluation in the echo area, copying non-void values when copy-result is enabled. Preserve messages spoken by void commands. Only the optional expression adds an M-x history entry."
+        (outcome (record evaluation) "the execution result")
+        (query string "the actual Scheme input to retain in M-x history"))
+  (define report!
+    (case-lambda
+      [(outcome) (report! outcome #f)]
+      [(outcome query)
+       ;; A command run at M-x that spoke in the echo area, (edit:answer! ...)
+       ;; say, keeps its message: a void result is logged but not shown over
+       ;; it. Spoken is the echo text before the evaluation, when known.
+       (let* ([failed? (not (eq? (evaluation-status outcome) 'ok))]
+              [vals (evaluation-values outcome)]
+              [void? (and (not failed?)
+                       (or (null? vals)
+                           (and (null? (cdr vals))
+                                (eq? (car vals) (void)))))]
+              [result (if failed?
+                        (if (eq? (evaluation-status outcome) 'interrupted) "interrupted"
+                          (format "error: ~a" (kernel:condition-text (evaluation-condition outcome))))
+                        (string:join (map (lambda (v) (format "~s" v)) vals)
+                                     ", "))]
+              [spoke? (and void?
                         (let ([now (echo:text)])
-                          (and (string? now) (> (string-length now) 0) (not (equal? now (car spoken))))))])
-      (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
-             [result-record
-              (log:add! 'eval (cons query (if void? "#<void>" result)) #f)])
-        (when copied? (edit:copy-to-kill-buffer! result))
-        (unless spoke?
-          (edit:present-log-entries!
-            (append output-records (list result-record))
-            (if copied? " [stored in kill ring]" ""))))))
+                          (and (string? now) (> (string-length now) 0) (not (equal? now (evaluation-spoken outcome))))))])
+         (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
+                [result-record
+                 (log:add! (if query 'eval 'e)
+                   (let ([text (if void? "#<void>" result)]) (if query (cons query text) text)) #f)])
+           (when copied? (edit:copy-to-kill-buffer! result))
+           (unless spoke?
+             (edit:present-log-entries!
+               (list result-record)
+               (if copied? " [stored in kill ring]" "")))))]))
 
   (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area.")
   (define (eval!)
-    (let-values ([(outcome output-records)
-                  (evaluation-outcome "(eval!)" (edit:region-text (edit:current-region)))])
-      (report-evaluation! "(eval!)" outcome output-records))
+    (report! (call-with-evaluation! "(eval!)"
+               (lambda () (evaluate-text (edit:region-text (edit:current-region))))) "(eval!)")
     (void))
 
   (define (spell value)
@@ -1123,14 +1141,13 @@
         ;; An indicator, not a record: the expression is already
         ;; logged under eval.
         (paint:show-prompt-message! mx-label s mx-echo-styles)
-        (let ([spoken (echo:text)])
-          (let-values ([(outcome output-records)
-                        (parameterize ([paint:cursor-in-echo #t])
-                          (paint:redraw!)
-                          (evaluation-outcome s s))])
-            ;; One structured record per exchange: history reads the query,
-            ;; while the view and echo show the formatted pair.
-            (report-evaluation! s outcome output-records spoken))))))
+        (let ([outcome
+               (parameterize ([paint:cursor-in-echo #t])
+                 (paint:redraw!)
+                 (call-with-evaluation! s (lambda () (evaluate-text s))))])
+          ;; One structured record per exchange: history reads the query,
+          ;; while the view and echo show the formatted pair.
+          (report! outcome s)))))
 
   (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area."
         (prompts))

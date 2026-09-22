@@ -2,8 +2,8 @@
 
 ## Library architecture
 
-Libraries under `lib/` use the `.sls` extension and flat names:
-`lib/head/edit.sls` is `(edit)`, `lib/apps/eval.sls` is `(eval)`, and so on.
+Libraries under `lib/` use the `.sls` extension and qualified names:
+`lib/head/edit.sls` is `(head edit)`, `lib/apps/eval.sls` is `(apps eval)`, and so on.
 Directories group responsibility in dependency order:
 `foundation`, `sys`, `core`, `state`, `service`, `head`, `apps`, `modes`, `run`.
 Imports may point down or sideways; no library imports a runtime entrypoint.
@@ -142,9 +142,90 @@ Load additional extensions with `(kernel:load-module! "my-mode")` from the
 appropriate configuration file. A failed base initializer stops startup;
 failed head extensions report their errors while the editor continues.
 
+### External checkouts
+
+Keep an extension in its own repository with sources under `lib/`. Enable
+its entry module with one expression in `config.e`:
+
+```scheme
+(extension:load! "~/git/my-extension" "my-mode")
+```
+
+The entry can be `lib/my-mode.sls`, declaring `(my-mode)`, or
+`lib/modes/my-mode.sls`, declaring `(modes my-mode)`. It exports `init!`;
+the kernel publishes its exports as `my-mode:` and owns its registrations
+just like a bundled module. Helpers are ordinary imported libraries.
+Relative checkout paths start at e's installation, not the current buffer.
+An optional third argument lists additional R6RS source roots, relative to
+the checkout or absolute, with `~` supported:
+
+```scheme
+(extension:load! "~/git/my-extension" "my-mode" '("vendor" "~/scheme"))
+```
+
+The loader manages compilation under e's runtime cache. The checkout can
+be read-only; it needs no cache setup, generated files or machine-specific
+paths in its libraries. It never downloads dependencies. Conflicting
+library sources are refused rather than silently shadowing existing code.
+Repeated loading is harmless. If initialization or a surrounding config
+fails, module membership and registrations roll back, allowing a corrected
+retry. Imported libraries and their search roots stay for the process's
+lifetime, as do arbitrary initializer effects. Load these head extensions
+from `config.e`, not `base-config.e`.
+
+For example, put this in a separate checkout's `lib/greeting.sls`:
+
+```scheme
+(import (only (foundation edoc) elibrary))
+(elibrary (greeting)
+  (export hello! init!)
+  (import (chezscheme)
+          (prefix (head edit) edit:)
+          (prefix (head keymap) keymap:))
+
+  (edoc "Show a greeting in the echo area.")
+  (define (hello!) (edit:set-message! "Hello from an extension"))
+
+  (define (init!) (keymap:bind-default! "C-c h" hello!)))
+```
+
+Load it with `(extension:load! "~/git/greeting" "greeting")`. Its command
+appears as `greeting:hello!` in completion and describe, and saving its source
+in e reloads its binding. Plain R6RS libraries are also supported; `elibrary`
+and `edoc` supply documentation beside the definitions without a second API.
+
+Test an entry in a headless process using:
+
+```sh
+scheme --script /path/to/e/tools/test-extension.sps /path/to/greeting greeting tests/smoke.ss
+```
+
+The runner initializes editing, evaluation and Scheme mode, then loads the
+extension and the test file. Tests run from the extension checkout; optional
+trailing arguments supply dependency roots just like `extension:load!`.
+They can import editor libraries and use `kernel:load-module!` for additional
+apps. The runner reads no personal configuration, contacts no base and needs
+no terminal. It shares e's compiler cache but editor state lasts only for that
+process. For a minimal `tests/smoke.ss`, call `(greeting:hello!)`; ordinary
+Scheme assertions and test libraries work as usual.
+
 Bundled and third-party modules should use `keymap:bind-default!`.
 `keymap:bind!` is for deliberate user or session overrides, ensuring a
 module reload cannot displace configuration choices.
+
+To give a mode Scheme's editing behavior with its own file endings:
+
+```scheme
+(mode:derive! "worksheet" "scheme" '(".ws" ".mpl"))
+```
+
+Derivation follows the parent's current styles, rendering, indentation,
+formatting and Tab policy, including after reload. Local indenter/formatter
+registrations override inherited ones. The new mode keeps its own key
+context; it does not inherit parent keys, suffixes or interpreter detection.
+Missing parents and cycles are refused when registering. If the parent is
+later removed, inherited behavior becomes unavailable while local behavior
+and the child's identity remain.
 
 ## Hot reload
 
@@ -157,6 +238,8 @@ outside e can be picked up explicitly:
 
 ```scheme
 (kernel:reload-module! "paren")
+;; A helper's full library name reloads its importers without publishing it:
+(kernel:reload-module! '(my-extension helper))
 ```
 
 `main:modules-reload-on-save` controls automatic source reload. The kernel,

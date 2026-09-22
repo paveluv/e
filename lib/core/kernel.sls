@@ -14,7 +14,7 @@
           module-requires? module-source persistent-cell pin-modules! read-only-error? refusal?
           registering-module registration-conflict? registry-add! registry-entries registry-find
           registry-items registry-observe! registry-remove! registry-unobserve! reload-module!
-          retract-module!)
+          retract-module! source-library)
   (import (rnrs)
           (only (chezscheme)
                 box unbox make-hashtable equal-hash
@@ -585,45 +585,79 @@
   (edoc "The loaded modules, in load order."
         (returns (list-of string)))
   (define (loaded-modules)
-    (reverse (registry-items module-catalog)))
+    (reverse (map car (registry-items module-catalog))))
 
   (define (record-module! name)
-    (parameterize ([registering-module module-catalog-owner])
-      (registry-add! module-catalog name)))
+    (let ([location (module-location name)])
+      (parameterize ([registering-module module-catalog-owner])
+        (registry-add! module-catalog (list name (car location) (cdr location))))))
 
   (define (module-location name)
     ;; (path . library) of a module in the first library root holding it:
     ;; flat in the root as <root>/<name>.sls, the library (name), else under
     ;; a kind directory as <root>/<kind>/<name>.sls, the library (kind name);
     ;; #f when no root has it
-    (let roots ([directories (library-directories)])
-      (if (null? directories) #f
-          (let* ([root (caar directories)] [flat (format "~a/~a.sls" root name)])
-            (if (file-exists? flat)
-                (cons flat (list (string->symbol name)))
-                (let scan ([kinds (guard (ex [else '()]) (directory-list root))])
-                  (cond
-                    [(null? kinds) (roots (cdr directories))]
-                    [(and (not (member (car kinds) '("base" "client")))
-                          (file-directory? (string-append root "/" (car kinds)))
-                          (file-exists? (format "~a/~a/~a.sls" root (car kinds) name)))
-                     (cons (format "~a/~a/~a.sls" root (car kinds) name)
-                           (list (string->symbol (car kinds)) (string->symbol name)))]
-                    [else (scan (cdr kinds))])))))))
+    (define (library-path name)
+      (apply string-append (map (lambda (part) (string-append "/" (symbol->string part))) name)))
+    (let ([known (registry-find module-catalog
+                   (lambda (entry) (if (list? name) (equal? (caddr entry) name) (string=? (car entry) name))))])
+      (if known (cons (cadr known) (caddr known))
+        (let roots ([directories (library-directories)])
+          (if (null? directories) #f
+            (let* ([root (caar directories)]
+                   [flat (if (list? name) (string-append root (library-path name) ".sls") (format "~a/~a.sls" root name))])
+              (cond
+                [(list? name) (if (file-exists? flat) (cons flat name) (roots (cdr directories)))]
+                [(file-exists? flat)
+                 (cons flat (list (string->symbol name)))
+                ]
+                [else
+                 (let scan ([kinds (guard (ex [else '()]) (directory-list root))])
+                   (cond
+                     [(null? kinds) (roots (cdr directories))]
+                     [(and (not (member (car kinds) '("base" "client")))
+                           (file-directory? (string-append root "/" (car kinds)))
+                           (file-exists? (format "~a/~a/~a.sls" root (car kinds) name)))
+                      (cons (format "~a/~a/~a.sls" root (car kinds) name)
+                            (list (string->symbol (car kinds)) (string->symbol name)))]
+                     [else (scan (cdr kinds))]))])))))))
 
-  (edoc "The source file of a module, in the first library root holding it under a kind directory or flat; a missing module's path in the first root."
-        (name string "the module")
+  (edoc "The selected source of a public module or full library name. A loaded module retains its source when new roots are added; a missing source raises."
+        (name (or string list) "the public module name or full library name")
         (returns file))
   (define (module-source name)
     (let ([hit (module-location name)])
-      (if hit (car hit) (format "~a/~a.sls" (caar (library-directories)) name))))
+      (if hit (car hit) (error 'module-source "no library source" name))))
 
   (edoc "The library a module declares: (kind name) for a module under a library root's kind directory, (name) for one flat in a root."
-        (name string "the module")
+        (name (or string list) "the public module name or full library name")
         (returns list))
   (define (module-library name)
-    (let ([hit (module-location name)])
-      (if hit (cdr hit) (list (string->symbol name)))))
+    (if (list? name) name
+        (let ([hit (module-location name)])
+          (if hit (cdr hit) (list (string->symbol name))))))
+
+  (edoc "The full library name of a selected source file in the active roots, or #f for a file outside them or shadowed by another source."
+        (path file "the saved source")
+        (returns (or list #f)))
+  (define (source-library path)
+    (let ([full (path:canonical path)])
+      (let roots ([directories (library-directories)])
+        (and (pair? directories)
+             (let* ([root (string-append (path:canonical (caar directories)) "/")]
+                    [n (string-length full)] [start (string-length root)])
+               (or (and (> n (+ start 4)) (string=? (substring full 0 start) root)
+                        (string=? (substring full (- n 4) n) ".sls")
+                        (let split ([i start] [from start] [out '()])
+                          (cond
+                            [(= i (- n 4))
+                             (let* ([lib (reverse (cons (string->symbol (substring full from i)) out))]
+                                    [location (module-location lib)])
+                               (and location (string=? full (path:canonical (car location))) lib))]
+                            [(char=? (string-ref full i) #\/)
+                             (split (+ i 1) (+ i 1) (cons (string->symbol (substring full from i)) out))]
+                            [else (split (+ i 1) from out)])))
+                   (roots (cdr directories))))))))
 
   ;; The bindings Chez itself provides, so that the editor's public API and
   ;; the modules' definitions can be told apart from builtins: M-x completion
@@ -688,21 +722,20 @@
       '() names))
 
   (edoc "Whether a module's library builds on another, directly or through others."
-        (name string "the module")
-        (target string "the module it may need")
+        (name (or string list) "the public module or library")
+        (target (or string list) "the public module or library it may need")
         (returns boolean))
   (define (module-requires? name target)
     ;; Does library (name) build on (target), directly or through
     ;; others?
-    (let ([t (string->symbol target)]
+    (let ([t (module-library target)]
           [seen (make-hashtable equal-hash equal?)])
-      (define (leaf lib) (if (pair? (cdr lib)) (leaf (cdr lib)) (car lib)))
       (let walk ([lib (module-library name)])
         (if (hashtable-ref seen lib #f)
             #f
             (begin
               (hashtable-set! seen lib #t)
-              (exists (lambda (req) (or (eq? (leaf req) t) (walk req)))
+              (exists (lambda (req) (or (equal? req t) (walk req)))
                       (guard (ex [else '()])
                         ;; Import metadata exists even when lazy runtime
                         ;; code has never been invoked (e.g. the sandbox).
@@ -819,9 +852,17 @@
   (define (reload-order name)
     ;; Capture the affected import graph before redefining any library, and
     ;; load dependencies before their clients, independent of catalog order.
-    (let loop ([pending (cons name (filter (lambda (m)
-                                             (and (not (string=? m name)) (module-requires? m name)))
-                                           (loaded-modules)))]
+    (define seen (make-hashtable equal-hash equal?))
+    (define (collect lib)
+      (if (hashtable-ref seen lib #f) '()
+          (begin
+            (hashtable-set! seen lib #t)
+            (cons lib
+              (apply append (map collect
+                              (guard (ex [else '()])
+                                (library-requirements lib (library-requirements-options import)))))))))
+    (let loop ([pending (filter (lambda (lib) (or (equal? lib name) (module-requires? lib name)))
+                          (apply append (map collect (cons name (map module-library (loaded-modules))))))]
                [out '()])
       (if (null? pending) (reverse out)
           (let ([next (find (lambda (m)
@@ -831,7 +872,7 @@
             (loop (remove next pending) (cons next out))))))
 
   (edoc "Reload a module in place from its edited source, with every loaded module built on it, re-running their init! before publishing."
-        (name* (or string symbol) "the module"))
+        (name* (or string symbol list) "the public module, or a full library name to reload without publishing a new module"))
   (define (reload-module! name*)
     ;; Reload a module in place: redefine its library from the
     ;; (edited) source, likewise every loaded module built on it, then
@@ -840,23 +881,29 @@
     ;; A module's own state starts over unless held in a persistent cell;
     ;; library redefinition and arbitrary effects are outside rollback.
     (let* ([name (if (symbol? name*) (symbol->string name*) name*)]
+           [lib (module-library name)]
            [source (module-source name)])
       (call-with-registration-update
         (lambda ()
           (cond [(find (lambda (root)
-                         (or (string=? root name) (module-requires? root name)))
+                         (or (equal? (module-library root) lib) (module-requires? root lib)))
                        restart-roots)
                  => (lambda (root)
                       (error 'reload-module!
                         (format "~a pins ~a: restart e to pick up changes" root name)))])
           (unless (file-exists? source)
             (error 'reload-module! "no module source" source))
-          (let ([affected (reload-order name)])
+          (let ([affected (reload-order lib)])
             (for-each (lambda (m) (load (module-source m))) affected)
-            (unless (member name (loaded-modules))
+            (when (and (string? name) (not (member name (loaded-modules))))
               (record-module! name))
             ;; Unrelated owners keep their registrations and active work.
-            (for-each (lambda (m) (retract-module! (string->symbol m))) affected)
-            (for-each init-module! affected))
+            (let ([modules
+                   (apply append
+                     (map (lambda (library)
+                            (filter (lambda (m) (equal? (module-library m) library)) (loaded-modules)))
+                       affected))])
+              (for-each (lambda (m) (retract-module! (string->symbol m))) modules)
+              (for-each init-module! modules)))
           (for-each (lambda (hook) (hook name))
                     (registry-items after-reload-hooks)))))))

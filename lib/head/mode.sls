@@ -18,7 +18,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head mode)
   (export (rename (add-mode-extension! add-extension!)) (rename (assign-mode! assign!))
-          (rename (set-buffer-mode! choose!)) (rename (detect-mode detect))
+          (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
           indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
           key-context (rename (buffer-line-styles line-styles))
@@ -53,25 +53,27 @@
         (interpreters (list-of string) "the #! interpreter names it claims")
         (styles (or procedure #f) "line to per-column style symbols, or #f for unstyled")
         (render (or procedure #f) "(render buffer row line) giving a same-length display transform, or #f")
-        (row-styles (or procedure #f) "(row-styles buffer row line) giving a styles vector, or #f for the plain styles"))
+        (row-styles (or procedure #f) "(row-styles buffer row line) giving a styles vector, or #f for the plain styles")
+        (parent (or mode #f) "the parent of a derived mode"))
   (define-record-type mode
-    (fields name extensions interpreters styles
+    (fields name extensions interpreters (immutable styles own-styles)
             ;; optional display transform: (render buffer row line) ->
             ;; a string of the SAME character length, or a same-length vector
             ;; of strings whose concatenation meets that contract. Character
             ;; to cell geometry must match the source (including clusters).
             ;; Invalid substitutions paint source; character styles project
             ;; to every cell of the leading character's glyph.
-            render
+            (immutable render own-render)
             ;; optional buffer-aware styling: (row-styles buffer row
             ;; line) -> a styles vector, or #f for the plain styles
             ;; function.  Uncached here -- the mode memoizes.
-            row-styles)
+            (immutable row-styles own-row-styles) parent)
     (protocol (lambda (new)
                 (case-lambda
-                  [(n e i s) (new n e i s #f #f)]
-                  [(n e i s r) (new n e i s r #f)]
-                  [(n e i s r rs) (new n e i s r rs)]))))
+                  [(n e i s) (new n e i s #f #f #f)]
+                  [(n e i s r) (new n e i s r #f #f)]
+                  [(n e i s r rs) (new n e i s r rs #f)]
+                  [(n e i s r rs p) (new n e i s r rs p)]))))
 
   (define modes (kernel:make-registry))
 
@@ -100,6 +102,33 @@
       (make-mode name extensions interpreters styles
                  (and (pair? extra) (car extra))
                  (and (pair? extra) (pair? (cdr extra)) (cadr extra)))))
+
+  (edoc "Register a distinct mode inheriting its parent's current presentation, indentation, formatting and Tab policy. Endings belong only to the new mode; parent keys and interpreters are not inherited. Local indenter/formatter registrations take precedence."
+        (name string "the new mode name")
+        (parent mode "the registered parent")
+        (extensions (list-of string) "the new mode's file endings"))
+  (define (derive! name parent extensions)
+    (let walk ([next parent] [seen (list name)])
+      (when (member next seen) (error 'derive! "cyclic mode derivation" name parent))
+      (let ([m (find-mode next)])
+        (unless m (error 'derive! "no parent mode" next))
+        (when (mode-parent m) (walk (mode-parent m) (cons next seen)))))
+    (kernel:registry-add! modes (make-mode name extensions '() #f #f #f parent)))
+
+  (define (presentation m get)
+    (and m (if (mode-parent m) (presentation (find-mode (mode-parent m)) get) (get m))))
+
+  (edoc "A mode's effective line styler, following its current parent, or #f."
+        (m (record mode) "the mode") (returns (or procedure #f)))
+  (define (mode-styles m) (presentation m own-styles))
+
+  (edoc "A mode's effective render transform, following its current parent, or #f."
+        (m (record mode) "the mode") (returns (or procedure #f)))
+  (define (mode-render m) (presentation m own-render))
+
+  (edoc "A mode's effective row styler, following its current parent, or #f."
+        (m (record mode) "the mode") (returns (or procedure #f)))
+  (define (mode-row-styles m) (presentation m own-row-styles))
 
   (edoc "Give an existing mode another file-name ending, as a registry entry that config reload retracts."
         (name mode "the mode")
@@ -206,9 +235,18 @@
   ;; when the rows cannot be formatted.
   (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
   (define formatters (kernel:make-registry))  ; entries (mode proc)
+  (define tab-overrides (kernel:make-registry)) ; entries (mode flag)
+
+  (define (own-entry registry name)
+    (kernel:registry-find registry (lambda (x) (string=? (car x) name))))
+
+  (define (inherited-entry registry name)
+    (or (own-entry registry name)
+        (let ([m (find-mode name)])
+          (and m (mode-parent m) (inherited-entry registry (mode-parent m))))))
 
   (define (indenter-entry name)
-    (kernel:registry-find indenters (lambda (x) (string=? (car x) name))))
+    (inherited-entry indenters name))
 
   (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
         (name mode "the mode")
@@ -231,7 +269,7 @@
   (define (indent-on-tab! name flag)
     (let ([entry (indenter-entry name)])
       (unless entry (error 'indent-on-tab! "no indenter for mode" name))
-      (kernel:registry-add! indenters (list name (cadr entry) flag))))
+      (kernel:registry-add! tab-overrides (list name flag))))
 
   (edoc "A mode's indenter, (proc buffer from to), or #f."
         (name string "the mode's name")
@@ -243,13 +281,18 @@
         (name string "the mode's name")
         (returns boolean))
   (define (indent-on-tab? name)
-    (let ([entry (indenter-entry name)]) (and entry (caddr entry) #t)))
+    (let ([override (own-entry tab-overrides name)] [entry (own-entry indenters name)])
+      (cond [(not (indenter-entry name)) #f]
+            [override (and (cadr override) #t)]
+            [entry (and (caddr entry) #t)]
+            [else (let ([m (find-mode name)])
+                    (and m (mode-parent m) (indent-on-tab? (mode-parent m))))])))
 
   (edoc "A mode's formatter, (proc buffer from to), or #f."
         (name string "the mode's name")
         (returns (or procedure #f)))
   (define (formatter name)
-    (let ([entry (kernel:registry-find formatters (lambda (x) (string=? (car x) name)))])
+    (let ([entry (inherited-entry formatters name)])
       (and entry (cadr entry))))
 
   (define (no-styles s) #f)
@@ -257,8 +300,8 @@
   ;; Computed styles, memoized per line string.  Edits replace line
   ;; strings (never mutate them), so string identity keys the cache and
   ;; can never go stale; weak keys keep it bounded by the live lines.
-  ;; Each entry remembers its mode, in case an identical string is shared
-  ;; between buffers of different modes.
+  ;; Each entry remembers the effective styler, so a parent's replacement
+  ;; invalidates derived-mode results even when the child record is unchanged.
 
   (define style-cache (make-weak-eq-hashtable))
 
@@ -268,17 +311,17 @@
         (effects internal))
   (define (buffer-line-styles b)
     ;; The line-styles function of b's mode; unstyled without one.
-    (let ([m (mode-of b)])
-      (if m
+    (let* ([m (mode-of b)] [styler (and m (mode-styles m))])
+      (if styler
           (lambda (s)
             (let ([hit (eq-hashtable-ref style-cache s #f)])
-              (if (and hit (eq? (car hit) m))
+              (if (and hit (eq? (car hit) styler))
                   (cdr hit)
                   ;; a raising mode styles the line plain rather than
                   ;; taking the redraw (and the editor) down
                   (let ([styles (guard (ex [else #f])
-                                  ((mode-styles m) s))])
-                    (eq-hashtable-set! style-cache s (cons m styles))
+                                  (styler s))])
+                    (eq-hashtable-set! style-cache s (cons styler styles))
                     styles))))
           no-styles)))
 

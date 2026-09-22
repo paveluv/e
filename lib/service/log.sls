@@ -83,7 +83,7 @@
 
   ;;; Queries ---------------------------------------------------------------
 
-  (edoc "Log records, oldest first: every record, a component's, or at most count of a component's newest; #f for every component."
+  (edoc "Log records, newest first: every record, a component's, or at most count of a component's newest; #f for every component."
         (component (or symbol #f) "the component")
         (count (or integer #f) "how many at most")
         (returns list))

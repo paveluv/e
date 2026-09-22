@@ -324,3 +324,28 @@ the commands' current key bindings, including user rebinding from `config.e`.
 
 `eval:copy-result` is a parameter and may also be changed temporarily with
 `parameterize` around programmatic evaluation.
+
+## Reusing evaluation in an extension
+
+An evaluator with its own Scheme environment can reuse e's interruption,
+output capture, undo grouping and reporting without using M-x's environment:
+
+```scheme
+(eval:report!
+  (eval:call-with-evaluation! "worksheet evaluation"
+    (lambda () (eval form worksheet-environment))))
+```
+
+The thunk returns ordinary Scheme values. `eval:status` is `ok`, `error` or
+`interrupted`; `eval:values` returns the list of values and `eval:condition`
+the original condition on failure. Execution alone neither copies nor
+reports the result. `eval:report!` applies `eval:copy-result` and preserves a
+message spoken by a void command. Passing the actual input as its second
+argument additionally records an M-x history exchange; omit it for extensions.
+
+Run on the head's main thread. Nested calls share the outer capture and
+interruption scope and one undo group. A continuation escape cleans up and
+escapes normally; grouping is not a rollback of edits or arbitrary Scheme
+effects. Parse inside the thunk so read errors use the same reporting path.
+For result insertion, edit inside the thunk and return the original values
+with `apply values`, keeping the computation and insertion in one undo step.

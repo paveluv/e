@@ -160,11 +160,20 @@
   (define (module-name-of-path path)
     ;; The module name a saved path denotes in the selected source roots;
     ;; #f for other paths, including kernel/main, which cannot be reloaded.
-    (let* ([full (file:canonical path)] [base (file:base-name full)])
-      (and (string:suffix? ".sls" base)
-           (not (member base '("kernel.sls" "main.sls")))
-           (let ([name (substring base 0 (- (string-length base) 4))])
-             (and (string=? full (file:canonical (kernel:module-source name))) name)))))
+    (let* ([full (or (sys:canonical-file-path path) (file:canonical path))]
+           [library (kernel:source-library full)])
+      (and library
+           (not (member library '((core kernel) (run main))))
+           (or (find (lambda (name) (equal? (kernel:module-library name) library))
+                     (kernel:loaded-modules))
+               ;; Saving an independent new module still publishes its API.
+               ;; Imported helpers retain their full library identity and
+               ;; do not acquire another public prefix merely by being saved.
+               (and (not (exists (lambda (name) (kernel:module-requires? name library))
+                           (kernel:loaded-modules)))
+                    (let ([name (symbol->string (car (reverse library)))])
+                      (and (equal? (kernel:module-library name) library) name)))
+               library))))
 
   (define (reload-on-save! path)
     ;; The post-save hook.  A reload that fails (a module saved mid-edit,
@@ -249,7 +258,7 @@
             (echo:set-text! msg)))
         (reverse
           (kernel:load-modules!
-            '("blame" "buffer-view" "c-mode" "describe" "dispatch" "echo" "edit" "eval" "file-view" "git-view"
+            '("blame" "buffer-view" "c-mode" "describe" "dispatch" "echo" "edit" "eval" "extension" "file-view" "git-view"
               "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "merge" "mode" "mouse"
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
               "scheme-mode" "search" "style" "terminal" "tty" "window"))))
