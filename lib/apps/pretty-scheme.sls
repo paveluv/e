@@ -336,10 +336,11 @@
          (("procedure" . "(pretty-scheme:rainbow!)")) "void"
          ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the current Scheme buffer between its normal mode and a view that colors parentheses by nesting depth.")))
-    (mode:register! "pretty-scheme-clusters" '() '() scheme-styles rendered)
-    (mode:register! "pretty-scheme-depth" '() '() scheme-styles depth-rendered)
-    (mode:register! "pretty-scheme-rainbow" '() '() scheme-styles #f
-                    rainbow-styles)
+    ;; submodes of Scheme: its indentation, formatting, Tab policy and keys,
+    ;; with a presentation of their own
+    (mode:derive! "pretty-scheme-clusters" "scheme" '() #f rendered)
+    (mode:derive! "pretty-scheme-depth" "scheme" '() #f depth-rendered)
+    (mode:derive! "pretty-scheme-rainbow" "scheme" '() #f #f rainbow-styles)
     (keymap:bind-default! ")" (lambda () (close! #\))))
     (keymap:bind-default! "]" (lambda () (close! #\])))
     (paint:add-status-hint!

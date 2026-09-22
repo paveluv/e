@@ -219,19 +219,24 @@ Bundled and third-party modules should use `keymap:bind-default!`.
 `keymap:bind!` is for deliberate user or session overrides, ensuring a
 module reload cannot displace configuration choices.
 
-To give a mode Scheme's editing behavior with its own file endings:
+To give a mode Scheme's editing behavior with its own file endings, derive it:
 
 ```scheme
 (mode:derive! "worksheet" "scheme" '(".ws" ".mpl"))
 ```
 
-Derivation follows the parent's current styles, rendering, indentation,
-formatting and Tab policy, including after reload. Local indenter/formatter
-registrations override inherited ones. The new mode keeps its own key
-context; it does not inherit parent keys, suffixes or interpreter detection.
-Missing parents and cycles are refused when registering. If the parent is
-later removed, inherited behavior becomes unavailable while local behavior
-and the child's identity remain.
+A derived mode, a submode, has a parent. Whatever it does not define itself,
+line styles, rendering, row styles, indentation, formatting and the Tab
+policy, follows the parent's current registration, including after a reload,
+and keys are looked up in its own context first, then the parent's, then the
+global map. Optional arguments after the endings give the submode its own
+line styles, render transform and row styles, as `mode:register!` takes them:
+Pretty Scheme's displays are submodes of Scheme that override only their
+presentation. Local indenter and formatter registrations override inherited
+ones. The new mode keeps its own suffix and interpreter detection. The parent
+may be registered later, since resolution is by name at each use; a cycle is
+refused. If the parent is removed, inherited behavior becomes unavailable
+while local behavior and the child's identity remain.
 
 ## Hot reload
 
@@ -441,6 +446,19 @@ without replacing the mode:
 ```scheme
 (mode:add-extension! "scheme" ".foo")
 ```
+
+A buffer takes the mode detection finds when it opens, and follows detection
+until a mode is chosen for it by hand:
+
+```scheme
+(mode:choose! (head:current-buffer) "scheme")
+```
+
+Registering a mode, deriving one or adding an ending gives the mode to the
+open buffers that have none yet, so a file opened before its extension loads
+takes the mode when the extension registers it. A buffer that already has a
+mode, detected or chosen, keeps it and picks up only a reloaded record of the
+same name; `(mode:assign! b)` re-detects one buffer on request.
 
 Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives a
 snapshot vector of lines and returns per-row results, recomputed once per

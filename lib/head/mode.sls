@@ -21,7 +21,7 @@
           (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
           indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
-          key-context (rename (buffer-line-styles line-styles))
+          key-context key-contexts (rename (buffer-line-styles line-styles))
           (rename (memoize-buffer-analysis memoize-analysis)) mode? (rename (mode-name name))
           (rename (buffer-mode-name name-of)) (rename (mode-of of))
           (rename (refresh-buffer-modes! refresh!)) (rename (register-mode! register!))
@@ -89,7 +89,7 @@
 
   (define mode-extension-additions (kernel:make-registry))
 
-  (edoc "Register a mode: its name, the file-name endings it claims, the interpreters of a #! line, a line styles function, then optionally a render transform and a buffer-aware row-styles procedure."
+  (edoc "Register a mode, and re-resolve every open buffer's mode at once: its name, the file-name endings it claims, the interpreters of a #! line, a line styles function, then optionally a render transform and a buffer-aware row-styles procedure."
         (name string "the mode's name")
         (extensions (list-of string) "the file-name endings")
         (interpreters (list-of string) "the #! interpreter names")
@@ -101,22 +101,31 @@
     (kernel:registry-add! modes
       (make-mode name extensions interpreters styles
                  (and (pair? extra) (car extra))
-                 (and (pair? extra) (pair? (cdr extra)) (cadr extra)))))
+                 (and (pair? extra) (pair? (cdr extra)) (cadr extra))))
+    (refresh-buffer-modes!))
 
-  (edoc "Register a distinct mode inheriting its parent's current presentation, indentation, formatting and Tab policy. Endings belong only to the new mode; parent keys and interpreters are not inherited. Local indenter/formatter registrations take precedence."
+  (edoc "Register a submode: a distinct mode with a parent, following the parent's current styles, rendering, row styles, indentation, formatting, Tab policy and key bindings except where its own optional styles, render transform and row styles override them; endings belong only to the new mode, the parent may register later, and a cycle is refused."
         (name string "the new mode name")
-        (parent mode "the registered parent")
-        (extensions (list-of string) "the new mode's file endings"))
-  (define (derive! name parent extensions)
+        (parent string "the parent mode's name")
+        (extensions (list-of string) "the new mode's file endings")
+        (extra (list-of (or procedure #f)) "own line styles, then a render transform, then a row-styles procedure"))
+  (define (derive! name parent extensions . extra)
     (let walk ([next parent] [seen (list name)])
       (when (member next seen) (error 'derive! "cyclic mode derivation" name parent))
       (let ([m (find-mode next)])
-        (unless m (error 'derive! "no parent mode" next))
-        (when (mode-parent m) (walk (mode-parent m) (cons next seen)))))
-    (kernel:registry-add! modes (make-mode name extensions '() #f #f #f parent)))
+        (when (and m (mode-parent m)) (walk (mode-parent m) (cons next seen)))))
+    (kernel:registry-add! modes
+      (make-mode name extensions '()
+                 (and (pair? extra) (car extra))
+                 (and (pair? extra) (pair? (cdr extra)) (cadr extra))
+                 (and (pair? extra) (pair? (cdr extra)) (pair? (cddr extra)) (caddr extra))
+                 parent))
+    (refresh-buffer-modes!))
 
   (define (presentation m get)
-    (and m (if (mode-parent m) (presentation (find-mode (mode-parent m)) get) (get m))))
+    ;; a mode's own part, else its parent's, resolved by name at each use
+    (and m (or (get m)
+               (and (mode-parent m) (presentation (find-mode (mode-parent m)) get)))))
 
   (edoc "A mode's effective line styler, following its current parent, or #f."
         (m (record mode) "the mode") (returns (or procedure #f)))
@@ -143,8 +152,7 @@
     (unless (find-mode name)
       (error 'add-mode-extension! "no such mode" name))
     (kernel:registry-add! mode-extension-additions (cons extension name))
-    (for-each (lambda (b) (when (head:buffer-mode-auto b) (assign-mode! b)))
-              (head:buffers))
+    (refresh-buffer-modes!)
     (void))
 
   (edoc "The mode for a file, by its extension then by the #! interpreter line, or #f."
@@ -214,6 +222,19 @@
            (let ([context (string->symbol name)])
              (and (or (not (keymap:context-capture context)) (head:app-buffer? b))
                   context)))))
+
+  (edoc "The keymap contexts of a buffer's mode and its parents, nearest first, each named after its mode; a capture context needs a live app."
+        (b buffer "the buffer")
+        (returns (list-of symbol)))
+  (define (key-contexts b)
+    (let loop ([m (mode-of b)] [acc '()])
+      (if (not m)
+          (reverse acc)
+          (loop (and (mode-parent m) (find-mode (mode-parent m)))
+                (let ([context (string->symbol (mode-name m))])
+                  (if (or (not (keymap:context-capture context)) (head:app-buffer? b))
+                      (cons context acc)
+                      acc))))))
 
   (edoc "The name of a buffer's mode, or #f without one."
         (b buffer "the buffer")
@@ -353,16 +374,16 @@
             (and (< row (vector-length product))
                  (vector-ref product row)))))))
 
-  (edoc "Re-resolve every buffer's mode by name, so buffers pick up a reloaded mode or lose one that is gone.")
+  (edoc "Re-resolve every buffer's mode: a buffer with a mode keeps it by name, picking up a reloaded record; a buffer without one that follows detection takes the mode detection now finds.")
   (define (refresh-buffer-modes!)
-    ;; Re-resolve every buffer's mode by name, so buffers pick up a
-    ;; reloaded mode's new styles (or lose a mode that is gone).
+    ;; A detected or chosen mode stays: registration is additive, never a
+    ;; theft. A mode gone from the registry leaves its name on the buffer,
+    ;; plain text until it returns.
     (for-each (lambda (b)
-                (if (head:buffer-mode-auto b)
-                    (assign-mode! b)
-                    (let ([m (mode-of b)])
-                      (when m
-                        (set-mode-of! b (find-mode (mode-name m)))))))
+                (let ([name (head:buffer-fact b 'mode #f)])
+                  (cond [(not name) (when (head:buffer-mode-auto b) (assign-mode! b))]
+                        [(find-mode name) => (lambda (m) (set-mode-of! b m))]
+                        [else (void)])))
               (head:buffers)))
 
 

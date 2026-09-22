@@ -127,7 +127,6 @@
      (check 'no-expression-before-point-is-an-error (test:raises? eval:last-expression!) #t)
 
      ;; *scratch* speaks Scheme once the mode is registered (it was, above)
-     (mode:refresh!)
      (check 'scratch-has-scheme-mode-by-default
        (mode:name-of (head:buffer-named "*scratch*")) "scheme")
 

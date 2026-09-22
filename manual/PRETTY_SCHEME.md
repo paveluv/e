@@ -36,6 +36,9 @@ the palette is exhausted.
 depth through a seven-color sequence. Closing delimiters match their opener.
 
 Invoking the active variant again returns the buffer to normal Scheme display.
+The three displays are submodes of Scheme: indentation, formatting, Tab and
+Scheme's own key bindings work as in a Scheme buffer; only the presentation
+differs.
 
 ## Semantic symbol styling
 

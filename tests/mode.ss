@@ -17,7 +17,8 @@
              (prefix (head mode) mode:)
              (prefix (head head) head:)
              (prefix (state store) store:)
-             (only (chezscheme) format box unbox set-box!))
+             (only (chezscheme) format box unbox set-box!)
+             (prefix (modes scheme-mode) scheme-mode:) (prefix (apps pretty-scheme) pretty-scheme:))
 
 
      (define check test:check)
@@ -163,8 +164,7 @@
      (define old (mode:find "probe"))
      (mode:register! "probe" '(".probe") '("probesh") probe-styler)
      (check 'newest-registration-wins (eq? (mode:find "probe") old) #f)
-     (mode:refresh!)
-     (check 'refresh-resolves-to-new (eq? (mode:of by-file) (mode:find "probe")) #t)
+     (check 'registration-re-resolves-open-buffers-at-once (eq? (mode:of by-file) (mode:find "probe")) #t)
      (check 'refresh-keeps-name (mode:name-of by-file) "probe")
 
      ;; A derived mode follows live behavior, while detection and keys stay
@@ -204,14 +204,74 @@
        (list (eq? (mode:indenter "grandchild") old-indent)
              (eq? (mode:formatter "grandchild") old-indent) (mode:indent-on-tab? "grandchild"))
        '(#t #t #t))
-     (check 'invalid-derivation-preserves-the-existing-parent
+     ;; A submode overrides the presentation parts it defines and inherits the
+     ;; rest; its key contexts chain to the parent's; a parent may come later.
+     (mode:derive! "styled-child" "parent" '() probe-styler)
+     (check 'a-submode-overrides-what-it-defines-and-inherits-the-rest
+       (list (eq? (mode:styles (mode:find "styled-child")) probe-styler)
+             (eq? (mode:render (mode:find "styled-child")) new-indent)
+             (eq? (mode:indenter "styled-child") new-indent)
+             (mode:key-contexts plain))
+       '(#t #t #t (grandchild child parent)))
+     (mode:derive! "orphan" "absent" '())
+     (check 'a-parent-registered-later-is-followed-by-name
+       (list (mode:styles (mode:find "orphan"))
+             (begin (mode:register! "absent" '() '() probe-styler)
+                    (eq? (mode:styles (mode:find "orphan")) probe-styler)))
+       '(#f #t))
+     ;; an extension loaded after its files are open: deriving the mode that
+     ;; claims their ending assigns it to them at once, as the worksheet does
+     (define late (head:new-buffer! "notes.late"))
+     (head:buffer-file-set! late "/tmp/notes.late")
+     (mode:assign! late)
+     (define before-derivation (mode:name-of late))
+     (mode:derive! "late" "parent" '(".late"))
+     (check 'deriving-a-mode-assigns-it-to-open-buffers-with-its-ending
+       (list before-derivation (mode:name-of late)) '(#f "late"))
+     ;; a mode's source edited to claim one more ending, then reloaded: its
+     ;; re-registration gives the open buffers with that ending the mode
+     (define newly (head:new-buffer! "notes.newly"))
+     (head:buffer-file-set! newly "/tmp/notes.newly")
+     (mode:assign! newly)
+     (define before-reregistration (mode:name-of newly))
+     (parameterize ([kernel:registering-module 'derived-parent])
+       (mode:register! "parent" '(".parent" ".newly") '("parentsh") probe-styler))
+     (check 'reregistering-a-mode-with-a-new-ending-assigns-it-to-open-buffers
+       (list before-reregistration (mode:name-of newly) (mode:name-of late)) '(#f "parent" "late"))
+     ;; a detected or chosen mode stays when others register: registration
+     ;; is additive, and a mode chosen by hand follows only its own name
+     (mode:choose! late "parent")
+     (parameterize ([kernel:registering-module 'derived-parent])
+       (mode:register! "thief" '(".newly" ".late") '() probe-styler))
+     (define stolen (head:new-buffer! "z.newly"))
+     (head:buffer-file-set! stolen "/tmp/z.newly")
+     (mode:assign! stolen)
+     (check 'registration-takes-only-buffers-without-a-mode
+       (list (mode:name-of newly) (mode:name-of late) (mode:name-of stolen)) '("parent" "parent" "thief"))
+     (parent! probe-styler new-indent)
+     (check 'a-chosen-mode-stays-through-its-reregistration
+       (list (mode:name-of late) (eq? (mode:of late) (mode:find "parent"))) '("parent" #t))
+     (check 'a-derivation-cycle-is-refused-and-preserves-the-existing-parent
        (list (test:raises? (lambda () (mode:derive! "parent" "grandchild" '())))
-             (test:raises? (lambda () (mode:derive! "child" "absent" '())))
-             (mode:extensions (mode:find "parent"))) '(#t #t (".parent")))
+             (mode:extensions (mode:find "parent"))) '(#t (".parent")))
      (kernel:retract-module! 'derived-parent)
      (check 'missing-parent-loses-presentation-but-keeps-child-and-local-overrides
        (list (mode:name-of plain) ((mode:line-styles plain) derived-line)
              (mode:render (mode:find "child")) (eq? (mode:formatter "child") old-indent))
        '("grandchild" #f #f #t))
+
+
+     ;; pretty-scheme's displays are submodes of Scheme: they indent, format
+     ;; and take Tab as Scheme does, with a presentation of their own
+     (scheme-mode:init!)
+     (pretty-scheme:init!)
+     (check 'pretty-scheme-modes-inherit-scheme-editing-with-their-own-display
+       (list (eq? (mode:indenter "pretty-scheme-rainbow") (mode:indenter "scheme"))
+             (eq? (mode:formatter "pretty-scheme-clusters") (mode:formatter "scheme"))
+             (mode:indent-on-tab? "pretty-scheme-depth")
+             (and (mode:row-styles (mode:find "pretty-scheme-rainbow")) #t)
+             (eq? (mode:styles (mode:find "pretty-scheme-rainbow")) (mode:styles (mode:find "scheme")))
+             (and (mode:render (mode:find "pretty-scheme-clusters")) #t))
+       '(#t #t #t #t #t #t))
 
      (test:finish! 'mode)))

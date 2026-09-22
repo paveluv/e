@@ -75,17 +75,15 @@
              #t))))
 
   (define (dispatch-sequence! first)
-    ;; Resolve a key sequence: the buffer's mode context first, then the
+    ;; Resolve a key sequence: the buffer's mode contexts first, nearest first, then the
     ;; global map. Once a prefix reaches e, the whole command stays here,
     ;; including synchronous prompts; an app cannot consume its suffix.
     (let* ([buffer (head:window-buffer (head:current-window))]
-           [mode-context (mode:key-context buffer)]
-           [capture (and mode-context (keymap:context-capture mode-context))])
+           [contexts (mode:key-contexts buffer)]
+           [capture (exists keymap:context-capture contexts)])
       (let loop ([sequence (list first)])
-        (let* ([in-context (and mode-context
-                                (keymap:resolved-binding mode-context sequence))]
-               [context-prefix? (and mode-context
-                                     (keymap:binding-prefix? mode-context sequence))]
+        (let* ([in-context (exists (lambda (context) (keymap:resolved-binding context sequence)) contexts)]
+               [context-prefix? (exists (lambda (context) (keymap:binding-prefix? context sequence)) contexts)]
                [hit (or in-context (keymap:resolved-binding 'global sequence))]
                [prefix? (or context-prefix?
                             (keymap:binding-prefix? 'global sequence))])
@@ -124,11 +122,11 @@
     ;; to the keymaps even inside a capturing app: the app's handler
     ;; sees only the keys its context leaves unbound, so a terminal
     ;; cannot swallow its capture control or a reserved editor prefix.
-    (let ([context (mode:key-context (head:window-buffer (head:current-window)))])
-      (and context
-           (let ([sequence (list event)] [capture (keymap:context-capture context)])
-             (or (keymap:resolved-binding context sequence)
-                 (keymap:binding-prefix? context sequence)
+    (let ([contexts (mode:key-contexts (head:window-buffer (head:current-window)))])
+      (and (pair? contexts)
+           (let ([sequence (list event)] [capture (exists keymap:context-capture contexts)])
+             (or (exists (lambda (context) (keymap:resolved-binding context sequence)) contexts)
+                 (exists (lambda (context) (keymap:binding-prefix? context sequence)) contexts)
                  (and capture (not (head:full-capture? (head:current-window)))
                       (member event (cddr capture)))))
            #t)))
