@@ -83,6 +83,24 @@
   ;; candidate's spelling the way it matches a symbol, and Tab extends it
   ;; the same way: to the longest text every current match still matches.
 
+  (define (string-content raw)
+    ;; what a string literal's text so far denotes, its escapes read: quo\"te
+    ;; is quo"te; the text itself when it does not read, an escape left open say
+    (guard (ex [else raw])
+      (let ([v (read (open-input-string (string-append "\"" raw "\"")))])
+        (if (string? v) v raw))))
+
+  (define (string-escaped value)
+    ;; a value as a string literal holds it, without the quotes: quo"te is quo\"te
+    (let ([w (call-with-string-output-port (lambda (p) (write value p)))])
+      (substring w 1 (- (string-length w) 1))))
+
+  (define (open-position? s pos)
+    ;; whether an empty token at pos stands where a datum is due: at the
+    ;; start or after a separator; glued to a closed string or form it does
+    ;; not, that datum being final, for Tab to settle around
+    (or (= pos 0) (and (memv (string-ref s (- pos 1)) '(#\space #\tab #\newline #\( #\[ #\{)) #t)))
+
   (define (open-string-start s pos)
     ;; the index of the quote opening a string still open at pos, or #f
     (let loop ([i 0] [open #f])
@@ -195,18 +213,19 @@
            [range (and (not quote-at) (symbol-range s pos))]
            [start (cond [quote-at (+ quote-at 1)] [range (car range)] [else pos])]
            [end (cond [quote-at pos] [range (cdr range)] [else pos])]
+           [token (let ([raw (substring s start end)]) (if quote-at (string-content raw) raw))]
            [frames (call-frames (substring s 0 (if quote-at quote-at start)))])
-      (and (pair? frames)
+      (and (or quote-at (and range (< (car range) (cdr range))) (open-position? s pos)) (pair? frames)
            (let ([frame (car frames)])
              (cond
                [(plain? frame)
-                (let ([context (typed frame start end (substring s start end) (and quote-at #t))])
+                (let ([context (typed frame start end token (and quote-at #t))])
                   (cond [(not context) #f]
                         ;; inside (file "~ the values spell bare, never a literal within a literal
-                        [(literal-operator? frame) (if quote-at context (list (car context) start end (substring s start end) 'inside))]
+                        [(literal-operator? frame) (if quote-at context (list (car context) start end token 'inside))]
                         ;; a string at an argument spelling its values as
                         ;; literals expands into the literal, from its quote
-                        [(and quote-at (literal-typed? (car context))) (list (car context) quote-at end (substring s start end) 'literal)]
+                        [(and quote-at (literal-typed? (car context))) (list (car context) quote-at end token 'literal)]
                         [else context]))]
                [(and (eq? (frame-operator frame) 'pending) (not (frame-quoted? frame)) (not quote-at)
                      (pair? (cdr frames)) (plain? (cadr frames))
@@ -217,7 +236,7 @@
                [(and (frame-quoted? frame) (pair? (cdr frames)) (plain? (cadr frames)))
                 (let ([type (element-type (argument-type (string->symbol (frame-operator (cadr frames)))
                                                          (frame-arguments (cadr frames))))])
-                  (and type (list type start end (substring s start end) (and quote-at #t))))]
+                  (and type (list type start end token (and quote-at #t))))]
                [else #f])))))
 
   (edoc "Whether a produced type serves a wanted one: the same, one refining it, a named type and the record type it denotes either way round, or a member serving a member across unions; #f, the absence a union allows, serves nothing."
@@ -379,6 +398,14 @@
             [(char=? (string-ref text i) #\") (substring text (+ i 1) (string-length text))]
             [else (find (+ i 1))])))
 
+  (define (value-part text)
+    ;; the value in a candidate's text: after the opening quote of a literal
+    ;; or of a string spelling, (file "~/ or "~/; a bare value is all of it,
+    ;; a quote within a name notwithstanding
+    (if (and (> (string-length text) 0) (memv (string-ref text 0) '(#\( #\")))
+        (or (quoted-part text) text)
+        text))
+
   (define (typed-options context)
     ;; ((option . fragments) ...) for an argument context, best first, or #f
     ;; when the type offers nothing the token matches: the token aligns with
@@ -406,7 +433,7 @@
                   [matched (if (pair? matched) matched
                                (fold-right (lambda (o out)
                                              (let ([text (option-text o)])
-                                               (if (string:prefix? token (or (quoted-part text) text)) (cons (cons o #f) out) out)))
+                                               (if (string:prefix? token (value-part text)) (cons (cons o #f) out) out)))
                                            '() all))])
              (and (pair? matched)
                   (map (lambda (entry) (cons (car entry) (if (cdr entry) (fuzzy:fragments (cdr entry)) '())))
@@ -450,27 +477,33 @@
         (let* ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))]
                [value-part (quoted-part common)])
           (and value-part (string:prefix? token value-part) common)))
-      (cond
-        [(null? (cdr options)) (list (sole-insert (car (car options))))]
-        ;; a string or bare token becoming a value's spelling: the openings'
-        ;; common prefix when its value extends the token, as inside a string
-        [(memq in-string? '(literal inside)) (list (or (literal-common) (substring s start end)))]
-        [in-string?
-         (let ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))])
-           (list (if (and (> (string-length common) (string-length token)) (string:prefix? token common)) common token)))]
-        ;; a bare token the values alone match, / over the root's entries
-        ;; say, opens their literal as a string would; with a symbol among
-        ;; the matches it extends as symbols do
-        [(and (for-all (lambda (entry) (option-value (car entry))) options) (literal-common)) => list]
-        [else
-         (let ([seen (make-hashtable string-hash string=?)])
-           (fuzzy:expansions token
-             (fold-right (lambda (entry out)
-                           (let ([text (option-text (car entry))])
-                             (if (hashtable-ref seen text #f) out
-                                 (begin (hashtable-set! seen text #t) (cons text out)))))
-                         '() options)
-             typed-still?))])))
+      (define (bare-inserts)
+        ;; the inserts as the candidates' texts spell them
+        (cond
+          [(null? (cdr options)) (list (sole-insert (car (car options))))]
+          ;; a string or bare token becoming a value's spelling: the openings'
+          ;; common prefix when its value extends the token, as inside a string
+          [(memq in-string? '(literal inside)) (list (or (literal-common) (substring s start end)))]
+          [in-string?
+           (let ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))])
+             (list (if (and (> (string-length common) (string-length token)) (string:prefix? token common)) common token)))]
+          ;; a bare token the values alone match, / over the root's entries
+          ;; say, opens their literal as a string would; with a symbol among
+          ;; the matches it extends as symbols do
+          [(and (for-all (lambda (entry) (option-value (car entry))) options) (literal-common)) => list]
+          [else
+           (let ([seen (make-hashtable string-hash string=?)])
+             (fuzzy:expansions token
+                               (fold-right (lambda (entry out)
+                                             (let ([text (option-text (car entry))])
+                                               (if (hashtable-ref seen text #f) out
+                                                 (begin (hashtable-set! seen text #t) (cons text out)))))
+                                 '() options)
+                               typed-still?))]))
+      ;; inside a string the inserts are what the literal holds, a quote or a
+      ;; backslash in a name escaped, as the token was read
+      (let ([inserts (bare-inserts)])
+        (if (eq? in-string? #t) (map string-escaped inserts) inserts))))
 
   (define (typed-candidate entry)
     ;; a prompt candidate from (option . fragments): the label with its
@@ -573,7 +606,7 @@
       (lambda (s pos)
         (define (symbols)
           (let ([range (symbol-range s pos)])
-            (if (not range) (values #f #f '() '())
+            (if (or (not range) (and (= (car range) (cdr range)) (not (open-position? s pos)))) (values #f #f '() '())
                 (let* ([part (substring s (car range) (cdr range))]
                        ;; Symbols go in as they are: the matcher keeps each one
                        ;; prepared across keystrokes.
@@ -842,6 +875,9 @@
       (let loop ([i from])
         (or (>= i (string-length text))
             (and (memv (string-ref text i) '(#\space #\tab #\newline)) (loop (+ i 1))))))
+    (define (trim-right s)
+      (let loop ([n (string-length s)])
+        (if (and (> n 0) (memv (string-ref s (- n 1)) '(#\space #\tab #\newline))) (loop (- n 1)) (substring s 0 n))))
     (define (settle frames out at)
       (if (or (null? frames) (frame-quoted? (car frames)))
           (cons out at)
@@ -850,11 +886,13 @@
                  [arity (and (string? operator) (fixed-arity (string->symbol operator)))])
             (cond
               [(not arity) (cons out at)]
-              [(< (frame-arguments frame) arity) (cons (string-append out " ") (+ at 1))]
+              ;; one space on to the next argument, unless a separator is there already
+              [(< (frame-arguments frame) arity)
+               (if (< (string-length (trim-right out)) (string-length out)) (cons out at) (cons (string-append out " ") (+ at 1)))]
+              ;; a complete form closes flush, never as (f )
               [(= (frame-arguments frame) arity)
-               (settle (count-datum (cdr frames) #f)
-                 (string-append out (string (cdr (assv (frame-opener frame) closers))))
-                 (+ at 1))]
+               (let ([out (string-append (trim-right out) (string (cdr (assv (frame-opener frame) closers))))])
+                 (settle (count-datum (cdr frames) #f) out (string-length out)))]
               [else (cons out at)]))))
     (define (settled head tail at)
       (let* ([result (settle (call-frames head) head at)]

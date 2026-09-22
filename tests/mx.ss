@@ -163,15 +163,36 @@
      ;; type's literal and extends the path to the candidates' longest common
      ;; prefix, as a shell does: a listing sharing nothing stays put, a deep
      ;; path stays quick, and shared characters extend
+     ;; the kernel publishes each type's literal after a module initializes;
+     ;; the test stands in for it, so (file " completes inside the literal
+     (for-each (lambda (name) (unless (top-level-bound? name) (define-top-level-value name (edoc:type-literal name) (interaction-environment))))
+               (edoc:type-literals))
      (define scratch-dir (format "/tmp/e-mx-~a" (get-process-id)))
      (mkdir scratch-dir)
      (for-each (lambda (name) (call-with-output-file (string-append scratch-dir "/" name) (lambda (p) (put-string p "x"))))
-               '("alpha-one.txt" "alpha-two.txt"))
+               '("alpha-one.txt" "alpha-two.txt" "a b.txt" "quo\"te.txt"))
      (check 'string-extensions-are-common-prefixes
        (list (extensions "(visit-file! \"manual/") (extensions "(visit-file! \"lib/apps/")
              (extensions (string-append "(visit-file! \"" scratch-dir "/al")))
        (list '("(file \"manual/") '("(file \"lib/apps/") (list (string-append "(file \"" scratch-dir "/alpha-"))))
-     (for-each (lambda (name) (delete-file (string-append scratch-dir "/" name))) '("alpha-one.txt" "alpha-two.txt"))
+     ;; a name with a space completes like any other; a quote in a name is
+     ;; escaped as the string literal holds it, inside the string and in the
+     ;; literal alike, and a token typed with the escape reads the same way
+     (check 'special-characters-in-a-name-are-escaped-in-the-string
+       (let ([quoted (string-append scratch-dir "/quo\\\"te.txt")])
+         (list (extensions (string-append "(visit-file! \"" scratch-dir "/a "))
+               (extensions (string-append "(visit-file! (file \"" scratch-dir "/quo"))
+               (extensions (string-append "(visit-file! (file \"" scratch-dir "/quo\\\""))
+               (extensions (string-append "(visit-file! \"" scratch-dir "/quo"))
+               (settled (string-append "(visit-file! \"" quoted "\""))
+               (read (open-input-string (string-append "(visit-file! \"" quoted "\")")))))
+       (let ([quoted (string-append scratch-dir "/quo\\\"te.txt")] [closed (string-append "(visit-file! \"" scratch-dir "/quo\\\"te.txt\")")])
+         (list (list (string-append "(file \"" scratch-dir "/a b.txt\")"))
+               (list quoted) (list quoted)
+               (list (string-append "(file \"" quoted "\")"))
+               (cons closed (string-length closed))
+               (list 'visit-file! (string-append scratch-dir "/quo\"te.txt")))))
+     (for-each (lambda (name) (delete-file (string-append scratch-dir "/" name))) '("alpha-one.txt" "alpha-two.txt" "a b.txt" "quo\"te.txt"))
      (delete-directory scratch-dir)
      ;; A roots argument, one directory or a list of them, completes as a
      ;; directory inside the string and inside each element of a quoted list;
@@ -204,10 +225,7 @@
      ;; A string at an argument whose type spells its values as literals
      ;; expands into the literal from its quote, Tab replacing the whole
      ;; string; a bare token does the same; inside the constructor the values
-     ;; spell bare. The kernel publishes the literals after a module
-     ;; initializes; the test stands in for it.
-     (for-each (lambda (name) (unless (top-level-bound? name) (define-top-level-value name (edoc:type-literal name) (interaction-environment))))
-               (edoc:type-literals))
+     ;; spell bare.
      (define (span text) (eval:completion-span text (string-length text)))
      (check 'a-string-or-token-expands-into-its-literal
        (list (extensions "(mode:choose! \"sch") (span "(mode:choose! \"sch") (extensions "(mode:choose! sch") (span "(mode:choose! sch")
@@ -217,6 +235,19 @@
              (has? "(buffer \"*scratch*\")" (labels "(head:show-buffer! *")))
        '(("(mode \"scheme\")") (14 . 18) ("(mode \"scheme\")") (14 . 17) ("scheme") ("scheme") ("\"scheme\"")
          ("(mode:choose! (mode \"scheme\")" . 29) #t))
+     ;; Tab at a final datum, a closed string or form, settles: each enclosing
+     ;; form with a fixed arity closes once its arguments are there, the
+     ;; cursor steps to a due argument past a separator already typed, and a
+     ;; closed string is never completed further, existing or not
+     (check 'a-final-datum-settles-the-forms-around-it
+       (list (settled "(save-file! (file \"~/ddd\"") (settled "(save-file! (file \"~/ddd") (settled "(save-file! \"~/ddd\"")
+             (settled "(head:show-buffer! (buffer \"*scratch*\")") (settled "(window:split-right! ")
+             (settled "(head:set-window-buffer! (window 1)") (settled "(head:set-window-buffer! (window 1) ")
+             (labels "(extension:load! \"x\" \"y\"") (labels "(visit-file! \"manual/\""))
+       '(("(save-file! (file \"~/ddd\"))" . 27) ("(save-file! (file \"~/ddd\"))" . 27) ("(save-file! \"~/ddd\")" . 20)
+         ("(head:show-buffer! (buffer \"*scratch*\"))" . 40) ("(window:split-right!)" . 21)
+         ("(head:set-window-buffer! (window 1) " . 36) ("(head:set-window-buffer! (window 1) " . 36) #f #f))
+
      ;; ~ and / lead the home and the root directory, though the matcher has
      ;; no segment for them: at a file or directory argument they open the
      ;; literal, bare or in a string, and complete bare inside the constructor

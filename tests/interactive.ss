@@ -226,6 +226,13 @@
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-session-gives-the-window-back
                 (lambda () (not (find-cell "<completions>"))) 5000)
+     ;; A closed string is final: Tab settles the forms around it, the file
+     ;; literal closing at its one argument and the command at its one,
+     ;; whether or not the path exists.
+     (send! "\x1b;xedit:save-file! (file \"~/ddd\"\t")
+     (wait-for! 'a-final-datum-settles-the-forms-around-it
+                (lambda () (find-cell "λ (edit:save-file! (file \"~/ddd\"))")) 5000)
+     (send! "\x7;")                     ; C-g
      ;; Completing a sole candidate includes punctuation and remains executable.
      (send! "\x1b;xspwir\t\r")
      (wait-for! 'normalized-full-match-can-run

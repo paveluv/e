@@ -97,16 +97,23 @@ The result can be a complete symbol even when longer candidates remain.
 Enter evaluates the input as usual; to
 refine it instead, keep typing and press Tab again.
 
-A Tab with exactly one match inserts that symbol, closes the list, and
-settles the form around it while every enclosing operator has a fixed arity:
+Tab acts on the datum at point. A partial symbol completes as above. A datum
+that is final, a closed string, a closed form, or a string value at its dead
+end, is settled instead: Tab closes each enclosing form whose operator has a
+fixed arity once its arguments are all there, innermost first, and where more
+are due steps one space on to the next argument. So `(edit:save-file! (file
+"~/ddd"` Tab gives `(edit:save-file! (file "~/ddd"))`, the file literal taking
+one argument and `edit:save-file!` one, whether or not `~/ddd` exists; had
+either taken two, the cursor would step to the second. A Tab with exactly one
+match inserts that symbol, closes the list, and settles the same way:
 a procedure of no arguments closes its form with the matching `)`, `]` or
 `}`, one expecting more arguments leaves the cursor one space on, at the next
 argument, and a completed last argument closes the form. A closed form is then
 settled as an argument of its parent, so `(head:window-index (head:curr` Tab
 yields `(head:window-index (head:current-window))`. Optional and rest parameters,
 syntax, unbound names, quoted or quasiquoted forms, and text after the
-cursor all leave the cursor at the end of the symbol without appending a
-space or changing the arguments. Strings, comments and character literals
+cursor all leave the input alone, and Tab says `[No symbol]`; a symbol
+nothing matches stays as typed, with `[No match]`. Comments and character literals
 are left alone. A fuzzy query need not itself be valid Scheme: `2foo` can
 find `foo-2`.
 
@@ -165,7 +172,10 @@ value would offer nothing but the value itself. So `(edit:visit-file! "man`
 Tab gives `(edit:visit-file! (file "manual/` with the manual's entries
 listed at once, and `"manual/EVAL.m` Tab gives `(file "manual/EVAL.md")`,
 closed and settled; a directory argument closes at a directory without
-subdirectories. `~` and `/` lead the home and the root directory though the
+subdirectories. A name with a space completes like any other; a quote or a
+backslash in a name is escaped as the string literal holds it, `quo\"te.txt`,
+and a token typed with its escapes reads the same way. `~` and `/` lead the
+home and the root directory though the
 matcher has no segment for them: `(edit:visit-file! ~` Tab gives `(file "~/`,
 a bare `/` gives `(file "/` unless a symbol containing `/` is among the
 matches, and the same holds at a directory argument. How paths

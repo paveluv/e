@@ -827,7 +827,18 @@
                 (if (completer? completer)
                     (let-values ([(start end options values) ((completer-lookup completer) s pos)])
                       (cond
-                        [(not start) (dismiss-completions!) (loop s pos " [No symbol]")]
+                        [(not start)
+                         ;; nothing open at point: the datum before it, a closed
+                         ;; string or form, is final, and Tab settles the input
+                         ;; around it, closing complete forms and stepping to a due
+                         ;; argument, whose candidates then show; else the note
+                         (let ([settled (if (completer-settle completer) ((completer-settle completer) s pos) (cons s pos))])
+                           (if (and (string=? (car settled) s) (= (cdr settled) pos))
+                               (begin (dismiss-completions!) (loop s pos " [No symbol]"))
+                               (begin
+                                 (set! completion-source completer) (set! completion-range (cons pos pos))
+                                 (continue-or-end! completer (car settled) (cdr settled))
+                                 (edited (car settled) (cdr settled)))))]
                         [else
                          (set! completion-source completer) (set! completion-range (cons start end))
                          (cond
