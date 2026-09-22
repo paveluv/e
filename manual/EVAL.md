@@ -185,17 +185,27 @@ echo-area rows; long individual lines still soft-wrap at the terminal edge.
 After completion, the transient echo record retains the command's explicit
 line breaks, matching its multiline representation in `<log>`.
 
+### `eval:last-expression!` and `eval:top-level-form!` — evaluate at point
+
+`C-x C-e` evaluates the expression before point, the one `C-M-b` would cross:
+the atom around point, else the last expression ending by point inside the
+enclosing one. `C-M-x` evaluates the top-level form around point, else the
+next one after it. Both are the Emacs keys. Each shows `expression => result`
+in the echo area and records it in `<log>` as an `eval` exchange, so the
+expression is one Up away at M-x. `C-M-f` and `C-M-b` move by the same
+expressions: a string, a quoted datum or a vector is one expression, and a
+form still being typed keeps the complete expressions inside it.
+
 ### `eval:run!` — evaluate buffer or region text
 
-`C-x C-e` is bound to `eval:run!`.
+`eval:run!` evaluates the selected region while the mark is active, else the
+whole current buffer:
 
 ```scheme
 (eval:run!)
 ```
 
-`eval:run!` evaluates the selected region while the mark is active, else the
-whole current buffer. Another buffer or region is evaluated under a scope
-form:
+Another buffer or region is evaluated under a scope form:
 
 ```scheme
 (head:with-buffer (buffer "scratch.scm") (eval:run!))

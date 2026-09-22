@@ -9,7 +9,8 @@ The focused buffer is advertised to the containing terminal as
 `e: <buffer-name>`, allowing terminal emulators such as GNOME Terminal to show
 it in their tab or window title.
 
-The initial `*scratch*` buffer is an ordinary shared, unvisited buffer.
+The initial `*scratch*` buffer is an ordinary shared, unvisited buffer in
+Scheme mode.
 Local buffers belong to this head and have names in angle brackets:
 `<buffers>`, `<log>`, `<describe>`, `<completions>`, and merge reports.
 Shared buffers retain file names or names such as `*scratch*`. Describe's

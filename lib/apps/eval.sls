@@ -14,16 +14,19 @@
 ;; down arrows browse the history, and C-g interrupts a runaway
 ;; evaluation. Parameter suggestions query the base's reference corpus
 ;; and live module entries, with source and arity as fallbacks.
-;; C-x C-e runs eval:run! over the whole current buffer, or an explicit
-;; region/buffer target, in that same top level.
+;; C-x C-e evaluates the expression before point and C-M-x the top-level
+;; form around it, as in Emacs, in that same top level; eval:run! takes
+;; the selected region or the whole buffer at M-x.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps eval)
   (export call-with-evaluation! completion-candidates completion-extensions
           (rename (evaluation-condition condition)) (rename (eval-copy-result copy-result))
-          init! input-closers input-diagnostic (rename (eval-prompt! prompt!))
+          init! input-closers input-diagnostic (rename (eval-last-expression! last-expression!))
+          (rename (eval-prompt! prompt!))
           (rename (eval-prompt-with! prompt-with!)) report! (rename (eval! run!)) settle-completion
-          (rename (evaluation-status status)) (rename (evaluation-values values)))
+          (rename (evaluation-status status)) (rename (eval-top-level-form! top-level-form!))
+          (rename (evaluation-values values)))
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
@@ -33,6 +36,7 @@
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head edit) edit:)
+          (prefix (head expression) expression:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
@@ -1127,6 +1131,25 @@
                (lambda () (evaluate-text (edit:region-text (edit:current-region))))) "(eval!)")
     (void))
 
+  (define (evaluate-span! start end label)
+    ;; the buffer text between two positions, evaluated and reported as
+    ;; the exchange it is: the expression, then its result
+    (let ([text (expression:text (head:current-buffer) start end)])
+      (report! (call-with-evaluation! label (lambda () (evaluate-text text))) text)
+      (void)))
+
+  (edoc "Evaluate the expression before point, the one C-M-b would cross, in the M-x interaction environment and show its result; the C-x C-e of Emacs.")
+  (define (eval-last-expression!)
+    (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
+      (unless start (error 'eval:last-expression! "no expression before point"))
+      (evaluate-span! start end "(eval:last-expression!)")))
+
+  (edoc "Evaluate the top-level form around point, else the next one after it, in the M-x interaction environment and show its result; the C-M-x of Emacs.")
+  (define (eval-top-level-form!)
+    (let-values ([(start end) (expression:top-level (head:current-buffer) (head:point))])
+      (unless start (error 'eval:top-level-form! "no top-level form in the buffer"))
+      (evaluate-span! start end "(eval:top-level-form!)")))
+
   (define (spell value)
     ;; a pre-filled argument as the expression denoting it
     (if (symbol? value) (format "'~s" value) (format "~s" value)))
@@ -1175,17 +1198,24 @@
     ;; the prompt pretypes "(", deletable, so a bare symbol evaluates too
     (read-and-run! "("))
 
-  (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e and M-x bindings.")
+  (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e, C-M-x and M-x bindings.")
   (define (init!)
     (doc:register!
-      '(((eval:run!) (("procedure" . "(eval:run! [where])")) "void"
+      '(((eval:run!) (("procedure" . "(eval:run!)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f
          "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the copy buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
+        ((eval:last-expression!) (("procedure" . "(eval:last-expression!)")) "void"
+         ("(apps eval)") eval "Evaluation commands" #f
+         "Evaluate the expression before point, the one C-M-b would cross, in the M-x interaction environment and show its result in the echo area; C-x C-e.")
+        ((eval:top-level-form!) (("procedure" . "(eval:top-level-form!)")) "void"
+         ("(apps eval)") eval "Evaluation commands" #f
+         "Evaluate the top-level form around point, else the next one after it, in the M-x interaction environment and show its result in the echo area; C-M-x.")
         ((eval:prompt!) (("procedure" . "(eval:prompt!)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f
          "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the copy buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (log:register-formatter! 'eval format-exchange style-exchange)
-    (keymap:bind-default! "C-x C-e" eval!)
+    (keymap:bind-default! "C-x C-e" eval-last-expression!)
+    (keymap:bind-default! "C-M-x" eval-top-level-form!)
     (keymap:bind-default! "M-x" eval-prompt!)
     ;; keys bound with keymap:prefill open this prompt with their text
     (dispatch:set-prompt-opener! eval-prompt-with!)))

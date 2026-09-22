@@ -27,10 +27,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head edit)
-  (export answer! backspace! beginning-of-buffer! beginning-of-line! buffer-clean? buffer-text
+  (export answer! backspace! backward-expression! beginning-of-buffer! beginning-of-line! buffer-clean? buffer-text
           call-as-one-edit! copy-region! copy-text copy-text! current-region
           delete-forward! empty-trash! end-of-buffer! end-of-line! format-buffer! format-region!
-          forward-copy-buffer-to-system-clipboard indent-buffer! indent-line! indent-region!
+          forward-copy-buffer-to-system-clipboard forward-expression! indent-buffer! indent-line! indent-region!
           indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-line! kill-region!
           message-progress message-source move-horizontal! move-left! move-right! move-vertical!
           new-buffer! newline! next-line! open-line! page-down! page-up! page-window!
@@ -47,6 +47,7 @@
           (prefix (foundation text) text:)
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
+          (prefix (head expression) expression:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (head literal)
@@ -430,6 +431,16 @@
   (define (clamp-point!)
     (set! point-row (max 0 (min point-row (- (vlen) 1))))
     (set! point-col (max 0 (min point-col (string-length (current-display-line))))))
+
+  (edoc "Move point forward over one expression: the atom around point, else the next expression inside the enclosing one; the C-M-f of Emacs.")
+  (define (forward-expression!)
+    (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
+      (if end (head:goto! end) (set-message! "No expression after point"))))
+
+  (edoc "Move point backward over one expression: the atom around point, else the last expression ending by it inside the enclosing one; the C-M-b of Emacs.")
+  (define (backward-expression!)
+    (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
+      (if start (head:goto! start) (set-message! "No expression before point"))))
 
   (edoc "Move point one character left, crossing to the end of the previous line.")
   (define (move-left!)
@@ -1945,6 +1956,7 @@
           ("C-o" ,open-line!) ("C-p" ,previous-line!)
           ("C-v" ,page-down!) ("C-w" ,kill-region!) ("C-y" ,yank!)
           ("C-_" ,undo!) ("C-M-_" ,redo!) ("M-w" ,copy-region!)
+          ("C-M-f" ,forward-expression!) ("C-M-b" ,backward-expression!)
           ("M-v" ,page-up!) ("M-<" ,beginning-of-buffer!)
           ("M->" ,end-of-buffer!) ("UP" ,previous-line!)
           ("DOWN" ,next-line!) ("LEFT" ,move-left!)

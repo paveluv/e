@@ -162,7 +162,8 @@ for configuration, lifecycle and scripted clients.
 | `C-_`, `C-M-_` | Undo, redo |
 | `C-@`, `C-w`, `M-w`, `C-y` | Mark, kill, copy, yank |
 | `M-x` | Evaluate Scheme interactively |
-| `C-x C-e` | Evaluate the current buffer as Scheme |
+| `C-x C-e`, `C-M-x` | Evaluate the expression before point, the top-level form around it |
+| `C-M-f`, `C-M-b` | Move forward, backward by expression |
 | `C-h f`, `M-.`, `C-h k` | Describe a name, symbol at point, or key |
 | `C-x g` | Browse Git history and patches |
 | `C-c t` | Open a terminal buffer |

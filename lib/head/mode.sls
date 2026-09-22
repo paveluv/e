@@ -172,11 +172,20 @@
                                           (string-length first-line)))
                          (mode-interpreters m)))))))
 
-  (edoc "Give a buffer the mode its file and first line detect, following detection from then on."
+  (define (scratch-mode b)
+    ;; *scratch*, the editor's notepad, speaks Scheme without a file name
+    ;; to say so, as Emacs's *scratch* speaks Lisp
+    (and (not (head:buffer-file b))
+         (string:prefix? "*scratch*" (head:buffer-name b))
+         (find-mode "scheme")))
+
+  (edoc "Give a buffer the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
         (b buffer "the buffer"))
   (define (assign-mode! b)
     (set-mode-of! b
-      (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0)) #t))
+      (or (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0))
+          (scratch-mode b))
+      #t))
 
   (edoc "The registered mode called name, or #f."
         (name mode "the mode's name")
