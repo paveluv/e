@@ -1065,13 +1065,22 @@
     (if (evaluating?) (run)
       (let ([lock (make-mutex)]
             [terminal (sys:duplicate-standard-output-port)])
-        (define (record! component line)
+        (define (record! component line . show)
           (parameterize ([sys:terminal-output-port terminal])
-            (with-mutex lock (log:add! component line))))
+            (with-mutex lock (apply log:add! component line show))))
+        (define compile-default (compile-library-handler))
+        (define (compile-quietly source object)
+          ;; A library compiled on import, once an extension enabled lazy
+          ;; compilation, is bookkeeping: a compile record naming its source
+          ;; for the log, nothing in the echo area, and Chez's own line
+          ;; withheld. A compilation that fails raises into the result.
+          (record! 'compile source #f)
+          (parameterize ([compile-file-message #f]) (compile-default source object)))
         (dynamic-wind
           void
           (lambda ()
-            (parameterize ([sys:terminal-output-port terminal] [evaluating? #t])
+            (parameterize ([sys:terminal-output-port terminal] [evaluating? #t]
+                           [compile-library-handler compile-quietly])
               (sys:call-with-streamed-output
                 (lambda (line) (record! 'stdout line))
                 (lambda (line) (record! 'stderr line))

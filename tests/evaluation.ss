@@ -7,7 +7,8 @@
   '(begin
      (import (prefix (apps eval) eval:) (prefix (head edit) edit:)
              (prefix (head head) head:) (prefix (head echo) echo:)
-             (prefix (service log) log:) (prefix (test) test:))
+             (prefix (service log) log:) (prefix (test) test:)
+             (prefix (foundation string) string:) (prefix (core kernel) kernel:))
 
      (define (run thunk) (eval:call-with-evaluation! "test evaluation" thunk))
      (test:check 'values-are-retained-without-implicit-reporting
@@ -62,4 +63,39 @@
      (define spoken (run (lambda () (echo:set-text! "command message") (void))))
      (eval:report! spoken 'probe)
      (test:check 'void-report-preserves-the-command-message (echo:text) "command message")
+     ;; A library compiled on import announces itself as a compile record for
+     ;; the log alone; a broken one fails the evaluation, which the echo shows.
+     (define root (format "/tmp/e-eval-compile-~a-~a" (get-process-id) (random 1000000)))
+     (define (library! name text)
+       (call-with-output-file (string-append root "/probe/" name ".sls") (lambda (p) (display text p))))
+     (mkdir root) (mkdir (string-append root "/probe"))
+     (library! "fresh" "(library (probe fresh) (export fresh) (import (rnrs)) (define fresh 'compiled))")
+     (library! "broken" "(library (probe broken) (export) (import (rnrs)) (define))")
+     (define shown '())
+     (define printed '())
+     (log:subscribe! (lambda (e presentation)
+                       (case (log:component e)
+                         [(compile) (set! shown (cons presentation shown))]
+                         [(stdout) (set! printed (cons (cons (log:datum e) presentation) printed))])))
+     (run (lambda () (display "haha")))
+     (test:check 'ordinary-output-still-reaches-the-echo-area printed '(("haha" . append)))
+     (define stdout-before (length (log:entries 'stdout)))
+     (define-values (compiled failed)
+       (parameterize ([library-directories (cons (cons root root) (library-directories))]
+                      [compile-imported-libraries #t])
+         (values (run (lambda () (eval '(begin (import (probe fresh)) fresh) (interaction-environment))))
+                 (run (lambda () (eval '(import (probe broken)) (interaction-environment)))))))
+     (test:check 'a-library-compiled-on-import-is-a-compile-record-shown-nowhere
+       (list (eval:values compiled) (map log:datum (log:entries 'compile)) shown
+             (- (length (log:entries 'stdout)) stdout-before))
+       (list '(compiled) (list (string-append root "/probe/fresh.sls") (string-append root "/probe/broken.sls")) '(#f #f) 0))
+     (test:check 'a-failed-compilation-is-the-evaluation-error-naming-the-source
+       (list (eval:status failed)
+             (and (string:search (kernel:condition-text (eval:condition failed)) "broken.sls" 0
+                                 (string-length (kernel:condition-text (eval:condition failed)))) #t))
+       '(error #t))
+     (for-each (lambda (name) (delete-file (string-append root "/probe/" name)))
+               (list "fresh.sls" "fresh.so" "broken.sls"))
+     (delete-directory (string-append root "/probe")) (delete-directory root)
+
      (test:finish! 'evaluation)))

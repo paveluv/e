@@ -252,6 +252,10 @@ child's line after it. Output is separated into structured log components:
 
 - the current output port and process stdout become `stdout` records;
 - the current error port and process stderr become `stderr` records.
+- a library compiled on import, once an extension enabled lazy compilation,
+  becomes a `compile` record naming its source; it stays out of the echo
+  area, and Chez's own `compiling …` line is withheld. A compilation that
+  fails raises into the evaluation's error, which the echo area shows.
 
 Each completed line receives its timestamp when it arrives, so `<log>`
 preserves the timing of long-running commands. A final unterminated line is
