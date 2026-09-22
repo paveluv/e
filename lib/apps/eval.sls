@@ -1078,39 +1078,39 @@
                 (lambda () (head:call-with-interrupt run)))))
           (lambda () (close-port terminal))))))
 
-  (edoc "Report an evaluation in the echo area, copying non-void values when copy-result is enabled. Preserve messages spoken by void commands. Only the optional expression adds an M-x history entry."
+  (edoc "Report an evaluation in the echo area, copying non-void values when copy-result is enabled and preserving a message a void command spoke. The record goes to the log under the caller's component, an extension's own; given the M-x input as a string instead, it is recorded as an eval exchange, with its history."
         (outcome (record evaluation) "the execution result")
-        (query string "the actual Scheme input to retain in M-x history"))
-  (define report!
-    (case-lambda
-      [(outcome) (report! outcome #f)]
-      [(outcome query)
-       ;; A command run at M-x that spoke in the echo area, (edit:answer! ...)
-       ;; say, keeps its message: a void result is logged but not shown over
-       ;; it. Spoken is the echo text before the evaluation, when known.
-       (let* ([failed? (not (eq? (evaluation-status outcome) 'ok))]
-              [vals (evaluation-values outcome)]
-              [void? (and (not failed?)
-                       (or (null? vals)
-                           (and (null? (cdr vals))
-                                (eq? (car vals) (void)))))]
-              [result (if failed?
-                        (if (eq? (evaluation-status outcome) 'interrupted) "interrupted"
-                          (format "error: ~a" (kernel:condition-text (evaluation-condition outcome))))
-                        (string:join (map (lambda (v) (format "~s" v)) vals)
-                                     ", "))]
-              [spoke? (and void?
-                        (let ([now (echo:text)])
-                          (and (string? now) (> (string-length now) 0) (not (equal? now (evaluation-spoken outcome))))))])
-         (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
-                [result-record
-                 (log:add! (if query 'eval 'e)
-                   (let ([text (if void? "#<void>" result)]) (if query (cons query text) text)) #f)])
-           (when copied? (edit:copy-to-kill-buffer! result))
-           (unless spoke?
-             (edit:present-log-entries!
-               (list result-record)
-               (if copied? " [stored in kill ring]" "")))))]))
+        (destination (or symbol string) "the log component for the record, or the M-x input to record as an exchange"))
+  (define (report! outcome destination)
+    (unless (or (symbol? destination) (string? destination))
+      (error 'eval:report! "expected a log component or the M-x input" destination))
+    (let ([query (and (string? destination) destination)] [component (if (string? destination) 'eval destination)])
+      ;; A command run at M-x that spoke in the echo area, (edit:answer! ...)
+      ;; say, keeps its message: a void result is logged but not shown over
+      ;; it. Spoken is the echo text before the evaluation, when known.
+      (let* ([failed? (not (eq? (evaluation-status outcome) 'ok))]
+             [vals (evaluation-values outcome)]
+             [void? (and (not failed?)
+                      (or (null? vals)
+                          (and (null? (cdr vals))
+                               (eq? (car vals) (void)))))]
+             [result (if failed?
+                       (if (eq? (evaluation-status outcome) 'interrupted) "interrupted"
+                         (format "error: ~a" (kernel:condition-text (evaluation-condition outcome))))
+                       (string:join (map (lambda (v) (format "~s" v)) vals)
+                                    ", "))]
+             [spoke? (and void?
+                       (let ([now (echo:text)])
+                         (and (string? now) (> (string-length now) 0) (not (equal? now (evaluation-spoken outcome))))))])
+        (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
+               [result-record
+                (log:add! component
+                  (let ([text (if void? "#<void>" result)]) (if query (cons query text) text)) #f)])
+          (when copied? (edit:copy-to-kill-buffer! result))
+          (unless spoke?
+            (edit:present-log-entries!
+              (list result-record)
+              (if copied? " [stored in kill ring]" "")))))))
 
   (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area.")
   (define (eval!)

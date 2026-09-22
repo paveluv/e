@@ -335,15 +335,18 @@ output capture, undo grouping and reporting without using M-x's environment:
 ```scheme
 (eval:report!
   (eval:call-with-evaluation! "worksheet evaluation"
-    (lambda () (eval form worksheet-environment))))
+    (lambda () (eval form worksheet-environment)))
+  'worksheet)
 ```
 
 The thunk returns ordinary Scheme values. `eval:status` is `ok`, `error` or
 `interrupted`; `eval:values` returns the list of values and `eval:condition`
 the original condition on failure. Execution alone neither copies nor
 reports the result. `eval:report!` applies `eval:copy-result` and preserves a
-message spoken by a void command. Passing the actual input as its second
-argument additionally records an M-x history exchange; omit it for extensions.
+message spoken by a void command. Its second argument says where the record
+goes: an extension passes its own log component, `'worksheet`, and the
+result appears under it in `<log>`; M-x passes the actual input as a string,
+which records an `eval` exchange with its history.
 
 Run on the head's main thread. Nested calls share the outer capture and
 interruption scope and one undo group. A continuation escape cleans up and

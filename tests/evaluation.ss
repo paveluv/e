@@ -51,14 +51,15 @@
        (list (eq? handler (keyboard-interrupt-handler)) (= descriptors (test:fd-count))
              (eval:values (run (lambda () 7)))) '(#t #t (7)))
 
-     (eval:report! nested)
-     (test:check 'extension-report-copies-without-mx-history
-       (list (log:history 'eval car) (head:kill-ring)) '(() "42"))
+     (eval:report! nested 'probe)
+     (test:check 'extension-report-records-under-its-component-without-mx-history
+       (list (log:history 'eval car) (head:kill-ring) (map log:datum (log:entries 'probe))) '(() "42" ("42")))
+     (test:check 'a-report-needs-a-destination (test:raises? (lambda () (eval:report! nested))) #t)
      (eval:report! (run (lambda () #f)) "#f")
      (test:check 'explicit-input-records-the-exchange
        (map log:datum (log:entries 'eval)) '(("#f" . "#f")))
      (echo:set-text! "before")
      (define spoken (run (lambda () (echo:set-text! "command message") (void))))
-     (eval:report! spoken)
+     (eval:report! spoken 'probe)
      (test:check 'void-report-preserves-the-command-message (echo:text) "command message")
      (test:finish! 'evaluation)))

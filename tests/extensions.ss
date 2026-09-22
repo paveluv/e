@@ -8,7 +8,7 @@
 (eval
   '(begin
      (import (prefix (core extension) extension:) (prefix (core kernel) kernel:)
-             (prefix (sys sys) sys:)
+             (prefix (foundation string) string:) (prefix (sys sys) sys:)
              (prefix (test) test:))
 
      (define scratch (format "/tmp/e-extension-test-~a-~a" (get-process-id) (random 1000000)))
@@ -59,6 +59,8 @@
               (define ready #f) (define (ready?) ready) (define (init!) (set! ready #t))))
          (put "runner-test.ss" '(unless (runner-probe:ready?) (error 'runner "entry not initialized")))
          (put "failed/lib/external-retry.sls" (entry 'external-retry '(collection helper)))
+         (put "plugin/lib/needs-absent.sls"
+           '(library (needs-absent) (export init!) (import (chezscheme) (absent collection)) (define (init!) (void))))
          (put "conflict/lib/core/kernel.sls" '(library (core kernel) (export) (import (rnrs))))
          (put "shadow/external-probe.sls" (entry 'external-probe '(other helper)))
          (chmod (path "plugin/lib") #o555)
@@ -90,6 +92,16 @@
              (map test:raises?
                (list (lambda () (extension:load! "../conflict" "kernel"))
                      (lambda () (extension:load! "../plugin" "missing")))) '(#t #t))
+           (let ([complaint (lambda (thunk) (guard (ex [else (condition-message ex)]) (thunk) "no error"))]
+                 [mentions? (lambda (text . parts)
+                              (for-all (lambda (part) (and (string:search text part 0 (string-length text)) #t)) parts))])
+             (test:check 'errors-name-the-checkout-the-entry-and-the-missing-library
+               (list (mentions? (complaint (lambda () (extension:load! "../plugin" "missing"))) (path "plugin") "missing")
+                     (mentions? (complaint (lambda () (extension:load! "../conflict" "kernel"))) "core/kernel.sls" "two roots")
+                     (mentions? (complaint (lambda () (extension:load! "../plugin" "needs-absent"))) "(absent collection)" "third argument")
+                     (mentions? (complaint (lambda () (extension:load! "../nowhere" "x"))) "repository")
+                     (mentions? (complaint (lambda () (extension:load! "../plugin" "external-probe" "../nowhere"))) "library root"))
+               '(#t #t #t #t #t)))
            (test:check 'published-module-keeps-its-source
              (parameterize ([library-directories (cons (cons (path "shadow") (path "objects")) (library-directories))])
                (kernel:module-source "external-probe"))

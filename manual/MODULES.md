@@ -167,8 +167,11 @@ the quoted list:
 
 The loader manages compilation under e's runtime cache. The checkout can
 be read-only; it needs no cache setup, generated files or machine-specific
-paths in its libraries. It never downloads dependencies. Conflicting
-library sources are refused rather than silently shadowing existing code.
+paths in its libraries. It never downloads dependencies. A library present
+under two roots is refused, naming both files, rather than one silently
+shadowing the other; the check indexes each root once, so a large source
+tree as a dependency root costs one walk. A missing import names the
+library and the third argument that supplies its root.
 Repeated loading is harmless. If initialization or a surrounding config
 fails, module membership and registrations roll back, allowing a corrected
 retry. Imported libraries and their search roots stay for the process's
