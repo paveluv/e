@@ -1243,8 +1243,16 @@
 
   (define (now-seconds) (time-second (current-time 'time-utc)))
 
-  (define (trashed-ids)
-    (filter (lambda (id) (store:property id 'trashed #f)) (store:buffer-list)))
+  (define (trashed-entries)
+    ;; (id name killed-at actor), the newest kill first
+    (list-sort (lambda (a b) (or (> (caddr a) (caddr b)) (and (= (caddr a) (caddr b)) (> (car a) (car b)))))
+      (filter values
+        (map (lambda (id)
+               (let ([t (store:property id 'trashed #f)])
+                 (and t (list id (store:buffer-name id) (car t) (cadr t)))))
+             (store:buffer-list)))))
+
+  (define (trashed-ids) (map car (trashed-entries)))
 
   (edoc "Kill a buffer at once: a shared document goes to the trash, where restore! finds it under its name for store:trash-retention days; disposable output is deleted and a local buffer forgotten."
         (b buffer "the buffer to kill"))
@@ -1266,11 +1274,7 @@
   (edoc "The trashed buffers, newest first, as (name killed-at actor): killed-at in UTC seconds; each expires store:trash-retention days after it was killed."
         (returns (list-of list)))
   (define (trash)
-    (list-sort (lambda (a b) (> (cadr a) (cadr b)))
-      (map (lambda (id)
-             (let ([t (store:property id 'trashed #f)])
-               (list (store:buffer-name id) (car t) (cadr t))))
-           (trashed-ids))))
+    (map cdr (trashed-entries)))
 
   (edoc-type trashed "the name of a buffer in the trash"
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
@@ -1281,19 +1285,20 @@
     (write (lambda (v) (format "~s" v)))
     (within string))
 
-  (edoc "Bring a buffer back from the trash, with its text and history, and show it in the current window."
+  (edoc "Bring a buffer back from the trash, the newest of that name, with its text and history, and show it in the current window; it takes a unique name when another buffer holds its own."
         (name trashed "the buffer's name in the trash")
         (returns buffer))
   (define (restore! name)
-    (let ([id (find (lambda (id) (string=? (store:buffer-name id) name)) (trashed-ids))])
-      (unless id (error 'restore! "no such buffer in the trash" name))
-      (store:set-properties! head:ui-actor id '((trashed . #f)))
-      (let ([b (head:adopt-store-buffer! id)])
-        (unless b (error 'restore! "the buffer did not come back" name))
-        (head:show-buffer! b)
-        (parameterize ([message-source 'restore!])
-          (set-message! (format "Restored ~a" (head:buffer-name b))))
-        b)))
+    (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
+      (unless entry (error 'restore! "no such buffer in the trash" name))
+      (let ([id (car entry)])
+        (store:set-properties! head:ui-actor id '((trashed . #f)))
+        (let ([b (head:adopt-store-buffer! id)])
+          (unless b (error 'restore! "the buffer did not come back" name))
+          (head:show-buffer! b)
+          (parameterize ([message-source 'restore!])
+            (set-message! (format "Restored ~a" (head:buffer-name b))))
+          b))))
 
   (edoc "Delete every trashed buffer for good; how many went."
         (returns integer))

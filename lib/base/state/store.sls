@@ -200,13 +200,15 @@
     (string-copy name))
 
   (define (unique-name base self)
-    ;; Caller holds the store lock. Hidden buffers share this namespace;
-    ;; deletion releases a name and renaming does not compete with itself.
+    ;; Caller holds the store lock. Hidden buffers share this namespace,
+    ;; trashed ones release their names until they are restored; deletion
+    ;; releases a name and renaming does not compete with itself.
     (let ([used (make-hashtable string-hash string=?)])
       (vector-for-each
         (lambda (id)
-          (unless (eqv? id self)
-            (hashtable-set! used (buffer-label (buffer-of 'unique-name id)) #t)))
+          (let ([b (buffer-of 'unique-name id)])
+            (unless (or (eqv? id self) (property-value b 'trashed #f))
+              (hashtable-set! used (buffer-label b) #t))))
         (hashtable-keys (store-buffers (current-store))))
       (let next ([name base] [suffix 2])
         (if (hashtable-ref used name #f)
@@ -247,7 +249,12 @@
     ;; identity lives in the file fact, so retarget/delete need no index upkeep.
     (unless (and (string? path) (> (string-length path) 0))
       (error 'find-file "expected a nonempty canonical file path" path))
-    (find (lambda (id) (equal? (property-value (buffer-of 'find-file id) 'file #f) path))
+    ;; A trashed document no longer visits its file: a fresh visit starts
+    ;; from disk, and restore! brings the trashed one back beside it.
+    (find (lambda (id)
+            (let ([b (buffer-of 'find-file id)])
+              (and (not (property-value b 'trashed #f))
+                   (equal? (property-value b 'file #f) path))))
           (vector->list (hashtable-keys (store-buffers (current-store))))))
 
   (edoc "The id of the buffer visiting a file, or #f."
@@ -1335,12 +1342,18 @@
         (lambda (actor)
           (let* ([b (if expected (hashtable-ref (store-buffers (current-store)) id #f)
                         (buffer-of 'set-properties! id))]
-                 [trailing? (and b (property-value b 'trailing #t))])
+                 [trailing? (and b (property-value b 'trailing #t))]
+                 [trashed? (and b (property-value b 'trashed #f) #t)])
             (and b (or (not expected) (property:matches? expected (current-properties b)))
                  (begin
                    (unless (null? updates)
                      (install-properties! b updates)
                      (refresh-edit-facts! b (not (eq? trailing? (property-value b 'trailing #t)))))
+                   ;; a restored buffer takes a unique name: while it sat in
+                   ;; the trash, a fresh visit may have taken its own
+                   (when (and trashed? (not (property-value b 'trashed #f)))
+                     (let ([unique (unique-name (buffer-label b) id)])
+                       (unless (string=? unique (buffer-label b)) (rename-buffer! actor id unique))))
                    (when name (rename-buffer! actor id name))
                    (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
                    #t)))))))

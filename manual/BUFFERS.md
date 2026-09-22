@@ -77,9 +77,12 @@ Killing asks nothing. `M-x (edit:kill-buffer! ` completes the live buffers,
 and `C-x k` kills the current one. A shared document goes to the trash
 rather than being deleted: it disappears from every head, its text, facts
 and undo history stay in the base, and the echo area says whether the work
-in it was unsaved. `M-x (edit:restore! ` completes the trashed names, newest
-first with how long ago each was killed, and brings one back into the
-current window; `(edit:trash)` lists them as `(name killed-at actor)`, and
+in it was unsaved. Visiting the file again reads the disk into a fresh buffer
+under the plain name; the trashed one stays in the trash. `M-x (edit:restore! `
+completes the trashed names, newest first with how long ago each was killed,
+and brings one back into the current window: the newest of that name, renamed
+with a suffix while another buffer holds it, since several buffers may visit
+one file. `(edit:trash)` lists them as `(name killed-at actor)`, and
 `(edit:empty-trash!)` deletes them for good. The trash survives a base
 restart and empties itself by age, thirty days by default through
 `(store:trash-retention days)` in `base-config.e`. Disposable output,
