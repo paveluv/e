@@ -510,4 +510,8 @@
              '((#t #t) (#t #t))))
          (lambda () (when (file-exists? path) (delete-file path)))))
 
+     ;; Before the input reader runs no question can be answered: the prompts
+     ;; ask first and cancel instead of waiting forever
+     (check 'input-is-not-live-before-the-reader-runs (head:input-live?) #f)
+
      (test:finish! 'edit-state)))

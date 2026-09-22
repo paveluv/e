@@ -264,14 +264,15 @@
               "scheme-mode" "search" "style" "terminal" "tty" "window"))))
       (load-config!)
       ;; Config loads the local view providers before resolving their plain
-      ;; descriptors. An explicit file still opens in the restored selection.
+      ;; descriptors. An explicit file still opens in the restored selection,
+      ;; but only once the terminal is live and keys arrive, below: visiting
+      ;; may ask about a file changed on disk, and a question asked before
+      ;; the input reader runs waits forever.
       (let ([resumed? (head:resume!)])
-        (if file
-            (head:open-file! file)
-            (when (and (not resumed?) startup-page)
-              (guard (ex [else (void)]) (startup-page))
-              ;; the greeting outlives the page's own load chatter
-              (echo:set-text! (startup-greeting))))))
+        (when (and (not file) (not resumed?) startup-page)
+          (guard (ex [else (void)]) (startup-page))
+          ;; the greeting outlives the page's own load chatter
+          (echo:set-text! (startup-greeting)))))
     ;; A stray SIGINT outside an evaluation must not drop into Chez's break
     ;; prompt underneath the editor's screen.
     (keyboard-interrupt-handler void)
@@ -298,6 +299,8 @@
         (paint:set-screen-live! #t)
         (head:start-input-reader!))
       (lambda ()
+        (let ([file (startup:file)])
+          (when file (head:open-file! file)))
         (let loop ()
           (unless (head:quitting?)
             (head:run-deferred!)

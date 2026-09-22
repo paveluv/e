@@ -42,7 +42,7 @@
           dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer
           fit-layout! flush-ui-audit! follow-app! forget-buffer! fresh-buffer!
           (rename (window-full-capture? full-capture?)) goto! hide-popup! host-color-scheme
-          in-main-pump interrupted? kill-ring last-command layout layout-leaves
+          in-main-pump input-live? interrupted? kill-ring last-command layout layout-leaves
           layout-min-height layout-min-width layout-node! layout-parent layout-replace!
           layout-split-first layout-split-first-set! layout-split-first-weight
           layout-split-first-weight-set! layout-split-orientation layout-split-second
@@ -886,8 +886,17 @@
   (define (set-current-keys! keys)
     (set! the-current-keys keys))
 
+  ;; Whether the reader runs: a question asked before it does would wait
+  ;; forever on a mailbox nothing feeds, so the prompts ask first.
+  (define input-reader-started? #f)
+
+  (edoc "Whether terminal input reaches the pump: the input reader has started, so a prompt can be answered."
+        (returns boolean))
+  (define (input-live?) input-reader-started?)
+
   (edoc "Start the thread that reads terminal events into the pump's mailbox.")
   (define (start-input-reader!)
+    (set! input-reader-started? #t)
     (let ([stdin (sys:duplicate-standard-input-port)])
       (fork-thread
         (lambda ()
@@ -923,7 +932,7 @@
                   [(not (pair? event)) (set-mouse-position! #f) event]
                   [(eq? (car event) 'mouse)
                    (set-mouse-position! (and handle-mouse?
-                                          (cons (list-ref event 3) (list-ref event 4))))
+                                             (cons (list-ref event 3) (list-ref event 4))))
                    (let ([result (apply mouse-handler handle-mouse? (cdr event))])
                      (cond [(eq? result 'ignore)
                             ;; Swallowed, but it may have moved hover state:
@@ -959,6 +968,7 @@
                      (set! deferred (cons (cdr message) deferred))])
               (pump)]
              [else (pump)])))]))
+
   ;;; Tiling and hit-testing -------------------------------------------------------
 
   ;; The last tiling is remembered: mouse hit-testing asks where the

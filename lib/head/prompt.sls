@@ -127,59 +127,62 @@
                                    (string-length allowed)))])
               (loop (+ i (if marker? 2 1))
                     (cons ch chars) (cons marker? marked))))))
-    (let* ([rendered (render-question question)]
-           [shown (string-append (car rendered) " ")]
-           [shown-styles (let* ([source (cdr rendered)]
-                                [v (make-vector (string-length shown) 'plain)])
-                           (let copy ([i 0])
-                             (when (< i (vector-length source))
-                               (vector-set! v i (vector-ref source i))
-                               (copy (+ i 1))))
-                           v)]
-           [repaint (and (pair? rest) (car rest))])
-      (define (repaint-extra!)
-        (when repaint
-          (repaint)
-          (paint:place-cursor!)))
-      (interaction
-        (lambda ()
-          (dynamic-wind
-            (lambda ()
-              (set! message shown)
-              (set! message-ghost "")
-              (set! message-styles (cons shown (lambda (_) shown-styles)))
-              (set! echo-indent 0)
-              (set! echo-input-end (string-length shown))
-              (set! echo-cursor (string-length shown))
-              (paint:redraw!)
-              (repaint-extra!))
-            (lambda ()
-              (let wait ()
-                (let ([event (head:read-key-event #f)])
-                  (cond [(eof-object? event) #f]
-                    [(string=? event "C-g") #\alarm]
-                    [(string=? event "ESC") #\esc]
-                    [(tty:key-event-character event)
-                     => (lambda (choice)
-                          (if (string:search allowed
-                                (string (char-downcase choice))
-                                0 (string-length allowed))
+    ;; no input yet, no answer: a question asked before the terminal's
+    ;; reader runs cancels instead of waiting forever
+    (if (not (head:input-live?)) #f
+      (let* ([rendered (render-question question)]
+             [shown (string-append (car rendered) " ")]
+             [shown-styles (let* ([source (cdr rendered)]
+                                  [v (make-vector (string-length shown) 'plain)])
+                             (let copy ([i 0])
+                               (when (< i (vector-length source))
+                                 (vector-set! v i (vector-ref source i))
+                                 (copy (+ i 1))))
+                             v)]
+             [repaint (and (pair? rest) (car rest))])
+        (define (repaint-extra!)
+          (when repaint
+            (repaint)
+            (paint:place-cursor!)))
+        (interaction
+          (lambda ()
+            (dynamic-wind
+              (lambda ()
+                (set! message shown)
+                (set! message-ghost "")
+                (set! message-styles (cons shown (lambda (_) shown-styles)))
+                (set! echo-indent 0)
+                (set! echo-input-end (string-length shown))
+                (set! echo-cursor (string-length shown))
+                (paint:redraw!)
+                (repaint-extra!))
+              (lambda ()
+                (let wait ()
+                  (let ([event (head:read-key-event #f)])
+                    (cond [(eof-object? event) #f]
+                      [(string=? event "C-g") #\alarm]
+                      [(string=? event "ESC") #\esc]
+                      [(tty:key-event-character event)
+                       => (lambda (choice)
+                            (if (string:search allowed
+                                  (string (char-downcase choice))
+                                  0 (string-length allowed))
                               choice
                               (begin
                                 (paint:visual-bell!)
                                 (repaint-extra!)
                                 (wait))))]
-                    [else
-                     (paint:visual-bell!)
-                     (repaint-extra!)
-                     (wait)]))))
-            (lambda ()
-              (set! echo-cursor #f)
-              (set! echo-indent #f)
-              (set! echo-input-end #f)
-              (set! message-styles #f)
-              (set! message "")
-              (set! message-ghost "")))))))
+                      [else
+                       (paint:visual-bell!)
+                       (repaint-extra!)
+                       (wait)]))))
+              (lambda ()
+                (set! echo-cursor #f)
+                (set! echo-indent #f)
+                (set! echo-input-end #f)
+                (set! message-styles #f)
+                (set! message "")
+                (set! message-ghost ""))))))))
 
   (define active-refresh (make-parameter #f))
   (define window-owner (make-parameter #f))
@@ -949,22 +952,24 @@
                   [(prompt-window-command event) => (lambda (run) (loop s pos (run)))]
                   [(tty:key-event-character event) => (lambda (c) (edited (string:insert s pos (string c)) (+ pos 1)))]
                   [else (loop s pos "")]))))))
-    (interaction
-      (lambda ()
-        ;; These options belong to this invocation. Nested questions must
-        ;; not validate a filename, overwrite its draft or borrow its table.
-        (parameterize ([active-refresh (lambda ()
-                                         (when (and (not in-window?) (notice? note)) (render-echo!)))]
-                       [window-owner (if in-window? owner (window-owner))]
-                       [validate-input #f] [draft-input #f] [content #f])
-          (dynamic-wind
-            (lambda () (when in-window? (take-view!)))
-            run-prompt
-            (lambda ()
-              (release-view!)
-              (clear-validation!)
-              (set! echo-cursor #f) (set! echo-indent #f) (set! echo-input-end #f)
-              (set! echo-scroll 0) (set! message-ghost "")))))))
+    ;; no input yet, no reading: see query-key!
+    (if (not (head:input-live?)) #f
+      (interaction
+        (lambda ()
+          ;; These options belong to this invocation. Nested questions must
+          ;; not validate a filename, overwrite its draft or borrow its table.
+          (parameterize ([active-refresh (lambda ()
+                                           (when (and (not in-window?) (notice? note)) (render-echo!)))]
+                         [window-owner (if in-window? owner (window-owner))]
+                         [validate-input #f] [draft-input #f] [content #f])
+            (dynamic-wind
+              (lambda () (when in-window? (take-view!)))
+              run-prompt
+              (lambda ()
+                (release-view!)
+                (clear-validation!)
+                (set! echo-cursor #f) (set! echo-indent #f) (set! echo-input-end #f)
+                (set! echo-scroll 0) (set! message-ghost ""))))))))
 
   (edoc "Ask a yes-or-no question with a single key."
         (label string "the question")
