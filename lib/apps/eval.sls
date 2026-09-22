@@ -866,7 +866,7 @@
 
   ;;; Evaluation ----------------------------------------------------------------
 
-  (edoc "Whether a non-void evaluation result is also placed in the kill ring."
+  (edoc "Whether a non-void evaluation result is also placed in the copy buffer."
         (value boolean))
   (define eval-copy-result (make-parameter #t))
 
@@ -1106,11 +1106,11 @@
                [result-record
                 (log:add! component
                   (let ([text (if void? "#<void>" result)]) (if query (cons query text) text)) #f)])
-          (when copied? (edit:copy-to-kill-buffer! result))
+          (when copied? (edit:copy-text! result))
           (unless spoke?
             (edit:present-log-entries!
               (list result-record)
-              (if copied? " [stored in kill ring]" "")))))))
+              (if copied? " [copied]" "")))))))
 
   (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area.")
   (define (eval!)
@@ -1171,10 +1171,10 @@
     (doc:register!
       '(((eval:run!) (("procedure" . "(eval:run! [where])")) "void"
          ("(apps eval)") eval "Evaluation commands" #f
-         "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
+         "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the copy buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
         ((eval:prompt!) (("procedure" . "(eval:prompt!)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f
-         "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the kill ring when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
+         "Prompt for a Scheme expression, evaluate it in the editor's interaction environment, and record the expression and result in the log. Non-void results are stored in the copy buffer when `eval-copy-result` is true. Standard output and error are logged per line under `stdout` and `stderr`, including child-process output.")))
     (log:register-formatter! 'eval format-exchange style-exchange)
     (keymap:bind-default! "C-x C-e" eval!)
     (keymap:bind-default! "M-x" eval-prompt!)

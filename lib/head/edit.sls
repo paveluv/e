@@ -4,7 +4,7 @@
 ;; Everything a user does to text and to the seat that shows it: the
 ;; buffer commands (the window commands are (window)'s), visiting,
 ;; saving, merging with the disk,
-;; editing with undo, the kill ring and the clipboard, indentation and
+;; editing with undo, the copy buffer and the clipboard, indentation and
 ;; formatting through the modes' registered indenters,
 ;; the default key bindings, and the generic editing helpers (regions;
 ;; search and replace are (search)'s, merge conflicts (merge)'s).  It
@@ -28,9 +28,9 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head edit)
   (export answer! backspace! beginning-of-buffer! beginning-of-line! buffer-clean? buffer-text
-          call-as-one-edit! copy-region! copy-to-kill-buffer! current-kill-ring current-region
+          call-as-one-edit! copy-region! copy-text! current-copy-buffer current-region
           delete-forward! empty-trash! end-of-buffer! end-of-line! format-buffer! format-region!
-          forward-kill-ring-to-system-clipboard indent-buffer! indent-line! indent-region!
+          forward-copy-buffer-to-system-clipboard indent-buffer! indent-line! indent-region!
           indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-line! kill-region!
           message-progress message-source move-horizontal! move-left! move-right! move-vertical!
           new-buffer! newline! next-line! open-line! page-down! page-up! page-window!
@@ -147,8 +147,8 @@
     (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
   (define-syntax echo-pending
     (identifier-syntax [id (echo:pending)] [(set! id v) (echo:set-pending! v)]))
-  (define-syntax kill-ring
-    (identifier-syntax [id (head:kill-ring)] [(set! id v) (head:set-kill-ring! v)]))
+  (define-syntax copy-buffer
+    (identifier-syntax [id (head:copy-buffer)] [(set! id v) (head:set-copy-buffer! v)]))
   (define suppress-history (make-parameter #f))
   ;; Desired anchors in the command's proposed result.  The head projects
   ;; them into the accepted revision before adopting any later changes.
@@ -584,15 +584,15 @@
 
   ;;; Kill and yank ---------------------------------------------------------
 
-  (edoc "Whether every kill also reaches the terminal's clipboard, through OSC 52."
+  (edoc "Whether every kill and copy also reaches the terminal's clipboard, through OSC 52."
         (value boolean))
-  (define forward-kill-ring-to-system-clipboard (make-parameter
-                                                  #f
-                                                  (lambda (enabled?)
-                                                    (unless (boolean? enabled?)
-                                                      (error 'forward-kill-ring-to-system-clipboard
-                                                        "expected a boolean" enabled?))
-                                                    enabled?)))
+  (define forward-copy-buffer-to-system-clipboard (make-parameter
+                                                    #f
+                                                    (lambda (enabled?)
+                                                      (unless (boolean? enabled?)
+                                                        (error 'forward-copy-buffer-to-system-clipboard
+                                                          "expected a boolean" enabled?))
+                                                      enabled?)))
 
   (define base64-alphabet
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
@@ -627,28 +627,28 @@
     ;; OSC 52 lets the host terminal own the clipboard, which also works when
     ;; e is several SSH or multiplexer layers away from the desktop. The
     ;; payload is base64, so buffer contents cannot terminate the sequence.
-    (when (and (forward-kill-ring-to-system-clipboard) (paint:screen-live?))
+    (when (and (forward-copy-buffer-to-system-clipboard) (paint:screen-live?))
       (with-mutex paint:redraw-lock
         (paint:ansi! "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (sys:terminal-output-port)))))
 
   (define (killing?)
     ;; was the previous command a kill?  Consecutive kills accumulate
-    ;; into a single kill-ring entry.
+    ;; into a single copy-buffer entry.
     (and (memq (head:last-command) (list kill-line! kill-region!)) #t))
 
   (define (kill! text)
-    (set! kill-ring (if (killing?) (string-append kill-ring text) text))
-    (publish-system-clipboard! kill-ring))
+    (set! copy-buffer (if (killing?) (string-append copy-buffer text) text))
+    (publish-system-clipboard! copy-buffer))
 
-  (edoc "Replace the kill ring's text without changing a buffer or point; C-y yanks it."
-        (text string "the new kill ring text"))
-  (define (copy-to-kill-buffer! text)
-    ;; Replace the text yanked by C-y without changing a buffer or point.
+  (edoc "Copy text into the copy buffer without changing a buffer or point; C-y pastes it."
+        (text string "the text to copy"))
+  (define (copy-text! text)
+    ;; Replace the text C-y pastes without changing a buffer or point.
     (unless (string? text)
-      (error 'copy-to-kill-buffer! "expected a string" text))
-    (set! kill-ring text)
-    (publish-system-clipboard! kill-ring)
+      (error 'copy-text! "expected a string" text))
+    (set! copy-buffer text)
+    (publish-system-clipboard! copy-buffer)
     (void))
 
   (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate.")
@@ -666,19 +666,19 @@
              (delete-forward!)
              (kill! "\n")])))
 
-  (edoc "The kill ring's text."
+  (edoc "The copy buffer's text."
         (returns string))
-  (define (current-kill-ring)
-    ;; The kill ring's text, for consumers outside the buffer -- the
+  (define (current-copy-buffer)
+    ;; The copy buffer's text, for consumers outside the buffer -- the
     ;; terminal's yank, a future clipboard bridge.
-    kill-ring)
+    copy-buffer)
 
-  (edoc "Insert the kill ring's text at point.")
+  (edoc "Insert the copy buffer's text at point.")
   (define (yank!)
-    ;; Kill-ring entries can span lines after consecutive C-k commands.  Insert
+    ;; The copy buffer can span lines after consecutive C-k commands.  Insert
     ;; newlines as buffer structure rather than embedding them in a line string.
-    (unless (string=? kill-ring "")
-      (insert-text-as! kill-ring (format "yank ~s" kill-ring))))
+    (unless (string=? copy-buffer "")
+      (insert-text-as! copy-buffer (format "yank ~s" copy-buffer))))
 
   (define (text-between sr sc er ec)
     (if (= sr er)
@@ -722,9 +722,9 @@
     (parameterize ([edit-source basis] [edit-point (head:point)])
       (replace-region-text! start end text)))
 
-  (edoc "Copy the text between mark and point to the kill ring without deleting it; the mark deactivates.")
+  (edoc "Copy the text between mark and point to the copy buffer without deleting it; the mark deactivates.")
   (define (copy-region!)
-    ;; Save the region to the kill ring without deleting it -- M-w, as
+    ;; Save the region to the copy buffer without deleting it -- M-w, as
     ;; in Emacs.  The mark deactivates; C-y reinserts.
     (if (not mark-active?)
         (set! message "The mark is not set now")
@@ -732,11 +732,11 @@
           (if (and (= sr er) (= sc ec))
               (set! message "Empty region")
               (begin
-                (copy-to-kill-buffer! (text-between sr sc er ec))
+                (copy-text! (text-between sr sc er ec))
                 (set! mark-active? #f)
                 (set! message "Copied"))))))
 
-  (edoc "Kill the text between mark and point into the kill ring.")
+  (edoc "Kill the text between mark and point into the copy buffer.")
   (define (kill-region!)
     (if (not mark-active?)
         (set! message "The mark is not set now")

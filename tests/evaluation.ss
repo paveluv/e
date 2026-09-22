@@ -53,7 +53,7 @@
 
      (eval:report! nested 'probe)
      (test:check 'extension-report-records-under-its-component-without-mx-history
-       (list (log:history 'eval car) (head:kill-ring) (map log:datum (log:entries 'probe))) '(() "42" ("42")))
+       (list (log:history 'eval car) (head:copy-buffer) (map log:datum (log:entries 'probe))) '(() "42" ("42")))
      (test:check 'a-report-needs-a-destination (test:raises? (lambda () (eval:report! nested))) #t)
      (eval:report! (run (lambda () #f)) "#f")
      (test:check 'explicit-input-records-the-exchange

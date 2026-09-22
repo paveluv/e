@@ -136,7 +136,7 @@ the newly focused buffer. Status-bar clicks always remain editor-owned; clicking
 an unfocused window's capture indicator focuses it and toggles only its capture
 preference.
 
-Run `terminal:yank!` through M-x to paste the kill ring into the child.
+Run `terminal:yank!` through M-x to paste the copy buffer into the child.
 `C-]` is reserved for the toggle; to send its literal byte, evaluate
 `(terminal:send! "\x1d;")` through M-x. `C-] C-]` now toggles twice.
 
@@ -212,18 +212,18 @@ not URLs. Hover applies e's shared bold, dotted underline to the label in
 that head's window, without moving the child's cursor or sending it an input
 event.
 OSC 52 clipboard writes from terminal children are decoded into exact UTF-8
-text and, by default, stored in the last input actor's head kill ring. The
-receiving head's echo area and `<log>` report
+text and, by default, copied into the copy buffer of the head whose input
+the child received last. The receiving head's echo area and `<log>` report
 the terminal buffer that supplied the clipboard. Disable this independently
 of outbound clipboard forwarding in `config.e`:
 
 ```scheme
-(terminal:forward-clipboard-to-kill-ring #f) ; default is #t
+(terminal:forward-clipboard-to-copy-buffer #f) ; default is #t
 ```
 
 OSC 52 clipboard queries are ignored: a child may offer text to its containing
-editor, but it cannot read unrelated contents from e's kill ring. When
-`edit:forward-kill-ring-to-system-clipboard` is enabled, imported text follows the
+editor, but it cannot read unrelated contents from e's copy buffer. When
+`edit:forward-copy-buffer-to-system-clipboard` is enabled, imported text follows the
 same outbound path as `M-w` and `C-k`, allowing it to continue through another
 multiplexer or supporting host terminal.
 OSC 4 changes and queries the 256-color palette, including multiple indexed

@@ -4,7 +4,7 @@ e is one editor state with any number of screens on it. The **base** owns
 what is shared: the buffer store with its text, undo history and marks,
 terminal processes, the log, describe's documentation sources and the
 permission policy. A **head** is one user's screen: windows, prompts, local
-buffers such as `<buffers>` and `<log>`, the kill ring and `config.e`. Plain
+buffers such as `<buffers>` and `<log>`, the copy buffer and `config.e`. Plain
 `e` starts or attaches to the installation's base; `e --base` runs the base
 alone for a supervisor. Scripted clients -- agents -- connect
 to the same base under their own permissions.
@@ -224,7 +224,7 @@ not interpret historical hello/error strings or negotiate an older protocol.
 | Terminal processes and their screens | Prompts, `<completions>`, `<buffers>` |
 | The log's records | `<log>` renderings and the echo area |
 | Describe's `*describe*` source | Its rendered `<describe>` companion and Markdown views |
-| Questions waiting for a named head | The kill ring, checkpointed under the head's name |
+| Questions waiting for a named head | The copy buffer, checkpointed under the head's name |
 | `base-config.e`, permissions and sessions | `config.e`, key bindings, styles |
 
 Shared buffers keep file names or names such as `*scratch*`; local buffers
@@ -241,7 +241,7 @@ another edit consumes the text being changed, e reports `Edit not applied`
 and refreshes the buffer; shared text and history stay intact
 ([details](BUFFERS.md#switching-creating-and-killing)). `C-_` undoes this
 head's latest action by default; `(edit:undo-scope 'all)` includes every actor and
-`M-x edit:undo-actor!` picks one ([undo](BUFFERS.md#undo-selections-and-the-kill-buffer)).
+`M-x edit:undo-actor!` picks one ([undo](BUFFERS.md#undo-selections-and-the-copy-buffer)).
 Another actor's fresh text is tinted briefly in its own color, and
 `M-x blame:at-point!` reports authorship from the retained edit log
 ([attribution](BUFFERS.md#recent-edit-attribution)). Saving captures the

@@ -8,7 +8,7 @@
 ;; window record, the persistent split tree and its tiling), the
 ;; scheduling pump (the mailbox, wakes, posted thunks, the input
 ;; reader), the store client, the app registry, and the seat's
-;; per-user state (kill ring, paste text, the last command).  Key
+;; per-user state (copy buffer, paste text, the last command).  Key
 ;; dispatch lives in (dispatch), the loop's body in (main), painting in
 ;; (paint), the commands in (edit); the command layer still reaches the seat's
 ;; state through identifier-syntax facades. Hooks connect the pump and
@@ -37,12 +37,12 @@
           buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
           buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
           bump-buffer-revision! call-uninterrupted call-with-display-update call-with-interrupt
-          checkpoint! clamp-buffer-positions! current-buffer current-keys
+          checkpoint! clamp-buffer-positions! copy-buffer current-buffer current-keys
           (rename (current current-window)) default-directory depart! detach-app!
           dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer
           fit-layout! flush-ui-audit! follow-app! forget-buffer! fresh-buffer!
           (rename (window-full-capture? full-capture?)) goto! hide-popup! host-color-scheme
-          in-main-pump input-live? interrupted? kill-ring last-command layout layout-leaves
+          in-main-pump input-live? interrupted? last-command layout layout-leaves
           layout-min-height layout-min-width layout-node! layout-parent layout-replace!
           layout-split-first layout-split-first-set! layout-split-first-weight
           layout-split-first-weight-set! layout-split-orientation layout-split-second
@@ -55,9 +55,9 @@
           request-app-size! request-frame-at! resume! resume-source! root run-deferred!
           run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
           set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
-          set-app-selectable! set-app-status-position! set-buffers! set-current!
+          set-app-selectable! set-app-status-position! set-buffers! set-copy-buffer! set-current!
           set-current-keys! set-departure! set-dividers! set-drag! set-file-opener!
-          set-frame-hook! set-full-capture! set-kill-ring! set-last-command! set-layout-root!
+          set-frame-hook! set-full-capture! set-last-command! set-layout-root!
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
           set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
           show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
@@ -367,19 +367,19 @@
     ;; the live window numbered n, or #f
     (find (lambda (w) (eqv? (window-index w) n)) the-windows))
 
-  ;; The seat's kill ring: one string, the last kill; commands and
+  ;; The seat's copy buffer: one string, the last kill or copy; commands and
   ;; prompts read and replace it.
-  (define the-kill-ring "")
+  (define the-copy-buffer "")
 
-  (edoc "The seat's kill ring: the last kill, one string."
+  (edoc "The seat's copy buffer: the last kill or copy, one string."
         (returns string))
-  (define (kill-ring)
-    the-kill-ring)
+  (define (copy-buffer)
+    the-copy-buffer)
 
-  (edoc "Replace the seat's kill ring."
+  (edoc "Replace the seat's copy buffer."
         (s string "the text"))
-  (define (set-kill-ring! s)
-    (set! the-kill-ring s))
+  (define (set-copy-buffer! s)
+    (set! the-copy-buffer s))
 
   ;; The text of the bracketed paste just consumed: the pump's paste
   ;; handler stashes it, the PASTE key's command reads it.
@@ -2340,7 +2340,7 @@
 
   ;;; Named screen resume ------------------------------------------------------
 
-  ;; A checkpoint is (screen 3 kill-text selected-number layout buffers).
+  ;; A checkpoint is (screen 3 copy-text selected-number layout buffers).
   ;; Version 1 had no capture preference; restore those windows with partial
   ;; capture. Version 2 kept line numbers per buffer; a window restored from
   ;; it follows the default. Splits retain their ordinary orientation/weights;
@@ -2417,7 +2417,7 @@
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 3 the-kill-ring (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 3 the-copy-buffer (window-index the-current) layout (map capture-buffer the-buffers))])
       (unless (equal? state last-checkpoint)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-sent-at (add-duration checkpoint-sent-at checkpoint-interval))])
@@ -2479,8 +2479,8 @@
 
   (define (restore-screen! state)
     (apply
-      (lambda (tag version kill selected layout entries)
-        (unless (and (eq? tag 'screen) (memv version '(1 2 3)) (string? kill))
+      (lambda (tag version copied selected layout entries)
+        (unless (and (eq? tag 'screen) (memv version '(1 2 3)) (string? copied))
           (error 'resume! "unsupported screen checkpoint"))
         (let* ([fallback (window-buffer the-current)]
                ;; before version 3 a buffer entry carried its line numbers second
@@ -2551,7 +2551,7 @@
                       (vector-set! entry 4 (project-resume-positions positions lines changes))))))) buffers)
           (set-layout-root! root)
           (set-current! current)
-          (set-kill-ring! kill)
+          (set-copy-buffer! copied)
           (let ([restored (filter values (map (lambda (entry) (vector-ref entry 0)) (vector->list buffers)))])
             (set! the-buffers (append restored (filter (lambda (b) (not (memq b restored))) the-buffers))))
           (vector-for-each

@@ -4,7 +4,7 @@
 (elibrary (apps terminal)
   (export (rename (terminal-close! close!)) (rename (terminal-color-scheme! color-scheme!))
           (rename (terminal-yank! edit:yank!))
-          (rename (terminal-forward-clipboard-to-kill-ring forward-clipboard-to-kill-ring))
+          (rename (terminal-forward-clipboard-to-copy-buffer forward-clipboard-to-copy-buffer))
           init! (rename (terminal! open!)) (rename (vt:scrollback scrollback))
           (rename (terminal-send! send!)) (rename (vt:shell shell))
           (rename (terminal-toggle-capture! toggle-capture!)))
@@ -21,13 +21,13 @@
           (prefix (service vt) vt:)
           (prefix (state store) store:))
 
-  (edoc "Whether text a terminal program puts on the clipboard through OSC 52 also becomes the kill ring's."
+  (edoc "Whether text a terminal program puts on the clipboard through OSC 52 also becomes the copy buffer's."
         (value boolean))
-  (define terminal-forward-clipboard-to-kill-ring (make-parameter #t
-                                                    (lambda (enabled?)
-                                                      (unless (boolean? enabled?)
-                                                        (error 'forward-clipboard-to-kill-ring "expected a boolean" enabled?))
-                                                      enabled?)))
+  (define terminal-forward-clipboard-to-copy-buffer (make-parameter #t
+                                                      (lambda (enabled?)
+                                                        (unless (boolean? enabled?)
+                                                          (error 'forward-clipboard-to-copy-buffer "expected a boolean" enabled?))
+                                                        enabled?)))
 
   (define (terminal-facts buffer)
     (let* ([facts (head:app-facts buffer)] [owner (and facts (cdr (assq 'app facts)))])
@@ -49,9 +49,9 @@
   (define (terminal-send! text)
     (send-input! text #f) (void))
 
-  (edoc "Send the kill ring's text to the terminal in the current buffer as pasted input.")
+  (edoc "Send the copy buffer's text to the terminal in the current buffer as pasted input.")
   (define (terminal-yank!)
-    (send-input! (edit:current-kill-ring) #t) (void))
+    (send-input! (edit:current-copy-buffer) #t) (void))
 
   (edoc "Toggle whether the current terminal window captures every key, C-x and M-x included.")
   (define (terminal-toggle-capture!)
@@ -107,9 +107,9 @@
               (hashtable-set! presented buffer (cons sequence diagnostics))
               (when (and clipboard (> sequence (car old))
                          (equal? (cadr clipboard) head:ui-actor)
-                         (terminal-forward-clipboard-to-kill-ring))
-                (edit:copy-to-kill-buffer! (caddr clipboard))
-                (log:add! 'terminal (format "Received clipboard from ~a, stored in kill ring"
+                         (terminal-forward-clipboard-to-copy-buffer))
+                (edit:copy-text! (caddr clipboard))
+                (log:add! 'terminal (format "Copied clipboard text from ~a"
                                             (head:buffer-name buffer))))
               (for-each
                 (lambda (message)

@@ -51,7 +51,7 @@
      (undo!)
      (check 'undo-preserves-the-same-line-foreign-edit (text-of disjoint) '("abcdefZ"))
 
-     ;; Preserve an existing redo entry, the kill ring, and selection
+     ;; Preserve an existing redo entry, the copy buffer, and selection
      ;; activity when a foreign replacement consumes the insertion point.
      (define overlap (fresh "edit-overlap" '("abcdef" "tail")))
      (define overlap-id (head:buffer-store-id overlap))
@@ -60,7 +60,7 @@
      (undo!)
      (head:goto! '(0 . 2))
      (set-mark-command!)
-     (copy-to-kill-buffer! "saved kill")
+     (copy-text! "saved kill")
      (define old-undo (vector-ref (head:buffer-history overlap) 0))
      (define old-redo (vector-ref (head:buffer-history overlap) 1))
      (foreign! overlap (text:make-span 0 1 0 5) '("RIV"))
@@ -72,7 +72,7 @@
      (check 'refusal-keeps-undo-list (eq? old-undo (vector-ref (head:buffer-history overlap) 0)) #t)
      (check 'refusal-keeps-redo-list (eq? old-redo (vector-ref (head:buffer-history overlap) 1)) #t)
      (check 'refusal-keeps-selection-active (head:buffer-marked overlap) #t)
-     (check 'refusal-keeps-kill-ring (current-kill-ring) "saved kill")
+     (check 'refusal-keeps-copy-buffer (current-copy-buffer) "saved kill")
      (check 'refusal-rebases-point-only-through-the-foreign-edit (head:point) '(0 . 4))
      (redo!)
      (check 'redo-still-works-after-refusal (text-of overlap) '("aRIVf" "tailown"))
@@ -190,7 +190,7 @@
      (replace-region-text! '(0 . 1) '(0 . 5) "Q\nR")
      (check 'replacement-has-one-complete-observation observations '(("aQ" "Ril")))
      (set! observations '())
-     (copy-to-kill-buffer! "x\ny\n")
+     (copy-text! "x\ny\n")
      (yank!)
      (check 'multiline-yank-including-final-break-is-atomic observations '(("aQ" "Rx" "y" "il")))
      (store:unsubscribe! structural-token)
@@ -199,17 +199,17 @@
      ;; nor move point before their edit is known to have succeeded.
      (define killed (fresh "edit-kill-refusal" '("abcdef" "tail")))
      (head:goto! '(0 . 2))
-     (copy-to-kill-buffer! "keep")
+     (copy-text! "keep")
      (foreign! killed (text:make-span 0 1 0 5) '("R"))
      (check 'kill-overlap-refuses (refused? kill-line!) #t)
-     (check 'refused-kill-keeps-kill-ring (current-kill-ring) "keep")
+     (check 'refused-kill-keeps-copy-buffer (current-copy-buffer) "keep")
      (check 'refused-kill-records-no-entry (vector-ref (head:buffer-history killed) 0) '())
      (head:goto! '(0 . 3))
      (head:buffer-read-only-set! killed #t)
      (check 'read-only-newline-kill-refuses
             (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)])
               (kill-line!) #f) #t)
-     (check 'read-only-newline-kill-keeps-kill-ring (current-kill-ring) "keep")
+     (check 'read-only-newline-kill-keeps-copy-buffer (current-copy-buffer) "keep")
 
      ;; An indenter can be overtaken while computing its proposal.  Its
      ;; desired cursor movement cannot be installed before a refused edit.

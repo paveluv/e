@@ -928,9 +928,9 @@
                    (if (< pos len) (edited (string:delete s pos (+ pos 1)) pos) (loop s pos ""))]
                   [(eq? action 'delete-backward)
                    (if (= pos 0) (loop s pos "") (edited (string:delete s (- pos 1) pos) (- pos 1)))]
-                  [(eq? action 'kill) (head:set-kill-ring! (string:tail s pos)) (edited (substring s 0 pos) pos)]
+                  [(eq? action 'kill) (head:set-copy-buffer! (string:tail s pos)) (edited (substring s 0 pos) pos)]
                   [(eq? action 'yank)
-                   (edited (string:insert s pos (head:kill-ring)) (+ pos (string-length (head:kill-ring))))]
+                   (edited (string:insert s pos (head:copy-buffer)) (+ pos (string-length (head:copy-buffer))))]
                   [(eq? action 'complete) (if complete (complete-input complete) (loop s pos ""))]
                   [(eq? action 'alternate-complete) (if alt-complete (complete-input alt-complete) (loop s pos ""))]
                   [(eq? action 'inspect)

@@ -206,7 +206,7 @@ Every datum in the text is evaluated. The values of the last datum become
 the command result; definitions and effects from earlier datums remain in
 place.
 
-## Results and the kill buffer
+## Results and the copy buffer
 
 Evaluation results are printed with Scheme's write representation. Multiple
 values are separated by `, `. A result is shown in the echo area and stored
@@ -216,16 +216,16 @@ as an `eval` log record:
 eval: (+ 20 22) => 42
 ```
 
-By default, a non-void result is also copied to the kill buffer, ready to
+By default, a non-void result is also copied, ready to
 insert with `C-y`. The echo result gains a grey, italic ghost tail:
 
 ```text
-eval: (+ 20 22) => 42 [stored in kill ring]
+eval: (+ 20 22) => 42 [copied]
 ```
 
 The ghost is presentation only and is not part of the result or log record.
 The copied text is exactly the displayed result representation. Void results,
-zero-value results, errors, and interruptions do not replace the kill buffer.
+zero-value results, errors, and interruptions do not replace the copy buffer.
 
 Disable automatic copying in `config.e`:
 
@@ -316,7 +316,7 @@ the commands' current key bindings, including user rebinding from `config.e`.
 ## Configuration summary
 
 ```scheme
-;; Copy non-void eval:run!/M-x results to the C-y kill buffer (default: #t).
+;; Copy non-void eval:run!/M-x results for C-y (default: #t).
 (eval:copy-result #t)
 
 ;; Optional key rebinding examples.

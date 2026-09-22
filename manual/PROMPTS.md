@@ -15,7 +15,7 @@ Prompt input supports the familiar bindings:
 | `C-a`, `C-e`, Home, End | Move to an input or visual-line boundary |
 | `C-b`, `C-f`, Left, Right | Move by one character |
 | Up, Down | Browse history in window prompts; move through visual lines, then history in the echo area |
-| `C-k`, `C-y` | Use this head's kill ring |
+| `C-k`, `C-y` | Use this head's copy buffer |
 | Tab | Complete |
 | `C-g`, Escape | Cancel |
 | Return | Accept |

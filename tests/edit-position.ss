@@ -283,7 +283,7 @@
              (check 'published-selection-agrees-with-head
                     (list (text:span-start region) (text:span-end region)) '((0 . 4) (0 . 8))))
            (copy-region!)
-           (check 'selection-keeps-the-original-text (current-kill-ring) "cdef")
+           (check 'selection-keeps-the-original-text (current-copy-buffer) "cdef")
            (head:buffer-marked-set! b #t)
            (foreign! b (text:make-span 0 0 0 2) '(""))
            (head:before-frame!)
@@ -293,7 +293,7 @@
            (foreign! b (text:make-span 0 3 0 5) '(""))
            (head:before-frame!)
            (copy-region!)
-           (check 'selection-keeps-the-surviving-text (current-kill-ring) "cf")))
+           (check 'selection-keeps-the-surviving-text (current-copy-buffer) "cf")))
        '(#f #t))
 
      (test:finish! 'edit-position)))

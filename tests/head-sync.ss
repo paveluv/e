@@ -408,7 +408,7 @@
              (head:buffer-spot-row-set! b 2)
              (head:buffer-spot-col-set! b 4)
              (head:buffer-spot-top-set! b 1)
-             (head:set-kill-ring! (string-copy "saved kill"))
+             (head:set-copy-buffer! (string-copy "saved kill"))
              (head:set-full-capture! w #t)
              (head:checkpoint!)
              (case kind
@@ -423,11 +423,11 @@
                   (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("x")))])
              (head:window-prow-set! w 0)
              (head:set-full-capture! w #f)
-             (head:set-kill-ring! "lost")
+             (head:set-copy-buffer! "lost")
              (let ([truth (call-with-values (lambda () (store:snapshot-state id)) list)])
                (check (list 'resume-from-saved-revision kind)
                  (list (head:resume!)
-                       (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:kill-ring)
+                       (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:copy-buffer)
                        (head:full-capture? (head:current-window))
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
                  (list #t expected #t "saved kill" #t #t)))))
@@ -437,7 +437,7 @@
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (0 . 0) (0 . 0))))
        ;; The unchanged-frame comparison owns its data too.
-       (string-set! (head:kill-ring) 0 #\X)
+       (string-set! (head:copy-buffer) 0 #\X)
        (head:checkpoint!)
        (check 'mutating-live-kill-text-does-not-mutate-the-last-checkpoint
          (caddr (actor:checkpoint head:ui-actor)) "Xaved kill"))

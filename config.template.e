@@ -48,7 +48,7 @@
 ;;                                ; M-c toggles (#f: always exact)
 ;; (eval:copy-result #t)          ; copy non-void eval:run! and M-x results for C-y
 ;; (edit:undo-scope 'mine)            ; 'all: undo the latest action by any actor
-;; (edit:forward-kill-ring-to-system-clipboard #f)
+;; (edit:forward-copy-buffer-to-system-clipboard #f)
 ;;                              ; #t: also request an OSC 52 system-clipboard
 ;;                              ; update after kills and copies; the host
 ;;                              ; terminal may ignore or prohibit the request,
@@ -66,9 +66,9 @@
 ;; Partial capture is the default: C-x and M-x reach e. C-] or ●/◐ toggles capture.
 ;; To leave additional prefixes to e during partial capture:
 ;; (keymap:set-context-capture! 'terminal "C-]" terminal:toggle-capture! '("C-x" "M-x" "C-c"))
-;; (terminal:forward-clipboard-to-kill-ring #t)
+;; (terminal:forward-clipboard-to-copy-buffer #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
-;;                              ; children into e's kill ring
+;;                              ; children into e's copy buffer
 ;; (head:min-window-lines 3)      ; minimum text height allowed by a split
 ;; (prompt:in-window #t)          ; default #f; every prompt takes the window, as
 ;;                                ; edit:find-file!! does, instead of the echo area

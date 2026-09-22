@@ -1560,7 +1560,7 @@
 
   (define (dispatch-clipboard! state text)
     ;; OSC 52 ; selection ; base64-data ST. Queries are deliberately ignored:
-    ;; importing clipboard contents is useful, exposing the kill ring to an
+    ;; importing clipboard contents is useful, exposing the copy buffer to an
     ;; untrusted child is not.
     (let ([separator (string:search text ";" 3 (string-length text))])
       (when separator

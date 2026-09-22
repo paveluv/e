@@ -206,7 +206,7 @@ collisions become `<<<<<<< buffer`, `=======`, and `>>>>>>> disk` regions.
 and `M-d` (`merge:keep-disk!`) keep the buffer or disk side. Each resolution is one undo step, and saving waits until all conflicts are
 resolved. A read-only `<merge-name>` buffer records the merge report.
 
-## Undo, selections, and the kill buffer
+## Undo, selections, and the copy buffer
 
 Undo and redo history are per buffer. One typed run, pasted block, formatting
 operation, replacement, or grouped API edit normally forms one undo entry.
@@ -235,18 +235,18 @@ snapshot history and behave the same under `mine` and `all`.
 
 The mark belongs to the buffer, while point belongs to each window.
 
-The kill buffer is global: text killed or copied in one buffer can be yanked in
-another. Consecutive kill commands accumulate, so repeated `C-k` followed by
-`C-y` reconstructs the complete block.
+The copy buffer is global: text killed or copied in one buffer can be pasted
+with `C-y` in another. Consecutive kill commands accumulate, so repeated `C-k`
+followed by `C-y` reconstructs the complete block.
 
-Kill-ring updates may also be sent to the host terminal with OSC 52. Thus,
-`M-w`, `C-w`, repeated `C-k`, and Scheme calls to `edit:copy-to-kill-buffer!` can
+Copy buffer updates may also be sent to the host terminal with OSC 52. Thus,
+`M-w`, `C-w`, repeated `C-k`, and Scheme calls to `edit:copy-text!` can
 place the exact UTF-8 text in the desktop clipboard without selecting padded
 terminal cells. The host terminal retains final control over whether clipboard
 writes are permitted. Enable forwarding in `config.e` when desired:
 
 ```scheme
-(edit:forward-kill-ring-to-system-clipboard #t) ; default is #f
+(edit:forward-copy-buffer-to-system-clipboard #t) ; default is #f
 ```
 
 OSC 52 can work over SSH: a supporting terminal on the local desktop decodes
