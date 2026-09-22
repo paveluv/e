@@ -149,15 +149,26 @@ symbol; a form under a quote, or under an undocumented operator, completes
 symbols as before, except an element of a quoted list at an argument typed
 `(list-of T)`, which completes as a `T`: `(extension:load! "x" "y" '("../sch`
 lists directories. A `one-of` type offers its literals, a boolean `#t` and
-`#f`, and inside a string literal the type's string values complete the
-literal: `(edit:visit-file! "man` lists paths under `manual/`, `(buffer "`
-lists buffer names. A string value completes as a session: with several
-matches Tab extends the literal to their longest common prefix, as a shell
-does; a sole match is inserted bare, and the literal closes only at a dead
-end, where completing from the value would offer nothing but the value itself. So `(edit:visit-file!
-"man` Tab gives `"manual/` with the manual's entries listed at once, and
-`"manual/EVAL.m` Tab gives `"manual/EVAL.md")`, closed and settled; a
-directory argument closes at a directory without subdirectories. How paths
+`#f`. Every type that completes spells its values as a literal derived from
+the type, `(mode "scheme")` or `(file "manual/EVAL.md")`, and a command
+takes the bare value and the literal alike, so the literal is a reminder of
+the type that costs no typing: Tab writes it. A string at such an argument
+expands into the literal from its quote, `(mode:choose! "sch` Tab giving
+`(mode:choose! (mode "scheme")`, and a bare `sch` does the same; inside the
+constructor the values spell bare, `(mode "sc` Tab giving `(mode "scheme`.
+A string value completes as a session: `(edit:visit-file! "man` lists the
+paths under `manual/`, `(buffer "` the buffer names; with several matches
+Tab extends the path to their longest common prefix, as a shell does; a
+sole match is inserted whole, open while it still completes, a directory
+say, and the literal closes only at a dead end, where completing from the
+value would offer nothing but the value itself. So `(edit:visit-file! "man`
+Tab gives `(edit:visit-file! (file "manual/` with the manual's entries
+listed at once, and `"manual/EVAL.m` Tab gives `(file "manual/EVAL.md")`,
+closed and settled; a directory argument closes at a directory without
+subdirectories. `~` and `/` lead the home and the root directory though the
+matcher has no segment for them: `(edit:visit-file! ~` Tab gives `(file "~/`,
+a bare `/` gives `(file "/` unless a symbol containing `/` is among the
+matches, and the same holds at a directory argument. How paths
 are offered is the `file:completion` parameter: `fuzzy`, the default, lists
 every entry of the partial path's directory for the matcher's segments, so
 `"lib/apps/evsl` finds `eval.sls`; `prefix` lists only the entries that

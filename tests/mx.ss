@@ -89,8 +89,8 @@
      ;; a mode is named, not spelled as a literal: an argument of type mode
      ;; completes to the registered names, and no producer sneaks in
      (scheme-mode:init!)
-     (check 'a-mode-argument-completes-to-names
-       (list (and (member "\"scheme\"" (labels "(mode:choose! ")) #t)
+     (check 'a-mode-argument-completes-to-its-literals
+       (list (and (member "(mode \"scheme\")" (labels "(mode:choose! ")) #t)
              (filter (lambda (label) (and (>= (string-length label) 5) (string=? (substring label 0 5) "(echo"))) (labels "(mode:choose! "))
              (format "~a" (mode:find "scheme")))
        '(#t () "#<mode scheme>"))
@@ -147,21 +147,22 @@
                ;; a quoted form, or one whose operator is undocumented, completes symbols
                (labels "(head:show-buffer! '(bu") (labels "(list (bu")))
        '(#t #t #f ("(head:current-buffer)") ("(head:current-buffer)") ("(buffer") ("(buffer") ("myb") ("")
-         ("'clean") ("manual/") #f #f))
+         ("'clean") ("(file \"manual/") #f #f))
      ;; The file completion parameter: prefix offers the directory's entries
      ;; extending the component, fuzzy all of them for the matcher's
      ;; segments, deep the entries below it too
      (check 'file-completion-modes
        (list (parameterize ([file:completion 'prefix]) (labels "(visit-file! \"lib/apps/evsl"))
-             (parameterize ([file:completion 'fuzzy]) (has? "lib/apps/eval.sls" (labels "(visit-file! \"lib/apps/evsl")))
+             (parameterize ([file:completion 'fuzzy]) (has? "(file \"lib/apps/eval.sls\")" (labels "(visit-file! \"lib/apps/evsl")))
              (parameterize ([file:completion 'fuzzy]) (labels "(visit-file! \"lib/evsl"))
-             (parameterize ([file:completion 'deep]) (has? "lib/apps/eval.sls" (labels "(visit-file! \"lib/evsl")))
-             ;; a directory inserts bare, to descend into; a file's own name is its dead end
+             (parameterize ([file:completion 'deep]) (has? "(file \"lib/apps/eval.sls\")" (labels "(visit-file! \"lib/evsl")))
+             ;; a directory opens its literal, to descend into; a file's own name is its dead end, closed
              (extensions "(visit-file! \"man") (extensions "(visit-file! \"manual/EVAL.m"))
-       '(#f #t #f #t ("manual/") ("manual/EVAL.md")))
-     ;; Inside a string, Tab extends the literal to the candidates' longest
-     ;; common prefix, as a shell does: a listing sharing nothing stays put,
-     ;; a deep path stays quick, and shared characters extend
+       '(#f #t #f #t ("(file \"manual/") ("(file \"manual/EVAL.md\")")))
+     ;; Inside a string at a path argument, Tab expands the string into the
+     ;; type's literal and extends the path to the candidates' longest common
+     ;; prefix, as a shell does: a listing sharing nothing stays put, a deep
+     ;; path stays quick, and shared characters extend
      (define scratch-dir (format "/tmp/e-mx-~a" (get-process-id)))
      (mkdir scratch-dir)
      (for-each (lambda (name) (call-with-output-file (string-append scratch-dir "/" name) (lambda (p) (put-string p "x"))))
@@ -169,14 +170,14 @@
      (check 'string-extensions-are-common-prefixes
        (list (extensions "(visit-file! \"manual/") (extensions "(visit-file! \"lib/apps/")
              (extensions (string-append "(visit-file! \"" scratch-dir "/al")))
-       (list '("manual/") '("lib/apps/") (list (string-append scratch-dir "/alpha-"))))
+       (list '("(file \"manual/") '("(file \"lib/apps/") (list (string-append "(file \"" scratch-dir "/alpha-"))))
      (for-each (lambda (name) (delete-file (string-append scratch-dir "/" name))) '("alpha-one.txt" "alpha-two.txt"))
      (delete-directory scratch-dir)
      ;; A roots argument, one directory or a list of them, completes as a
      ;; directory inside the string and inside each element of a quoted list;
      ;; a quoted list elsewhere still completes symbols
      (check 'a-list-of-argument-completes-its-elements
-       (list (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" \"man"))
+       (list (has-prefix? "(directory \"manual/" (labels "(extension:load! \"x\" \"y\" \"man"))
              (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" '(\"man"))
              (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" '(\"lib\" \"man"))
              (labels "(head:show-buffer! '(bu"))
@@ -185,7 +186,7 @@
        (list (has? "'clean" (labels "(head:buffer-wrap-set! b ")) (has? "#f" (labels "(head:buffer-wrap-set! b "))
              ;; the language's types offer their own values but no producers
              (length (labels "(head:buffer-wrap-set! b ")) (labels "(window:set-wrap! ")
-             (has-prefix? "manual/" (labels "(visit-file! \"man"))
+             (has-prefix? "(file \"manual/" (labels "(visit-file! \"man"))
              (has? "*scratch*" (labels "(buffer \""))
              ;; an undocumented operator falls back to symbols
              (labels "(car "))
@@ -199,6 +200,32 @@
        (list (settled "(head:show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))
        '(("(head:show-buffer! (buffer \"*scratch*\"))" . 40) ("(visit-file! \"manual/EVAL.md\")" . 30)))
 
+
+     ;; A string at an argument whose type spells its values as literals
+     ;; expands into the literal from its quote, Tab replacing the whole
+     ;; string; a bare token does the same; inside the constructor the values
+     ;; spell bare. The kernel publishes the literals after a module
+     ;; initializes; the test stands in for it.
+     (for-each (lambda (name) (unless (top-level-bound? name) (define-top-level-value name (edoc:type-literal name) (interaction-environment))))
+               (edoc:type-literals))
+     (define (span text) (eval:completion-span text (string-length text)))
+     (check 'a-string-or-token-expands-into-its-literal
+       (list (extensions "(mode:choose! \"sch") (span "(mode:choose! \"sch") (extensions "(mode:choose! sch") (span "(mode:choose! sch")
+             (labels "(mode:choose! (mode \"sc") (extensions "(mode:choose! (mode \"sc") (extensions "(mode:choose! (mode sc")
+             (settled "(mode:choose! (mode \"scheme\")")
+             ;; a bare token the values alone match opens their literal
+             (has? "(buffer \"*scratch*\")" (labels "(head:show-buffer! *")))
+       '(("(mode \"scheme\")") (14 . 18) ("(mode \"scheme\")") (14 . 17) ("scheme") ("scheme") ("\"scheme\"")
+         ("(mode:choose! (mode \"scheme\")" . 29) #t))
+     ;; ~ and / lead the home and the root directory, though the matcher has
+     ;; no segment for them: at a file or directory argument they open the
+     ;; literal, bare or in a string, and complete bare inside the constructor
+     (check 'home-and-root-open-a-path-literal
+       (list (extensions "(visit-file! ~") (extensions "(visit-file! \"~") (extensions "(visit-file! (file ~") (extensions "(visit-file! (file \"~")
+             (extensions "(visit-file! /") (extensions "(visit-file! \"/") (extensions "(visit-file! (file /")
+             (extensions "(extension:load! \"x\" \"y\" ~") (extensions "(extension:load! \"x\" \"y\" /")
+             (span "(visit-file! ~") (span "(visit-file! \"~"))
+       '(("(file \"~/") ("(file \"~/") ("\"~/") ("~/") ("(file \"/") ("(file \"/") ("\"/") ("(directory \"~/") ("(directory \"/") (13 . 14) (13 . 15)))
      ;; Identities are literals too: (head "desk") and (agent "claude") read
      ;; back as they print, and an actor argument completes from the directory.
      (check 'identities-read-back-as-they-print

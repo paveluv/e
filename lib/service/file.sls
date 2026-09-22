@@ -94,7 +94,11 @@
         v)))
 
   (define (offered partial)
-    ;; the paths a partial path offers at M-x, per the completion parameter
+    ;; the paths a partial path offers at M-x, per the completion parameter;
+    ;; ~ alone offers the home directory to descend into
+    (if (string=? partial "~") (list "~/") (offered-entries partial)))
+
+  (define (offered-entries partial)
     (case (completion)
       [(prefix) (complete partial)]
       [else (guard (ex [else '()]) (entries partial (eq? (completion) 'deep)))]))

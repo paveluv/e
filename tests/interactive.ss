@@ -214,11 +214,12 @@
      (send! "\x7;")                     ; C-g
      (wait-for! 'typed-completions-give-the-window-back
                 (lambda () (not (find-cell "<completions>"))) 5000)
-     ;; A string argument completes as a session: a sole directory stays open
-     ;; without settling, and the pop-up lists its entries at once.
+     ;; A string argument completes as a session: a sole directory opens the
+     ;; type's literal and stays open without settling, and the pop-up lists
+     ;; its entries at once.
      (send! "\x1b;xedit:visit-file! \"man\t")
      (wait-for! 'a-directory-completion-stays-open-and-lists-its-entries
-                (lambda () (and (find-cell "λ (edit:visit-file! \"manual/")
+                (lambda () (and (find-cell "λ (edit:visit-file! (file \"manual/")
                                 (find-cell "matches of file")
                                 (find-cell "manual/EVAL.md")))
                 5000)

@@ -674,10 +674,11 @@
             (unless (string=? new-s input) (dismiss-completions!)))))
     (define (continue-or-end! completer s pos)
       ;; after a sole completion: the session goes on when the completer
-      ;; still offers more than the token now at pos -- a directory's
-      ;; entries, say -- and the list shows it; else the session ends
+      ;; still offers more than the token now at pos, one within what the
+      ;; completion wrote -- a directory's entries, inside the literal the
+      ;; completion opened, say -- and the list shows it; else the session ends
       (let-values ([(start end options values) ((completer-lookup completer) s pos)])
-        (if (and start completion-range (= start (car completion-range)) (pair? values)
+        (if (and start completion-range (<= (car completion-range) start pos) (pair? values)
                  (not (and (null? (cdr values))
                            (string=? (if (candidate? (car values)) (candidate-value (car values)) (car values))
                                      (substring s start end)))))

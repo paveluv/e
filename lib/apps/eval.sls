@@ -20,7 +20,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps eval)
-  (export call-with-evaluation! completion-candidates completion-extensions
+  (export call-with-evaluation! completion-candidates completion-extensions completion-span
           (rename (evaluation-condition condition)) (rename (eval-copy-result copy-result))
           init! input-closers input-diagnostic (rename (eval-last-expression! last-expression!))
           (rename (eval-prompt! prompt!))
@@ -131,11 +131,15 @@
                  (some (filter (lambda (sig) (of-module? sig prefix)) (or sigs '()))))]
               [else (loop (+ i 1))])))))
 
+  (define (operator-signatures sym)
+    ;; the signatures of the callable bound to sym, else those recorded under its name
+    (let ([value (and (top-level-bound? sym) (top-level-value sym))])
+      (if (procedure? value) (edoc:edoc-of value) (named-signatures sym))))
+
   (define (argument-type sym index)
     ;; the type documented for argument index of the callable bound to sym,
     ;; the union of its lambda lists' answers, or #f
-    (let* ([value (and (top-level-bound? sym) (top-level-value sym))]
-           [signatures (if (procedure? value) (edoc:edoc-of value) (named-signatures sym))])
+    (let ([signatures (operator-signatures sym)])
       (and signatures
            (let ([types
                   (fold-left
@@ -154,22 +158,39 @@
                    [else (cons 'or (reverse types))])))))
 
   (define (argument-context s pos)
-    ;; (type start end token string?) for the cursor at a documented
-    ;; argument position: the argument's type, the range and text of the
-    ;; token being completed, and whether it sits inside a string literal.
-    ;; At the operator position of a nested form, (head:show-buffer! (bu, the
-    ;; token is the form's opening and the type is the enclosing argument's:
-    ;; whatever the form produces has to serve it. #f under a quote, or
-    ;; without a type.
-    (define (typed frame start end in-string?)
+    ;; (type start end token where) for the cursor at a documented argument
+    ;; position: the argument's type, the range and text of the token being
+    ;; completed, and where it sits: #t inside a string literal, literal in
+    ;; a string at an argument whose type spells its values as literals,
+    ;; which expands into the literal from its quote, inside for a bare
+    ;; token within a literal constructor, else #f. At the operator position
+    ;; of a nested form, (head:show-buffer! (bu, the token is the form's
+    ;; opening and the type is the enclosing argument's: whatever the form
+    ;; produces has to serve it. #f under a quote, or without a type.
+    (define (typed frame start end token where)
       (let ([type (argument-type (string->symbol (frame-operator frame)) (frame-arguments frame))])
-        (and type (list type start end (substring s start end) in-string?))))
+        (and type (list type start end token where))))
     (define (plain? frame) (and (not (frame-quoted? frame)) (string? (frame-operator frame))))
     (define (element-type type)
       ;; the element type of a (list-of t) argument, or of such a member of an or
       (cond [(and (pair? type) (eq? (car type) 'list-of) (pair? (cdr type))) (cadr type)]
             [(and (pair? type) (eq? (car type) 'or)) (exists element-type (cdr type))]
             [else #f]))
+    (define (literal-typed? type)
+      ;; whether the type, or a member of a union, spells its values as literals
+      (cond [(symbol? type) (and (memq type (edoc:type-literals)) #t)]
+            [(and (pair? type) (eq? (car type) 'or)) (exists literal-typed? (cdr type))]
+            [else #f]))
+    (define (literal-operator? frame)
+      ;; whether the frame's operator denotes a value: a type's derived
+      ;; literal, or a constructor (head literal) writes by hand, (agent
+      ;; "name") say, which are the procedures that library documents
+      (let ([sym (string->symbol (frame-operator frame))])
+        (or (and (memq sym (edoc:type-literals)) #t)
+            (let ([sigs (operator-signatures sym)])
+              (and sigs
+                   (exists (lambda (sig) (and (eq? (edoc:signature-kind sig) 'procedure) (equal? (edoc:signature-library sig) "(head literal)"))) sigs)
+                   #t)))))
     (let* ([quote-at (open-string-start s pos)]
            [range (and (not quote-at) (symbol-range s pos))]
            [start (cond [quote-at (+ quote-at 1)] [range (car range)] [else pos])]
@@ -178,11 +199,19 @@
       (and (pair? frames)
            (let ([frame (car frames)])
              (cond
-               [(plain? frame) (typed frame start end (and quote-at #t))]
+               [(plain? frame)
+                (let ([context (typed frame start end (substring s start end) (and quote-at #t))])
+                  (cond [(not context) #f]
+                        ;; inside (file "~ the values spell bare, never a literal within a literal
+                        [(literal-operator? frame) (if quote-at context (list (car context) start end (substring s start end) 'inside))]
+                        ;; a string at an argument spelling its values as
+                        ;; literals expands into the literal, from its quote
+                        [(and quote-at (literal-typed? (car context))) (list (car context) quote-at end (substring s start end) 'literal)]
+                        [else context]))]
                [(and (eq? (frame-operator frame) 'pending) (not (frame-quoted? frame)) (not quote-at)
                      (pair? (cdr frames)) (plain? (cadr frames))
                      (> start 0) (char=? (string-ref s (- start 1)) (frame-opener frame)))
-                (typed (cadr frames) (- start 1) end #f)]
+                (typed (cadr frames) (- start 1) end (substring s (- start 1) end) #f)]
                ;; an element of a quoted list at an argument typed (list-of t)
                ;; takes t: '("../sch completes directories under a roots argument
                [(and (frame-quoted? frame) (pair? (cdr frames)) (plain? (cadr frames)))
@@ -232,7 +261,7 @@
   ;; label's face. The text is the candidate's opening: its spelling without
   ;; the closers the settle step supplies, so an extension never closes the
   ;; form the token is still inside.
-  (define-record-type option (fields text insert label hint face))
+  (define-record-type option (fields text insert label hint face value))
 
   (define (opening spelling)
     (let loop ([end (string-length spelling)])
@@ -241,16 +270,22 @@
           (substring spelling 0 end))))
 
   (define (value-options type token in-string?)
+    ;; the type's values as options, with the value itself: inside a string
+    ;; the bare string values, completing the literal in place; inside a
+    ;; literal constructor, (file "~ say, each value's own spelling; elsewhere,
+    ;; and for a string expanding into a literal, the literal denoting it
     (fold-right
       (lambda (pair out)
         (let ([value (car pair)] [hint (or (cdr pair) "")])
           (cond
-            [in-string?
+            [(eq? in-string? #t)
              ;; the literal stays open: the settle step closes it at the
              ;; session's dead end, once nothing more completes from the value
-             (if (string? value) (cons (make-option value value value hint 'plain) out) out)]
-            [else (let ([text (edoc:type-spelling type value)])
-                    (cons (make-option (opening text) text text hint 'plain) out))])))
+             (if (string? value) (cons (make-option value value value hint 'plain value) out) out)]
+            [else (let ([text (if (eq? in-string? 'inside)
+                                  (edoc:type-spelling type value)
+                                  (edoc:type-literal-spelling type value))])
+                    (cons (make-option (opening text) text text hint 'plain value) out))])))
       '() (edoc:type-completions type token)))
 
   (define (documented-symbols)
@@ -301,8 +336,14 @@
                        [label (edoc:edoc-template sym formals)]
                        [text (string-append "(" name)]
                        [insert (if (null? formals) label text)])
-                  (cons (make-option text insert label (edoc:signature-summary sig) 'editor) out)))))
-          '() (documented-symbols)))))
+                  (cons (make-option text insert label (edoc:signature-summary sig) 'editor #f) out)))))
+          '() (let ([literals (edoc:type-literals)])
+                ;; a type's derived literal produces its values by definition
+                ;; and adds nothing to them; a constructor written by hand,
+                ;; (buffer name) or (head name . more), is a producer like any
+                (filter (lambda (entry)
+                          (not (and (memq (car entry) literals) (eq? (top-level-value (car entry)) (edoc:type-literal (car entry))))))
+                        (documented-symbols)))))))
 
   (define (variable-options type)
     ;; the top-level names whose current values the type accepts, alphabetically
@@ -314,7 +355,7 @@
                 (if (and value (guard (ex [else #f]) (edoc:type-accepts? type value)))
                   (let ([name (symbol->string sym)])
                     (cons (make-option name name name
-                            (if (procedure? value) (completion-hint sym) (edoc:type-spelling type value)) 'editor)
+                            (if (procedure? value) (completion-hint sym) (edoc:type-spelling type value)) 'editor #f)
                           out))
                   out)))
             '() (environment-symbols (interaction-environment))))))
@@ -329,6 +370,14 @@
             [(< (car a) (car b)) #t]
             [(> (car a) (car b)) #f]
             [else (loop (cdr a) (cdr b) (- n 1))])))
+
+  (define (quoted-part text)
+    ;; the text after its first quote, a literal opening's value part, ~/ in
+    ;; (file "~/ say; #f without one
+    (let find ([i 0])
+      (cond [(>= i (string-length text)) #f]
+            [(char=? (string-ref text i) #\") (substring text (+ i 1) (string-length text))]
+            [else (find (+ i 1))])))
 
   (define (typed-options context)
     ;; ((option . fragments) ...) for an argument context, best first, or #f
@@ -347,14 +396,22 @@
            (for-each (lambda (o) (hashtable-set! by-text (option-text o) #t)) all)
            (for-each (lambda (m) (hashtable-set! by-text (fuzzy:name m) m))
                      (fuzzy:rank token (vector->list (hashtable-keys by-text))))
-           (let ([matched (fold-right
-                            (lambda (o out)
-                              (let ([m (hashtable-ref by-text (option-text o) #t)])
-                                (if (eq? m #t) out (cons (cons o m) out))))
-                            '() all)])
+           (let* ([matched (fold-right
+                             (lambda (o out)
+                               (let ([m (hashtable-ref by-text (option-text o) #t)])
+                                 (if (eq? m #t) out (cons (cons o m) out))))
+                             '() all)]
+                  ;; a token the matcher has no segment for, ~ or / say, still
+                  ;; leads the values it begins: the home or the root directory
+                  [matched (if (pair? matched) matched
+                               (fold-right (lambda (o out)
+                                             (let ([text (option-text o)])
+                                               (if (string:prefix? token (or (quoted-part text) text)) (cons (cons o #f) out) out)))
+                                           '() all))])
              (and (pair? matched)
-                  (map (lambda (entry) (cons (car entry) (fuzzy:fragments (cdr entry))))
-                       (list-sort (lambda (a b) (quality<? (fuzzy:score (cdr a)) (fuzzy:score (cdr b)))) matched)))))])))
+                  (map (lambda (entry) (cons (car entry) (if (cdr entry) (fuzzy:fragments (cdr entry)) '())))
+                       (list-sort (lambda (a b) (and (cdr a) (cdr b) (quality<? (fuzzy:score (cdr a)) (fuzzy:score (cdr b))) #t))
+                                  matched)))))])))
 
   (define (dead-end? type value)
     ;; whether completing from a string value offers nothing but the value
@@ -375,16 +432,36 @@
     ;; matches, as for symbols, and that leaves the cursor at a typed
     ;; argument: an extension opening a string after an operator nobody
     ;; documents, (hea" say, would strand it
-    (let ([start (cadr context)] [end (caddr context)] [token (cadddr context)] [in-string? (car (cddddr context))])
+    (let ([type (car context)] [start (cadr context)] [end (caddr context)] [token (cadddr context)] [in-string? (car (cddddr context))])
       (define (typed-still? text)
         (and (argument-context (string-append (substring s 0 start) text (substring s end (string-length s)))
                                (+ start (string-length text)))
              #t))
+      (define (sole-insert option)
+        ;; a sole value whole: a string value still completing on, a
+        ;; directory say, open to continue into, else closed at its dead end
+        (let ([value (option-value option)])
+          (if (and (string? value) (not (eq? in-string? #t)) (not (dead-end? type value)))
+              (option-text option)
+              (option-insert option))))
+      (define (literal-common)
+        ;; the openings' common prefix when its value part extends the
+        ;; token, (file "/ over the root's entries say, else #f
+        (let* ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))]
+               [value-part (quoted-part common)])
+          (and value-part (string:prefix? token value-part) common)))
       (cond
-        [(null? (cdr options)) (list (option-insert (car (car options))))]
+        [(null? (cdr options)) (list (sole-insert (car (car options))))]
+        ;; a string or bare token becoming a value's spelling: the openings'
+        ;; common prefix when its value extends the token, as inside a string
+        [(memq in-string? '(literal inside)) (list (or (literal-common) (substring s start end)))]
         [in-string?
          (let ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))])
            (list (if (and (> (string-length common) (string-length token)) (string:prefix? token common)) common token)))]
+        ;; a bare token the values alone match, / over the root's entries
+        ;; say, opens their literal as a string would; with a symbol among
+        ;; the matches it extends as symbols do
+        [(and (for-all (lambda (entry) (option-value (car entry))) options) (literal-common)) => list]
         [else
          (let ([seen (make-hashtable string-hash string=?)])
            (fuzzy:expansions token
@@ -425,6 +502,14 @@
   (define (completion-extensions text pos)
     (let* ([context (argument-context text pos)] [options (and context (typed-options context))])
       (and options (typed-inserts text context options))))
+
+  (edoc "The span Tab replaces at a typed argument position, (start . end) character offsets, or #f: the token, or the whole string when it expands into a literal."
+        (text string "the prompt input")
+        (pos integer "the cursor position")
+        (returns (or pair #f)))
+  (define (completion-span text pos)
+    (let* ([context (argument-context text pos)] [options (and context (typed-options context))])
+      (and options (cons (cadr context) (caddr context)))))
 
   (define hint-cache (make-weak-eq-hashtable))
 

@@ -35,7 +35,8 @@
           edoc-template edoc-type edoc-type? edoc-types elibrary first-sentence
           signature-arguments signature-flags signature-formals signature-kind signature-library
           signature-returns signature-summary signature? type-accepts? type-completions
-          type-denotes-record? type-literal type-literals type-named type-owner type-prose type-read type-spelling
+          type-denotes-record? type-literal type-literal-spelling type-literals type-named type-owner type-prose type-read
+          type-spelling
           type-text type-value type-within)
   (import (rnrs)
           (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
@@ -880,31 +881,65 @@
     (let ([type (type-named t)] [predicate (eq-hashtable-ref record-predicates name #f)])
       (and type predicate (eq? (type-predicate-of type) predicate))))
 
+  (define (literal-type? name)
+    ;; whether a type spells its values as literals: a library's own type
+    ;; with a completer; the language's keep their native spellings
+    (let ([type (eq-hashtable-ref types name #f)])
+      (and type (type-complete-of type) (type-owner-of type)
+           (not (equal? (type-owner-of type) "(foundation edoc)")) #t)))
+
   (edefine (type-literals)
     (edoc "The names of the types that spell their values as literals, (mode \"scheme\") say: the types a library defines with a completer, in name order."
           (returns list))
     (list-sort (lambda (a b) (string<? (symbol->string a) (symbol->string b)))
-      (filter (lambda (name)
-                (let ([type (eq-hashtable-ref types name #f)])
-                  (and (type-complete-of type) (type-owner-of type)
-                       (not (equal? (type-owner-of type) "(foundation edoc)")))))
-        (vector->list (hashtable-keys types)))))
+      (filter literal-type? (vector->list (hashtable-keys types)))))
+
+  ;; the derived literals, one per type: the procedure the kernel binds is the
+  ;; one type-literal returns, so a name bound to it is known for its literal
+  (define literals (make-eq-hashtable))
 
   (edefine (type-literal name)
-    (edoc "A type's literal constructor: a procedure from a spelling to the type's value, the type's reader applied when it has one, that must then satisfy the type; how (mode \"scheme\") and (buffer \"name\") read. The type is looked up at each use, so a reload is followed."
-          (name symbol "the type's name") (returns procedure))
-    (lambda (spelling)
-      (let ([type (type-named name)])
-        (unless type (error name "no such type"))
-        (let ([value (if (type-read-of type) ((type-read-of type) spelling) spelling)])
-          (unless (type-accepts? name value)
-            (error name (string-append "expected " (type-prose-of type)) spelling))
-          value))))
+    (edoc "A type's literal constructor: a procedure from a spelling to the type's value, the type's reader applied when it has one, that must then satisfy the type; how (mode \"scheme\") and (buffer \"name\") read. The type is looked up at each use, so a reload is followed; the constructor documents itself, so completion continues inside it. One procedure per type, however often asked."
+          (name symbol "the type's name") (returns procedure) (effects internal))
+    (or (eq-hashtable-ref literals name #f)
+        (let ([type (type-named name)])
+          (unless type (error 'type-literal "no such type" name))
+          (let ([literal
+                 (attach! name
+                   (lambda (spelling)
+                     (let ([type (type-named name)])
+                       (unless type (error name "no such type"))
+                       (let ([value (if (type-read-of type) ((type-read-of type) spelling) spelling)])
+                         (unless (type-accepts? name value)
+                           (error name (string-append "expected " (type-prose-of type)) spelling))
+                         value)))
+                   (list 'edoc (string-append (type-prose-of type) ", as its literal (" (symbol->string name) " spelling) reads it back")
+                         (list 'spelling (if (type-read-of type) 'string name) "the spelling, as completion offers it")
+                         (list 'returns name)
+                         (list "kind" 'procedure) (list "formals" '(spelling)) (list "library" "(foundation edoc)")))])
+            (eq-hashtable-set! literals name literal)
+            literal))))
 
   (edefine (type-value name v)
     (edoc "A value as a type's own: v itself when it satisfies the type, else the type's literal read from v as a spelling; how a command takes a bare name and a literal alike, (mode:choose! \"scheme\") and (mode:choose! (mode \"scheme\"))."
-          (name symbol "the type's name") (v any "the value, or its spelling") (returns any))
+          (name symbol "the type's name") (v any "the value, or its spelling") (returns any) (effects internal))
     (if (type-accepts? name v) v ((type-literal name) v)))
+
+  (edefine (type-literal-spelling t value)
+    (edoc "A value of a type as the literal denoting it, (mode \"scheme\") say, when the type spells its values so and its own spelling is not a form already; else its spelling, as type-spelling gives it."
+          (t datum "the type") (value any "the value") (returns string))
+    (cond
+      [(and (pair? t) (eq? (car t) 'or))
+       (let ([m (find (lambda (m) (type-accepts? m value)) (cdr t))])
+         (if m (type-literal-spelling m value) (type-spelling t value)))]
+      [(and (symbol? t) (literal-type? t))
+       ;; a spelling that is a form already, (agent "helper") for an actor
+       ;; say, denotes the value as it is; a bare one takes the type's literal
+       (let ([spelling (type-spelling t value)])
+         (if (and (> (string-length spelling) 0) (char=? (string-ref spelling 0) #\())
+             spelling
+             (string-append "(" (symbol->string t) " " spelling ")")))]
+      [else (type-spelling t value)]))
 
   (edefine (type-read type)
     (edoc "A type's reader, text to value, or #f." (type (record type) "the type record") (returns (or procedure #f)))
